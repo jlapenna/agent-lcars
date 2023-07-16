@@ -41,6 +41,6 @@
     "@slack/bolt": "^3.13.2"
   },
   "lint-staged": {
-    "*.ts": "eslint --cache --fix"
+    "*.ts": "eslint --cache --fix --max-warnings=0"
   }
 }
