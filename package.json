@@ -11,7 +11,8 @@
     "test": "jest --detectOpenHandles",
     "test:verbose": "jest --detectOpenHandles --verbose --silent=false",
     "test:watch": "jest --watchAll",
-    "test:coverage": "jest --detectOpenHandles --coverage --verbose"
+    "test:coverage": "jest --detectOpenHandles --coverage --verbose",
+    "prepare": "husky install"
   },
   "keywords": [],
   "author": "Joe LaPenna <jlapenna@gmail.com>",
@@ -27,7 +28,9 @@
     "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-jest": "^27.2.3",
     "eslint-plugin-prettier": "^5.0.0",
+    "husky": "^8.0.3",
     "jest": "^29.6.1",
+    "lint-staged": "^13.2.3",
     "ngrok": "^5.0.0-beta.2",
     "nodemon": "^3.0.1",
     "ts-jest": "^29.1.1",
