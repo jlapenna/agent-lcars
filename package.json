@@ -2,7 +2,7 @@
   "name": "sprinklesbot",
   "version": "1.0.0",
   "description": "",
-  "main": "src/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node src/index.ts",
     "ngrok": "ngrok http 3535",
@@ -11,8 +11,7 @@
     "test": "jest --detectOpenHandles",
     "test:verbose": "jest --detectOpenHandles --verbose --silent=false",
     "test:watch": "jest --watchAll",
-    "test:coverage": "jest --detectOpenHandles --coverage --verbose",
-    "prepare": "husky install"
+    "test:coverage": "jest --detectOpenHandles --coverage --verbose"
   },
   "keywords": [],
   "author": "Joe LaPenna <jlapenna@gmail.com>",
@@ -23,7 +22,6 @@
     "@types/node": "^20.4.2",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
-    "dotenv": "^16.3.1",
     "eslint": "^8.45.0",
     "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-jest": "^27.2.3",
@@ -39,7 +37,8 @@
   },
   "dependencies": {
     "@slack/bolt": "^3.13.2",
-    "airtable": "^0.12.1"
+    "airtable": "^0.12.1",
+    "dotenv": "^16.3.1"
   },
   "lint-staged": {
     "*.ts": "eslint --cache --fix --max-warnings=0"
