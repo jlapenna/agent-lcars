@@ -1,6 +1,11 @@
 {
   "extends": "@tsconfig/node20/tsconfig.json",
-  "ts-node": { "files": true },
+  "ts-node": {
+    "files": true,
+    "require": [
+      "dotenv/config"
+    ]
+  },
   "compilerOptions": {
     /* Visit https://aka.ms/tsconfig to read more about this file */
 
