@@ -41,7 +41,7 @@
     "@slack/bolt": "^3.13.2",
     "airtable": "^0.12.1",
     "dotenv": "^16.3.1",
-    "express-async-router": "^0.1.15"
+    "express-promise-router": "^4.1.1"
   },
   "lint-staged": {
     "*.ts": "eslint --cache --fix --max-warnings=0"
