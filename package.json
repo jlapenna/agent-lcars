@@ -4,7 +4,8 @@
   "description": "",
   "main": "dist/src/index.js",
   "scripts": {
-    "dev": "cross-env NODE_ENV=development DOTENV_CONFIG_PATH=.env.local nodemon --exec ts-node src/index.ts",
+    "dev": "cross-env NODE_ENV=development DOTENV_CONFIG_PATH=.env.development nodemon --exec ts-node src/index.ts",
+    "dev:local": "cross-env NODE_ENV=development DOTENV_CONFIG_PATH=.env.development.local nodemon --exec ts-node src/index.ts",
     "ngrok": "ngrok http 3535",
     "start": "cross-env NODE_ENV=production DOTENV_CONFIG_PATH=.env.production exec ts-node src/index.ts",
     "build": "tsc",
