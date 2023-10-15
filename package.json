@@ -45,7 +45,8 @@
     "commander": "^11.0.0",
     "dotenv": "^16.3.1",
     "express-promise-router": "^4.1.1",
-    "firebase-admin": "^11.10.1"
+    "firebase-admin": "^11.10.1",
+    "googleapis": "^127.0.0"
   },
   "lint-staged": {
     "*.ts": "eslint --cache --fix --max-warnings=0"
