@@ -21,6 +21,7 @@
     "@commander-js/extra-typings": "^11.0.0",
     "@jest/globals": "^29.6.1",
     "@tsconfig/node20": "^20.1.0",
+    "@types/lodash.difference": "^4.5.7",
     "@types/node": "^20.4.2",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
@@ -46,7 +47,8 @@
     "dotenv": "^16.3.1",
     "express-promise-router": "^4.1.1",
     "firebase-admin": "^11.10.1",
-    "googleapis": "^127.0.0"
+    "googleapis": "^127.0.0",
+    "lodash.difference": "^4.5.0"
   },
   "lint-staged": {
     "*.ts": "eslint --cache --fix --max-warnings=0"
