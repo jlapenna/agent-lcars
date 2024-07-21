@@ -1,0 +1,21 @@
+{
+  "name": "members",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "prepare": "husky && husky install",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.7",
+    "typescript": "^5.5.3",
+    "typescript-eslint": "^7.16.1"
+  },
+  "lint-staged": {
+    "*.js": "eslint --cache --fix",
+    "*.ts": "eslint --cache --fix --max-warnings=0"
+  }
+}
