@@ -2,13 +2,20 @@
   "name": "members",
   "version": "1.0.0",
   "private": true,
+  "workspaces": [
+    "bot",
+    "lib",
+    "results"
+  ],
   "scripts": {
-    "prepare": "husky && husky install",
-    "lint": "eslint",
-    "lint:fix": "eslint --fix"
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "lint:fix": "npm run lint:fix --workspaces",
+    "prepare": "husky install"
   },
   "devDependencies": {
     "eslint": "^8.57.0",
+    "eslint-plugin-prettier": "^5.2.1",
     "husky": "^8.0.3",
     "lint-staged": "^15.2.7",
     "typescript": "^5.5.3",

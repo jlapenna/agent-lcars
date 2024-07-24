@@ -1,0 +1,28 @@
+{
+  "include": [
+    "bot/**/*.ts",
+    "lib/**/*.ts",
+    "results/**/*.ts",
+    "env.d.ts"
+  ],
+  "compilerOptions": {
+    "lib": ["es2018"],
+    "module": "commonjs",
+    "target": "es2018",
+
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+
+    "allowJs": true,
+    "resolveJsonModule": true,
+
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@lib/*": ["lib/src/*"],
+      "@bot/*": ["lib/src/*"],
+      "@results/*": ["lib/src/*"]
+    }
+  }
+}
