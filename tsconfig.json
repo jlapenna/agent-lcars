@@ -1,10 +1,7 @@
 {
-  "include": [
-    "bot/**/*.ts",
-    "lib/**/*.ts",
-    "results/**/*.ts",
-    "env.d.ts"
-  ],
+  "include": ["bot/**/*.ts", "lib/**/*.ts", "results/**/*.ts"],
+  "files": ["env.d.ts"],
+  "exclude": ["node_modules", "dist"],
   "compilerOptions": {
     "lib": ["es2018"],
     "module": "commonjs",
@@ -21,8 +18,12 @@
     "baseUrl": ".",
     "paths": {
       "@lib/*": ["lib/src/*"],
-      "@bot/*": ["lib/src/*"],
-      "@results/*": ["lib/src/*"]
+      "@bot/*": ["bot/src/*"],
+      "@results/*": ["results/src/*"]
     }
+  },
+  "ts-node": {
+    "files": true,
+    "require": ["dotenv/config"]
   }
 }
