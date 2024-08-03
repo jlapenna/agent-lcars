@@ -1,13 +1,12 @@
 {
-  "include": ["bot/**/*.ts", "lib/**/*.ts", "results/**/*.ts"],
-  "files": ["env.d.ts"],
-  "exclude": ["node_modules", "dist"],
+  "include": ["eslint.config.mjs"],
   "compilerOptions": {
     "lib": ["es2018"],
     "module": "commonjs",
     "target": "es2018",
 
     "strict": true,
+    "strictNullChecks": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
 
