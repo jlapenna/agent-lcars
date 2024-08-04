@@ -90,4 +90,14 @@ export default tseslint.config(
   // Removes conflicting eslint+prettier rules.
   // Should remain at the end.
   eslintPluginPrettierRecommended,
+  // Its really annoying when writing code that a formatting issue is an error.
+  // Make these warnings.
+  // However, we want prettier rules to be warnings; they'll get reformatted and
+  // fixed, anyway, further, our lint-staged/husky rules treat warnings as
+  // fatal.
+  {
+    rules: {
+      "prettier/prettier": "warn",
+    },
+  }
 );
