@@ -13,6 +13,7 @@
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces",
     "lint:fix": "npm run lint:fix --workspaces",
+    "lint-staged": "npm run lint-staged --workspaces",
     "deploy": "./tools/deploy.sh && npm run deploy --workspaces",
     "prepare": "husky"
   },
