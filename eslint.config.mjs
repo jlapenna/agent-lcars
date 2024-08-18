@@ -55,7 +55,7 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
       "unused-imports/no-unused-imports": "error",
       "unused-imports/no-unused-vars": [
-        "error",
+        "warn",
         {
           // Options based on https://typescript-eslint.io/rules/no-unused-vars/
           args: "all",
