@@ -10,7 +10,7 @@ export default tseslint.config(
 
   // tselint: Start
   {
-    ignores: ["eslint.config.mjs", "**/node_modules", "**/dist"],
+    ignores: ["**/*.config.ts", "**/*.config.js", "**/*.config.mjs", "**/node_modules", "**/dist"],
   },
   ...tseslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
