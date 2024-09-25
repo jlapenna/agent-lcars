@@ -11,6 +11,7 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",
+    "test:pre-commit": "npm run test:pre-commit --workspaces",
     "lint": "npm run lint --workspaces",
     "lint:fix": "npm run lint:fix --workspaces",
     "lint-staged": "npm run lint-staged --workspaces",
