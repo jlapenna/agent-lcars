@@ -1,7 +1,7 @@
 import unusedImports from "eslint-plugin-unused-imports";
 import eslint from "@eslint/js";
 import jest from "eslint-plugin-jest";
-import eslintPluginPrettierRecommended from "eslint-plugin-prettier/recommended";
+import eslintConfigPrettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -23,7 +23,6 @@ export default tseslint.config(
       },
     },
     rules: {
-      "prettier/prettier": "warn",
       "@typescript-eslint/consistent-indexed-object-style": "off",
       "@typescript-eslint/consistent-type-definitions": "off",
       "@typescript-eslint/no-empty-function": "warn",
@@ -87,17 +86,6 @@ export default tseslint.config(
   },
   // jest: End
 
-  // Removes conflicting eslint+prettier rules.
-  // Should remain at the end.
-  eslintPluginPrettierRecommended,
-  // Its really annoying when writing code that a formatting issue is an error.
-  // Make these warnings.
-  // However, we want prettier rules to be warnings; they'll get reformatted and
-  // fixed, anyway, further, our lint-staged/husky rules treat warnings as
-  // fatal.
-  {
-    rules: {
-      "prettier/prettier": "warn",
-    },
-  }
+  // Removes conflicting eslint+prettier rules -- Should remain at the end.
+  eslintConfigPrettier,
 );
