@@ -10,7 +10,13 @@ export default tseslint.config(
 
   // tselint: Start
   {
-    ignores: ["**/*.config.ts", "**/*.config.js", "**/*.config.mjs", "**/node_modules", "**/dist"],
+    ignores: [
+      "**/*.config.ts",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/node_modules",
+      "**/dist",
+    ],
   },
   ...tseslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
@@ -23,6 +29,7 @@ export default tseslint.config(
       },
     },
     rules: {
+      "no-empty": "warn",
       "@typescript-eslint/consistent-indexed-object-style": "off",
       "@typescript-eslint/consistent-type-definitions": "off",
       "@typescript-eslint/no-empty-function": "warn",
@@ -87,5 +94,5 @@ export default tseslint.config(
   // jest: End
 
   // Removes conflicting eslint+prettier rules -- Should remain at the end.
-  eslintConfigPrettier,
+  eslintConfigPrettier
 );
