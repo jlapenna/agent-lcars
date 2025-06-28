@@ -18,6 +18,12 @@ export default tseslint.config(
       "**/dist",
     ],
   },
+  {
+    files: ["**/jest.config.ts"],
+    rules: {
+      "no-ignored-file": "off",
+    },
+  },
   ...tseslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,
