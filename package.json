@@ -6,7 +6,8 @@
     "bot",
     "functions",
     "lib",
-    "results"
+    "results",
+    "tasks"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
