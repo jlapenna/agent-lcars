@@ -52,6 +52,28 @@ export default tseslint.config(
           allowNumber: true,
         },
       ],
+      "no-restricted-imports": "off",
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["firebase-admin/*"],
+              importNames: ["getFirestore"],
+              message:
+                'Avoid direct Firebase Admin SDK functions. Use @"lib/firebase/client"',
+            },
+          ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: 'TSTypeReference[typeName.left.name="FirebaseFirestore"]',
+          message:
+            "Usage of types from the `FirebaseFirestore` namespace is forbidden; import from firebase-admin/firestore instead.",
+        },
+      ],
     },
   },
   // tselint: End
