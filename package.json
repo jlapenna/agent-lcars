@@ -16,6 +16,7 @@
     "lint": "npm run lint --workspaces",
     "lint:fix": "npm run lint:fix --workspaces",
     "lint-staged": "npm run lint-staged --workspaces",
+    "type-check": "npm run type-check --workspaces",
     "deploy": "./tools/deploy.sh && npm run deploy --workspaces",
     "prepare": "husky"
   },
