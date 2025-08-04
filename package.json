@@ -10,16 +10,6 @@
     "tasks"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces",
-    "test:pre-commit": "npm run test:pre-commit --workspaces",
-    "lint": "npm run lint --workspaces",
-    "lint:fix": "npm run lint:fix --workspaces",
-    "lint:pre-commit": "npm run lint:pre-commit --workspaces",
-    "format": "npm run format --workspaces",
-    "format:pre-commit": "npm run format:pre-commit --workspaces",
-    "lint-staged": "npm run lint-staged --workspaces",
-    "type-check": "npm run type-check --workspaces",
     "deploy": "./tools/deploy.sh && npm run deploy --workspaces",
     "prepare": "husky"
   },

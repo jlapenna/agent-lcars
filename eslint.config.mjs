@@ -74,6 +74,13 @@ export default tseslint.config(
             "Usage of types from the `FirebaseFirestore` namespace is forbidden; import from firebase-admin/firestore instead.",
         },
       ],
+      // Work around express 5 async handler (expected) behavior)
+      "@typescript-eslint/no-misused-promises": [
+        "error",
+        {
+          checksVoidReturn: false,
+        },
+      ],
     },
   },
   // tselint: End
@@ -107,16 +114,12 @@ export default tseslint.config(
 
   // jest: Start
   {
-    files: ["__test__/**", "test/**"],
-    ...jest.configs["flat/recommended"],
-    ...jest.configs["flat/style"],
+    files: ["__test__/**", "test/**", "**/*.test.ts"],
+    ...jest.configs["flat/all"],
     rules: {
+      "@typescript-eslint/unbound-method": "off",
+      // TODO: add flag/all back in, to add style chekcs back.
       ...jest.configs["flat/recommended"].rules,
-    },
-    languageOptions: {
-      globals: {
-        ...jest.environments.globals,
-      },
     },
   },
   // jest: End
