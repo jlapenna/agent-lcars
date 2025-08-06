@@ -10,6 +10,8 @@
     "tasks"
   ],
   "scripts": {
+    "lint:pre-commit": "eslint --cache --max-warnings 0 --no-warn-ignored --fix",
+    "format:pre-commit": "prettier --write --ignore-unknown",
     "deploy": "./tools/deploy.sh && npm run deploy --workspaces",
     "prepare": "husky"
   },
