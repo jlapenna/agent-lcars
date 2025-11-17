@@ -1,0 +1,5 @@
+#!/bin/bash
+# This script executes nx with all forwarded arguments,
+# adding required flags for the environment.
+set -eo pipefail
+./node_modules/.bin/nx --tuiAutoExit --outputStyle=stream "$@"

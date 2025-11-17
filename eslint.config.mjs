@@ -1,111 +1,60 @@
-import unusedImports from "eslint-plugin-unused-imports";
-import eslint from "@eslint/js";
-import jest from "eslint-plugin-jest";
-import eslintConfigPrettier from "eslint-config-prettier";
-import tseslint from "typescript-eslint";
+import markdown from '@eslint/markdown';
+import nx from '@nx/eslint-plugin';
+import jest from 'eslint-plugin-jest';
+import simpleImportSort from 'eslint-plugin-simple-import-sort';
+import unusedImports from 'eslint-plugin-unused-imports';
+import jsoncParser from 'jsonc-eslint-parser';
 
-export default tseslint.config(
-  // javascript rules?
-  eslint.configs.recommended,
-
-  // tselint: Start
+export default [
+  ...nx.configs['flat/base'],
+  ...nx.configs['flat/typescript'],
+  ...nx.configs['flat/javascript'],
   {
-    ignores: [
-      "**/*.config.ts",
-      "**/*.config.js",
-      "**/*.config.mjs",
-      "**/node_modules",
-      "**/dist",
-      "**/coverage",
-    ],
+    ignores: ['**/dist', '**/next-env.d.ts'],
   },
   {
-    files: ["**/jest.config.ts"],
+    files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     rules: {
-      "no-ignored-file": "off",
-    },
-  },
-  ...tseslint.configs.recommended,
-  ...tseslint.configs.strictTypeChecked,
-  ...tseslint.configs.stylisticTypeChecked,
-  {
-    languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
-    rules: {
-      "no-empty": "warn",
-      "@typescript-eslint/consistent-indexed-object-style": "off",
-      "@typescript-eslint/consistent-type-definitions": "off",
-      "@typescript-eslint/no-empty-function": "warn",
-      "@typescript-eslint/no-empty-interface": "warn",
-      "@typescript-eslint/no-misused-promises": "warn",
-      "@typescript-eslint/no-unnecessary-type-assertion": "warn",
-      "@typescript-eslint/no-unsafe-assignment": "off",
-      "@typescript-eslint/no-unsafe-member-access": "off",
-      "@typescript-eslint/no-unsafe-argument": "off",
-      "@typescript-eslint/require-await": "warn",
-      "@typescript-eslint/restrict-template-expressions": [
-        "error",
+      '@typescript-eslint/triple-slash-reference': 'off',
+      '@nx/enforce-module-boundaries': [
+        'error',
         {
-          allowNumber: true,
-        },
-      ],
-      "no-restricted-imports": "off",
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        {
-          patterns: [
+          enforceBuildableLibDependency: true,
+          allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$'],
+          depConstraints: [
             {
-              group: ["firebase-admin/*"],
-              importNames: ["getFirestore"],
-              message:
-                'Avoid direct Firebase Admin SDK functions. Use @"lib/firebase/client"',
+              sourceTag: '*',
+              onlyDependOnLibsWithTags: ['*'],
             },
           ],
         },
       ],
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: 'TSTypeReference[typeName.left.name="FirebaseFirestore"]',
-          message:
-            "Usage of types from the `FirebaseFirestore` namespace is forbidden; import from firebase-admin/firestore instead.",
-        },
-      ],
-      // Work around express 5 async handler (expected) behavior)
-      "@typescript-eslint/no-misused-promises": [
-        "error",
-        {
-          checksVoidReturn: false,
-        },
-      ],
     },
   },
-  // tselint: End
-
   // unusedImports: Start
   // Overriding teslint no-unsed-vars rule.
   // Per: https://www.npmjs.com/package/eslint-plugin-unused-imports
   {
+    files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     plugins: {
-      "unused-imports": unusedImports,
+      'simple-import-sort': simpleImportSort,
+      'unused-imports': unusedImports,
     },
     rules: {
-      "@typescript-eslint/no-unused-vars": "off",
-      "unused-imports/no-unused-imports": "warn",
-      "unused-imports/no-unused-vars": [
-        "warn",
+      'simple-import-sort/imports': 'error',
+      'simple-import-sort/exports': 'error',
+      '@typescript-eslint/no-unused-vars': 'off',
+      'unused-imports/no-unused-imports': 'warn',
+      'unused-imports/no-unused-vars': [
+        'warn',
         {
           // Options based on https://typescript-eslint.io/rules/no-unused-vars/
-          args: "all",
-          argsIgnorePattern: "^_",
-          caughtErrors: "all",
-          caughtErrorsIgnorePattern: "^_",
-          destructuredArrayIgnorePattern: "^_",
-          varsIgnorePattern: "^_",
+          args: 'all',
+          argsIgnorePattern: '^_',
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
           ignoreRestSiblings: true,
         },
       ],
@@ -113,18 +62,52 @@ export default tseslint.config(
   },
   // unusedImports: End
 
-  // jest: Start
+  // Tests
   {
-    files: ["__test__/**", "test/**", "**/*.test.ts"],
-    ...jest.configs["flat/all"],
+    files: ['**/*.spec.ts', '**/*.test.ts'],
+    plugins: {
+      jest,
+    },
     rules: {
-      "@typescript-eslint/unbound-method": "off",
-      // TODO: add flag/all back in, to add style chekcs back.
-      ...jest.configs["flat/recommended"].rules,
+      ...jest.configs.recommended.rules,
     },
   },
-  // jest: End
+  // Tests: End
 
-  // Removes conflicting eslint+prettier rules -- Should remain at the end.
-  eslintConfigPrettier
-);
+  // package.json dependency checks
+  {
+    files: ['package.json'],
+    ...nx.configs['flat/dependency-checks'],
+  },
+
+  {
+    files: ['**/*.json'],
+    languageOptions: {
+      parser: jsoncParser,
+    },
+  },
+
+  {
+    files: ['**/*.md'],
+    plugins: {
+      markdown,
+    },
+    language: 'markdown/commonmark',
+    rules: {},
+  },
+
+  // Override or add rules here
+  {
+    files: [
+      '**/*.ts',
+      '**/*.tsx',
+      '**/*.cts',
+      '**/*.mts',
+      '**/*.js',
+      '**/*.jsx',
+      '**/*.cjs',
+      '**/*.mjs',
+    ],
+    rules: {},
+  },
+];
