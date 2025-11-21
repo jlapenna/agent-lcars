@@ -10,6 +10,9 @@
       "path": "./apps/bot"
     },
     {
+      "path": "./apps/cli"
+    },
+    {
       "path": "./libs/shared"
     },
     {
