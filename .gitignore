@@ -79,3 +79,6 @@ jules-scratch
 dev_server.log
 serve_static.log
 firestore-debug.log
+
+# Antigravity
+build_log*.txt
