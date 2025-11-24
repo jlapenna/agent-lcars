@@ -7,6 +7,9 @@
       "path": "./apps/e2e-bot"
     },
     {
+      "path": "./apps/e2e-tasks"
+    },
+    {
       "path": "./apps/bot"
     },
     {

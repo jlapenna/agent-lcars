@@ -44,7 +44,7 @@
       "options": {
         "targetName": "test"
       },
-      "exclude": ["apps/e2e-bot/**/*"]
+      "exclude": ["apps/e2e-bot/**/*", "apps/e2e-tasks/**/*"]
     }
   ],
   "targetDefaults": {
