@@ -70,6 +70,7 @@ export default [
     },
     rules: {
       ...jest.configs.recommended.rules,
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
   // Tests: End
