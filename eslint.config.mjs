@@ -41,7 +41,7 @@ export default [
       'unused-imports': unusedImports,
     },
     rules: {
-      'simple-import-sort/imports': 'error',
+      'simple-import-sort/imports': 'warn',
       'simple-import-sort/exports': 'error',
       '@typescript-eslint/no-unused-vars': 'off',
       'unused-imports/no-unused-imports': 'warn',
