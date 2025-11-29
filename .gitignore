@@ -82,6 +82,3 @@ firestore-debug.log
 
 # Antigravity
 build_log*.txt
-
-# Auth Creds
-.default-application-service-account.json
