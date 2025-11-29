@@ -72,7 +72,9 @@ e2e-server.log
 !.gemini/settings.json
 !.gemini/config.yaml
 
+# Credentials
 gha-creds-*.json
+.default-application-service-account.json
 
 # Jules
 jules-scratch
