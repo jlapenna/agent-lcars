@@ -80,7 +80,7 @@
     "jsonc-eslint-parser": "^2.4.1",
     "lint-staged": "^16.1.2",
     "lodash": "^4.17.21",
-    "npm-check-updates": "^18.0.1",
+    "npm-check-updates": "^19.0.0",
     "nx": "22.1.3",
     "prettier": "^2.6.2",
     "ts-jest": "^29.4.0",
