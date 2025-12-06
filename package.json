@@ -6,7 +6,7 @@
   "private": true,
   "engines": {
     "npm": "11.x",
-    "node": "22"
+    "node": "24"
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.0",
@@ -63,7 +63,7 @@
     "@types/lodash": "^4.17.20",
     "@types/lodash.clonedeep": "^4.5.9",
     "@types/lodash.isequal": "^4.5.8",
-    "@types/node": "20.19.25",
+    "@types/node": "24.10.1",
     "@types/xml2js": "^0.4.14",
     "esbuild": "^0.27.0",
     "eslint": "^9.8.0",
