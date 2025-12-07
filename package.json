@@ -2,7 +2,9 @@
   "name": "@members/source",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "build:cli": "npx nx build cli"
+  },
   "private": true,
   "engines": {
     "npm": "11.x",
@@ -24,6 +26,7 @@
     "chrono-node": "^2.7.6",
     "cloudevents": "^10.0.0",
     "commander": "^14.0.2",
+    "csv-parse": "^6.1.0",
     "cycle": "^1.0.3",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
