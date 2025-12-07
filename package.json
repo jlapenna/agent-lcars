@@ -9,6 +9,7 @@
     "node": "24"
   },
   "dependencies": {
+    "@esm2cjs/p-map": "^5.5.0",
     "@google-cloud/secret-manager": "^6.1.0",
     "@google/events": "^5.4.0",
     "@nx/esbuild": "22.1.3",
