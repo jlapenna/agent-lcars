@@ -22,6 +22,7 @@
     "@slack/socket-mode": "^2.0.4",
     "@slack/web-api": "^7.9.3",
     "axios": "^1.6.0",
+    "bottleneck": "^2.19.5",
     "cheerio": "^1.1.2",
     "chrono-node": "^2.7.6",
     "cloudevents": "^10.0.0",
