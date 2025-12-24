@@ -4,6 +4,7 @@
   "license": "MIT",
   "scripts": {
     "postinstall": "patch-package",
+    "prepare": "if [ -z \"$CI\" ]; then husky; fi",
     "build:cli": "npx nx build cli"
   },
   "private": true,
@@ -83,6 +84,7 @@
     "eslint-plugin-unused-imports": "^4.3.0",
     "firebase-tools": "^15.1.0",
     "firestore-jest-mock": "^0.26.0",
+    "husky": "^9.1.7",
     "jest": "^30.0.2",
     "jest-environment-node": "^30.0.2",
     "jest-fetch-mock": "^3.0.3",
