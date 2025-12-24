@@ -37,7 +37,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.0.3",
     "firebase-admin": "^13.6.0",
-    "googleapis": "^168.0.0",
+    "googleapis": "^169.0.0",
     "ical": "^0.8.0",
     "json-diff-ts": "^4.6.3",
     "jsonwebtoken": "^9.0.3",
