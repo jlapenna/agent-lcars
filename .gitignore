@@ -84,3 +84,13 @@ firestore-debug.log
 
 # Antigravity
 build_log*.txt
+
+# Nx-Firebase
+.runtimeconfig.json
+**/.emulators/*
+**/.firebase/*
+database-debug.log
+pubsub-debug.log
+ui-debug.log
+firebase-export*
+.secret.local
