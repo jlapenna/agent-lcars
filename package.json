@@ -25,6 +25,7 @@
     "@slack/oauth": "^3.0.3",
     "@slack/socket-mode": "^2.0.4",
     "@slack/web-api": "^7.13.0",
+    "@types/yargs": "^17.0.35",
     "axios": "^1.6.0",
     "bottleneck": "^2.19.5",
     "cheerio": "^1.1.2",
@@ -46,12 +47,15 @@
     "lodash.clonedeep": "^4.5.0",
     "lodash.isequal": "^4.5.0",
     "lodash.merge": "^4.6.2",
+    "md-to-slack": "^1.1.7",
     "normalize-url": "^8.0.2",
     "openapi-fetch": "^0.15.0",
     "p-wait-for": "^6.0.0",
+    "shlex": "^3.0.0",
     "strava-api-client": "^1.4.0",
     "uuid": "^11.0.0",
-    "xml2js": "^0.6.2"
+    "xml2js": "^0.6.2",
+    "yargs": "^18.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
