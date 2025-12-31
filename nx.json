@@ -45,6 +45,16 @@
         "targetName": "test"
       },
       "exclude": ["apps/e2e-bot/**/*", "apps/e2e-tasks/**/*"]
+    },
+    {
+      "plugin": "@naxodev/gonx",
+      "options": {
+        "buildTargetName": "build",
+        "serveTargetName": "serve",
+        "testTargetName": "test",
+        "lintTargetName": "lint",
+        "tidyTargetName": "tidy"
+      }
     }
   ],
   "targetDefaults": {
