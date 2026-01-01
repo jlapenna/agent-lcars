@@ -66,6 +66,7 @@ e2e-server.log
 # Env (may have secrets).
 .env
 .env.*
+!.env.development
 !.env.test
 
 .gemini/*
