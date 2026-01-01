@@ -3,7 +3,6 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "postinstall": "patch-package",
     "prepare": "if [ -z \"$CI\" ]; then husky; fi",
     "build:cli": "npx nx build cli"
   },
@@ -53,7 +52,7 @@
     "normalize-url": "^8.0.2",
     "openapi-fetch": "^0.15.0",
     "p-wait-for": "^6.0.0",
-    "strava-api-client": "^1.4.0",
+    "strava-api-client": "^1.5.0-next.1",
     "uuid": "^11.0.0",
     "xml2js": "^0.6.2",
     "yargs": "^18.0.0"
@@ -107,7 +106,6 @@
     "lodash": "^4.17.21",
     "npm-check-updates": "^19.0.0",
     "nx": "22.3.3",
-    "patch-package": "^8.0.1",
     "prettier": "^3.0.0",
     "ts-jest": "^29.4.0",
     "ts-markdown": "^1.3.0",
