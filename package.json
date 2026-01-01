@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "prepare": "if [ -z \"$CI\" ]; then husky; fi",
-    "build:cli": "npx nx build cli"
+    "postinstall": "patch-package; tools/cloud-build-ensure-go.sh",
+    "prepare": "if [ -z \"$CI\" ]; then husky; fi"
   },
   "private": true,
   "engines": {

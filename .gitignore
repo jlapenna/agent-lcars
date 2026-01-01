@@ -95,3 +95,6 @@ pubsub-debug.log
 ui-debug.log
 firebase-export*
 .secret.local
+
+# Local Go installation
+.go
