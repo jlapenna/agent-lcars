@@ -20,9 +20,6 @@
     },
     {
       "path": "./apps/tasks"
-    },
-    {
-      "path": "./apps/results"
     }
   ]
 }
