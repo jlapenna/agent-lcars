@@ -54,6 +54,7 @@
     "openapi-fetch": "^0.15.0",
     "p-wait-for": "^6.0.0",
     "readline-sync": "^1.4.10",
+    "square": "^43.2.1",
     "strava-api-client": "^1.4.0",
     "uuid": "^11.0.0",
     "xml2js": "^0.6.2",
