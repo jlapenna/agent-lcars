@@ -65,7 +65,10 @@
       "inputs": ["production", "^production"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "options": {
+        "silent": true
+      }
     },
     "e2e": {
       "dependsOn": ["^build"]
