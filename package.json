@@ -14,9 +14,11 @@
   "dependencies": {
     "@a2a-js/sdk": "^0.3.9",
     "@esm2cjs/p-map": "^5.5.0",
+    "@google-cloud/common": "^6.0.0",
     "@google-cloud/firestore": "^8.2.0",
     "@google-cloud/profiler": "^6.0.3",
     "@google-cloud/secret-manager": "^6.1.1",
+    "@google-cloud/storage": "^7.18.0",
     "@google-cloud/tasks": "^6.2.1",
     "@google/events": "^5.4.0",
     "@google/genai": "^1.38.0",
