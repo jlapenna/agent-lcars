@@ -29,6 +29,19 @@ export default [
           ],
         },
       ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='require']",
+          message:
+            'Using require() is not allowed. Use ES static imports instead.',
+        },
+        {
+          selector: 'ImportExpression',
+          message:
+            'Dynamic import() is not allowed. Use ES static imports instead.',
+        },
+      ],
     },
   },
   // unusedImports: Start
