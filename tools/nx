@@ -2,4 +2,8 @@
 # This script executes nx with all forwarded arguments,
 # adding required flags for the environment.
 set -eo pipefail
+
+# Increase memory limit to prevent OOM errors during large builds/tests
+export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=4096"
+
 ./node_modules/.bin/nx --outputStyle=stream "$@"
