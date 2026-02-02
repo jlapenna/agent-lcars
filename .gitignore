@@ -100,4 +100,6 @@ firebase-export*
 # Local Go installation
 .go
 
+*.tsbuildinfo
+
 .clasp.json
