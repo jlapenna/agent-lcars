@@ -1,6 +1,8 @@
 # See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
 tmp/
+e2e.pid
+e2e.log
 
 # Probably never intentional
 *.log
@@ -51,6 +53,7 @@ firebase-debug.log
 .nx/workspace-data
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
+apps/web/next-env.d.ts
 
 # Next.js
 .next

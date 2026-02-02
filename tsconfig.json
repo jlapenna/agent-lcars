@@ -20,6 +20,12 @@
     },
     {
       "path": "./apps/tasks"
+    },
+    {
+      "path": "./apps/e2e-web"
+    },
+    {
+      "path": "./apps/web"
     }
   ]
 }
