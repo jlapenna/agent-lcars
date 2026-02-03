@@ -108,3 +108,4 @@ firebase-export*
 *.tsbuildinfo
 
 .clasp.json
+apps/agent/agent
