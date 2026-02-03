@@ -74,6 +74,8 @@ e2e-server.log
 !.env.test
 
 .gemini/*
+.gemini/skills
+.gemini/skills/workflow-follower*/**
 !.gemini/settings.json
 !.gemini/config.yaml
 
