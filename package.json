@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "postinstall": "patch-package; tools/cloud-build-ensure-go.sh",
+    "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
     "prepare": "if [ -z \"$CI\" ]; then npx husky; fi"
   },
   "private": true,
