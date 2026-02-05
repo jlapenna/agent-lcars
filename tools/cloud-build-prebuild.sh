@@ -27,8 +27,4 @@ else
     exit 1
 fi
 
-# Build shared library
-echo "Building shared library..."
-export NODE_OPTIONS="--max-old-space-size=4096"
-./node_modules/.bin/nx build shared
 
