@@ -72,8 +72,7 @@
   ],
   "targetDefaults": {
     "serve": {
-      "options": {
-      }
+      "options": {}
     },
     "@nx/esbuild:esbuild": {
       "cache": true,
