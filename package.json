@@ -172,9 +172,7 @@
     "vitest": "^4.0.18"
   },
   "overrides": {
-    "@firebase/firestore": {
-      "@grpc/grpc-js": "1.14.3"
-    }
+    "@grpc/grpc-js": "1.14.3"
   },
   "workspaces": [
     "apps/*",
