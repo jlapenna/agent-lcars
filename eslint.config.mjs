@@ -23,8 +23,16 @@ export default [
           allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$'],
           depConstraints: [
             {
-              sourceTag: '*',
-              onlyDependOnLibsWithTags: ['*'],
+              sourceTag: 'platform:server',
+              notDependOnLibsWithTags: ['platform:browser'],
+            },
+            {
+              sourceTag: 'platform:browser',
+              notDependOnLibsWithTags: ['platform:server'],
+            },
+            {
+              sourceTag: 'platform:shared',
+              notDependOnLibsWithTags: ['platform:server', 'platform:browser'],
             },
           ],
         },
