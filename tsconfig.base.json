@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "composite": false,
+    "declaration": true,
     "declarationMap": true,
     "emitDeclarationOnly": true,
     "importHelpers": true,
@@ -38,21 +39,27 @@
       ],
       "@members/shared/instagram": ["libs/shared/src/instagram/index.ts"],
       "@members/shared/logging": ["libs/shared/src/logging/index.ts"],
+      "@members/shared/logging-node": ["libs/shared/src/logging/node.ts"],
       "@members/shared/mail": ["libs/shared/src/mail/index.ts"],
       "@members/shared/provider-service": [
         "libs/shared/src/provider-service/index.ts"
       ],
       "@members/shared/providers": ["libs/shared/src/providers/index.ts"],
       "@members/shared/qbp": ["libs/shared/src/qbp/index.ts"],
+      "@members/shared/qbp-client": ["libs/shared/src/qbp/client-types.ts"],
       "@members/shared/race-events": ["libs/shared/src/race-events/index.ts"],
       "@members/shared/races": ["libs/shared/src/races/index.ts"],
       "@members/shared/rag": ["libs/shared/src/rag/index.ts"],
       "@members/shared/results": ["libs/shared/src/results/index.ts"],
       "@members/shared/riders": ["libs/shared/src/riders/index.ts"],
+      "@members/shared/riders/membership-client": [
+        "libs/shared/src/riders/membership-client.ts"
+      ],
       "@members/shared/secrets": ["libs/shared/src/secrets/index.ts"],
       "@members/shared/slack": ["libs/shared/src/slack/index.ts"],
       "@members/shared/squareup": ["libs/shared/src/squareup/index.ts"],
       "@members/shared/strava": ["libs/shared/src/strava/index.ts"],
+      "@members/shared/test-utils": ["libs/shared/src/test-utils/index.ts"],
       "@members/shared/util": ["libs/shared/src/util/index.ts"],
       "@members/shared/util/env": ["libs/shared/src/util/env.ts"],
       "@members/shared/util/secrets": ["libs/shared/src/util/secrets.ts"]
