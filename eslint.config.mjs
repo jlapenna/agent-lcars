@@ -131,8 +131,6 @@ export default [
       '**/*.cjs',
       '**/*.mjs',
     ],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
-    },
+    rules: {},
   },
 ];
