@@ -72,6 +72,7 @@ e2e-server.log
 .env.*
 !.env.development
 !.env.test
+!.env.e2e
 
 .gemini/*
 !.gemini/skills

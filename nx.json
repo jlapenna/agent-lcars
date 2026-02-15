@@ -83,7 +83,8 @@
       "dependsOn": ["^build"],
       "options": {
         "silent": true,
-        "forceExit": true
+        "forceExit": true,
+        "passWithNoTests": true
       }
     },
     "e2e": {
