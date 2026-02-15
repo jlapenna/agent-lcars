@@ -27,11 +27,21 @@
       "@members/shared/chores": ["libs/shared/src/chores/index.ts"],
       "@members/shared/cloudevents": ["libs/shared/src/cloudevents/index.ts"],
       "@members/shared/competitions": ["libs/shared/src/competitions/index.ts"],
+      "@members/shared/competitions-browser": [
+        "libs/shared/src/competitions/browser/index.ts"
+      ],
       "@members/shared/export-sheets": [
         "libs/shared/src/export-sheets/index.ts"
       ],
+      "@members/shared/race-events": ["libs/shared/src/race-events/index.ts"],
+      "@members/shared/race-events-browser": [
+        "libs/shared/src/race-events/browser/index.ts"
+      ],
       "@members/shared/firebase": ["libs/shared/src/firebase/index.ts"],
       "@members/shared/firestore": ["libs/shared/src/firestore/index.ts"],
+      "@members/shared/firestore-browser": [
+        "libs/shared/src/firestore/browser/index.ts"
+      ],
       "@members/shared/ghost": ["libs/shared/src/ghost/index.ts"],
       "@members/shared/google": ["libs/shared/src/google/index.ts"],
       "@members/shared/google/calendar": [
@@ -39,6 +49,9 @@
       ],
       "@members/shared/instagram": ["libs/shared/src/instagram/index.ts"],
       "@members/shared/logging": ["libs/shared/src/logging/index.ts"],
+      "@members/shared/logging-browser": [
+        "libs/shared/src/logging/browser/index.ts"
+      ],
       "@members/shared/logging-node": ["libs/shared/src/logging/node.ts"],
       "@members/shared/mail": ["libs/shared/src/mail/index.ts"],
       "@members/shared/provider-service": [
@@ -47,11 +60,17 @@
       "@members/shared/providers": ["libs/shared/src/providers/index.ts"],
       "@members/shared/qbp": ["libs/shared/src/qbp/index.ts"],
       "@members/shared/qbp-client": ["libs/shared/src/qbp/client-types.ts"],
-      "@members/shared/race-events": ["libs/shared/src/race-events/index.ts"],
       "@members/shared/races": ["libs/shared/src/races/index.ts"],
+      "@members/shared/races-browser": ["libs/shared/src/races/browser/index.ts"],
       "@members/shared/rag": ["libs/shared/src/rag/index.ts"],
       "@members/shared/results": ["libs/shared/src/results/index.ts"],
+      "@members/shared/results-browser": [
+        "libs/shared/src/results/browser/index.ts"
+      ],
       "@members/shared/riders": ["libs/shared/src/riders/index.ts"],
+      "@members/shared/riders-browser": [
+        "libs/shared/src/riders/browser/index.ts"
+      ],
       "@members/shared/riders/membership-client": [
         "libs/shared/src/riders/membership-client.ts"
       ],
@@ -61,8 +80,15 @@
       "@members/shared/strava": ["libs/shared/src/strava/index.ts"],
       "@members/shared/test-utils": ["libs/shared/src/test-utils/index.ts"],
       "@members/shared/util": ["libs/shared/src/util/index.ts"],
+      "@members/shared/util/dates": ["libs/shared/src/util/dates.ts"],
       "@members/shared/util/env": ["libs/shared/src/util/env.ts"],
-      "@members/shared/util/secrets": ["libs/shared/src/util/secrets.ts"]
+      "@members/shared/util/env-next": ["libs/shared/src/util/env-next.ts"],
+      "@members/shared/util/env-public": ["libs/shared/src/util/env-public.ts"],
+      "@members/shared/util/rate-limiter": ["libs/shared/src/util/rate-limiter.ts"],
+      "@members/shared/util/secrets": ["libs/shared/src/util/secrets.ts"],
+      "@members/shared/util/server": ["libs/shared/src/util/server.ts"],
+      "@members/shared/util-client": ["libs/shared/src/util/client.ts"],
+      "@members/shared/youtube": ["libs/shared/src/youtube/index.ts"]
     }
   }
 }
