@@ -61,7 +61,9 @@
       "@members/shared/qbp": ["libs/shared/src/qbp/index.ts"],
       "@members/shared/qbp-client": ["libs/shared/src/qbp/client-types.ts"],
       "@members/shared/races": ["libs/shared/src/races/index.ts"],
-      "@members/shared/races-browser": ["libs/shared/src/races/browser/index.ts"],
+      "@members/shared/races-browser": [
+        "libs/shared/src/races/browser/index.ts"
+      ],
       "@members/shared/rag": ["libs/shared/src/rag/index.ts"],
       "@members/shared/results": ["libs/shared/src/results/index.ts"],
       "@members/shared/results-browser": [
@@ -84,7 +86,9 @@
       "@members/shared/util/env": ["libs/shared/src/util/env.ts"],
       "@members/shared/util/env-next": ["libs/shared/src/util/env-next.ts"],
       "@members/shared/util/env-public": ["libs/shared/src/util/env-public.ts"],
-      "@members/shared/util/rate-limiter": ["libs/shared/src/util/rate-limiter.ts"],
+      "@members/shared/util/rate-limiter": [
+        "libs/shared/src/util/rate-limiter.ts"
+      ],
       "@members/shared/util/secrets": ["libs/shared/src/util/secrets.ts"],
       "@members/shared/util/server": ["libs/shared/src/util/server.ts"],
       "@members/shared/util-client": ["libs/shared/src/util/client.ts"],
