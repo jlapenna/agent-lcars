@@ -9,10 +9,3 @@ fi
 
 # Ensure Go is installed and in PATH
 . tools/cloud-build-ensure-go.sh
-
-# Debug: List root structure
-echo "Current directory: $(pwd)"
-echo "Root contents:"
-ls -F
-
-
