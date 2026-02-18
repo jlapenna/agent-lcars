@@ -71,6 +71,7 @@
     "md-to-slack": "^1.1.7",
     "next": "~16.1.6",
     "next-auth": "^5.0.0-beta.30",
+    "nextjs-toploader": "^3.9.17",
     "normalize-url": "^8.1.1",
     "openapi-fetch": "^0.17.0",
     "p-wait-for": "^6.0.0",
