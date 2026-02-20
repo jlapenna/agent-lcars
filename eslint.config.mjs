@@ -10,7 +10,15 @@ export default [
   ...nx.configs['flat/typescript'],
   ...nx.configs['flat/javascript'],
   {
-    ignores: ['**/dist', '**/next-env.d.ts', '**/test-output'],
+    ignores: [
+      '**/dist',
+      '**/next-env.d.ts',
+      '**/test-output',
+      'conductor/',
+      '.agent/',
+      '.gemini/',
+      '.jules/',
+    ],
   },
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
