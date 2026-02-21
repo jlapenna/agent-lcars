@@ -75,9 +75,7 @@ e2e-server.log
 !.env.e2e
 
 .gemini/*
-!.gemini/skills
-!.gemini/skills/github-ci-monitor/**
-!.gemini/skills/workflow-follower*/**
+!.gemini/hooks
 !.gemini/settings.json
 !.gemini/config.yaml
 
