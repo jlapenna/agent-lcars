@@ -49,8 +49,7 @@ Thumbs.db
 firebase-debug.log
 
 # NX
-.nx/cache
-.nx/workspace-data
+.nx/
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
 apps/web/next-env.d.ts
@@ -70,9 +69,11 @@ e2e-server.log
 # Env (may have secrets).
 .env
 .env.*
-!.env.development
+.env.local
+.env.*.local
 !.env.test
-!.env.e2e
+!.env.development
+
 
 .gemini/*
 !.gemini/hooks
