@@ -59,6 +59,9 @@
       "@members/shared/provider-service": [
         "libs/shared/src/provider-service/index.ts"
       ],
+      "@members/shared/provider-service/browser": [
+        "libs/shared/src/provider-service/browser/index.ts"
+      ],
       "@members/shared/providers": ["libs/shared/src/providers/index.ts"],
       "@members/shared/qbp": ["libs/shared/src/qbp/index.ts"],
       "@members/shared/races": ["libs/shared/src/races/index.ts"],

@@ -6,6 +6,7 @@ e2e.log
 
 # Probably never intentional
 *.log
+*.txt
 
 # compiled output
 dist
