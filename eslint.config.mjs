@@ -12,6 +12,7 @@ export default [
   {
     ignores: [
       '**/dist',
+      '**/out-tsc',
       '**/next-env.d.ts',
       '**/test-output',
       'conductor/',
