@@ -3,7 +3,7 @@ import nx from '@nx/eslint-plugin';
 import jest from 'eslint-plugin-jest';
 import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
-import jsoncParser from 'jsonc-eslint-parser';
+import * as jsoncParser from 'jsonc-eslint-parser';
 
 export default [
   ...nx.configs['flat/base'],
