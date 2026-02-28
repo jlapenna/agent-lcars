@@ -92,6 +92,19 @@
     "yargs": "^18.0.0",
     "zod": "^4.3.6"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@firebase/util",
+      "@parcel/watcher",
+      "@swc/core",
+      "esbuild",
+      "less",
+      "nx",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver"
+    ]
+  },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
     "@eslint/json": "^0.14.0",
