@@ -8,10 +8,10 @@ export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=8192"
 
 if [ -f "./node_modules/.bin/nx" ]; then
   exec ./node_modules/.bin/nx --outputStyle=stream "$@"
-elif command -v npx >/dev/null 2>&1; then
-  echo "nx not found in node_modules. Trying npx..."
-  exec npx nx --outputStyle=stream "$@"
+elif command -v pnpm >/dev/null 2>&1; then
+  echo "nx not found in node_modules. Trying pnpm exec..."
+  exec pnpm exec nx --outputStyle=stream "$@"
 else
-  echo "CRITICAL: nx and npx NOT FOUND"
+  echo "CRITICAL: nx and pnpm NOT FOUND"
   exit 1
 fi
