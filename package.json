@@ -82,6 +82,7 @@
     "postcss-simple-vars": "^7.0.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-timezone-select": "^3.3.2",
     "readline-sync": "^1.4.10",
     "recharts": "^3.7.0",
     "server-only": "^0.0.1",
