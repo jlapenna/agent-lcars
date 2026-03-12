@@ -74,6 +74,7 @@ e2e-server.log
 .env.*.local
 !.env.test
 !.env.development
+!.env.production
 
 
 .gemini/*
