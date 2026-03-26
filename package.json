@@ -186,7 +186,7 @@
     "npm-check-updates": "^19.5.0",
     "nx": "22.5.3",
     "patch-package": "^8.0.1",
-    "picomatch": "4.0.3",
+    "picomatch": "4.0.4",
     "prettier": "^3.8.1",
     "readdirp": "^5.0.0",
     "taze": "^19.9.2",
