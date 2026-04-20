@@ -112,3 +112,6 @@ firebase-export*
 
 .clasp.json
 apps/agent/agent
+
+.claude/worktrees
+.claude/settings.local.json
