@@ -183,7 +183,7 @@
     "lint-staged": "^16.2.7",
     "lodash": "^4.17.23",
     "node-mocks-http": "^1.17.2",
-    "npm-check-updates": "^19.5.0",
+    "npm-check-updates": "^21.0.0",
     "nx": "22.6.5",
     "patch-package": "^8.0.1",
     "picomatch": "4.0.4",
