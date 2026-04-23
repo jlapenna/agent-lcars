@@ -17,6 +17,7 @@
     "strict": true,
     "target": "es2022",
     "customConditions": ["@members/source"],
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@/*": ["apps/web/src/*"],
