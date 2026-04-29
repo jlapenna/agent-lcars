@@ -8,9 +8,10 @@
     "tsc": "echo 'BANNED: Direct tsc calls are forbidden. Use nx run <project>:typecheck or nx run-many -t typecheck instead.' && exit 1"
   },
   "private": true,
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": "24",
-    "pnpm": ">=9"
+    "pnpm": "10.33.2"
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.13",
