@@ -10,5 +10,7 @@ module.exports = {
       __dirname,
       'libs/shared/src/test-utils/server-only-mock.js',
     ),
+    '^@members/auth/(.*)$': path.join(__dirname, 'libs/auth/src/$1'),
+    '^@members/shared/(.*)$': path.join(__dirname, 'libs/shared/src/$1'),
   },
 };

@@ -89,7 +89,10 @@
       "@members/shared/util": ["libs/shared/src/util/index.ts"],
       "@members/shared/util/browser": ["libs/shared/src/util/browser/index.ts"],
       "@members/shared/util/server": ["libs/shared/src/util/server/index.ts"],
-      "@members/shared/youtube": ["libs/shared/src/youtube/index.ts"]
+      "@members/shared/youtube": ["libs/shared/src/youtube/index.ts"],
+      "@members/auth": ["libs/auth/src/index.ts"],
+      "@members/auth/server": ["libs/auth/src/server/index.ts"],
+      "@members/auth/client": ["libs/auth/src/client/index.ts"]
     }
   }
 }

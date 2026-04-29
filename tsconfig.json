@@ -2,30 +2,5 @@
   "extends": "./tsconfig.base.json",
   "compileOnSave": false,
   "files": [],
-  "references": [
-    {
-      "path": "./apps/e2e-bot"
-    },
-    {
-      "path": "./apps/e2e-tasks"
-    },
-    {
-      "path": "./apps/bot"
-    },
-    {
-      "path": "./apps/cli"
-    },
-    {
-      "path": "./libs/shared"
-    },
-    {
-      "path": "./apps/tasks"
-    },
-    {
-      "path": "./apps/e2e-web"
-    },
-    {
-      "path": "./apps/web"
-    }
-  ]
+  "references": []
 }
