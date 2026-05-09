@@ -1,4 +1,4 @@
-import { injectLoggingContext, RequestContext } from '@members/shared/logging';
+import { injectLoggingContext, RequestContext } from '@members/logging';
 import { headers } from 'next/headers';
 
 /**

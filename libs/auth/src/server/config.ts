@@ -14,18 +14,18 @@
 import './types';
 
 import { FirestoreAdapter } from '@auth/firebase-adapter';
-import { getAuthSecret } from '@members/shared/auth';
-import { getFirebaseAdminApp, getFirestore } from '@members/shared/firebase';
-import { logger, LogLevel } from '@members/shared/logging';
-import { getSecrets as getSlackSecrets } from '@members/shared/slack';
-import { getSecrets as getStravaSecrets } from '@members/shared/strava';
+import { getFirebaseAdminApp, getFirestore } from '@members/firebase-server';
+import { logger, LogLevel } from '@members/logging';
+import { getAuthSecret } from '@members/service-auth';
+import { getSecrets as getSlackSecrets } from '@members/slack';
+import { getSecrets as getStravaSecrets } from '@members/strava';
 import {
   enableTestingHandlers,
   getLogLevel,
   getSlackTeamId,
   isSlackAdmin,
-} from '@members/shared/util';
-import { getNextPublicSlackClientId } from '@members/shared/util/browser';
+} from '@members/util';
+import { getNextPublicSlackClientId } from '@members/util/browser';
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';
 import Credentials from 'next-auth/providers/credentials';

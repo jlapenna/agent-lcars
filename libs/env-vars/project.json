@@ -1,0 +1,33 @@
+{
+  "name": "env",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/env-vars/src",
+  "projectType": "library",
+  "tags": [
+    "platform:shared"
+  ],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:swc",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "options": {
+        "outputPath": "dist/libs/env-vars",
+        "main": "libs/env-vars/src/index.ts",
+        "tsConfig": "libs/env-vars/tsconfig.lib.json",
+        "skipTypeCheck": true,
+        "clean": false
+      },
+      "defaultConfiguration": "production",
+      "configurations": {
+        "development": {
+          "sourcemap": true
+        },
+        "production": {
+          "sourcemap": false
+        }
+      }
+    }
+  }
+}

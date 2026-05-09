@@ -1,33 +1,45 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tsconfig.lib.base.json",
   "compilerOptions": {
     "ignoreDeprecations": "6.0",
     "rootDir": "src",
     "outDir": "dist",
-    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
     "declaration": true,
     "emitDeclarationOnly": false,
     "forceConsistentCasingInFileNames": true,
     "jsx": "react-jsx",
     "types": ["node"],
-    "composite": true
+    "composite": true,
+    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo"
   },
-  "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.js", "src/**/*.jsx", "src/**/*.tsx"],
   "references": [
     {
-      "path": "../shared/tsconfig.lib.json"
+      "path": "../firestore/tsconfig.lib.json"
+    },
+    {
+      "path": "../strava/tsconfig.lib.json"
+    },
+    {
+      "path": "../slack/tsconfig.lib.json"
+    },
+    {
+      "path": "../service-auth/tsconfig.lib.json"
+    },
+    {
+      "path": "../util/tsconfig.lib.json"
+    },
+    {
+      "path": "../logging/tsconfig.lib.json"
+    },
+    {
+      "path": "../firebase-server/tsconfig.lib.json"
     }
   ],
-  "exclude": [
-    "jest.config.ts",
-    "jest.config.cts",
-    "src/**/*.spec.ts",
-    "src/**/*.test.ts",
-    "src/**/*.spec.tsx",
-    "src/**/*.test.tsx",
-    "src/**/*.spec.js",
-    "src/**/*.test.js",
-    "src/**/*.spec.jsx",
-    "src/**/*.test.jsx"
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.js",
+    "src/**/*.jsx",
+    "src/**/*.d.ts"
   ]
 }

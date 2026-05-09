@@ -1,0 +1,6 @@
+{
+  "name": "@members/env",
+  "version": "0.0.1",
+  "private": true,
+  "sideEffects": false
+}

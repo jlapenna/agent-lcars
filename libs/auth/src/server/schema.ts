@@ -1,4 +1,4 @@
-import { FirebaseTimestampSchema, zodLooseObject } from '@members/shared/firestore';
+import { FirebaseTimestampSchema, zodLooseObject } from '@members/firestore';
 import { z } from 'zod';
 
 /**

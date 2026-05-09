@@ -1,0 +1,330 @@
+/** Handle special cases in env dotfiles. */
+
+import type { EnvVars } from '@members/env';
+
+import { isTrue, optional, required, splitEnvList } from './env-util';
+import { isDefined } from './typing';
+
+export const isE2eTesting = () => isTrue('E2E_TESTING');
+export const getEnvNodeEnv = () => optional('NODE_ENV');
+/** @deprecated Use specific helpers like isDotEnvSecrets, isMockAuthEnabled, etc. */
+export const isTest = () => getEnvNodeEnv() === 'test';
+export const isProduction = () => getEnvNodeEnv() === 'production';
+
+export const getSlackAdditionalChannels = () =>
+  splitEnvList('SLACK_STAFF_ADDITIONAL_CHANNELS_LIST');
+
+export const getSlackPseudobots = () => splitEnvList('SLACK_PSEUDOBOTS');
+
+export const getSlackQbpStaffChannel = () =>
+  optional('SLACK_QBP_STAFF_CHANNEL');
+
+export const getSlackQbpAnnounceChannel = () =>
+  optional('SLACK_QBP_ANNOUNCE_CHANNEL');
+
+export const isSlackAdmin = (slackId: string) =>
+  splitEnvList('SLACK_ADMINS').includes(slackId);
+
+export const getSlackLogLevel = () => optional('SLACK_LOG_LEVEL');
+
+export const getLogLevel = () => optional('LOG_LEVEL');
+
+export const getSlackAppId = () => optional('SLACK_APP_ID');
+
+export const getNodeEnv = () => optional('NODE_ENV');
+
+export function getStravaLogLevel(): string {
+  const level = optional('STRAVA_LOG_LEVEL');
+  if (isDefined(level) && level.length > 0) {
+    return level.toLowerCase();
+  }
+  return 'warn';
+}
+
+export function isOnGoogleCloud(): boolean {
+  // https://cloud.google.com/run/docs/container-contract#env-vars
+  return (
+    (isDefined(optional('K_SERVICE')) ||
+      isDefined(optional('K_REVISION')) ||
+      isDefined(optional('CLOUD_RUN_JOB'))) &&
+    !isTrue('FUNCTIONS_EMULATOR')
+  );
+}
+
+export function forceStructuredLogging(): boolean {
+  return isTrue('FORCE_STRUCTURED_LOGGING');
+}
+
+export function enableRequestLogging(): boolean {
+  return isTrue('ENABLE_REQUEST_LOGGING');
+}
+export function isAuthEnabled(): boolean {
+  return isTrue('AUTH_ENABLED');
+}
+
+export function isAuthEnforced(): boolean {
+  return isTrue('AUTH_ENFORCED');
+}
+
+export function enableFirestoreRequestLogging(): boolean {
+  return isTrue('ENABLE_FIRESTORE_REQUEST_LOGGING');
+}
+
+export const isImpersonate = () => isDefined(optional('IMPERSONATE'));
+export const isImpersonateAutomaticLogin = () =>
+  isDefined(optional('IMPERSONATE_AUTOMATIC_LOGIN'));
+export const getE2eTestingUser = () => optional('E2E_TESTING_USER');
+
+export const isMockAuthEnabled = () =>
+  isE2eTesting() || isImpersonateAutomaticLogin() || isImpersonate();
+
+export const shouldConnectAuthEmulator = () =>
+  isTrue('FIREBASE_AUTH_EMULATOR_HOST');
+export const shouldTraceSchemaErrors = () => getEnvNodeEnv() !== 'production';
+export const isCI = () => isDefined(optional('CI'));
+
+export const isLocal = () => isTrue('LOCAL');
+export const enableTestingHandlers = () =>
+  isLocal() || isTest() || isE2eTesting();
+
+export const isFunctionsEmulator = () => isTrue('FUNCTIONS_EMULATOR');
+
+export const isEmulator = () =>
+  isFunctionsEmulator() ||
+  getAuthEmulatorHost() ||
+  getFirebaseAuthEmulatorHost() ||
+  getFirestoreEmulatorHost();
+
+export const getAuthEmulatorHost = () => optional('AUTH_EMULATOR_HOST');
+
+export const getFirebaseAuthEmulatorHost = () =>
+  optional('FIREBASE_AUTH_EMULATOR_HOST');
+
+export const getFirestoreEmulatorHost = () =>
+  optional('FIRESTORE_EMULATOR_HOST');
+
+export const isDotEnvSecrets = () => isTrue('DOTENV_SECRETS');
+
+export const getPort = () => {
+  const val = optional('PORT');
+  return val ? parseInt(val) : undefined;
+};
+
+export const getHost = () => optional('HOST') ?? '127.0.0.1';
+
+export const getKRevision = () => optional('K_REVISION');
+
+export const getSlackProfileFieldStrava = () =>
+  required('SLACK_PROFILE_FIELD_STRAVA');
+export const getSlackProfileFieldInstagram = () =>
+  required('SLACK_PROFILE_FIELD_INSTAGRAM');
+export const getSlackProfileFieldRoadResults = () =>
+  required('SLACK_PROFILE_FIELD_ROADRESULTS');
+export const getSlackProfileFieldCrossResults = () =>
+  required('SLACK_PROFILE_FIELD_CROSSRESULTS');
+export const getSlackProfileFieldGravelResults = () =>
+  required('SLACK_PROFILE_FIELD_GRAVELRESULTS');
+export const getSlackProfileFieldAthlinks = () =>
+  required('SLACK_PROFILE_FIELD_ATHLINKS');
+export const getSlackProfileFieldUsac = () =>
+  required('SLACK_PROFILE_FIELD_USAC');
+export const getSlackProfileFieldUsacRoadCat = () =>
+  required('SLACK_PROFILE_FIELD_USAC_ROAD_CAT');
+export const getSlackProfileFieldUsacCrossCat = () =>
+  required('SLACK_PROFILE_FIELD_USAC_CROSS_CAT');
+
+export const getInstagramWebhookVerifyToken = () =>
+  optional('INSTAGRAM_WEBHOOK_VERIFY_TOKEN');
+
+export const getStravaClubId = () => optional('STRAVA_CLUB_ID');
+
+export const getStravaIgnoreAthleteIds = () =>
+  splitEnvList('STRAVA_IGNORE_ATHLETE_IDS');
+
+// Page size and firestore batch size should be the same default value because they are often used in concert.
+export const getFirestoreBatchSize = () =>
+  parseInt(optional('FIRESTORE_BATCH_SIZE') ?? '50');
+
+// Firestore allows up to 500 writes per batch. We use a safe margin.
+export const getFirestoreWriteBatchSize = () =>
+  parseInt(optional('FIRESTORE_WRITE_BATCH_SIZE') ?? '450');
+
+export const getPageSize = () => parseInt(optional('PAGE_SIZE') ?? '50');
+
+export const getConcurrencyLimit = () =>
+  parseInt(optional('CONCURRENCY_LIMIT') ?? '5');
+
+export const getProviderMinRequestDelayMs = () =>
+  parseInt(optional('PROVIDER_MIN_REQUEST_DELAY_MS') ?? '1000');
+
+export const getTasksServiceUrl = () => optional('TASKS_SERVICE_URL');
+export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
+export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');
+export const getGhostServiceUrl = () => required('GHOST_SERVICE_URL');
+
+export const getRacesCalendarId = () => required('RACES_CALENDAR_ID');
+
+export const getEventsSpreadsheetId = () => required('EVENTS_SPREADSHEET_ID');
+
+export const getEventsSpreadsheetWorksheetTitle = () =>
+  optional('EVENTS_SPREADSHEET_WORKSHEET_TITLE') ?? 'Events';
+
+export const isAttendanceEnabled = () => isTrue('ATTENDANCE_ENABLED');
+
+export const getServiceAccountImpersonationSubject = () =>
+  required('SERVICE_ACCOUNT_IMPERSONATION_SUBJECT');
+
+export const getEffortsSpreadsheetWorksheetTitle = () =>
+  required('EFFORTS_SPREADSHEET_WORKSHEET_TITLE');
+
+export const getEffortsSpreadsheetId = () => required('EFFORTS_SPREADSHEET_ID');
+
+export const getSegmentsSpreadsheetId = () =>
+  required('SEGMENTS_SPREADSHEET_ID');
+
+export const getSegmentsSpreadsheetWorksheetTitle = () =>
+  required('SEGMENTS_SPREADSHEET_WORKSHEET_TITLE');
+
+export const getQbpResponsesSpreadsheetId = () =>
+  required('QBP_RESPONSES_SPREADSHEET_ID');
+
+export const getQbpResponsesWorksheetTitle = () =>
+  required('QBP_RESPONSES_WORKSHEET_TITLE');
+
+export const getQbpFormId = () => required('QBP_FORM_ID');
+
+export const isInvoicingEnabled = () => isTrue('ENABLE_INVOICING');
+
+export const getQbpFormMetadata = () =>
+  required('QBP_FORM_METADATA') as 'dev' | 'prod';
+
+export const getQbpApiBaseUrl = () => required('QBP_API_BASE_URL');
+
+export const getProjectId = () => {
+  return (
+    optional('PROJECT_ID') ||
+    optional('GCLOUD_PROJECT') ||
+    optional('FIREBASE_PROJECT_ID') ||
+    required('PROJECT_ID')
+  );
+};
+
+export const getQbpEftpHost = () => optional('QBP_EFTP_HOST');
+export const getQbpEftpPort = () => {
+  const val = optional('QBP_EFTP_PORT');
+  return val ? parseInt(val) : undefined;
+};
+export const getQbpEftpLogin = () => required('QBP_EFTP_LOGIN');
+export const getQbpEftpPassword = () => optional('QBP_EFTP_PASSWORD');
+export const getQbpEftpShipToCode = () => optional('QBP_EFTP_SHIP_TO_CODE');
+export const getQbpEftpAccountNumber = () =>
+  optional('QBP_EFTP_ACCOUNT_NUMBER');
+
+export const getVertexAiLocation = () => optional('VERTEX_AI_LOCATION');
+
+export const getGeminiApiKey = () =>
+  optional('GEMINI_API_KEY') || optional('GOOGLE_API_KEY');
+
+export const getRagDriveFolders = () => splitEnvList('RAG_DRIVE_FOLDERS');
+
+export const getSquareupEnvironment = () =>
+  optional('SQUAREUP_ENVIRONMENT') ?? 'sandbox';
+
+export const getSquareupApplicationId = () =>
+  optional('SQUAREUP_APPLICATION_ID');
+
+export const getSquareupLocationId = () => optional('SQUAREUP_LOCATION_ID');
+
+export const getSquareupServiceChargeId = () =>
+  optional('SQUAREUP_SERVICE_CHARGE_ID');
+
+export const getRoadResultsTeamId = () => required('ROADRESULTS_TEAM_ID');
+export const getCrossResultsTeamId = () => required('CROSSRESULTS_TEAM_ID');
+export const getGravelResultsTeamId = () => required('GRAVELRESULTS_TEAM_ID');
+
+export const getExportSpreadsheetId = () => required('EXPORT_SPREADSHEET_ID');
+export const getExportSpreadsheetWorksheetTitle = () =>
+  required('EXPORT_SPREADSHEET_WORKSHEET_TITLE');
+
+export const getLookupSpreadsheetId = () => required('LOOKUP_SPREADSHEET_ID');
+export const getLookupSpreadsheetSlackWorksheetTitle = () =>
+  required('LOOKUP_SPREADSHEET_SLACK_WORKSHEET_TITLE');
+export const getLookupSpreadsheetEmailWorksheetTitle = () =>
+  required('LOOKUP_SPREADSHEET_EMAIL_WORKSHEET_TITLE');
+
+export const getYoutubeTranscriptApiToken = () =>
+  required('YOUTUBE_TRANSCRIPT_API_TOKEN');
+
+export const getProfilerLogLevel = () => {
+  const val = optional('PROFILER_LOG_LEVEL');
+  return val ? parseInt(val) : 0;
+};
+
+export const getMailServer = () => required('MAIL_SERVER');
+export const getMailPort = () => required('MAIL_PORT');
+export const getMailUser = () => required('MAIL_USER');
+export const getMailPassword = () => required('MAIL_PASSWORD');
+
+export const getQbpApiKey = () => required('QBP_API_KEY');
+
+export const getSquareupAccessToken = () => required('SQUAREUP_ACCESS_TOKEN');
+
+export const getStravaClientId = () => required('STRAVA_CLIENT_ID');
+export const getStravaClientSecret = () => required('STRAVA_CLIENT_SECRET');
+export const getStravaVerifyToken = () => required('STRAVA_VERIFY_TOKEN');
+export const getStravaRedirectUri = () => required('STRAVA_REDIRECT_URI');
+
+export const getServiceAccountSecretKey = (): keyof EnvVars =>
+  // We know that we'll set an EnvVar key in the value here. its okay.
+  required('SERVICE_ACCOUNT_SECRET_KEY') as keyof EnvVars;
+
+export const getAuthSecret = () => required('AUTH_SECRET');
+
+export const getAuthUrl = () => required('AUTH_URL');
+
+export const getSlackTestChannel = () => optional('SLACK_TEST_CHANNEL');
+
+export const getSlackAnnounceChannel = () => optional('SLACK_ANNOUNCE_CHANNEL');
+
+export const getRacesSpreadsheetId = () => required('RACES_SPREADSHEET_ID');
+
+export const getRacesSpreadsheetWorksheetTitle = () =>
+  required('RACES_SPREADSHEET_WORKSHEET_TITLE');
+
+export const getSlackDebugChannel = () => required('SLACK_DEBUG_CHANNEL');
+
+export const getSlackLeaderboardsChannel = () =>
+  required('SLACK_LEADERBOARDS_CHANNEL');
+
+export const getSlackRacesCronChannel = () =>
+  required('SLACK_RACES_CRON_CHANNEL');
+
+export const getSlackMgmtChannel = () => required('SLACK_MGMT_CHANNEL');
+
+export const getSlackStaffChannel = () => required('SLACK_STAFF_CHANNEL');
+
+export const getResultsSpreadsheetId = () => required('RESULTS_SPREADSHEET_ID');
+
+export const getResultsSpreadsheetWorksheetTitle = () =>
+  required('RESULTS_SPREADSHEET_WORKSHEET_TITLE');
+
+export const getTeamMailingList = () => required('TEAM_MAILING_LIST');
+
+export const getFirebaseProjectId = () =>
+  optional('FIREBASE_PROJECT_ID') ||
+  optional('PROJECT_ID') ||
+  optional('GCLOUD_PROJECT') ||
+  'dummy-project-id';
+
+// Secrets (Development)
+export const getSlackBotToken = () => optional('SLACK_BOT_TOKEN');
+export const getSlackUserToken = () => optional('SLACK_USER_TOKEN');
+export const getSlackAppToken = () => optional('SLACK_APP_TOKEN');
+export const getSlackClientId = () => optional('SLACK_CLIENT_ID');
+export const getSlackClientSecret = () => optional('SLACK_CLIENT_SECRET');
+export const getSlackSigningSecret = () => optional('SLACK_SIGNING_SECRET');
+export const getSlackStateSecret = () => optional('SLACK_STATE_SECRET');
+
+export const getSlackTeamId = () => optional('SLACK_TEAM_ID');
+
+export const getCloudTasksLocation = () => optional('CLOUD_TASKS_LOCATION');

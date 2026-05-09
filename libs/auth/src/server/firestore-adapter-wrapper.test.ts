@@ -1,5 +1,5 @@
 import { FirestoreAdapter } from '@auth/firebase-adapter';
-import { logger } from '@members/shared/logging';
+import { logger } from '@members/logging';
 
 import { getAuthConfig } from './config';
 
@@ -14,16 +14,16 @@ jest.mock('next-auth/providers/credentials', () =>
   jest.fn().mockReturnValue({}),
 );
 
-jest.mock('@members/shared/auth', () => ({
+jest.mock('@members/service-auth', () => ({
   getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@members/shared/firebase', () => ({
+jest.mock('@members/firebase-server', () => ({
   getFirestore: jest.fn().mockResolvedValue({}),
   getFirebaseAdminApp: jest.fn(),
 }));
 
-jest.mock('@members/shared/logging', () => ({
+jest.mock('@members/logging', () => ({
   logger: {
     debug: jest.fn(),
     error: jest.fn(),
@@ -35,14 +35,14 @@ jest.mock('@members/shared/logging', () => ({
   },
 }));
 
-jest.mock('@members/shared/slack', () => ({
+jest.mock('@members/slack', () => ({
   getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
   getBotDetails: jest
     .fn()
     .mockResolvedValue({ teamId: 'team-id', appId: 'app-id' }),
 }));
 
-jest.mock('@members/shared/strava', () => ({
+jest.mock('@members/strava', () => ({
   getSecrets: jest.fn().mockResolvedValue({
     clientId: 'id',
     clientSecret: 'secret',
@@ -50,14 +50,14 @@ jest.mock('@members/shared/strava', () => ({
   }),
 }));
 
-jest.mock('@members/shared/util', () => ({
+jest.mock('@members/util', () => ({
   enableTestingHandlers: jest.fn().mockReturnValue(false),
   getLogLevel: jest.fn().mockReturnValue('debug'),
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
   isSlackAdmin: jest.fn().mockReturnValue(false),
 }));
 
-jest.mock('@members/shared/util/browser', () => ({
+jest.mock('@members/util/browser', () => ({
   getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
 }));
 

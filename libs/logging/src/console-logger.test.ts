@@ -1,0 +1,164 @@
+import { Logger, setLogDefaults } from './console-logger';
+import { forceStructuredLogging, getLogLevel, isOnGoogleCloud } from './env';
+import { LogLevel } from './log-level';
+
+jest.mock('./env', () => ({
+  ...jest.requireActual('./env'),
+  getLogLevel: jest.fn(),
+  isOnGoogleCloud: jest.fn(),
+  forceStructuredLogging: jest.fn(),
+}));
+
+describe('Logger', () => {
+  let consoleLogSpy: jest.SpyInstance;
+  let consoleDebugSpy: jest.SpyInstance;
+  let consoleWarnSpy: jest.SpyInstance;
+  let consoleErrorSpy: jest.SpyInstance;
+  let originalLogLevel: string | undefined;
+
+  beforeEach(() => {
+    setLogDefaults({ getLogLevel });
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+    consoleDebugSpy = jest.spyOn(console, 'debug').mockImplementation();
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+    originalLogLevel = process.env.LOG_LEVEL;
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleDebugSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    (getLogLevel as jest.Mock).mockReturnValue(originalLogLevel);
+  });
+
+  describe('getLogLevel', () => {
+    it('should return DEBUG by default', () => {
+      (getLogLevel as jest.Mock).mockReturnValue(undefined);
+      expect(Logger.getLogLevel()).toBe(LogLevel.DEBUG);
+    });
+
+    it('should return log level from environment variable', () => {
+      (getLogLevel as jest.Mock).mockReturnValue('ERROR');
+      expect(Logger.getLogLevel()).toBe(LogLevel.ERROR);
+
+      (getLogLevel as jest.Mock).mockReturnValue('warn');
+      expect(Logger.getLogLevel()).toBe(LogLevel.WARN);
+
+      (getLogLevel as jest.Mock).mockReturnValue('INFO');
+      expect(Logger.getLogLevel()).toBe(LogLevel.INFO);
+    });
+
+    it('should return DEBUG for invalid log level', () => {
+      (getLogLevel as jest.Mock).mockReturnValue('invalid');
+      expect(Logger.getLogLevel()).toBe(LogLevel.DEBUG);
+    });
+  });
+
+  describe('log level filtering', () => {
+    it('should log all levels when set to DEBUG', () => {
+      const logger = new Logger(LogLevel.DEBUG);
+
+      logger.debug('debug message');
+      logger.info('info message');
+      logger.warn('warn message');
+      logger.error('error message');
+
+      expect(consoleDebugSpy).toHaveBeenCalledWith('debug message');
+      expect(consoleLogSpy).toHaveBeenCalledWith('info message');
+      expect(consoleWarnSpy).toHaveBeenCalledWith('warn message');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
+    });
+
+    it('should only log INFO, WARN, ERROR when set to INFO', () => {
+      const logger = new Logger(LogLevel.INFO);
+
+      logger.debug('debug message');
+      logger.info('info message');
+      logger.warn('warn message');
+      logger.error('error message');
+
+      expect(consoleDebugSpy).not.toHaveBeenCalled();
+      expect(consoleLogSpy).toHaveBeenCalledWith('info message');
+      expect(consoleWarnSpy).toHaveBeenCalledWith('warn message');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
+    });
+
+    it('should only log WARN and ERROR when set to WARN', () => {
+      const logger = new Logger(LogLevel.WARN);
+
+      logger.debug('debug message');
+      logger.info('info message');
+      logger.warn('warn message');
+      logger.error('error message');
+
+      expect(consoleDebugSpy).not.toHaveBeenCalled();
+      expect(consoleLogSpy).not.toHaveBeenCalled();
+      expect(consoleWarnSpy).toHaveBeenCalledWith('warn message');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
+    });
+
+    it('should only log ERROR when set to ERROR', () => {
+      const logger = new Logger(LogLevel.ERROR);
+
+      logger.debug('debug message');
+      logger.info('info message');
+      logger.warn('warn message');
+      logger.error('error message');
+
+      expect(consoleDebugSpy).not.toHaveBeenCalled();
+      expect(consoleLogSpy).not.toHaveBeenCalled();
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
+    });
+  });
+
+  describe('getLevel', () => {
+    it('should return the configured log level', () => {
+      const logger = new Logger(LogLevel.WARN);
+      expect(logger.getLevel()).toBe(LogLevel.WARN);
+    });
+  });
+
+  describe('multiple arguments', () => {
+    it('should pass all arguments to console methods', () => {
+      const logger = new Logger(LogLevel.DEBUG);
+
+      logger.info('message', { key: 'value' }, 123);
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        'message',
+        { key: 'value' },
+        123,
+      );
+
+      logger.error('error:', new Error('test'));
+      expect(consoleErrorSpy).toHaveBeenCalledWith('error:', expect.any(Error));
+    });
+
+    it('should expand deep objects when running on Google Cloud', () => {
+      // Mock isOnGoogleCloud to return true
+      (isOnGoogleCloud as jest.Mock).mockReturnValue(true);
+      (forceStructuredLogging as jest.Mock).mockReturnValue(false);
+      setLogDefaults({
+        formatter: (args) => JSON.stringify(args),
+      });
+
+      const logger = new Logger(LogLevel.DEBUG, {
+        isOnGoogleCloud,
+        forceStructuredLogging,
+      });
+      const deepObject = { a: { b: { c: { d: 'deep' } } } };
+
+      logger.info('deep object:', deepObject);
+
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('deep'),
+      );
+      // The JSON string passed to console.log should contain the fully expanded object
+      const logCall = consoleLogSpy.mock.calls[0][0];
+      const parsedLog = JSON.parse(logCall);
+      expect(parsedLog.message).toContain('deep');
+    });
+  });
+});

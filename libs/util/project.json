@@ -1,0 +1,33 @@
+{
+  "name": "@members/util",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/util/src",
+  "projectType": "library",
+  "tags": [
+    "platform:shared"
+  ],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:swc",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "options": {
+        "outputPath": "dist/libs/util",
+        "main": "libs/util/src/index.ts",
+        "tsConfig": "libs/util/tsconfig.lib.json",
+        "skipTypeCheck": true,
+        "clean": false
+      },
+      "defaultConfiguration": "production",
+      "configurations": {
+        "development": {
+          "sourcemap": true
+        },
+        "production": {
+          "sourcemap": false
+        }
+      }
+    }
+  }
+}

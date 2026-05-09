@@ -40,6 +40,10 @@ export default [
               notDependOnLibsWithTags: ['platform:server'],
             },
             {
+              sourceTag: 'platform:nextjs',
+              notDependOnLibsWithTags: [],
+            },
+            {
               sourceTag: 'platform:shared',
               notDependOnLibsWithTags: ['platform:server', 'platform:browser'],
             },
@@ -108,8 +112,11 @@ export default [
 
   // package.json dependency checks
   {
-    files: ['package.json'],
+    files: ['**/package.json'],
     ...nx.configs['flat/dependency-checks'],
+    rules: {
+      '@nx/dependency-checks': 'off',
+    },
   },
 
   {

@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.lib.base.json",
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0",
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
+    "declaration": true,
+    "emitDeclarationOnly": false,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "composite": true
+  },
+  "references": [
+    {
+      "path": "../logging/tsconfig.lib.json"
+    },
+    {
+      "path": "../env-vars/tsconfig.lib.json"
+    }
+  ],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.js",
+    "src/**/*.jsx",
+    "src/**/*.d.ts"
+  ]
+}

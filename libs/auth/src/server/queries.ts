@@ -1,4 +1,4 @@
-import { createConverter } from '@members/shared/firestore';
+import { createConverter } from '@members/firestore';
 import { Firestore, Transaction, UpdateData } from 'firebase-admin/firestore';
 
 import {

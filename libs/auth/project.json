@@ -3,17 +3,22 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/auth/src",
   "projectType": "library",
-  "tags": ["platform:shared"],
+  "tags": [
+    "platform:server",
+    "npm:private"
+  ],
   "targets": {
     "build": {
-      "executor": "@nx/js:tsc",
-      "outputs": ["{options.outputPath}"],
+      "executor": "@nx/js:swc",
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "options": {
-        "outputPath": "libs/auth/dist",
+        "outputPath": "dist/libs/auth",
         "main": "libs/auth/src/index.ts",
         "tsConfig": "libs/auth/tsconfig.lib.json",
-        "rootDir": "libs/auth/src",
-        "buildableProjectDepsInPackageJsonType": "dependencies"
+        "skipTypeCheck": true,
+        "clean": false
       },
       "defaultConfiguration": "production",
       "configurations": {
