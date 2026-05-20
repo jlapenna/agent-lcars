@@ -13,7 +13,6 @@ export * from './env';
 export * from './env-util';
 export * from './http';
 export * from './json';
-export * from './jsx-adapter';
 export * from './objects';
 export * from './rate-limiter';
 export * from './retry';

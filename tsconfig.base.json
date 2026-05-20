@@ -54,6 +54,12 @@
       "@members/util/*": [
         "libs/util/src/*"
       ],
+      "@members/jsx": [
+        "libs/jsx/src/index.ts"
+      ],
+      "@members/jsx/*": [
+        "libs/jsx/src/*"
+      ],
       "@/*": [
         "apps/web/src/*"
       ],

@@ -11,7 +11,7 @@
   "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": "24",
-    "pnpm": "10.33.4"
+    "pnpm": "10.33.2"
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.13",
@@ -97,12 +97,15 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "@firebase/util",
+      "@google/genai",
       "@parcel/watcher",
       "@swc/core",
+      "core-js",
       "esbuild",
       "less",
       "nx",
       "protobufjs",
+      "re2",
       "sharp",
       "unrs-resolver"
     ]
@@ -209,6 +212,5 @@
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.8",
     "vitest": "^4.1.4"
-  },
-  "packageManager": "pnpm@10.33.4"
+  }
 }
