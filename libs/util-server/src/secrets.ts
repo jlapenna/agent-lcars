@@ -1,7 +1,7 @@
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { logger } from '@members/logging';
 
-const client = new SecretManagerServiceClient();
+const client = new SecretManagerServiceClient({ fallback: 'rest' });
 
 export async function getSecret(
   name: string,
