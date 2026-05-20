@@ -22,7 +22,7 @@
     "@google-cloud/secret-manager": "6.1.2",
     "@google-cloud/storage": "^7.19.0",
     "@google/events": "^5.4.0",
-    "@google/genai": "^1.50.1",
+    "@google/genai": "^2.0.0",
     "@mantine/charts": "^9.0.2",
     "@mantine/core": "^9.0.2",
     "@mantine/dates": "^9.0.2",
