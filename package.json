@@ -5,7 +5,7 @@
   "scripts": {
     "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
     "prepare": "if [ -z \"$CI\" ]; then pnpm exec husky; fi",
-    "tsc": "echo 'BANNED: Direct tsc calls are forbidden. Use nx run <project>:typecheck or nx run-many -t typecheck instead.' && exit 1"
+    "tsc": "nx run-many -t typecheck"
   },
   "private": true,
   "packageManager": "pnpm@10.33.2",
