@@ -1,11 +1,6 @@
 import { getFirebaseAdminApp } from '@members/firebase-server';
 import { logger } from '@members/logging';
-import {
-  getE2eTestingUser,
-  isImpersonateAutomaticLogin,
-  isMockAuthEnabled,
-  isSlackAdmin,
-} from '@members/util';
+import { getE2eTestingUser, isImpersonateAutomaticLogin, isMockAuthEnabled, isSlackAdmin } from '@members/util-server';
 import { headers } from 'next/headers';
 import { NextRequest } from 'next/server';
 import NextAuth, { Session } from 'next-auth';

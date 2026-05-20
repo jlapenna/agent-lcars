@@ -49,7 +49,8 @@ jest.mock('@members/strava', () => ({
   }),
 }));
 
-jest.mock('@members/util', () => ({
+jest.mock('@members/util-server', () => ({
+  ...jest.requireActual('@members/util-server'),
   enableTestingHandlers: jest.fn().mockReturnValue(false),
   getLogLevel: jest.fn().mockReturnValue('debug'),
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),

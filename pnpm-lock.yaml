@@ -638,6 +638,18 @@ importers:
 
   libs/util: {}
 
+  libs/util-server:
+    dependencies:
+      '@members/env':
+        specifier: workspace:*
+        version: link:../env-vars
+      '@members/logging':
+        specifier: workspace:*
+        version: link:../logging
+      '@members/util':
+        specifier: workspace:*
+        version: link:../util
+
   libs/youtube: {}
 
 packages:

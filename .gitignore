@@ -94,6 +94,7 @@ firestore-debug.log
 
 # Antigravity
 build_log*.txt
+.antigravitycli/
 
 # Nx-Firebase
 .runtimeconfig.json

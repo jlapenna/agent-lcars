@@ -1,9 +1,9 @@
 /** Handle special cases in env dotfiles. */
 
 import type { EnvVars } from '@members/env';
+import { isDefined } from '@members/util';
 
 import { isTrue, optional, required, splitEnvList } from './env-util';
-import { isDefined } from './typing';
 
 export const isE2eTesting = () => isTrue('E2E_TESTING');
 export const getEnvNodeEnv = () => optional('NODE_ENV');
@@ -35,7 +35,7 @@ export const getNodeEnv = () => optional('NODE_ENV');
 
 export function getStravaLogLevel(): string {
   const level = optional('STRAVA_LOG_LEVEL');
-  if (isDefined(level) && level.length > 0) {
+  if (level && level.length > 0) {
     return level.toLowerCase();
   }
   return 'warn';

@@ -1,0 +1,13 @@
+{
+  "name": "@members/util-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "dependencies": {
+    "@members/util": "workspace:*",
+    "@members/logging": "workspace:*",
+    "@members/env": "workspace:*"
+  }
+}

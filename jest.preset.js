@@ -72,6 +72,8 @@ module.exports = {
     '^@members/strava/(.*)$': path.join(__dirname, 'libs/strava/src/$1'),
     '^@members/util$': path.join(__dirname, 'libs/util/src/index.ts'),
     '^@members/util/(.*)$': path.join(__dirname, 'libs/util/src/$1'),
+    '^@members/util-server$': path.join(__dirname, 'libs/util-server/src/index.ts'),
+    '^@members/util-server/(.*)$': path.join(__dirname, 'libs/util-server/src/$1'),
     '^@members/jsx$': path.join(__dirname, 'libs/jsx/src/index.ts'),
     '^@members/jsx/(.*)$': path.join(__dirname, 'libs/jsx/src/$1'),
     '^@members/youtube$': path.join(__dirname, 'libs/youtube/src/index.ts'),

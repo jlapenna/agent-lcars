@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.lib.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "declaration": true,
+    "types": ["node"],
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
+    "composite": true
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    {
+      "path": "../env-vars/tsconfig.lib.json"
+    },
+    {
+      "path": "../logging/tsconfig.lib.json"
+    },
+    {
+      "path": "../util/tsconfig.lib.json"
+    }
+  ]
+}

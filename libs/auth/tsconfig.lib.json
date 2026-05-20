@@ -26,6 +26,9 @@
       "path": "../service-auth/tsconfig.lib.json"
     },
     {
+      "path": "../util-server/tsconfig.lib.json"
+    },
+    {
       "path": "../util/tsconfig.lib.json"
     },
     {

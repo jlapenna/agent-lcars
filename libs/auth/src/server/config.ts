@@ -19,13 +19,9 @@ import { logger, LogLevel } from '@members/logging';
 import { getAuthSecret } from '@members/service-auth';
 import { getSecrets as getSlackSecrets } from '@members/slack';
 import { getSecrets as getStravaSecrets } from '@members/strava';
-import {
-  enableTestingHandlers,
-  getLogLevel,
-  getSlackTeamId,
-  isSlackAdmin,
-} from '@members/util';
 import { getNextPublicSlackClientId } from '@members/util/browser';
+import { enableTestingHandlers } from '@members/util-server';
+import { getLogLevel, getSlackTeamId, isSlackAdmin } from '@members/util-server';
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';
 import Credentials from 'next-auth/providers/credentials';

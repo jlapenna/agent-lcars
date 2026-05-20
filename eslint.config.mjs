@@ -45,7 +45,7 @@ export default [
             },
             {
               sourceTag: 'platform:shared',
-              notDependOnLibsWithTags: ['platform:server', 'platform:browser'],
+              notDependOnLibsWithTags: ['platform:browser'],
             },
           ],
         },

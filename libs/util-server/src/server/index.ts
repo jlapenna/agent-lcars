@@ -1,4 +1,4 @@
-import { assertNotBrowser } from '../typing';
+import { assertNotBrowser } from '@members/util';
 
 assertNotBrowser();
 

@@ -38,7 +38,7 @@ describe('retry', () => {
       retry(operation, {
         minTimeout: 1,
         retries: 3,
-        shouldRetry: (err) => (err as Error).message !== 'fatal error',
+        shouldRetry: (err: unknown) => (err as Error).message !== 'fatal error',
       }),
     ).rejects.toThrow('fatal error');
 

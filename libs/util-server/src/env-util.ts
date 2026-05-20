@@ -17,7 +17,7 @@ const sanitize = (value: string | undefined): string | undefined => {
 
 export const optional = (key: keyof EnvVars): string | undefined => {
   const value = (process.env as unknown as Record<string, string | undefined>)[
-    key
+    key as string
   ];
   return sanitize(value);
 };
@@ -25,7 +25,7 @@ export const optional = (key: keyof EnvVars): string | undefined => {
 export const required = (key: keyof EnvVars): string => {
   const value = optional(key);
   if (value === undefined) {
-    throw new Error(`process.env.${key} not defined`);
+    throw new Error(`process.env.${key as string} not defined`);
   }
   return value;
 };

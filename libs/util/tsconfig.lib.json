@@ -12,14 +12,7 @@
     "types": ["node"],
     "composite": true
   },
-  "references": [
-    {
-      "path": "../logging/tsconfig.lib.json"
-    },
-    {
-      "path": "../env-vars/tsconfig.lib.json"
-    }
-  ],
+  "references": [],
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
