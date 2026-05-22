@@ -21,7 +21,11 @@ import { getSecrets as getSlackSecrets } from '@members/slack';
 import { getSecrets as getStravaSecrets } from '@members/strava';
 import { getNextPublicSlackClientId } from '@members/util/browser';
 import { enableTestingHandlers } from '@members/util-server';
-import { getLogLevel, getSlackTeamId, isSlackAdmin } from '@members/util-server';
+import {
+  getLogLevel,
+  getSlackTeamId,
+  isSlackAdmin,
+} from '@members/util-server';
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';
 import Credentials from 'next-auth/providers/credentials';
@@ -30,6 +34,7 @@ import Strava from 'next-auth/providers/strava';
 import { z } from 'zod';
 
 import { getAuthJsAccount } from './queries';
+import { REQUIRED_WAIVER_VERSION } from './schema';
 import { SlackUser } from './types';
 
 /**
@@ -44,57 +49,65 @@ import { SlackUser } from './types';
  *
  * @returns Promise resolving to the NextAuthConfig
  */
-export const getAuthConfig = async (): Promise<NextAuthConfig> => {
+export interface AuthConfigOptions {
+  providers?: ('slack' | 'strava')[];
+}
+
+export const getAuthConfig = async (
+  options?: AuthConfigOptions,
+): Promise<NextAuthConfig> => {
   logger.debug('getAuthConfig: Starting...');
 
   const firestore = await getFirestore();
-  const slackSecrets = await getSlackSecrets();
-  const stravaSecrets = await getStravaSecrets();
   const authSecret = await getAuthSecret();
 
-  const providers: Provider[] = [
-    Slack({
-      clientId: getNextPublicSlackClientId(),
-      clientSecret: slackSecrets.clientSecret,
-      authorization: {
-        params: {
-          scope: 'openid profile email',
-        },
-      },
-      /**
-       * Profile callback - transforms the OIDC profile into the Auth.js user object.
-       *
-       * CRITICAL: The Firestore adapter calls `.add()` which auto-generates the document ID.
-       * This auto-generated ID becomes the user.id and cannot be overridden.
-       * Therefore, we store Slack-specific data in a custom `slack` object.
-       *
-       * Note: Firestore adapter auto-generates document IDs, so we use a custom field.
-       * @see https://authjs.dev/getting-started/providers/slack
-       */
-      profile(profile) {
-        return {
-          name: profile.name,
-          email: profile.email,
-          image: profile.picture,
-          slack: {
-            id: profile.sub, // Slack User ID from OIDC sub claim
-            teamId: profile['https://slack.com/team_id'] as string | undefined,
-            isAdmin: false, // Will be computed in session callback
+  const requestedProviders = options?.providers || ['slack', 'strava'];
+  const providers: Provider[] = [];
+
+  if (requestedProviders.includes('slack')) {
+    const slackSecrets = await getSlackSecrets();
+    providers.push(
+      Slack({
+        clientId: getNextPublicSlackClientId(),
+        clientSecret: slackSecrets.clientSecret,
+        authorization: {
+          params: {
+            scope: 'openid profile email',
           },
-        };
-      },
-      allowDangerousEmailAccountLinking: true,
-    }),
-    Strava({
-      clientId: stravaSecrets.clientId,
-      clientSecret: stravaSecrets.clientSecret,
-      authorization: {
-        params: {
-          scope: 'read,activity:read,activity:read_all,profile:read_all',
         },
-      },
-    }),
-  ];
+        profile(profile) {
+          return {
+            name: profile.name,
+            email: profile.email,
+            image: profile.picture,
+            slack: {
+              id: profile.sub,
+              teamId: profile['https://slack.com/team_id'] as
+                | string
+                | undefined,
+              isAdmin: false,
+            },
+          };
+        },
+        allowDangerousEmailAccountLinking: true,
+      }),
+    );
+  }
+
+  if (requestedProviders.includes('strava')) {
+    const stravaSecrets = await getStravaSecrets();
+    providers.push(
+      Strava({
+        clientId: stravaSecrets.clientId,
+        clientSecret: stravaSecrets.clientSecret,
+        authorization: {
+          params: {
+            scope: 'read,activity:read,activity:read_all,profile:read_all',
+          },
+        },
+      }),
+    );
+  }
 
   // Conditionally add Credentials provider for testing and local development
   if (enableTestingHandlers()) {
@@ -129,6 +142,7 @@ export const getAuthConfig = async (): Promise<NextAuthConfig> => {
               id: data.userId, // mock same ID
               isAdmin: data.isAdmin === 'true',
             },
+            waiverVersionAccepted: REQUIRED_WAIVER_VERSION,
           };
         },
       }),
@@ -218,6 +232,9 @@ export const getAuthConfig = async (): Promise<NextAuthConfig> => {
         if (user?.slack) {
           token.slack = user.slack;
           token.sub = user.id;
+          if ('waiverVersionAccepted' in user) {
+            token.waiverVersionAccepted = (user as any).waiverVersionAccepted;
+          }
         }
         return token;
       },
@@ -239,40 +256,59 @@ export const getAuthConfig = async (): Promise<NextAuthConfig> => {
           | SlackUser
           | undefined;
 
-        // Handle E2E testing mock user or standard user
-        if (session.user && slackData) {
-          // Keep the internal Firestore ID available (or fallback to token sub)
-          session.user.id = user?.id || token?.sub || '';
+          // Handle E2E testing mock user or standard user
+          if (session.user) {
+            // Keep the internal Firestore ID available (or fallback to token sub)
+            session.user.id = user?.id || token?.sub || '';
 
-          // Populate Strava connection status
-          try {
-            const stravaAccount = await getAuthJsAccount(
-              firestore,
-              session.user.id,
-              'strava',
-            );
-            session.user.isStravaConnected = !!stravaAccount;
+            const firebaseUid = slackData?.id || session.user.id;
+
+            // Populate Onboarding Status
+            let hasCompletedProfile = false;
+            let isStravaConnected = false;
+
+            try {
+              const [stravaAccount, riderProfileDoc] = await Promise.all([
+                getAuthJsAccount(firestore, session.user.id, 'strava'),
+                firestore.collection('riders').doc(firebaseUid).get(),
+              ]);
+
+            isStravaConnected = !!stravaAccount;
+
+            if (riderProfileDoc.exists) {
+              const riderProfile = riderProfileDoc.data();
+              hasCompletedProfile =
+                !!riderProfile?.contact?.phoneNumber &&
+                !!riderProfile?.emergencyContact?.name;
+            }
           } catch (error) {
-            logger.error(
-              'Failed to check Strava connection for session:',
-              error,
-            );
+            logger.error('Failed to check onboarding status:', error);
           }
 
-          // Populate Slack-specific data
-          session.user.slack = {
-            id: slackData.id,
-            teamId: slackData.teamId,
-            isAdmin: isSlackAdmin(slackData.id),
+          session.user.onboarding = {
+            hasAcceptedWaiver:
+              ((user as any)?.waiverVersionAccepted ?? 0) >=
+              REQUIRED_WAIVER_VERSION,
+            hasCompletedProfile,
+            isStravaConnected,
           };
+
+          if (slackData) {
+            // Populate Slack-specific data
+            session.user.slack = {
+              id: slackData.id,
+              teamId: slackData.teamId,
+              isAdmin: isSlackAdmin(slackData.id),
+            };
+          }
 
           // Generate Firebase custom token for client-side Firebase authentication
           try {
             const adminApp = await getFirebaseAdminApp();
             session.firebaseToken = await adminApp
               .auth()
-              .createCustomToken(slackData.id, {
-                isAdmin: session.user.slack.isAdmin,
+              .createCustomToken(firebaseUid, {
+                isAdmin: session.user.slack?.isAdmin ?? false,
               });
           } catch (error) {
             logger.error('Failed to create Firebase custom token:', error);

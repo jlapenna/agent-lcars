@@ -1,6 +1,11 @@
 import { getFirebaseAdminApp } from '@members/firebase-server';
 import { logger } from '@members/logging';
-import { getE2eTestingUser, isImpersonateAutomaticLogin, isMockAuthEnabled, isSlackAdmin } from '@members/util-server';
+import {
+  getE2eTestingUser,
+  isImpersonateAutomaticLogin,
+  isMockAuthEnabled,
+  isSlackAdmin,
+} from '@members/util-server';
 import { headers } from 'next/headers';
 import { NextRequest } from 'next/server';
 import NextAuth, { Session } from 'next-auth';
@@ -61,7 +66,11 @@ async function getMockSession(userId: string): Promise<Session> {
       id: userId,
       name: 'Impersonated User',
       email: 'impersonated@example.com',
-      isStravaConnected: false,
+      onboarding: {
+        hasAcceptedWaiver: true,
+        hasCompletedProfile: true,
+        isStravaConnected: false,
+      },
       slack: {
         id: userId,
         isAdmin,

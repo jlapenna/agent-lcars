@@ -5,7 +5,9 @@ const path = require('path');
 module.exports = {
   ...nxPreset,
   testMatch: ['**/?(*.)+(spec|test).[jt]s?(x)'],
-  transformIgnorePatterns: ['node_modules/(?!.*(?:uuid|cls-rtracer|md-to-slack|marked|p-limit|yocto-queue|p-wait-for|p-timeout))'],
+  transformIgnorePatterns: [
+    'node_modules/(?!.*(?:uuid|cls-rtracer|md-to-slack|marked|p-limit|yocto-queue|p-wait-for|p-timeout))',
+  ],
   moduleNameMapper: {
     'server-only': path.join(
       __dirname,
@@ -47,14 +49,29 @@ module.exports = {
     '^@members/slack/(.*)$': path.join(__dirname, 'libs/slack/src/$1'),
     '^@members/assistant$': path.join(__dirname, 'libs/assistant/src/index.ts'),
     '^@members/assistant/(.*)$': path.join(__dirname, 'libs/assistant/src/$1'),
-    '^@members/test-utils$': path.join(__dirname, 'libs/test-utils/src/index.ts'),
-    '^@members/test-utils/(.*)$': path.join(__dirname, 'libs/test-utils/src/$1'),
-    '^@members/service-auth$': path.join(__dirname, 'libs/service-auth/src/index.ts'),
-    '^@members/service-auth/(.*)$': path.join(__dirname, 'libs/service-auth/src/$1'),
+    '^@members/test-utils$': path.join(
+      __dirname,
+      'libs/test-utils/src/index.ts',
+    ),
+    '^@members/test-utils/(.*)$': path.join(
+      __dirname,
+      'libs/test-utils/src/$1',
+    ),
+    '^@members/service-auth$': path.join(
+      __dirname,
+      'libs/service-auth/src/index.ts',
+    ),
+    '^@members/service-auth/(.*)$': path.join(
+      __dirname,
+      'libs/service-auth/src/$1',
+    ),
     '^@members/logging$': path.join(__dirname, 'libs/logging/src/index.ts'),
     '^@members/logging/(.*)$': path.join(__dirname, 'libs/logging/src/$1'),
     '^@members/app$': path.join(__dirname, 'libs/app/src/index.ts'),
-    '^@members/cloudevents$': path.join(__dirname, 'libs/cloudevents/src/index.ts'),
+    '^@members/cloudevents$': path.join(
+      __dirname,
+      'libs/cloudevents/src/index.ts',
+    ),
     '^@members/env$': path.join(__dirname, 'libs/env-vars/src/index.ts'),
     '^@members/firestore$': path.join(__dirname, 'libs/firestore/src/index.ts'),
     '^@members/firestore/(.*)$': path.join(__dirname, 'libs/firestore/src/$1'),
@@ -72,18 +89,42 @@ module.exports = {
     '^@members/strava/(.*)$': path.join(__dirname, 'libs/strava/src/$1'),
     '^@members/util$': path.join(__dirname, 'libs/util/src/index.ts'),
     '^@members/util/(.*)$': path.join(__dirname, 'libs/util/src/$1'),
-    '^@members/util-server$': path.join(__dirname, 'libs/util-server/src/index.ts'),
-    '^@members/util-server/(.*)$': path.join(__dirname, 'libs/util-server/src/$1'),
+    '^@members/util-server$': path.join(
+      __dirname,
+      'libs/util-server/src/index.ts',
+    ),
+    '^@members/util-server/(.*)$': path.join(
+      __dirname,
+      'libs/util-server/src/$1',
+    ),
     '^@members/jsx$': path.join(__dirname, 'libs/jsx/src/index.ts'),
     '^@members/jsx/(.*)$': path.join(__dirname, 'libs/jsx/src/$1'),
     '^@members/youtube$': path.join(__dirname, 'libs/youtube/src/index.ts'),
     '^@members/youtube/(.*)$': path.join(__dirname, 'libs/youtube/src/$1'),
     '^@members/ghost$': path.join(__dirname, 'libs/ghost/src/index.ts'),
-    '^@members/provider-service$': path.join(__dirname, 'libs/provider-service/src/index.ts'),
-    '^@members/provider-service/(.*)$': path.join(__dirname, 'libs/provider-service/src/$1'),
-    '^@members/race-events$': path.join(__dirname, 'libs/race-events/src/index.ts'),
-    '^@members/race-events/(.*)$': path.join(__dirname, 'libs/race-events/src/$1'),
-    '^@members/export-sheets$': path.join(__dirname, 'libs/export-sheets/src/index.ts'),
-    '^@members/export-sheets/(.*)$': path.join(__dirname, 'libs/export-sheets/src/$1'),
+    '^@members/provider-service$': path.join(
+      __dirname,
+      'libs/provider-service/src/index.ts',
+    ),
+    '^@members/provider-service/(.*)$': path.join(
+      __dirname,
+      'libs/provider-service/src/$1',
+    ),
+    '^@members/race-events$': path.join(
+      __dirname,
+      'libs/race-events/src/index.ts',
+    ),
+    '^@members/race-events/(.*)$': path.join(
+      __dirname,
+      'libs/race-events/src/$1',
+    ),
+    '^@members/export-sheets$': path.join(
+      __dirname,
+      'libs/export-sheets/src/index.ts',
+    ),
+    '^@members/export-sheets/(.*)$': path.join(
+      __dirname,
+      'libs/export-sheets/src/$1',
+    ),
   },
 };

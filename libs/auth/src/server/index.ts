@@ -1,3 +1,4 @@
+export * from './assertOnboarding';
 export * from './auth';
 export * from './config';
 export * from './logging-initialization';

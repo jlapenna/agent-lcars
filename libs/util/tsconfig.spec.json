@@ -4,14 +4,11 @@
     "rootDir": "src",
     "outDir": "dist",
     "jsx": "react-jsx",
-    "types": [
-      "jest",
-      "node"
-    ],
+    "types": ["jest", "node"],
     "composite": true,
     "noPropertyAccessFromIndexSignature": false,
-    "tsBuildInfoFile": "dist/tsconfig.spec.tsbuildinfo",
-    },
+    "tsBuildInfoFile": "dist/tsconfig.spec.tsbuildinfo"
+  },
   "include": [
     "src/**/*.test.ts",
     "src/**/*.spec.ts",

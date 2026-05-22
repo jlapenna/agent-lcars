@@ -8,9 +8,7 @@
     "emitDeclarationOnly": false,
     "forceConsistentCasingInFileNames": true,
     "jsx": "react-jsx",
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "composite": true,
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo"
   },

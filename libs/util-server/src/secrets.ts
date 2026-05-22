@@ -3,6 +3,8 @@ import { logger } from '@members/logging';
 
 const client = new SecretManagerServiceClient({ fallback: 'rest' });
 
+const secretCache = new Map<string, string | null>();
+
 export async function getSecret(
   name: string,
   defaultValue: string,
@@ -16,6 +18,19 @@ export async function getSecret(
   name: string,
   defaultValue?: string | null,
 ): Promise<string | null> {
+  if (secretCache.has(name)) {
+    const cached = secretCache.get(name);
+    if (cached === undefined || cached === null) {
+      if (defaultValue === undefined) {
+        throw new Error(
+          `Secret not found or empty for: ${name} (default: ${defaultValue})`,
+        );
+      }
+      return defaultValue;
+    }
+    return cached;
+  }
+
   const [version] = await client.accessSecretVersion({
     name: name,
   });
@@ -25,6 +40,7 @@ export async function getSecret(
       `Secret not found or empty for: ${name} (default: ${defaultValue})`,
     );
   }
+  secretCache.set(name, secretValue);
   return secretValue;
 }
 

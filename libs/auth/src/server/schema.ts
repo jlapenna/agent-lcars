@@ -37,8 +37,12 @@ export const AuthJsUserSchema = zodLooseObject({
     teamId: z.string().optional(),
     isAdmin: z.boolean().optional(),
   }).optional(),
+  waiverAcceptedAt: FirebaseTimestampSchema.nullish(),
+  waiverVersionAccepted: z.number().nullish(),
 });
 
 export type AuthJsUser = z.infer<typeof AuthJsUserSchema> & {
   id?: string;
 };
+
+export const REQUIRED_WAIVER_VERSION = 1;

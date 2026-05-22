@@ -41,8 +41,12 @@ declare module 'next-auth' {
       id: string;
       /** Slack-specific user data */
       slack?: SlackUser;
-      /** Whether the user has linked their Strava account */
-      isStravaConnected?: boolean;
+      /** Onboarding and compliance gates */
+      onboarding: {
+        hasAcceptedWaiver: boolean;
+        hasCompletedProfile: boolean;
+        isStravaConnected: boolean;
+      };
     } & DefaultSession['user'];
   }
 
@@ -52,8 +56,12 @@ declare module 'next-auth' {
   interface User {
     /** Slack-specific user data */
     slack?: SlackUser;
-    /** Whether the user has linked their Strava account */
-    isStravaConnected?: boolean;
+    /** Onboarding and compliance gates */
+    onboarding?: {
+      hasAcceptedWaiver: boolean;
+      hasCompletedProfile: boolean;
+      isStravaConnected: boolean;
+    };
   }
 
   /**

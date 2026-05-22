@@ -3,15 +3,11 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/env-vars/src",
   "projectType": "library",
-  "tags": [
-    "platform:shared"
-  ],
+  "tags": ["platform:shared"],
   "targets": {
     "build": {
       "executor": "@nx/js:swc",
-      "outputs": [
-        "{options.outputPath}"
-      ],
+      "outputs": ["{options.outputPath}"],
       "options": {
         "outputPath": "dist/libs/env-vars",
         "main": "libs/env-vars/src/index.ts",
