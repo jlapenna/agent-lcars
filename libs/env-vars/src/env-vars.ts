@@ -47,6 +47,7 @@ export interface EnvVars {
   SLACK_ANNOUNCE_CHANNEL?: string;
   SLACK_PSEUDOBOTS?: string;
   SLACK_ADMINS?: string;
+  ONECAKE_ADMINS?: string;
 
   SLACK_PROFILE_FIELD_STRAVA: string;
   SLACK_PROFILE_FIELD_INSTAGRAM: string;
