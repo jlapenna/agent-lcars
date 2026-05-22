@@ -6,7 +6,6 @@ import {
   isMockAuthEnabled,
   isSlackAdmin,
 } from '@members/util-server';
-import { headers } from 'next/headers';
 import { NextRequest } from 'next/server';
 import NextAuth, { Session } from 'next-auth';
 
@@ -86,20 +85,6 @@ async function getMockSession(userId: string): Promise<Session> {
  */
 const auth: typeof nextAuth = (async (...args: Parameters<typeof nextAuth>) => {
   if (isMockAuthEnabled()) {
-    const headerList = await headers();
-    const e2eSession = headerList.get('x-e2e-session');
-    if (e2eSession) {
-      try {
-        const sessionData = JSON.parse(e2eSession);
-        if (isSession(sessionData)) {
-          logger.debug('auth.ts: Using mock session from header');
-          return sessionData;
-        }
-      } catch (e) {
-        logger.error('auth.ts: Failed to parse mock session header', e);
-      }
-    }
-
     if (isImpersonateAutomaticLogin()) {
       const e2eTestingUser = getE2eTestingUser();
       if (e2eTestingUser) {
@@ -121,23 +106,6 @@ const auth: typeof nextAuth = (async (...args: Parameters<typeof nextAuth>) => {
 const wrappedHandlers = {
   GET: async (req: NextRequest) => {
     if (isMockAuthEnabled()) {
-      const e2eSession = req.headers.get('x-e2e-session');
-      if (e2eSession && req.nextUrl.pathname.includes('/api/auth/session')) {
-        try {
-          const sessionData = JSON.parse(e2eSession);
-          if (isSession(sessionData)) {
-            return new Response(JSON.stringify(sessionData), {
-              headers: { 'Content-Type': 'application/json' },
-            });
-          }
-        } catch (e) {
-          logger.error(
-            'auth.ts: Failed to parse mock session header in handler',
-            e,
-          );
-        }
-      }
-
       if (
         isImpersonateAutomaticLogin() &&
         req.nextUrl.pathname.includes('/api/auth/session')

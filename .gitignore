@@ -3,6 +3,7 @@
 tmp/
 e2e.pid
 e2e.log
+.agents/scratch
 
 # Probably never intentional
 *.log

@@ -128,6 +128,52 @@ export async function ensureAuthJsUserForSlack(
     return existing;
   }
 
+  // Fallback: NextAuth strips custom fields like `slack.id` when creating the user.
+  // Find the real user by querying the accounts collection using the Slack provider ID.
+  const accountSnapshot = await getAccountsCollection(firestore)
+    .where('provider', '==', 'slack')
+    .where('providerAccountId', '==', slackUser.id)
+    .limit(1)
+    .get();
+
+  if (!accountSnapshot.empty) {
+    const account = accountSnapshot.docs[0].data();
+    if (account.userId) {
+      const userDoc = await getUsersCollection(firestore).doc(account.userId).get();
+      const user = userDoc.data();
+      if (userDoc.exists && user) {
+        
+        // Backfill the missing slack.id so we don't have to fallback again
+        await userDoc.ref.update({
+          slack: {
+            id: slackUser.id,
+            teamId: slackUser.teamId,
+          }
+        });
+        
+        return user;
+      }
+    }
+  }
+
+  // Fallback 2: Look up by email (since NextAuth might have generated a UUID for providerAccountId)
+  if (slackUser.email) {
+    const user = await getAuthJsUserByEmail(firestore, slackUser.email);
+    if (user && user.id) {
+      const userDoc = await getUsersCollection(firestore).doc(user.id).get();
+      if (userDoc.exists) {
+        // Backfill the missing slack.id so we don't have to fallback again
+        await userDoc.ref.update({
+          slack: {
+            id: slackUser.id,
+            teamId: slackUser.teamId,
+          }
+        });
+        return userDoc.data() as AuthJsUser;
+      }
+    }
+  }
+
   // Create new user document
   const newUser: AuthJsUser = {
     name: slackUser.name,

@@ -106,3 +106,53 @@ describe('getAuthConfig Adapter Wrapper', () => {
     expect(result).toEqual(mockSession);
   });
 });
+
+  it('should force User ID to match Slack ID in createUser', async () => {
+    const config = await getAuthConfig();
+    const adapter = config.adapter!;
+    const mockFirestore = await jest.requireMock('@members/firebase-server').getFirestore();
+    const mockDoc = { set: jest.fn() };
+    const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
+    mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+
+    const mockUser = {
+      name: 'Test',
+      email: 'test@example.com',
+      slack: { id: 'slack-123' },
+      emailVerified: null,
+    };
+
+    const createdUser = await adapter.createUser!(mockUser as any);
+
+    expect(createdUser.id).toBe('slack-123');
+    expect(mockFirestore.collection).toHaveBeenCalledWith('services/authjs/users');
+    expect(mockCollection.doc).toHaveBeenCalledWith('slack-123');
+    expect(mockDoc.set).toHaveBeenCalledWith({
+      name: 'Test',
+      email: 'test@example.com',
+      slack: { id: 'slack-123' },
+      emailVerified: null,
+    });
+  });
+
+  it('should force deterministic ID in linkAccount', async () => {
+    const config = await getAuthConfig();
+    const adapter = config.adapter!;
+    const mockFirestore = await jest.requireMock('@members/firebase-server').getFirestore();
+    const mockDoc = { set: jest.fn() };
+    const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
+    mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+
+    const mockAccount = {
+      providerAccountId: 'strava-123',
+      provider: 'strava',
+      type: 'oauth',
+      userId: 'slack-123',
+    };
+
+    const linkedAccount = await adapter.linkAccount!(mockAccount as any);
+
+    expect(linkedAccount!.id).toBe('slack-123_strava');
+    expect(mockFirestore.collection).toHaveBeenCalledWith('services/authjs/accounts');
+    expect(mockCollection.doc).toHaveBeenCalledWith('slack-123_strava');
+  });

@@ -33,7 +33,7 @@ import Slack from 'next-auth/providers/slack';
 import Strava from 'next-auth/providers/strava';
 import { z } from 'zod';
 
-import { getAuthJsAccount } from './queries';
+import { getAuthJsAccount, getAuthJsAccountId } from './queries';
 import { REQUIRED_WAIVER_VERSION } from './schema';
 import { SlackUser } from './types';
 
@@ -77,6 +77,7 @@ export const getAuthConfig = async (
         },
         profile(profile) {
           return {
+            id: profile.sub,
             name: profile.name,
             email: profile.email,
             image: profile.picture,
@@ -161,6 +162,21 @@ export const getAuthConfig = async (
 
   const adapter: NextAuthConfig['adapter'] = {
     ...firestoreAdapter,
+    async createUser(user) {
+      // Force User ID to be the Slack ID if available, otherwise fallback to UUID
+      // This aligns NextAuth identity with our `riders` database keys
+      const id = (user as any).slack?.id || crypto.randomUUID();
+      const { id: _removedId, ...userData } = user as any;
+      await firestore.collection('services/authjs/users').doc(id).set(userData);
+      return { ...user, id } as any;
+    },
+    async linkAccount(account) {
+      // Force deterministic Account ID for easy lookups
+      const id = getAuthJsAccountId(account.userId, account.provider);
+      const { id: _removedId, ...accountData } = account as any;
+      await firestore.collection('services/authjs/accounts').doc(id).set(accountData);
+      return { ...account, id } as any;
+    },
     async updateSession(session) {
       if (!firestoreAdapter.updateSession) {
         return null;
@@ -256,22 +272,25 @@ export const getAuthConfig = async (
           | SlackUser
           | undefined;
 
-          // Handle E2E testing mock user or standard user
-          if (session.user) {
-            // Keep the internal Firestore ID available (or fallback to token sub)
-            session.user.id = user?.id || token?.sub || '';
+        if (session.user) {
+          // The NextAuth internal user.id might be a UUID for legacy users.
+          const internalId = user?.id || token?.sub || '';
+          
+          // Force the public session.user.id to be the canonical Slack ID,
+          // so the entire frontend and business logic correctly queries the `riders` collection.
+          session.user.id = slackData?.id || internalId;
 
-            const firebaseUid = slackData?.id || session.user.id;
+          // Populate Onboarding Status
+          let hasCompletedProfile = false;
+          let isStravaConnected = false;
 
-            // Populate Onboarding Status
-            let hasCompletedProfile = false;
-            let isStravaConnected = false;
-
-            try {
-              const [stravaAccount, riderProfileDoc] = await Promise.all([
-                getAuthJsAccount(firestore, session.user.id, 'strava'),
-                firestore.collection('riders').doc(firebaseUid).get(),
-              ]);
+          try {
+            const [stravaAccount, riderProfileDoc] = await Promise.all([
+              // Auth.js accounts are linked to the internal Auth.js ID (UUID or Slack ID)
+              getAuthJsAccount(firestore, internalId, 'strava'),
+              // Business logic (riders) is always linked to the canonical ID (Slack ID)
+              firestore.collection('user-profiles').doc(session.user.id).get(),
+            ]);
 
             isStravaConnected = !!stravaAccount;
 
@@ -287,8 +306,9 @@ export const getAuthConfig = async (
 
           session.user.onboarding = {
             hasAcceptedWaiver:
-              ((user as any)?.waiverVersionAccepted ?? 0) >=
-              REQUIRED_WAIVER_VERSION,
+              ((user as any)?.waiverVersionAccepted ??
+                (token as any)?.waiverVersionAccepted ??
+                0) >= REQUIRED_WAIVER_VERSION,
             hasCompletedProfile,
             isStravaConnected,
           };
@@ -307,7 +327,7 @@ export const getAuthConfig = async (
             const adminApp = await getFirebaseAdminApp();
             session.firebaseToken = await adminApp
               .auth()
-              .createCustomToken(firebaseUid, {
+              .createCustomToken(session.user.id, {
                 isAdmin: session.user.slack?.isAdmin ?? false,
               });
           } catch (error) {
