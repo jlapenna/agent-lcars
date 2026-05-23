@@ -33,15 +33,6 @@ const {
 });
 
 /**
- * Type guard for Session object.
- */
-function isSession(val: unknown): val is Session {
-  return (
-    typeof val === 'object' && val !== null && 'user' in val && 'expires' in val
-  );
-}
-
-/**
  * Generates a mock session for testing or development.
  */
 async function getMockSession(userId: string): Promise<Session> {
@@ -85,6 +76,7 @@ async function getMockSession(userId: string): Promise<Session> {
  */
 const auth: typeof nextAuth = (async (...args: Parameters<typeof nextAuth>) => {
   if (isMockAuthEnabled()) {
+    // Fallback to automatic impersonation via env variable
     if (isImpersonateAutomaticLogin()) {
       const e2eTestingUser = getE2eTestingUser();
       if (e2eTestingUser) {

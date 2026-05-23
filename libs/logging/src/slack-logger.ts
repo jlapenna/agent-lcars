@@ -43,7 +43,7 @@ export class SlackLogger {
           ...(context?.path
             ? { httpRequest: { requestUrl: context.path } }
             : {}),
-          ...(context?.slackUserId ? { slackUserId: context.slackUserId } : {}),
+          ...(context?.userId ? { userId: context.userId } : {}),
           ...(context?.action ? { action: context.action } : {}),
         }),
       );

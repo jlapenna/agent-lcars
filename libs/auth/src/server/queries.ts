@@ -1,5 +1,10 @@
 import { createConverter } from '@members/firestore';
-import { Firestore, Transaction, UpdateData } from 'firebase-admin/firestore';
+import {
+  FieldPath,
+  Firestore,
+  Transaction,
+  UpdateData,
+} from 'firebase-admin/firestore';
 
 import {
   AuthJsAccount,
@@ -92,6 +97,31 @@ export async function getAuthJsUsersBySlackIds(
 }
 
 /**
+ * Find multiple Auth.js users by their User IDs (UUIDs) in a single query.
+ */
+export async function getAuthJsUsersByUserIds(
+  firestore: Firestore,
+  userIds: string[],
+): Promise<AuthJsUser[]> {
+  if (userIds.length === 0) return [];
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < userIds.length; i += 30) {
+    chunks.push(userIds.slice(i, i + 30));
+  }
+
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      getUsersCollection(firestore)
+        .where(FieldPath.documentId(), 'in', chunk)
+        .get(),
+    ),
+  );
+
+  return results.flatMap((snapshot) => snapshot.docs.map((d) => d.data()));
+}
+
+/**
  * Find an Auth.js user by their email.
  */
 export async function getAuthJsUserByEmail(
@@ -139,18 +169,19 @@ export async function ensureAuthJsUserForSlack(
   if (!accountSnapshot.empty) {
     const account = accountSnapshot.docs[0].data();
     if (account.userId) {
-      const userDoc = await getUsersCollection(firestore).doc(account.userId).get();
+      const userDoc = await getUsersCollection(firestore)
+        .doc(account.userId)
+        .get();
       const user = userDoc.data();
       if (userDoc.exists && user) {
-        
         // Backfill the missing slack.id so we don't have to fallback again
         await userDoc.ref.update({
           slack: {
             id: slackUser.id,
             teamId: slackUser.teamId,
-          }
+          },
         });
-        
+
         return user;
       }
     }
@@ -167,7 +198,7 @@ export async function ensureAuthJsUserForSlack(
           slack: {
             id: slackUser.id,
             teamId: slackUser.teamId,
-          }
+          },
         });
         return userDoc.data() as AuthJsUser;
       }

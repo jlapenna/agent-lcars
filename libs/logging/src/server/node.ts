@@ -71,7 +71,7 @@ export function initNodeLogging() {
     return {
       traceId: rtracer.id() as string | undefined,
       requestUrl: context?.path,
-      slackUserId: context?.slackUserId,
+      userId: context?.userId,
       action: context?.action,
     };
   });
@@ -103,7 +103,7 @@ export class SlackLogger {
           ...(context?.path
             ? { httpRequest: { requestUrl: context.path } }
             : {}),
-          ...(context?.slackUserId ? { slackUserId: context.slackUserId } : {}),
+          ...(context?.userId ? { userId: context.userId } : {}),
           ...(context?.action ? { action: context.action } : {}),
         }),
       );

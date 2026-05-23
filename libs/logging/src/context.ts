@@ -120,12 +120,12 @@ export async function bindBoltContext(args: BoltMiddlewareArgs) {
   const { context: boltContext, body, next } = args;
   const slackBody = body as SlackBody;
 
-  let slackUserId = boltContext.botUserId || boltContext.userToken;
+  let userId = boltContext.botUserId || boltContext.userToken;
 
   // Extract User ID from Body if not in context
-  if (!slackUserId) {
+  if (!userId) {
     if (isSlashCommand(slackBody)) {
-      slackUserId = slackBody.user_id;
+      userId = slackBody.user_id;
     } else if (
       isEvent(slackBody) &&
       slackBody.event &&
@@ -133,13 +133,13 @@ export async function bindBoltContext(args: BoltMiddlewareArgs) {
     ) {
       const eventUser = slackBody.event.user;
       if (typeof eventUser === 'string') {
-        slackUserId = eventUser;
+        userId = eventUser;
       } else if (
         typeof eventUser === 'object' &&
         eventUser !== null &&
         'id' in eventUser
       ) {
-        slackUserId = (eventUser as { id: string }).id;
+        userId = (eventUser as { id: string }).id;
       }
     } else if (
       'user' in slackBody &&
@@ -147,7 +147,7 @@ export async function bindBoltContext(args: BoltMiddlewareArgs) {
       typeof slackBody.user === 'object' &&
       'id' in slackBody.user
     ) {
-      slackUserId = (slackBody.user as { id: string }).id;
+      userId = (slackBody.user as { id: string }).id;
     }
   }
 
@@ -167,11 +167,11 @@ export async function bindBoltContext(args: BoltMiddlewareArgs) {
 
   const existingContext = getContext();
   if (existingContext) {
-    existingContext.slackUserId = slackUserId;
+    existingContext.userId = userId;
     if (action) existingContext.action = action;
     await next();
   } else {
-    await runWithContext({ slackUserId, action }, next);
+    await runWithContext({ userId, action }, next);
   }
 }
 

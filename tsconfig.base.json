@@ -80,7 +80,8 @@
       "@members/dummy": ["./dummy/src/index.ts"],
       "@members/dummy2": ["./dummy2/src/index.ts"],
       "@members/util-server": ["libs/util-server/src/index.ts"],
-      "@members/util-server/*": ["libs/util-server/src/*"]
+      "@members/util-server/*": ["libs/util-server/src/*"],
+      "@members/cli/*": ["apps/cli/src/*"]
     }
   }
 }

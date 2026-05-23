@@ -4,7 +4,7 @@ import { shouldLog } from './utils';
 export interface LogEnrichment {
   traceId?: string;
   requestUrl?: string;
-  slackUserId?: string;
+  userId?: string;
   action?: string;
 }
 
@@ -109,9 +109,7 @@ export class Logger {
           ...(enrichment.requestUrl
             ? { httpRequest: { requestUrl: enrichment.requestUrl } }
             : {}),
-          ...(enrichment.slackUserId
-            ? { slackUserId: enrichment.slackUserId }
-            : {}),
+          ...(enrichment.userId ? { userId: enrichment.userId } : {}),
           ...(enrichment.action ? { action: enrichment.action } : {}),
         }),
       );

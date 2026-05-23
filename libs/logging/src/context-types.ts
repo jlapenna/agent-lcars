@@ -1,5 +1,5 @@
 export interface RequestContext {
-  slackUserId?: string;
+  userId?: string;
   path?: string;
   action?: string;
 }

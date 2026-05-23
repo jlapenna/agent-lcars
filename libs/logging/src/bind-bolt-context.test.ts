@@ -16,7 +16,7 @@ describe('bind-context', () => {
       mockNext = jest.fn().mockResolvedValue(undefined);
     });
 
-    it('should extract slackUserId from boltContext.botUserId', async () => {
+    it('should extract userId from boltContext.botUserId', async () => {
       const args = {
         context: { botUserId: 'U_BOT' } as Context,
         body: {},
@@ -25,12 +25,12 @@ describe('bind-context', () => {
 
       await runWithContext({}, async () => {
         await bindBoltContext(args);
-        expect(getContext()?.slackUserId).toBe('U_BOT');
+        expect(getContext()?.userId).toBe('U_BOT');
       });
       expect(mockNext).toHaveBeenCalled();
     });
 
-    it('should extract slackUserId from boltContext.userToken', async () => {
+    it('should extract userId from boltContext.userToken', async () => {
       // Note: As noted in original test, userToken usage as ID might be questionable but preserving logic.
       const args = {
         context: { userToken: 'U_TOKEN_USER' } as Context,
@@ -40,7 +40,7 @@ describe('bind-context', () => {
 
       await runWithContext({}, async () => {
         await bindBoltContext(args);
-        expect(getContext()?.slackUserId).toBe('U_TOKEN_USER');
+        expect(getContext()?.userId).toBe('U_TOKEN_USER');
       });
     });
 
@@ -53,7 +53,7 @@ describe('bind-context', () => {
 
       await runWithContext({}, async () => {
         await bindBoltContext(args);
-        expect(getContext()?.slackUserId).toBe('U_BODY');
+        expect(getContext()?.userId).toBe('U_BODY');
       });
     });
 
@@ -66,7 +66,7 @@ describe('bind-context', () => {
 
       await runWithContext({}, async () => {
         await bindBoltContext(args);
-        expect(getContext()?.slackUserId).toBe('U_BODY_ID');
+        expect(getContext()?.userId).toBe('U_BODY_ID');
       });
     });
 
@@ -80,7 +80,7 @@ describe('bind-context', () => {
       // Called WITHOUT existing runWithContext
       // This will create a new context scope for `next`
       const checkContextNext = jest.fn().mockImplementation(() => {
-        expect(getContext()?.slackUserId).toBe('U_NEW');
+        expect(getContext()?.userId).toBe('U_NEW');
         return Promise.resolve();
       });
 

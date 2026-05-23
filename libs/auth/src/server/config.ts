@@ -33,6 +33,7 @@ import Slack from 'next-auth/providers/slack';
 import Strava from 'next-auth/providers/strava';
 import { z } from 'zod';
 
+import { resolveUserIdFromSlackId } from './identity';
 import { getAuthJsAccount, getAuthJsAccountId } from './queries';
 import { REQUIRED_WAIVER_VERSION } from './schema';
 import { SlackUser } from './types';
@@ -135,12 +136,28 @@ export const getAuthConfig = async (
 
           const data = parsed.data;
 
+          let resolvedId = data.userId;
+          if (data.userId.startsWith('slack-') || data.userId.startsWith('U')) {
+            try {
+              resolvedId = await resolveUserIdFromSlackId(firestore, {
+                id: data.userId,
+                name: data.name,
+                email: data.email,
+              });
+            } catch (err) {
+              logger.error(
+                'Failed to resolve UUID in credentials authorize:',
+                err,
+              );
+            }
+          }
+
           return {
-            id: data.userId,
+            id: resolvedId,
             name: data.name,
             email: data.email,
             slack: {
-              id: data.userId, // mock same ID
+              id: data.userId, // mock original Slack ID
               isAdmin: data.isAdmin === 'true',
             },
             waiverVersionAccepted: REQUIRED_WAIVER_VERSION,
@@ -162,19 +179,14 @@ export const getAuthConfig = async (
 
   const adapter: NextAuthConfig['adapter'] = {
     ...firestoreAdapter,
-    async createUser(user) {
-      // Force User ID to be the Slack ID if available, otherwise fallback to UUID
-      // This aligns NextAuth identity with our `riders` database keys
-      const id = (user as any).slack?.id || crypto.randomUUID();
-      const { id: _removedId, ...userData } = user as any;
-      await firestore.collection('services/authjs/users').doc(id).set(userData);
-      return { ...user, id } as any;
-    },
     async linkAccount(account) {
       // Force deterministic Account ID for easy lookups
       const id = getAuthJsAccountId(account.userId, account.provider);
       const { id: _removedId, ...accountData } = account as any;
-      await firestore.collection('services/authjs/accounts').doc(id).set(accountData);
+      await firestore
+        .collection('services/authjs/accounts')
+        .doc(id)
+        .set(accountData);
       return { ...account, id } as any;
     },
     async updateSession(session) {
@@ -248,6 +260,7 @@ export const getAuthConfig = async (
         if (user?.slack) {
           token.slack = user.slack;
           token.sub = user.id;
+          token.isAdmin = user.slack.isAdmin || isSlackAdmin(user.slack.id);
           if ('waiverVersionAccepted' in user) {
             token.waiverVersionAccepted = (user as any).waiverVersionAccepted;
           }
@@ -273,12 +286,10 @@ export const getAuthConfig = async (
           | undefined;
 
         if (session.user) {
-          // The NextAuth internal user.id might be a UUID for legacy users.
           const internalId = user?.id || token?.sub || '';
-          
-          // Force the public session.user.id to be the canonical Slack ID,
-          // so the entire frontend and business logic correctly queries the `riders` collection.
-          session.user.id = slackData?.id || internalId;
+
+          // Use the canonical NextAuth UUID.
+          session.user.id = internalId;
 
           // Populate Onboarding Status
           let hasCompletedProfile = false;
@@ -318,7 +329,7 @@ export const getAuthConfig = async (
             session.user.slack = {
               id: slackData.id,
               teamId: slackData.teamId,
-              isAdmin: isSlackAdmin(slackData.id),
+              isAdmin: (token as any)?.isAdmin ?? isSlackAdmin(slackData.id),
             };
           }
 

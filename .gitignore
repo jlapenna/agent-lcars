@@ -63,6 +63,7 @@ out
 # Playwright / E2E Testing
 e2e-server.log
 test-output
+test-results
 
 # Playwright
 server.log

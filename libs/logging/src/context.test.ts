@@ -47,12 +47,12 @@ describe('RequestContext', () => {
       const current = getContext();
       expect(current).toBeDefined();
       if (current) {
-        current.slackUserId = 'U123';
+        current.userId = 'U123';
       }
-      expect(getContext()?.slackUserId).toBe('U123');
+      expect(getContext()?.userId).toBe('U123');
     });
     // Modification shouldn't affect original object reference if accessed outside (it's the same object)
     // but context storage is gone.
-    expect(context.slackUserId).toBe('U123');
+    expect(context.userId).toBe('U123');
   });
 });
