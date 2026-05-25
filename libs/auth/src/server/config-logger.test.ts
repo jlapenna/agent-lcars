@@ -4,7 +4,9 @@ import { getAuthConfig } from './config';
 
 // Mock dependencies
 jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn().mockReturnValue({}),
+  FirestoreAdapter: jest.fn().mockReturnValue({
+    createUser: jest.fn(),
+  }),
 }));
 
 jest.mock('next-auth/providers/slack', () => jest.fn().mockReturnValue({}));

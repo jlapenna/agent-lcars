@@ -71,6 +71,11 @@ describe('getAuthConfig Adapter Wrapper', () => {
     mockGetSessionAndUser = jest.fn();
 
     (FirestoreAdapter as jest.Mock).mockReturnValue({
+      createUser: jest
+        .fn()
+        .mockImplementation((user) =>
+          Promise.resolve({ id: 'user-uuid', ...user }),
+        ),
       updateSession: mockUpdateSession,
       getSessionAndUser: mockGetSessionAndUser,
     });

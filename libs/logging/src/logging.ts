@@ -10,13 +10,21 @@ export function logMemory(tag = ''): void {
   logger.debug(getMemoryString(tag));
 }
 
+interface NodeProcessWithMemory {
+  memoryUsage?: () => { heapUsed: number };
+}
+
 export function getMemoryString(tag = ''): string {
   if (
     typeof process === 'undefined' ||
-    typeof process.memoryUsage !== 'function'
+    typeof (process as typeof process & NodeProcessWithMemory).memoryUsage !==
+      'function'
   ) {
     return `${tag ? `${tag}: ` : ''}Memory: N/A (Browser)`;
   }
-  const used = process.memoryUsage().heapUsed / 1024 / 1024;
+  const memoryUsage = (
+    process as typeof process & Required<NodeProcessWithMemory>
+  ).memoryUsage;
+  const used = memoryUsage().heapUsed / 1024 / 1024;
   return `${tag ? `${tag}: ` : ''}Memory: ${Math.floor(used)} MB`;
 }

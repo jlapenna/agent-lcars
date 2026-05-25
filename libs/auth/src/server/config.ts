@@ -20,10 +20,12 @@ import { getAuthSecret } from '@members/service-auth';
 import { getSecrets as getSlackSecrets } from '@members/slack';
 import { getSecrets as getStravaSecrets } from '@members/strava';
 import { getNextPublicSlackClientId } from '@members/util/browser';
-import { enableTestingHandlers } from '@members/util-server';
+import { enableTestingHandlers, getProjectId } from '@members/util-server';
 import {
   getLogLevel,
   getSlackTeamId,
+  getStravaClubId,
+  isAdminEmail,
   isSlackAdmin,
 } from '@members/util-server';
 import type { NextAuthConfig } from 'next-auth';
@@ -50,8 +52,23 @@ import { SlackUser } from './types';
  *
  * @returns Promise resolving to the NextAuthConfig
  */
+interface AppUser {
+  id?: string;
+  slack?: SlackUser;
+  waiverVersionAccepted?: number;
+}
+
+interface AppJWT {
+  sub?: string;
+  slack?: SlackUser;
+  isAdmin?: boolean;
+  waiverVersionAccepted?: number;
+}
+
 export interface AuthConfigOptions {
   providers?: ('slack' | 'strava')[];
+  /** When true, validates that the Strava athlete is a member of the expected club. */
+  requireClubMembership?: boolean;
 }
 
 export const getAuthConfig = async (
@@ -62,7 +79,12 @@ export const getAuthConfig = async (
   const firestore = await getFirestore();
   const authSecret = await getAuthSecret();
 
-  const requestedProviders = options?.providers || ['slack', 'strava'];
+  const projectId = getProjectId();
+  const isOneCake = projectId?.startsWith('onecake');
+  const requireClubMembership =
+    options?.requireClubMembership ?? isOneCake ?? false;
+  const requestedProviders =
+    options?.providers || (isOneCake ? ['strava'] : ['slack', 'strava']);
   const providers: Provider[] = [];
 
   if (requestedProviders.includes('slack')) {
@@ -121,14 +143,12 @@ export const getAuthConfig = async (
           userId: { label: 'User ID', type: 'text' },
           name: { label: 'Name', type: 'text' },
           email: { label: 'Email', type: 'text' },
-          isAdmin: { label: 'Is Admin', type: 'text' },
         },
         async authorize(credentials) {
           const schema = z.object({
             userId: z.string().default('test-user'),
             name: z.string().default('Test User'),
             email: z.string().default('test@example.com'),
-            isAdmin: z.enum(['true', 'false']).default('false'),
           });
 
           const parsed = schema.safeParse(credentials);
@@ -149,8 +169,16 @@ export const getAuthConfig = async (
                 'Failed to resolve UUID in credentials authorize:',
                 err,
               );
+              throw err;
             }
           }
+
+          const isAdmin =
+            data.userId === 'slack-123' ||
+            data.userId === 'admin-123' ||
+            data.email.startsWith('admin@') ||
+            isSlackAdmin(data.userId) ||
+            isAdminEmail(data.email);
 
           return {
             id: resolvedId,
@@ -158,7 +186,7 @@ export const getAuthConfig = async (
             email: data.email,
             slack: {
               id: data.userId, // mock original Slack ID
-              isAdmin: data.isAdmin === 'true',
+              isAdmin,
             },
             waiverVersionAccepted: REQUIRED_WAIVER_VERSION,
           };
@@ -179,15 +207,47 @@ export const getAuthConfig = async (
 
   const adapter: NextAuthConfig['adapter'] = {
     ...firestoreAdapter,
+    async createUser(user) {
+      if (!firestoreAdapter.createUser) {
+        throw new Error('FirestoreAdapter does not support createUser');
+      }
+      const createdUser = await firestoreAdapter.createUser(user);
+      if (user.email && isAdminEmail(user.email)) {
+        logger.info(
+          `createUser: Bootstrapping admin status for new user ${user.email}`,
+        );
+        await firestore
+          .collection('services/authjs/users')
+          .doc(createdUser.id)
+          .set(
+            {
+              slack: {
+                id: '',
+                isAdmin: true,
+              },
+            },
+            { merge: true },
+          );
+        if (createdUser.slack) {
+          createdUser.slack.isAdmin = true;
+        } else {
+          createdUser.slack = { id: '', isAdmin: true };
+        }
+      }
+      return createdUser;
+    },
     async linkAccount(account) {
       // Force deterministic Account ID for easy lookups
       const id = getAuthJsAccountId(account.userId, account.provider);
-      const { id: _removedId, ...accountData } = account as any;
+      const { id: _removedId, ...accountData } = account as Record<
+        string,
+        unknown
+      >;
       await firestore
         .collection('services/authjs/accounts')
         .doc(id)
         .set(accountData);
-      return { ...account, id } as any;
+      return { ...account, id } as typeof account;
     },
     async updateSession(session) {
       if (!firestoreAdapter.updateSession) {
@@ -257,12 +317,15 @@ export const getAuthConfig = async (
        * We propagate the Slack data from the user object to the token.
        */
       async jwt({ token, user }) {
-        if (user?.slack) {
-          token.slack = user.slack;
-          token.sub = user.id;
-          token.isAdmin = user.slack.isAdmin || isSlackAdmin(user.slack.id);
-          if ('waiverVersionAccepted' in user) {
-            token.waiverVersionAccepted = (user as any).waiverVersionAccepted;
+        const appUser = user as AppUser | undefined;
+        const appToken = token as AppJWT;
+        if (appUser?.slack) {
+          appToken.slack = appUser.slack;
+          appToken.sub = appUser.id;
+          appToken.isAdmin =
+            appUser.slack.isAdmin || isSlackAdmin(appUser.slack.id);
+          if (appUser.waiverVersionAccepted !== undefined) {
+            appToken.waiverVersionAccepted = appUser.waiverVersionAccepted;
           }
         }
         return token;
@@ -280,13 +343,15 @@ export const getAuthConfig = async (
        * @returns The modified session object
        */
       async session({ session, user, token }) {
+        const appUser = user as AppUser | undefined;
+        const appToken = token as AppJWT | undefined;
         // Handle Database strategy (user) or JWT strategy (token)
-        const slackData = (user?.slack || token?.slack) as
+        const slackData = (appUser?.slack || appToken?.slack) as
           | SlackUser
           | undefined;
 
         if (session.user) {
-          const internalId = user?.id || token?.sub || '';
+          const internalId = appUser?.id || appToken?.sub || '';
 
           // Use the canonical NextAuth UUID.
           session.user.id = internalId;
@@ -317,8 +382,8 @@ export const getAuthConfig = async (
 
           session.user.onboarding = {
             hasAcceptedWaiver:
-              ((user as any)?.waiverVersionAccepted ??
-                (token as any)?.waiverVersionAccepted ??
+              (appUser?.waiverVersionAccepted ??
+                appToken?.waiverVersionAccepted ??
                 0) >= REQUIRED_WAIVER_VERSION,
             hasCompletedProfile,
             isStravaConnected,
@@ -329,7 +394,7 @@ export const getAuthConfig = async (
             session.user.slack = {
               id: slackData.id,
               teamId: slackData.teamId,
-              isAdmin: (token as any)?.isAdmin ?? isSlackAdmin(slackData.id),
+              isAdmin: appToken?.isAdmin ?? isSlackAdmin(slackData.id),
             };
           }
 
@@ -355,7 +420,39 @@ export const getAuthConfig = async (
        * We use this to enforce that the user is signing in from the correct Slack workspace.
        * This is a security measure to mitigate the risk of 'allowDangerousEmailAccountLinking: true'.
        */
-      async signIn({ account, profile }) {
+      async signIn({ user, account, profile }) {
+        // Bootstrap admin status if user's email is in the admin list
+        if (user?.id && user?.email && isAdminEmail(user.email)) {
+          try {
+            const userRef = firestore
+              .collection('services/authjs/users')
+              .doc(user.id);
+            const userDoc = await userRef.get();
+            if (userDoc.exists) {
+              const userData = userDoc.data();
+              if (!userData?.slack?.isAdmin) {
+                logger.info(
+                  `signIn: Bootstrapping admin status for user ${user.id} (${user.email})`,
+                );
+                await userRef.set(
+                  {
+                    slack: {
+                      ...(userData?.slack || { id: '' }),
+                      isAdmin: true,
+                    },
+                  },
+                  { merge: true },
+                );
+              }
+            }
+          } catch (err) {
+            logger.error(
+              `signIn: Failed to bootstrap admin status for user ${user?.id}:`,
+              err,
+            );
+          }
+        }
+
         if (account?.provider === 'slack') {
           const slackTeamId = getSlackTeamId();
           const teamId = profile?.['https://slack.com/team_id'];
@@ -366,6 +463,71 @@ export const getAuthConfig = async (
             return false;
           }
         }
+
+        if (
+          requireClubMembership &&
+          account?.provider === 'strava' &&
+          account.access_token
+        ) {
+          const expectedClubId = getStravaClubId() || '40422';
+          try {
+            logger.debug(
+              `Validating Strava club membership for club ${expectedClubId}...`,
+            );
+            const response = await fetch(
+              'https://www.strava.com/api/v3/athlete/clubs',
+              {
+                headers: {
+                  Authorization: `Bearer ${account.access_token}`,
+                },
+              },
+            );
+            if (response.ok) {
+              const clubs = (await response.json()) as {
+                id: number | string;
+              }[];
+              const isMember = clubs.some(
+                (club) => club.id.toString() === expectedClubId.toString(),
+              );
+              const deniedRedirect =
+                isOneCake || options?.requireClubMembership
+                  ? '/denied'
+                  : '/login?error=AccessDenied';
+              if (!isMember) {
+                logger.warn(
+                  `Rejecting Strava sign-in: athlete is not a member of club ${expectedClubId}`,
+                );
+                // Revoke token immediately
+                await fetch('https://www.strava.com/oauth/deauthorize', {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${account.access_token}`,
+                  },
+                }).catch((e) => logger.error('Failed to deauthorize token', e));
+                return `${deniedRedirect}${deniedRedirect.includes('?') ? '&' : '?'}reason=club_membership_required`;
+              }
+              logger.debug(`Strava club membership validated successfully.`);
+            } else {
+              logger.error(
+                'Failed to fetch Strava clubs for validation',
+                await response.text(),
+              );
+              const deniedRedirect =
+                isOneCake || options?.requireClubMembership
+                  ? '/denied'
+                  : '/login?error=AccessDenied';
+              return `${deniedRedirect}${deniedRedirect.includes('?') ? '&' : '?'}reason=club_membership_check_failed`;
+            }
+          } catch (e) {
+            logger.error('Error validating Strava club membership', e);
+            const deniedRedirect =
+              isOneCake || options?.requireClubMembership
+                ? '/denied'
+                : '/login?error=AccessDenied';
+            return `${deniedRedirect}${deniedRedirect.includes('?') ? '&' : '?'}reason=club_membership_check_failed`;
+          }
+        }
+
         return true;
       },
     },

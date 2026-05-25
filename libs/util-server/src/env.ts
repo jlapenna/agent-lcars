@@ -25,6 +25,22 @@ export const getSlackQbpAnnounceChannel = () =>
 export const isSlackAdmin = (slackId: string) =>
   splitEnvList('SLACK_ADMINS').includes(slackId);
 
+export const getAdminEmails = (): string[] => {
+  const envEmails = splitEnvList('ADMIN_EMAILS');
+  if (envEmails.length > 0) {
+    return envEmails.map((email) => email.toLowerCase().trim());
+  }
+  return [
+    'jlapenna@supersprinkles.racing',
+    'haley@supersprinkles.racing',
+    'liz@supersprinkles.racing',
+  ];
+};
+
+export const isAdminEmail = (email: string): boolean => {
+  return getAdminEmails().includes(email.toLowerCase().trim());
+};
+
 export const getSlackLogLevel = () => optional('SLACK_LOG_LEVEL');
 
 export const getLogLevel = () => optional('LOG_LEVEL');

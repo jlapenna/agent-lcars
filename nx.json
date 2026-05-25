@@ -52,7 +52,11 @@
       "options": {
         "targetName": "test"
       },
-      "exclude": ["apps/e2e-bot/**/*", "apps/e2e-tasks/**/*"]
+      "exclude": [
+        "apps/e2e-bot/**/*",
+        "apps/e2e-tasks/**/*",
+        "apps/e2e-onecake-backend/**/*"
+      ]
     },
     {
       "plugin": "@naxodev/gonx",

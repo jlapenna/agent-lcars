@@ -38,7 +38,6 @@ export default function LoginForm({
           userId: e2eTestingUser || 'IMPERSONATE',
           name: 'Mock Admin',
           email: 'admin@supersprinkles.racing',
-          isAdmin: 'true',
         });
       } else {
         await signIn('slack', { callbackUrl: '/onboarding' });

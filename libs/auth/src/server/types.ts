@@ -56,12 +56,6 @@ declare module 'next-auth' {
   interface User {
     /** Slack-specific user data */
     slack?: SlackUser;
-    /** Onboarding and compliance gates */
-    onboarding?: {
-      hasAcceptedWaiver: boolean;
-      hasCompletedProfile: boolean;
-      isStravaConnected: boolean;
-    };
   }
 
   /**

@@ -563,6 +563,8 @@ importers:
         specifier: workspace:*
         version: link:../../libs/util
 
+  apps/e2e-onecake: {}
+
   apps/e2e-tasks:
     dependencies:
       '@members/logging':
@@ -573,6 +575,8 @@ importers:
         version: link:../../libs/util
 
   apps/e2e-web: {}
+
+  apps/onecake: {}
 
   apps/tasks: {}
 

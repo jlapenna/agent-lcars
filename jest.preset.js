@@ -127,4 +127,9 @@ module.exports = {
       'libs/export-sheets/src/$1',
     ),
   },
+  maxWorkers: process.env.JEST_MAX_WORKERS
+    ? isNaN(process.env.JEST_MAX_WORKERS)
+      ? process.env.JEST_MAX_WORKERS
+      : parseInt(process.env.JEST_MAX_WORKERS, 10)
+    : undefined,
 };
