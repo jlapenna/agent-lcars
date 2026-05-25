@@ -14,7 +14,11 @@ export type LogFormatter = (args: unknown[]) => string;
 let logEnricher: LogEnricher = () => ({});
 let logFormatter: LogFormatter = (args: unknown[]) =>
   args
-    .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))
+    .map((arg) => {
+      if (typeof arg === 'string') return arg;
+      if (arg instanceof Error) return arg.stack || arg.message;
+      return JSON.stringify(arg);
+    })
     .join(' ');
 
 let defaultLogLevelGetter: () => string | undefined = () =>
