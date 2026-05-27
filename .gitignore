@@ -118,3 +118,6 @@ apps/agent/agent
 
 .claude/worktrees
 .claude/settings.local.json
+
+# E2E Auth Storage State
+.auth/
