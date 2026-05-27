@@ -4,7 +4,9 @@
 set -eo pipefail
 
 # Increase memory limit to prevent OOM errors during large builds/tests
-export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=8192"
+if [[ "$NODE_OPTIONS" != *"--max-old-space-size"* ]]; then
+  export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=8192"
+fi
 
 # Use pnpm exec to ensure we use the workspace-local nx version.
 if command -v pnpm >/dev/null 2>&1; then
