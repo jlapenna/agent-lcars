@@ -34,7 +34,7 @@ importers:
         version: 5.4.0
       '@google/genai':
         specifier: ^2.0.0
-        version: 2.6.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
+        version: 2.7.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       '@mantine/charts':
         specifier: ^9.0.2
         version: 9.2.2(@mantine/core@9.2.2(@mantine/hooks@9.2.2(react@19.2.6))(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(@mantine/hooks@9.2.2(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(recharts@3.8.1(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@19.2.6)(react@19.2.6)(redux@5.0.1))
@@ -2085,8 +2085,8 @@ packages:
     resolution: {integrity: sha512-x2XUslYOzWGxP/Fox0nicmJAcqHBpv1Ji4kGQayxHfQExrvMYbSkSZx7zcQPeF+LHtiZg7/CYpKGx8mO0XoUgw==}
     engines: {node: '>=10'}
 
-  '@google/genai@2.6.0':
-    resolution: {integrity: sha512-HjoW3mPuEn7pnuKABJl9VbDoWDSF4nbwYKYvYYor7YjPeDxrrBxHzu2d1Prcd+BAuC4w+85UP6y7ZdcrQAoO7g==}
+  '@google/genai@2.7.0':
+    resolution: {integrity: sha512-tv0DRtcndt2oEhBYy+5mA0TaXH98+L1Gt0AP9unBfH7DP20KhB7+O3QqAN1Lz+laMARGTHS7BFQSNpLbl4gm1g==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -14038,7 +14038,7 @@ snapshots:
 
   '@google/events@5.4.0': {}
 
-  '@google/genai@2.6.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
+  '@google/genai@2.7.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:
       google-auth-library: 10.6.2
       p-retry: 4.6.2
