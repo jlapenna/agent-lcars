@@ -61,7 +61,7 @@
     "firebase-functions": "^7.2.5",
     "google-auth-library": "^10.6.2",
     "google-gax": "5.0.6",
-    "googleapis": "^171.4.0",
+    "googleapis": "^172.0.0",
     "ical": "^0.8.0",
     "js-yaml": "^4.1.1",
     "json-diff-ts": "^4.10.4",
