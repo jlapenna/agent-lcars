@@ -176,10 +176,8 @@ export async function ensureAuthJsUserForSlack(
       if (userDoc.exists && user) {
         // Backfill the missing slack.id so we don't have to fallback again
         await userDoc.ref.update({
-          slack: {
-            id: slackUser.id,
-            teamId: slackUser.teamId,
-          },
+          'slack.id': slackUser.id,
+          ...(slackUser.teamId && { 'slack.teamId': slackUser.teamId }),
         });
 
         return user;
@@ -195,10 +193,8 @@ export async function ensureAuthJsUserForSlack(
       if (userDoc.exists) {
         // Backfill the missing slack.id so we don't have to fallback again
         await userDoc.ref.update({
-          slack: {
-            id: slackUser.id,
-            teamId: slackUser.teamId,
-          },
+          'slack.id': slackUser.id,
+          ...(slackUser.teamId && { 'slack.teamId': slackUser.teamId }),
         });
         return userDoc.data() as AuthJsUser;
       }
@@ -289,7 +285,7 @@ export async function updateAuthJsAccount(
   data: Partial<AuthJsAccount>,
   transaction?: Transaction,
 ) {
-  const ref = firestore.collection('services/authjs/accounts').doc(accountId);
+  const ref = getAccountsCollection(firestore).doc(accountId);
 
   if (transaction) {
     transaction.update(ref, data as unknown as UpdateData<AuthJsAccount>);
@@ -306,7 +302,7 @@ export async function deleteAuthJsAccount(
   accountId: string,
   transaction?: Transaction,
 ) {
-  const ref = firestore.collection('services/authjs/accounts').doc(accountId);
+  const ref = getAccountsCollection(firestore).doc(accountId);
 
   if (transaction) {
     transaction.delete(ref);

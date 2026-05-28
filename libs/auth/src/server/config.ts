@@ -361,21 +361,51 @@ export const getAuthConfig = async (
           let isStravaConnected = false;
 
           try {
-            const [stravaAccount, riderProfileDoc] = await Promise.all([
-              // Auth.js accounts are linked to the internal Auth.js ID (UUID or Slack ID)
-              getAuthJsAccount(firestore, internalId, 'strava'),
-              // Business logic (riders) is always linked to the canonical ID (Slack ID)
-              firestore.collection('user-profiles').doc(session.user.id).get(),
-            ]);
+            const stravaAccountPromise = getAuthJsAccount(
+              firestore,
+              internalId,
+              'strava',
+            );
 
-            isStravaConnected = !!stravaAccount;
+            let riderProfileDoc = await firestore
+              .collection('user-profiles')
+              .doc(session.user.id)
+              .get();
+
+            console.error(
+              `[E2E DEBUG] NextAuth session callback: reading user-profiles/${session.user.id}. Exists: ${riderProfileDoc.exists}`,
+            );
+
+            if (
+              !riderProfileDoc.exists &&
+              slackData?.id &&
+              slackData.id !== session.user.id
+            ) {
+              riderProfileDoc = await firestore
+                .collection('user-profiles')
+                .doc(slackData.id)
+                .get();
+              console.error(
+                `[E2E DEBUG] NextAuth session callback: fallback reading user-profiles/${slackData.id}. Exists: ${riderProfileDoc.exists}`,
+              );
+            }
 
             if (riderProfileDoc.exists) {
               const riderProfile = riderProfileDoc.data();
+              console.error(
+                `[E2E DEBUG] NextAuth session callback: Profile data: ${JSON.stringify(riderProfile)}`,
+              );
               hasCompletedProfile =
                 !!riderProfile?.contact?.phoneNumber &&
                 !!riderProfile?.emergencyContact?.name;
+              console.error(
+                `[E2E DEBUG] NextAuth session callback: hasCompletedProfile evaluated to ${hasCompletedProfile}`,
+              );
             }
+
+            const stravaAccount = await stravaAccountPromise;
+
+            isStravaConnected = !!stravaAccount;
           } catch (error) {
             logger.error('Failed to check onboarding status:', error);
           }

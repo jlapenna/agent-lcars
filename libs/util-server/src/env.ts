@@ -10,6 +10,7 @@ export const getEnvNodeEnv = () => optional('NODE_ENV');
 /** @deprecated Use specific helpers like isDotEnvSecrets, isMockAuthEnabled, etc. */
 export const isTest = () => getEnvNodeEnv() === 'test';
 export const isProduction = () => getEnvNodeEnv() === 'production';
+export const isMaintenanceMode = () => process.env.MAINTENANCE_MODE === 'true';
 
 export const getSlackAdditionalChannels = () =>
   splitEnvList('SLACK_STAFF_ADDITIONAL_CHANNELS_LIST');
