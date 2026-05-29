@@ -127,7 +127,7 @@
     "@babel/core": "^7.14.5",
     "@babel/preset-react": "^7.14.5",
     "@eslint/js": "^10.0.1",
-    "@eslint/json": "^1.2.0",
+    "@eslint/json": "^2.0.0",
     "@eslint/markdown": "^8.0.1",
     "@jest/globals": "^30.3.0",
     "@naxodev/gonx": "^3.0.0",
