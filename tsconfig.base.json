@@ -32,7 +32,6 @@
       "@members/util/*": ["libs/util/src/*"],
       "@members/jsx": ["libs/jsx/src/index.ts"],
       "@members/jsx/*": ["libs/jsx/src/*"],
-      "@/*": ["apps/web/src/*"],
       "@members/app": ["./libs/app/src/index.ts"],
       "@members/chores": ["./libs/chores/src/index.ts"],
       "@members/chores/*": ["./libs/chores/src/*"],
@@ -81,7 +80,8 @@
       "@members/dummy2": ["./dummy2/src/index.ts"],
       "@members/util-server": ["libs/util-server/src/index.ts"],
       "@members/util-server/*": ["libs/util-server/src/*"],
-      "@members/cli/*": ["apps/cli/src/*"]
+      "@members/cli/*": ["apps/cli/src/*"],
+      "@members/stripe": ["libs/stripe/src/index.ts"]
     }
   }
 }
