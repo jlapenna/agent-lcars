@@ -705,7 +705,11 @@ importers:
 
   libs/strava: {}
 
-  libs/stripe: {}
+  libs/stripe:
+    dependencies:
+      '@members/env':
+        specifier: workspace:*
+        version: link:../env-vars
 
   libs/test-utils: {}
 
