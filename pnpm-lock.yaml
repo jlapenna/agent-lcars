@@ -85,10 +85,10 @@ importers:
         version: 7.16.0
       '@stripe/react-stripe-js':
         specifier: ^5.6.1
-        version: 5.6.1(@stripe/stripe-js@8.11.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 5.6.1(@stripe/stripe-js@9.7.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@stripe/stripe-js':
-        specifier: ^8.11.0
-        version: 8.11.0
+        specifier: ^9.0.0
+        version: 9.7.0
       '@tabler/icons-react':
         specifier: ^3.41.1
         version: 3.44.0(react@19.2.6)
@@ -4772,8 +4772,8 @@ packages:
       react: '>=16.8.0 <20.0.0'
       react-dom: '>=16.8.0 <20.0.0'
 
-  '@stripe/stripe-js@8.11.0':
-    resolution: {integrity: sha512-3fVF4z3efsgwgyj64nFK+6F4/vMw0mUXD2TBbOfftJtKVNx4JNv3CSfe1fY4DCtCk0JFp8/YPNcRkzgV0HJ8cg==}
+  '@stripe/stripe-js@9.7.0':
+    resolution: {integrity: sha512-r1ElolvWXM4aYnZZVHvKW3EDL8JcwEuIgTuWxlB5lvC+YsvjkQ0gX35x9d8dTDubX395fViLVqkaolVs1PmIQQ==}
     engines: {node: '>=12.16'}
 
   '@svgr/babel-plugin-add-jsx-attribute@8.0.0':
@@ -18373,14 +18373,14 @@ snapshots:
 
   '@standard-schema/utils@0.3.0': {}
 
-  '@stripe/react-stripe-js@5.6.1(@stripe/stripe-js@8.11.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@stripe/react-stripe-js@5.6.1(@stripe/stripe-js@9.7.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@stripe/stripe-js': 8.11.0
+      '@stripe/stripe-js': 9.7.0
       prop-types: 15.8.1
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
 
-  '@stripe/stripe-js@8.11.0': {}
+  '@stripe/stripe-js@9.7.0': {}
 
   '@svgr/babel-plugin-add-jsx-attribute@8.0.0(@babel/core@7.29.7)':
     dependencies:
