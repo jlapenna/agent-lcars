@@ -221,7 +221,7 @@
     "readdirp": "^5.0.0",
     "rollup": "^4.14.0",
     "source-map": "^0.7.6",
-    "stylelint": "^16.26.1",
+    "stylelint": "^17.0.0",
     "stylelint-config-standard": "^40.0.0",
     "taze": "^19.11.0",
     "ts-jest": "^29.4.9",
