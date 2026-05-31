@@ -113,8 +113,7 @@
       "options": {
         "silent": true,
         "forceExit": true,
-        "passWithNoTests": true,
-        "runInBand": true
+        "passWithNoTests": true
       }
     },
     "e2e": {
