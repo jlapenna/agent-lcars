@@ -46,6 +46,7 @@ declare module 'next-auth' {
         hasAcceptedWaiver: boolean;
         hasCompletedProfile: boolean;
         isStravaConnected: boolean;
+        hasActiveMembership: boolean;
       };
     } & DefaultSession['user'];
   }

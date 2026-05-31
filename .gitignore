@@ -121,3 +121,4 @@ apps/agent/agent
 
 # E2E Auth Storage State
 .auth/
+.worktrees

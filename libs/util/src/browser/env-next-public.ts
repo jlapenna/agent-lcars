@@ -55,3 +55,6 @@ export const getAnalyticsId = () =>
 
 export const getNextPublicFirebaseAuthEmulatorHost = () =>
   sanitize(process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST);
+
+export const getNextPublicStripePublishableKey = () =>
+  sanitize(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) || '';

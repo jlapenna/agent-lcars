@@ -60,6 +60,7 @@ async function getMockSession(userId: string): Promise<Session> {
         hasAcceptedWaiver: true,
         hasCompletedProfile: true,
         isStravaConnected: false,
+        hasActiveMembership: true,
       },
       slack: {
         id: userId,

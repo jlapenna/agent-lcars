@@ -157,6 +157,9 @@ export interface EnvVars {
   AUTH_SECRET?: string; // Secret
   AUTH_URL?: string;
 
+  STRIPE_SECRET_KEY?: string; // Secret
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?: string;
+
   ATTENDANCE_ENABLED?: string;
 
   E2E_TESTING_USER?: string;

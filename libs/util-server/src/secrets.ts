@@ -94,16 +94,24 @@ export async function upsertSecret(
   } catch (error: unknown) {
     const err = error as { code?: number };
     if (err.code === 5) {
-      // Secret doesn't exist (NOT_FOUND), create it
-      await client.createSecret({
-        parent,
-        secretId,
-        secret: {
-          replication: {
-            automatic: {},
+      // Secret doesn't exist (NOT_FOUND), try to create it
+      try {
+        await client.createSecret({
+          parent,
+          secretId,
+          secret: {
+            replication: {
+              automatic: {},
+            },
           },
-        },
-      });
+        });
+      } catch (createErr: unknown) {
+        const cErr = createErr as { code?: number };
+        // If it actually already exists (e.g. race condition or soft-deleted mismatch), just proceed to add version
+        if (cErr.code !== 6) {
+          throw createErr;
+        }
+      }
 
       await client.addSecretVersion({
         parent: secretName,
@@ -112,7 +120,7 @@ export async function upsertSecret(
         },
       });
 
-      logger.info(`✅ Created secret: ${secretId}`);
+      logger.info(`✅ Created/Updated secret: ${secretId}`);
       return 'created';
     }
 

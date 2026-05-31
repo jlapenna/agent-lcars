@@ -345,3 +345,5 @@ export const getSlackStateSecret = () => optional('SLACK_STATE_SECRET');
 export const getSlackTeamId = () => optional('SLACK_TEAM_ID');
 
 export const getCloudTasksLocation = () => optional('CLOUD_TASKS_LOCATION');
+
+export const getStripeSecretKey = () => optional('STRIPE_SECRET_KEY');

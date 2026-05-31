@@ -359,6 +359,7 @@ export const getAuthConfig = async (
           // Populate Onboarding Status
           let hasCompletedProfile = false;
           let isStravaConnected = false;
+          let hasActiveMembership = false;
 
           try {
             const stravaAccountPromise = getAuthJsAccount(
@@ -398,6 +399,8 @@ export const getAuthConfig = async (
               hasCompletedProfile =
                 !!riderProfile?.contact?.phoneNumber &&
                 !!riderProfile?.emergencyContact?.name;
+              hasActiveMembership =
+                riderProfile?.membership?.status === 'Active';
               console.error(
                 `[E2E DEBUG] NextAuth session callback: hasCompletedProfile evaluated to ${hasCompletedProfile}`,
               );
@@ -417,6 +420,7 @@ export const getAuthConfig = async (
                 0) >= REQUIRED_WAIVER_VERSION,
             hasCompletedProfile,
             isStravaConnected,
+            hasActiveMembership,
           };
 
           if (slackData) {
