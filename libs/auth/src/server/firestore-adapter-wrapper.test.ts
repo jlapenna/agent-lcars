@@ -56,6 +56,7 @@ jest.mock('@members/util-server', () => ({
   getLogLevel: jest.fn().mockReturnValue('debug'),
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
   isSlackAdmin: jest.fn().mockReturnValue(false),
+  getProjectId: jest.fn().mockReturnValue('demo-project'),
 }));
 
 jest.mock('@members/util/browser', () => ({

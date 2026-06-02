@@ -96,6 +96,7 @@ jest.mock('@members/util-server', () => ({
       'liz@supersprinkles.racing',
     ].includes(email);
   }),
+  getProjectId: jest.fn().mockReturnValue('demo-project'),
 }));
 
 jest.mock('@members/util/browser', () => ({
