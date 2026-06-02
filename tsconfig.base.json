@@ -81,7 +81,8 @@
       "@members/util-server": ["libs/util-server/src/index.ts"],
       "@members/util-server/*": ["libs/util-server/src/*"],
       "@members/cli/*": ["apps/cli/src/*"],
-      "@members/stripe": ["libs/stripe/src/index.ts"]
+      "@members/stripe": ["libs/stripe/src/index.ts"],
+      "@members/app-providers": ["./libs/app-providers/src/index.ts"]
     }
   }
 }
