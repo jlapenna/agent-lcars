@@ -109,7 +109,7 @@
       "inputs": ["production", "^production"]
     },
     "test": {
-      "dependsOn": [],
+      "dependsOn": ["^build"],
       "options": {
         "silent": true,
         "forceExit": true,
@@ -117,7 +117,7 @@
       }
     },
     "e2e": {
-      "dependsOn": []
+      "dependsOn": ["^build"]
     },
     "@nx/js:tsc": {
       "cache": true,
