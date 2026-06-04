@@ -132,4 +132,5 @@ module.exports = {
       ? process.env.JEST_MAX_WORKERS
       : parseInt(process.env.JEST_MAX_WORKERS, 10)
     : 1,
+  workerIdleMemoryLimit: '512MB',
 };

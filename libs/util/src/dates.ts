@@ -1,3 +1,4 @@
+import { formatDistanceToNow } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 
 // Intl.DateTimeFormat can cause hydration mismatches due to differences in ICU data
@@ -122,4 +123,84 @@ export function formatTimestampAsDate(
   if (!(date instanceof Date) || isNaN(date.getTime())) return undefined;
 
   return formatInTimeZone(date, 'UTC', 'yyyy-MM-dd');
+}
+
+export function getISODateFromDate(value: TimestampLike) {
+  const date = getDateFromTimestamp(value);
+  return date && !isNaN(date.getTime()) ? date.toISOString() : undefined;
+}
+
+export const formatDateUrl = formatTimestampAsDate;
+
+function withDate(formatString: string) {
+  return (value: TimestampLike, timeZone = 'UTC') => {
+    const dateObj = getDateFromTimestamp(value);
+    if (!dateObj || isNaN(dateObj.getTime())) return '';
+    return formatInTimeZone(dateObj, timeZone, formatString);
+  };
+}
+
+export const formatDateLong = withDate('PPP');
+export const formatTime = withDate('p');
+export const formatDateShortPrimes = withDate('PP');
+export const formatDateTime = withDate('PP p');
+
+export function formatDateRange(
+  startDate: TimestampLike,
+  endDate: TimestampLike,
+  timeZone?: string,
+) {
+  const start = getDateFromTimestamp(startDate);
+  if (!start || isNaN(start.getTime())) return '';
+
+  const end = getDateFromTimestamp(endDate);
+
+  if (end && !isNaN(end.getTime()) && start.getTime() > end.getTime()) {
+    throw new Error('End date cannot be before start date');
+  }
+
+  const formatFn = (d: Date) => formatDateShortPrimes(d, timeZone);
+
+  if (end && !isNaN(end.getTime()) && formatFn(start) === formatFn(end)) {
+    return formatFn(start);
+  }
+
+  if (end && !isNaN(end.getTime())) {
+    return `${formatFn(start)} - ${formatFn(end)}`;
+  }
+
+  return formatFn(start);
+}
+
+export function formatDateRelative(
+  value: TimestampLike,
+  options?: { addSuffix?: boolean },
+) {
+  const dateObj = getDateFromTimestamp(value);
+  if (!dateObj || isNaN(dateObj.getTime())) return '';
+  // date-fns formatDistanceToNow is imported dynamically to avoid hydration issues if needed
+  // but let's just use it natively.
+  return formatDistanceToNow(dateObj, options);
+}
+
+export function compareDates(
+  a: TimestampLike,
+  b: TimestampLike,
+  order: 'asc' | 'desc' = 'desc',
+) {
+  const dateA = getDateFromTimestamp(a)?.getTime() ?? 0;
+  const dateB = getDateFromTimestamp(b)?.getTime() ?? 0;
+
+  if (order === 'asc') {
+    return dateA - dateB;
+  }
+
+  return dateB - dateA;
+}
+
+export function isDateAfter(date: TimestampLike, dateToCompare: TimestampLike) {
+  const a = getDateFromTimestamp(date);
+  const b = getDateFromTimestamp(dateToCompare);
+  if (!a || !b || isNaN(a.getTime()) || isNaN(b.getTime())) return false;
+  return a.getTime() > b.getTime();
 }
