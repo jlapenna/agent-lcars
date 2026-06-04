@@ -26,8 +26,7 @@
       "@members/youtube/*": ["libs/youtube/src/*"],
       "@members/squareup": ["libs/squareup/src/index.ts"],
       "@members/squareup/*": ["libs/squareup/src/*"],
-      "@members/mail": ["libs/mail/src/index.ts"],
-      "@members/mail/*": ["libs/mail/src/*"],
+
       "@members/util": ["libs/util/src/index.ts"],
       "@members/util/*": ["libs/util/src/*"],
       "@members/jsx": ["libs/jsx/src/index.ts"],

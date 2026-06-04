@@ -76,8 +76,7 @@ module.exports = {
     '^@members/firestore$': path.join(__dirname, 'libs/firestore/src/index.ts'),
     '^@members/firestore/(.*)$': path.join(__dirname, 'libs/firestore/src/$1'),
     '^@members/google$': path.join(__dirname, 'libs/google/src/index.ts'),
-    '^@members/mail$': path.join(__dirname, 'libs/mail/src/index.ts'),
-    '^@members/mail/(.*)$': path.join(__dirname, 'libs/mail/src/$1'),
+
     '^@members/races$': path.join(__dirname, 'libs/races/src/index.ts'),
     '^@members/races/(.*)$': path.join(__dirname, 'libs/races/src/$1'),
     '^@members/rag$': path.join(__dirname, 'libs/rag/src/index.ts'),
