@@ -6,7 +6,7 @@ module.exports = {
   ...nxPreset,
   testMatch: ['**/?(*.)+(spec|test).[jt]s?(x)'],
   transformIgnorePatterns: [
-    'node_modules/(?!.*(?:uuid|cls-rtracer|md-to-slack|marked|p-limit|yocto-queue|p-wait-for|p-timeout|superjson|copy-anything|is-what|commander))',
+    'node_modules/(?!.*(?:uuid|cls-rtracer|md-to-slack|marked|p-limit|yocto-queue|p-wait-for|p-timeout|superjson|copy-anything|is-what|commander|next-auth|@auth/core))',
   ],
   moduleNameMapper: {
     'server-only': path.join(
@@ -124,6 +124,11 @@ module.exports = {
     '^@members/export-sheets/(.*)$': path.join(
       __dirname,
       'libs/export-sheets/src/$1',
+    ),
+    '^@members/stripe$': path.join(__dirname, 'libs/stripe/src/index.ts'),
+    '^@members/app-providers$': path.join(
+      __dirname,
+      'libs/app-providers/src/index.ts',
     ),
   },
   maxWorkers: process.env.JEST_MAX_WORKERS

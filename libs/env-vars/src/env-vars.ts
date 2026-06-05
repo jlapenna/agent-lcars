@@ -205,4 +205,8 @@ export interface EnvVars {
   IMPERSONATE?: string;
   /** Dev only */
   IMPERSONATE_AUTOMATIC_LOGIN?: string;
+
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  STRIPE_WEBHOOK_SECRET?: string; // Secret
 }

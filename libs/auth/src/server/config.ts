@@ -22,6 +22,8 @@ import { getSecrets as getStravaSecrets } from '@members/strava';
 import { getNextPublicSlackClientId } from '@members/util/browser';
 import { enableTestingHandlers, getProjectId } from '@members/util-server';
 import {
+  getGoogleClientId,
+  getGoogleClientSecret,
   getLogLevel,
   getSlackTeamId,
   getStravaClubId,
@@ -31,6 +33,7 @@ import {
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';
 import Credentials from 'next-auth/providers/credentials';
+import GoogleProvider from 'next-auth/providers/google';
 import Slack from 'next-auth/providers/slack';
 import Strava from 'next-auth/providers/strava';
 import { z } from 'zod';
@@ -66,9 +69,10 @@ interface AppJWT {
 }
 
 export interface AuthConfigOptions {
-  providers?: ('slack' | 'strava')[];
+  providers?: ('slack' | 'strava' | 'google')[];
   /** When true, validates that the Strava athlete is a member of the expected club. */
   requireClubMembership?: boolean;
+  allowedEmails?: string[];
 }
 
 export const getAuthConfig = async (
@@ -131,6 +135,19 @@ export const getAuthConfig = async (
         },
       }),
     );
+  }
+
+  if (requestedProviders.includes('google')) {
+    const googleId = getGoogleClientId();
+    const googleSecret = getGoogleClientSecret();
+    if (googleId && googleSecret) {
+      providers.push(
+        GoogleProvider({
+          clientId: googleId,
+          clientSecret: googleSecret,
+        }),
+      );
+    }
   }
 
   // Conditionally add Credentials provider for testing and local development
@@ -495,6 +512,23 @@ export const getAuthConfig = async (
               `Rejecting sign-in from incorrect Slack team: ${teamId} (expected ${slackTeamId})`,
             );
             return false;
+          }
+        }
+
+        if (account?.provider === 'google') {
+          if (options?.allowedEmails && user.email) {
+            const allowed = options.allowedEmails.map((e) =>
+              e.toLowerCase().trim(),
+            );
+            if (
+              !allowed.includes(user.email.toLowerCase().trim()) &&
+              !enableTestingHandlers()
+            ) {
+              logger.warn(
+                `Rejecting Google sign-in: ${user.email} is not in allowed list`,
+              );
+              return false;
+            }
           }
         }
 

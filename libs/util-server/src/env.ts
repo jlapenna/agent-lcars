@@ -347,3 +347,9 @@ export const getSlackTeamId = () => optional('SLACK_TEAM_ID');
 export const getCloudTasksLocation = () => optional('CLOUD_TASKS_LOCATION');
 
 export const getStripeSecretKey = () => optional('STRIPE_SECRET_KEY');
+
+export const getStripeWebhookSecret = () => optional('STRIPE_WEBHOOK_SECRET');
+
+export const getGoogleClientId = () => optional('GOOGLE_CLIENT_ID');
+
+export const getGoogleClientSecret = () => optional('GOOGLE_CLIENT_SECRET');
