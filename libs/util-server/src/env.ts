@@ -87,9 +87,9 @@ export function enableFirestoreRequestLogging(): boolean {
   return isTrue('ENABLE_FIRESTORE_REQUEST_LOGGING');
 }
 
-export const isImpersonate = () => isDefined(optional('IMPERSONATE'));
+export const isImpersonate = () => isTrue('IMPERSONATE');
 export const isImpersonateAutomaticLogin = () =>
-  isDefined(optional('IMPERSONATE_AUTOMATIC_LOGIN'));
+  isTrue('IMPERSONATE_AUTOMATIC_LOGIN');
 export const getE2eTestingUser = () => optional('E2E_TESTING_USER');
 
 export const isMockAuthEnabled = () =>
