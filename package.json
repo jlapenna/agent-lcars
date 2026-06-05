@@ -1,7 +1,7 @@
 {
   "name": "@members/source",
   "version": "0.0.0",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
     "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
     "prepare": "if [ -z \"$CI\" ]; then pnpm exec husky; fi",
