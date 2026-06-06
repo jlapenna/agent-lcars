@@ -1,5 +1,5 @@
 {
-  "name": "env",
+  "name": "@members/env",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/env-vars/src",
   "projectType": "library",
