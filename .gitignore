@@ -52,6 +52,7 @@ firebase-debug.log
 
 # NX
 .nx/
+graph.json
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
 apps/web/next-env.d.ts
