@@ -123,3 +123,6 @@ apps/agent/agent
 # E2E Auth Storage State
 .auth/
 .worktrees
+
+# Containerized e2e: isolated node_modules / pnpm store / nx cache
+.cache/e2e-docker/

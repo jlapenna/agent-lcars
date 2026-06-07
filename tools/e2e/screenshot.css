@@ -1,0 +1,33 @@
+/*
+ * Injected into every `toHaveScreenshot` comparison (via the `stylePath`
+ * option in each app's playwright.config.ts) to remove common sources of
+ * pixel noise that aren't real visual changes.
+ *
+ * Specs can hide inherently-dynamic content (timestamps, "x minutes ago",
+ * avatars, generated ids) from screenshots by marking the element with
+ * `data-screenshot="hide"` in the app markup.
+ */
+
+/* Kill any residual animation/transition (belt-and-suspenders with
+   `reducedMotion: 'reduce'`) so captures are stable regardless of timing. */
+*,
+*::before,
+*::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+  /* A blinking text caret is a frequent 1-2px flake on form pages. */
+  caret-color: transparent !important;
+}
+
+/* Scrollbars render differently across environments; hide them. */
+::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* Opt-in masking for dynamic content. */
+[data-screenshot='hide'] {
+  visibility: hidden !important;
+}
