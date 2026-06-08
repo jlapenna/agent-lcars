@@ -173,6 +173,7 @@ export interface EnvVars {
 
   STRAVA_CLUB_ID?: string;
   STRAVA_IGNORE_ATHLETE_IDS?: string;
+  ALLOWED_STRAVA_ATHLETE_IDS?: string;
 
   FIRESTORE_BATCH_SIZE?: string;
   FIRESTORE_WRITE_BATCH_SIZE?: string;
