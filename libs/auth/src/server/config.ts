@@ -25,15 +25,22 @@ import {
   getGoogleClientId,
   getGoogleClientSecret,
   getLogLevel,
+  getMailFrom,
+  getOptionalMailPassword,
+  getOptionalMailPort,
+  getOptionalMailServer,
+  getOptionalMailUser,
   getSlackTeamId,
   getStravaClubId,
   isAdminEmail,
+  isMailConfigured,
   isSlackAdmin,
 } from '@members/util-server';
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';
 import Credentials from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
+import Nodemailer from 'next-auth/providers/nodemailer';
 import Slack from 'next-auth/providers/slack';
 import Strava from 'next-auth/providers/strava';
 import { z } from 'zod';
@@ -69,10 +76,17 @@ interface AppJWT {
 }
 
 export interface AuthConfigOptions {
-  providers?: ('slack' | 'strava' | 'google')[];
+  providers?: ('slack' | 'strava' | 'google' | 'email')[];
   /** When true, validates that the Strava athlete is a member of the expected club. */
   requireClubMembership?: boolean;
+  /** Allowlist gating email-bearing providers (google, email). */
   allowedEmails?: string[];
+  /**
+   * Allowlist gating Strava sign-in by athlete ID. Strava returns no email, so
+   * it cannot be gated by `allowedEmails`. When provided, only these athlete IDs
+   * may sign in via Strava.
+   */
+  allowedStravaAthleteIds?: string[];
 }
 
 export const getAuthConfig = async (
@@ -146,6 +160,33 @@ export const getAuthConfig = async (
           clientId: googleId,
           clientSecret: googleSecret,
         }),
+      );
+    }
+  }
+
+  if (requestedProviders.includes('email')) {
+    // Magic-link sign-in over SMTP (Google Workspace relay). Self-disables when
+    // SMTP is not fully configured so Google/Strava keep working in environments
+    // where the MAIL_* secrets are not yet provisioned.
+    if (isMailConfigured()) {
+      providers.push(
+        Nodemailer({
+          id: 'email',
+          name: 'Email',
+          from: getMailFrom(),
+          server: {
+            host: getOptionalMailServer(),
+            port: Number(getOptionalMailPort()),
+            auth: {
+              user: getOptionalMailUser(),
+              pass: getOptionalMailPassword(),
+            },
+          },
+        }),
+      );
+    } else {
+      logger.warn(
+        'getAuthConfig: email provider requested but SMTP is not fully configured; skipping magic-link provider.',
       );
     }
   }
@@ -515,20 +556,40 @@ export const getAuthConfig = async (
           }
         }
 
-        if (account?.provider === 'google') {
-          if (options?.allowedEmails && user.email) {
-            const allowed = options.allowedEmails.map((e) =>
-              e.toLowerCase().trim(),
+        // Strava returns no email, so gate it by athlete ID instead. When a
+        // Strava allowlist is configured, only those athlete IDs may sign in.
+        const stravaIdGated =
+          account?.provider === 'strava' && !!options?.allowedStravaAthleteIds;
+        if (stravaIdGated && !enableTestingHandlers()) {
+          const allowedIds = (options?.allowedStravaAthleteIds ?? []).map(
+            (id) => id.toString().trim(),
+          );
+          const athleteId = account?.providerAccountId?.toString().trim();
+          if (!athleteId || !allowedIds.includes(athleteId)) {
+            logger.warn(
+              `Rejecting Strava sign-in: athlete ${athleteId ?? '(unknown)'} is not in the allowed list`,
             );
-            if (
-              !allowed.includes(user.email.toLowerCase().trim()) &&
-              !enableTestingHandlers()
-            ) {
-              logger.warn(
-                `Rejecting Google sign-in: ${user.email} is not in allowed list`,
-              );
-              return false;
-            }
+            return false;
+          }
+        }
+
+        // Email-bearing providers (google, magic-link email) are gated by the
+        // email allowlist. Strava is excluded here since it carries no email and
+        // is handled by the athlete-ID gate above.
+        if (
+          options?.allowedEmails &&
+          !enableTestingHandlers() &&
+          !stravaIdGated
+        ) {
+          const allowed = options.allowedEmails.map((e) =>
+            e.toLowerCase().trim(),
+          );
+          const email = user.email?.toLowerCase().trim();
+          if (!email || !allowed.includes(email)) {
+            logger.warn(
+              `Rejecting ${account?.provider ?? 'unknown'} sign-in: ${user.email ?? '(no email)'} is not in the allowed list`,
+            );
+            return false;
           }
         }
 
@@ -623,7 +684,7 @@ export const getAuthConfig = async (
      * - newUser: '/auth/new-user'
      */
     pages: {
-      // signIn: '/auth/signin', // Uncomment to use custom sign-in page
+      signIn: enableTestingHandlers() ? undefined : '/login',
       newUser: '/onboarding',
     },
 

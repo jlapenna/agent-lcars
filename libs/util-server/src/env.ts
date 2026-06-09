@@ -158,6 +158,13 @@ export const getStravaClubId = () => optional('STRAVA_CLUB_ID');
 export const getStravaIgnoreAthleteIds = () =>
   splitEnvList('STRAVA_IGNORE_ATHLETE_IDS');
 
+/** Strava athlete IDs allowed to sign in (Strava returns no email to gate on). */
+export const getAllowedStravaAthleteIds = () =>
+  splitEnvList('ALLOWED_STRAVA_ATHLETE_IDS');
+
+/** Emails allowed to sign in via email-bearing providers (google, magic-link). */
+export const getAllowedEmails = () => splitEnvList('ALLOWED_EMAILS');
+
 // Page size and firestore batch size should be the same default value because they are often used in concert.
 export const getFirestoreBatchSize = () =>
   parseInt(optional('FIRESTORE_BATCH_SIZE') ?? '50');
@@ -281,6 +288,20 @@ export const getMailServer = () => required('MAIL_SERVER');
 export const getMailPort = () => required('MAIL_PORT');
 export const getMailUser = () => required('MAIL_USER');
 export const getMailPassword = () => required('MAIL_PASSWORD');
+
+// Optional variants used by the magic-link (email) provider, which self-disables
+// when SMTP is not fully configured rather than throwing at startup.
+export const getOptionalMailServer = () => optional('MAIL_SERVER');
+export const getOptionalMailPort = () => optional('MAIL_PORT');
+export const getOptionalMailUser = () => optional('MAIL_USER');
+export const getOptionalMailPassword = () => optional('MAIL_PASSWORD');
+/** Defaults to MAIL_USER when MAIL_FROM is not explicitly set. */
+export const getMailFrom = () => optional('MAIL_FROM') ?? optional('MAIL_USER');
+export const isMailConfigured = (): boolean =>
+  !!getOptionalMailServer() &&
+  !!getOptionalMailPort() &&
+  !!getOptionalMailUser() &&
+  !!getOptionalMailPassword();
 
 export const getQbpApiKey = () => required('QBP_API_KEY');
 

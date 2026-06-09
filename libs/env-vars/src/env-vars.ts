@@ -148,6 +148,7 @@ export interface EnvVars {
   MAIL_PORT?: string; // Secret
   MAIL_USER?: string; // Secret
   MAIL_PASSWORD?: string; // Secret
+  MAIL_FROM?: string; // Address magic-link emails are sent from
 
   STRAVA_CLIENT_ID?: string; // Secret
   STRAVA_CLIENT_SECRET?: string; // Secret
@@ -174,6 +175,7 @@ export interface EnvVars {
   STRAVA_CLUB_ID?: string;
   STRAVA_IGNORE_ATHLETE_IDS?: string;
   ALLOWED_STRAVA_ATHLETE_IDS?: string;
+  ALLOWED_EMAILS?: string; // Sign-in allowlist for email-bearing providers
 
   FIRESTORE_BATCH_SIZE?: string;
   FIRESTORE_WRITE_BATCH_SIZE?: string;

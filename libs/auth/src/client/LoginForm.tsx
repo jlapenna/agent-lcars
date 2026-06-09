@@ -93,7 +93,10 @@ export default function LoginForm({
                     variant="light"
                     style={{ transform: 'rotate(-10deg)' }}
                   >
-                    <IconCookie style={{ width: rem(32), height: rem(32) }} />
+                    <IconCookie
+                      aria-hidden="true"
+                      style={{ width: rem(32), height: rem(32) }}
+                    />
                   </ThemeIcon>
                   <ThemeIcon
                     size={72}
@@ -101,7 +104,10 @@ export default function LoginForm({
                     color="sprinkles-blue"
                     variant="light"
                   >
-                    <IconCake style={{ width: rem(36), height: rem(36) }} />
+                    <IconCake
+                      aria-hidden="true"
+                      style={{ width: rem(36), height: rem(36) }}
+                    />
                   </ThemeIcon>
                   <ThemeIcon
                     size={64}
@@ -110,12 +116,16 @@ export default function LoginForm({
                     variant="light"
                     style={{ transform: 'rotate(10deg)' }}
                   >
-                    <IconTrophy style={{ width: rem(32), height: rem(32) }} />
+                    <IconTrophy
+                      aria-hidden="true"
+                      style={{ width: rem(32), height: rem(32) }}
+                    />
                   </ThemeIcon>
                 </Group>
 
                 <Stack gap={0} align="center">
                   <Title
+                    textWrap="balance"
                     order={1}
                     className="premium-gradient"
                     ta="center"
