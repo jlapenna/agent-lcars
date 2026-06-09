@@ -159,6 +159,10 @@ export const getAuthConfig = async (
         GoogleProvider({
           clientId: googleId,
           clientSecret: googleSecret,
+          // Google verifies email ownership, so it is safe to link a Google
+          // sign-in to an existing account with the same (e.g. magic-link)
+          // email instead of failing with OAuthAccountNotLinked.
+          allowDangerousEmailAccountLinking: true,
         }),
       );
     }
