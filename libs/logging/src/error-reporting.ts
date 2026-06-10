@@ -1,13 +1,16 @@
-import 'server-only';
-
-import { logger } from '../instance';
-
 /**
- * Shared error-reporting helpers used by every Next.js app to land both client
- * and server errors in Cloud Logging as structured ERROR entries via the shared
- * `logger`. The app supplies its own `projectId` (resolved through its env
- * accessor) so this library does not depend on `@members/util-server` — that
- * would be circular, since util-server depends on `@members/logging`.
+ * Shared, runtime-agnostic error reporting for the Next.js apps. Emits both
+ * client-forwarded errors and server-side exceptions to Cloud Logging as
+ * structured ERROR entries via a single-line `console.error(JSON…)`, which
+ * App Hosting / Cloud Run parses into a structured entry (top-level severity +
+ * trace).
+ *
+ * This module has NO node-only dependencies on purpose: it is imported by
+ * `instrumentation.ts`, which Next compiles for the edge runtime whenever an
+ * app ships an edge middleware (primes). Pulling the node `@members/logging`
+ * logger in here crashes the edge bundle (`__import_unsupported is not
+ * defined`). `console.error` is safe in the Node and edge runtimes alike and,
+ * unlike the logger, needs neither initNodeLogging() nor a LOG_LEVEL.
  */
 
 interface ClientErrorReport {
@@ -25,31 +28,42 @@ const CLIENT_PREFIX_BY_SOURCE: Record<string, string> = {
   unhandledrejection: 'Unhandled Promise Rejection:',
 };
 
-const tracePath = (
-  projectId: string | undefined,
-  traceId: string | undefined,
-): string | undefined =>
-  projectId && traceId
+// Resolved from the environment so callers don't have to thread it through (and
+// so this stays free of the node-only @members/util-server accessor, which
+// would be both a circular dep and edge-unsafe).
+const getProjectId = (): string | undefined =>
+  process.env.NEXT_PUBLIC_PROJECT_ID ||
+  process.env.PROJECT_ID ||
+  process.env.GCLOUD_PROJECT ||
+  process.env.FIREBASE_PROJECT_ID;
+
+const tracePath = (traceId: string | undefined): string | undefined => {
+  const projectId = getProjectId();
+  return projectId && traceId
     ? `projects/${projectId}/traces/${traceId}`
     : undefined;
+};
+
+// Single-line JSON → parsed into a structured Cloud Logging entry.
+const emit = (entry: Record<string, unknown>): void => {
+  console.error(JSON.stringify(entry));
+};
 
 /**
  * Handles a POST to /api/logs/error from the client `installBrowserErrorReporter`.
- * Each app's route is a thin wrapper that supplies its project id.
+ * Each app's route is a one-line wrapper around this.
  */
-export async function handleClientErrorReport(
-  req: Request,
-  options: { projectId?: string } = {},
-): Promise<Response> {
+export async function handleClientErrorReport(req: Request): Promise<Response> {
   try {
     const { source, message, stack, url, userAgent, traceId } =
       (await req.json()) as ClientErrorReport;
 
     const prefix =
       (source && CLIENT_PREFIX_BY_SOURCE[source]) ?? 'Browser Error:';
-    const trace = tracePath(options.projectId, traceId);
+    const trace = tracePath(traceId);
 
-    logger.error({
+    emit({
+      severity: 'ERROR',
       message: `${prefix} ${message ?? 'Unknown browser error'}`,
       ...(trace && { 'logging.googleapis.com/trace': trace }),
       clientData: { source, stack, url, userAgent },
@@ -57,7 +71,11 @@ export async function handleClientErrorReport(
 
     return Response.json({ success: true });
   } catch (err) {
-    logger.error({ message: 'Failed to process client-side error report', err });
+    emit({
+      severity: 'ERROR',
+      message: 'Failed to process client-side error report',
+      error: err instanceof Error ? err.stack : String(err),
+    });
     return Response.json(
       { success: false, error: 'Failed to process error' },
       { status: 500 },
@@ -66,8 +84,8 @@ export async function handleClientErrorReport(
 }
 
 // Structural subsets of Next's Instrumentation.onRequestError args, so this
-// library does not need to depend on `next`. The app's instrumentation.ts holds
-// the real `Instrumentation.onRequestError` type and passes these through.
+// library does not depend on `next`. The app's instrumentation.ts holds the
+// real `Instrumentation.onRequestError` type and passes these through.
 interface ServerErrorRequest {
   path: string;
   method: string;
@@ -85,20 +103,20 @@ interface ServerErrorContext {
  * Reports a server-side exception (server action, RSC render, route handler,
  * middleware) captured by Next's `onRequestError` instrumentation hook.
  */
-export async function reportServerError(
+export function reportServerError(
   err: unknown,
   request: ServerErrorRequest,
   context: ServerErrorContext,
-  options: { projectId?: string } = {},
-): Promise<void> {
+): void {
   const error = err as Partial<Error> & { digest?: string };
 
   // x-cloud-trace-context: TRACE_ID/SPAN_ID;o=TRACE_TRUE
   const traceHeader = request.headers?.['x-cloud-trace-context'];
   const rawTrace = Array.isArray(traceHeader) ? traceHeader[0] : traceHeader;
-  const trace = tracePath(options.projectId, rawTrace?.split('/')[0]);
+  const trace = tracePath(rawTrace?.split('/')[0]);
 
-  logger.error({
+  emit({
+    severity: 'ERROR',
     message: `Server Error: ${error?.message ?? String(err)}`,
     ...(trace && { 'logging.googleapis.com/trace': trace }),
     serverData: {

@@ -112,6 +112,20 @@ describe('Logger', () => {
       expect(consoleWarnSpy).not.toHaveBeenCalled();
       expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
     });
+
+    it('still logs ERROR when LOG_LEVEL is unset (regression: silent logger)', () => {
+      // The shared `logger` in instance.ts is built from Logger.getLogLevel(),
+      // which falls back to DEBUG when LOG_LEVEL is unset. Building it from the
+      // raw env value (undefined) makes shouldLog(undefined, ERROR) false and
+      // silently drops every line — including errors — for services that don't
+      // set LOG_LEVEL (e.g. the primes/onecake web apps).
+      (getLogLevel as jest.Mock).mockReturnValue(undefined);
+      const logger = new Logger(Logger.getLogLevel());
+
+      logger.error('error message');
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
+    });
   });
 
   describe('getLevel', () => {

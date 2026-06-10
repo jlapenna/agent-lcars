@@ -41,6 +41,9 @@
       "@members/ghost": ["libs/ghost/src/index.ts"],
       "@members/logging": ["libs/logging/src/index.ts"],
       "@members/logging/browser": ["libs/logging/src/browser/index.ts"],
+      "@members/logging/error-reporting": [
+        "libs/logging/src/error-reporting.ts"
+      ],
       "@members/logging/server": ["libs/logging/src/server/index.ts"],
       "@members/provider-service": ["./libs/provider-service/src/index.ts"],
       "@members/provider-service/*": ["./libs/provider-service/src/*"],

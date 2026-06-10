@@ -1,9 +1,12 @@
 import { Logger } from './console-logger';
-import { forceStructuredLogging, getLogLevel, isOnGoogleCloud } from './env';
-import { LogLevel } from './log-level';
+import { forceStructuredLogging, isOnGoogleCloud } from './env';
 import { SlackLogger } from './slack-logger';
 
-export const logger = new Logger(getLogLevel() as LogLevel, {
+// Use the static resolver, which falls back to DEBUG when LOG_LEVEL is unset.
+// Reading the raw env directly yields `undefined`, and shouldLog(undefined, …)
+// is always false — silently dropping every log line (including errors) for any
+// service that does not set LOG_LEVEL (e.g. the primes/onecake web apps).
+export const logger = new Logger(Logger.getLogLevel(), {
   isOnGoogleCloud,
   forceStructuredLogging,
 });
