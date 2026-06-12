@@ -58,3 +58,49 @@ export async function resolveUserIdFromSlackId(
 
   return user.id;
 }
+
+const isUuid = (id: string) => id.includes('-') && id.length >= 32;
+
+/**
+ * Read-only resolution of any rider identifier (a Slack ID or an already-canonical
+ * NextAuth UUID) to the canonical UUID that the rider profile is keyed by.
+ *
+ * Unlike {@link resolveUserIdFromSlackId}, this never creates a user/account — use
+ * it on read paths (e.g. the web `/profile/.../[id]` pages, where `id` is a Slack
+ * ID in the URL). When duplicate auth users exist for one Slack ID it prefers the
+ * UUID-format user (the canonical survivor) over a legacy auto-ID fork. Falls back
+ * to the input id for Slack-only members whose profile still lives under their
+ * Slack ID.
+ */
+export async function getCanonicalUserId(
+  firestore: Firestore,
+  id: string,
+): Promise<string> {
+  if (isUuid(id)) return id;
+
+  // Slack ID → the userId on its slack account (the same path the bot uses).
+  const accountSnapshot = await firestore
+    .collection('services/authjs/accounts')
+    .where('provider', '==', 'slack')
+    .where('providerAccountId', '==', id)
+    .limit(1)
+    .get();
+  if (!accountSnapshot.empty) {
+    const userId = (accountSnapshot.docs[0].data() as AuthJsAccount).userId;
+    if (userId) return userId;
+  }
+
+  // Fallback: an auth user carrying this slack.id (prefer the canonical UUID).
+  const usersSnapshot = await firestore
+    .collection('services/authjs/users')
+    .where('slack.id', '==', id)
+    .get();
+  if (!usersSnapshot.empty) {
+    return (
+      usersSnapshot.docs.map((d) => d.id).find(isUuid) ??
+      usersSnapshot.docs[0].id
+    );
+  }
+
+  return id;
+}
