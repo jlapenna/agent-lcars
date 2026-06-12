@@ -17,19 +17,16 @@ export function getTimestampFromISODate(value: string | undefined) {
   return value ? Timestamp.fromDate(new Date(value)) : undefined;
 }
 
-export function getTimestampFromISOLocalDate(
-  value: string,
-  timezone: string,
-): Timestamp;
-export function getTimestampFromISOLocalDate(
+export function getDateFromISOLocalDate(value: string, timezone: string): Date;
+export function getDateFromISOLocalDate(
   value: string | undefined,
   timezone: string,
-): Timestamp | undefined;
-export function getTimestampFromISOLocalDate(
+): Date | undefined;
+export function getDateFromISOLocalDate(
   value: string | undefined,
   timezone: string,
 ) {
-  return value ? Timestamp.fromDate(fromZonedTime(value, timezone)) : undefined;
+  return value ? fromZonedTime(value, timezone) : undefined;
 }
 
 /**
@@ -41,6 +38,6 @@ export function formatDurationServer(totalSeconds: number): string {
   return formatInTimeZone(date, 'UTC', pattern);
 }
 
-export function getDayTimestamp(year: number, month: number, day: number) {
-  return Timestamp.fromDate(new Date(year, month, day));
+export function getDayDate(year: number, month: number, day: number) {
+  return new Date(year, month, day);
 }
