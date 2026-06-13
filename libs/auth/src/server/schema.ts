@@ -1,4 +1,4 @@
-import { FirebaseTimestampSchema, zodLooseObject } from '@members/firestore';
+import { timestampCodec, zodLooseObject } from '@members/firestore';
 import { z } from 'zod';
 
 /**
@@ -31,13 +31,13 @@ export const AuthJsUserSchema = zodLooseObject({
   name: z.string().optional(),
   email: z.string().optional(),
   image: z.string().optional(),
-  emailVerified: FirebaseTimestampSchema.nullish(),
+  emailVerified: timestampCodec.nullish(),
   slack: zodLooseObject({
     id: z.string(),
     teamId: z.string().optional(),
     isAdmin: z.boolean().optional(),
   }).optional(),
-  waiverAcceptedAt: FirebaseTimestampSchema.nullish(),
+  waiverAcceptedAt: timestampCodec.nullish(),
   waiverVersionAccepted: z.number().nullish(),
 });
 
