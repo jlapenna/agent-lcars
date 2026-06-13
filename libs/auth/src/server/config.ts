@@ -14,7 +14,11 @@
 import './types';
 
 import { FirestoreAdapter } from '@auth/firebase-adapter';
-import { getFirebaseAdminApp, getFirestore } from '@members/firebase-server';
+import {
+  getFirebaseAdminApp,
+  getFirebaseAuthAdmin,
+  getFirestore,
+} from '@members/firebase-server';
 import { logger, LogLevel } from '@members/logging';
 import { getAuthSecret } from '@members/service-auth';
 import { getSecrets as getSlackSecrets } from '@members/slack';
@@ -496,12 +500,13 @@ export const getAuthConfig = async (
 
           // Generate Firebase custom token for client-side Firebase authentication
           try {
-            const adminApp = await getFirebaseAdminApp();
-            session.firebaseToken = await adminApp
-              .auth()
-              .createCustomToken(session.user.id, {
+            const authAdmin = await getFirebaseAuthAdmin();
+            session.firebaseToken = await authAdmin.createCustomToken(
+              session.user.id,
+              {
                 isAdmin: session.user.slack?.isAdmin ?? false,
-              });
+              },
+            );
           } catch (error) {
             logger.error('Failed to create Firebase custom token:', error);
           }

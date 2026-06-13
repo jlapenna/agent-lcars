@@ -1,4 +1,7 @@
-import { getFirebaseAdminApp } from '@members/firebase-server';
+import {
+  getFirebaseAdminApp,
+  getFirebaseAuthAdmin,
+} from '@members/firebase-server';
 import { logger } from '@members/logging';
 import {
   getE2eTestingUser,
@@ -40,8 +43,8 @@ async function getMockSession(userId: string): Promise<Session> {
   let firebaseToken: string | undefined;
 
   try {
-    const adminApp = await getFirebaseAdminApp();
-    firebaseToken = await adminApp.auth().createCustomToken(userId, {
+    const authAdmin = await getFirebaseAuthAdmin();
+    firebaseToken = await authAdmin.createCustomToken(userId, {
       isAdmin,
     });
   } catch (error) {

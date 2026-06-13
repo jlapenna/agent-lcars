@@ -6,7 +6,7 @@ module.exports = {
   ...nxPreset,
   testMatch: ['**/?(*.)+(spec|test).[jt]s?(x)'],
   transformIgnorePatterns: [
-    'node_modules/(?!.*(?:uuid|cls-rtracer|md-to-slack|marked|p-limit|yocto-queue|p-wait-for|p-timeout|superjson|copy-anything|is-what|commander|next-auth|@auth/core))',
+    'node_modules/(?!.*(?:uuid|cls-rtracer|md-to-slack|marked|p-limit|yocto-queue|p-wait-for|p-timeout|superjson|copy-anything|is-what|commander|next-auth|@auth/core|jose))',
   ],
   moduleNameMapper: {
     'server-only': path.join(
