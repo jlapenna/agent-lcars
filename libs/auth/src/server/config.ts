@@ -439,10 +439,6 @@ export const getAuthConfig = async (
               .doc(session.user.id)
               .get();
 
-            console.error(
-              `[E2E DEBUG] NextAuth session callback: reading user-profiles/${session.user.id}. Exists: ${riderProfileDoc.exists}`,
-            );
-
             if (
               !riderProfileDoc.exists &&
               slackData?.id &&
@@ -452,24 +448,15 @@ export const getAuthConfig = async (
                 .collection('user-profiles')
                 .doc(slackData.id)
                 .get();
-              console.error(
-                `[E2E DEBUG] NextAuth session callback: fallback reading user-profiles/${slackData.id}. Exists: ${riderProfileDoc.exists}`,
-              );
             }
 
             if (riderProfileDoc.exists) {
               const riderProfile = riderProfileDoc.data();
-              console.error(
-                `[E2E DEBUG] NextAuth session callback: Profile data: ${JSON.stringify(riderProfile)}`,
-              );
               hasCompletedProfile =
                 !!riderProfile?.contact?.phoneNumber &&
                 !!riderProfile?.emergencyContact?.name;
               hasActiveMembership =
                 riderProfile?.membership?.status === 'Active';
-              console.error(
-                `[E2E DEBUG] NextAuth session callback: hasCompletedProfile evaluated to ${hasCompletedProfile}`,
-              );
             }
 
             const stravaAccount = await stravaAccountPromise;
