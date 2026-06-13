@@ -73,6 +73,7 @@ e2e-server.log
 # Env (may have secrets).
 .env
 .env.*
+.envrc
 .env.local
 .env.*.local
 !.env.test
