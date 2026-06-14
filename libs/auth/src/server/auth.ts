@@ -1,7 +1,4 @@
-import {
-  getFirebaseAdminApp,
-  getFirebaseAuthAdmin,
-} from '@members/firebase-server';
+import { getFirebaseAuthAdmin } from '@members/firebase-server';
 import { logger } from '@members/logging';
 import {
   getE2eTestingUser,

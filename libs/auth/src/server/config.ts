@@ -14,11 +14,7 @@
 import './types';
 
 import { FirestoreAdapter } from '@auth/firebase-adapter';
-import {
-  getFirebaseAdminApp,
-  getFirebaseAuthAdmin,
-  getFirestore,
-} from '@members/firebase-server';
+import { getFirebaseAuthAdmin, getFirestore } from '@members/firebase-server';
 import { logger, LogLevel } from '@members/logging';
 import { getAuthSecret } from '@members/service-auth';
 import { getSecrets as getSlackSecrets } from '@members/slack';
