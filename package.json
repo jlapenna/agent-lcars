@@ -54,7 +54,7 @@
     "cloudevents": "^10.0.0",
     "cls-rtracer": "^2.6.3",
     "commander": "^15.0.0",
-    "csv-parse": "^6.2.1",
+    "csv-parse": "^7.0.0",
     "cycle": "^1.0.3",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
