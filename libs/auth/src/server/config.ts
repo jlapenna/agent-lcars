@@ -87,6 +87,11 @@ export interface AuthConfigOptions {
    * may sign in via Strava.
    */
   allowedStravaAthleteIds?: string[];
+  /**
+   * Override the route new users are redirected to.
+   * Defaults to '/onboarding'. If set to null, the redirect is disabled.
+   */
+  newUserRoute?: string | null;
 }
 
 export const getAuthConfig = async (
@@ -677,7 +682,10 @@ export const getAuthConfig = async (
      */
     pages: {
       signIn: enableTestingHandlers() ? undefined : '/login',
-      newUser: '/onboarding',
+      newUser:
+        options?.newUserRoute !== undefined
+          ? (options.newUserRoute ?? undefined)
+          : '/onboarding',
     },
 
     /**
