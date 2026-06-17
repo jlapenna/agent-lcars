@@ -1,7 +1,11 @@
 import { logger } from '@members/logging';
 import Bottleneck from 'bottleneck';
 
-import { getProviderMinRequestDelayMs, isTest } from './env';
+import {
+  getProviderMinRequestDelayMs,
+  getProviderRequestTimeoutMs,
+  isTest,
+} from './env';
 
 export function createProviderLimiter(): Bottleneck {
   if (isTest()) {
@@ -57,6 +61,10 @@ export function isRetryableError(error: unknown): boolean {
     e.code === 'ECONNRESET' ||
     e.code === 'ETIMEDOUT' ||
     e.name === 'FetchError' ||
+    // AbortSignal.timeout() rejects with a TimeoutError; a manual abort yields
+    // AbortError. Both mean the request was cut off and is worth retrying.
+    e.name === 'TimeoutError' ||
+    e.name === 'AbortError' ||
     e.cause?.code === 'ECONNRESET' // Node fetch often wraps cause
   ) {
     return true;
@@ -70,7 +78,14 @@ export async function throttledFetch(
   init?: RequestInit,
 ): Promise<Response> {
   return limiter.schedule(async () => {
-    const response = await fetch(url, init);
+    // Node's fetch has no default timeout, so an unresponsive external site
+    // would hang here forever — holding the limiter's single concurrent slot
+    // and blocking every other request for this domain. Bound it with a
+    // timeout (TimeoutError is retryable, so it feeds the backoff above).
+    // A caller-supplied signal takes precedence.
+    const signal =
+      init?.signal ?? AbortSignal.timeout(getProviderRequestTimeoutMs());
+    const response = await fetch(url, { ...init, signal });
 
     if (response.status === 429 || response.status >= 500) {
       const error = new Error(

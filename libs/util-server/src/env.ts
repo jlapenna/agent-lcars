@@ -181,6 +181,9 @@ export const getConcurrencyLimit = () =>
 export const getProviderMinRequestDelayMs = () =>
   parseInt(optional('PROVIDER_MIN_REQUEST_DELAY_MS') ?? '1000');
 
+export const getProviderRequestTimeoutMs = () =>
+  parseInt(optional('PROVIDER_REQUEST_TIMEOUT_MS') ?? '30000');
+
 export const getTasksServiceUrl = () => optional('TASKS_SERVICE_URL');
 export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
 export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');

@@ -34,6 +34,7 @@ describe('rate-limiter', () => {
 
     mockedEnv.isTest.mockReturnValue(true);
     mockedEnv.getProviderMinRequestDelayMs.mockReturnValue(500);
+    mockedEnv.getProviderRequestTimeoutMs.mockReturnValue(30000);
   });
 
   describe('isRetryableError', () => {
@@ -62,6 +63,12 @@ describe('rate-limiter', () => {
 
     it('should return true for error name FetchError', () => {
       expect(isRetryableError({ name: 'FetchError' })).toBe(true);
+    });
+
+    it('should return true for aborted/timed-out requests', () => {
+      // AbortSignal.timeout() rejects with TimeoutError; manual abort -> AbortError.
+      expect(isRetryableError({ name: 'TimeoutError' })).toBe(true);
+      expect(isRetryableError({ name: 'AbortError' })).toBe(true);
     });
 
     it('should return true for error with cause code ECONNRESET', () => {
@@ -175,11 +182,27 @@ describe('rate-limiter', () => {
       const result = await throttledFetch(limiter, 'http://example.com');
 
       expect(result).toBe(mockResponse);
+      // A timeout signal is attached so an unresponsive host can't hang forever.
       expect(global.fetch).toHaveBeenCalledWith(
         'http://example.com',
-        undefined,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(limiter.schedule).toHaveBeenCalled();
+    });
+
+    it('uses a caller-supplied signal instead of the default timeout', async () => {
+      const mockResponse = { status: 200 } as Response;
+      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
+      const controller = new AbortController();
+
+      await throttledFetch(limiter, 'http://example.com', {
+        signal: controller.signal,
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://example.com',
+        expect.objectContaining({ signal: controller.signal }),
+      );
     });
 
     it('should throw error with status for 429 response', async () => {
