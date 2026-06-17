@@ -127,6 +127,7 @@ export interface EnvVars {
   NEXT_PUBLIC_USE_HTTPS?: string;
   NEXT_PUBLIC_DEBUG_AUTH?: string;
   NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST?: string;
+  NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST?: string;
 
   /** Server Secrets **/
   DOTENV_SECRETS?: string;
