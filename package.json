@@ -125,8 +125,8 @@
     ]
   },
   "devDependencies": {
-    "@babel/core": "^7.14.5",
-    "@babel/preset-react": "^7.14.5",
+    "@babel/core": "^8.0.0",
+    "@babel/preset-react": "^8.0.0",
     "@eslint/js": "^10.0.1",
     "@eslint/json": "^2.0.0",
     "@eslint/markdown": "^8.0.1",
