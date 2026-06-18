@@ -34,6 +34,7 @@ import {
   getStravaClubId,
   isAdminEmail,
   isMailConfigured,
+  isOnecakeAdmin,
   isSlackAdmin,
 } from '@members/util-server';
 import type { NextAuthConfig } from 'next-auth';
@@ -427,6 +428,10 @@ export const getAuthConfig = async (
           let hasCompletedProfile = false;
           let isStravaConnected = false;
           let hasActiveMembership = false;
+          // Strava-only admin gate (OneCake): the signed-in athlete ID is on the
+          // ONECAKE_ADMINS allowlist. Strava carries no email, so this is the
+          // only admin path for a Strava-only sign-in.
+          let isStravaAthleteAdmin = false;
 
           try {
             const stravaAccountPromise = getAuthJsAccount(
@@ -463,6 +468,9 @@ export const getAuthConfig = async (
             const stravaAccount = await stravaAccountPromise;
 
             isStravaConnected = !!stravaAccount;
+            isStravaAthleteAdmin =
+              !!stravaAccount?.providerAccountId &&
+              isOnecakeAdmin(stravaAccount.providerAccountId);
           } catch (error) {
             logger.error('Failed to check onboarding status:', error);
           }
@@ -482,7 +490,16 @@ export const getAuthConfig = async (
             session.user.slack = {
               id: slackData.id,
               teamId: slackData.teamId,
-              isAdmin: appToken?.isAdmin ?? isSlackAdmin(slackData.id),
+              isAdmin:
+                (appToken?.isAdmin ?? isSlackAdmin(slackData.id)) ||
+                isStravaAthleteAdmin,
+            };
+          } else if (isStravaAthleteAdmin) {
+            // Strava-only sign-in (OneCake) with no Slack identity. Surface admin
+            // via the same field consumers already read (session.user.slack?.isAdmin).
+            session.user.slack = {
+              id: '',
+              isAdmin: true,
             };
           }
 
