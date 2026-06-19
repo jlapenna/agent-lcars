@@ -33,8 +33,11 @@ export const isSlackAdmin = (slackId: string) =>
  */
 export const getOnecakeAdmins = (): string[] => splitEnvList('ONECAKE_ADMINS');
 
-export const isOnecakeAdmin = (athleteId: string): boolean =>
-  getOnecakeAdmins().includes(athleteId.trim());
+// Strava athlete ids arrive as either strings or numbers depending on the source
+// (Auth.js account docs store `providerAccountId` numerically). Coerce before
+// comparing so a numeric id doesn't throw `athleteId.trim is not a function`.
+export const isOnecakeAdmin = (athleteId: string | number): boolean =>
+  getOnecakeAdmins().includes(String(athleteId).trim());
 
 export const getAdminEmails = (): string[] => {
   const envEmails = splitEnvList('ADMIN_EMAILS');
