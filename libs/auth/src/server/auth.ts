@@ -60,21 +60,29 @@ async function getMockSession(userId: string): Promise<Session> {
     );
   }
 
+  // Only attach a Slack identity when the impersonated id actually looks like a
+  // Slack user id. Strava-only (OneCake) impersonation must not fabricate Slack
+  // data — admin is surfaced via the platform-agnostic `isAdmin` flag below.
+  const isSlackId = userId.startsWith('U') || userId.startsWith('slack-');
+
   return {
     user: {
       id: userId,
       name: 'Impersonated User',
       email,
+      isAdmin,
       onboarding: {
         hasAcceptedWaiver: true,
         hasCompletedProfile: true,
         isStravaConnected: false,
         hasActiveMembership: true,
       },
-      slack: {
-        id: userId,
-        isAdmin,
-      },
+      ...(isSlackId && {
+        slack: {
+          id: userId,
+          isAdmin,
+        },
+      }),
     },
     firebaseToken,
     expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),

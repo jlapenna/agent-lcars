@@ -118,7 +118,9 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
     });
 
     expect(utilServer.isOnecakeAdmin).toHaveBeenCalledWith('66304');
-    expect(result.user.slack?.isAdmin).toBe(true);
+    // Admin is surfaced via the platform-agnostic flag, never via Slack.
+    expect(result.user.isAdmin).toBe(true);
+    expect(result.user.slack).toBeUndefined();
   });
 
   it('does not grant admin when the athlete ID is not allowlisted', async () => {
@@ -130,6 +132,7 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
       user: stravaUser,
     });
 
-    expect(result.user.slack?.isAdmin).toBeUndefined();
+    expect(result.user.isAdmin).toBe(false);
+    expect(result.user.slack).toBeUndefined();
   });
 });

@@ -485,21 +485,23 @@ export const getAuthConfig = async (
             hasActiveMembership,
           };
 
+          // Slack-workspace admin signal (web/bot identities only). Strava-only
+          // (OneCake) sign-ins carry no Slack identity, so this is false there.
+          const slackAdmin = slackData
+            ? (appToken?.isAdmin ?? isSlackAdmin(slackData.id))
+            : false;
+
+          // Canonical, platform-agnostic admin flag. This is the single field
+          // authorization consumers read. Admin is NOT surfaced via `slack`.
+          const isAdmin = slackAdmin || isStravaAthleteAdmin;
+          session.user.isAdmin = isAdmin;
+
           if (slackData) {
-            // Populate Slack-specific data
+            // Slack identity data (id/team). Admin lives on session.user.isAdmin.
             session.user.slack = {
               id: slackData.id,
               teamId: slackData.teamId,
-              isAdmin:
-                (appToken?.isAdmin ?? isSlackAdmin(slackData.id)) ||
-                isStravaAthleteAdmin,
-            };
-          } else if (isStravaAthleteAdmin) {
-            // Strava-only sign-in (OneCake) with no Slack identity. Surface admin
-            // via the same field consumers already read (session.user.slack?.isAdmin).
-            session.user.slack = {
-              id: '',
-              isAdmin: true,
+              isAdmin: slackAdmin,
             };
           }
 
@@ -509,7 +511,7 @@ export const getAuthConfig = async (
             session.firebaseToken = await authAdmin.createCustomToken(
               session.user.id,
               {
-                isAdmin: session.user.slack?.isAdmin ?? false,
+                isAdmin,
               },
             );
           } catch (error) {

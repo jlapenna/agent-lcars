@@ -39,7 +39,16 @@ declare module 'next-auth' {
     user: {
       /** Internal database user ID */
       id: string;
-      /** Slack-specific user data */
+      /**
+       * Canonical, platform-agnostic admin flag. This is the field every
+       * authorization consumer should read. Sourced in the session callback
+       * from whichever admin mechanism applies to the signed-in identity:
+       * Slack workspace admin (web/bot), OneCake Strava-athlete allowlist
+       * (ONECAKE_ADMINS), or admin email (ADMIN_EMAILS). Do NOT read admin
+       * status off `slack` — Slack is just one identity provider.
+       */
+      isAdmin: boolean;
+      /** Slack-specific identity data (web/bot). Not an authorization source. */
       slack?: SlackUser;
       /** Onboarding and compliance gates */
       onboarding: {
