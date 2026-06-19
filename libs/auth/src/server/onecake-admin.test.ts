@@ -135,4 +135,19 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
     expect(result.user.isAdmin).toBe(false);
     expect(result.user.slack).toBeUndefined();
   });
+
+  it('grants admin from a persisted user-doc flag (runtime promotion)', async () => {
+    // Athlete is NOT on the ONECAKE_ADMINS allowlist...
+    (utilServer.isOnecakeAdmin as jest.Mock).mockReturnValue(false);
+
+    const session = await getSessionCallback();
+    const result = await session({
+      session: { user: { id: '' } },
+      // ...but an admin granted them via the admin UI (persisted on the user doc).
+      user: { ...stravaUser, isAdmin: true },
+    });
+
+    expect(result.user.isAdmin).toBe(true);
+    expect(result.user.slack).toBeUndefined();
+  });
 });

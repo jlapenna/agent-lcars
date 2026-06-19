@@ -277,6 +277,22 @@ export async function getAllAuthJsUsers(
 }
 
 /**
+ * Grant or revoke the persisted admin flag on an Auth.js user doc. The auth
+ * session callback ORs this into `session.user.isAdmin`, so the change takes
+ * effect on the user's next request (database sessions recompute per-request).
+ */
+export async function setAuthJsUserAdmin(
+  firestore: Firestore,
+  userId: string,
+  isAdmin: boolean,
+): Promise<void> {
+  await firestore
+    .collection('services/authjs/users')
+    .doc(userId)
+    .set({ isAdmin }, { merge: true });
+}
+
+/**
  * Update an Auth.js account with new token data.
  */
 export async function updateAuthJsAccount(

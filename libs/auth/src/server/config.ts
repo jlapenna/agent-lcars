@@ -67,6 +67,8 @@ interface AppUser {
   id?: string;
   slack?: SlackUser;
   waiverVersionAccepted?: number;
+  /** Persisted admin grant on the Auth.js user doc (set via the admin UI). */
+  isAdmin?: boolean;
 }
 
 interface AppJWT {
@@ -493,7 +495,12 @@ export const getAuthConfig = async (
 
           // Canonical, platform-agnostic admin flag. This is the single field
           // authorization consumers read. Admin is NOT surfaced via `slack`.
-          const isAdmin = slackAdmin || isStravaAthleteAdmin;
+          // Sources: Slack-workspace admin, OneCake Strava-athlete allowlist
+          // (ONECAKE_ADMINS), or a persisted grant on the user doc set at runtime
+          // via the admin UI (appUser.isAdmin). Database sessions recompute this
+          // every request, so a grant/revoke takes effect on the next page load.
+          const isAdmin =
+            slackAdmin || isStravaAthleteAdmin || !!appUser?.isAdmin;
           session.user.isAdmin = isAdmin;
 
           if (slackData) {

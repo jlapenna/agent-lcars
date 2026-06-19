@@ -31,6 +31,9 @@ export const AuthJsUserSchema = zodLooseObject({
   name: z.string().optional(),
   email: z.string().optional(),
   image: z.string().optional(),
+  /** Persisted admin grant (OneCake admin UI). Allowlist/Slack admins are
+   * derived separately and do not depend on this flag. */
+  isAdmin: z.boolean().optional(),
   emailVerified: timestampCodec.nullish(),
   slack: zodLooseObject({
     id: z.string(),
