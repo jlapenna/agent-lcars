@@ -18,6 +18,7 @@
     "@a2a-js/sdk": "^0.3.13",
     "@auth/firebase-adapter": "^2.11.2",
     "@esm2cjs/p-map": "^5.5.0",
+    "@genkit-ai/compat-oai": "^1.37.0",
     "@genkit-ai/firebase": "^1.36.0",
     "@genkit-ai/googleai": "^1.28.0",
     "@google-cloud/common": "^6.0.0",

@@ -23,6 +23,15 @@ export interface EnvVars {
   GEMINI_API_KEY?: string;
   GOOGLE_API_KEY?: string;
 
+  // Reasoner (provider-agnostic LLM disambiguation). See #1686 / #1675 §6.0.
+  // Primary target is the self-hosted OpenAI-compatible endpoint; falls back to
+  // googleai (gemini-3.5-flash) on timeout/error.
+  LLM_PROVIDER?: string;
+  LLM_BASE_URL?: string;
+  LLM_API_KEY?: string;
+  LLM_MODEL?: string;
+  LLM_FALLBACK_MODEL?: string;
+
   NEXT_PUBLIC_ANALYTICS_ID?: string;
 
   AUTH_ENABLED?: string;

@@ -265,6 +265,29 @@ export const getVertexAiLocation = () => optional('VERTEX_AI_LOCATION');
 export const getGeminiApiKey = () =>
   optional('GEMINI_API_KEY') || optional('GOOGLE_API_KEY');
 
+// Reasoner (provider-agnostic LLM disambiguation). See #1686 / #1675 §6.0.
+// The primary path is the self-hosted OpenAI-compatible endpoint; on
+// timeout/error it falls back to googleai (gemini-3.5-flash by default).
+
+/** `openai-compat` (default) | `googleai`. Selects the primary provider. */
+export const getLlmProvider = (): 'openai-compat' | 'googleai' => {
+  const value = optional('LLM_PROVIDER');
+  return value === 'googleai' ? 'googleai' : 'openai-compat';
+};
+
+/** Base URL of the OpenAI-compatible endpoint, e.g. https://llm.jlapenna.net/v1 */
+export const getLlmBaseUrl = () => optional('LLM_BASE_URL');
+
+/** API key for the OpenAI-compatible endpoint. */
+export const getLlmApiKey = () => optional('LLM_API_KEY');
+
+/** Model id served by the primary (OpenAI-compatible) endpoint. */
+export const getLlmModel = () => optional('LLM_MODEL');
+
+/** Gemini model id used when the primary path is unavailable. */
+export const getLlmFallbackModel = () =>
+  optional('LLM_FALLBACK_MODEL') ?? 'gemini-3.5-flash';
+
 export const getRagDriveFolders = () => splitEnvList('RAG_DRIVE_FOLDERS');
 
 export const getSquareupEnvironment = () =>
