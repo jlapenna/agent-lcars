@@ -121,6 +121,8 @@ export interface EnvVars {
 
   PROVIDER_REQUEST_TIMEOUT_MS?: string;
 
+  PROVIDER_USER_AGENT?: string;
+
   TASKS_SERVICE_URL?: string;
   AGENT_SERVICE_URL?: string;
   WEB_SERVICE_URL?: string;

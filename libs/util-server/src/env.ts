@@ -197,6 +197,14 @@ export const getProviderMinRequestDelayMs = () =>
 export const getProviderRequestTimeoutMs = () =>
   parseInt(optional('PROVIDER_REQUEST_TIMEOUT_MS') ?? '30000');
 
+/**
+ * A single, stable, identifying User-Agent for all outbound crawl traffic.
+ * Politeness, not evasion: we never rotate this to evade blocks (see #1675 §1).
+ */
+export const getProviderUserAgent = () =>
+  optional('PROVIDER_USER_AGENT') ??
+  'SuperSprinklesRacingBot/1.0 (+https://supersprinkles.racing; bot@supersprinkles.racing)';
+
 export const getTasksServiceUrl = () => optional('TASKS_SERVICE_URL');
 export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
 export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');
