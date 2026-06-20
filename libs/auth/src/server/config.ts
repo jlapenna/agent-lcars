@@ -37,6 +37,7 @@ import {
   isOnecakeAdmin,
   isSlackAdmin,
 } from '@members/util-server';
+import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';
 import Credentials from 'next-auth/providers/credentials';
@@ -282,6 +283,13 @@ export const getAuthConfig = async (
         throw new Error('FirestoreAdapter does not support createUser');
       }
       const createdUser = await firestoreAdapter.createUser(user);
+      if (createdUser.id && createdUser.name) {
+        await syncNameToRiderProfile(
+          firestore,
+          createdUser.id,
+          createdUser.name,
+        );
+      }
       if (user.email && isAdminEmail(user.email)) {
         logger.info(
           `createUser: Bootstrapping admin status for new user ${user.email}`,
@@ -305,6 +313,20 @@ export const getAuthConfig = async (
         }
       }
       return createdUser;
+    },
+    async updateUser(user) {
+      if (!firestoreAdapter.updateUser) {
+        throw new Error('FirestoreAdapter does not support updateUser');
+      }
+      const updatedUser = await firestoreAdapter.updateUser(user);
+      if (updatedUser.id && updatedUser.name) {
+        await syncNameToRiderProfile(
+          firestore,
+          updatedUser.id,
+          updatedUser.name,
+        );
+      }
+      return updatedUser;
     },
     async linkAccount(account) {
       // Force deterministic Account ID for easy lookups
@@ -735,3 +757,40 @@ export const getAuthConfig = async (
     },
   };
 };
+
+async function syncNameToRiderProfile(
+  firestore: Firestore,
+  userId: string,
+  name: string,
+) {
+  try {
+    const riderRef = firestore.collection('user-profiles').doc(userId);
+    const doc = await riderRef.get();
+    if (doc.exists) {
+      const data = doc.data();
+      const existingNames = data?.contact?.names || [];
+      if (existingNames[0] === name) {
+        return;
+      }
+      const newNames = [
+        name,
+        ...existingNames.filter((n: string) => n !== name),
+      ];
+      await riderRef.update({
+        'contact.names': newNames,
+        'metadata.lastModifiedAt': FieldValue.serverTimestamp(),
+      });
+    } else {
+      await riderRef.set({
+        contact: {
+          names: [name],
+        },
+        metadata: {
+          lastModifiedAt: FieldValue.serverTimestamp(),
+        },
+      });
+    }
+  } catch (error) {
+    logger.error(`Failed to sync name to rider profile for ${userId}:`, error);
+  }
+}
