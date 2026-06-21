@@ -72,7 +72,7 @@
     "google-gax": "5.0.7",
     "googleapis": "^173.0.0",
     "ical": "^0.8.0",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^5.0.0",
     "json-diff-ts": "^4.10.4",
     "jsonwebtoken": "^9.0.3",
     "jsx-slack": "^6.1.2",
