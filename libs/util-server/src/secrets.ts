@@ -3,7 +3,7 @@ import { logger } from '@members/logging';
 
 const client = new SecretManagerServiceClient({ fallback: 'rest' });
 
-const secretCache = new Map<string, string | null>();
+const secretPromiseCache = new Map<string, Promise<string | null>>();
 
 export async function getSecret(
   name: string,
@@ -18,29 +18,32 @@ export async function getSecret(
   name: string,
   defaultValue?: string | null,
 ): Promise<string | null> {
-  if (secretCache.has(name)) {
-    const cached = secretCache.get(name);
-    if (cached === undefined || cached === null) {
-      if (defaultValue === undefined) {
-        throw new Error(
-          `Secret not found or empty for: ${name} (default: ${defaultValue})`,
-        );
-      }
-      return defaultValue;
-    }
-    return cached;
+  let promise = secretPromiseCache.get(name);
+  if (!promise) {
+    promise = client
+      .accessSecretVersion({
+        name: name,
+      })
+      .then(([version]) => {
+        return version.payload?.data?.toString() ?? null;
+      })
+      .catch((err) => {
+        secretPromiseCache.delete(name);
+        throw err;
+      });
+    secretPromiseCache.set(name, promise);
   }
 
-  const [version] = await client.accessSecretVersion({
-    name: name,
-  });
-  const secretValue = version.payload?.data?.toString() ?? defaultValue;
-  if (secretValue === undefined) {
-    throw new Error(
-      `Secret not found or empty for: ${name} (default: ${defaultValue})`,
-    );
+  const cached = await promise;
+  const secretValue = cached ?? defaultValue;
+  if (secretValue === undefined || secretValue === null) {
+    if (defaultValue === undefined) {
+      throw new Error(
+        `Secret not found or empty for: ${name} (default: ${defaultValue})`,
+      );
+    }
+    return defaultValue;
   }
-  secretCache.set(name, secretValue);
   return secretValue;
 }
 
