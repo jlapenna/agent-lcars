@@ -296,6 +296,23 @@ export const getLlmModel = () => optional('LLM_MODEL');
 export const getLlmFallbackModel = () =>
   optional('LLM_FALLBACK_MODEL') ?? 'gemini-3.5-flash';
 
+/**
+ * Whether the canonical cross-provider matcher runs at publish (#1675 §6).
+ * Default OFF: the pipeline direct-publishes (each race its own canonical via
+ * source key) and only shadow-logs candidate distances. Turn ON to route
+ * extracted races through vector retrieval + the Reasoner.
+ */
+export const getCanonicalMatcherEnabled = () =>
+  isTrue('CANONICAL_MATCHER_ENABLED');
+
+/**
+ * Whether a high-confidence, corroborated match may AUTO-MERGE without human
+ * review (#1675 §6.2/§6.3). Default OFF: even confident matches go to the review
+ * queue. Only turn ON after calibrating thresholds from the shadow logs.
+ */
+export const getCanonicalAutoMergeEnabled = () =>
+  isTrue('CANONICAL_AUTO_MERGE_ENABLED');
+
 export const getRagDriveFolders = () => splitEnvList('RAG_DRIVE_FOLDERS');
 
 export const getSquareupEnvironment = () =>

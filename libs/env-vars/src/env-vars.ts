@@ -32,6 +32,10 @@ export interface EnvVars {
   LLM_MODEL?: string;
   LLM_FALLBACK_MODEL?: string;
 
+  // Canonical cross-provider matcher feature flags (#1675 §6). Default off.
+  CANONICAL_MATCHER_ENABLED?: string;
+  CANONICAL_AUTO_MERGE_ENABLED?: string;
+
   NEXT_PUBLIC_ANALYTICS_ID?: string;
 
   AUTH_ENABLED?: string;
