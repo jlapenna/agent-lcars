@@ -132,7 +132,6 @@
     "@eslint/json": "^2.0.0",
     "@eslint/markdown": "^8.0.1",
     "@jest/globals": "^30.3.0",
-    "@naxodev/gonx": "^3.0.0",
     "@next/eslint-plugin-next": "^16.2.4",
     "@nx/devkit": "23.0.1",
     "@nx/docker": "23.0.1",

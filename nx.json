@@ -16,13 +16,6 @@
       "!{projectRoot}/src/test-setup.[jt]s",
       "!{projectRoot}/test-setup.[jt]s"
     ],
-    "goInputs": [
-      "{projectRoot}/**/*.go",
-      "{workspaceRoot}/go.work",
-      "{workspaceRoot}/go.work.sum",
-      "{projectRoot}/go.mod",
-      "{projectRoot}/go.sum"
-    ],
     "sharedGlobals": [
       "{workspaceRoot}/.github/workflows/ci.yml",
       "{workspaceRoot}/pnpm-lock.yaml",
@@ -69,16 +62,6 @@
       ]
     },
     {
-      "plugin": "@naxodev/gonx",
-      "options": {
-        "buildTargetName": "build",
-        "serveTargetName": "serve",
-        "testTargetName": "test",
-        "lintTargetName": "lint",
-        "tidyTargetName": "tidy"
-      }
-    },
-    {
       "plugin": "@nx/next/plugin",
       "options": {
         "devTargetName": "serve"
@@ -104,11 +87,6 @@
       "dependsOn": ["^build", "^typecheck"],
       "inputs": ["production", "^production"],
       "cache": true
-    },
-    "@naxodev/gonx:build": {
-      "cache": true,
-      "dependsOn": ["^build"],
-      "inputs": ["goInputs", "^goInputs"]
     },
     "serve": {
       "options": {}
