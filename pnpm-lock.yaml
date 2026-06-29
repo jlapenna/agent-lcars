@@ -652,7 +652,11 @@ importers:
 
   apps/onecake: {}
 
+  apps/onecake-backend: {}
+
   apps/primes: {}
+
+  apps/primes-backend: {}
 
   apps/tasks: {}
 

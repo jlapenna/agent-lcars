@@ -230,4 +230,5 @@ export interface EnvVars {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   STRIPE_WEBHOOK_SECRET?: string; // Secret
+  PRIMES_BACKEND_SERVICE_URL?: string;
 }

@@ -7,8 +7,11 @@ if [ -z "$CLOUD_BUILD" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
-# Ensure Go is installed and in PATH
-. tools/cloud-build-ensure-go.sh
+# Go is only needed for apps/agent (Go service)
+# Skip Go installation for Node.js-only services
+if [ -f "apps/agent/go.mod" ] || [ -f "go.mod" ]; then
+    . tools/cloud-build-ensure-go.sh
+fi
 
 # Fix for TS6305: App Hosting preserves workspace states across builds
 # which can leave stale .tsbuildinfo files or partial dist/ outputs.

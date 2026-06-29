@@ -1,5 +1,8 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "sync": {
+    "applyChanges": true
+  },
   "namedInputs": {
     "default": ["{projectRoot}/**/*", "sharedGlobals"],
     "production": [
@@ -61,7 +64,8 @@
       "exclude": [
         "apps/e2e-bot/**/*",
         "apps/e2e-tasks/**/*",
-        "apps/e2e-onecake-backend/**/*"
+        "apps/e2e-onecake-backend/**/*",
+        "apps/primes-backend-e2e/**/*"
       ]
     },
     {

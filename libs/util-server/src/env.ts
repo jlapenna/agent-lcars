@@ -206,6 +206,8 @@ export const getProviderUserAgent = () =>
   'SuperSprinklesRacingBot/1.0 (+https://supersprinkles.racing; bot@supersprinkles.racing)';
 
 export const getTasksServiceUrl = () => optional('TASKS_SERVICE_URL');
+export const getPrimesBackendServiceUrl = () =>
+  optional('PRIMES_BACKEND_SERVICE_URL');
 export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
 export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');
 export const getGhostServiceUrl = () => required('GHOST_SERVICE_URL');
