@@ -55,10 +55,9 @@
         "targetName": "test"
       },
       "exclude": [
-        "apps/e2e-bot/**/*",
-        "apps/e2e-tasks/**/*",
-        "apps/e2e-onecake-backend/**/*",
-        "apps/primes-backend-e2e/**/*"
+        "apps/members/e2e/**/*",
+        "apps/onecake/e2e/**/*",
+        "apps/primes/e2e/**/*"
       ]
     },
     {
