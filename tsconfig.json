@@ -4,25 +4,10 @@
   "files": [],
   "references": [
     {
-      "path": "./apps/onecake/e2e/frontend"
-    },
-    {
-      "path": "./apps/members/e2e/frontend"
-    },
-    {
-      "path": "./apps/members/e2e/backend"
-    },
-    {
-      "path": "./apps/onecake/e2e/backend"
-    },
-    {
       "path": "./apps/primes/e2e/frontend"
     },
     {
       "path": "./apps/primes/e2e/backend"
-    },
-    {
-      "path": "./apps/members/e2e/bot"
     }
   ]
 }
