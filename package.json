@@ -48,7 +48,6 @@
     "axios": "^1.15.0",
     "basic-ftp": "^6.0.0",
     "bottleneck": "^2.19.5",
-    "browser-image-compression": "^2.0.2",
     "cheerio": "^1.2.0",
     "chrono-node": "^2.9.0",
     "client-only": "^0.0.1",

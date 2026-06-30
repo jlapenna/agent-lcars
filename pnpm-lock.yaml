@@ -107,9 +107,6 @@ importers:
       bottleneck:
         specifier: ^2.19.5
         version: 2.19.5
-      browser-image-compression:
-        specifier: ^2.0.2
-        version: 2.0.2
       cheerio:
         specifier: ^1.2.0
         version: 1.2.0
@@ -619,45 +616,7 @@ importers:
         specifier: ^4.1.4
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@24.13.2)(jsdom@26.1.0)(vite@8.1.0(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(less@4.5.1)(sass-embedded@1.99.0)(sass@1.99.0)(sugarss@5.0.1(postcss@8.5.15))(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
 
-  apps/bot: {}
-
   apps/cli: {}
-
-  apps/e2e-bot:
-    dependencies:
-      '@members/logging':
-        specifier: workspace:*
-        version: link:../../libs/logging
-      '@members/util':
-        specifier: workspace:*
-        version: link:../../libs/util
-
-  apps/e2e-onecake: {}
-
-  apps/e2e-primes: {}
-
-  apps/e2e-tasks:
-    dependencies:
-      '@members/logging':
-        specifier: workspace:*
-        version: link:../../libs/logging
-      '@members/util':
-        specifier: workspace:*
-        version: link:../../libs/util
-
-  apps/e2e-web: {}
-
-  apps/onecake: {}
-
-  apps/onecake-backend: {}
-
-  apps/primes: {}
-
-  apps/primes-backend: {}
-
-  apps/tasks: {}
-
-  apps/web: {}
 
   libs/app: {}
 
@@ -6439,9 +6398,6 @@ packages:
   braces@3.0.3:
     resolution: {integrity: sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==}
     engines: {node: '>=8'}
-
-  browser-image-compression@2.0.2:
-    resolution: {integrity: sha512-pBLlQyUf6yB8SmmngrcOw3EoS4RpQ1BcylI3T9Yqn7+4nrQTXJD4sJDe5ODnJdrvNMaio5OicFo75rDyJD2Ucw==}
 
   browserslist@4.28.2:
     resolution: {integrity: sha512-48xSriZYYg+8qXna9kwqjIVzuQxi+KYWp2+5nCYnYKPTr0LvD89Jqk2Or5ogxz0NUMfIjhh2lIUX/LyX9B4oIg==}
@@ -13123,9 +13079,6 @@ packages:
     resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
     deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
-
-  uzip@0.20201231.0:
-    resolution: {integrity: sha512-OZeJfZP+R0z9D6TmBgLq2LHzSSptGMGDGigGiEe0pr8UBe/7fdflgHlHBNDASTXB5jnFuxHpNaJywSg8YFeGng==}
 
   v8-compile-cache-lib@3.0.1:
     resolution: {integrity: sha512-wa7YjyUGfNZngI/vtK0UHAN+lgDCxBPCylVXGp0zu59Fz5aiGtNXaq3DhIov063MorB+VfufLh3JlF2KdTK3xg==}
@@ -20924,10 +20877,6 @@ snapshots:
   braces@3.0.3:
     dependencies:
       fill-range: 7.1.1
-
-  browser-image-compression@2.0.2:
-    dependencies:
-      uzip: 0.20201231.0
 
   browserslist@4.28.2:
     dependencies:
@@ -28969,8 +28918,6 @@ snapshots:
   uuid@8.3.2: {}
 
   uuid@9.0.1: {}
-
-  uzip@0.20201231.0: {}
 
   v8-compile-cache-lib@3.0.1: {}
 
