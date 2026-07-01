@@ -127,12 +127,12 @@ export interface EnvVars {
 
   PROVIDER_USER_AGENT?: string;
 
-  TASKS_SERVICE_URL?: string;
+  BACKEND_SERVICE_URL?: string;
   AGENT_SERVICE_URL?: string;
   WEB_SERVICE_URL?: string;
   GHOST_SERVICE_URL?: string;
 
-  CLOUD_TASKS_LOCATION?: string;
+  CLOUD_BACKEND_LOCATION?: string;
 
   RAG_DRIVE_FOLDERS?: string;
 
@@ -231,4 +231,14 @@ export interface EnvVars {
   GOOGLE_CLIENT_SECRET?: string;
   STRIPE_WEBHOOK_SECRET?: string; // Secret
   PRIMES_BACKEND_SERVICE_URL?: string;
+  SERVICE_ACCOUNT_CLIENT_EMAIL?: string;
+  SERVICE_ACCOUNT_PRIVATE_KEY?: string;
+  FIREBASE_CLIENT_EMAIL?: string;
+  FIREBASE_PRIVATE_KEY?: string;
+  AUTH_COOKIE_SIGNATURE_KEY_CURRENT?: string;
+  AUTH_COOKIE_SIGNATURE_KEY_PREVIOUS?: string;
+  DEBUG_DATASTORE?: string;
+  NEXT_PUBLIC_URL_PREFIX?: string;
+  NEXT_PUBLIC_STRIPE_ENABLED?: string;
+  NEXT_PUBLIC_DEBUG_LINKS?: string;
 }

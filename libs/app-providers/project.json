@@ -1,5 +1,5 @@
 {
-  "name": "@members/app-providers",
+  "name": "@repo/app-providers",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/app-providers/src",
   "projectType": "library",

@@ -1,4 +1,4 @@
-import { logger } from '@members/logging';
+import { logger } from '@repo/logging';
 import Bottleneck from 'bottleneck';
 
 import * as env from './env';
@@ -9,7 +9,7 @@ import {
 } from './rate-limiter';
 
 jest.mock('./env');
-jest.mock('@members/logging');
+jest.mock('@repo/logging');
 jest.mock('bottleneck');
 
 describe('rate-limiter', () => {

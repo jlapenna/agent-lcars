@@ -674,7 +674,7 @@ importers:
 
   libs/stripe:
     dependencies:
-      '@members/env':
+      '@repo/env':
         specifier: workspace:*
         version: link:../env-vars
 
@@ -684,13 +684,13 @@ importers:
 
   libs/util-server:
     dependencies:
-      '@members/env':
+      '@repo/env':
         specifier: workspace:*
         version: link:../env-vars
-      '@members/logging':
+      '@repo/logging':
         specifier: workspace:*
         version: link:../logging
-      '@members/util':
+      '@repo/util':
         specifier: workspace:*
         version: link:../util
 

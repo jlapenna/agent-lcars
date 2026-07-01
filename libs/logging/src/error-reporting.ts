@@ -7,7 +7,7 @@
  *
  * This module has NO node-only dependencies on purpose: it is imported by
  * `instrumentation.ts`, which Next compiles for the edge runtime whenever an
- * app ships an edge middleware (primes). Pulling the node `@members/logging`
+ * app ships an edge middleware (primes). Pulling the node `@repo/logging`
  * logger in here crashes the edge bundle (`__import_unsupported is not
  * defined`). `console.error` is safe in the Node and edge runtimes alike and,
  * unlike the logger, needs neither initNodeLogging() nor a LOG_LEVEL.
@@ -29,7 +29,7 @@ const CLIENT_PREFIX_BY_SOURCE: Record<string, string> = {
 };
 
 // Resolved from the environment so callers don't have to thread it through (and
-// so this stays free of the node-only @members/util-server accessor, which
+// so this stays free of the node-only @repo/util-server accessor, which
 // would be both a circular dep and edge-unsafe).
 const getProjectId = (): string | undefined =>
   process.env.NEXT_PUBLIC_PROJECT_ID ||

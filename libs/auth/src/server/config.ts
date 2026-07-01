@@ -14,13 +14,13 @@
 import './types';
 
 import { FirestoreAdapter } from '@auth/firebase-adapter';
-import { getFirebaseAuthAdmin, getFirestore } from '@members/firebase-server';
-import { logger, LogLevel } from '@members/logging';
-import { getAuthSecret } from '@members/service-auth';
-import { getSecrets as getSlackSecrets } from '@members/slack';
-import { getSecrets as getStravaSecrets } from '@members/strava';
-import { getNextPublicSlackClientId } from '@members/util/browser';
-import { enableTestingHandlers, getProjectId } from '@members/util-server';
+import { getFirebaseAuthAdmin, getFirestore } from '@repo/firebase-server';
+import { logger, LogLevel } from '@repo/logging';
+import { getAuthSecret } from '@repo/service-auth';
+import { getSecrets as getSlackSecrets } from '@repo/slack';
+import { getSecrets as getStravaSecrets } from '@repo/strava';
+import { getNextPublicSlackClientId } from '@repo/util/browser';
+import { enableTestingHandlers, getProjectId } from '@repo/util-server';
 import {
   getGoogleClientId,
   getGoogleClientSecret,
@@ -36,7 +36,7 @@ import {
   isMailConfigured,
   isOnecakeAdmin,
   isSlackAdmin,
-} from '@members/util-server';
+} from '@repo/util-server';
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';

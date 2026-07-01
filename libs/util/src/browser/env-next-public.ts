@@ -58,3 +58,15 @@ export const getNextPublicFirebaseAuthEmulatorHost = () =>
 
 export const getNextPublicStripePublishableKey = () =>
   sanitize(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) || '';
+
+export const getNextPublicStripeEnabled = () =>
+  isTrue(process.env.NEXT_PUBLIC_STRIPE_ENABLED);
+
+export const getNextPublicDebugLinks = () =>
+  isTrue(process.env.NEXT_PUBLIC_DEBUG_LINKS);
+
+export const getNextPublicFirestoreEmulatorHost = () =>
+  sanitize(process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST);
+
+export const getNextPublicUrlPrefix = () =>
+  sanitize(process.env.NEXT_PUBLIC_URL_PREFIX) || 'http://localhost:4200';

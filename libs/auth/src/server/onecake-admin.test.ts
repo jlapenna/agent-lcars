@@ -1,5 +1,5 @@
-import { getFirestore } from '@members/firebase-server';
-import * as utilServer from '@members/util-server';
+import { getFirestore } from '@repo/firebase-server';
+import * as utilServer from '@repo/util-server';
 
 import { getAuthConfig } from './config';
 import { getAuthJsAccount } from './queries';
@@ -24,11 +24,11 @@ jest.mock('next-auth/providers/credentials', () =>
   jest.fn().mockImplementation((options) => options),
 );
 
-jest.mock('@members/service-auth', () => ({
+jest.mock('@repo/service-auth', () => ({
   getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@members/firebase-server', () => ({
+jest.mock('@repo/firebase-server', () => ({
   getFirestore: jest.fn(),
   getFirebaseAdminApp: jest.fn(),
   getFirebaseAuthAdmin: jest.fn().mockResolvedValue({
@@ -36,7 +36,7 @@ jest.mock('@members/firebase-server', () => ({
   }),
 }));
 
-jest.mock('@members/logging', () => ({
+jest.mock('@repo/logging', () => ({
   logger: {
     debug: jest.fn(),
     error: jest.fn(),
@@ -46,17 +46,17 @@ jest.mock('@members/logging', () => ({
   LogLevel: { DEBUG: 'debug' },
 }));
 
-jest.mock('@members/slack', () => ({
+jest.mock('@repo/slack', () => ({
   getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
 }));
 
-jest.mock('@members/strava', () => ({
+jest.mock('@repo/strava', () => ({
   getSecrets: jest
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
 }));
 
-jest.mock('@members/util/browser', () => ({
+jest.mock('@repo/util/browser', () => ({
   getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
 }));
 
@@ -66,8 +66,8 @@ jest.mock('./queries', () => ({
 }));
 
 // OneCake-shaped environment: Strava-only, with an athlete admin allowlist.
-jest.mock('@members/util-server', () => ({
-  ...jest.requireActual('@members/util-server'),
+jest.mock('@repo/util-server', () => ({
+  ...jest.requireActual('@repo/util-server'),
   enableTestingHandlers: jest.fn().mockReturnValue(false),
   getLogLevel: jest.fn().mockReturnValue('warn'),
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),

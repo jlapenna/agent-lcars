@@ -1,5 +1,5 @@
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
-import { logger } from '@members/logging';
+import { logger } from '@repo/logging';
 
 const client = new SecretManagerServiceClient({ fallback: 'rest' });
 

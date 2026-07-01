@@ -1,4 +1,4 @@
-import { logger } from '@members/logging';
+import { logger } from '@repo/logging';
 
 import { getAuthConfig } from './config';
 
@@ -19,11 +19,11 @@ jest.mock('next-auth/providers/credentials', () =>
   jest.fn().mockImplementation((options) => options),
 );
 
-jest.mock('@members/service-auth', () => ({
+jest.mock('@repo/service-auth', () => ({
   getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@members/firebase-server', () => ({
+jest.mock('@repo/firebase-server', () => ({
   getFirestore: jest.fn().mockResolvedValue({
     collection: jest.fn().mockImplementation((name) => {
       if (name === 'services/authjs/users') {
@@ -56,7 +56,7 @@ jest.mock('@members/firebase-server', () => ({
   getFirebaseAdminApp: jest.fn(),
 }));
 
-jest.mock('@members/logging', () => ({
+jest.mock('@repo/logging', () => ({
   logger: {
     debug: jest.fn(),
     error: jest.fn(),
@@ -68,14 +68,14 @@ jest.mock('@members/logging', () => ({
   },
 }));
 
-jest.mock('@members/slack', () => ({
+jest.mock('@repo/slack', () => ({
   getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
   getBotDetails: jest
     .fn()
     .mockResolvedValue({ teamId: 'team-id', appId: 'app-id' }),
 }));
 
-jest.mock('@members/strava', () => ({
+jest.mock('@repo/strava', () => ({
   getSecrets: jest.fn().mockResolvedValue({
     clientId: 'id',
     clientSecret: 'secret',
@@ -83,8 +83,8 @@ jest.mock('@members/strava', () => ({
   }),
 }));
 
-jest.mock('@members/util-server', () => ({
-  ...jest.requireActual('@members/util-server'),
+jest.mock('@repo/util-server', () => ({
+  ...jest.requireActual('@repo/util-server'),
   enableTestingHandlers: jest.fn().mockReturnValue(true),
   getLogLevel: jest.fn().mockReturnValue('debug'),
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
@@ -99,7 +99,7 @@ jest.mock('@members/util-server', () => ({
   getProjectId: jest.fn().mockReturnValue('demo-project'),
 }));
 
-jest.mock('@members/util/browser', () => ({
+jest.mock('@repo/util/browser', () => ({
   getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
 }));
 
@@ -162,7 +162,7 @@ describe('Admin Bootstrapping', () => {
       const mockDoc = { get: mockGet, set: mockSet };
       const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
       const mockFirestore = await jest
-        .requireMock('@members/firebase-server')
+        .requireMock('@repo/firebase-server')
         .getFirestore();
       mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
 
@@ -216,7 +216,7 @@ describe('Admin Bootstrapping', () => {
       const mockDoc = { get: mockGet, set: mockSet };
       const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
       const mockFirestore = await jest
-        .requireMock('@members/firebase-server')
+        .requireMock('@repo/firebase-server')
         .getFirestore();
       mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
 
@@ -244,7 +244,7 @@ describe('Admin Bootstrapping', () => {
       const mockDoc = { get: mockGet, set: mockSet };
       const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
       const mockFirestore = await jest
-        .requireMock('@members/firebase-server')
+        .requireMock('@repo/firebase-server')
         .getFirestore();
       mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
 
@@ -274,7 +274,7 @@ describe('Admin Bootstrapping', () => {
       const mockDoc = { set: mockSet };
       const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
       const mockFirestore = await jest
-        .requireMock('@members/firebase-server')
+        .requireMock('@repo/firebase-server')
         .getFirestore();
       mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
 
@@ -319,7 +319,7 @@ describe('Admin Bootstrapping', () => {
       const mockDoc = { set: mockSet };
       const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
       const mockFirestore = await jest
-        .requireMock('@members/firebase-server')
+        .requireMock('@repo/firebase-server')
         .getFirestore();
       mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
 

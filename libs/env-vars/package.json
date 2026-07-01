@@ -1,5 +1,5 @@
 {
-  "name": "@members/env",
+  "name": "@repo/env",
   "version": "0.0.1",
   "private": true,
   "sideEffects": false

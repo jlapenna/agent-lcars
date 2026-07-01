@@ -1,5 +1,5 @@
-import { getFirebaseAuthAdmin } from '@members/firebase-server';
-import { logger } from '@members/logging';
+import { getFirebaseAuthAdmin } from '@repo/firebase-server';
+import { logger } from '@repo/logging';
 import {
   getE2eTestingUser,
   isAdminEmail,
@@ -7,7 +7,7 @@ import {
   isMockAuthEnabled,
   isOnecakeAdmin,
   isSlackAdmin,
-} from '@members/util-server';
+} from '@repo/util-server';
 import { NextRequest } from 'next/server';
 import NextAuth, { Session } from 'next-auth';
 

@@ -1,4 +1,4 @@
-import { timestampCodec, zodLooseObject } from '@members/firestore';
+import { timestampCodec, zodLooseObject } from '@repo/firestore';
 import { z } from 'zod';
 
 /**

@@ -1,4 +1,4 @@
-import { assertNotBrowser } from '@members/util';
+import { assertNotBrowser } from '@repo/util';
 
 assertNotBrowser();
 

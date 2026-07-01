@@ -1,4 +1,4 @@
-import type { EnvVars } from '@members/env';
+import type { EnvVars } from '@repo/env';
 
 declare global {
   namespace NodeJS {

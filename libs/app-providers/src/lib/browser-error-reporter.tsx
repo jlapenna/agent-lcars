@@ -1,6 +1,6 @@
 'use client';
 
-import { installBrowserErrorReporter } from '@members/logging/browser';
+import { installBrowserErrorReporter } from '@repo/logging/browser';
 import { useEffect } from 'react';
 
 export interface BrowserErrorReporterProps {

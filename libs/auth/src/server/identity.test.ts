@@ -9,7 +9,7 @@ jest.mock('./queries', () => ({
   ensureAuthJsUserForSlack: jest.fn(),
   upsertAuthJsAccount: jest.fn(),
 }));
-jest.mock('@members/firebase-server', () => ({
+jest.mock('@repo/firebase-server', () => ({
   getFirestore: jest.fn(),
 }));
 

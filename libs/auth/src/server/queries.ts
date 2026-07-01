@@ -1,4 +1,4 @@
-import { createConverter } from '@members/firestore';
+import { createConverter } from '@repo/firestore';
 import {
   FieldPath,
   Firestore,

@@ -127,3 +127,4 @@ apps/agent/agent
 
 # Containerized e2e: isolated node_modules / pnpm store / nx cache
 .cache/e2e-docker/
+cs_build_full.json

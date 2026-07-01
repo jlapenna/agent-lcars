@@ -111,12 +111,12 @@ export interface EnvVars {
 
   PROVIDER_REQUEST_TIMEOUT_MS?: string;
 
-  TASKS_SERVICE_URL?: string;
+  BACKEND_SERVICE_URL?: string;
   AGENT_SERVICE_URL?: string;
   WEB_SERVICE_URL?: string;
   GHOST_SERVICE_URL?: string;
 
-  CLOUD_TASKS_LOCATION?: string;
+  CLOUD_BACKEND_LOCATION?: string;
 
   RAG_DRIVE_FOLDERS?: string;
 

@@ -1,4 +1,4 @@
-import type { EnvVars } from '@members/env';
+import type { EnvVars } from '@repo/env';
 
 const isTrueValue = (value: string | undefined): boolean => {
   return typeof value === 'string' && value.toLowerCase() === 'true';

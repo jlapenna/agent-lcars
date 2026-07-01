@@ -224,7 +224,12 @@ export function installBrowserErrorReporter(
         .join(' ')
         .slice(0, MAX_MESSAGE_LENGTH);
       if (!message || isDuplicate(`console:${message}`)) return;
-      report({ source: 'console.error', message, stack: err?.stack, ...context() });
+      report({
+        source: 'console.error',
+        message,
+        stack: err?.stack,
+        ...context(),
+      });
     } catch {
       // Ignore serialization failures.
     }

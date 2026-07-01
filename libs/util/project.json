@@ -1,5 +1,5 @@
 {
-  "name": "@members/util",
+  "name": "@repo/util",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/util/src",
   "projectType": "library",

@@ -1,7 +1,7 @@
 /** Handle special cases in env dotfiles. */
 
-import type { EnvVars } from '@members/env';
-import { isDefined } from '@members/util';
+import type { EnvVars } from '@repo/env';
+import { isDefined } from '@repo/util';
 
 import { isTrue, optional, required, splitEnvList } from './env-util';
 
@@ -205,7 +205,7 @@ export const getProviderUserAgent = () =>
   optional('PROVIDER_USER_AGENT') ??
   'SuperSprinklesRacingBot/1.0 (+https://supersprinkles.racing; bot@supersprinkles.racing)';
 
-export const getTasksServiceUrl = () => optional('TASKS_SERVICE_URL');
+export const getBackendServiceUrl = () => optional('BACKEND_SERVICE_URL');
 export const getPrimesBackendServiceUrl = () =>
   optional('PRIMES_BACKEND_SERVICE_URL');
 export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
@@ -431,7 +431,7 @@ export const getSlackStateSecret = () => optional('SLACK_STATE_SECRET');
 
 export const getSlackTeamId = () => optional('SLACK_TEAM_ID');
 
-export const getCloudTasksLocation = () => optional('CLOUD_TASKS_LOCATION');
+export const getCloudTasksLocation = () => optional('CLOUD_BACKEND_LOCATION');
 
 export const getStripeSecretKey = () => optional('STRIPE_SECRET_KEY');
 
@@ -440,3 +440,28 @@ export const getStripeWebhookSecret = () => optional('STRIPE_WEBHOOK_SECRET');
 export const getGoogleClientId = () => optional('GOOGLE_CLIENT_ID');
 
 export const getGoogleClientSecret = () => optional('GOOGLE_CLIENT_SECRET');
+
+export const getServiceAccountClientEmail = () =>
+  optional('SERVICE_ACCOUNT_CLIENT_EMAIL') ||
+  optional('FIREBASE_CLIENT_EMAIL') ||
+  '';
+
+export const getServiceAccountPrivateKey = () =>
+  optional('SERVICE_ACCOUNT_PRIVATE_KEY') ||
+  optional('FIREBASE_PRIVATE_KEY') ||
+  '';
+
+export const getAuthCookieSignatureKeyCurrent = () =>
+  optional('AUTH_COOKIE_SIGNATURE_KEY_CURRENT') || '';
+
+export const getAuthCookieSignatureKeyPrevious = () =>
+  optional('AUTH_COOKIE_SIGNATURE_KEY_PREVIOUS') || '';
+
+export const getStripeApiVersion = (): string => '2023-10-16';
+
+export const isDebugDatastore = () => isTrue('DEBUG_DATASTORE');
+
+export const getUrlPrefix = () =>
+  optional('NEXT_PUBLIC_URL_PREFIX') || 'http://localhost:4200';
+
+export const isStripeEnabled = () => isTrue('NEXT_PUBLIC_STRIPE_ENABLED');

@@ -1,4 +1,4 @@
-import { logger } from '@members/logging';
+import { logger } from '@repo/logging';
 import Bottleneck from 'bottleneck';
 
 import {
