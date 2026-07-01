@@ -25,6 +25,10 @@ module.exports = {
     ),
     '^@repo/instagram$': path.join(__dirname, 'libs/instagram/src/index.ts'),
     '^@repo/instagram/(.*)$': path.join(__dirname, 'libs/instagram/src/$1'),
+    '^@repo/invites$': path.join(__dirname, 'libs/invites/src/index.ts'),
+    '^@repo/invites/(.*)$': path.join(__dirname, 'libs/invites/src/$1'),
+    '^@repo/onboarding$': path.join(__dirname, 'libs/onboarding/src/index.ts'),
+    '^@repo/onboarding/(.*)$': path.join(__dirname, 'libs/onboarding/src/$1'),
     '^@repo/qbp$': path.join(__dirname, 'libs/qbp/src/index.ts'),
     '^@repo/qbp/(.*)$': path.join(__dirname, 'libs/qbp/src/$1'),
     '^@repo/competitions$': path.join(
