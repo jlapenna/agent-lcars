@@ -19,16 +19,4 @@ RUN apt-get update \
 # Provide pnpm at the version pinned by the repo's packageManager field.
 RUN corepack enable && corepack prepare pnpm@10.34.1 --activate
 
-# nx's Go plugin (@naxodev/gonx) shells out to `go` while building the project
-# graph, so the toolchain must be present even for the (JS) e2e target. Match
-# the version in apps/agent/go.mod.
-ENV GO_VERSION=1.26.3
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
-  | tar -C /usr/local -xz
-ENV PATH="/usr/local/go/bin:${PATH}"
-# Cache Go build/module artifacts in the mounted workspace cache (the container
-# runs as the host user, who cannot write to the default /root or /go).
-ENV GOPATH=/work/.cache/e2e-docker/go
-ENV GOCACHE=/work/.cache/e2e-docker/go-build
-
 ENV CI=1
