@@ -1,0 +1,22 @@
+diff --git a/node_modules/@nx/react/dist/babel.js b/node_modules/@nx/react/dist/babel.js
+--- a/node_modules/@nx/react/dist/babel.js
++++ b/node_modules/@nx/react/dist/babel.js
+@@ -57,8 +57,16 @@
+         development: presetOptions.development ?? env !== 'production',
+     };
+     // JSX spread is transformed into object spread in `@babel/plugin-transform-react-jsx`
+-    // `useBuiltIns` will be removed in Babel 8.
+-    if (reactPresetOptions.runtime === 'automatic') {
++    // `useBuiltIns` was removed in Babel 8 (`@babel/preset-react` throws on it),
++    // so only set it when running under Babel 7.
++    let babelCoreMajor = 7;
++    try {
++        babelCoreMajor = parseInt(require('@babel/core/package.json').version, 10);
++    }
++    catch (_a) {
++        // Fall back to legacy behavior if the version can't be resolved.
++    }
++    if (reactPresetOptions.runtime === 'automatic' && babelCoreMajor < 8) {
+         reactPresetOptions.useBuiltIns = true;
+     }
+     if (presetOptions.importSource) {
