@@ -28,7 +28,8 @@
       "{workspaceRoot}/pnpm-lock.yaml",
       "{workspaceRoot}/package.json",
       "{workspaceRoot}/tsconfig.base.json",
-      "{workspaceRoot}/nx.json"
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/patches/**"
     ]
   },
   "tui": {
