@@ -23,9 +23,9 @@ importers:
       '@genkit-ai/firebase':
         specifier: ^1.36.0
         version: 1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0)(genkit@1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0))
-      '@genkit-ai/googleai':
-        specifier: ^1.28.0
-        version: 1.28.0(encoding@0.1.13)(genkit@1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0))
+      '@genkit-ai/google-genai':
+        specifier: ^1.39.0
+        version: 1.39.0(encoding@0.1.13)(genkit@1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0))
       '@google-cloud/common':
         specifier: ^6.0.0
         version: 6.0.1
@@ -188,9 +188,6 @@ importers:
       jsx-slack:
         specifier: ^6.1.2
         version: 6.1.2
-      libsodium-wrappers:
-        specifier: ^0.8.4
-        version: 0.8.4
       lodash.clonedeep:
         specifier: ^4.5.0
         version: 4.5.0
@@ -411,9 +408,6 @@ importers:
       '@types/jsonwebtoken':
         specifier: ^9.0.10
         version: 9.0.10
-      '@types/libsodium-wrappers':
-        specifier: ^0.8.2
-        version: 0.8.2
       '@types/lodash':
         specifier: ^4.17.24
         version: 4.17.24
@@ -2261,11 +2255,10 @@ packages:
     peerDependencies:
       genkit: ^1.39.0
 
-  '@genkit-ai/googleai@1.28.0':
-    resolution: {integrity: sha512-K39g1UbuZbaQaX0CyJbLW5nLKxv8HkghyQqezy4EtDK92SqoCEXK4DQKtEi+9JLRa9MHutaBxX9+fSHu7KPE1A==}
-    deprecated: 'Use @genkit-ai/google-genai package instead. See: https://genkit.dev/docs/js/integrations/google-genai/'
+  '@genkit-ai/google-genai@1.39.0':
+    resolution: {integrity: sha512-ZP9nA6TlBJ1ZHCmSkz56v0lrRS/Wfh6L09oHgeOIZyD/Pq76uX3W+Uly8dPAbDtNax63l64TsEYZH1HHt8rC8A==}
     peerDependencies:
-      genkit: ^1.28.0
+      genkit: ^1.39.0
 
   '@google-cloud/cloud-sql-connector@1.11.2':
     resolution: {integrity: sha512-ImHGgHunHoAHnQ9Bbsuq9an0rwmMdaPL8nrdQkVNnuIb0GKE+rTyjKNV+po7DJLuk84JPUUbK0cWW9AjPiAblA==}
@@ -2385,10 +2378,6 @@ packages:
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
         optional: true
-
-  '@google/generative-ai@0.24.1':
-    resolution: {integrity: sha512-MqO+MLfM6kjxcKoy0p1wRzG3b4ZZXtPI+z2IE26UogS2Cm/XHO+7gGRBh6gcJsOiIVoH93UwKvW4HdgiOZCy9Q==}
-    engines: {node: '>=18.0.0'}
 
   '@googleapis/sqladmin@37.0.0':
     resolution: {integrity: sha512-LBxSb3V+avoqsTHY/KsSR4/3FGnRfUw8yhGjx6ihTE5w7Y6l1EZkcx62aCCfCNkaigCQDvgiJG2Pq2jxN1sfag==}
@@ -2875,6 +2864,18 @@ packages:
 
   '@jsdevtools/ono@7.1.3':
     resolution: {integrity: sha512-4JQNk+3mVzK3xh2rqd6RB4J46qUR19azEHBneZyTZM+c456qOrbbM/5xcR8huNCCcbVt7+UmizG6GuUvPvKUYg==}
+
+  '@jsep-plugin/assignment@1.3.0':
+    resolution: {integrity: sha512-VVgV+CXrhbMI3aSusQyclHkenWSAm95WaiKrMxRFam3JSUiIaQjoMIw2sEs/OX4XifnqeQUN4DYbJjlA8EfktQ==}
+    engines: {node: '>= 10.16.0'}
+    peerDependencies:
+      jsep: ^0.4.0||^1.0.0
+
+  '@jsep-plugin/regex@1.0.4':
+    resolution: {integrity: sha512-q7qL4Mgjs1vByCaTnDFcBnV9HS7GVPJX5vyVoCgZHNSC9rjwIlmbXG5sUuorR5ndfHAIlJ8pVStxvjXHbNvtUg==}
+    engines: {node: '>= 10.16.0'}
+    peerDependencies:
+      jsep: ^0.4.0||^1.0.0
 
   '@jsonjoy.com/base64@1.1.2':
     resolution: {integrity: sha512-q6XAnWQDIMA3+FTiOYajoYqySkO+JSat0ytXGSuRdq9uXE7o92gzuQwQM14xaCRlBLGq3v5miDGC4vkVTn54xA==}
@@ -5361,10 +5362,6 @@ packages:
 
   '@types/katex@0.16.8':
     resolution: {integrity: sha512-trgaNyfU+Xh2Tc+ABIb44a5AYUpicB3uwirOioeOkNPPbmgRNtcWyDeeFRzjPZENO9Vq8gvVqfhaaXWLlevVwg==}
-
-  '@types/libsodium-wrappers@0.8.2':
-    resolution: {integrity: sha512-+2IDfSULPUskSjIYfZl9suIUsIE5PXwoKZiE/j0MZWd+M9nEGvJDsk/ztMZKNhL1lBL+1CaypW0dQSjqPW2dMg==}
-    deprecated: This is a stub types definition. libsodium-wrappers provides its own type definitions, so you do not need this installed.
 
   '@types/lodash.clonedeep@4.5.9':
     resolution: {integrity: sha512-19429mWC+FyaAhOLzsS8kZUsI+/GmBAQ0HFiCPsKGU+7pBXOQWhyrY6xNNDwUSX8SMZMJvuFVMF9O5dQOlQK9Q==}
@@ -9260,6 +9257,10 @@ packages:
       canvas:
         optional: true
 
+  jsep@1.4.0:
+    resolution: {integrity: sha512-B7qPcEVE3NVkmSJbaYxvv4cHkVW7DQsZz13pUMrfS8z8Q/BuShN+gcTXrUlPiGqM2/t/EEaI030bpxMqY8gMlw==}
+    engines: {node: '>= 10.16.0'}
+
   jsesc@3.1.0:
     resolution: {integrity: sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA==}
     engines: {node: '>=6'}
@@ -9331,6 +9332,11 @@ packages:
 
   jsonify@0.0.1:
     resolution: {integrity: sha512-2/Ki0GcmuqSrgFyelQq9M05y7PS0mEwuIzrf3f1fPqkVDVRvZrPZtVSMHxdgo8Aq0sxAOb/cr2aqqA3LeWHVPg==}
+
+  jsonpath-plus@10.4.0:
+    resolution: {integrity: sha512-T92WWatJXmhBbKsgH/0hl+jxjdXrifi5IKeMY02DWggRxX0UElcbVzPlmgLTbvsPeW1PasQ6xE2Q75stkhGbsA==}
+    engines: {node: '>=18.0.0'}
+    hasBin: true
 
   jsonwebtoken@9.0.3:
     resolution: {integrity: sha512-MT/xP0CrubFRNLNKvxJ2BYfy53Zkm++5bX9dtuPbqAeQpTVe0MQTFhao8+Cp//EmJp244xt6Drw/GVEGCUj40g==}
@@ -9429,14 +9435,8 @@ packages:
   libsodium-wrappers@0.7.16:
     resolution: {integrity: sha512-Gtr/WBx4dKjvRL1pvfwZqu7gO6AfrQ0u9vFL+kXihtHf6NfkROR8pjYWn98MFDI3jN19Ii1ZUfPR9afGiPyfHg==}
 
-  libsodium-wrappers@0.8.4:
-    resolution: {integrity: sha512-mu8aAWucZjTB5O/BtGXtW4e1agy7uHxNYG7zPthmmD1jU43LCDmSWZLN4JhflbdPXj3yDO4lxM1O9hLDgIOXDw==}
-
   libsodium@0.7.16:
     resolution: {integrity: sha512-3HrzSPuzm6Yt9aTYCDxYEG8x8/6C0+ag655Y7rhhWZM9PT4NpdnbqlzXhGZlDnkgR6MeSTnOt/VIyHLs9aSf+Q==}
-
-  libsodium@0.8.4:
-    resolution: {integrity: sha512-lMcYaRi0zcs7tarATsQUYC7rstliIXZuoq0c6zXSgNtSNtdvBgkSegjWhpMJAXzKX3SUSwIp7+zEsob+j3LuRw==}
 
   license-webpack-plugin@4.0.2:
     resolution: {integrity: sha512-771TFWFD70G1wLTC4oU2Cw4qvtmNrIw+wRvBtn+okgHl7slJVi7zfNcdmqDL72BojM30VNJ2UHylr1o77U37Jw==}
@@ -15648,12 +15648,11 @@ snapshots:
       - encoding
       - supports-color
 
-  '@genkit-ai/googleai@1.28.0(encoding@0.1.13)(genkit@1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0))':
+  '@genkit-ai/google-genai@1.39.0(encoding@0.1.13)(genkit@1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0))':
     dependencies:
-      '@google/generative-ai': 0.24.1
       genkit: 1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0)
       google-auth-library: 9.15.1(encoding@0.1.13)
-      node-fetch: 3.3.2
+      jsonpath-plus: 10.4.0
     transitivePeerDependencies:
       - encoding
       - supports-color
@@ -15879,8 +15878,6 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
-
-  '@google/generative-ai@0.24.1': {}
 
   '@googleapis/sqladmin@37.0.0':
     dependencies:
@@ -16408,6 +16405,14 @@ snapshots:
   '@js-sdsl/ordered-map@4.4.2': {}
 
   '@jsdevtools/ono@7.1.3': {}
+
+  '@jsep-plugin/assignment@1.3.0(jsep@1.4.0)':
+    dependencies:
+      jsep: 1.4.0
+
+  '@jsep-plugin/regex@1.0.4(jsep@1.4.0)':
+    dependencies:
+      jsep: 1.4.0
 
   '@jsonjoy.com/base64@1.1.2(tslib@2.8.1)':
     dependencies:
@@ -19520,10 +19525,6 @@ snapshots:
       '@types/node': 24.13.2
 
   '@types/katex@0.16.8': {}
-
-  '@types/libsodium-wrappers@0.8.2':
-    dependencies:
-      libsodium-wrappers: 0.8.4
 
   '@types/lodash.clonedeep@4.5.9':
     dependencies:
@@ -24411,6 +24412,8 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  jsep@1.4.0: {}
+
   jsesc@3.1.0: {}
 
   json-bigint@1.0.0:
@@ -24477,6 +24480,12 @@ snapshots:
       graceful-fs: 4.2.11
 
   jsonify@0.0.1: {}
+
+  jsonpath-plus@10.4.0:
+    dependencies:
+      '@jsep-plugin/assignment': 1.3.0(jsep@1.4.0)
+      '@jsep-plugin/regex': 1.0.4(jsep@1.4.0)
+      jsep: 1.4.0
 
   jsonwebtoken@9.0.3:
     dependencies:
@@ -24604,13 +24613,7 @@ snapshots:
     dependencies:
       libsodium: 0.7.16
 
-  libsodium-wrappers@0.8.4:
-    dependencies:
-      libsodium: 0.8.4
-
   libsodium@0.7.16: {}
-
-  libsodium@0.8.4: {}
 
   license-webpack-plugin@4.0.2(webpack@5.106.2(@swc/core@1.15.43(@swc/helpers@0.5.23))(esbuild@0.28.1)(postcss@8.5.16)):
     dependencies:
