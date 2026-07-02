@@ -5,6 +5,8 @@ import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
 import * as jsoncParser from 'jsonc-eslint-parser';
 
+import repoBoundaries from './tools/eslint/no-server-only-imports-in-client.mjs';
+
 export default [
   ...nx.configs['flat/base'],
   ...nx.configs['flat/typescript'],
@@ -21,6 +23,16 @@ export default [
       '.jules/',
       '.worktrees/',
     ],
+  },
+  {
+    // Server/client boundary: 'use client' files must not value-import
+    // server-only @repo libraries (rule no-ops on files without the
+    // directive, so it is safe to apply everywhere).
+    files: ['**/*.ts', '**/*.tsx'],
+    plugins: { repo: repoBoundaries },
+    rules: {
+      'repo/no-server-only-imports-in-client': 'error',
+    },
   },
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
