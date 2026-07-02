@@ -5,9 +5,10 @@
 # local runs match CI byte-for-byte, so a screenshot diff means a real visual
 # change rather than environment noise.
 #
-# The tag MUST match the @playwright/test version resolved in pnpm-lock.yaml
-# (currently 1.60.0). If Playwright is upgraded, bump this tag and the IMAGE tag
-# in tools/e2e-docker.sh together, or the bundled browser build won't match.
+# The base tag MUST match the @playwright/test version resolved in
+# pnpm-lock.yaml, or the bundled browser build won't match. The image tag used
+# by tools/e2e-docker.sh and CI is derived from this file's content hash, so
+# editing this file automatically invalidates stale images everywhere.
 FROM mcr.microsoft.com/playwright:v1.61.1-noble
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target
