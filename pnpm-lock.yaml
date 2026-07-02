@@ -652,6 +652,8 @@ importers:
 
   libs/race-events: {}
 
+  libs/racer-claims: {}
+
   libs/races: {}
 
   libs/rag: {}

@@ -71,6 +71,8 @@
       "@repo/invites/*": ["./libs/invites/src/*"],
       "@repo/onboarding": ["./libs/onboarding/src/index.ts"],
       "@repo/onboarding/*": ["./libs/onboarding/src/*"],
+      "@repo/racer-claims": ["./libs/racer-claims/src/index.ts"],
+      "@repo/racer-claims/*": ["./libs/racer-claims/src/*"],
       "@repo/rag": ["libs/rag/src/index.ts"],
       "@repo/rag/*": ["libs/rag/src/*"],
       "@repo/results": ["./libs/results/src/index.ts"],
