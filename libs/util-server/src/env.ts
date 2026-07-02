@@ -212,7 +212,7 @@ export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
 export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');
 export const getGhostServiceUrl = () => required('GHOST_SERVICE_URL');
 
-export const getRacesCalendarId = () => required('RACES_CALENDAR_ID');
+export const getRacesCalendarId = () => optional('RACES_CALENDAR_ID');
 
 export const getEventsSpreadsheetId = () => required('EVENTS_SPREADSHEET_ID');
 
@@ -222,7 +222,7 @@ export const getEventsSpreadsheetWorksheetTitle = () =>
 export const isAttendanceEnabled = () => isTrue('ATTENDANCE_ENABLED');
 
 export const getServiceAccountImpersonationSubject = () =>
-  required('SERVICE_ACCOUNT_IMPERSONATION_SUBJECT');
+  optional('SERVICE_ACCOUNT_IMPERSONATION_SUBJECT');
 
 export const getEffortsSpreadsheetWorksheetTitle = () =>
   required('EFFORTS_SPREADSHEET_WORKSHEET_TITLE');
