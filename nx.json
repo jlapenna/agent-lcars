@@ -24,7 +24,6 @@
       "{projectRoot}/go.sum"
     ],
     "sharedGlobals": [
-      "{workspaceRoot}/.github/workflows/ci.yml",
       "{workspaceRoot}/pnpm-lock.yaml",
       "{workspaceRoot}/package.json",
       "{workspaceRoot}/tsconfig.base.json",
