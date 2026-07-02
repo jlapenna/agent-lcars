@@ -63,6 +63,24 @@ export default [
           message:
             'Dynamic import() is not allowed. Use ES static imports instead.',
         },
+        {
+          selector:
+            'CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/][arguments.length=0]',
+          message:
+            "Bare toLocale*String() depends on the runtime locale/timezone and causes hydration mismatches (React #418). Pin them (e.g. 'en-US', { timeZone: 'UTC' }) or use the date helpers in @repo/util.",
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/][arguments.0.type='Identifier'][arguments.0.name='undefined']",
+          message:
+            "toLocale*String(undefined, …) uses the runtime locale and causes hydration mismatches (React #418). Pin the locale (e.g. 'en-US') and include a timeZone, or use the date helpers in @repo/util.",
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/][arguments.0.type='ArrayExpression'][arguments.0.elements.length=0]",
+          message:
+            "toLocale*String([], …) uses the runtime locale and causes hydration mismatches (React #418). Pin the locale (e.g. 'en-US') and include a timeZone, or use the date helpers in @repo/util.",
+        },
       ],
     },
   },
