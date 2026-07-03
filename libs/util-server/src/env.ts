@@ -333,6 +333,7 @@ export const getSquareupServiceChargeId = () =>
 export const getRoadResultsTeamId = () => required('ROADRESULTS_TEAM_ID');
 export const getCrossResultsTeamId = () => required('CROSSRESULTS_TEAM_ID');
 export const getGravelResultsTeamId = () => required('GRAVELRESULTS_TEAM_ID');
+export const getBikeregResultsTeamId = () => required('BIKEREGRESULTS_TEAM_ID');
 
 export const getExportSpreadsheetId = () => required('EXPORT_SPREADSHEET_ID');
 export const getExportSpreadsheetWorksheetTitle = () =>

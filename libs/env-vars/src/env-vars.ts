@@ -97,6 +97,7 @@ export interface EnvVars {
   ROADRESULTS_TEAM_ID: string;
   CROSSRESULTS_TEAM_ID: string;
   GRAVELRESULTS_TEAM_ID: string;
+  BIKEREGRESULTS_TEAM_ID: string;
 
   APPLICATION_2024_FORM_ID: string;
   APPLICATION_2025_FORM_ID: string;
