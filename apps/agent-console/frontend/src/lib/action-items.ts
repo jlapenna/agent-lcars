@@ -230,16 +230,28 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
 // qualifiers (`label:`/`author:`/`review-requested:`) - `q:
 // "label:claude OR author:app/claude"` 422s. Run one query per qualifier
 // and dedupe by issue number instead.
-const SEARCH_QUERIES = [
+//
+// GitHub's search API also now rejects any query that doesn't explicitly
+// say `is:issue` or `is:pull-request` ("Query must include 'is:issue' or
+// 'is:pull-request'", 422) - there's no single qualifier meaning "both", so
+// each base query below is expanded into both variants.
+const BASE_QUERIES = [
   'is:open label:claude',
   'is:open author:app/claude',
   'is:open review-requested:jlapenna',
 ];
+const SEARCH_QUERIES = BASE_QUERIES.flatMap((query) => [
+  `${query} is:issue`,
+  `${query} is:pull-request`,
+]);
 
 export async function getActionItems(): Promise<ActionItem[]> {
   const octokit = getGithubClient();
 
-  const results = await Promise.all(
+  // One malformed/rejected query (e.g. a future GitHub search-API contract
+  // change, as already happened once - see the SEARCH_QUERIES comment)
+  // shouldn't take down the whole dashboard. Log and skip it instead.
+  const results = await Promise.allSettled(
     SEARCH_QUERIES.map((query) =>
       octokit.rest.search.issuesAndPullRequests({
         q: `repo:${REPO_OWNER}/${REPO_NAME} ${query}`,
@@ -249,8 +261,15 @@ export async function getActionItems(): Promise<ActionItem[]> {
   );
 
   const byNumber = new Map<number, SearchIssue>();
-  for (const { data } of results) {
-    for (const issue of data.items) {
+  for (const [i, result] of results.entries()) {
+    if (result.status === 'rejected') {
+      console.error(
+        `agent-console: search query failed (${SEARCH_QUERIES[i]}):`,
+        result.reason,
+      );
+      continue;
+    }
+    for (const issue of result.value.data.items) {
       byNumber.set(issue.number, issue as SearchIssue);
     }
   }
