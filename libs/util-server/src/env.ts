@@ -212,6 +212,15 @@ export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
 export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');
 export const getGhostServiceUrl = () => required('GHOST_SERVICE_URL');
 
+export const getAgentConsoleGithubToken = () =>
+  required('AGENT_CONSOLE_GITHUB_TOKEN');
+export const getAgentConsoleAdminGithubLogin = () =>
+  required('AGENT_CONSOLE_ADMIN_GITHUB_LOGIN');
+export const getAgentConsoleGithubOauthClientId = () =>
+  required('AGENT_CONSOLE_GITHUB_OAUTH_CLIENT_ID');
+export const getAgentConsoleGithubOauthClientSecret = () =>
+  required('AGENT_CONSOLE_GITHUB_OAUTH_CLIENT_SECRET');
+
 export const getRacesCalendarId = () => optional('RACES_CALENDAR_ID');
 
 export const getEventsSpreadsheetId = () => required('EVENTS_SPREADSHEET_ID');

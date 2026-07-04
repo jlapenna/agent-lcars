@@ -133,6 +133,11 @@ export interface EnvVars {
   WEB_SERVICE_URL?: string;
   GHOST_SERVICE_URL?: string;
 
+  AGENT_CONSOLE_GITHUB_TOKEN?: string; // Secret
+  AGENT_CONSOLE_ADMIN_GITHUB_LOGIN?: string;
+  AGENT_CONSOLE_GITHUB_OAUTH_CLIENT_ID?: string;
+  AGENT_CONSOLE_GITHUB_OAUTH_CLIENT_SECRET?: string; // Secret
+
   CLOUD_BACKEND_LOCATION?: string;
 
   RAG_DRIVE_FOLDERS?: string;
@@ -204,6 +209,7 @@ export interface EnvVars {
   ENABLE_INVOICING?: string;
   AUTH_ENFORCED?: string;
   FORCE_STRUCTURED_LOGGING?: string;
+  MAINTENANCE_MODE?: string;
 
   SLACK_APP_CONFIGURATION_REFRESH_TOKEN?: string; // Secret
 
