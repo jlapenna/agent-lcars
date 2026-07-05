@@ -33,6 +33,9 @@
   "references": [
     {
       "path": "../../../libs/util-server/tsconfig.lib.json"
+    },
+    {
+      "path": "../../../libs/app-providers"
     }
   ]
 }

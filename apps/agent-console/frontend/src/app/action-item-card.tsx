@@ -1,5 +1,17 @@
 'use client';
 
+import {
+  Anchor,
+  Badge,
+  Blockquote,
+  Button,
+  Card,
+  Group,
+  Stack,
+  Text,
+  TextInput,
+} from '@mantine/core';
+import { modals } from '@mantine/modals';
 import { useState, useTransition } from 'react';
 
 import type {
@@ -18,10 +30,10 @@ const ACTION_LABELS: Record<ActionType, string> = {
 };
 
 const ACTION_COLORS: Record<ActionType, string> = {
-  'waiting-on-answer': '#3b82f6',
-  'run-failed': '#ef4444',
-  'review-requested': '#a855f7',
-  'post-deploy-action': '#fbca04',
+  'waiting-on-answer': 'blue',
+  'run-failed': 'red',
+  'review-requested': 'grape',
+  'post-deploy-action': 'yellow',
 };
 
 const TRUNCATION_THRESHOLD = 400;
@@ -30,10 +42,10 @@ const COLLAPSED_HEIGHT = 120;
 // 'clean'/'unknown' need no callout; the rest explain why "Approve & Merge"
 // might not work without a click through to GitHub.
 const MERGEABLE_WARNINGS: Partial<Record<MergeableState, string>> = {
-  dirty: '⚠ Merge conflicts',
-  blocked: '⚠ Blocked (branch protection / required checks)',
-  unstable: '⚠ Checks unstable',
-  behind: '⚠ Base branch has moved',
+  dirty: 'Merge conflicts',
+  blocked: 'Blocked (branch protection / required checks)',
+  unstable: 'Checks unstable',
+  behind: 'Base branch has moved',
 };
 
 const NOT_MERGEABLE_STATES: MergeableState[] = ['dirty', 'blocked'];
@@ -52,23 +64,22 @@ function CommentPreview({
   const needsTruncation = body.length > TRUNCATION_THRESHOLD;
   const isCollapsed = needsTruncation && !expanded;
   return (
-    <div style={{ marginTop: 10 }}>
+    <Stack gap={6}>
       <div style={{ position: 'relative' }}>
-        <blockquote
-          style={{
-            margin: 0,
-            padding: '8px 12px',
-            borderLeft: '3px solid #374151',
-            color: '#d1d5db',
-            fontSize: 13,
-            whiteSpace: 'pre-wrap',
-            maxHeight: isCollapsed ? COLLAPSED_HEIGHT : 'none',
-            overflow: 'hidden',
-            cursor: 'text',
+        <Blockquote
+          color="gray"
+          styles={{
+            root: {
+              padding: '8px 12px',
+              maxHeight: isCollapsed ? COLLAPSED_HEIGHT : 'none',
+              overflow: 'hidden',
+            },
           }}
         >
-          {body}
-        </blockquote>
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+            {body}
+          </Text>
+        </Blockquote>
         {isCollapsed && (
           <div
             aria-hidden="true"
@@ -85,34 +96,28 @@ function CommentPreview({
           />
         )}
       </div>
-      <div
-        style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}
-      >
+      <Group gap="md">
         {needsTruncation && (
-          <button
+          <Button
+            variant="subtle"
+            color="gray"
+            size="compact-xs"
             onClick={onToggle}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#9ca3af',
-              fontSize: 12,
-              cursor: 'pointer',
-              padding: 0,
-            }}
           >
             {expanded ? '▴ Show less' : '▾ Show full response'}
-          </button>
+          </Button>
         )}
-        <a
+        <Anchor
           href={url}
           target="_blank"
           rel="noreferrer"
-          style={{ fontSize: 12, color: '#9ca3af' }}
+          size="xs"
+          c="dimmed"
         >
           View on GitHub ↗
-        </a>
-      </div>
-    </div>
+        </Anchor>
+      </Group>
+    </Stack>
   );
 }
 
@@ -152,6 +157,20 @@ export function ActionItemCard({
     });
   };
 
+  const confirmMerge = () =>
+    modals.openConfirmModal({
+      title: `Merge #${item.number}?`,
+      children: (
+        <Text size="sm">
+          This approves and squash-merges &ldquo;{item.title}&rdquo; into main.
+          This can&rsquo;t be undone from here.
+        </Text>
+      ),
+      labels: { confirm: 'Approve & Merge', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: handleMerge,
+    });
+
   const handleRetrigger = () => {
     setError(undefined);
     startTransition(async () => {
@@ -164,195 +183,171 @@ export function ActionItemCard({
   };
 
   return (
-    <div
-      style={{
-        border: '1px solid #374151',
-        borderRadius: 8,
-        padding: 16,
-        marginBottom: 12,
-      }}
-    >
-      <div
-        style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}
-      >
-        <a
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
-          style={{ fontWeight: 600, color: 'inherit', textDecoration: 'none' }}
-        >
-          #{item.number} {item.title}
-        </a>
-        <span
-          style={{
-            display: 'flex',
-            gap: 6,
-            alignItems: 'center',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {item.draft && (
-            <span style={{ fontSize: 11, color: '#9ca3af' }}>Draft</span>
-          )}
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>
-            {item.kind === 'pr' ? 'PR' : 'Issue'}
-          </span>
-        </span>
-      </div>
+    <Card withBorder radius="md" padding="md">
+      <Stack gap={6}>
+        <Group justify="space-between" wrap="nowrap" align="flex-start">
+          <Anchor
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            fw={600}
+            c="inherit"
+            style={{ minWidth: 0, overflowWrap: 'break-word' }}
+          >
+            #{item.number} {item.title}
+          </Anchor>
+          <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+            {item.draft && (
+              <Badge variant="outline" color="gray" size="sm">
+                Draft
+              </Badge>
+            )}
+            <Badge variant="outline" color="gray" size="sm">
+              {item.kind === 'pr' ? 'PR' : 'Issue'}
+            </Badge>
+          </Group>
+        </Group>
 
-      <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
-        {item.author && <>by {item.author} · </>}
-        updated {updatedAtLabel}
-      </div>
+        <Text size="xs" c="dimmed">
+          {item.author && <>by {item.author} · </>}
+          updated {updatedAtLabel}
+        </Text>
 
-      {(item.parentNumber || item.subIssues || item.linkedIssueNumbers) && (
-        <div
-          style={{
-            fontSize: 12,
-            color: '#9ca3af',
-            marginTop: 6,
-            display: 'flex',
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
-          {item.parentNumber && (
-            <a
-              href={githubIssueUrl(item, item.parentNumber)}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: 'inherit' }}
-            >
-              ↳ part of #{item.parentNumber}
-            </a>
-          )}
-          {item.subIssues && (
-            <span>
-              sub-issues: {item.subIssues.completed}/{item.subIssues.total} done
-            </span>
-          )}
-          {item.linkedIssueNumbers && item.linkedIssueNumbers.length > 0 && (
-            <span>
-              Closes{' '}
-              {item.linkedIssueNumbers.map((n, i) => (
-                <span key={n}>
-                  {i > 0 && ', '}
-                  <a
-                    href={githubIssueUrl(item, n)}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: 'inherit' }}
-                  >
-                    #{n}
-                  </a>
-                </span>
-              ))}
-            </span>
-          )}
-        </div>
-      )}
-
-      {item.actionTypes.length > 0 && (
-        <div
-          style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}
-        >
-          {item.actionTypes.map((type) => (
-            <span
-              key={type}
-              style={{
-                fontSize: 11,
-                padding: '2px 8px',
-                borderRadius: 4,
-                background: `${ACTION_COLORS[type]}22`,
-                color: ACTION_COLORS[type],
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                letterSpacing: 0.3,
-              }}
-            >
-              {ACTION_LABELS[type]}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {item.failingChecks && item.failingChecks.length > 0 && (
-        <div style={{ fontSize: 12, color: '#f87171', marginTop: 6 }}>
-          Failed:{' '}
-          {item.failingChecks.map((check, i) => (
-            <span key={check.name}>
-              {i > 0 && ', '}
-              <a
-                href={check.url}
+        {(item.parentNumber || item.subIssues || item.linkedIssueNumbers) && (
+          <Group gap="md">
+            {item.parentNumber && (
+              <Anchor
+                href={githubIssueUrl(item, item.parentNumber)}
                 target="_blank"
                 rel="noreferrer"
-                style={{ color: 'inherit' }}
+                size="xs"
+                c="dimmed"
               >
-                {check.name}
-              </a>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState] && (
-        <div style={{ fontSize: 12, color: '#fbca04', marginTop: 6 }}>
-          {MERGEABLE_WARNINGS[item.mergeableState]}
-        </div>
-      )}
-
-      {item.lastCommentBody && item.lastCommentUrl && (
-        <CommentPreview
-          body={item.lastCommentBody}
-          url={item.lastCommentUrl}
-          expanded={expanded}
-          onToggle={() => setExpanded((prev) => !prev)}
-        />
-      )}
-
-      <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-        <input
-          value={replyBody}
-          onChange={(e) => setReplyBody(e.target.value)}
-          placeholder="Reply with @claude ..."
-          style={{
-            flex: 1,
-            minWidth: 200,
-            padding: '6px 10px',
-            borderRadius: 6,
-            border: '1px solid #374151',
-            background: 'transparent',
-            color: 'inherit',
-          }}
-        />
-        <button disabled={isPending || !replyBody.trim()} onClick={handleReply}>
-          Reply
-        </button>
-        {item.kind === 'issue' && (
-          <button disabled={isPending} onClick={handleRetrigger}>
-            Retrigger
-          </button>
+                ↳ part of #{item.parentNumber}
+              </Anchor>
+            )}
+            {item.subIssues && (
+              <Text size="xs" c="dimmed">
+                sub-issues: {item.subIssues.completed}/{item.subIssues.total}{' '}
+                done
+              </Text>
+            )}
+            {item.linkedIssueNumbers && item.linkedIssueNumbers.length > 0 && (
+              <Text size="xs" c="dimmed">
+                Closes{' '}
+                {item.linkedIssueNumbers.map((n, i) => (
+                  <span key={n}>
+                    {i > 0 && ', '}
+                    <Anchor
+                      href={githubIssueUrl(item, n)}
+                      target="_blank"
+                      rel="noreferrer"
+                      size="xs"
+                      c="dimmed"
+                      inherit
+                    >
+                      #{n}
+                    </Anchor>
+                  </span>
+                ))}
+              </Text>
+            )}
+          </Group>
         )}
-        {item.kind === 'pr' && (
-          <button
-            disabled={
-              isPending ||
-              (item.mergeableState !== undefined &&
-                NOT_MERGEABLE_STATES.includes(item.mergeableState))
-            }
-            title={
-              item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState]
-            }
-            onClick={handleMerge}
+
+        {item.actionTypes.length > 0 && (
+          <Group gap={6}>
+            {item.actionTypes.map((type) => (
+              <Badge key={type} color={ACTION_COLORS[type]} variant="light">
+                {ACTION_LABELS[type]}
+              </Badge>
+            ))}
+          </Group>
+        )}
+
+        {item.failingChecks && item.failingChecks.length > 0 && (
+          <Text size="xs" c="red">
+            Failed:{' '}
+            {item.failingChecks.map((check, i) => (
+              <span key={check.name}>
+                {i > 0 && ', '}
+                <Anchor
+                  href={check.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="xs"
+                  c="red"
+                  inherit
+                >
+                  {check.name}
+                </Anchor>
+              </span>
+            ))}
+          </Text>
+        )}
+
+        {item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState] && (
+          <Text size="xs" c="yellow">
+            ⚠ {MERGEABLE_WARNINGS[item.mergeableState]}
+          </Text>
+        )}
+
+        {item.lastCommentBody && item.lastCommentUrl && (
+          <CommentPreview
+            body={item.lastCommentBody}
+            url={item.lastCommentUrl}
+            expanded={expanded}
+            onToggle={() => setExpanded((prev) => !prev)}
+          />
+        )}
+
+        <Group gap="sm" wrap="wrap" mt={4}>
+          <TextInput
+            value={replyBody}
+            onChange={(e) => setReplyBody(e.currentTarget.value)}
+            placeholder="Reply with @claude…"
+            style={{ flex: 1, minWidth: 200 }}
+          />
+          <Button
+            variant="default"
+            disabled={isPending || !replyBody.trim()}
+            onClick={handleReply}
           >
-            Approve &amp; Merge
-          </button>
-        )}
-      </div>
+            Reply
+          </Button>
+          {item.kind === 'issue' && (
+            <Button
+              variant="default"
+              disabled={isPending}
+              onClick={handleRetrigger}
+            >
+              Retrigger
+            </Button>
+          )}
+          {item.kind === 'pr' && (
+            <Button
+              color="dark"
+              disabled={
+                isPending ||
+                (item.mergeableState !== undefined &&
+                  NOT_MERGEABLE_STATES.includes(item.mergeableState))
+              }
+              title={
+                item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState]
+              }
+              onClick={confirmMerge}
+            >
+              Approve &amp; Merge
+            </Button>
+          )}
+        </Group>
 
-      {error && (
-        <p style={{ color: '#ef4444', fontSize: 13, marginTop: 8 }}>{error}</p>
-      )}
-    </div>
+        {error && (
+          <Text c="red" size="sm">
+            {error}
+          </Text>
+        )}
+      </Stack>
+    </Card>
   );
 }

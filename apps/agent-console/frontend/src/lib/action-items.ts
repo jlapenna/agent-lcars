@@ -179,23 +179,33 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
       actionTypes.push('review-requested');
     }
 
-    const { data: checkRuns } = await octokit.rest.checks.listForRef({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
-      ref: pr.head.sha,
-      per_page: 20,
-    });
-    const failed = checkRuns.check_runs.filter(
-      (run) =>
-        run.status === 'completed' &&
-        (run.conclusion === 'failure' || run.conclusion === 'cancelled'),
-    );
-    if (failed.length > 0) {
-      actionTypes.push('run-failed');
-      failingChecks = failed.map((run) => ({
-        name: run.name,
-        url: run.html_url ?? issue.html_url,
-      }));
+    // Same defensive pattern as the search queries below: a single GitHub
+    // API hiccup for one PR (e.g. a token lacking the "Checks: read"
+    // permission) must not crash the whole dashboard for every item.
+    try {
+      const { data: checkRuns } = await octokit.rest.checks.listForRef({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        ref: pr.head.sha,
+        per_page: 20,
+      });
+      const failed = checkRuns.check_runs.filter(
+        (run) =>
+          run.status === 'completed' &&
+          (run.conclusion === 'failure' || run.conclusion === 'cancelled'),
+      );
+      if (failed.length > 0) {
+        actionTypes.push('run-failed');
+        failingChecks = failed.map((run) => ({
+          name: run.name,
+          url: run.html_url ?? issue.html_url,
+        }));
+      }
+    } catch (error) {
+      console.error(
+        `agent-console: failed to list check runs for #${issue.number}:`,
+        error,
+      );
     }
   }
 
@@ -274,9 +284,20 @@ export async function getActionItems(): Promise<ActionItem[]> {
     }
   }
 
-  const items = await Promise.all(
+  // Defense in depth: an unexpected error classifying one item (a GitHub API
+  // hiccup, a malformed search result, etc.) should drop that one item, not
+  // crash the whole dashboard for everyone.
+  const classified = await Promise.allSettled(
     Array.from(byNumber.values()).map((issue) => classifyIssue(issue)),
   );
+  const items: ActionItem[] = [];
+  for (const result of classified) {
+    if (result.status === 'rejected') {
+      console.error('agent-console: failed to classify an item:', result.reason);
+      continue;
+    }
+    items.push(result.value);
+  }
 
   return items.sort((a, b) => itemPriority(a) - itemPriority(b));
 }

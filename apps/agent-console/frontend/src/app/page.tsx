@@ -1,3 +1,4 @@
+import { Container, Stack, Text, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 
 import { auth } from '../auth';
@@ -21,36 +22,46 @@ export default async function Index() {
   const rest = items.filter((item) => item.actionTypes.length === 0);
 
   return (
-    <main style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
-      <h1>Agent Console</h1>
-      <p style={{ color: '#9ca3af' }}>
+    <Container size="md" py="xl">
+      <Title order={1}>Agent Console</Title>
+      <Text c="dimmed" mt={4} mb="xl">
         supersprinklesracing/members &mdash; Claude issue agent activity
-      </p>
+      </Text>
 
-      <h2>Needs your action ({needsAction.length})</h2>
+      <Title order={2} mb="sm">
+        Needs Your Action ({needsAction.length})
+      </Title>
       {needsAction.length === 0 && (
-        <p style={{ color: '#9ca3af' }}>Nothing waiting on you right now.</p>
+        <Text c="dimmed" mb="xl">
+          Nothing waiting on you right now.
+        </Text>
       )}
-      {needsAction.map((item) => (
-        <ActionItemCard
-          key={`${item.kind}-${item.number}`}
-          item={item}
-          updatedAtLabel={formatRelativeTime(item.updatedAt)}
-        />
-      ))}
+      <Stack gap="sm" mb="xl">
+        {needsAction.map((item) => (
+          <ActionItemCard
+            key={`${item.kind}-${item.number}`}
+            item={item}
+            updatedAtLabel={formatRelativeTime(item.updatedAt)}
+          />
+        ))}
+      </Stack>
 
       {rest.length > 0 && (
         <>
-          <h2>Everything else ({rest.length})</h2>
-          {rest.map((item) => (
-            <ActionItemCard
-              key={`${item.kind}-${item.number}`}
-              item={item}
-              updatedAtLabel={formatRelativeTime(item.updatedAt)}
-            />
-          ))}
+          <Title order={2} mb="sm">
+            Everything Else ({rest.length})
+          </Title>
+          <Stack gap="sm">
+            {rest.map((item) => (
+              <ActionItemCard
+                key={`${item.kind}-${item.number}`}
+                item={item}
+                updatedAtLabel={formatRelativeTime(item.updatedAt)}
+              />
+            ))}
+          </Stack>
         </>
       )}
-    </main>
+    </Container>
   );
 }
