@@ -511,18 +511,33 @@ export const getAuthConfig = async (
 
           // Slack-workspace admin signal (web/bot identities only). Strava-only
           // (OneCake) sign-ins carry no Slack identity, so this is false there.
+          // Database sessions have no JWT, so the persisted `slack.isAdmin`
+          // grant (written by the admin-email bootstrap in createUser/signIn)
+          // must be read here directly — the JWT path already folds it into
+          // appToken.isAdmin.
           const slackAdmin = slackData
-            ? (appToken?.isAdmin ?? isSlackAdmin(slackData.id))
+            ? (appToken?.isAdmin ??
+              (!!slackData.isAdmin || isSlackAdmin(slackData.id)))
             : false;
+
+          // Live admin-email signal: email-bearing sign-ins (Google, magic
+          // link — e.g. Primes) match ADMIN_EMAILS directly, so admin works
+          // even if the persisted bootstrap never fired for this user.
+          const emailAdmin =
+            !!session.user.email && isAdminEmail(session.user.email);
 
           // Canonical, platform-agnostic admin flag. This is the single field
           // authorization consumers read. Admin is NOT surfaced via `slack`.
           // Sources: Slack-workspace admin, OneCake Strava-athlete allowlist
-          // (ONECAKE_ADMINS), or a persisted grant on the user doc set at runtime
-          // via the admin UI (appUser.isAdmin). Database sessions recompute this
-          // every request, so a grant/revoke takes effect on the next page load.
+          // (ONECAKE_ADMINS), admin email (ADMIN_EMAILS), or a persisted grant
+          // on the user doc set at runtime via the admin UI (appUser.isAdmin).
+          // Database sessions recompute this every request, so a grant/revoke
+          // takes effect on the next page load.
           const isAdmin =
-            slackAdmin || isStravaAthleteAdmin || !!appUser?.isAdmin;
+            slackAdmin ||
+            isStravaAthleteAdmin ||
+            emailAdmin ||
+            !!appUser?.isAdmin;
           session.user.isAdmin = isAdmin;
 
           if (slackData) {
