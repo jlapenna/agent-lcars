@@ -68,8 +68,9 @@ export function initNodeLogging() {
   // Set log enricher for structured logging
   setLogEnricher(() => {
     const context = contextStorage.getStore();
+    const traceId = getTraceId();
     return {
-      traceId: rtracer.id() as string | undefined,
+      traceId: typeof traceId === 'string' ? traceId : undefined,
       requestUrl: context?.path,
       userId: context?.userId,
       action: context?.action,
@@ -93,7 +94,8 @@ export class SlackLogger {
   private log(severity: string, ...msg: unknown[]) {
     if (isOnGoogleCloud() || forceStructuredLogging()) {
       const message = formatWithOptions({ depth: null }, ...msg);
-      const traceId = rtracer.id();
+      const rawTraceId = getTraceId();
+      const traceId = typeof rawTraceId === 'string' ? rawTraceId : undefined;
       const context = contextStorage.getStore();
       console.log(
         JSON.stringify({

@@ -1,7 +1,6 @@
-import rtracer from 'cls-rtracer';
 import { formatWithOptions } from 'util';
 
-import { getContext } from './context';
+import { getContext, getTraceId } from './context';
 import {
   forceStructuredLogging,
   getSlackLogLevel,
@@ -33,7 +32,8 @@ export class SlackLogger {
   private log(severity: string, ...msg: unknown[]) {
     if (isOnGoogleCloud() || forceStructuredLogging()) {
       const message = formatWithOptions({ depth: null }, ...msg);
-      const traceId = rtracer.id();
+      const rawTraceId = getTraceId();
+      const traceId = typeof rawTraceId === 'string' ? rawTraceId : undefined;
       const context = getContext();
       console.log(
         JSON.stringify({
