@@ -1,18 +1,10 @@
 import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
 
 export type ActionType =
-  | 'waiting-on-answer'
-  | 'run-failed'
-  | 'review-requested'
-  | 'post-deploy-action';
+  'human-needed' | 'run-failed' | 'review-requested' | 'post-deploy-action';
 
 export type MergeableState =
-  | 'clean'
-  | 'dirty'
-  | 'blocked'
-  | 'unstable'
-  | 'behind'
-  | 'unknown';
+  'clean' | 'dirty' | 'blocked' | 'unstable' | 'behind' | 'unknown';
 
 export interface SubIssuesSummary {
   total: number;
@@ -27,6 +19,7 @@ export interface ActionItem {
   author?: string;
   updatedAt: string;
   actionTypes: ActionType[];
+  labels: string[];
   lastCommentBody?: string;
   lastCommentUrl?: string;
   parentNumber?: number;
@@ -38,7 +31,7 @@ export interface ActionItem {
 }
 
 const ACTION_PRIORITY: Record<ActionType, number> = {
-  'waiting-on-answer': 0,
+  'human-needed': 0,
   'run-failed': 1,
   'review-requested': 2,
   'post-deploy-action': 3,
@@ -49,23 +42,19 @@ function itemPriority(item: ActionItem): number {
   return Math.min(...item.actionTypes.map((type) => ACTION_PRIORITY[type]));
 }
 
-interface LastCommentSignal {
-  type: ActionType;
+// These already get a dedicated, colored action-type badge (see
+// ACTION_LABELS in action-item-card.tsx) - repeating them in the plain
+// label list would just be noise.
+const LABELS_SHOWN_AS_ACTION_TYPES = new Set(['human-needed', 'post-deploy-action']);
+
+interface LastComment {
   body: string;
   url: string;
 }
 
-// The agent appends the same "reply with @claude" reminder footer to every
-// comment where it stops and waits - including post-deploy-action follow-up
-// instructions, not just genuine clarifying questions. Detecting the
-// reminder alone over-flags every post-deploy comment as "waiting-on-answer"
-// too; the post-deploy-action label check below takes priority so the two
-// stay mutually exclusive for the same last comment.
-const CLAUDE_REMINDER_RE = /reply.{0,20}@claude/i;
-
-async function getLastCommentSignal(
+async function getLastComment(
   issueNumber: number,
-): Promise<LastCommentSignal | undefined> {
+): Promise<LastComment | undefined> {
   const octokit = getGithubClient();
   const { data: comments } = await octokit.rest.issues.listComments({
     owner: REPO_OWNER,
@@ -76,16 +65,7 @@ async function getLastCommentSignal(
     direction: 'desc',
   });
   const last = comments[0];
-  if (!last?.body) return undefined;
-
-  if (CLAUDE_REMINDER_RE.test(last.body)) {
-    return {
-      type: 'waiting-on-answer',
-      body: last.body,
-      url: last.html_url,
-    };
-  }
-  return undefined;
+  return last?.body ? { body: last.body, url: last.html_url } : undefined;
 }
 
 interface SearchIssue {
@@ -134,24 +114,22 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
     typeof label === 'string' ? label : (label.name ?? ''),
   );
   const isPostDeploy = labels.includes('post-deploy-action');
+  const isHumanNeeded = labels.includes('human-needed');
 
   const actionTypes: ActionType[] = [];
+  if (isHumanNeeded) {
+    actionTypes.push('human-needed');
+  }
   if (isPostDeploy) {
     actionTypes.push('post-deploy-action');
   }
 
-  const signal = await getLastCommentSignal(issue.number);
   let lastCommentBody: string | undefined;
   let lastCommentUrl: string | undefined;
-  if (signal) {
-    lastCommentBody = signal.body;
-    lastCommentUrl = signal.url;
-    // See CLAUDE_REMINDER_RE comment above: don't double-count a post-deploy
-    // comment as also "waiting-on-answer".
-    const isRealSignal = !(isPostDeploy && signal.type === 'waiting-on-answer');
-    if (isRealSignal) {
-      actionTypes.push(signal.type);
-    }
+  if (isHumanNeeded || isPostDeploy) {
+    const comment = await getLastComment(issue.number);
+    lastCommentBody = comment?.body;
+    lastCommentUrl = comment?.url;
   }
 
   let draft: boolean | undefined;
@@ -219,6 +197,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
     author: issue.user?.login ?? undefined,
     updatedAt: issue.updated_at,
     actionTypes,
+    labels: labels.filter((label) => !LABELS_SHOWN_AS_ACTION_TYPES.has(label)),
     lastCommentBody,
     lastCommentUrl,
     parentNumber: extractParentNumber(issue.parent_issue_url),
@@ -293,7 +272,10 @@ export async function getActionItems(): Promise<ActionItem[]> {
   const items: ActionItem[] = [];
   for (const result of classified) {
     if (result.status === 'rejected') {
-      console.error('agent-console: failed to classify an item:', result.reason);
+      console.error(
+        'agent-console: failed to classify an item:',
+        result.reason,
+      );
       continue;
     }
     items.push(result.value);

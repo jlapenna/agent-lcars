@@ -24,14 +24,14 @@ import { mergePr, replyToItem, retriggerIssue } from './actions';
 import { githubIssueUrl } from './format';
 
 const ACTION_LABELS: Record<ActionType, string> = {
-  'waiting-on-answer': 'Waiting on your answer',
+  'human-needed': 'Needs a human',
   'run-failed': 'CI run failed',
   'review-requested': 'Review requested',
   'post-deploy-action': 'Needs post-deploy action',
 };
 
 const ACTION_COLORS: Record<ActionType, string> = {
-  'waiting-on-answer': 'blue',
+  'human-needed': 'blue',
   'run-failed': 'red',
   'review-requested': 'grape',
   'post-deploy-action': 'yellow',
@@ -232,6 +232,16 @@ export function ActionItemCard({
           {item.author && <>by {item.author} · </>}
           updated {updatedAtLabel}
         </Text>
+
+        {item.labels.length > 0 && (
+          <Group gap={6}>
+            {item.labels.map((label) => (
+              <Badge key={label} variant="dot" color="gray" size="sm">
+                {label}
+              </Badge>
+            ))}
+          </Group>
+        )}
 
         {(item.parentNumber || item.subIssues || item.linkedIssueNumbers) && (
           <Group gap="md">
