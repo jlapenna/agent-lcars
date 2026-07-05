@@ -12,6 +12,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
+import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import type {
@@ -140,10 +141,21 @@ export function ActionItemCard({
       try {
         await replyToItem(item.number, replyBody);
         setReplyBody('');
+        notifications.show({
+          message: `Reply posted on #${item.number}`,
+          color: 'green',
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to post reply');
       }
     });
+  };
+
+  const handleReplyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleReply();
+    }
   };
 
   const handleMerge = () => {
@@ -151,6 +163,10 @@ export function ActionItemCard({
     startTransition(async () => {
       try {
         await mergePr(item.number);
+        notifications.show({
+          message: `#${item.number} merged`,
+          color: 'green',
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to merge');
       }
@@ -176,6 +192,10 @@ export function ActionItemCard({
     startTransition(async () => {
       try {
         await retriggerIssue(item.number);
+        notifications.show({
+          message: `#${item.number} retriggered`,
+          color: 'green',
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to retrigger');
       }
@@ -305,6 +325,7 @@ export function ActionItemCard({
           <TextInput
             value={replyBody}
             onChange={(e) => setReplyBody(e.currentTarget.value)}
+            onKeyDown={handleReplyKeyDown}
             placeholder="Reply with @claude…"
             style={{ flex: 1, minWidth: 200 }}
           />

@@ -1,10 +1,11 @@
-import { Container, Stack, Text, Title } from '@mantine/core';
+import { Container, Group, Stack, Text, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 
 import { auth } from '../auth';
 import { ActionItemCard } from './action-item-card';
 import { getActionItems } from './actions';
 import { formatRelativeTime } from './format';
+import { RefreshButton } from './refresh-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,13 +21,22 @@ export default async function Index() {
   const items = await getActionItems();
   const needsAction = items.filter((item) => item.actionTypes.length > 0);
   const rest = items.filter((item) => item.actionTypes.length === 0);
+  const generatedAt = new Date().toISOString();
 
   return (
     <Container size="md" py="xl">
-      <Title order={1}>Agent Console</Title>
-      <Text c="dimmed" mt={4} mb="xl">
-        supersprinklesracing/members &mdash; Claude issue agent activity
-      </Text>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" mb="xl">
+        <div>
+          <Title order={1}>Agent Console</Title>
+          <Text c="dimmed" mt={4}>
+            supersprinklesracing/members &mdash; Claude issue agent activity
+          </Text>
+        </div>
+        <RefreshButton
+          generatedAt={generatedAt}
+          initialLabel={formatRelativeTime(generatedAt)}
+        />
+      </Group>
 
       <Title order={2} mb="sm">
         Needs Your Action ({needsAction.length})
