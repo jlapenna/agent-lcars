@@ -20,6 +20,8 @@ export interface ActionItem {
   updatedAt: string;
   actionTypes: ActionType[];
   labels: string[];
+  /** Newest `claude-agent-session.sh resume <id>` command the agent posted. */
+  takeoverCommand?: string;
   lastCommentBody?: string;
   lastCommentUrl?: string;
   parentNumber?: number;
@@ -52,9 +54,18 @@ interface LastComment {
   url: string;
 }
 
-async function getLastComment(
-  issueNumber: number,
-): Promise<LastComment | undefined> {
+interface CommentScan {
+  last?: LastComment;
+  takeoverCommand?: string;
+}
+
+// The agent's kickoff prompt (see .github/workflows/claude.yml) makes it
+// post its exact takeover command in its first ack comment, e.g.
+// `~/p/members/tools/claude-agent-session.sh resume <session-id>`. Each new
+// run posts a fresh one, so the newest match wins.
+const TAKEOVER_COMMAND_RE = /(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/;
+
+async function scanComments(issueNumber: number): Promise<CommentScan> {
   const octokit = getGithubClient();
   const { data: comments } = await octokit.rest.issues.listComments({
     owner: REPO_OWNER,
@@ -65,7 +76,18 @@ async function getLastComment(
     direction: 'desc',
   });
   const last = comments[0];
-  return last?.body ? { body: last.body, url: last.html_url } : undefined;
+  let takeoverCommand: string | undefined;
+  for (const comment of comments) {
+    const match = comment.body?.match(TAKEOVER_COMMAND_RE);
+    if (match) {
+      takeoverCommand = match[1];
+      break;
+    }
+  }
+  return {
+    last: last?.body ? { body: last.body, url: last.html_url } : undefined,
+    takeoverCommand,
+  };
 }
 
 interface SearchIssue {
@@ -126,10 +148,19 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
 
   let lastCommentBody: string | undefined;
   let lastCommentUrl: string | undefined;
-  if (isHumanNeeded || isPostDeploy) {
-    const comment = await getLastComment(issue.number);
-    lastCommentBody = comment?.body;
-    lastCommentUrl = comment?.url;
+  let takeoverCommand: string | undefined;
+  // Comment fetches cost one API call per item, so stay scoped: actionable
+  // items (for the comment preview) plus claude-labeled issues (where the
+  // agent's ack comment carries the session takeover command; PRs never
+  // do - the agent only posts it on the issue it picked up).
+  const wantsTakeover = !isPr && labels.includes('claude');
+  if (isHumanNeeded || isPostDeploy || wantsTakeover) {
+    const scan = await scanComments(issue.number);
+    if (isHumanNeeded || isPostDeploy) {
+      lastCommentBody = scan.last?.body;
+      lastCommentUrl = scan.last?.url;
+    }
+    takeoverCommand = wantsTakeover ? scan.takeoverCommand : undefined;
   }
 
   let draft: boolean | undefined;
@@ -198,6 +229,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
     updatedAt: issue.updated_at,
     actionTypes,
     labels: labels.filter((label) => !LABELS_SHOWN_AS_ACTION_TYPES.has(label)),
+    takeoverCommand,
     lastCommentBody,
     lastCommentUrl,
     parentNumber: extractParentNumber(issue.parent_issue_url),

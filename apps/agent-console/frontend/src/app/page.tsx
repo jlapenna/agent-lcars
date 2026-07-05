@@ -2,8 +2,10 @@ import { Container, Group, Stack, Text, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 
 import { auth } from '../auth';
+import { getAgentActivity } from '../lib/agent-activity';
 import { ActionItemCard } from './action-item-card';
 import { getActionItems } from './actions';
+import { AgentActivityPanel } from './agent-activity-panel';
 import { formatRelativeTime } from './format';
 import { RefreshButton } from './refresh-button';
 
@@ -18,7 +20,10 @@ export default async function Index() {
     redirect('/login');
   }
 
-  const items = await getActionItems();
+  const [items, activity] = await Promise.all([
+    getActionItems(),
+    getAgentActivity(),
+  ]);
   const needsAction = items.filter((item) => item.actionTypes.length > 0);
   const rest = items.filter((item) => item.actionTypes.length === 0);
   const generatedAt = new Date().toISOString();
@@ -37,6 +42,8 @@ export default async function Index() {
           initialLabel={formatRelativeTime(generatedAt)}
         />
       </Group>
+
+      <AgentActivityPanel activity={activity} />
 
       <Title order={2} mb="sm">
         Needs Your Action ({needsAction.length})

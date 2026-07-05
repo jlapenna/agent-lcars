@@ -6,9 +6,13 @@ import {
   Blockquote,
   Button,
   Card,
+  Code,
+  CopyButton,
   Group,
+  Popover,
   Stack,
   Text,
+  Textarea,
   TextInput,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
@@ -131,6 +135,8 @@ export function ActionItemCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
+  const [retriggerOpened, setRetriggerOpened] = useState(false);
+  const [retriggerNote, setRetriggerNote] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
@@ -188,10 +194,12 @@ export function ActionItemCard({
     });
 
   const handleRetrigger = () => {
+    setRetriggerOpened(false);
     setError(undefined);
     startTransition(async () => {
       try {
-        await retriggerIssue(item.number);
+        await retriggerIssue(item.number, retriggerNote.trim() || undefined);
+        setRetriggerNote('');
         notifications.show({
           message: `#${item.number} retriggered`,
           color: 'green',
@@ -322,6 +330,36 @@ export function ActionItemCard({
           </Text>
         )}
 
+        {item.takeoverCommand && (
+          <Group gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+              Takeover:
+            </Text>
+            <Code
+              style={{
+                overflowX: 'auto',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
+              {item.takeoverCommand}
+            </Code>
+            <CopyButton value={item.takeoverCommand}>
+              {({ copied, copy }) => (
+                <Button
+                  variant="subtle"
+                  size="compact-xs"
+                  color={copied ? 'teal' : 'gray'}
+                  onClick={copy}
+                  style={{ flexShrink: 0 }}
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </Button>
+              )}
+            </CopyButton>
+          </Group>
+        )}
+
         {item.lastCommentBody && item.lastCommentUrl && (
           <CommentPreview
             body={item.lastCommentBody}
@@ -347,13 +385,41 @@ export function ActionItemCard({
             Reply
           </Button>
           {item.kind === 'issue' && (
-            <Button
-              variant="default"
-              disabled={isPending}
-              onClick={handleRetrigger}
+            <Popover
+              opened={retriggerOpened}
+              onChange={setRetriggerOpened}
+              width={340}
+              position="bottom-end"
+              withArrow
             >
-              Retrigger
-            </Button>
+              <Popover.Target>
+                <Button
+                  variant="default"
+                  disabled={isPending}
+                  onClick={() => setRetriggerOpened((prev) => !prev)}
+                >
+                  Retrigger
+                </Button>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <Stack gap="xs">
+                  <Textarea
+                    value={retriggerNote}
+                    onChange={(e) => setRetriggerNote(e.currentTarget.value)}
+                    placeholder="Optional steering note — posted on the issue before the fresh run starts"
+                    autosize
+                    minRows={2}
+                  />
+                  <Button
+                    disabled={isPending}
+                    onClick={handleRetrigger}
+                    fullWidth
+                  >
+                    Retrigger now
+                  </Button>
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
           )}
           {item.kind === 'pr' && (
             <Button

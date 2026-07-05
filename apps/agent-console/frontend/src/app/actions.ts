@@ -77,10 +77,10 @@ export async function mergePr(number: number) {
   }
 }
 
-export async function retriggerIssue(number: number) {
+export async function retriggerIssue(number: number, note?: string) {
   await requireAdmin();
   try {
-    await retriggerIssueLib(number);
+    await retriggerIssueLib(number, note);
     revalidatePath('/');
   } catch (error) {
     throw toUserError(error);
