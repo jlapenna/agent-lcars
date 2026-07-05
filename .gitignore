@@ -76,6 +76,7 @@ e2e-server.log
 .envrc
 .env.local
 .env.*.local
+!.env
 !.env.test
 !.env.development
 !.env.production
