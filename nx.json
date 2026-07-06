@@ -114,6 +114,21 @@
     "e2e": {
       "dependsOn": ["^build"]
     },
+    "e2e-docker": {
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/tools/e2e-docker.sh",
+        "{workspaceRoot}/tools/e2e/Dockerfile"
+      ]
+    },
+    "copy-json-assets": {
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/tools/patch-cli-dist.cjs"
+      ]
+    },
     "@nx/js:tsc": {
       "cache": true,
       "dependsOn": ["^build"],
