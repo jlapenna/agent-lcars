@@ -307,6 +307,11 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
 // each base query below is expanded into both variants.
 const BASE_QUERIES = [
   'is:open label:claude',
+  // human-needed is one of this dashboard's own action types, but not every
+  // human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
+  // carry human-needed without ever having the claude label or an agent
+  // author, and without this query it never enters the dashboard at all.
+  'is:open label:human-needed',
   'is:open author:app/claude',
   'is:open review-requested:jlapenna',
 ];
