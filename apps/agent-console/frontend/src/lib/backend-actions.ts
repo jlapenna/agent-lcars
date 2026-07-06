@@ -17,6 +17,39 @@ function ensureTriggersAgent(body: string): string {
   return /@claude/i.test(body) ? body : `${body}\n\n@claude`;
 }
 
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status: unknown }).status === 404
+  );
+}
+
+// Replying or retriggering hands the ball back to the agent. The agent
+// applies `human-needed` but nothing ever cleared it, so answered items
+// stayed pinned to the top of "Needs Your Action" indefinitely.
+async function clearHumanNeededLabel(issueNumber: number): Promise<void> {
+  const octokit = getGithubClient();
+  try {
+    await octokit.rest.issues.removeLabel({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      issue_number: issueNumber,
+      name: 'human-needed',
+    });
+  } catch (error) {
+    // 404 = the label wasn't set. Anything else: the primary action already
+    // succeeded, so a failed label cleanup should not fail the request.
+    if (!isNotFound(error)) {
+      console.error(
+        `agent-console: failed to clear human-needed on #${issueNumber}:`,
+        error,
+      );
+    }
+  }
+}
+
 export async function postComment(
   issueNumber: number,
   body: string,
@@ -31,6 +64,7 @@ export async function postComment(
     issue_number: issueNumber,
     body: ensureTriggersAgent(body),
   });
+  await clearHumanNeededLabel(issueNumber);
   return { url: data.html_url };
 }
 
@@ -72,6 +106,8 @@ export async function retriggerIssue(
       400,
     );
   }
+
+  await clearHumanNeededLabel(issueNumber);
 
   // A steering note goes up BEFORE the retrigger so the fresh run reads it
   // as part of the thread. Deliberately NOT run through ensureTriggersAgent:

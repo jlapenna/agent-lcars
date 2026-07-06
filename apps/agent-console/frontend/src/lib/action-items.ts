@@ -4,7 +4,7 @@ export type ActionType =
   'human-needed' | 'run-failed' | 'review-requested' | 'post-deploy-action';
 
 export type MergeableState =
-  'clean' | 'dirty' | 'blocked' | 'unstable' | 'behind' | 'unknown';
+  'clean' | 'dirty' | 'blocked' | 'unstable' | 'behind' | 'draft' | 'unknown';
 
 export interface SubIssuesSummary {
   total: number;
@@ -30,6 +30,20 @@ export interface ActionItem {
   draft?: boolean;
   mergeableState?: MergeableState;
   failingChecks?: { name: string; url: string }[];
+  /** Some check run on the PR's head is still queued or in progress. */
+  ciRunning?: boolean;
+}
+
+/**
+ * True when all that's left on the item is waiting for the next deploy: the
+ * post-deploy verification agent verifies and closes these automatically,
+ * so they are not the maintainer's to act on.
+ */
+export function isDeployWaitOnly(item: ActionItem): boolean {
+  return (
+    item.actionTypes.length > 0 &&
+    item.actionTypes.every((type) => type === 'post-deploy-action')
+  );
 }
 
 const ACTION_PRIORITY: Record<ActionType, number> = {
@@ -47,7 +61,10 @@ function itemPriority(item: ActionItem): number {
 // These already get a dedicated, colored action-type badge (see
 // ACTION_LABELS in action-item-card.tsx) - repeating them in the plain
 // label list would just be noise.
-const LABELS_SHOWN_AS_ACTION_TYPES = new Set(['human-needed', 'post-deploy-action']);
+const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
+  'human-needed',
+  'post-deploy-action',
+]);
 
 interface LastComment {
   body: string;
@@ -65,20 +82,42 @@ interface CommentScan {
 // run posts a fresh one, so the newest match wins.
 const TAKEOVER_COMMAND_RE = /(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/;
 
-async function scanComments(issueNumber: number): Promise<CommentScan> {
+// issues.listComments has no sort/direction parameters (unlike the
+// repo-level comment listings) - it ALWAYS returns ascending created order,
+// so the newest comments live on the LAST page. Verified live: passing
+// sort/direction is silently ignored, which used to make this scan return
+// the issue's oldest comment as the "last response" and the takeover command
+// of the first (long-dead) session.
+const COMMENTS_PER_PAGE = 100;
+
+async function scanComments(
+  issueNumber: number,
+  commentCount: number,
+): Promise<CommentScan> {
   const octokit = getGithubClient();
-  const { data: comments } = await octokit.rest.issues.listComments({
+  const lastPage = Math.max(1, Math.ceil(commentCount / COMMENTS_PER_PAGE));
+  let { data: comments } = await octokit.rest.issues.listComments({
     owner: REPO_OWNER,
     repo: REPO_NAME,
     issue_number: issueNumber,
-    per_page: 10,
-    sort: 'created',
-    direction: 'desc',
+    per_page: COMMENTS_PER_PAGE,
+    page: lastPage,
   });
-  const last = comments[0];
+  // The count from the search index can lag deletions; if the computed page
+  // is past the end, step back one page rather than reporting no comments.
+  if (comments.length === 0 && lastPage > 1) {
+    ({ data: comments } = await octokit.rest.issues.listComments({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      issue_number: issueNumber,
+      per_page: COMMENTS_PER_PAGE,
+      page: lastPage - 1,
+    }));
+  }
+  const last = comments[comments.length - 1];
   let takeoverCommand: string | undefined;
-  for (const comment of comments) {
-    const match = comment.body?.match(TAKEOVER_COMMAND_RE);
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const match = comments[i].body?.match(TAKEOVER_COMMAND_RE);
     if (match) {
       takeoverCommand = match[1];
       break;
@@ -101,6 +140,7 @@ interface SearchIssue {
   pull_request?: unknown;
   parent_issue_url?: string | null;
   sub_issues_summary?: { total: number; completed: number };
+  comments?: number;
 }
 
 // GitHub's own closing-keyword syntax: "closes #123", "fixes #123", etc.
@@ -155,7 +195,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
   // do - the agent only posts it on the issue it picked up).
   const wantsTakeover = !isPr && labels.includes('claude');
   if (isHumanNeeded || isPostDeploy || wantsTakeover) {
-    const scan = await scanComments(issue.number);
+    const scan = await scanComments(issue.number, issue.comments ?? 0);
     if (isHumanNeeded || isPostDeploy) {
       lastCommentBody = scan.last?.body;
       lastCommentUrl = scan.last?.url;
@@ -166,6 +206,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
   let draft: boolean | undefined;
   let mergeableState: MergeableState | undefined;
   let failingChecks: { name: string; url: string }[] | undefined;
+  let ciRunning: boolean | undefined;
   let linkedIssueNumbers = extractLinkedIssueNumbers(issue.body, issue.number);
 
   if (isPr) {
@@ -181,10 +222,13 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
     linkedIssueNumbers =
       extractLinkedIssueNumbers(pr.body, issue.number) ?? linkedIssueNumbers;
 
+    // A review request on a draft isn't actionable yet - the agent asks for
+    // review at PR creation, but a draft is by definition still being
+    // iterated on. It surfaces once the PR is marked ready.
     const reviewRequested = pr.requested_reviewers?.some(
       (reviewer) => reviewer.login === 'jlapenna',
     );
-    if (reviewRequested) {
+    if (reviewRequested && !pr.draft) {
       actionTypes.push('review-requested');
     }
 
@@ -198,10 +242,11 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
         ref: pr.head.sha,
         per_page: 20,
       });
+      // Only genuine failures count: a `cancelled` conclusion is almost
+      // always a superseded or manually-killed run, and badging it "CI run
+      // failed" steered the maintainer toward retriggers nobody needed.
       const failed = checkRuns.check_runs.filter(
-        (run) =>
-          run.status === 'completed' &&
-          (run.conclusion === 'failure' || run.conclusion === 'cancelled'),
+        (run) => run.status === 'completed' && run.conclusion === 'failure',
       );
       if (failed.length > 0) {
         actionTypes.push('run-failed');
@@ -210,6 +255,9 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
           url: run.html_url ?? issue.html_url,
         }));
       }
+      ciRunning = checkRuns.check_runs.some(
+        (run) => run.status !== 'completed',
+      );
     } catch (error) {
       console.error(
         `agent-console: failed to list check runs for #${issue.number}:`,
@@ -244,6 +292,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
     draft,
     mergeableState,
     failingChecks,
+    ciRunning,
   };
 }
 

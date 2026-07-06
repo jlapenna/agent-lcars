@@ -31,14 +31,14 @@ const ACTION_LABELS: Record<ActionType, string> = {
   'human-needed': 'Needs a human',
   'run-failed': 'CI run failed',
   'review-requested': 'Review requested',
-  'post-deploy-action': 'Needs post-deploy action',
+  'post-deploy-action': 'Awaiting next deploy',
 };
 
 const ACTION_COLORS: Record<ActionType, string> = {
   'human-needed': 'blue',
   'run-failed': 'red',
   'review-requested': 'grape',
-  'post-deploy-action': 'yellow',
+  'post-deploy-action': 'gray',
 };
 
 const TRUNCATION_THRESHOLD = 400;
@@ -51,9 +51,17 @@ const MERGEABLE_WARNINGS: Partial<Record<MergeableState, string>> = {
   blocked: 'Blocked (branch protection / required checks)',
   unstable: 'Checks unstable',
   behind: 'Base branch has moved',
+  draft: 'Draft — mark it ready for review first',
 };
 
-const NOT_MERGEABLE_STATES: MergeableState[] = ['dirty', 'blocked'];
+const NOT_MERGEABLE_STATES: MergeableState[] = ['dirty', 'blocked', 'draft'];
+
+/** Preformatted live-run info; built server-side in page.tsx. */
+export interface LiveRunSummary {
+  status: 'queued' | 'running';
+  label: string;
+  url: string;
+}
 
 function CommentPreview({
   body,
@@ -129,9 +137,11 @@ function CommentPreview({
 export function ActionItemCard({
   item,
   updatedAtLabel,
+  liveRun,
 }: {
   item: ActionItem;
   updatedAtLabel: string;
+  liveRun?: LiveRunSummary;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
@@ -293,8 +303,32 @@ export function ActionItemCard({
           </Group>
         )}
 
-        {item.actionTypes.length > 0 && (
+        {(liveRun || item.actionTypes.length > 0) && (
           <Group gap={6}>
+            {liveRun && (
+              <>
+                <Badge
+                  variant="filled"
+                  color={liveRun.status === 'running' ? 'blue' : 'gray'}
+                >
+                  {liveRun.status === 'running'
+                    ? 'Agent working now'
+                    : 'Agent run queued'}
+                </Badge>
+                <Text size="xs" c="dimmed">
+                  {liveRun.label}
+                </Text>
+                <Anchor
+                  href={liveRun.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="xs"
+                  c="dimmed"
+                >
+                  View run ↗
+                </Anchor>
+              </>
+            )}
             {item.actionTypes.map((type) => (
               <Badge key={type} color={ACTION_COLORS[type]} variant="light">
                 {ACTION_LABELS[type]}
@@ -321,6 +355,12 @@ export function ActionItemCard({
                 </Anchor>
               </span>
             ))}
+          </Text>
+        )}
+
+        {item.ciRunning && (
+          <Text size="xs" c="dimmed">
+            CI running…
           </Text>
         )}
 
@@ -384,7 +424,7 @@ export function ActionItemCard({
           >
             Reply
           </Button>
-          {item.kind === 'issue' && (
+          {item.kind === 'issue' && item.labels.includes('claude') && (
             <Popover
               opened={retriggerOpened}
               onChange={setRetriggerOpened}
@@ -395,7 +435,14 @@ export function ActionItemCard({
               <Popover.Target>
                 <Button
                   variant="default"
-                  disabled={isPending}
+                  // Retriggering mid-run double-dispatches: the label cycle
+                  // fires a second run while the first still holds the issue.
+                  disabled={isPending || Boolean(liveRun)}
+                  title={
+                    liveRun
+                      ? 'An agent run is already in flight for this item'
+                      : undefined
+                  }
                   onClick={() => setRetriggerOpened((prev) => !prev)}
                 >
                   Retrigger
@@ -424,13 +471,19 @@ export function ActionItemCard({
           {item.kind === 'pr' && (
             <Button
               color="dark"
+              // item.draft is belt-and-suspenders for the 'draft'
+              // mergeable_state: merging a draft always 405s.
               disabled={
                 isPending ||
+                item.draft ||
                 (item.mergeableState !== undefined &&
                   NOT_MERGEABLE_STATES.includes(item.mergeableState))
               }
               title={
-                item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState]
+                item.draft
+                  ? MERGEABLE_WARNINGS.draft
+                  : item.mergeableState &&
+                    MERGEABLE_WARNINGS[item.mergeableState]
               }
               onClick={confirmMerge}
             >

@@ -17,6 +17,12 @@ export interface AgentRun {
   conclusion?: AgentRunConclusion;
   event: string;
   url: string;
+  /**
+   * For `issues`/`issue_comment`-triggered runs GitHub sets this to the
+   * issue/PR title, which lets the dashboard join live runs to action items
+   * without any runner-side telemetry.
+   */
+  displayTitle: string;
   createdAt: string;
   updatedAt: string;
   /**
@@ -45,6 +51,7 @@ interface WorkflowRunLike {
   conclusion: string | null;
   event: string;
   html_url: string;
+  display_title: string;
   created_at: string;
   updated_at: string;
   run_started_at?: string;
@@ -76,6 +83,7 @@ function toAgentRun(run: WorkflowRunLike): AgentRun {
     conclusion: toConclusion(run.conclusion),
     event: run.event,
     url: run.html_url,
+    displayTitle: run.display_title,
     createdAt: run.created_at,
     updatedAt: run.updated_at,
     elapsedSeconds: Math.max(0, Math.round((endMs - startMs) / 1000)),
