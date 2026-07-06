@@ -1,3 +1,14 @@
+// Owned constants for the Auth.js Firestore paths (#2126). They live in the
+// dependency-free @repo/authjs-paths so libraries with a real functional
+// dependency on @repo/auth (e.g. @repo/strava, whose OAuth secrets config.ts
+// imports) can reference them without forming a circular build dependency.
+// Re-exported here for existing @repo/auth/server consumers.
+import {
+  AUTHJS_ACCOUNTS_COLLECTION_PATH,
+  AUTHJS_SESSIONS_COLLECTION_PATH,
+  AUTHJS_USERS_COLLECTION_PATH,
+  AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH,
+} from '@repo/authjs-paths';
 import { createConverter } from '@repo/firestore';
 import {
   FieldPath,
@@ -13,16 +24,12 @@ import {
   AuthJsUserSchema,
 } from './schema';
 
-// Owned constants for the Auth.js Firestore paths (#2126) - ~30 raw
-// occurrences of these paths exist across the repo (strava, slack, this
-// lib's own config.ts/identity.ts) with no constant defined anywhere.
-// Exported so other modules in @repo/auth can adopt them; cross-lib
-// adoption (strava, slack) is deferred - see the note on #2126.
-export const AUTHJS_USERS_COLLECTION_PATH = 'services/authjs/users';
-export const AUTHJS_ACCOUNTS_COLLECTION_PATH = 'services/authjs/accounts';
-export const AUTHJS_SESSIONS_COLLECTION_PATH = 'services/authjs/sessions';
-export const AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH =
-  'services/authjs/verificationTokens';
+export {
+  AUTHJS_ACCOUNTS_COLLECTION_PATH,
+  AUTHJS_SESSIONS_COLLECTION_PATH,
+  AUTHJS_USERS_COLLECTION_PATH,
+  AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH,
+};
 
 const authJsUserConverter = createConverter(AuthJsUserSchema, {
   idField: 'id',
@@ -300,7 +307,7 @@ export async function setAuthJsUserAdmin(
   isAdmin: boolean,
 ): Promise<void> {
   await firestore
-    .collection('services/authjs/users')
+    .collection(AUTHJS_USERS_COLLECTION_PATH)
     .doc(userId)
     .set({ isAdmin }, { merge: true });
 }

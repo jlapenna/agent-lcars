@@ -470,20 +470,20 @@ export const getAuthConfig = async (
               'strava',
             );
 
-            let riderProfileDoc = await firestore
-              .collection('user-profiles')
-              .doc(session.user.id)
-              .get();
+            let riderProfileDoc = await getRiderProfileRef(
+              firestore,
+              session.user.id,
+            ).get();
 
             if (
               !riderProfileDoc.exists &&
               slackData?.id &&
               slackData.id !== session.user.id
             ) {
-              riderProfileDoc = await firestore
-                .collection('user-profiles')
-                .doc(slackData.id)
-                .get();
+              riderProfileDoc = await getRiderProfileRef(
+                firestore,
+                slackData.id,
+              ).get();
             }
 
             if (riderProfileDoc.exists) {

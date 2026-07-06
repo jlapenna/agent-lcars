@@ -17,6 +17,12 @@
       "path": "../firestore/tsconfig.lib.json"
     },
     {
+      "path": "../authjs-paths/tsconfig.lib.json"
+    },
+    {
+      "path": "../util/tsconfig.lib.json"
+    },
+    {
       "path": "../strava/tsconfig.lib.json"
     },
     {
@@ -26,19 +32,16 @@
       "path": "../service-auth/tsconfig.lib.json"
     },
     {
-      "path": "../util-server/tsconfig.lib.json"
+      "path": "../riders/tsconfig.lib.json"
     },
     {
-      "path": "../util/tsconfig.lib.json"
+      "path": "../util-server/tsconfig.lib.json"
     },
     {
       "path": "../logging/tsconfig.lib.json"
     },
     {
       "path": "../firebase-server/tsconfig.lib.json"
-    },
-    {
-      "path": "../riders/tsconfig.lib.json"
     }
   ],
   "include": [

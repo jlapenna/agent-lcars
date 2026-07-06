@@ -84,6 +84,9 @@ const makeFirestore = () => ({
     doc: jest.fn().mockReturnValue({
       get: jest.fn().mockResolvedValue({ exists: false }),
       set: jest.fn().mockResolvedValue({}),
+      // getRiderProfileRef() attaches a converter before .get()/.set(); return
+      // the same doc mock so the chained calls still work.
+      withConverter: jest.fn().mockReturnThis(),
     }),
   }),
 });

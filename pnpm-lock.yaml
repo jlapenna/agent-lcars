@@ -618,6 +618,8 @@ importers:
 
   libs/auth: {}
 
+  libs/authjs-paths: {}
+
   libs/chores: {}
 
   libs/cloudevents: {}

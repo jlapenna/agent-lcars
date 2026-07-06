@@ -5,6 +5,7 @@ import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
 import * as jsoncParser from 'jsonc-eslint-parser';
 
+import firestorePaths from './tools/eslint/no-raw-collection-path-literals.mjs';
 import repoBoundaries from './tools/eslint/no-server-only-imports-in-client.mjs';
 
 export default [
@@ -32,6 +33,15 @@ export default [
     plugins: { repo: repoBoundaries },
     rules: {
       'repo/no-server-only-imports-in-client': 'error',
+    },
+  },
+  {
+    // Owned collection-path modules (#2126): raw literals for paths that
+    // already have an accessor bypass that module's Firestore converter.
+    files: ['**/*.ts', '**/*.tsx'],
+    plugins: { 'firestore-paths': firestorePaths },
+    rules: {
+      'firestore-paths/no-raw-collection-path-literals': 'error',
     },
   },
   {

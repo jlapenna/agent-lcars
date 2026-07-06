@@ -60,6 +60,7 @@
       "@repo/auth": ["libs/auth/src/index.ts"],
       "@repo/auth/server": ["libs/auth/src/server/index.ts"],
       "@repo/auth/client": ["libs/auth/src/client/index.ts"],
+      "@repo/authjs-paths": ["libs/authjs-paths/src/index.ts"],
       "@repo/cloudevents": ["libs/cloudevents/src/index.ts"],
       "@repo/env": ["libs/env-vars/src/index.ts"],
       "@repo/secrets": ["libs/secrets/src/index.ts"],
