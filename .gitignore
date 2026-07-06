@@ -135,3 +135,7 @@ cs_build_full.json
 # lacking `h` breaks every fresh clone/worktree until someone manually runs
 # `pnpm exec husky` (see #1649, #1920).
 .husky/_/
+# Accidental `gh`/tool state dirs created inside the repo when $HOME or
+# $XDG_STATE_HOME is misconfigured (e.g. a sandboxed agent session);
+# never legitimate repo content.
+/.local/
