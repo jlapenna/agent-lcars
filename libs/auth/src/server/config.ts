@@ -16,6 +16,7 @@ import './types';
 import { FirestoreAdapter } from '@auth/firebase-adapter';
 import { getFirebaseAuthAdmin, getFirestore } from '@repo/firebase-server';
 import { logger, LogLevel } from '@repo/logging';
+import { getRiderProfileRef } from '@repo/riders/queries';
 import { getAuthSecret } from '@repo/service-auth';
 import { getSecrets as getSlackSecrets } from '@repo/slack';
 import { getSecrets as getStravaSecrets } from '@repo/strava';
@@ -48,7 +49,14 @@ import Strava from 'next-auth/providers/strava';
 import { z } from 'zod';
 
 import { resolveUserIdFromSlackId } from './identity';
-import { getAuthJsAccount, getAuthJsAccountId } from './queries';
+import {
+  AUTHJS_ACCOUNTS_COLLECTION_PATH,
+  AUTHJS_SESSIONS_COLLECTION_PATH,
+  AUTHJS_USERS_COLLECTION_PATH,
+  AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH,
+  getAuthJsAccount,
+  getAuthJsAccountId,
+} from './queries';
 import { REQUIRED_WAIVER_VERSION } from './schema';
 import { SlackUser } from './types';
 
@@ -134,8 +142,7 @@ export const getAuthConfig = async (
             slack: {
               id: profile.sub,
               teamId: profile['https://slack.com/team_id'] as
-                | string
-                | undefined,
+                string | undefined,
               isAdmin: false,
             },
           };
@@ -269,10 +276,10 @@ export const getAuthConfig = async (
   const firestoreAdapter = FirestoreAdapter({
     firestore,
     collections: {
-      users: 'services/authjs/users',
-      accounts: 'services/authjs/accounts',
-      sessions: 'services/authjs/sessions',
-      verificationTokens: 'services/authjs/verificationTokens',
+      users: AUTHJS_USERS_COLLECTION_PATH,
+      accounts: AUTHJS_ACCOUNTS_COLLECTION_PATH,
+      sessions: AUTHJS_SESSIONS_COLLECTION_PATH,
+      verificationTokens: AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH,
     },
   });
 
@@ -295,7 +302,7 @@ export const getAuthConfig = async (
           `createUser: Bootstrapping admin status for new user ${user.email}`,
         );
         await firestore
-          .collection('services/authjs/users')
+          .collection(AUTHJS_USERS_COLLECTION_PATH)
           .doc(createdUser.id)
           .set(
             {
@@ -336,7 +343,7 @@ export const getAuthConfig = async (
         unknown
       >;
       await firestore
-        .collection('services/authjs/accounts')
+        .collection(AUTHJS_ACCOUNTS_COLLECTION_PATH)
         .doc(id)
         .set(accountData);
       return { ...account, id } as typeof account;
@@ -439,8 +446,7 @@ export const getAuthConfig = async (
         const appToken = token as AppJWT | undefined;
         // Handle Database strategy (user) or JWT strategy (token)
         const slackData = (appUser?.slack || appToken?.slack) as
-          | SlackUser
-          | undefined;
+          SlackUser | undefined;
 
         if (session.user) {
           const internalId = appUser?.id || appToken?.sub || '';
@@ -577,7 +583,7 @@ export const getAuthConfig = async (
         if (user?.id && user?.email && isAdminEmail(user.email)) {
           try {
             const userRef = firestore
-              .collection('services/authjs/users')
+              .collection(AUTHJS_USERS_COLLECTION_PATH)
               .doc(user.id);
             const userDoc = await userRef.get();
             if (userDoc.exists) {
@@ -779,7 +785,7 @@ async function syncNameToRiderProfile(
   name: string,
 ) {
   try {
-    const riderRef = firestore.collection('user-profiles').doc(userId);
+    const riderRef = getRiderProfileRef(firestore, userId);
     const doc = await riderRef.get();
     if (doc.exists) {
       const data = doc.data();

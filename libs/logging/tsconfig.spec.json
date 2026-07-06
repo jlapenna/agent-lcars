@@ -23,6 +23,9 @@
   "references": [
     {
       "path": "./tsconfig.lib.json"
+    },
+    {
+      "path": "../env-vars/tsconfig.lib.json"
     }
   ]
 }

@@ -36,6 +36,9 @@
     },
     {
       "path": "../firebase-server/tsconfig.lib.json"
+    },
+    {
+      "path": "../riders/tsconfig.lib.json"
     }
   ],
   "include": [

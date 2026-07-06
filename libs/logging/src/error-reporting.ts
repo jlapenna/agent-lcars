@@ -51,7 +51,8 @@ const emit = (entry: Record<string, unknown>): void => {
 
 /**
  * Handles a POST to /api/logs/error from the client `installBrowserErrorReporter`.
- * Each app's route is a one-line wrapper around this.
+ * Each app's `app/api/logs/error/route.ts` re-exports `clientErrorReportRoute`
+ * as `POST` directly (#2127) - no app-specific code needed at all.
  */
 export async function handleClientErrorReport(req: Request): Promise<Response> {
   try {
@@ -82,6 +83,10 @@ export async function handleClientErrorReport(req: Request): Promise<Response> {
     );
   }
 }
+
+/** Ready-made Next.js route handler; see `handleClientErrorReport` above. */
+export const clientErrorReportRoute = (req: Request): Promise<Response> =>
+  handleClientErrorReport(req);
 
 // Structural subsets of Next's Instrumentation.onRequestError args, so this
 // library does not depend on `next`. The app's instrumentation.ts holds the

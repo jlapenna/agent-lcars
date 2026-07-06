@@ -12,7 +12,11 @@
     "composite": true,
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo"
   },
-  "references": [],
+  "references": [
+    {
+      "path": "../env-vars/tsconfig.lib.json"
+    }
+  ],
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",

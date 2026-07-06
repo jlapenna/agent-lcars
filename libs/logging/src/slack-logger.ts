@@ -1,11 +1,11 @@
-import { formatWithOptions } from 'util';
-
-import { getContext, getTraceId } from './context';
 import {
   forceStructuredLogging,
   getSlackLogLevel,
   isOnGoogleCloud,
-} from './env';
+} from '@repo/env';
+import { formatWithOptions } from 'util';
+
+import { getContext, getTraceId } from './context';
 import { LogLevel } from './log-level';
 import { shouldLog } from './utils';
 

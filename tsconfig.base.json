@@ -81,6 +81,8 @@
       "@repo/riders/*": ["./libs/riders/src/*"],
       "@repo/slack": ["./libs/slack/src/index.ts"],
       "@repo/slack/*": ["./libs/slack/src/*"],
+      "@repo/slack-types": ["./libs/slack-types/src/index.ts"],
+      "@repo/slack-types/*": ["./libs/slack-types/src/*"],
       "@repo/assistant": ["libs/assistant/src/index.ts"],
       "@repo/util-server": ["libs/util-server/src/index.ts"],
       "@repo/util-server/*": ["libs/util-server/src/*"],

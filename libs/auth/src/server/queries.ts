@@ -13,6 +13,17 @@ import {
   AuthJsUserSchema,
 } from './schema';
 
+// Owned constants for the Auth.js Firestore paths (#2126) - ~30 raw
+// occurrences of these paths exist across the repo (strava, slack, this
+// lib's own config.ts/identity.ts) with no constant defined anywhere.
+// Exported so other modules in @repo/auth can adopt them; cross-lib
+// adoption (strava, slack) is deferred - see the note on #2126.
+export const AUTHJS_USERS_COLLECTION_PATH = 'services/authjs/users';
+export const AUTHJS_ACCOUNTS_COLLECTION_PATH = 'services/authjs/accounts';
+export const AUTHJS_SESSIONS_COLLECTION_PATH = 'services/authjs/sessions';
+export const AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH =
+  'services/authjs/verificationTokens';
+
 const authJsUserConverter = createConverter(AuthJsUserSchema, {
   idField: 'id',
 });
@@ -20,15 +31,15 @@ const authJsAccountConverter = createConverter(AuthJsAccountSchema, {
   idField: 'id',
 });
 
-function getUsersCollection(firestore: Firestore) {
+export function getAuthJsUsersCollection(firestore: Firestore) {
   return firestore
-    .collection('services/authjs/users')
+    .collection(AUTHJS_USERS_COLLECTION_PATH)
     .withConverter(authJsUserConverter);
 }
 
-function getAccountsCollection(firestore: Firestore) {
+export function getAuthJsAccountsCollection(firestore: Firestore) {
   return firestore
-    .collection('services/authjs/accounts')
+    .collection(AUTHJS_ACCOUNTS_COLLECTION_PATH)
     .withConverter(authJsAccountConverter);
 }
 
@@ -47,7 +58,7 @@ export function getAuthJsAccountRef(
   userId: string,
   provider: string,
 ) {
-  return getAccountsCollection(firestore).doc(
+  return getAuthJsAccountsCollection(firestore).doc(
     getAuthJsAccountId(userId, provider),
   );
 }
@@ -60,7 +71,7 @@ export async function getAuthJsUserBySlackId(
   firestore: Firestore,
   slackId: string,
 ): Promise<AuthJsUser | undefined> {
-  const snapshot = await getUsersCollection(firestore)
+  const snapshot = await getAuthJsUsersCollection(firestore)
     .where('slack.id', '==', slackId)
     .limit(1)
     .get();
@@ -89,7 +100,7 @@ export async function getAuthJsUsersBySlackIds(
 
   const results = await Promise.all(
     chunks.map((chunk) =>
-      getUsersCollection(firestore).where('slack.id', 'in', chunk).get(),
+      getAuthJsUsersCollection(firestore).where('slack.id', 'in', chunk).get(),
     ),
   );
 
@@ -112,7 +123,7 @@ export async function getAuthJsUsersByUserIds(
 
   const results = await Promise.all(
     chunks.map((chunk) =>
-      getUsersCollection(firestore)
+      getAuthJsUsersCollection(firestore)
         .where(FieldPath.documentId(), 'in', chunk)
         .get(),
     ),
@@ -128,7 +139,7 @@ export async function getAuthJsUserByEmail(
   firestore: Firestore,
   email: string,
 ): Promise<AuthJsUser | undefined> {
-  const snapshot = await getUsersCollection(firestore)
+  const snapshot = await getAuthJsUsersCollection(firestore)
     .where('email', '==', email)
     .limit(1)
     .get();
@@ -160,7 +171,7 @@ export async function ensureAuthJsUserForSlack(
 
   // Fallback: NextAuth strips custom fields like `slack.id` when creating the user.
   // Find the real user by querying the accounts collection using the Slack provider ID.
-  const accountSnapshot = await getAccountsCollection(firestore)
+  const accountSnapshot = await getAuthJsAccountsCollection(firestore)
     .where('provider', '==', 'slack')
     .where('providerAccountId', '==', slackUser.id)
     .limit(1)
@@ -169,7 +180,7 @@ export async function ensureAuthJsUserForSlack(
   if (!accountSnapshot.empty) {
     const account = accountSnapshot.docs[0].data();
     if (account.userId) {
-      const userDoc = await getUsersCollection(firestore)
+      const userDoc = await getAuthJsUsersCollection(firestore)
         .doc(account.userId)
         .get();
       const user = userDoc.data();
@@ -189,7 +200,9 @@ export async function ensureAuthJsUserForSlack(
   if (slackUser.email) {
     const user = await getAuthJsUserByEmail(firestore, slackUser.email);
     if (user && user.id) {
-      const userDoc = await getUsersCollection(firestore).doc(user.id).get();
+      const userDoc = await getAuthJsUsersCollection(firestore)
+        .doc(user.id)
+        .get();
       if (userDoc.exists) {
         // Backfill the missing slack.id so we don't have to fallback again
         await userDoc.ref.update({
@@ -212,7 +225,7 @@ export async function ensureAuthJsUserForSlack(
     },
   };
 
-  const docRef = await getUsersCollection(firestore).add(newUser);
+  const docRef = await getAuthJsUsersCollection(firestore).add(newUser);
 
   return { ...newUser, id: docRef.id };
 }
@@ -229,7 +242,7 @@ export async function getAuthJsAccount(
   if (doc.exists) return doc.data();
 
   // Fallback to legacy query-based lookup for accounts without deterministic IDs
-  const snapshot = await getAccountsCollection(firestore)
+  const snapshot = await getAuthJsAccountsCollection(firestore)
     .where('userId', '==', userId)
     .where('provider', '==', provider)
     .limit(1)
@@ -255,7 +268,7 @@ export async function getAuthJsAccountsByUserIds(
 
   const results = await Promise.all(
     chunks.map((chunk) =>
-      getAccountsCollection(firestore)
+      getAuthJsAccountsCollection(firestore)
         .where('userId', 'in', chunk)
         .where('provider', '==', provider)
         .get(),
@@ -272,7 +285,7 @@ export async function getAuthJsAccountsByUserIds(
 export async function getAllAuthJsUsers(
   firestore: Firestore,
 ): Promise<AuthJsUser[]> {
-  const snapshot = await getUsersCollection(firestore).get();
+  const snapshot = await getAuthJsUsersCollection(firestore).get();
   return snapshot.docs.map((d) => d.data());
 }
 
@@ -301,7 +314,7 @@ export async function updateAuthJsAccount(
   data: Partial<AuthJsAccount>,
   transaction?: Transaction,
 ) {
-  const ref = getAccountsCollection(firestore).doc(accountId);
+  const ref = getAuthJsAccountsCollection(firestore).doc(accountId);
 
   if (transaction) {
     transaction.update(ref, data as unknown as UpdateData<AuthJsAccount>);
@@ -318,7 +331,7 @@ export async function deleteAuthJsAccount(
   accountId: string,
   transaction?: Transaction,
 ) {
-  const ref = getAccountsCollection(firestore).doc(accountId);
+  const ref = getAuthJsAccountsCollection(firestore).doc(accountId);
 
   if (transaction) {
     transaction.delete(ref);

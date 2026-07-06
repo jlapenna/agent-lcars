@@ -2,6 +2,11 @@ import 'server-only';
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import {
+  forceStructuredLogging,
+  getSlackLogLevel as getEnvSlackLogLevel,
+  isOnGoogleCloud,
+} from '@repo/env';
 import rtracer from 'cls-rtracer';
 import crypto from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
@@ -18,11 +23,6 @@ import {
   runWithContext,
   traceMiddleware,
 } from '../context';
-import {
-  forceStructuredLogging,
-  getSlackLogLevel as getEnvSlackLogLevel,
-  isOnGoogleCloud,
-} from '../env';
 import { LogLevel } from '../log-level';
 import { shouldLog } from '../utils';
 

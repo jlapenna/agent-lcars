@@ -1,9 +1,30 @@
 /** Handle special cases in env dotfiles. */
 
 import type { EnvVars } from '@repo/env';
+import {
+  forceStructuredLogging,
+  getEnvValue,
+  getLogLevel,
+  getSlackLogLevel,
+  isOnGoogleCloud,
+  isTrue,
+  optional,
+  required,
+  splitEnvList,
+} from '@repo/env';
 import { isDefined } from '@repo/util';
 
-import { isTrue, optional, required, splitEnvList } from './env-util';
+export {
+  forceStructuredLogging,
+  getEnvValue,
+  getLogLevel,
+  getSlackLogLevel,
+  isOnGoogleCloud,
+  isTrue,
+  optional,
+  required,
+  splitEnvList,
+};
 
 export const isE2eTesting = () => isTrue('E2E_TESTING');
 export const getEnvNodeEnv = () => optional('NODE_ENV');
@@ -55,10 +76,6 @@ export const isAdminEmail = (email: string): boolean => {
   return getAdminEmails().includes(email.toLowerCase().trim());
 };
 
-export const getSlackLogLevel = () => optional('SLACK_LOG_LEVEL');
-
-export const getLogLevel = () => optional('LOG_LEVEL');
-
 export const getSlackAppId = () => optional('SLACK_APP_ID');
 
 export const getNodeEnv = () => optional('NODE_ENV');
@@ -69,20 +86,6 @@ export function getStravaLogLevel(): string {
     return level.toLowerCase();
   }
   return 'warn';
-}
-
-export function isOnGoogleCloud(): boolean {
-  // https://cloud.google.com/run/docs/container-contract#env-vars
-  return (
-    (isDefined(optional('K_SERVICE')) ||
-      isDefined(optional('K_REVISION')) ||
-      isDefined(optional('CLOUD_RUN_JOB'))) &&
-    !isTrue('FUNCTIONS_EMULATOR')
-  );
-}
-
-export function forceStructuredLogging(): boolean {
-  return isTrue('FORCE_STRUCTURED_LOGGING');
 }
 
 export function enableRequestLogging(): boolean {
@@ -211,6 +214,7 @@ export const getPrimesBackendServiceUrl = () =>
 export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
 export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');
 export const getGhostServiceUrl = () => required('GHOST_SERVICE_URL');
+export const getGhostStorageBucket = () => optional('GHOST_STORAGE_BUCKET');
 
 export const getAgentConsoleGithubToken = () =>
   required('AGENT_CONSOLE_GITHUB_TOKEN');

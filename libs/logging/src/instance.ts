@@ -1,5 +1,6 @@
+import { forceStructuredLogging, isOnGoogleCloud } from '@repo/env';
+
 import { Logger } from './console-logger';
-import { forceStructuredLogging, isOnGoogleCloud } from './env';
 import { SlackLogger } from './slack-logger';
 
 // Use the static resolver, which falls back to DEBUG when LOG_LEVEL is unset.

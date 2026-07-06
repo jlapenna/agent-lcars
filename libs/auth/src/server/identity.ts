@@ -1,6 +1,11 @@
 import { Firestore } from 'firebase-admin/firestore';
 
-import { ensureAuthJsUserForSlack, upsertAuthJsAccount } from './queries';
+import {
+  AUTHJS_ACCOUNTS_COLLECTION_PATH,
+  AUTHJS_USERS_COLLECTION_PATH,
+  ensureAuthJsUserForSlack,
+  upsertAuthJsAccount,
+} from './queries';
 import { AuthJsAccount } from './schema';
 
 /**
@@ -23,7 +28,7 @@ export async function resolveUserIdFromSlackId(
 ): Promise<string> {
   // 1. Try to find an existing AuthJsAccount for this Slack user
   const accountSnapshot = await firestore
-    .collection('services/authjs/accounts')
+    .collection(AUTHJS_ACCOUNTS_COLLECTION_PATH)
     .where('provider', '==', 'slack')
     .where('providerAccountId', '==', slackUser.id)
     .limit(1)
@@ -80,7 +85,7 @@ export async function getCanonicalUserId(
 
   // Slack ID → the userId on its slack account (the same path the bot uses).
   const accountSnapshot = await firestore
-    .collection('services/authjs/accounts')
+    .collection(AUTHJS_ACCOUNTS_COLLECTION_PATH)
     .where('provider', '==', 'slack')
     .where('providerAccountId', '==', id)
     .limit(1)
@@ -92,7 +97,7 @@ export async function getCanonicalUserId(
 
   // Fallback: an auth user carrying this slack.id (prefer the canonical UUID).
   const usersSnapshot = await firestore
-    .collection('services/authjs/users')
+    .collection(AUTHJS_USERS_COLLECTION_PATH)
     .where('slack.id', '==', id)
     .get();
   if (!usersSnapshot.empty) {

@@ -1,10 +1,11 @@
+import { forceStructuredLogging, getSlackLogLevel } from '@repo/env';
+
 import { getTraceId } from './context';
-import { forceStructuredLogging, getSlackLogLevel } from './env';
 import { LogLevel } from './log-level';
 import { SlackLogger } from './slack-logger';
 
-jest.mock('./env', () => ({
-  ...jest.requireActual('./env'),
+jest.mock('@repo/env', () => ({
+  ...jest.requireActual('@repo/env'),
   getSlackLogLevel: jest.fn(),
   forceStructuredLogging: jest.fn(),
 }));

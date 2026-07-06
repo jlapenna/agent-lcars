@@ -642,7 +642,11 @@ importers:
 
   libs/jsx: {}
 
-  libs/logging: {}
+  libs/logging:
+    dependencies:
+      '@repo/env':
+        specifier: workspace:*
+        version: link:../env-vars
 
   libs/onboarding: {}
 
@@ -667,6 +671,8 @@ importers:
   libs/service-auth: {}
 
   libs/slack: {}
+
+  libs/slack-types: {}
 
   libs/squareup: {}
 

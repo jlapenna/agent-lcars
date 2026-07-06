@@ -1,9 +1,14 @@
+import {
+  forceStructuredLogging,
+  getLogLevel,
+  isOnGoogleCloud,
+} from '@repo/env';
+
 import { Logger, setLogDefaults } from './console-logger';
-import { forceStructuredLogging, getLogLevel, isOnGoogleCloud } from './env';
 import { LogLevel } from './log-level';
 
-jest.mock('./env', () => ({
-  ...jest.requireActual('./env'),
+jest.mock('@repo/env', () => ({
+  ...jest.requireActual('@repo/env'),
   getLogLevel: jest.fn(),
   isOnGoogleCloud: jest.fn(),
   forceStructuredLogging: jest.fn(),

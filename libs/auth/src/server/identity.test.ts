@@ -6,6 +6,7 @@ import { ensureAuthJsUserForSlack, upsertAuthJsAccount } from './queries';
 
 // Mock queries
 jest.mock('./queries', () => ({
+  ...jest.requireActual('./queries'),
   ensureAuthJsUserForSlack: jest.fn(),
   upsertAuthJsAccount: jest.fn(),
 }));

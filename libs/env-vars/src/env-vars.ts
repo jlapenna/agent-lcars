@@ -18,6 +18,8 @@ export interface EnvVars {
   // Standard
   NODE_ENV?: 'development' | 'production' | 'test';
   CI?: string;
+  /** Set by Jest config (jest.config.ts reporters) to pick a CI-friendly reporter; not app-domain config. */
+  IS_CI?: string;
 
   // AI
   GEMINI_API_KEY?: string;
@@ -132,6 +134,7 @@ export interface EnvVars {
   AGENT_SERVICE_URL?: string;
   WEB_SERVICE_URL?: string;
   GHOST_SERVICE_URL?: string;
+  GHOST_STORAGE_BUCKET?: string;
 
   AGENT_CONSOLE_GITHUB_TOKEN?: string; // Secret
   AGENT_CONSOLE_ADMIN_GITHUB_LOGIN?: string;

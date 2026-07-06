@@ -2,5 +2,8 @@
   "name": "@repo/logging",
   "version": "0.0.1",
   "private": true,
-  "sideEffects": false
+  "sideEffects": false,
+  "dependencies": {
+    "@repo/env": "workspace:*"
+  }
 }
