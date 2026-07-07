@@ -1,3 +1,4 @@
+import type { OnboardingGate } from '@repo/onboarding/browser';
 import type { Session } from 'next-auth';
 
 /**
@@ -5,12 +6,13 @@ import type { Session } from 'next-auth';
  * Throws an error if the requirements are not met.
  *
  * @param session - The NextAuth session
- * @param required - An array of required gates. Defaults to ['waiver', 'profile']
+ * @param required - An array of required gates (#2267's shared
+ *   `OnboardingGate`). Defaults to ['waiver', 'profile']
  * @throws {Error} - If the user is not authenticated or fails a required gate
  */
 export function assertOnboarding(
   session: Session | null,
-  required: ('waiver' | 'profile' | 'strava')[] = ['waiver', 'profile'],
+  required: OnboardingGate[] = ['waiver', 'profile'],
 ): asserts session is Session & { user: { id: string } } {
   if (!session?.user?.id) {
     throw new Error('Not authenticated');
@@ -30,6 +32,10 @@ export function assertOnboarding(
 
   if (required.includes('profile') && !onboarding.hasCompletedProfile) {
     throw new Error('Profile onboarding must be completed first.');
+  }
+
+  if (required.includes('membership') && !onboarding.hasActiveMembership) {
+    throw new Error('Active membership is required.');
   }
 
   if (required.includes('strava') && !onboarding.isStravaConnected) {

@@ -16,6 +16,11 @@ import './types';
 import { FirestoreAdapter } from '@auth/firebase-adapter';
 import { getFirebaseAuthAdmin, getFirestore } from '@repo/firebase-server';
 import { logger, LogLevel } from '@repo/logging';
+import {
+  hasAcceptedWaiverGate,
+  hasActiveMembershipGate,
+  hasCompletedProfileGate,
+} from '@repo/onboarding/browser';
 import { getRiderProfileRef } from '@repo/riders/queries';
 import { getAuthSecret } from '@repo/service-auth';
 import { getSecrets as getSlackSecrets } from '@repo/slack';
@@ -540,11 +545,8 @@ export const getAuthConfig = async (
 
               if (riderProfileDoc.exists) {
                 const riderProfile = riderProfileDoc.data();
-                hasCompletedProfile =
-                  !!riderProfile?.contact?.phoneNumber &&
-                  !!riderProfile?.emergencyContact?.name;
-                hasActiveMembership =
-                  riderProfile?.membership?.status === 'Active';
+                hasCompletedProfile = hasCompletedProfileGate(riderProfile);
+                hasActiveMembership = hasActiveMembershipGate(riderProfile);
               }
 
               const stravaAccount = await stravaAccountPromise;
@@ -558,10 +560,11 @@ export const getAuthConfig = async (
             }
 
             session.user.onboarding = {
-              hasAcceptedWaiver:
-                (appUser?.waiverVersionAccepted ??
-                  appToken?.waiverVersionAccepted ??
-                  0) >= REQUIRED_WAIVER_VERSION,
+              hasAcceptedWaiver: hasAcceptedWaiverGate(
+                appUser?.waiverVersionAccepted ??
+                  appToken?.waiverVersionAccepted,
+                REQUIRED_WAIVER_VERSION,
+              ),
               hasCompletedProfile,
               isStravaConnected,
               hasActiveMembership,

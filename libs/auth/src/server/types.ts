@@ -11,6 +11,7 @@
  * @see https://authjs.dev/getting-started/typescript
  */
 
+import type { OnboardingStatus } from '@repo/onboarding/browser';
 import type { DefaultSession } from 'next-auth';
 
 /**
@@ -59,14 +60,11 @@ declare module 'next-auth' {
       /**
        * Onboarding and compliance gates. Absent for apps that run without
        * the Firestore adapter (adapter-less JWT sessions, e.g.
-       * agent-console) and for injected test sessions.
+       * agent-console) and for injected test sessions. Sourced from
+       * `@repo/onboarding` (#2267) so this shape can't drift from the
+       * completion predicate or the UI gatekeeper.
        */
-      onboarding?: {
-        hasAcceptedWaiver: boolean;
-        hasCompletedProfile: boolean;
-        isStravaConnected: boolean;
-        hasActiveMembership: boolean;
-      };
+      onboarding?: OnboardingStatus;
     } & DefaultSession['user'];
   }
 

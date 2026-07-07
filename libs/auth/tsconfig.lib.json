@@ -42,6 +42,9 @@
     },
     {
       "path": "../firebase-server/tsconfig.lib.json"
+    },
+    {
+      "path": "../onboarding/tsconfig.lib.json"
     }
   ],
   "include": [
