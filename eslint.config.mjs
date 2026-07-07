@@ -5,6 +5,7 @@ import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
 import * as jsoncParser from 'jsonc-eslint-parser';
 
+import firebaseServerScope from './tools/eslint/no-firebase-server-outside-data.mjs';
 import firestorePaths from './tools/eslint/no-raw-collection-path-literals.mjs';
 import repoBoundaries from './tools/eslint/no-server-only-imports-in-client.mjs';
 
@@ -42,6 +43,21 @@ export default [
     plugins: { 'firestore-paths': firestorePaths },
     rules: {
       'firestore-paths/no-raw-collection-path-literals': 'error',
+    },
+  },
+  {
+    // Members frontend data-access layer (#2261): getFirestore/
+    // fetchPrimesBackend may only be imported inside data/ - every other
+    // file (server actions, RSC pages, route handlers) goes through those
+    // modules' typed queries/mutations instead. No-ops outside
+    // apps/members/frontend/src.
+    files: [
+      'apps/members/frontend/src/**/*.ts',
+      'apps/members/frontend/src/**/*.tsx',
+    ],
+    plugins: { 'firebase-server-scope': firebaseServerScope },
+    rules: {
+      'firebase-server-scope/no-firebase-server-outside-data': 'error',
     },
   },
   {
