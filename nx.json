@@ -108,7 +108,8 @@
       "options": {
         "silent": true,
         "forceExit": true,
-        "passWithNoTests": true
+        "passWithNoTests": true,
+        "maxWorkers": 4
       }
     },
     "e2e": {
