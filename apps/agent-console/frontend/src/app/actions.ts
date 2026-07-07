@@ -1,5 +1,6 @@
 'use server';
 
+import { createAdminAction } from '@repo/auth/server';
 import { revalidatePath } from 'next/cache';
 
 import { auth } from '../auth';
@@ -14,13 +15,9 @@ import {
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
 
-async function requireAdmin() {
-  if (process.env.SKIP_AUTH_FOR_LAN_PREVIEW === 'true') return;
-  const session = await auth();
-  if (!session?.user?.isAdmin) {
-    throw new Error('Not authorized');
-  }
-}
+// LAN preview goes through the shared test-session adapter inside auth()
+// (IMPERSONATE_AUTOMATIC_LOGIN), so no bypass is needed here.
+const requireAdmin = createAdminAction(auth);
 
 // Duck-typed check for Octokit's RequestError (thrown for any non-2xx
 // GitHub API response) - avoids a direct @octokit/request-error dependency

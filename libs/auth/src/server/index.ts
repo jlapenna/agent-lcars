@@ -1,4 +1,5 @@
 export * from './admin-action';
+export * from './app-auth';
 export * from './assertOnboarding';
 export * from './auth';
 export * from './config';
@@ -6,4 +7,5 @@ export * from './identity';
 export * from './logging-initialization';
 export * from './queries';
 export * from './schema';
+export * from './test-session';
 export * from './types';

@@ -9,13 +9,14 @@ import {
   isSlackAdmin,
 } from '@repo/util-server';
 import { NextRequest } from 'next/server';
+import type { Session } from 'next-auth';
 
 /**
  * Generates a basic mock session for impersonation in local/E2E testing.
  * Apps with app-specific session fields (e.g. slack) should pass a custom
  * mock session function to withImpersonation() instead.
  */
-export async function getMockSession(userId: string) {
+export async function getMockSession(userId: string): Promise<Session> {
   const email = userId.includes('@') ? userId : 'impersonated@example.com';
   const isAdmin =
     isSlackAdmin(userId) || isOnecakeAdmin(userId) || isAdminEmail(email);
@@ -49,7 +50,7 @@ export function withImpersonation(
     GET: (req: NextRequest) => Promise<Response> | Response;
     POST: (req: NextRequest) => Promise<Response> | Response;
   },
-  mockSessionFn: (userId: string) => Promise<unknown> = getMockSession,
+  mockSessionFn: (userId: string) => Promise<Session> = getMockSession,
 ) {
   return {
     GET: async (req: NextRequest) => {

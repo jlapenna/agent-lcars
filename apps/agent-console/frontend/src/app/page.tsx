@@ -34,10 +34,7 @@ function toLiveRunSummary(
 
 export default async function Index() {
   const session = await auth();
-  if (
-    !session?.user?.isAdmin &&
-    process.env.SKIP_AUTH_FOR_LAN_PREVIEW !== 'true'
-  ) {
+  if (!session?.user?.isAdmin) {
     redirect('/login');
   }
 

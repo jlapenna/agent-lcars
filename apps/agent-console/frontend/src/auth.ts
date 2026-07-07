@@ -1,37 +1,31 @@
-import {
-  getAgentConsoleAdminGithubLogin,
-  getAgentConsoleGithubOauthClientId,
-  getAgentConsoleGithubOauthClientSecret,
-  getAuthSecret,
-} from '@repo/util-server';
-import NextAuth from 'next-auth';
-import GitHub from 'next-auth/providers/github';
+import { createAppAuth } from '@repo/auth/server';
+import { getAgentConsoleAdminGithubLogin } from '@repo/util-server';
+import type { Session } from 'next-auth';
 
-const { handlers, auth, signIn, signOut } = NextAuth(() => ({
-  secret: getAuthSecret(),
-  session: { strategy: 'jwt' },
-  providers: [
-    GitHub({
-      clientId: getAgentConsoleGithubOauthClientId(),
-      clientSecret: getAgentConsoleGithubOauthClientSecret(),
-    }),
-  ],
-  callbacks: {
-    signIn({ profile }) {
-      const login = (profile as { login?: string } | undefined)?.login;
-      return login === getAgentConsoleAdminGithubLogin();
+/**
+ * Mock session for the shared test-session adapter (LAN preview:
+ * IMPERSONATE_AUTOMATIC_LOGIN=true + E2E_TESTING_USER=<name>).
+ * agent-console is a single-admin app, so the injected identity is an
+ * admin — this replaces the old SKIP_AUTH_FOR_LAN_PREVIEW bypass.
+ */
+async function getMockSession(userId: string): Promise<Session> {
+  return {
+    user: {
+      id: userId,
+      name: 'LAN Preview',
+      email: `${userId}@example.com`,
+      isAdmin: true,
     },
-    jwt({ token, profile }) {
-      const login = (profile as { login?: string } | undefined)?.login;
-      if (login) token.githubLogin = login;
-      return token;
-    },
-    session({ session, token }) {
-      session.user.isAdmin =
-        token.githubLogin === getAgentConsoleAdminGithubLogin();
-      return session;
-    },
-  },
-}));
+    expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
 
-export { auth, handlers, signIn, signOut };
+export const { auth, handlers, signIn, signOut } = createAppAuth({
+  config: () => ({
+    providers: ['github'],
+    allowedGithubLogins: [getAgentConsoleAdminGithubLogin()],
+    adapter: false,
+    newUserRoute: null,
+  }),
+  mockSession: getMockSession,
+});

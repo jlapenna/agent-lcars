@@ -32,10 +32,19 @@
   ],
   "references": [
     {
+      "path": "../../../libs/app/tsconfig.lib.json"
+    },
+    {
       "path": "../../../libs/util-server/tsconfig.lib.json"
     },
     {
       "path": "../../../libs/app-providers"
+    },
+    {
+      "path": "../../../libs/logging/tsconfig.lib.json"
+    },
+    {
+      "path": "../../../libs/auth/tsconfig.lib.json"
     }
   ]
 }

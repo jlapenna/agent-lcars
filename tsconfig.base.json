@@ -32,6 +32,7 @@
       "@repo/jsx": ["libs/jsx/src/index.ts"],
       "@repo/jsx/*": ["libs/jsx/src/*"],
       "@repo/app": ["./libs/app/src/index.ts"],
+      "@repo/app/proxy": ["./libs/app/src/proxy/index.ts"],
       "@repo/chores": ["./libs/chores/src/index.ts"],
       "@repo/chores/*": ["./libs/chores/src/*"],
       "@repo/competitions": ["./libs/competitions/src/index.ts"],

@@ -23,6 +23,8 @@ import { getSecrets as getStravaSecrets } from '@repo/strava';
 import { getNextPublicSlackClientId } from '@repo/util/browser';
 import { enableTestingHandlers, getProjectId } from '@repo/util-server';
 import {
+  getAgentConsoleGithubOauthClientId,
+  getAgentConsoleGithubOauthClientSecret,
   getGoogleClientId,
   getGoogleClientSecret,
   getLogLevel,
@@ -42,6 +44,7 @@ import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import type { NextAuthConfig } from 'next-auth';
 import type { Provider } from 'next-auth/providers';
 import Credentials from 'next-auth/providers/credentials';
+import GitHub from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import Nodemailer from 'next-auth/providers/nodemailer';
 import Slack from 'next-auth/providers/slack';
@@ -85,12 +88,26 @@ interface AppJWT {
   slack?: SlackUser;
   isAdmin?: boolean;
   waiverVersionAccepted?: number;
+  githubLogin?: string;
 }
 
 export interface AuthConfigOptions {
-  providers?: ('slack' | 'strava' | 'google' | 'email')[];
+  providers?: ('slack' | 'strava' | 'google' | 'email' | 'github')[];
   /** When true, validates that the Strava athlete is a member of the expected club. */
   requireClubMembership?: boolean;
+  /**
+   * Allowlist gating GitHub sign-in by login. GitHub carries a verified
+   * login rather than a workspace/club identity, so this is both the
+   * sign-in gate and the admin source: every allowed login is an admin
+   * (agent-console's single-admin model).
+   */
+  allowedGithubLogins?: string[];
+  /**
+   * When false, run without the Firestore adapter entirely: JWT sessions,
+   * no onboarding/rider-profile reads, no Firebase custom token
+   * (agent-console — its GCP project has no Firestore database).
+   */
+  adapter?: boolean;
   /** Allowlist gating email-bearing providers (google, email). */
   allowedEmails?: string[];
   /**
@@ -111,7 +128,8 @@ export const getAuthConfig = async (
 ): Promise<NextAuthConfig> => {
   logger.debug('getAuthConfig: Starting...');
 
-  const firestore = await getFirestore();
+  const useAdapter = options?.adapter !== false;
+  const firestore = useAdapter ? await getFirestore() : undefined;
   const authSecret = await getAuthSecret();
 
   const projectId = getProjectId();
@@ -184,6 +202,17 @@ export const getAuthConfig = async (
     }
   }
 
+  if (requestedProviders.includes('github')) {
+    // The accessor names are historical: agent-console is the only GitHub
+    // OAuth consumer, and its client id/secret live under AGENT_CONSOLE_*.
+    providers.push(
+      GitHub({
+        clientId: getAgentConsoleGithubOauthClientId(),
+        clientSecret: getAgentConsoleGithubOauthClientSecret(),
+      }),
+    );
+  }
+
   if (requestedProviders.includes('email')) {
     // Magic-link sign-in over SMTP (Google Workspace relay). Self-disables when
     // SMTP is not fully configured so Google/Strava keep working in environments
@@ -235,7 +264,10 @@ export const getAuthConfig = async (
           const data = parsed.data;
 
           let resolvedId = data.userId;
-          if (data.userId.startsWith('slack-') || data.userId.startsWith('U')) {
+          if (
+            firestore &&
+            (data.userId.startsWith('slack-') || data.userId.startsWith('U'))
+          ) {
             try {
               resolvedId = await resolveUserIdFromSlackId(firestore, {
                 id: data.userId,
@@ -273,112 +305,119 @@ export const getAuthConfig = async (
     );
   }
 
-  const firestoreAdapter = FirestoreAdapter({
-    firestore,
-    collections: {
-      users: AUTHJS_USERS_COLLECTION_PATH,
-      accounts: AUTHJS_ACCOUNTS_COLLECTION_PATH,
-      sessions: AUTHJS_SESSIONS_COLLECTION_PATH,
-      verificationTokens: AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH,
-    },
-  });
+  const buildAdapter = (
+    firestore: Firestore,
+  ): NonNullable<NextAuthConfig['adapter']> => {
+    const firestoreAdapter = FirestoreAdapter({
+      firestore,
+      collections: {
+        users: AUTHJS_USERS_COLLECTION_PATH,
+        accounts: AUTHJS_ACCOUNTS_COLLECTION_PATH,
+        sessions: AUTHJS_SESSIONS_COLLECTION_PATH,
+        verificationTokens: AUTHJS_VERIFICATION_TOKENS_COLLECTION_PATH,
+      },
+    });
 
-  const adapter: NextAuthConfig['adapter'] = {
-    ...firestoreAdapter,
-    async createUser(user) {
-      if (!firestoreAdapter.createUser) {
-        throw new Error('FirestoreAdapter does not support createUser');
-      }
-      const createdUser = await firestoreAdapter.createUser(user);
-      if (createdUser.id && createdUser.name) {
-        await syncNameToRiderProfile(
-          firestore,
-          createdUser.id,
-          createdUser.name,
-        );
-      }
-      if (user.email && isAdminEmail(user.email)) {
-        logger.info(
-          `createUser: Bootstrapping admin status for new user ${user.email}`,
-        );
-        await firestore
-          .collection(AUTHJS_USERS_COLLECTION_PATH)
-          .doc(createdUser.id)
-          .set(
-            {
-              slack: {
-                id: '',
-                isAdmin: true,
-              },
-            },
-            { merge: true },
-          );
-        if (createdUser.slack) {
-          createdUser.slack.isAdmin = true;
-        } else {
-          createdUser.slack = { id: '', isAdmin: true };
+    return {
+      ...firestoreAdapter,
+      async createUser(user) {
+        if (!firestoreAdapter.createUser) {
+          throw new Error('FirestoreAdapter does not support createUser');
         }
-      }
-      return createdUser;
-    },
-    async updateUser(user) {
-      if (!firestoreAdapter.updateUser) {
-        throw new Error('FirestoreAdapter does not support updateUser');
-      }
-      const updatedUser = await firestoreAdapter.updateUser(user);
-      if (updatedUser.id && updatedUser.name) {
-        await syncNameToRiderProfile(
-          firestore,
-          updatedUser.id,
-          updatedUser.name,
-        );
-      }
-      return updatedUser;
-    },
-    async linkAccount(account) {
-      // Force deterministic Account ID for easy lookups
-      const id = getAuthJsAccountId(account.userId, account.provider);
-      const { id: _removedId, ...accountData } = account as Record<
-        string,
-        unknown
-      >;
-      await firestore
-        .collection(AUTHJS_ACCOUNTS_COLLECTION_PATH)
-        .doc(id)
-        .set(accountData);
-      return { ...account, id } as typeof account;
-    },
-    async updateSession(session) {
-      if (!firestoreAdapter.updateSession) {
-        return null;
-      }
-      try {
-        return await firestoreAdapter.updateSession(session);
-      } catch (error: unknown) {
-        const err = error as { code?: number; message?: string };
-        if (err.code === 10 || err.message?.includes('contention')) {
-          logger.warn(
-            'getAuthConfig: Session update contention detected, ignoring update and fetching current session.',
+        const createdUser = await firestoreAdapter.createUser(user);
+        if (createdUser.id && createdUser.name) {
+          await syncNameToRiderProfile(
+            firestore,
+            createdUser.id,
+            createdUser.name,
           );
-          // If update failed due to contention, the session likely exists.
-          // We fetch it to return valid session data.
-          if (firestoreAdapter.getSessionAndUser) {
-            const result = await firestoreAdapter.getSessionAndUser(
-              session.sessionToken,
+        }
+        if (user.email && isAdminEmail(user.email)) {
+          logger.info(
+            `createUser: Bootstrapping admin status for new user ${user.email}`,
+          );
+          await firestore
+            .collection(AUTHJS_USERS_COLLECTION_PATH)
+            .doc(createdUser.id)
+            .set(
+              {
+                slack: {
+                  id: '',
+                  isAdmin: true,
+                },
+              },
+              { merge: true },
             );
-            return result?.session ?? null;
+          if (createdUser.slack) {
+            createdUser.slack.isAdmin = true;
+          } else {
+            createdUser.slack = { id: '', isAdmin: true };
           }
         }
-        throw error;
-      }
-    },
+        return createdUser;
+      },
+      async updateUser(user) {
+        if (!firestoreAdapter.updateUser) {
+          throw new Error('FirestoreAdapter does not support updateUser');
+        }
+        const updatedUser = await firestoreAdapter.updateUser(user);
+        if (updatedUser.id && updatedUser.name) {
+          await syncNameToRiderProfile(
+            firestore,
+            updatedUser.id,
+            updatedUser.name,
+          );
+        }
+        return updatedUser;
+      },
+      async linkAccount(account) {
+        // Force deterministic Account ID for easy lookups
+        const id = getAuthJsAccountId(account.userId, account.provider);
+        const { id: _removedId, ...accountData } = account as Record<
+          string,
+          unknown
+        >;
+        await firestore
+          .collection(AUTHJS_ACCOUNTS_COLLECTION_PATH)
+          .doc(id)
+          .set(accountData);
+        return { ...account, id } as typeof account;
+      },
+      async updateSession(session) {
+        if (!firestoreAdapter.updateSession) {
+          return null;
+        }
+        try {
+          return await firestoreAdapter.updateSession(session);
+        } catch (error: unknown) {
+          const err = error as { code?: number; message?: string };
+          if (err.code === 10 || err.message?.includes('contention')) {
+            logger.warn(
+              'getAuthConfig: Session update contention detected, ignoring update and fetching current session.',
+            );
+            // If update failed due to contention, the session likely exists.
+            // We fetch it to return valid session data.
+            if (firestoreAdapter.getSessionAndUser) {
+              const result = await firestoreAdapter.getSessionAndUser(
+                session.sessionToken,
+              );
+              return result?.session ?? null;
+            }
+          }
+          throw error;
+        }
+      },
+    };
   };
+
+  const adapter = firestore ? buildAdapter(firestore) : undefined;
 
   return {
     secret: authSecret,
     trustHost: true,
     /**
-     * Configure the Firestore adapter for database persistence.
+     * Configure the Firestore adapter for database persistence (omitted
+     * entirely in adapter-less mode — see `AuthConfigOptions.adapter`).
      *
      * The adapter handles:
      * - User creation and retrieval
@@ -391,7 +430,7 @@ export const getAuthConfig = async (
      *
      * @see https://authjs.dev/getting-started/adapters/firebase
      */
-    adapter,
+    ...(adapter && { adapter }),
 
     /**
      * Configure authentication providers.
@@ -415,7 +454,7 @@ export const getAuthConfig = async (
        * This is required when using the Credentials provider (which uses JWTs).
        * We propagate the Slack data from the user object to the token.
        */
-      async jwt({ token, user }) {
+      async jwt({ token, user, profile }) {
         const appUser = user as AppUser | undefined;
         const appToken = token as AppJWT;
         if (appUser?.slack) {
@@ -425,6 +464,15 @@ export const getAuthConfig = async (
             appUser.slack.isAdmin || isSlackAdmin(appUser.slack.id);
           if (appUser.waiverVersionAccepted !== undefined) {
             appToken.waiverVersionAccepted = appUser.waiverVersionAccepted;
+          }
+        }
+        // GitHub sign-ins carry the login on the OAuth profile; persist it
+        // on the token so the session callback can apply the allowlist on
+        // every refresh.
+        if (requestedProviders.includes('github')) {
+          const login = (profile as { login?: string } | undefined)?.login;
+          if (login) {
+            appToken.githubLogin = login;
           }
         }
         return token;
@@ -463,57 +511,62 @@ export const getAuthConfig = async (
           // only admin path for a Strava-only sign-in.
           let isStravaAthleteAdmin = false;
 
-          try {
-            const stravaAccountPromise = getAuthJsAccount(
-              firestore,
-              internalId,
-              'strava',
-            );
-
-            let riderProfileDoc = await getRiderProfileRef(
-              firestore,
-              session.user.id,
-            ).get();
-
-            if (
-              !riderProfileDoc.exists &&
-              slackData?.id &&
-              slackData.id !== session.user.id
-            ) {
-              riderProfileDoc = await getRiderProfileRef(
+          // Onboarding/rider-profile state lives in Firestore, so it only
+          // exists when the adapter does (adapter-less apps have no
+          // onboarding concept).
+          if (firestore) {
+            try {
+              const stravaAccountPromise = getAuthJsAccount(
                 firestore,
-                slackData.id,
+                internalId,
+                'strava',
+              );
+
+              let riderProfileDoc = await getRiderProfileRef(
+                firestore,
+                session.user.id,
               ).get();
+
+              if (
+                !riderProfileDoc.exists &&
+                slackData?.id &&
+                slackData.id !== session.user.id
+              ) {
+                riderProfileDoc = await getRiderProfileRef(
+                  firestore,
+                  slackData.id,
+                ).get();
+              }
+
+              if (riderProfileDoc.exists) {
+                const riderProfile = riderProfileDoc.data();
+                hasCompletedProfile =
+                  !!riderProfile?.contact?.phoneNumber &&
+                  !!riderProfile?.emergencyContact?.name;
+                hasActiveMembership =
+                  riderProfile?.membership?.status === 'Active';
+              }
+
+              const stravaAccount = await stravaAccountPromise;
+
+              isStravaConnected = !!stravaAccount;
+              isStravaAthleteAdmin =
+                !!stravaAccount?.providerAccountId &&
+                isOnecakeAdmin(stravaAccount.providerAccountId);
+            } catch (error) {
+              logger.error('Failed to check onboarding status:', error);
             }
 
-            if (riderProfileDoc.exists) {
-              const riderProfile = riderProfileDoc.data();
-              hasCompletedProfile =
-                !!riderProfile?.contact?.phoneNumber &&
-                !!riderProfile?.emergencyContact?.name;
-              hasActiveMembership =
-                riderProfile?.membership?.status === 'Active';
-            }
-
-            const stravaAccount = await stravaAccountPromise;
-
-            isStravaConnected = !!stravaAccount;
-            isStravaAthleteAdmin =
-              !!stravaAccount?.providerAccountId &&
-              isOnecakeAdmin(stravaAccount.providerAccountId);
-          } catch (error) {
-            logger.error('Failed to check onboarding status:', error);
+            session.user.onboarding = {
+              hasAcceptedWaiver:
+                (appUser?.waiverVersionAccepted ??
+                  appToken?.waiverVersionAccepted ??
+                  0) >= REQUIRED_WAIVER_VERSION,
+              hasCompletedProfile,
+              isStravaConnected,
+              hasActiveMembership,
+            };
           }
-
-          session.user.onboarding = {
-            hasAcceptedWaiver:
-              (appUser?.waiverVersionAccepted ??
-                appToken?.waiverVersionAccepted ??
-                0) >= REQUIRED_WAIVER_VERSION,
-            hasCompletedProfile,
-            isStravaConnected,
-            hasActiveMembership,
-          };
 
           // Slack-workspace admin signal (web/bot identities only). Strava-only
           // (OneCake) sign-ins carry no Slack identity, so this is false there.
@@ -532,17 +585,25 @@ export const getAuthConfig = async (
           const emailAdmin =
             !!session.user.email && isAdminEmail(session.user.email);
 
+          // GitHub-login allowlist (agent-console): every allowed login is
+          // an admin — the allowlist is also the sign-in gate.
+          const githubAdmin =
+            !!appToken?.githubLogin &&
+            (options?.allowedGithubLogins ?? []).includes(appToken.githubLogin);
+
           // Canonical, platform-agnostic admin flag. This is the single field
           // authorization consumers read. Admin is NOT surfaced via `slack`.
           // Sources: Slack-workspace admin, OneCake Strava-athlete allowlist
-          // (ONECAKE_ADMINS), admin email (ADMIN_EMAILS), or a persisted grant
-          // on the user doc set at runtime via the admin UI (appUser.isAdmin).
+          // (ONECAKE_ADMINS), admin email (ADMIN_EMAILS), GitHub-login
+          // allowlist (agent-console), or a persisted grant on the user doc
+          // set at runtime via the admin UI (appUser.isAdmin).
           // Database sessions recompute this every request, so a grant/revoke
           // takes effect on the next page load.
           const isAdmin =
             slackAdmin ||
             isStravaAthleteAdmin ||
             emailAdmin ||
+            githubAdmin ||
             !!appUser?.isAdmin;
           session.user.isAdmin = isAdmin;
 
@@ -555,17 +616,21 @@ export const getAuthConfig = async (
             };
           }
 
-          // Generate Firebase custom token for client-side Firebase authentication
-          try {
-            const authAdmin = await getFirebaseAuthAdmin();
-            session.firebaseToken = await authAdmin.createCustomToken(
-              session.user.id,
-              {
-                isAdmin,
-              },
-            );
-          } catch (error) {
-            logger.error('Failed to create Firebase custom token:', error);
+          // Generate Firebase custom token for client-side Firebase
+          // authentication. Adapter-less apps have no Firebase project to
+          // mint against.
+          if (useAdapter) {
+            try {
+              const authAdmin = await getFirebaseAuthAdmin();
+              session.firebaseToken = await authAdmin.createCustomToken(
+                session.user.id,
+                {
+                  isAdmin,
+                },
+              );
+            } catch (error) {
+              logger.error('Failed to create Firebase custom token:', error);
+            }
           }
         }
 
@@ -579,8 +644,21 @@ export const getAuthConfig = async (
        * This is a security measure to mitigate the risk of 'allowDangerousEmailAccountLinking: true'.
        */
       async signIn({ user, account, profile }) {
+        // GitHub sign-ins are gated by the login allowlist — GitHub carries
+        // no workspace/club identity, so the allowlist is the only gate.
+        if (account?.provider === 'github') {
+          const login = (profile as { login?: string } | undefined)?.login;
+          const allowedLogins = options?.allowedGithubLogins ?? [];
+          if (!login || !allowedLogins.includes(login)) {
+            logger.warn(
+              `Rejecting GitHub sign-in: ${login ?? '(unknown)'} is not in the allowed list`,
+            );
+            return false;
+          }
+        }
+
         // Bootstrap admin status if user's email is in the admin list
-        if (user?.id && user?.email && isAdminEmail(user.email)) {
+        if (firestore && user?.id && user?.email && isAdminEmail(user.email)) {
           try {
             const userRef = firestore
               .collection(AUTHJS_USERS_COLLECTION_PATH)
@@ -734,7 +812,10 @@ export const getAuthConfig = async (
      * creates and manages sessions in the database.
      */
     session: {
-      strategy: enableTestingHandlers() ? 'jwt' : 'database',
+      // Adapter-less apps have nowhere to persist sessions, so they always
+      // use JWTs; adapter-backed apps use database sessions except under
+      // the testing handlers.
+      strategy: !useAdapter || enableTestingHandlers() ? 'jwt' : 'database',
       // Default session max age is 30 days
       maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
     },

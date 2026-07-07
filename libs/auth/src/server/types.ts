@@ -36,6 +36,11 @@ declare module 'next-auth' {
   interface Session {
     /** Firebase custom token for client-side Firebase authentication */
     firebaseToken?: string;
+    /**
+     * Custom claims carried by the identity (primes' Firebase-flavored
+     * AuthUser layer and the shared e2e test-session adapter both use this).
+     */
+    customClaims?: Record<string, unknown>;
     user: {
       /** Internal database user ID */
       id: string;
@@ -44,14 +49,19 @@ declare module 'next-auth' {
        * authorization consumer should read. Sourced in the session callback
        * from whichever admin mechanism applies to the signed-in identity:
        * Slack workspace admin (web/bot), OneCake Strava-athlete allowlist
-       * (ONECAKE_ADMINS), or admin email (ADMIN_EMAILS). Do NOT read admin
-       * status off `slack` — Slack is just one identity provider.
+       * (ONECAKE_ADMINS), admin email (ADMIN_EMAILS), or GitHub-login
+       * allowlist (agent-console). Do NOT read admin status off `slack` —
+       * Slack is just one identity provider.
        */
       isAdmin: boolean;
       /** Slack-specific identity data (web/bot). Not an authorization source. */
       slack?: SlackUser;
-      /** Onboarding and compliance gates */
-      onboarding: {
+      /**
+       * Onboarding and compliance gates. Absent for apps that run without
+       * the Firestore adapter (adapter-less JWT sessions, e.g.
+       * agent-console) and for injected test sessions.
+       */
+      onboarding?: {
         hasAcceptedWaiver: boolean;
         hasCompletedProfile: boolean;
         isStravaConnected: boolean;
