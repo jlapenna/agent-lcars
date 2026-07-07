@@ -75,6 +75,8 @@
       "@repo/invites/*": ["./libs/invites/src/*"],
       "@repo/onboarding": ["./libs/onboarding/src/index.ts"],
       "@repo/onboarding/*": ["./libs/onboarding/src/*"],
+      "@repo/preems": ["./libs/preems/src/index.ts"],
+      "@repo/preems/*": ["./libs/preems/src/*"],
       "@repo/racer-claims": ["./libs/racer-claims/src/index.ts"],
       "@repo/racer-claims/*": ["./libs/racer-claims/src/*"],
       "@repo/rag": ["libs/rag/src/index.ts"],
