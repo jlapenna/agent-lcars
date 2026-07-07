@@ -35,9 +35,9 @@ module.exports = {
       __dirname,
       'libs/competitions/src/index.ts',
     ),
-    '^@repo/competitions/browser$': path.join(
+    '^@repo/competitions/ui$': path.join(
       __dirname,
-      'libs/competitions/src/browser/index.ts',
+      'libs/competitions/src/ui/index.ts',
     ),
     '^@repo/competitions/(.*)$': path.join(
       __dirname,

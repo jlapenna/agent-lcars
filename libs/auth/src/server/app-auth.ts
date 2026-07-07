@@ -1,5 +1,5 @@
-import NextAuth from 'next-auth';
 import type { Session } from 'next-auth';
+import NextAuth from 'next-auth';
 
 import { getMockSession, withImpersonation } from './auth';
 import { AuthConfigOptions, getAuthConfig } from './config';
