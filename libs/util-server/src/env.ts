@@ -166,9 +166,6 @@ export const getSlackProfileFieldUsacRoadCat = () =>
 export const getSlackProfileFieldUsacCrossCat = () =>
   required('SLACK_PROFILE_FIELD_USAC_CROSS_CAT');
 
-export const getInstagramWebhookVerifyToken = () =>
-  optional('INSTAGRAM_WEBHOOK_VERIFY_TOKEN');
-
 export const getStravaClubId = () => optional('STRAVA_CLUB_ID');
 
 export const getStravaIgnoreAthleteIds = () =>
@@ -213,8 +210,6 @@ export const getPrimesBackendServiceUrl = () =>
   optional('PRIMES_BACKEND_SERVICE_URL');
 export const getAgentServiceUrl = () => optional('AGENT_SERVICE_URL');
 export const getWebServiceUrl = () => optional('WEB_SERVICE_URL');
-export const getGhostServiceUrl = () => required('GHOST_SERVICE_URL');
-export const getGhostStorageBucket = () => optional('GHOST_STORAGE_BUCKET');
 
 export const getAgentConsoleGithubToken = () =>
   required('AGENT_CONSOLE_GITHUB_TOKEN');
