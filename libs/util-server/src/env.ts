@@ -325,17 +325,6 @@ export const getCanonicalAutoMergeEnabled = () =>
 
 export const getRagDriveFolders = () => splitEnvList('RAG_DRIVE_FOLDERS');
 
-export const getSquareupEnvironment = () =>
-  optional('SQUAREUP_ENVIRONMENT') ?? 'sandbox';
-
-export const getSquareupApplicationId = () =>
-  optional('SQUAREUP_APPLICATION_ID');
-
-export const getSquareupLocationId = () => optional('SQUAREUP_LOCATION_ID');
-
-export const getSquareupServiceChargeId = () =>
-  optional('SQUAREUP_SERVICE_CHARGE_ID');
-
 export const getRoadResultsTeamId = () => required('ROADRESULTS_TEAM_ID');
 export const getCrossResultsTeamId = () => required('CROSSRESULTS_TEAM_ID');
 export const getGravelResultsTeamId = () => required('GRAVELRESULTS_TEAM_ID');
@@ -379,8 +368,6 @@ export const isMailConfigured = (): boolean =>
   !!getOptionalMailPassword();
 
 export const getQbpApiKey = () => required('QBP_API_KEY');
-
-export const getSquareupAccessToken = () => required('SQUAREUP_ACCESS_TOKEN');
 
 export const getStravaClientId = () => required('STRAVA_CLIENT_ID');
 export const getStravaClientSecret = () => required('STRAVA_CLIENT_SECRET');
