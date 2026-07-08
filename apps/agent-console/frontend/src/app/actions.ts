@@ -11,6 +11,7 @@ import {
 import {
   ActionError,
   approveAndMergePr,
+  cancelWorkflowRun as cancelWorkflowRunLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
@@ -78,6 +79,16 @@ export async function retriggerIssue(number: number, note?: string) {
   await requireAdmin();
   try {
     await retriggerIssueLib(number, note);
+    revalidatePath('/');
+  } catch (error) {
+    throw toUserError(error);
+  }
+}
+
+export async function cancelRun(runId: number) {
+  await requireAdmin();
+  try {
+    await cancelWorkflowRunLib(runId);
     revalidatePath('/');
   } catch (error) {
     throw toUserError(error);

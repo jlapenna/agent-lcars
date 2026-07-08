@@ -25,6 +25,7 @@ import type {
   MergeableState,
 } from '../lib/action-items';
 import { mergePr, replyToItem, retriggerIssue } from './actions';
+import { CancelRunButton } from './cancel-run-button';
 import { githubIssueUrl } from './format';
 
 const ACTION_LABELS: Record<ActionType, string> = {
@@ -58,6 +59,7 @@ const NOT_MERGEABLE_STATES: MergeableState[] = ['dirty', 'blocked', 'draft'];
 
 /** Preformatted live-run info; built server-side in page.tsx. */
 export interface LiveRunSummary {
+  id: number;
   status: 'queued' | 'running';
   label: string;
   url: string;
@@ -327,6 +329,7 @@ export function ActionItemCard({
                 >
                   View run ↗
                 </Anchor>
+                <CancelRunButton runId={liveRun.id} label={item.title} />
               </>
             )}
             {item.actionTypes.map((type) => (

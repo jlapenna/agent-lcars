@@ -17,6 +17,7 @@ import type {
   RunnerStatus,
 } from '../lib/agent-activity';
 import { RUN_TIMEOUT_MINUTES } from '../lib/agent-activity';
+import { CancelRunButton } from './cancel-run-button';
 import { formatDuration, formatRelativeTime } from './format';
 
 const CONCLUSION_LABELS: Record<AgentRunConclusion, string> = {
@@ -81,16 +82,22 @@ function LiveRunRow({ run }: { run: AgentRun }) {
         <Text size="xs" c="dimmed">
           via {run.event}
         </Text>
-        <Anchor
-          href={run.url}
-          target="_blank"
-          rel="noreferrer"
-          size="xs"
-          c="dimmed"
+        <Group
+          gap={6}
+          wrap="nowrap"
           style={{ marginLeft: 'auto', flexShrink: 0 }}
         >
-          View run ↗
-        </Anchor>
+          <Anchor
+            href={run.url}
+            target="_blank"
+            rel="noreferrer"
+            size="xs"
+            c="dimmed"
+          >
+            View run ↗
+          </Anchor>
+          <CancelRunButton runId={run.id} label={run.displayTitle} />
+        </Group>
       </Group>
       {run.status === 'running' && (
         <Progress
@@ -157,8 +164,8 @@ export function AgentActivityPanel({ activity }: { activity: AgentActivity }) {
 
         {allOffline && (
           <Alert color="red" variant="light">
-            All agent runners are offline — dispatched runs will queue but
-            never start. Check the runner fleet before retriggering anything.
+            All agent runners are offline — dispatched runs will queue but never
+            start. Check the runner fleet before retriggering anything.
           </Alert>
         )}
 

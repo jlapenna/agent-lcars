@@ -86,6 +86,15 @@ export async function approveAndMergePr(prNumber: number): Promise<void> {
   });
 }
 
+export async function cancelWorkflowRun(runId: number): Promise<void> {
+  const octokit = getGithubClient();
+  await octokit.rest.actions.cancelWorkflowRun({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    run_id: runId,
+  });
+}
+
 export async function retriggerIssue(
   issueNumber: number,
   note?: string,

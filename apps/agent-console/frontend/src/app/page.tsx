@@ -8,11 +8,13 @@ import {
   getAgentActivity,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
-import { ActionItemCard, type LiveRunSummary } from './action-item-card';
+import { type LiveRunSummary } from './action-item-card';
+import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel } from './agent-activity-panel';
 import { formatDuration, formatRelativeTime } from './format';
 import { RefreshButton } from './refresh-button';
+import { ThemeToggle } from './theme-toggle';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,12 +25,21 @@ function toLiveRunSummary(
 ): LiveRunSummary | undefined {
   if (!run) return undefined;
   return {
+    id: run.id,
     status: run.status === 'running' ? 'running' : 'queued',
     label:
       run.status === 'running'
         ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m budget`
         : `queued for ${formatDuration(run.elapsedSeconds)}`,
     url: run.url,
+  };
+}
+
+function toCard(item: ActionItem, liveRun?: LiveRunSummary): BoardCard {
+  return {
+    item,
+    updatedAtLabel: formatRelativeTime(item.updatedAt),
+    liveRun,
   };
 }
 
@@ -81,10 +92,13 @@ export default async function Index() {
             supersprinklesracing/members &mdash; Claude issue agent activity
           </Text>
         </div>
-        <RefreshButton
-          generatedAt={generatedAt}
-          initialLabel={formatRelativeTime(generatedAt)}
-        />
+        <Group gap="sm" wrap="nowrap">
+          <RefreshButton
+            generatedAt={generatedAt}
+            initialLabel={formatRelativeTime(generatedAt)}
+          />
+          <ThemeToggle size="lg" />
+        </Group>
       </Group>
 
       {warnings.length > 0 && (
@@ -106,82 +120,14 @@ export default async function Index() {
 
       <AgentActivityPanel activity={activity} />
 
-      <Title order={2} mb="sm">
-        Needs Your Action ({needsAction.length})
-      </Title>
-      {needsAction.length === 0 && (
-        <Text c="dimmed" mb="xl">
-          Nothing waiting on you right now.
-        </Text>
-      )}
-      <Stack gap="sm" mb="xl">
-        {needsAction.map((item) => (
-          <ActionItemCard
-            key={`${item.kind}-${item.number}`}
-            item={item}
-            updatedAtLabel={formatRelativeTime(item.updatedAt)}
-          />
-        ))}
-      </Stack>
-
-      {agentWorking.length > 0 && (
-        <>
-          <Title order={2} mb={4}>
-            Agent Working ({agentWorking.length})
-          </Title>
-          <Text c="dimmed" size="sm" mb="sm">
-            The agent has the ball — nothing for you here yet.
-          </Text>
-          <Stack gap="sm" mb="xl">
-            {agentWorking.map((item) => (
-              <ActionItemCard
-                key={`${item.kind}-${item.number}`}
-                item={item}
-                updatedAtLabel={formatRelativeTime(item.updatedAt)}
-                liveRun={toLiveRunSummary(liveRunFor(item))}
-              />
-            ))}
-          </Stack>
-        </>
-      )}
-
-      {waitingOnDeploy.length > 0 && (
-        <>
-          <Title order={2} mb={4}>
-            Waiting on Next Deploy ({waitingOnDeploy.length})
-          </Title>
-          <Text c="dimmed" size="sm" mb="sm">
-            Verified and closed automatically by the post-deploy agent after the
-            next deploy of the affected app.
-          </Text>
-          <Stack gap="sm" mb="xl">
-            {waitingOnDeploy.map((item) => (
-              <ActionItemCard
-                key={`${item.kind}-${item.number}`}
-                item={item}
-                updatedAtLabel={formatRelativeTime(item.updatedAt)}
-              />
-            ))}
-          </Stack>
-        </>
-      )}
-
-      {rest.length > 0 && (
-        <>
-          <Title order={2} mb="sm">
-            Everything Else ({rest.length})
-          </Title>
-          <Stack gap="sm">
-            {rest.map((item) => (
-              <ActionItemCard
-                key={`${item.kind}-${item.number}`}
-                item={item}
-                updatedAtLabel={formatRelativeTime(item.updatedAt)}
-              />
-            ))}
-          </Stack>
-        </>
-      )}
+      <ActionItemsBoard
+        needsAction={needsAction.map((item) => toCard(item))}
+        agentWorking={agentWorking.map((item) =>
+          toCard(item, toLiveRunSummary(liveRunFor(item))),
+        )}
+        waitingOnDeploy={waitingOnDeploy.map((item) => toCard(item))}
+        rest={rest.map((item) => toCard(item))}
+      />
     </Container>
   );
 }
