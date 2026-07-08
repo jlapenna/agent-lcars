@@ -53,6 +53,7 @@ jest.mock('@repo/strava', () => ({
   getSecrets: jest
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
+  isOnecakeAdmin: jest.fn().mockReturnValue(false),
 }));
 
 jest.mock('@repo/util/browser', () => ({

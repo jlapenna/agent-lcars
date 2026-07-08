@@ -24,7 +24,7 @@ import {
 import { getRiderProfileRef } from '@repo/riders/queries';
 import { getAuthSecret } from '@repo/service-auth';
 import { getSecrets as getSlackSecrets } from '@repo/slack';
-import { getSecrets as getStravaSecrets } from '@repo/strava';
+import { getSecrets as getStravaSecrets, isOnecakeAdmin } from '@repo/strava';
 import { getNextPublicSlackClientId } from '@repo/util/browser';
 import { enableTestingHandlers, getProjectId } from '@repo/util-server';
 import {
@@ -42,7 +42,6 @@ import {
   getStravaClubId,
   isAdminEmail,
   isMailConfigured,
-  isOnecakeAdmin,
   isSlackAdmin,
 } from '@repo/util-server';
 import { FieldValue, Firestore } from 'firebase-admin/firestore';

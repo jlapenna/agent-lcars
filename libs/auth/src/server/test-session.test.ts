@@ -21,8 +21,11 @@ jest.mock('@repo/util-server', () => ({
   isImpersonateAutomaticLogin: jest.fn().mockReturnValue(false),
   getE2eTestingUser: jest.fn().mockReturnValue(undefined),
   isSlackAdmin: jest.fn().mockReturnValue(false),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
   isAdminEmail: jest.fn().mockReturnValue(false),
+}));
+
+jest.mock('@repo/strava', () => ({
+  isOnecakeAdmin: jest.fn().mockReturnValue(false),
 }));
 
 const mockHeaders = headers as jest.Mock;

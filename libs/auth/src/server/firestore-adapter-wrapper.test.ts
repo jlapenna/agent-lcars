@@ -48,6 +48,7 @@ jest.mock('@repo/strava', () => ({
     clientSecret: 'secret',
     redirectUri: 'uri',
   }),
+  isOnecakeAdmin: jest.fn().mockReturnValue(false),
 }));
 
 jest.mock('@repo/util-server', () => ({

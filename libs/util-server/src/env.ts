@@ -47,19 +47,6 @@ export const getSlackQbpAnnounceChannel = () =>
 export const isSlackAdmin = (slackId: string) =>
   splitEnvList('SLACK_ADMINS').includes(slackId);
 
-/**
- * Strava-athlete admin allowlist for OneCake. OneCake authenticates Strava-only,
- * and Strava carries no email, so admin cannot be derived from `ADMIN_EMAILS`.
- * This gates admin by Strava athlete ID instead (parallel to `isSlackAdmin`).
- */
-export const getOnecakeAdmins = (): string[] => splitEnvList('ONECAKE_ADMINS');
-
-// Strava athlete ids arrive as either strings or numbers depending on the source
-// (Auth.js account docs store `providerAccountId` numerically). Coerce before
-// comparing so a numeric id doesn't throw `athleteId.trim is not a function`.
-export const isOnecakeAdmin = (athleteId: string | number): boolean =>
-  getOnecakeAdmins().includes(String(athleteId).trim());
-
 export const getAdminEmails = (): string[] => {
   const envEmails = splitEnvList('ADMIN_EMAILS');
   if (envEmails.length > 0) {

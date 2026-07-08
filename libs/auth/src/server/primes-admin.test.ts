@@ -54,6 +54,7 @@ jest.mock('@repo/strava', () => ({
   getSecrets: jest
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
+  isOnecakeAdmin: jest.fn().mockReturnValue(false),
 }));
 
 jest.mock('@repo/util/browser', () => ({
@@ -74,7 +75,6 @@ jest.mock('@repo/util-server', () => ({
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
   isSlackAdmin: jest.fn().mockReturnValue(false),
   isAdminEmail: jest.fn().mockReturnValue(false),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
   getProjectId: jest.fn().mockReturnValue('preem-machine'),
   getStravaClubId: jest.fn().mockReturnValue('40422'),
   isMailConfigured: jest.fn().mockReturnValue(false),

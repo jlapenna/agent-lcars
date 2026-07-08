@@ -1,5 +1,5 @@
 import { getFirestore } from '@repo/firebase-server';
-import * as utilServer from '@repo/util-server';
+import * as strava from '@repo/strava';
 
 import { getAuthConfig } from './config';
 import { getAuthJsAccount } from './queries';
@@ -54,6 +54,7 @@ jest.mock('@repo/strava', () => ({
   getSecrets: jest
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
+  isOnecakeAdmin: jest.fn(),
 }));
 
 jest.mock('@repo/util/browser', () => ({
@@ -73,7 +74,6 @@ jest.mock('@repo/util-server', () => ({
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
   isSlackAdmin: jest.fn().mockReturnValue(false),
   isAdminEmail: jest.fn().mockReturnValue(false),
-  isOnecakeAdmin: jest.fn(),
   getProjectId: jest.fn().mockReturnValue('onecake'),
   getStravaClubId: jest.fn().mockReturnValue('40422'),
   isMailConfigured: jest.fn().mockReturnValue(false),
@@ -110,7 +110,7 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
   });
 
   it('grants admin to a Strava-only user whose athlete ID is allowlisted', async () => {
-    (utilServer.isOnecakeAdmin as jest.Mock).mockImplementation(
+    (strava.isOnecakeAdmin as jest.Mock).mockImplementation(
       (id: string) => id === '66304',
     );
 
@@ -120,14 +120,14 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
       user: stravaUser,
     });
 
-    expect(utilServer.isOnecakeAdmin).toHaveBeenCalledWith('66304');
+    expect(strava.isOnecakeAdmin).toHaveBeenCalledWith('66304');
     // Admin is surfaced via the platform-agnostic flag, never via Slack.
     expect(result.user.isAdmin).toBe(true);
     expect(result.user.slack).toBeUndefined();
   });
 
   it('does not grant admin when the athlete ID is not allowlisted', async () => {
-    (utilServer.isOnecakeAdmin as jest.Mock).mockReturnValue(false);
+    (strava.isOnecakeAdmin as jest.Mock).mockReturnValue(false);
 
     const session = await getSessionCallback();
     const result = await session({
@@ -141,7 +141,7 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
 
   it('grants admin from a persisted user-doc flag (runtime promotion)', async () => {
     // Athlete is NOT on the ONECAKE_ADMINS allowlist...
-    (utilServer.isOnecakeAdmin as jest.Mock).mockReturnValue(false);
+    (strava.isOnecakeAdmin as jest.Mock).mockReturnValue(false);
 
     const session = await getSessionCallback();
     const result = await session({
