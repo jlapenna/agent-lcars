@@ -1,4 +1,4 @@
-import { Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Alert, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 
 import { auth } from '../auth';
@@ -38,19 +38,30 @@ export default async function Index() {
     redirect('/login');
   }
 
-  const [items, activity] = await Promise.all([
+  const [{ items, warnings: itemWarnings }, activity] = await Promise.all([
     getActionItems(),
     getAgentActivity(),
   ]);
+  const warnings = [...itemWarnings, ...activity.warnings];
 
-  // Join live agent runs to items: for `issues`/`issue_comment`-triggered
-  // runs the workflow run's display title IS the issue/PR title. An item
-  // with a live run is the AGENT's to act on, whatever its labels say - it
-  // must never be presented as waiting on the maintainer.
-  const liveRunByTitle = new Map(
-    activity.liveRuns.map((run) => [run.displayTitle, run]),
+  // Join live agent runs to items, preferring the run-name-derived issue
+  // number (see claude.yml) - it's immune to title edits and duplicate
+  // titles. Runs that predate that rollout (issueNumber undefined) fall
+  // back to the old title-string match. An item with a live run is the
+  // AGENT's to act on, whatever its labels say - it must never be presented
+  // as waiting on the maintainer.
+  const liveRunByNumber = new Map(
+    activity.liveRuns
+      .filter((run) => run.issueNumber !== undefined)
+      .map((run) => [run.issueNumber as number, run]),
   );
-  const liveRunFor = (item: ActionItem) => liveRunByTitle.get(item.title);
+  const liveRunByTitle = new Map(
+    activity.liveRuns
+      .filter((run) => run.issueNumber === undefined)
+      .map((run) => [run.displayTitle, run]),
+  );
+  const liveRunFor = (item: ActionItem) =>
+    liveRunByNumber.get(item.number) ?? liveRunByTitle.get(item.title);
 
   const agentWorking = items.filter((item) => liveRunFor(item));
   const idle = items.filter((item) => !liveRunFor(item));
@@ -75,6 +86,23 @@ export default async function Index() {
           initialLabel={formatRelativeTime(generatedAt)}
         />
       </Group>
+
+      {warnings.length > 0 && (
+        <Alert
+          color="yellow"
+          variant="light"
+          title="Data may be incomplete"
+          mb="lg"
+        >
+          <Stack gap={4}>
+            {warnings.map((warning) => (
+              <Text key={warning} size="sm">
+                {warning}
+              </Text>
+            ))}
+          </Stack>
+        </Alert>
+      )}
 
       <AgentActivityPanel activity={activity} />
 

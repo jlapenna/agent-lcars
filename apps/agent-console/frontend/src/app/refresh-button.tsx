@@ -18,6 +18,10 @@ export function RefreshButton({
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
+    // Resync immediately on a new generatedAt (e.g. right after a refresh) -
+    // without this, the label kept showing the stale pre-refresh value until
+    // the next 30s tick.
+    setLabel(formatRelativeTime(generatedAt));
     const id = setInterval(
       () => setLabel(formatRelativeTime(generatedAt)),
       30_000,

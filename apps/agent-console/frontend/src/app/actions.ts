@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 
 import { auth } from '../auth';
 import {
-  type ActionItem,
+  type ActionItemsResult,
   getActionItems as fetchActionItems,
 } from '../lib/action-items';
 import {
@@ -48,7 +48,7 @@ function toUserError(error: unknown): Error {
   return error instanceof Error ? error : new Error('Unexpected error');
 }
 
-export async function getActionItems(): Promise<ActionItem[]> {
+export async function getActionItems(): Promise<ActionItemsResult> {
   await requireAdmin();
   return fetchActionItems();
 }

@@ -18,11 +18,17 @@ export interface AgentRun {
   event: string;
   url: string;
   /**
-   * For `issues`/`issue_comment`-triggered runs GitHub sets this to the
-   * issue/PR title, which lets the dashboard join live runs to action items
-   * without any runner-side telemetry.
+   * claude.yml's `run-name` sets this to `#<issue/PR number>: <title>`, which
+   * lets the dashboard join live runs to action items without any
+   * runner-side telemetry.
    */
   displayTitle: string;
+  /**
+   * Parsed from the leading `#<number>:` of displayTitle. Undefined for runs
+   * that predate the run-name rollout - callers should fall back to a
+   * title-string match against `displayTitle` for those.
+   */
+  issueNumber?: number;
   createdAt: string;
   updatedAt: string;
   /**
@@ -43,6 +49,17 @@ export interface AgentActivity {
   recentRuns: AgentRun[];
   /** undefined = runner API unavailable (e.g. token lacks admin:read). */
   runners?: RunnerStatus[];
+  /** Human-readable notes when a section above degraded instead of crashing. */
+  warnings: string[];
+}
+
+const DISPLAY_TITLE_NUMBER_RE = /^#(\d+):/;
+
+export function issueNumberFromDisplayTitle(
+  displayTitle: string,
+): number | undefined {
+  const match = displayTitle.match(DISPLAY_TITLE_NUMBER_RE);
+  return match ? Number(match[1]) : undefined;
 }
 
 interface WorkflowRunLike {
@@ -84,6 +101,7 @@ function toAgentRun(run: WorkflowRunLike): AgentRun {
     event: run.event,
     url: run.html_url,
     displayTitle: run.display_title,
+    issueNumber: issueNumberFromDisplayTitle(run.display_title),
     createdAt: run.created_at,
     updatedAt: run.updated_at,
     elapsedSeconds: Math.max(0, Math.round((endMs - startMs) / 1000)),
@@ -130,6 +148,8 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     ),
   ]);
 
+  const warnings: string[] = [];
+
   let liveRuns: AgentRun[] = [];
   if (liveResult.status === 'fulfilled') {
     liveRuns = liveResult.value.data.workflow_runs
@@ -140,6 +160,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       'agent-console: failed to list live agent runs:',
       liveResult.reason,
     );
+    warnings.push('Live agent runs unavailable (GitHub API request failed).');
   }
 
   let recentRuns: AgentRun[] = [];
@@ -154,6 +175,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       'agent-console: failed to list recent agent runs:',
       recentResult.reason,
     );
+    warnings.push('Recent agent runs unavailable (GitHub API request failed).');
   }
 
   let runners: RunnerStatus[] | undefined;
@@ -172,7 +194,10 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       'agent-console: failed to list self-hosted runners:',
       runnersResult.reason,
     );
+    warnings.push(
+      'Runner fleet status unavailable (GitHub API request failed).',
+    );
   }
 
-  return { liveRuns, recentRuns, runners };
+  return { liveRuns, recentRuns, runners, warnings };
 }

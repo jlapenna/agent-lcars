@@ -34,6 +34,12 @@ export interface ActionItem {
   ciRunning?: boolean;
 }
 
+export interface ActionItemsResult {
+  items: ActionItem[];
+  /** Human-readable notes when a query or item degraded instead of crashing. */
+  warnings: string[];
+}
+
 /**
  * True when all that's left on the item is waiting for the next deploy: the
  * post-deploy verification agent verifies and closes these automatically,
@@ -169,8 +175,53 @@ function extractParentNumber(
   return match ? Number(match[1]) : undefined;
 }
 
-async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
+interface CheckRunLike {
+  name: string;
+  html_url?: string | null;
+  status: string;
+  conclusion: string | null;
+}
+
+// GitHub caps a single page at 100; a handful of pages comfortably covers
+// any real PR (one check run per workflow job, across a few workflows) -
+// this bounds the loop rather than expecting to actually hit it.
+const CHECKS_PER_PAGE = 100;
+const CHECKS_MAX_PAGES = 5;
+
+async function listAllCheckRuns(
+  sha: string,
+): Promise<{ checkRuns: CheckRunLike[]; truncated: boolean }> {
   const octokit = getGithubClient();
+  const checkRuns: CheckRunLike[] = [];
+  let totalCount = 0;
+  for (let page = 1; page <= CHECKS_MAX_PAGES; page++) {
+    const { data } = await octokit.rest.checks.listForRef({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      ref: sha,
+      per_page: CHECKS_PER_PAGE,
+      page,
+    });
+    totalCount = data.total_count;
+    checkRuns.push(...data.check_runs);
+    if (
+      data.check_runs.length < CHECKS_PER_PAGE ||
+      checkRuns.length >= totalCount
+    ) {
+      break;
+    }
+  }
+  return { checkRuns, truncated: checkRuns.length < totalCount };
+}
+
+interface ClassifyResult {
+  item: ActionItem;
+  warnings: string[];
+}
+
+async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
+  const octokit = getGithubClient();
+  const warnings: string[] = [];
   const isPr = Boolean(issue.pull_request);
   const labels = issue.labels.map((label) =>
     typeof label === 'string' ? label : (label.name ?? ''),
@@ -236,16 +287,16 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
     // API hiccup for one PR (e.g. a token lacking the "Checks: read"
     // permission) must not crash the whole dashboard for every item.
     try {
-      const { data: checkRuns } = await octokit.rest.checks.listForRef({
-        owner: REPO_OWNER,
-        repo: REPO_NAME,
-        ref: pr.head.sha,
-        per_page: 20,
-      });
+      const { checkRuns, truncated } = await listAllCheckRuns(pr.head.sha);
+      if (truncated) {
+        warnings.push(
+          `Check runs truncated for #${issue.number} (over ${CHECKS_MAX_PAGES * CHECKS_PER_PAGE} runs) - some failures may not be shown.`,
+        );
+      }
       // Only genuine failures count: a `cancelled` conclusion is almost
       // always a superseded or manually-killed run, and badging it "CI run
       // failed" steered the maintainer toward retriggers nobody needed.
-      const failed = checkRuns.check_runs.filter(
+      const failed = checkRuns.filter(
         (run) => run.status === 'completed' && run.conclusion === 'failure',
       );
       if (failed.length > 0) {
@@ -255,20 +306,19 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
           url: run.html_url ?? issue.html_url,
         }));
       }
-      ciRunning = checkRuns.check_runs.some(
-        (run) => run.status !== 'completed',
-      );
+      ciRunning = checkRuns.some((run) => run.status !== 'completed');
     } catch (error) {
       console.error(
         `agent-console: failed to list check runs for #${issue.number}:`,
         error,
       );
+      warnings.push(`Check runs unavailable for #${issue.number}.`);
     }
   }
 
   const subIssuesSummary = issue.sub_issues_summary;
 
-  return {
+  const item: ActionItem = {
     kind: isPr ? 'pr' : 'issue',
     number: issue.number,
     title: issue.title,
@@ -294,6 +344,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ActionItem> {
     failingChecks,
     ciRunning,
   };
+  return { item, warnings };
 }
 
 // The search/issues API's `OR` only applies to free-text terms, not
@@ -320,19 +371,41 @@ const SEARCH_QUERIES = BASE_QUERIES.flatMap((query) => [
   `${query} is:pull-request`,
 ]);
 
-export async function getActionItems(): Promise<ActionItem[]> {
+// GitHub's search API hard-caps any single query at 1000 results (per_page
+// maxes at 100, so 10 pages is the true ceiling) - paging past that just
+// 422s, so this loop stops there and flags the query as truncated instead.
+const SEARCH_PER_PAGE = 100;
+const SEARCH_MAX_PAGES = 10;
+
+async function searchAll(
+  query: string,
+): Promise<{ items: SearchIssue[]; truncated: boolean }> {
   const octokit = getGithubClient();
+  const items: SearchIssue[] = [];
+  let totalCount = 0;
+  for (let page = 1; page <= SEARCH_MAX_PAGES; page++) {
+    const { data } = await octokit.rest.search.issuesAndPullRequests({
+      q: `repo:${REPO_OWNER}/${REPO_NAME} ${query}`,
+      per_page: SEARCH_PER_PAGE,
+      page,
+    });
+    totalCount = data.total_count;
+    items.push(...(data.items as SearchIssue[]));
+    if (data.items.length < SEARCH_PER_PAGE || items.length >= totalCount) {
+      break;
+    }
+  }
+  return { items, truncated: items.length < totalCount };
+}
+
+export async function getActionItems(): Promise<ActionItemsResult> {
+  const warnings: string[] = [];
 
   // One malformed/rejected query (e.g. a future GitHub search-API contract
   // change, as already happened once - see the SEARCH_QUERIES comment)
   // shouldn't take down the whole dashboard. Log and skip it instead.
   const results = await Promise.allSettled(
-    SEARCH_QUERIES.map((query) =>
-      octokit.rest.search.issuesAndPullRequests({
-        q: `repo:${REPO_OWNER}/${REPO_NAME} ${query}`,
-        per_page: 50,
-      }),
-    ),
+    SEARCH_QUERIES.map((query) => searchAll(query)),
   );
 
   const byNumber = new Map<number, SearchIssue>();
@@ -342,30 +415,40 @@ export async function getActionItems(): Promise<ActionItem[]> {
         `agent-console: search query failed (${SEARCH_QUERIES[i]}):`,
         result.reason,
       );
+      warnings.push(`Search query failed: "${SEARCH_QUERIES[i]}".`);
       continue;
     }
-    for (const issue of result.value.data.items) {
-      byNumber.set(issue.number, issue as SearchIssue);
+    if (result.value.truncated) {
+      warnings.push(
+        `Search results truncated (over ${SEARCH_MAX_PAGES * SEARCH_PER_PAGE} matches) for: "${SEARCH_QUERIES[i]}".`,
+      );
+    }
+    for (const issue of result.value.items) {
+      byNumber.set(issue.number, issue);
     }
   }
 
   // Defense in depth: an unexpected error classifying one item (a GitHub API
   // hiccup, a malformed search result, etc.) should drop that one item, not
   // crash the whole dashboard for everyone.
+  const issuesToClassify = Array.from(byNumber.values());
   const classified = await Promise.allSettled(
-    Array.from(byNumber.values()).map((issue) => classifyIssue(issue)),
+    issuesToClassify.map((issue) => classifyIssue(issue)),
   );
   const items: ActionItem[] = [];
-  for (const result of classified) {
+  for (const [i, result] of classified.entries()) {
     if (result.status === 'rejected') {
       console.error(
         'agent-console: failed to classify an item:',
         result.reason,
       );
+      warnings.push(`Failed to classify #${issuesToClassify[i].number}.`);
       continue;
     }
-    items.push(result.value);
+    items.push(result.value.item);
+    warnings.push(...result.value.warnings);
   }
 
-  return items.sort((a, b) => itemPriority(a) - itemPriority(b));
+  items.sort((a, b) => itemPriority(a) - itemPriority(b));
+  return { items, warnings };
 }
