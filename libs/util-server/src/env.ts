@@ -230,20 +230,7 @@ export const getSegmentsSpreadsheetId = () =>
 export const getSegmentsSpreadsheetWorksheetTitle = () =>
   required('SEGMENTS_SPREADSHEET_WORKSHEET_TITLE');
 
-export const getQbpResponsesSpreadsheetId = () =>
-  required('QBP_RESPONSES_SPREADSHEET_ID');
-
-export const getQbpResponsesWorksheetTitle = () =>
-  required('QBP_RESPONSES_WORKSHEET_TITLE');
-
-export const getQbpFormId = () => required('QBP_FORM_ID');
-
 export const isInvoicingEnabled = () => isTrue('ENABLE_INVOICING');
-
-export const getQbpFormMetadata = () =>
-  required('QBP_FORM_METADATA') as 'dev' | 'prod';
-
-export const getQbpApiBaseUrl = () => required('QBP_API_BASE_URL');
 
 export const getProjectId = () => {
   return (
@@ -253,17 +240,6 @@ export const getProjectId = () => {
     required('PROJECT_ID')
   );
 };
-
-export const getQbpEftpHost = () => optional('QBP_EFTP_HOST');
-export const getQbpEftpPort = () => {
-  const val = optional('QBP_EFTP_PORT');
-  return val ? parseInt(val) : undefined;
-};
-export const getQbpEftpLogin = () => required('QBP_EFTP_LOGIN');
-export const getQbpEftpPassword = () => optional('QBP_EFTP_PASSWORD');
-export const getQbpEftpShipToCode = () => optional('QBP_EFTP_SHIP_TO_CODE');
-export const getQbpEftpAccountNumber = () =>
-  optional('QBP_EFTP_ACCOUNT_NUMBER');
 
 export const getVertexAiLocation = () => optional('VERTEX_AI_LOCATION');
 
@@ -353,8 +329,6 @@ export const isMailConfigured = (): boolean =>
   !!getOptionalMailPort() &&
   !!getOptionalMailUser() &&
   !!getOptionalMailPassword();
-
-export const getQbpApiKey = () => required('QBP_API_KEY');
 
 export const getStravaClientId = () => required('STRAVA_CLIENT_ID');
 export const getStravaClientSecret = () => required('STRAVA_CLIENT_SECRET');
