@@ -20,8 +20,15 @@ jest.mock('@repo/util-server', () => ({
   isMockAuthEnabled: jest.fn().mockReturnValue(false),
   isImpersonateAutomaticLogin: jest.fn().mockReturnValue(false),
   getE2eTestingUser: jest.fn().mockReturnValue(undefined),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
   isAdminEmail: jest.fn().mockReturnValue(false),
+}));
+
+// Not requireActual: @repo/slack's barrel pulls in cloudevents/rag (and
+// transitively @google/genai, which needs a ReadableStream global this test
+// environment doesn't provide). This test only needs isSlackAdmin, reached
+// transitively via the real (unmocked) `./auth` module's getMockSession.
+jest.mock('@repo/slack', () => ({
+  isSlackAdmin: jest.fn().mockReturnValue(false),
 }));
 
 jest.mock('@repo/strava', () => ({

@@ -41,6 +41,7 @@ jest.mock('@repo/slack', () => ({
   getBotDetails: jest
     .fn()
     .mockResolvedValue({ teamId: 'team-id', appId: 'app-id' }),
+  isSlackAdmin: jest.fn().mockReturnValue(false),
 }));
 
 jest.mock('@repo/strava', () => ({
@@ -57,7 +58,6 @@ jest.mock('@repo/util-server', () => ({
   enableTestingHandlers: jest.fn().mockReturnValue(false),
   getLogLevel: jest.fn().mockReturnValue('debug'),
   getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
   getProjectId: jest.fn().mockReturnValue('demo-project'),
 }));
 

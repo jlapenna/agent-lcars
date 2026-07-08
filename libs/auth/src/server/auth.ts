@@ -1,12 +1,12 @@
 import { getFirebaseAuthAdmin } from '@repo/firebase-server';
 import { logger } from '@repo/logging';
+import { isSlackAdmin } from '@repo/slack';
 import { isOnecakeAdmin } from '@repo/strava';
 import {
   getE2eTestingUser,
   isAdminEmail,
   isImpersonateAutomaticLogin,
   isMockAuthEnabled,
-  isSlackAdmin,
 } from '@repo/util-server';
 import { NextRequest } from 'next/server';
 import type { Session } from 'next-auth';

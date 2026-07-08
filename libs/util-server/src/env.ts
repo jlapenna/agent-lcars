@@ -33,20 +33,6 @@ export const isTest = () => getEnvNodeEnv() === 'test';
 export const isProduction = () => getEnvNodeEnv() === 'production';
 export const isMaintenanceMode = () => process.env.MAINTENANCE_MODE === 'true';
 
-export const getSlackAdditionalChannels = () =>
-  splitEnvList('SLACK_STAFF_ADDITIONAL_CHANNELS_LIST');
-
-export const getSlackPseudobots = () => splitEnvList('SLACK_PSEUDOBOTS');
-
-export const getSlackQbpStaffChannel = () =>
-  optional('SLACK_QBP_STAFF_CHANNEL');
-
-export const getSlackQbpAnnounceChannel = () =>
-  optional('SLACK_QBP_ANNOUNCE_CHANNEL');
-
-export const isSlackAdmin = (slackId: string) =>
-  splitEnvList('SLACK_ADMINS').includes(slackId);
-
 export const getAdminEmails = (): string[] => {
   const envEmails = splitEnvList('ADMIN_EMAILS');
   if (envEmails.length > 0) {
@@ -62,8 +48,6 @@ export const getAdminEmails = (): string[] => {
 export const isAdminEmail = (email: string): boolean => {
   return getAdminEmails().includes(email.toLowerCase().trim());
 };
-
-export const getSlackAppId = () => optional('SLACK_APP_ID');
 
 export const getNodeEnv = () => optional('NODE_ENV');
 
@@ -133,25 +117,6 @@ export const getPort = () => {
 export const getHost = () => optional('HOST') ?? '127.0.0.1';
 
 export const getKRevision = () => optional('K_REVISION');
-
-export const getSlackProfileFieldStrava = () =>
-  required('SLACK_PROFILE_FIELD_STRAVA');
-export const getSlackProfileFieldInstagram = () =>
-  required('SLACK_PROFILE_FIELD_INSTAGRAM');
-export const getSlackProfileFieldRoadResults = () =>
-  required('SLACK_PROFILE_FIELD_ROADRESULTS');
-export const getSlackProfileFieldCrossResults = () =>
-  required('SLACK_PROFILE_FIELD_CROSSRESULTS');
-export const getSlackProfileFieldGravelResults = () =>
-  required('SLACK_PROFILE_FIELD_GRAVELRESULTS');
-export const getSlackProfileFieldAthlinks = () =>
-  required('SLACK_PROFILE_FIELD_ATHLINKS');
-export const getSlackProfileFieldUsac = () =>
-  required('SLACK_PROFILE_FIELD_USAC');
-export const getSlackProfileFieldUsacRoadCat = () =>
-  required('SLACK_PROFILE_FIELD_USAC_ROAD_CAT');
-export const getSlackProfileFieldUsacCrossCat = () =>
-  required('SLACK_PROFILE_FIELD_USAC_CROSS_CAT');
 
 export const getStravaClubId = () => optional('STRAVA_CLUB_ID');
 

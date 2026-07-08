@@ -23,7 +23,7 @@ import {
 } from '@repo/onboarding/browser';
 import { getRiderProfileRef } from '@repo/riders/queries';
 import { getAuthSecret } from '@repo/service-auth';
-import { getSecrets as getSlackSecrets } from '@repo/slack';
+import { getSecrets as getSlackSecrets, isSlackAdmin } from '@repo/slack';
 import { getSecrets as getStravaSecrets, isOnecakeAdmin } from '@repo/strava';
 import { getNextPublicSlackClientId } from '@repo/util/browser';
 import { enableTestingHandlers, getProjectId } from '@repo/util-server';
@@ -42,7 +42,6 @@ import {
   getStravaClubId,
   isAdminEmail,
   isMailConfigured,
-  isSlackAdmin,
 } from '@repo/util-server';
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import type { NextAuthConfig } from 'next-auth';

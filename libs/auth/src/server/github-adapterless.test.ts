@@ -26,6 +26,7 @@ jest.mock('@repo/firebase-server', () => ({
 
 jest.mock('@repo/slack', () => ({
   getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  isSlackAdmin: jest.fn().mockReturnValue(false),
 }));
 
 jest.mock('@repo/strava', () => ({
@@ -43,7 +44,6 @@ jest.mock('@repo/util-server', () => ({
   ...jest.requireActual('@repo/util-server'),
   enableTestingHandlers: jest.fn().mockReturnValue(false),
   getLogLevel: jest.fn().mockReturnValue('warn'),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
   isAdminEmail: jest.fn().mockReturnValue(false),
   getProjectId: jest.fn().mockReturnValue('demo-project'),
   getAgentConsoleGithubOauthClientId: jest.fn().mockReturnValue('gh-id'),
