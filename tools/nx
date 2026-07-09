@@ -8,6 +8,17 @@ if [[ "$NODE_OPTIONS" != *"--max-old-space-size"* ]]; then
   export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=8192"
 fi
 
+# Node's own compile cache (nx/dist/src/utils/compile-cache.js) is enabled as
+# nx's first import, before nx loads .env/.env.local - too early for a
+# dotenv-set TMPDIR to reach it. Read TMPDIR straight out of .env.local here,
+# at the shell level, so a personal disk-backed override actually applies to
+# this one cache. No-op if .env.local doesn't set TMPDIR (Node keeps its
+# default, tmpfs-based location).
+if [ -z "${NODE_COMPILE_CACHE:-}" ] && [ -f .env.local ]; then
+  local_tmpdir="$(sed -n 's/^TMPDIR=//p' .env.local | tail -1)"
+  [ -n "$local_tmpdir" ] && export NODE_COMPILE_CACHE="$local_tmpdir/node-compile-cache"
+fi
+
 # Use pnpm exec to ensure we use the workspace-local nx version.
 if command -v pnpm >/dev/null 2>&1; then
   exec pnpm exec nx --outputStyle=stream "$@"
