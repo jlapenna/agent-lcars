@@ -1,5 +1,5 @@
 import { Alert, Container, Group, Stack, Text, Title } from '@mantine/core';
-import { redirect } from 'next/navigation';
+import { assertAdmin } from '@repo/auth/server';
 
 import { auth } from '../auth';
 import { type ActionItem, isDeployWaitOnly } from '../lib/action-items';
@@ -45,9 +45,7 @@ function toCard(item: ActionItem, liveRun?: LiveRunSummary): BoardCard {
 
 export default async function Index() {
   const session = await auth();
-  if (!session?.user?.isAdmin) {
-    redirect('/login');
-  }
+  assertAdmin(session, '/login');
 
   const [{ items, warnings: itemWarnings }, activity] = await Promise.all([
     getActionItems(),

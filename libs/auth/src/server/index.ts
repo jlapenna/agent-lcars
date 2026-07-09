@@ -1,5 +1,6 @@
 export * from './admin-action';
 export * from './app-auth';
+export * from './assert-admin';
 export * from './assertOnboarding';
 export * from './auth';
 export * from './config';
