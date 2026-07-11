@@ -630,6 +630,8 @@ importers:
 
   libs/export-sheets: {}
 
+  libs/feed-events: {}
+
   libs/firebase-server: {}
 
   libs/firestore: {}
