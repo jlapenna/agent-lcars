@@ -25,6 +25,24 @@ if [ -z "${NX_CACHE_DIRECTORY:-}" ]; then
   fi
 fi
 
+# Self-hosted Nx remote cache (the same spark server CI uses). The vars live
+# in the gitignored .nx-remote-cache.env — written by setup-repo.sh, copied
+# into worktrees by setup-worktree.sh — rather than .env.local, so that ONLY
+# this wrapper enables them, and only after a fast reachability probe: nx
+# fails open on an unreachable server but pays ~45s of request timeouts per
+# task write (measured), which would tax laptops off the VPN. Explicit env
+# (CI sets these directly) wins and skips the probe.
+if [ -z "${NX_SELF_HOSTED_REMOTE_CACHE_SERVER:-}" ] && [ -f .nx-remote-cache.env ]; then
+  rc_server="$(sed -n 's/^NX_SELF_HOSTED_REMOTE_CACHE_SERVER=//p' .nx-remote-cache.env | tail -1)"
+  if [ -n "$rc_server" ] &&
+    curl -sf --max-time 0.4 -o /dev/null "$rc_server/healthz" 2>/dev/null; then
+    set -a
+    # shellcheck source=/dev/null
+    . ./.nx-remote-cache.env
+    set +a
+  fi
+fi
+
 # Node's own compile cache (nx/dist/src/utils/compile-cache.js) is enabled as
 # nx's first import, before nx loads .env/.env.local - too early for a
 # dotenv-set TMPDIR to reach it. Read TMPDIR straight out of .env.local here,

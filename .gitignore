@@ -74,6 +74,7 @@ e2e-server.log
 .env
 .env.*
 .envrc
+.nx-remote-cache.env
 .env.local
 .env.*.local
 !.env
