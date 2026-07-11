@@ -164,6 +164,9 @@ importers:
       genkit:
         specifier: ^1.36.0
         version: 1.39.0(@google-cloud/firestore@8.6.0)(encoding@0.1.13)(firebase-admin@14.1.0(encoding@0.1.13))(firebase@12.15.0)
+      geofire-common:
+        specifier: ^6.0.0
+        version: 6.0.0
       google-auth-library:
         specifier: ^10.6.2
         version: 10.9.0
@@ -8232,6 +8235,9 @@ packages:
   gensync@1.0.0-beta.2:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
+
+  geofire-common@6.0.0:
+    resolution: {integrity: sha512-dQ2qKWMtHUEKT41Kw4dmAtMjvEyhWv1XPnHHlK5p5l5+0CgwHYQjhonGE2QcPP60cBYijbJ/XloeKDMU4snUQg==}
 
   get-amd-module-type@6.0.2:
     resolution: {integrity: sha512-7zShVYAYtMnj9S65CfN+hvpBCByfuB1OY8xID01nZEzXTZbx4YyysAfi+nMl95JSR6odt4q8TCj2W63KAoyVLQ==}
@@ -23143,6 +23149,8 @@ snapshots:
       - utf-8-validate
 
   gensync@1.0.0-beta.2: {}
+
+  geofire-common@6.0.0: {}
 
   get-amd-module-type@6.0.2:
     dependencies:
