@@ -673,6 +673,8 @@ importers:
 
   libs/results: {}
 
+  libs/rider-stats: {}
+
   libs/riders: {}
 
   libs/secrets: {}

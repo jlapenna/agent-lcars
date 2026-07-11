@@ -26,7 +26,6 @@
       "@repo/youtube/*": ["libs/youtube/src/*"],
       "@repo/squareup": ["libs/squareup/src/index.ts"],
       "@repo/squareup/*": ["libs/squareup/src/*"],
-
       "@repo/util": ["libs/util/src/index.ts"],
       "@repo/util/*": ["libs/util/src/*"],
       "@repo/jsx": ["libs/jsx/src/index.ts"],
@@ -96,7 +95,9 @@
       "@repo/util-server/*": ["libs/util-server/src/*"],
       "@repo/cli/*": ["apps/cli/src/*"],
       "@repo/stripe": ["libs/stripe/src/index.ts"],
-      "@repo/app-providers": ["./libs/app-providers/src/index.ts"]
+      "@repo/app-providers": ["./libs/app-providers/src/index.ts"],
+      "@repo/rider-stats": ["./libs/rider-stats/src/index.ts"],
+      "@repo/rider-stats/*": ["./libs/rider-stats/src/*"]
     }
   }
 }
