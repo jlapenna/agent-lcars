@@ -657,6 +657,8 @@ importers:
         specifier: workspace:*
         version: link:../env-vars
 
+  libs/moderation: {}
+
   libs/onboarding: {}
 
   libs/preems: {}

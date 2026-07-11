@@ -45,6 +45,8 @@
       "@repo/logging/browser": ["libs/logging/src/browser/index.ts"],
       "@repo/logging/error-reporting": ["libs/logging/src/error-reporting.ts"],
       "@repo/logging/server": ["libs/logging/src/server/index.ts"],
+      "@repo/moderation": ["./libs/moderation/src/index.ts"],
+      "@repo/moderation/*": ["./libs/moderation/src/*"],
       "@repo/provider-service": ["./libs/provider-service/src/index.ts"],
       "@repo/provider-service/*": ["./libs/provider-service/src/*"],
       "@repo/qbp": ["./libs/qbp/src/index.ts"],
