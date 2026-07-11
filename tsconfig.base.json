@@ -54,6 +54,8 @@
       "@repo/race-events/*": ["./libs/race-events/src/*"],
       "@repo/races": ["./libs/races/src/index.ts"],
       "@repo/races/*": ["./libs/races/src/*"],
+      "@repo/feed-events": ["./libs/feed-events/src/index.ts"],
+      "@repo/feed-events/*": ["./libs/feed-events/src/*"],
       "@repo/strava": ["./libs/strava/src/index.ts"],
       "@repo/strava/*": ["./libs/strava/src/*"],
       "@repo/service-auth": ["libs/service-auth/src/index.ts"],
