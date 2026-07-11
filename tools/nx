@@ -8,6 +8,23 @@ if [[ "$NODE_OPTIONS" != *"--max-old-space-size"* ]]; then
   export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=8192"
 fi
 
+# Linked worktrees (.claude/worktrees/*, agent sessions) start with a cold Nx
+# cache, so they recompile every lib and Next build the primary checkout has
+# already cached. Point them at the primary checkout's cache: entries are
+# content-addressed (hashed by task inputs), so sharing across concurrent
+# worktrees/sessions is safe. A pre-set NX_CACHE_DIRECTORY always wins, and
+# the primary checkout itself is unaffected (#2437).
+if [ -z "${NX_CACHE_DIRECTORY:-}" ]; then
+  git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$git_common_dir" ] && [ -n "$toplevel" ]; then
+    primary_root="$(dirname "$git_common_dir")"
+    if [ "$primary_root" != "$toplevel" ] && [ -d "$primary_root/.nx/cache" ]; then
+      export NX_CACHE_DIRECTORY="$primary_root/.nx/cache"
+    fi
+  fi
+fi
+
 # Node's own compile cache (nx/dist/src/utils/compile-cache.js) is enabled as
 # nx's first import, before nx loads .env/.env.local - too early for a
 # dotenv-set TMPDIR to reach it. Read TMPDIR straight out of .env.local here,
