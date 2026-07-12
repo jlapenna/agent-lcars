@@ -25,8 +25,6 @@
       "{projectRoot}/go.sum"
     ],
     "sharedGlobals": [
-      "{workspaceRoot}/pnpm-lock.yaml",
-      "{workspaceRoot}/package.json",
       "{workspaceRoot}/tsconfig.base.json",
       "{workspaceRoot}/nx.json",
       "{workspaceRoot}/patches/**"
@@ -104,7 +102,6 @@
       "inputs": ["production", "^production"]
     },
     "test": {
-      "dependsOn": ["^build"],
       "options": {
         "silent": true,
         "forceExit": true,
@@ -113,7 +110,11 @@
       }
     },
     "e2e": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "e2e-run": {
+      "cache": false
     },
     "e2e-docker": {
       "inputs": [
