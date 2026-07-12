@@ -1,0 +1,78 @@
+# Agent Telemetry infra (Agent Console v2 program, Slice 1 — issue #2538).
+#
+# A dedicated Firestore database + a write-only and a read-only service
+# account for session telemetry (CLI + issue-agent runner sessions), isolated
+# from the app's (default) Firestore database. See PRD #2112 and
+# docs/firestore.md.
+#
+# This file is the source-of-truth inventory of what's provisioned. The
+# provisioning script (tools/provision-agent-telemetry-gcp.sh) recreates it
+# from scratch and is idempotent — re-run it if any of this needs to be
+# rebuilt (e.g. in a new project, or after an accidental deletion).
+project: 'supersprinklesracing'
+
+firestore:
+  database: 'agent-telemetry'
+  location: 'us-central1'
+  type: 'firestore-native'
+
+# Firestore has no built-in "write-only" or database-scoped role, so both
+# roles are custom, and every grant below is IAM-condition-scoped to this
+# one database (resource.type == "firestore.googleapis.com/Database" &&
+# resource.name == "projects/<project>/databases/agent-telemetry"). Do NOT
+# grant either role unconditionally — that defeats the isolation from the
+# app's (default) database.
+customRoles:
+  agentTelemetryWriter:
+    title: 'Agent Telemetry Writer'
+    description: 'Write-only access (create/update, no read/list) to the dedicated agent-telemetry Firestore database.'
+    includedPermissions:
+      - datastore.databases.get
+      - datastore.entities.create
+      - datastore.entities.update
+  agentTelemetryReader:
+    title: 'Agent Telemetry Reader'
+    description: 'Read-only access (get/list, no write) to the dedicated agent-telemetry Firestore database.'
+    includedPermissions:
+      - datastore.databases.get
+      - datastore.entities.get
+      - datastore.entities.list
+
+serviceAccounts:
+  # Runner-facing (Slice 2 shipper) and host-watcher-facing (Slice 1, issue
+  # #2540) writer. Never grant this SA to the shared App Hosting compute
+  # identity or any principal that already has a broader Firestore role —
+  # roles/datastore.user on firebase-app-hosting-compute already covers
+  # every database in this project unconditionally, so layering a scoped
+  # role on top of it grants nothing (this bit us during provisioning: see
+  # #2538).
+  writer:
+    email: 'agent-telemetry-writer@supersprinklesracing.iam.gserviceaccount.com'
+    role: 'agentTelemetryWriter'
+    grants:
+      - principal: 'principalSet://iam.googleapis.com/projects/972941236852/locations/global/workloadIdentityPools/claude-agent-pool/attribute.repository/supersprinklesracing/members'
+        role: 'roles/iam.workloadIdentityUser'
+        reason: 'claude.yml runner mints a token for this SA (runner-mode shipper, Slice 2 — not built yet)'
+      - principal: 'user:jlapenna@gmail.com'
+        role: 'roles/iam.serviceAccountTokenCreator'
+        reason: 'manual ops / verification'
+    # Host watchers (issue #2540) authenticate with this key, since they
+    # run outside any GCP compute identity. Fetch via:
+    #   gcloud secrets versions access latest \
+    #     --project=supersprinklesracing \
+    #     --secret=AGENT_TELEMETRY_WRITER_KEY_JSON
+    keySecret: 'AGENT_TELEMETRY_WRITER_KEY_JSON'
+
+  # Console-facing reader. A dedicated SA, deliberately NOT the shared
+  # firebase-app-hosting-compute identity (see the writer's comment above
+  # for why) — the console impersonates this SA at runtime instead.
+  reader:
+    email: 'agent-telemetry-reader@supersprinklesracing.iam.gserviceaccount.com'
+    role: 'agentTelemetryReader'
+    grants:
+      - principal: 'serviceAccount:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com'
+        role: 'roles/iam.serviceAccountTokenCreator'
+        reason: 'agent-console frontend (issue #2541) impersonates this SA to read session docs'
+      - principal: 'user:jlapenna@gmail.com'
+        role: 'roles/iam.serviceAccountTokenCreator'
+        reason: 'manual ops / verification'
