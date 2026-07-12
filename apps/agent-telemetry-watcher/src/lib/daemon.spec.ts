@@ -1,0 +1,280 @@
+import { SessionDoc } from '@repo/agent-telemetry';
+
+import { WatcherDaemon } from './daemon';
+import { SessionStore } from './store';
+
+const TRANSCRIPT = (
+  sessionId: string,
+  timestamp: string,
+  cwd = '/home/dev/project',
+) =>
+  [
+    JSON.stringify({
+      isSidechain: false,
+      type: 'user',
+      uuid: `${sessionId}-u1`,
+      timestamp,
+      sessionId,
+      cwd,
+      gitBranch: 'main',
+      message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    }),
+    JSON.stringify({
+      isSidechain: false,
+      type: 'assistant',
+      uuid: `${sessionId}-a1`,
+      timestamp,
+      sessionId,
+      message: {
+        model: 'claude-sonnet-5',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hi' }],
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+    }),
+  ].join('\n');
+
+function createFakeStore() {
+  const upserts: SessionDoc[] = [];
+  const store: SessionStore = {
+    async upsertSession(doc: SessionDoc) {
+      upserts.push(doc);
+    },
+  };
+  return { store, upserts };
+}
+
+describe('WatcherDaemon', () => {
+  const HEARTBEAT_MS = 10_000;
+  const STALENESS_MS = 30_000;
+
+  it('ships an initial summary for each discovered transcript on the first tick', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/proj/session-a.jsonl': TRANSCRIPT(
+        'session-a',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+    });
+
+    await daemon.tick();
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).toMatchObject({
+      sessionId: 'session-a',
+      liveness: 'live',
+    });
+  });
+
+  it('produces an upsert for a new transcript discovered on a later tick', async () => {
+    const { store, upserts } = createFakeStore();
+    let files: Record<string, string> = {};
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p],
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+    });
+
+    await daemon.tick();
+    expect(upserts).toHaveLength(0);
+
+    files = {
+      '/root/proj/session-b.jsonl': TRANSCRIPT(
+        'session-b',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    await daemon.tick();
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].sessionId).toBe('session-b');
+  });
+
+  it('transitions a session to `ended` once its process is no longer alive', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/proj/session-c.jsonl': TRANSCRIPT(
+        'session-c',
+        '2026-07-12T09:57:00.000Z',
+      ),
+    };
+    let processAlive = true;
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:00.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      isProcessAliveForCwd: () => processAlive,
+      resolveGitBranch: () => undefined,
+    });
+
+    await daemon.tick();
+    expect(upserts[0].liveness).toBe('idle'); // >2min since lastActivityAt but process alive
+
+    processAlive = false;
+    await daemon.tick();
+
+    expect(upserts[1].liveness).toBe('ended');
+  });
+
+  it('surfaces a session as `stale` once it goes undiscovered past the staleness window', async () => {
+    const { store, upserts } = createFakeStore();
+    let files: Record<string, string> = {
+      '/root/proj/session-d.jsonl': TRANSCRIPT(
+        'session-d',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    let now = '2026-07-12T10:00:01.000Z';
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => now,
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p],
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+    });
+
+    await daemon.tick();
+    expect(upserts[0].liveness).toBe('live');
+
+    // The transcript file disappears (e.g. deleted) — watcher stops rediscovering it,
+    // and time advances 59s, past the 30s staleness window.
+    files = {};
+    now = '2026-07-12T10:01:00.000Z';
+    await daemon.tick();
+    expect(upserts[1].liveness).toBe('stale');
+  });
+
+  it('fails soft when one transcript file cannot be read', async () => {
+    const { store, upserts } = createFakeStore();
+    const files: Record<string, string> = {
+      '/root/proj/session-good.jsonl': TRANSCRIPT(
+        'session-good',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => ['/root/proj/session-bad.jsonl', ...Object.keys(files)],
+      readFile: (p: string) => {
+        if (p === '/root/proj/session-bad.jsonl') {
+          throw new Error('EACCES: permission denied');
+        }
+        return files[p];
+      },
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+    });
+
+    await expect(daemon.tick()).resolves.toBeUndefined();
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].sessionId).toBe('session-good');
+  });
+
+  it('fails soft when the store rejects a write', async () => {
+    const store: SessionStore = {
+      upsertSession: jest
+        .fn()
+        .mockRejectedValue(new Error('firestore unavailable')),
+    };
+    const files = {
+      '/root/proj/session-e.jsonl': TRANSCRIPT(
+        'session-e',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+    });
+
+    await expect(daemon.tick()).resolves.toBeUndefined();
+    expect(store.upsertSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('overrides the reduced branch with a freshly-resolved git branch', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/proj/session-f.jsonl': TRANSCRIPT(
+        'session-f',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => 'feature/fresh-branch',
+    });
+
+    await daemon.tick();
+
+    expect(upserts[0]).toMatchObject({ branch: 'feature/fresh-branch' });
+  });
+});

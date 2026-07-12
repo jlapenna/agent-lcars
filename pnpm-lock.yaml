@@ -110,6 +110,9 @@ importers:
       cheerio:
         specifier: ^1.2.0
         version: 1.2.0
+      chokidar:
+        specifier: ^5.0.0
+        version: 5.0.0
       chrono-node:
         specifier: ^2.9.0
         version: 2.9.1
@@ -447,9 +450,6 @@ importers:
       baseline-browser-mapping:
         specifier: ^2.10.20
         version: 2.10.42
-      chokidar:
-        specifier: ^5.0.0
-        version: 5.0.0
       concurrently:
         specifier: ^10.0.0
         version: 10.0.3

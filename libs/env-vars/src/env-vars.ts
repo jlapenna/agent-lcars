@@ -251,4 +251,22 @@ export interface EnvVars {
   NEXT_PUBLIC_URL_PREFIX?: string;
   NEXT_PUBLIC_STRIPE_ENABLED?: string;
   NEXT_PUBLIC_DEBUG_LINKS?: string;
+
+  // Agent telemetry host watcher (issue #2540). See
+  // apps/agent-console/infra/agent-telemetry.yaml for the dedicated
+  // Firestore database + writer SA this daemon authenticates as.
+  /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts. */
+  AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
+  /** Comma-separated `*`-wildcard glob patterns; defaults to the members-repo slug only. */
+  AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST?: string;
+  /** Overrides `os.hostname()` for the `host` field on shipped session docs. */
+  AGENT_TELEMETRY_HOST?: string;
+  /** GCP project the dedicated `agent-telemetry` Firestore database lives in. */
+  AGENT_TELEMETRY_PROJECT_ID?: string;
+  /** Raw JSON contents of the `AGENT_TELEMETRY_WRITER_KEY_JSON` GCP secret. */
+  AGENT_TELEMETRY_WRITER_KEY_JSON?: string;
+  /** Tick interval in milliseconds; defaults to 10s. */
+  AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS?: string;
+  /** Staleness window in milliseconds; defaults to 5x the heartbeat interval. */
+  AGENT_TELEMETRY_STALENESS_WINDOW_MS?: string;
 }
