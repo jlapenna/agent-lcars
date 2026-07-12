@@ -1,10 +1,10 @@
+import { Firestore } from '@google-cloud/firestore';
 import { assertNotBrowser } from '@repo/util';
 import {
   getFirestoreEmulatorHost,
   getProjectId,
   isEmulator,
 } from '@repo/util-server';
-import { Firestore } from '@google-cloud/firestore';
 import { GoogleAuth, Impersonated } from 'google-auth-library';
 
 assertNotBrowser();

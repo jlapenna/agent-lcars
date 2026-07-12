@@ -81,6 +81,24 @@ describe('getCliSessions', () => {
     );
   });
 
+  it('passes through discovered artifacts', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({ artifacts: ['report.md', 'chart.png'] }),
+    ]);
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: {
+        search: {
+          issuesAndPullRequests: jest
+            .fn()
+            .mockResolvedValue({ data: { items: [] } }),
+        },
+      },
+    });
+
+    const { sessions } = await getCliSessions();
+    expect(sessions[0].artifacts).toEqual(['report.md', 'chart.png']);
+  });
+
   it('leaves pr undefined when the branch has no open PR', async () => {
     (listSessionDocs as jest.Mock).mockResolvedValue([makeCliDoc()]);
     (getGithubClient as jest.Mock).mockReturnValue({

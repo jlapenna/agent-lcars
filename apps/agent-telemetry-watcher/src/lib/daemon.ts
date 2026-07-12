@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { discoverTranscriptFiles } from './discover';
+import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover-artifacts';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { isProcessAliveForCwd as defaultIsProcessAliveForCwd } from './process-check';
 import { SessionStore } from './store';
@@ -32,12 +33,16 @@ export interface WatcherDaemonOptions {
    * which requires the watcher to have actually observed the process exit).
    */
   stalenessWindowMs: number;
+  /** Root of `~/share` (share-media skill convention). Artifact discovery is
+   * skipped entirely when unset. */
+  shareDir?: string;
   now?: () => string;
   readFile?: (filePath: string) => string;
   statFile?: (filePath: string) => FileStat;
   discover?: (claudeProjectsDir: string, allowlist: string[]) => string[];
   isProcessAliveForCwd?: (cwd: string) => boolean;
   resolveGitBranch?: (cwd: string) => string | undefined;
+  discoverArtifacts?: (shareDir: string, sessionId: string) => string[];
 }
 
 interface TrackedSession {
@@ -77,6 +82,8 @@ export class WatcherDaemon {
       this.options.isProcessAliveForCwd ?? defaultIsProcessAliveForCwd;
     const resolveGitBranch =
       this.options.resolveGitBranch ?? defaultResolveGitBranch;
+    const discoverArtifacts =
+      this.options.discoverArtifacts ?? defaultDiscoverArtifacts;
 
     const files = discover(
       this.options.claudeProjectsDir,
@@ -174,7 +181,17 @@ export class WatcherDaemon {
         heartbeatReceived,
       });
 
-      const doc = buildSessionDoc(tracked.summary, liveness);
+      // Re-checked every tick (not just when the transcript itself changes)
+      // since a shared artifact can appear well after the session's last
+      // transcript activity - e.g. a report written just before the agent
+      // wraps up.
+      const artifacts = this.options.shareDir
+        ? discoverArtifacts(this.options.shareDir, sessionId)
+        : [];
+      const summary =
+        artifacts.length > 0 ? { ...tracked.summary, artifacts } : tracked.summary;
+
+      const doc = buildSessionDoc(summary, liveness);
 
       try {
         await this.options.store.upsertSession(doc);

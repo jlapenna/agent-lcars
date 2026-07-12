@@ -35,6 +35,9 @@ export interface SessionSummary {
   lastToolCall?: ToolCallDigest;
   title?: string;
   deliverables: SessionDeliverables;
+  /** Filenames the share-media hook has written under this session's share
+   * dir on its host (see `discoverSessionArtifacts` in the watcher). */
+  artifacts?: string[];
 }
 
 export interface ReduceTranscriptOptions {
@@ -75,6 +78,9 @@ export interface CliSessionDoc extends BaseSessionDoc {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** Host-scoped, like `cwd`/`branch` - issue-agent (runner) sessions have
+   * no artifact story yet, so this only ever appears on `cli` docs. */
+  artifacts?: string[];
 }
 
 export interface IssueAgentSessionDoc extends BaseSessionDoc {

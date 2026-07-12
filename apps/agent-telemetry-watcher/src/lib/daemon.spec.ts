@@ -389,4 +389,106 @@ describe('WatcherDaemon', () => {
     expect(readFile).toHaveBeenCalledTimes(2);
     expect(upserts.at(-1)?.lastActivityAt).toBe('2026-07-12T11:00:00.000Z');
   });
+
+  it('merges discovered artifacts onto the cli session doc', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/proj/session-h.jsonl': TRANSCRIPT(
+        'session-h',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+      shareDir: '/root/share',
+      discoverArtifacts: (shareDir: string, sessionId: string) =>
+        shareDir === '/root/share' && sessionId === 'session-h'
+          ? ['report.md']
+          : [],
+    });
+
+    await daemon.tick();
+
+    expect(upserts[0]).toMatchObject({ artifacts: ['report.md'] });
+  });
+
+  it('re-discovers artifacts each tick even when the transcript is unchanged', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/proj/session-i.jsonl': TRANSCRIPT(
+        'session-i',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    let artifacts: string[] = [];
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+      shareDir: '/root/share',
+      discoverArtifacts: () => artifacts,
+    });
+
+    await daemon.tick();
+    expect(upserts[0]).not.toHaveProperty('artifacts');
+
+    artifacts = ['late-report.md'];
+    await daemon.tick();
+
+    expect(upserts.at(-1)).toMatchObject({ artifacts: ['late-report.md'] });
+  });
+
+  it('skips artifact discovery entirely when shareDir is unset', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/proj/session-j.jsonl': TRANSCRIPT(
+        'session-j',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    const discoverArtifacts = jest.fn(() => ['should-not-appear.md']);
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+      discoverArtifacts,
+    });
+
+    await daemon.tick();
+
+    expect(discoverArtifacts).not.toHaveBeenCalled();
+    expect(upserts[0]).not.toHaveProperty('artifacts');
+  });
 });

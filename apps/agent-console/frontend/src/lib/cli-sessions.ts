@@ -28,6 +28,9 @@ export interface CliSession {
   startedAt: string;
   lastActivityAt: string;
   pr?: JoinedPr;
+  /** Filenames shared under this session's share dir on `host` - only
+   * meaningful together with `host` (the join key for the share URL). */
+  artifacts?: string[];
 }
 
 function toCliSession(doc: CliSessionDoc): CliSession {
@@ -43,6 +46,7 @@ function toCliSession(doc: CliSessionDoc): CliSession {
     title: doc.title,
     startedAt: doc.startedAt,
     lastActivityAt: doc.lastActivityAt,
+    artifacts: doc.artifacts,
   };
 }
 

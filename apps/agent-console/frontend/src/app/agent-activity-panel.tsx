@@ -19,7 +19,12 @@ import type {
 import { RUN_TIMEOUT_MINUTES } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import { CancelRunButton } from './cancel-run-button';
-import { formatDuration, formatRelativeTime, formatTokenCount } from './format';
+import {
+  formatDuration,
+  formatRelativeTime,
+  formatTokenCount,
+  shareArtifactUrl,
+} from './format';
 
 const CONCLUSION_LABELS: Record<AgentRunConclusion, string> = {
   success: 'success',
@@ -160,6 +165,7 @@ const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
 };
 
 function CliSessionRow({ session }: { session: CliSession }) {
+  const { host, artifacts } = session;
   return (
     <Stack gap={2} data-testid={`cli-session-${session.sessionId}`}>
       <Group gap="xs" wrap="nowrap">
@@ -213,6 +219,24 @@ function CliSessionRow({ session }: { session: CliSession }) {
           last active {formatRelativeTime(session.lastActivityAt)}
         </Text>
       </Group>
+      {host && artifacts && artifacts.length > 0 && (
+        <Group gap={6} wrap="wrap">
+          <Text size="xs" c="dimmed">
+            Artifacts:
+          </Text>
+          {artifacts.map((filename) => (
+            <Anchor
+              key={filename}
+              href={shareArtifactUrl(host, session.sessionId, filename)}
+              target="_blank"
+              rel="noreferrer"
+              size="xs"
+            >
+              {filename} ↗
+            </Anchor>
+          ))}
+        </Group>
+      )}
     </Stack>
   );
 }

@@ -49,5 +49,7 @@ export function buildSessionDoc(
     ...(summary.cwd && { cwd: summary.cwd }),
     ...(summary.worktree && { worktree: summary.worktree }),
     ...(summary.branch && { branch: summary.branch }),
+    ...(summary.artifacts &&
+      summary.artifacts.length > 0 && { artifacts: summary.artifacts }),
   };
 }

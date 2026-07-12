@@ -100,6 +100,35 @@ describe('buildSessionDoc', () => {
     expect(Object.keys(doc)).not.toContain('cwd');
     expect(Object.keys(doc)).not.toContain('worktree');
     expect(Object.keys(doc)).not.toContain('branch');
+    expect(Object.keys(doc)).not.toContain('artifacts');
+  });
+
+  it('carries artifacts through on a cli doc when present and non-empty', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ artifacts: ['report.md', 'chart.png'] }),
+      'live',
+    );
+
+    expect(doc).toMatchObject({ artifacts: ['report.md', 'chart.png'] });
+  });
+
+  it('omits an empty artifacts list rather than writing []', () => {
+    const doc = buildSessionDoc(baseSummary({ artifacts: [] }), 'live');
+
+    expect(doc).not.toHaveProperty('artifacts');
+  });
+
+  it('never carries artifacts onto an issue-agent doc', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        source: 'issue-agent',
+        artifacts: ['report.md'],
+      }),
+      'ended',
+      { runId: 'run-123' },
+    );
+
+    expect(doc).not.toHaveProperty('artifacts');
   });
 
   it('carries lastToolCall/model/permissionMode/title through when present', () => {

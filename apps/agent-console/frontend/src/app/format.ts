@@ -45,3 +45,18 @@ export function formatTokenCount(tokens: number): string {
   if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(1)}k`;
   return `${(tokens / 1_000_000).toFixed(1)}M`;
 }
+
+/**
+ * The share-media skill's convention: files land at
+ * `/home/jlapenna/share/<conversation-id>/<filename>` on `host`, served at
+ * this URL (LAN/Tailscale-only, behind Authelia). For CLI sessions, the
+ * "conversation-id" is the session's own id - see the watcher's
+ * `discoverSessionArtifacts`.
+ */
+export function shareArtifactUrl(
+  host: string,
+  sessionId: string,
+  filename: string,
+): string {
+  return `https://share.lan.jlapenna.net/${host}/${sessionId}/${filename}`;
+}

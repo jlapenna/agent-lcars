@@ -269,4 +269,6 @@ export interface EnvVars {
   AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS?: string;
   /** Staleness window in milliseconds; defaults to 5x the heartbeat interval. */
   AGENT_TELEMETRY_STALENESS_WINDOW_MS?: string;
+  /** Root of `~/share` (share-media skill convention) to scan for session artifacts; defaults to `~/share`. */
+  AGENT_TELEMETRY_SHARE_DIR?: string;
 }

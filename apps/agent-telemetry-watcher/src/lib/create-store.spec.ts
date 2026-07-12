@@ -9,6 +9,7 @@ describe('createStoreFromConfig', () => {
     host: 'test-host',
     heartbeatIntervalMs: 10_000,
     stalenessWindowMs: 50_000,
+    shareDir: '/root/share',
   };
 
   it('falls back to a log-only store when no credentials or emulator are configured', () => {

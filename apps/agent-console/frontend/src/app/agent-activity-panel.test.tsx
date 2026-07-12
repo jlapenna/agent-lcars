@@ -85,6 +85,30 @@ describe('AgentActivityPanel CLI sessions', () => {
     );
   });
 
+  it('links to shared artifacts using host + sessionId', () => {
+    renderPanel([
+      makeCliSession({
+        sessionId: 'abc-123',
+        host: 'pike',
+        artifacts: ['report.md', 'chart.png'],
+      }),
+    ]);
+
+    const reportLink = screen.getByRole('link', { name: /report\.md/ });
+    expect(reportLink.getAttribute('href')).toBe(
+      'https://share.lan.jlapenna.net/pike/abc-123/report.md',
+    );
+    const chartLink = screen.getByRole('link', { name: /chart\.png/ });
+    expect(chartLink.getAttribute('href')).toBe(
+      'https://share.lan.jlapenna.net/pike/abc-123/chart.png',
+    );
+  });
+
+  it('renders no artifacts section when the session has none', () => {
+    renderPanel([makeCliSession({ artifacts: [] })]);
+    expect(screen.queryByText('Artifacts:')).toBeNull();
+  });
+
   it('visually distinguishes each liveness state', () => {
     renderPanel([
       makeCliSession({ sessionId: 's-live', liveness: 'live' }),

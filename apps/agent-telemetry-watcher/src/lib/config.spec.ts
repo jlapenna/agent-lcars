@@ -1,3 +1,6 @@
+import * as os from 'os';
+import * as path from 'path';
+
 import { DEFAULT_PROJECT_DIR_ALLOWLIST } from './allowlist';
 import { loadConfig } from './config';
 
@@ -9,6 +12,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_WRITER_KEY_JSON',
   'AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS',
   'AGENT_TELEMETRY_STALENESS_WINDOW_MS',
+  'AGENT_TELEMETRY_SHARE_DIR',
   'FIRESTORE_EMULATOR_HOST',
 ] as const;
 
@@ -38,6 +42,15 @@ describe('loadConfig', () => {
     expect(config.allowlist).toEqual(DEFAULT_PROJECT_DIR_ALLOWLIST);
     expect(config.heartbeatIntervalMs).toBe(10_000);
     expect(config.stalenessWindowMs).toBe(50_000);
+    expect(config.shareDir).toBe(path.join(os.homedir(), 'share'));
+  });
+
+  it('respects a share dir override', () => {
+    process.env['AGENT_TELEMETRY_SHARE_DIR'] = '/mnt/share';
+
+    const config = loadConfig();
+
+    expect(config.shareDir).toBe('/mnt/share');
   });
 
   it('parses a comma-separated allowlist override', () => {

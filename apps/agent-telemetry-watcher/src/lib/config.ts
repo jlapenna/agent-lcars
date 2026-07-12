@@ -13,6 +13,7 @@ export interface WatcherConfig {
   host: string;
   heartbeatIntervalMs: number;
   stalenessWindowMs: number;
+  shareDir: string;
   firestoreProjectId?: string;
   firestoreWriterKeyJson?: string;
   firestoreEmulatorHost?: string;
@@ -45,6 +46,8 @@ export function loadConfig(): WatcherConfig {
     host: optional('AGENT_TELEMETRY_HOST') ?? os.hostname(),
     heartbeatIntervalMs,
     stalenessWindowMs,
+    shareDir:
+      optional('AGENT_TELEMETRY_SHARE_DIR') ?? path.join(os.homedir(), 'share'),
     firestoreProjectId: optional('AGENT_TELEMETRY_PROJECT_ID'),
     firestoreWriterKeyJson: optional('AGENT_TELEMETRY_WRITER_KEY_JSON'),
     firestoreEmulatorHost: optional('FIRESTORE_EMULATOR_HOST'),

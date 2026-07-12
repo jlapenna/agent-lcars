@@ -1,3 +1,4 @@
+import { Firestore } from '@google-cloud/firestore';
 import {
   getFirestoreEmulatorHost,
   getProjectId,
@@ -8,7 +9,6 @@ import {
   Firestore as AdminFirestore,
   getFirestore as getAdminFirestore,
 } from 'firebase-admin/firestore';
-import { Firestore } from '@google-cloud/firestore';
 
 import { SessionDoc } from '../lib/types';
 import { AGENT_TELEMETRY_DATABASE_ID } from './firestore-client';

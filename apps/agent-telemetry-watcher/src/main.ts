@@ -20,6 +20,7 @@ function main() {
     store,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
     stalenessWindowMs: config.stalenessWindowMs,
+    shareDir: config.shareDir,
   });
 
   // Real-time nudge on file changes; the periodic tick (started below) is
