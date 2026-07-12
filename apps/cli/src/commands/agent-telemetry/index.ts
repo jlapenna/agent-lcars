@@ -1,6 +1,7 @@
 import { CommandModule } from 'yargs';
 
 import { reduceCommand } from './reduce';
+import { upsertCommand } from './upsert';
 
 export const agentTelemetryCommand: CommandModule = {
   command: 'agent-telemetry <command>',
@@ -8,6 +9,7 @@ export const agentTelemetryCommand: CommandModule = {
   builder: (yargs) => {
     return yargs
       .command(reduceCommand)
+      .command(upsertCommand)
       .demandCommand(1, 'You must provide a subcommand.');
   },
   handler: async () => {

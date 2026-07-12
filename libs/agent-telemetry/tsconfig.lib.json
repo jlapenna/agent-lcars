@@ -14,5 +14,13 @@
     "src/**/*.js",
     "src/**/*.jsx",
     "src/**/*.d.ts"
+  ],
+  "references": [
+    {
+      "path": "../util-server/tsconfig.lib.json"
+    },
+    {
+      "path": "../util/tsconfig.lib.json"
+    }
   ]
 }

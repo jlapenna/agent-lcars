@@ -106,7 +106,10 @@
       "@repo/app-providers": ["./libs/app-providers/src/index.ts"],
       "@repo/rider-stats": ["./libs/rider-stats/src/index.ts"],
       "@repo/rider-stats/*": ["./libs/rider-stats/src/*"],
-      "@repo/agent-telemetry": ["./libs/agent-telemetry/src/index.ts"]
+      "@repo/agent-telemetry": ["./libs/agent-telemetry/src/index.ts"],
+      "@repo/agent-telemetry/server": [
+        "./libs/agent-telemetry/src/server/index.ts"
+      ]
     }
   }
 }

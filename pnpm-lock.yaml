@@ -615,7 +615,14 @@ importers:
 
   apps/cli: {}
 
-  libs/agent-telemetry: {}
+  libs/agent-telemetry:
+    dependencies:
+      '@repo/util':
+        specifier: workspace:*
+        version: link:../util
+      '@repo/util-server':
+        specifier: workspace:*
+        version: link:../util-server
 
   libs/app: {}
 
