@@ -8,6 +8,7 @@ import {
   getAgentActivity,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
+import { getCliSessions } from '../lib/cli-sessions';
 import { type LiveRunSummary } from './action-item-card';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
@@ -47,11 +48,20 @@ export default async function Index() {
   const session = await auth();
   assertAdmin(session, '/login');
 
-  const [{ items, warnings: itemWarnings }, activity] = await Promise.all([
+  const [
+    { items, warnings: itemWarnings },
+    activity,
+    { sessions: cliSessions, warnings: cliSessionWarnings },
+  ] = await Promise.all([
     getActionItems(),
     getAgentActivity(),
+    getCliSessions(),
   ]);
-  const warnings = [...itemWarnings, ...activity.warnings];
+  const warnings = [
+    ...itemWarnings,
+    ...activity.warnings,
+    ...cliSessionWarnings,
+  ];
 
   // Join live agent runs to items, preferring the run-name-derived issue
   // number (see claude.yml) - it's immune to title edits and duplicate
@@ -116,7 +126,7 @@ export default async function Index() {
         </Alert>
       )}
 
-      <AgentActivityPanel activity={activity} />
+      <AgentActivityPanel activity={activity} cliSessions={cliSessions} />
 
       <ActionItemsBoard
         needsAction={needsAction.map((item) => toCard(item))}

@@ -17,8 +17,13 @@ import type {
   RunnerStatus,
 } from '../lib/agent-activity';
 import { RUN_TIMEOUT_MINUTES } from '../lib/agent-activity';
+import type { CliSession } from '../lib/cli-sessions';
 import { CancelRunButton } from './cancel-run-button';
-import { formatDuration, formatRelativeTime } from './format';
+import {
+  formatDuration,
+  formatRelativeTime,
+  formatTokenCount,
+} from './format';
 
 const CONCLUSION_LABELS: Record<AgentRunConclusion, string> = {
   success: 'success',
@@ -135,7 +140,93 @@ function RecentRunRow({ run }: { run: AgentRun }) {
   );
 }
 
-export function AgentActivityPanel({ activity }: { activity: AgentActivity }) {
+// live/idle are the process still doing something; ended/stale render last.
+const LIVENESS_SORT_ORDER: Record<CliSession['liveness'], number> = {
+  live: 0,
+  idle: 1,
+  ended: 2,
+  stale: 3,
+};
+
+const LIVENESS_LABELS: Record<CliSession['liveness'], string> = {
+  live: 'live',
+  idle: 'idle',
+  ended: 'ended',
+  stale: 'stale',
+};
+
+const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
+  live: 'green',
+  idle: 'yellow',
+  ended: 'gray',
+  // No watcher heartbeat at all - same severity class as an offline runner.
+  stale: 'red',
+};
+
+function CliSessionRow({ session }: { session: CliSession }) {
+  return (
+    <Stack gap={2}>
+      <Group gap="xs" wrap="nowrap">
+        <Badge
+          variant="filled"
+          color={LIVENESS_COLORS[session.liveness]}
+          size="sm"
+        >
+          {LIVENESS_LABELS[session.liveness]}
+        </Badge>
+        <Text size="sm" fw={500} style={{ minWidth: 0 }} truncate>
+          {session.title ?? session.branch ?? session.sessionId}
+        </Text>
+        {session.pr && (
+          <Anchor
+            href={session.pr.url}
+            target="_blank"
+            rel="noreferrer"
+            size="xs"
+            style={{ marginLeft: 'auto', flexShrink: 0 }}
+          >
+            PR #{session.pr.number} ↗
+          </Anchor>
+        )}
+      </Group>
+      <Group gap={6} wrap="wrap">
+        {session.host && (
+          <Text size="xs" c="dimmed">
+            {session.host}
+          </Text>
+        )}
+        {session.branch && (
+          <Text size="xs" c="dimmed">
+            {session.branch}
+            {session.worktree ? ` (${session.worktree})` : ''}
+          </Text>
+        )}
+        {session.model && (
+          <Text size="xs" c="dimmed">
+            {session.model}
+          </Text>
+        )}
+        <Text size="xs" c="dimmed">
+          {session.turns} turns
+        </Text>
+        <Text size="xs" c="dimmed">
+          {formatTokenCount(session.totalTokens)} tokens
+        </Text>
+        <Text size="xs" c="dimmed">
+          last active {formatRelativeTime(session.lastActivityAt)}
+        </Text>
+      </Group>
+    </Stack>
+  );
+}
+
+export function AgentActivityPanel({
+  activity,
+  cliSessions = [],
+}: {
+  activity: AgentActivity;
+  cliSessions?: CliSession[];
+}) {
   const { liveRuns, recentRuns, runners } = activity;
   const allOffline =
     runners !== undefined &&
@@ -190,6 +281,25 @@ export function AgentActivityPanel({ activity }: { activity: AgentActivity }) {
               {recentRuns.map((run) => (
                 <RecentRunRow key={run.id} run={run} />
               ))}
+            </Stack>
+          </>
+        )}
+
+        {cliSessions.length > 0 && (
+          <>
+            <Text size="xs" c="dimmed" fw={600} tt="uppercase">
+              CLI sessions
+            </Text>
+            <Stack gap="xs">
+              {[...cliSessions]
+                .sort(
+                  (a, b) =>
+                    LIVENESS_SORT_ORDER[a.liveness] -
+                    LIVENESS_SORT_ORDER[b.liveness],
+                )
+                .map((session) => (
+                  <CliSessionRow key={session.sessionId} session={session} />
+                ))}
             </Stack>
           </>
         )}

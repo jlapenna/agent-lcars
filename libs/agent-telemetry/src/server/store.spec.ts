@@ -8,7 +8,7 @@ import { FakeFirestore } from 'firestore-jest-mock';
 import { SessionDoc } from '../lib/types';
 import {
   _resetForTesting,
-  getAgentTelemetryFirestore,
+  getAgentTelemetryWriterFirestore,
   upsertSession,
 } from './store';
 
@@ -63,9 +63,9 @@ describe('agent-telemetry store', () => {
     (getAdminFirestore as jest.Mock).mockReturnValue(fakeFirestore);
   });
 
-  describe('getAgentTelemetryFirestore', () => {
+  describe('getAgentTelemetryWriterFirestore', () => {
     it('scopes the client to the dedicated agent-telemetry database', () => {
-      getAgentTelemetryFirestore();
+      getAgentTelemetryWriterFirestore();
 
       expect(getAdminFirestore).toHaveBeenCalledWith(
         expect.anything(),
@@ -74,8 +74,8 @@ describe('agent-telemetry store', () => {
     });
 
     it('caches the client across calls instead of re-initializing', () => {
-      const a = getAgentTelemetryFirestore();
-      const b = getAgentTelemetryFirestore();
+      const a = getAgentTelemetryWriterFirestore();
+      const b = getAgentTelemetryWriterFirestore();
 
       expect(a).toBe(b);
       expect(getAdminFirestore).toHaveBeenCalledTimes(1);
@@ -85,7 +85,7 @@ describe('agent-telemetry store', () => {
     it('reuses an already-initialized app rather than creating a new one', () => {
       (getApps as jest.Mock).mockReturnValue([{ name: '[DEFAULT]' }]);
 
-      getAgentTelemetryFirestore();
+      getAgentTelemetryWriterFirestore();
 
       expect(initializeApp).not.toHaveBeenCalled();
     });
