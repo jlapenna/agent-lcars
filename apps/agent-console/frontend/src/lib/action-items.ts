@@ -52,11 +52,14 @@ export function isDeployWaitOnly(item: ActionItem): boolean {
   );
 }
 
+// human-needed and review-requested are tied at the top tier: both mean an
+// agent cannot make further progress without Joe, so neither should get
+// buried behind run-failed items an agent may still be actively fixing.
 const ACTION_PRIORITY: Record<ActionType, number> = {
   'human-needed': 0,
+  'review-requested': 0,
   'run-failed': 1,
-  'review-requested': 2,
-  'post-deploy-action': 3,
+  'post-deploy-action': 2,
 };
 
 function itemPriority(item: ActionItem): number {

@@ -225,6 +225,56 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
+  it('sorts a review-requested PR ahead of a run-failed PR, tied with human-needed', async () => {
+    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+      if (!TARGET_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 3,
+          items: [
+            makeItem(1, { pull_request: {} }), // run-failed
+            makeItem(2, { pull_request: {} }), // review-requested
+            makeItem(3, { labels: ['human-needed'] }), // human-needed
+          ],
+        },
+      });
+    });
+    const pullsGet = jest.fn().mockImplementation(({ pull_number }) =>
+      Promise.resolve({
+        data: {
+          draft: false,
+          mergeable_state: 'clean',
+          head: { sha: `sha-${pull_number}` },
+          body: null,
+          requested_reviewers: pull_number === 2 ? [{ login: 'jlapenna' }] : [],
+        },
+      }),
+    );
+    const checksListForRef = jest.fn().mockImplementation(({ ref }) =>
+      Promise.resolve({
+        data: {
+          total_count: ref === 'sha-1' ? 1 : 0,
+          check_runs:
+            ref === 'sha-1'
+              ? [
+                  {
+                    name: 'ci',
+                    html_url: 'https://github.com/check',
+                    status: 'completed',
+                    conclusion: 'failure',
+                  },
+                ]
+              : [],
+        },
+      }),
+    );
+    setupOctokit({ issuesAndPullRequests, pullsGet, checksListForRef });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([2, 3, 1]);
+  });
+
   it('drops an item and records a warning when classification throws, without affecting siblings', async () => {
     const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
       if (!TARGET_Q(q)) return emptySearchPage();
