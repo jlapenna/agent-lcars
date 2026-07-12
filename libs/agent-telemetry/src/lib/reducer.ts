@@ -222,9 +222,13 @@ function resolveTitle(state: SessionState): string | undefined {
  * a session summary per distinct `sessionId` found across all of them.
  * Pass multiple file contents, in chronological order, to correctly reduce
  * a resumed/compacted session that spans more than one file.
+ *
+ * Accepts any `Iterable<string>` (not just an array) so a caller with many
+ * large files on disk can lazily yield one file's content at a time instead
+ * of holding every file in memory simultaneously.
  */
 export function reduceTranscripts(
-  rawContents: string[],
+  rawContents: Iterable<string>,
   options: ReduceTranscriptOptions = {},
 ): SessionSummary[] {
   const states = new Map<string, SessionState>();

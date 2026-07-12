@@ -6,11 +6,17 @@ import {
 } from '@repo/agent-telemetry';
 import { logger } from '@repo/logging';
 import * as fs from 'fs';
+import * as path from 'path';
 
 import { discoverTranscriptFiles } from './discover';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { isProcessAliveForCwd as defaultIsProcessAliveForCwd } from './process-check';
 import { SessionStore } from './store';
+
+export interface FileStat {
+  mtimeMs: number;
+  size: number;
+}
 
 export interface WatcherDaemonOptions {
   /** Root of `~/.claude/projects` (or a bind-mounted fixture dir in tests/Docker). */
@@ -28,6 +34,7 @@ export interface WatcherDaemonOptions {
   stalenessWindowMs: number;
   now?: () => string;
   readFile?: (filePath: string) => string;
+  statFile?: (filePath: string) => FileStat;
   discover?: (claudeProjectsDir: string, allowlist: string[]) => string[];
   isProcessAliveForCwd?: (cwd: string) => boolean;
   resolveGitBranch?: (cwd: string) => string | undefined;
@@ -49,6 +56,8 @@ interface TrackedSession {
  */
 export class WatcherDaemon {
   private readonly sessions = new Map<string, TrackedSession>();
+  /** Per-file mtime/size as of the last tick that successfully read it. */
+  private readonly fileStats = new Map<string, FileStat>();
   private intervalHandle?: ReturnType<typeof setInterval>;
 
   constructor(private readonly options: WatcherDaemonOptions) {}
@@ -58,6 +67,12 @@ export class WatcherDaemon {
     const discover = this.options.discover ?? discoverTranscriptFiles;
     const readFile =
       this.options.readFile ?? ((p: string) => fs.readFileSync(p, 'utf8'));
+    const statFile =
+      this.options.statFile ??
+      ((p: string) => {
+        const stat = fs.statSync(p);
+        return { mtimeMs: stat.mtimeMs, size: stat.size };
+      });
     const isProcessAliveForCwd =
       this.options.isProcessAliveForCwd ?? defaultIsProcessAliveForCwd;
     const resolveGitBranch =
@@ -68,26 +83,72 @@ export class WatcherDaemon {
       this.options.allowlist,
     );
 
-    const contents: string[] = [];
+    // Transcript filenames are `<sessionId>.jsonl` — a file that hasn't
+    // changed since it was last read can't have produced a different
+    // summary, so skip re-reading/re-reducing it and just refresh its
+    // session's heartbeat (this is also what makes an `ended` session's
+    // now-immutable file permanently skipped, with no extra bookkeeping).
+    const changedFiles = new Map<string, FileStat>();
     for (const file of files) {
+      let stat: FileStat;
       try {
-        contents.push(readFile(file));
+        stat = statFile(file);
       } catch (error) {
         logger.warn(
-          `agent-telemetry-watcher: failed to read transcript ${file}, skipping`,
+          `agent-telemetry-watcher: failed to stat transcript ${file}, skipping`,
           error,
         );
+        continue;
+      }
+
+      const previousStat = this.fileStats.get(file);
+      if (
+        previousStat &&
+        previousStat.mtimeMs === stat.mtimeMs &&
+        previousStat.size === stat.size
+      ) {
+        const tracked = this.sessions.get(path.basename(file, '.jsonl'));
+        if (tracked) {
+          tracked.lastHeartbeatAt = now;
+        }
+        continue;
+      }
+
+      changedFiles.set(file, stat);
+    }
+
+    // Lazily read one changed file's content at a time (rather than
+    // collecting them all into an array first) so peak memory stays
+    // bounded to a single transcript even on the first tick, when every
+    // discovered file is "changed".
+    const fileStats = this.fileStats;
+    function* readChangedContents() {
+      for (const [file, stat] of changedFiles) {
+        try {
+          const content = readFile(file);
+          fileStats.set(file, stat);
+          yield content;
+        } catch (error) {
+          logger.warn(
+            `agent-telemetry-watcher: failed to read transcript ${file}, skipping`,
+            error,
+          );
+        }
       }
     }
 
     let summaries: SessionSummary[] = [];
-    try {
-      summaries = reduceTranscripts(contents, { host: this.options.host });
-    } catch (error) {
-      logger.warn(
-        'agent-telemetry-watcher: failed to reduce transcripts this tick, skipping',
-        error,
-      );
+    if (changedFiles.size > 0) {
+      try {
+        summaries = reduceTranscripts(readChangedContents(), {
+          host: this.options.host,
+        });
+      } catch (error) {
+        logger.warn(
+          'agent-telemetry-watcher: failed to reduce transcripts this tick, skipping',
+          error,
+        );
+      }
     }
 
     for (const summary of summaries) {

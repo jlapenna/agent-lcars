@@ -49,6 +49,21 @@ function createFakeStore() {
   return { store, upserts };
 }
 
+/** A content-derived fake stat, so tests can simulate a file changing on
+ * disk (any edit bumps `mtimeMs` in reality) just by changing its content
+ * string — no real filesystem involved. */
+function fakeStat(content: string | undefined): {
+  mtimeMs: number;
+  size: number;
+} {
+  const text = content ?? '';
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+  return { mtimeMs: hash, size: text.length };
+}
+
 describe('WatcherDaemon', () => {
   const HEARTBEAT_MS = 10_000;
   const STALENESS_MS = 30_000;
@@ -72,6 +87,7 @@ describe('WatcherDaemon', () => {
       now: () => '2026-07-12T10:00:01.000Z',
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
       resolveGitBranch: () => undefined,
     });
@@ -99,6 +115,7 @@ describe('WatcherDaemon', () => {
       now: () => '2026-07-12T10:00:01.000Z',
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p],
+      statFile: (p: string) => fakeStat(files[p]),
       isProcessAliveForCwd: () => true,
       resolveGitBranch: () => undefined,
     });
@@ -118,7 +135,7 @@ describe('WatcherDaemon', () => {
     expect(upserts[0].sessionId).toBe('session-b');
   });
 
-  it('transitions a session to `ended` once its process is no longer alive', async () => {
+  it('transitions a session to `ended` once its process is no longer alive, without re-reading its unchanged transcript', async () => {
     const { store, upserts } = createFakeStore();
     const files = {
       '/root/proj/session-c.jsonl': TRANSCRIPT(
@@ -127,6 +144,7 @@ describe('WatcherDaemon', () => {
       ),
     };
     let processAlive = true;
+    const readFile = jest.fn((p: string) => files[p as keyof typeof files]);
 
     const daemon = new WatcherDaemon({
       claudeProjectsDir: '/root',
@@ -137,18 +155,28 @@ describe('WatcherDaemon', () => {
       stalenessWindowMs: STALENESS_MS,
       now: () => '2026-07-12T10:00:00.000Z',
       discover: () => Object.keys(files),
-      readFile: (p: string) => files[p as keyof typeof files],
+      readFile,
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => processAlive,
       resolveGitBranch: () => undefined,
     });
 
     await daemon.tick();
     expect(upserts[0].liveness).toBe('idle'); // >2min since lastActivityAt but process alive
+    expect(readFile).toHaveBeenCalledTimes(1);
 
     processAlive = false;
     await daemon.tick();
 
     expect(upserts[1].liveness).toBe('ended');
+    // The transcript is unchanged (the process just exited), so the
+    // watcher must not have re-read or re-reduced it on this tick.
+    expect(readFile).toHaveBeenCalledTimes(1);
+
+    // A further tick against the still-unchanged, now-`ended` file must
+    // also skip re-reading it.
+    await daemon.tick();
+    expect(readFile).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces a session as `stale` once it goes undiscovered past the staleness window', async () => {
@@ -171,6 +199,7 @@ describe('WatcherDaemon', () => {
       now: () => now,
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p],
+      statFile: (p: string) => fakeStat(files[p]),
       isProcessAliveForCwd: () => true,
       resolveGitBranch: () => undefined,
     });
@@ -210,6 +239,7 @@ describe('WatcherDaemon', () => {
         }
         return files[p];
       },
+      statFile: (p: string) => fakeStat(files[p]),
       isProcessAliveForCwd: () => true,
       resolveGitBranch: () => undefined,
     });
@@ -217,6 +247,40 @@ describe('WatcherDaemon', () => {
     await expect(daemon.tick()).resolves.toBeUndefined();
     expect(upserts).toHaveLength(1);
     expect(upserts[0].sessionId).toBe('session-good');
+  });
+
+  it('fails soft when one transcript file cannot be stat-ed', async () => {
+    const { store, upserts } = createFakeStore();
+    const files: Record<string, string> = {
+      '/root/proj/session-good2.jsonl': TRANSCRIPT(
+        'session-good2',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => ['/root/proj/session-bad2.jsonl', ...Object.keys(files)],
+      readFile: (p: string) => files[p],
+      statFile: (p: string) => {
+        if (p === '/root/proj/session-bad2.jsonl') {
+          throw new Error('ENOENT: no such file');
+        }
+        return fakeStat(files[p]);
+      },
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+    });
+
+    await expect(daemon.tick()).resolves.toBeUndefined();
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].sessionId).toBe('session-good2');
   });
 
   it('fails soft when the store rejects a write', async () => {
@@ -242,6 +306,7 @@ describe('WatcherDaemon', () => {
       now: () => '2026-07-12T10:00:01.000Z',
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
       resolveGitBranch: () => undefined,
     });
@@ -269,6 +334,7 @@ describe('WatcherDaemon', () => {
       now: () => '2026-07-12T10:00:01.000Z',
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
       resolveGitBranch: () => 'feature/fresh-branch',
     });
@@ -276,5 +342,51 @@ describe('WatcherDaemon', () => {
     await daemon.tick();
 
     expect(upserts[0]).toMatchObject({ branch: 'feature/fresh-branch' });
+  });
+
+  it('re-reads and re-reduces a transcript once it changes on a later tick', async () => {
+    const { store, upserts } = createFakeStore();
+    let files = {
+      '/root/proj/session-g.jsonl': TRANSCRIPT(
+        'session-g',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    const readFile = jest.fn((p: string) => files[p as keyof typeof files]);
+
+    const daemon = new WatcherDaemon({
+      claudeProjectsDir: '/root',
+      allowlist: ['*'],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile,
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+    });
+
+    await daemon.tick();
+    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(upserts[0].lastActivityAt).toBe('2026-07-12T10:00:00.000Z');
+
+    // Unchanged content on the next tick — must not be re-read.
+    await daemon.tick();
+    expect(readFile).toHaveBeenCalledTimes(1);
+
+    // The session is resumed and the same file grows with new activity.
+    files = {
+      '/root/proj/session-g.jsonl': TRANSCRIPT(
+        'session-g',
+        '2026-07-12T11:00:00.000Z',
+      ),
+    };
+    await daemon.tick();
+
+    expect(readFile).toHaveBeenCalledTimes(2);
+    expect(upserts.at(-1)?.lastActivityAt).toBe('2026-07-12T11:00:00.000Z');
   });
 });
