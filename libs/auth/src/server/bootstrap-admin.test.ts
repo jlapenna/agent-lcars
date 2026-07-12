@@ -240,7 +240,12 @@ describe('Admin Bootstrapping', () => {
       const config = await getAuthConfig();
       const signInCallback = config.callbacks!.signIn as any;
 
-      const mockGet = jest.fn();
+      // #2619: the signIn callback now also checks whether this user's doc
+      // exists (to gate pending-invite reconciliation) regardless of admin
+      // email, so `mockGet` is exercised here even though this user isn't an
+      // admin. No pending invite matches in this test's default `@repo/invites`
+      // mock (see invite-reconciliation.test.ts for that behavior).
+      const mockGet = jest.fn().mockResolvedValue({ exists: false });
       const mockSet = jest.fn();
       const mockDoc = { get: mockGet, set: mockSet };
       const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
@@ -261,7 +266,7 @@ describe('Admin Bootstrapping', () => {
       });
 
       expect(result).toBe(true);
-      expect(mockGet).not.toHaveBeenCalled();
+      expect(mockGet).toHaveBeenCalled();
       expect(mockSet).not.toHaveBeenCalled();
     });
   });

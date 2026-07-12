@@ -45,6 +45,9 @@
     },
     {
       "path": "../onboarding/tsconfig.lib.json"
+    },
+    {
+      "path": "../invites/tsconfig.lib.json"
     }
   ],
   "include": [

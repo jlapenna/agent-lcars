@@ -15,6 +15,7 @@ import './types';
 
 import { FirestoreAdapter } from '@auth/firebase-adapter';
 import { getFirebaseAuthAdmin, getFirestore } from '@repo/firebase-server';
+import { reconcilePendingInviteForEmail } from '@repo/invites';
 import { logger, LogLevel } from '@repo/logging';
 import {
   hasAcceptedWaiverGate,
@@ -373,6 +374,25 @@ export const getAuthConfig = async (
             createdUser.slack = { id: '', isAdmin: true };
           }
         }
+        if (createdUser.id && user.email) {
+          // #2619: reconcile any pending invite for this email the moment the
+          // account exists, regardless of whether sign-up went through the
+          // `/invite/[id]` cookie flow — that flow (when present) reconciles
+          // idempotently against this same authJsUserId, so consuming here
+          // first doesn't break it.
+          try {
+            await reconcilePendingInviteForEmail(
+              firestore,
+              user.email,
+              createdUser.id,
+            );
+          } catch (err) {
+            logger.error(
+              `createUser: Failed to reconcile pending invite for ${user.email}:`,
+              err,
+            );
+          }
+        }
         return createdUser;
       },
       async updateUser(user) {
@@ -701,6 +721,35 @@ export const getAuthConfig = async (
           } catch (err) {
             logger.error(
               `signIn: Failed to bootstrap admin status for user ${user?.id}:`,
+              err,
+            );
+          }
+        }
+
+        // #2619: reconcile any pending invite created for this email after
+        // the account already existed (e.g. re-invited to a different org),
+        // so its status stays trustworthy even though ordinary sign-in for
+        // an existing account never runs the `/invite/[id]` cookie flow.
+        // Brand-new accounts are handled in the adapter's createUser hook
+        // instead: at this point in the OAuth flow, signIn runs *before*
+        // adapter.createUser, so a new user's doc (and canonical id) don't
+        // exist yet — `userDoc.exists` below is false for them.
+        if (firestore && user?.id && user?.email) {
+          try {
+            const userDoc = await firestore
+              .collection(AUTHJS_USERS_COLLECTION_PATH)
+              .doc(user.id)
+              .get();
+            if (userDoc.exists) {
+              await reconcilePendingInviteForEmail(
+                firestore,
+                user.email,
+                user.id,
+              );
+            }
+          } catch (err) {
+            logger.error(
+              `signIn: Failed to reconcile pending invite for ${user.email}:`,
               err,
             );
           }
