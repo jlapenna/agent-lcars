@@ -12,6 +12,7 @@ e2e.log
 # compiled output
 dist
 out-tsc
+__pycache__/
 
 # dependencies
 node_modules
