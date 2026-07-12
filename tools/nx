@@ -54,6 +54,14 @@ if [ -z "${NODE_COMPILE_CACHE:-}" ] && [ -f .env.local ]; then
   [ -n "$local_tmpdir" ] && export NODE_COMPILE_CACHE="$local_tmpdir/node-compile-cache"
 fi
 
+# Otherwise default the compile cache on: every nx/jest invocation re-parses
+# megabytes of JS at startup, and Node's on-disk compile cache shaves a
+# consistent chunk off that for free. Shared across worktrees (keyed by file
+# content), so agent sessions benefit from each other's warm cache.
+if [ -z "${NODE_COMPILE_CACHE:-}" ]; then
+  export NODE_COMPILE_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/node-compile-cache"
+fi
+
 # Use pnpm exec to ensure we use the workspace-local nx version.
 if command -v pnpm >/dev/null 2>&1; then
   exec pnpm exec nx --outputStyle=stream "$@"
