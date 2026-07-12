@@ -35,6 +35,9 @@
       "path": "../../../libs/app/tsconfig.lib.json"
     },
     {
+      "path": "../../../libs/agent-telemetry/tsconfig.lib.json"
+    },
+    {
       "path": "../../../libs/util-server/tsconfig.lib.json"
     },
     {
