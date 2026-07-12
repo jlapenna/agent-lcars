@@ -19,11 +19,7 @@ import type {
 import { RUN_TIMEOUT_MINUTES } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import { CancelRunButton } from './cancel-run-button';
-import {
-  formatDuration,
-  formatRelativeTime,
-  formatTokenCount,
-} from './format';
+import { formatDuration, formatRelativeTime, formatTokenCount } from './format';
 
 const CONCLUSION_LABELS: Record<AgentRunConclusion, string> = {
   success: 'success',
@@ -165,12 +161,13 @@ const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
 
 function CliSessionRow({ session }: { session: CliSession }) {
   return (
-    <Stack gap={2}>
+    <Stack gap={2} data-testid={`cli-session-${session.sessionId}`}>
       <Group gap="xs" wrap="nowrap">
         <Badge
           variant="filled"
           color={LIVENESS_COLORS[session.liveness]}
           size="sm"
+          data-testid="cli-session-liveness"
         >
           {LIVENESS_LABELS[session.liveness]}
         </Badge>

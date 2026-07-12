@@ -1,0 +1,33 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../../../..",
+    "allowJs": true,
+    "outDir": "dist/out-tsc",
+    "sourceMap": false,
+    "types": ["jest", "node"],
+    "lib": ["dom", "es2022"],
+    "noPropertyAccessFromIndexSignature": false,
+    "declaration": true,
+    "composite": false
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.js",
+    "playwright.config.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.js",
+    "src/**/*.test.ts",
+    "src/**/*.test.js",
+    "src/**/*.d.ts"
+  ],
+  "exclude": [
+    "dist",
+    "out-tsc",
+    "test-output",
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "eslint.config.cjs"
+  ],
+  "references": []
+}
