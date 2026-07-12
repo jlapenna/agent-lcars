@@ -312,11 +312,11 @@ describe('Admin Bootstrapping', () => {
       );
     });
 
-    it('should not write to Firestore or modify returned user if registering with a non-admin email', async () => {
+    it('should not bootstrap admin state, but still stamps account-creation metadata, for a non-admin email', async () => {
       const config = await getAuthConfig();
       const createUserMethod = config.adapter!.createUser as any;
 
-      const mockSet = jest.fn();
+      const mockSet = jest.fn().mockResolvedValue({});
       const mockDoc = { set: mockSet };
       const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
       const mockFirestore = await jest
@@ -334,7 +334,13 @@ describe('Admin Bootstrapping', () => {
 
       expect(result).toBeDefined();
       expect(result.slack).toBeUndefined();
-      expect(mockSet).not.toHaveBeenCalled();
+      // Only the #2487 account-creation-metadata stamp writes — never the
+      // admin-bootstrap `slack` write, which is gated on `isAdminEmail`.
+      expect(mockSet).toHaveBeenCalledTimes(1);
+      expect(mockSet).toHaveBeenCalledWith(
+        { metadata: { createdAt: expect.anything() } },
+        { merge: true },
+      );
     });
   });
 });

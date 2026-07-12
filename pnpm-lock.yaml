@@ -627,6 +627,8 @@ importers:
 
   libs/cloudevents: {}
 
+  libs/comments: {}
+
   libs/competitions: {}
 
   libs/env-vars: {}

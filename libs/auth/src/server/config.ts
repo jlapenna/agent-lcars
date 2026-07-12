@@ -328,6 +328,22 @@ export const getAuthConfig = async (
           throw new Error('FirestoreAdapter does not support createUser');
         }
         const createdUser = await firestoreAdapter.createUser(user);
+        if (createdUser.id) {
+          // #2487: stamp account-creation time once, here at the adapter's
+          // own createUser hook — the single canonical "this account is
+          // new" signal every UGC feature's moderation gate
+          // (`@repo/moderation`'s `initialModerationStatus`) reads. A raw
+          // merge write (not routed through a Zod converter — the Firestore
+          // Adapter itself writes this collection raw) so it can't collide
+          // with any adapter-managed field.
+          await firestore
+            .collection(AUTHJS_USERS_COLLECTION_PATH)
+            .doc(createdUser.id)
+            .set(
+              { metadata: { createdAt: FieldValue.serverTimestamp() } },
+              { merge: true },
+            );
+        }
         if (createdUser.id && createdUser.name) {
           await syncNameToRiderProfile(
             firestore,

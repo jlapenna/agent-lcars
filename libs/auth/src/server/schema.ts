@@ -1,4 +1,8 @@
-import { timestampCodec, zodLooseObject } from '@repo/firestore';
+import {
+  MetadataSchema,
+  timestampCodec,
+  zodLooseObject,
+} from '@repo/firestore';
 import { z } from 'zod';
 
 /**
@@ -42,6 +46,13 @@ export const AuthJsUserSchema = zodLooseObject({
   }).optional(),
   waiverAcceptedAt: timestampCodec.nullish(),
   waiverVersionAccepted: z.number().nullish(),
+  /** `metadata.createdAt` is stamped once, at Auth.js's own `createUser`
+   * adapter hook (#2487) — the canonical "account age" signal every UGC
+   * feature's moderation gate (`@repo/moderation`'s `initialModerationStatus`)
+   * reads. Not written by the Firestore Adapter itself, so it's absent on
+   * any account created before #2487 shipped; callers must treat it as
+   * optional and fail closed (see `initialModerationStatus`'s own doc). */
+  metadata: MetadataSchema.optional(),
 });
 
 export type AuthJsUser = z.infer<typeof AuthJsUserSchema> & {
