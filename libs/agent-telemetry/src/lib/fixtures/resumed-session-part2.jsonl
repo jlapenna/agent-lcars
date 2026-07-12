@@ -1,0 +1,6 @@
+{"type":"relocated","sessionId":"session-resumed-1","relocatedCwd":"/home/dev/project/.claude/worktrees/export-feature"}
+{"type":"worktree-state","sessionId":"session-resumed-1","worktreeSession":{"worktreePath":"/home/dev/project/.claude/worktrees/export-feature","worktreeBranch":"feat/export"}}
+{"isSidechain":false,"type":"user","uuid":"ru2","timestamp":"2026-07-09T07:30:00.000Z","sessionId":"session-resumed-1","cwd":"/home/dev/project/.claude/worktrees/export-feature","gitBranch":"feat/export","message":{"role":"user","content":[{"type":"text","text":"Continue, please finish the export feature."}]}}
+{"isSidechain":false,"type":"assistant","uuid":"ra2","timestamp":"2026-07-09T07:30:10.000Z","sessionId":"session-resumed-1","message":{"model":"claude-sonnet-5","role":"assistant","content":[{"type":"tool_use","id":"rt2","name":"Bash","input":{"command":"git commit -am done"}}],"usage":{"input_tokens":60,"output_tokens":25,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"isSidechain":false,"type":"user","uuid":"ru3","timestamp":"2026-07-09T07:30:12.000Z","sessionId":"session-resumed-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"rt2","content":"[feat/export def5678] done"}]}}
+{"type":"ai-title","aiTitle":"Finish CSV export feature","sessionId":"session-resumed-1"}

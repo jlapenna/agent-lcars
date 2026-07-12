@@ -1,0 +1,6 @@
+{
+  "name": "@repo/agent-telemetry",
+  "version": "0.0.1",
+  "private": true,
+  "sideEffects": false
+}

@@ -1,0 +1,3 @@
+{"type":"queue-operation","timestamp":"2026-07-08T07:00:00.000Z","sessionId":"session-resumed-1"}
+{"isSidechain":false,"type":"user","uuid":"ru1","timestamp":"2026-07-08T07:00:01.000Z","sessionId":"session-resumed-1","cwd":"/home/dev/project","gitBranch":"main","message":{"role":"user","content":[{"type":"text","text":"Start working on the export feature."}]}}
+{"isSidechain":false,"type":"assistant","uuid":"ra1","timestamp":"2026-07-08T07:00:05.000Z","sessionId":"session-resumed-1","message":{"model":"claude-sonnet-5","role":"assistant","content":[{"type":"tool_use","id":"rt1","name":"Read","input":{"file_path":"export.ts"}}],"usage":{"input_tokens":40,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

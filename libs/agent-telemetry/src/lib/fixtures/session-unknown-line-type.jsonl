@@ -1,0 +1,5 @@
+{"type":"queue-operation","timestamp":"2026-07-09T08:00:00.000Z","sessionId":"session-unknown-1"}
+{"isSidechain":false,"type":"user","uuid":"u1","timestamp":"2026-07-09T08:00:01.000Z","sessionId":"session-unknown-1","cwd":"/home/dev/project","message":{"role":"user","content":[{"type":"text","text":"Say hello."}]}}
+{"type":"quantum-telemetry-beacon","sessionId":"session-unknown-1","timestamp":"2026-07-09T08:00:02.000Z","payload":{"nested":{"deeply":["arbitrary","future","shape"]}},"weirdField":12345}
+not even valid json {{{
+{"isSidechain":false,"type":"assistant","uuid":"a1","timestamp":"2026-07-09T08:00:03.000Z","sessionId":"session-unknown-1","message":{"model":"claude-sonnet-5","role":"assistant","content":[{"type":"text","text":"Hello!"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
