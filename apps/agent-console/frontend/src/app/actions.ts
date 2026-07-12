@@ -39,58 +39,72 @@ function isGithubRequestError(
 // real first hit was "Pull Request has merge conflicts" reported to the
 // user as just "Internal error", with the actual cause only visible in
 // server logs.
-function toUserError(error: unknown): Error {
-  if (error instanceof ActionError) return new Error(error.message);
+function toUserErrorMessage(error: unknown): string {
+  if (error instanceof ActionError) return error.message;
   if (isGithubRequestError(error)) {
-    return new Error(
-      error.response?.data?.message ?? 'GitHub API request failed',
-    );
+    return error.response?.data?.message ?? 'GitHub API request failed';
   }
-  return error instanceof Error ? error : new Error('Unexpected error');
+  return error instanceof Error ? error.message : 'Unexpected error';
 }
+
+// Next.js redacts the message of any Error *thrown* out of a Server Action
+// in production builds (client only gets a generic digest) - independent of
+// how well-formed the message is. So toUserErrorMessage()'s result has to
+// come back as a normal return value, not a thrown Error, to survive to the
+// client in prod. See #2628.
+export type ActionResult = { ok: true } | { ok: false; message: string };
 
 export async function getActionItems(): Promise<ActionItemsResult> {
   await requireAdmin();
   return fetchActionItems();
 }
 
-export async function replyToItem(number: number, body: string) {
+export async function replyToItem(
+  number: number,
+  body: string,
+): Promise<ActionResult> {
   await requireAdmin();
   try {
-    const result = await postComment(number, body);
+    await postComment(number, body);
     revalidatePath('/');
-    return result;
+    return { ok: true };
   } catch (error) {
-    throw toUserError(error);
+    return { ok: false, message: toUserErrorMessage(error) };
   }
 }
 
-export async function mergePr(number: number) {
+export async function mergePr(number: number): Promise<ActionResult> {
   await requireAdmin();
   try {
     await approveAndMergePr(number);
     revalidatePath('/');
+    return { ok: true };
   } catch (error) {
-    throw toUserError(error);
+    return { ok: false, message: toUserErrorMessage(error) };
   }
 }
 
-export async function retriggerIssue(number: number, note?: string) {
+export async function retriggerIssue(
+  number: number,
+  note?: string,
+): Promise<ActionResult> {
   await requireAdmin();
   try {
     await retriggerIssueLib(number, note);
     revalidatePath('/');
+    return { ok: true };
   } catch (error) {
-    throw toUserError(error);
+    return { ok: false, message: toUserErrorMessage(error) };
   }
 }
 
-export async function cancelRun(runId: number) {
+export async function cancelRun(runId: number): Promise<ActionResult> {
   await requireAdmin();
   try {
     await cancelWorkflowRunLib(runId);
     revalidatePath('/');
+    return { ok: true };
   } catch (error) {
-    throw toUserError(error);
+    return { ok: false, message: toUserErrorMessage(error) };
   }
 }

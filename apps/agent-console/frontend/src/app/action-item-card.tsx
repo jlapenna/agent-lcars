@@ -156,16 +156,16 @@ export function ActionItemCard({
     if (!replyBody.trim()) return;
     setError(undefined);
     startTransition(async () => {
-      try {
-        await replyToItem(item.number, replyBody);
-        setReplyBody('');
-        notifications.show({
-          message: `Reply posted on #${item.number}`,
-          color: 'green',
-        });
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to post reply');
+      const result = await replyToItem(item.number, replyBody);
+      if (!result.ok) {
+        setError(result.message);
+        return;
       }
+      setReplyBody('');
+      notifications.show({
+        message: `Reply posted on #${item.number}`,
+        color: 'green',
+      });
     });
   };
 
@@ -179,15 +179,15 @@ export function ActionItemCard({
   const handleMerge = () => {
     setError(undefined);
     startTransition(async () => {
-      try {
-        await mergePr(item.number);
-        notifications.show({
-          message: `#${item.number} merged`,
-          color: 'green',
-        });
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to merge');
+      const result = await mergePr(item.number);
+      if (!result.ok) {
+        setError(result.message);
+        return;
       }
+      notifications.show({
+        message: `#${item.number} merged`,
+        color: 'green',
+      });
     });
   };
 
@@ -209,16 +209,19 @@ export function ActionItemCard({
     setRetriggerOpened(false);
     setError(undefined);
     startTransition(async () => {
-      try {
-        await retriggerIssue(item.number, retriggerNote.trim() || undefined);
-        setRetriggerNote('');
-        notifications.show({
-          message: `#${item.number} retriggered`,
-          color: 'green',
-        });
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to retrigger');
+      const result = await retriggerIssue(
+        item.number,
+        retriggerNote.trim() || undefined,
+      );
+      if (!result.ok) {
+        setError(result.message);
+        return;
       }
+      setRetriggerNote('');
+      notifications.show({
+        message: `#${item.number} retriggered`,
+        color: 'green',
+      });
     });
   };
 

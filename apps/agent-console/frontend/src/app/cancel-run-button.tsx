@@ -20,15 +20,12 @@ export function CancelRunButton({
 
   const handleCancel = () => {
     startTransition(async () => {
-      try {
-        await cancelRun(runId);
-        notifications.show({ message: 'Run cancelled', color: 'green' });
-      } catch (e) {
-        notifications.show({
-          message: e instanceof Error ? e.message : 'Failed to cancel run',
-          color: 'red',
-        });
+      const result = await cancelRun(runId);
+      if (!result.ok) {
+        notifications.show({ message: result.message, color: 'red' });
+        return;
       }
+      notifications.show({ message: 'Run cancelled', color: 'green' });
     });
   };
 
