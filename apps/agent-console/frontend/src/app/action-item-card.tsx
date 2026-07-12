@@ -57,6 +57,16 @@ const MERGEABLE_WARNINGS: Partial<Record<MergeableState, string>> = {
 
 const NOT_MERGEABLE_STATES: MergeableState[] = ['dirty', 'blocked', 'draft'];
 
+// GitHub's 'blocked' state also covers required checks still running (the
+// "CI running…" line already covers that); only warn once checks are done.
+function mergeableWarning(item: {
+  mergeableState?: MergeableState;
+  ciRunning?: boolean;
+}): string | undefined {
+  if (item.mergeableState === 'blocked' && item.ciRunning) return undefined;
+  return item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState];
+}
+
 /** Preformatted live-run info; built server-side in page.tsx. */
 export interface LiveRunSummary {
   id: number;
@@ -370,9 +380,9 @@ export function ActionItemCard({
           </Text>
         )}
 
-        {item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState] && (
+        {mergeableWarning(item) && (
           <Text size="xs" c="yellow">
-            ⚠ {MERGEABLE_WARNINGS[item.mergeableState]}
+            ⚠ {mergeableWarning(item)}
           </Text>
         )}
 
@@ -486,10 +496,7 @@ export function ActionItemCard({
                   NOT_MERGEABLE_STATES.includes(item.mergeableState))
               }
               title={
-                item.draft
-                  ? MERGEABLE_WARNINGS.draft
-                  : item.mergeableState &&
-                    MERGEABLE_WARNINGS[item.mergeableState]
+                item.draft ? MERGEABLE_WARNINGS.draft : mergeableWarning(item)
               }
               onClick={confirmMerge}
             >
