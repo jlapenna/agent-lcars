@@ -11,10 +11,22 @@ import { dispatchUnstickPrs } from './actions';
  * and hands it to the Claude issue agent with the unstick-prs runbook. The
  * console joins the resulting run to its own card via the run-name's
  * leading "#N:" prefix, so no polling is needed here beyond a refresh.
+ *
+ * `defaultContext` lets a queue card prefill "#N title" so a maintainer can
+ * dispatch scoped to one stuck item in a single click instead of retyping
+ * it into the header's blank popover.
  */
-export function UnstickPrsButton({ size = 'compact-sm' }: { size?: string }) {
+export function UnstickPrsButton({
+  size = 'compact-sm',
+  label = 'Run unstick-prs',
+  defaultContext = '',
+}: {
+  size?: string;
+  label?: string;
+  defaultContext?: string;
+}) {
   const [opened, setOpened] = useState(false);
-  const [context, setContext] = useState('');
+  const [context, setContext] = useState(defaultContext);
   const [isPending, startTransition] = useTransition();
 
   const handleDispatch = () => {
@@ -25,7 +37,7 @@ export function UnstickPrsButton({ size = 'compact-sm' }: { size?: string }) {
         notifications.show({ message: result.message, color: 'red' });
         return;
       }
-      setContext('');
+      setContext(defaultContext);
       notifications.show({
         message: 'unstick-prs playbook dispatched',
         color: 'green',
@@ -48,7 +60,7 @@ export function UnstickPrsButton({ size = 'compact-sm' }: { size?: string }) {
           disabled={isPending}
           onClick={() => setOpened((prev) => !prev)}
         >
-          Run unstick-prs
+          {label}
         </Button>
       </Popover.Target>
       <Popover.Dropdown>

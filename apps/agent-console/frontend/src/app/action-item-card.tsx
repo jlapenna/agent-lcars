@@ -28,6 +28,7 @@ import { CancelRunButton } from './cancel-run-button';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { RetriggerButton } from './retrigger-button';
+import { UnstickPrsButton } from './unstick-prs-button';
 
 const ACTION_LABELS: Record<ActionType, string> = {
   'human-needed': 'Needs a human',
@@ -464,6 +465,13 @@ export function ActionItemCard({
               disabledReason="An agent run is already in flight for this item"
               onError={setError}
               size="sm"
+            />
+          )}
+          {item.kind === 'pr' && item.actionTypes.includes('run-failed') && (
+            <UnstickPrsButton
+              size="sm"
+              label="Unstick"
+              defaultContext={`#${item.number} ${item.title}`}
             />
           )}
         </Group>

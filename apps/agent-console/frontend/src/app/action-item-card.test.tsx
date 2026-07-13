@@ -10,6 +10,7 @@ import { ActionItemCard } from './action-item-card';
 jest.mock('./actions', () => ({
   mergePr: jest.fn(),
   replyToItem: jest.fn(),
+  dispatchUnstickPrs: jest.fn(),
 }));
 jest.mock('./cancel-run-button', () => ({
   CancelRunButton: () => null,
@@ -130,5 +131,42 @@ describe('ActionItemCard', () => {
       name: 'Approve & Merge',
     }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+  });
+
+  it('offers a per-card Unstick button on a PR with a failed run', () => {
+    renderCard(
+      makeItem({
+        kind: 'pr',
+        number: 42,
+        title: 'Add the widget',
+        actionTypes: ['run-failed'],
+      }),
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Unstick' }),
+    ).toBeTruthy();
+  });
+
+  it('omits the Unstick button when the PR has no failed run', () => {
+    renderCard(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+      }),
+    );
+
+    expect(screen.queryByRole('button', { name: 'Unstick' })).toBeNull();
+  });
+
+  it('omits the Unstick button on issues even with run-failed set', () => {
+    renderCard(
+      makeItem({
+        kind: 'issue',
+        actionTypes: ['run-failed'],
+      }),
+    );
+
+    expect(screen.queryByRole('button', { name: 'Unstick' })).toBeNull();
   });
 });
