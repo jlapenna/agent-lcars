@@ -233,7 +233,7 @@ export function ActionItemCard({
   return (
     <Card withBorder radius="md" padding="md">
       <Stack gap={6}>
-        <Group justify="space-between" wrap="nowrap" align="flex-start">
+        <Group justify="space-between" align="flex-start" gap="sm">
           <Anchor
             href={item.url}
             target="_blank"
@@ -244,7 +244,7 @@ export function ActionItemCard({
           >
             #{item.number} {item.title}
           </Anchor>
-          <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+          <Group gap={6} wrap="wrap" style={{ flexShrink: 0 }}>
             {item.actionTypes.map((type) => (
               <Badge
                 key={type}
