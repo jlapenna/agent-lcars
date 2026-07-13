@@ -37,8 +37,13 @@ function isAlreadyExists(error: unknown): boolean {
 
 // Replying or retriggering hands the ball back to the agent. The agent
 // applies `human-needed` but nothing ever cleared it, so answered items
-// stayed pinned to the top of "Needs Your Action" indefinitely.
-async function clearHumanNeededLabel(issueNumber: number): Promise<void> {
+// stayed pinned to the top of "Needs Your Action" indefinitely. Also exposed
+// directly as its own console action, for when a reply isn't warranted (the
+// question was answered elsewhere, the tracker is stale) but the label
+// still needs clearing.
+export async function clearHumanNeededLabel(
+  issueNumber: number,
+): Promise<void> {
   const octokit = getGithubClient();
   try {
     await octokit.rest.issues.removeLabel({
@@ -92,6 +97,19 @@ export async function approveAndMergePr(prNumber: number): Promise<void> {
     repo: REPO_NAME,
     pull_number: prNumber,
     merge_method: 'squash',
+  });
+}
+
+// The console's "Done" affordance for a loop that's simply finished (stale
+// tracker, question answered elsewhere, agent PR abandoned) - closes without
+// requiring a trip to GitHub.
+export async function closeIssue(issueNumber: number): Promise<void> {
+  const octokit = getGithubClient();
+  await octokit.rest.issues.update({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    issue_number: issueNumber,
+    state: 'closed',
   });
 }
 

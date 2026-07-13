@@ -1,9 +1,10 @@
-import { Stack, Text, Title } from '@mantine/core';
+import { Group, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../lib/action-items';
 import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard, type LiveRunSummary } from './action-item-card';
 import { CompactItemRow } from './compact-item-row';
+import { ItemOverflowMenu } from './item-overflow-menu';
 import { RetriggerButton } from './retrigger-button';
 
 export interface BoardCard {
@@ -74,12 +75,15 @@ export function ActionItemsBoard({
                 item={item}
                 hint={`you replied · updated ${updatedAtLabel}`}
                 action={
-                  item.kind === 'issue' && item.labels.includes('claude') ? (
-                    <RetriggerButton
-                      issueNumber={item.number}
-                      size="compact-xs"
-                    />
-                  ) : undefined
+                  <Group gap={4} wrap="nowrap">
+                    {item.kind === 'issue' && item.labels.includes('claude') && (
+                      <RetriggerButton
+                        issueNumber={item.number}
+                        size="compact-xs"
+                      />
+                    )}
+                    <ItemOverflowMenu item={item} />
+                  </Group>
                 }
               />
             ))}
@@ -102,6 +106,7 @@ export function ActionItemsBoard({
                 key={`${item.kind}-${item.number}`}
                 item={item}
                 hint={`updated ${updatedAtLabel}`}
+                action={<ItemOverflowMenu item={item} />}
               />
             ))}
           </Stack>
@@ -125,6 +130,7 @@ export function ActionItemsBoard({
                 key={`${item.kind}-${item.number}`}
                 item={item}
                 hint={`updated ${updatedAtLabel}`}
+                action={<ItemOverflowMenu item={item} />}
               />
             ))}
           </Stack>

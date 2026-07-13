@@ -26,6 +26,7 @@ import type { PrimaryAction } from '../lib/primary-action';
 import { mergePr, replyToItem } from './actions';
 import { CancelRunButton } from './cancel-run-button';
 import { githubIssueUrl } from './format';
+import { ItemOverflowMenu } from './item-overflow-menu';
 import { RetriggerButton } from './retrigger-button';
 
 const ACTION_LABELS: Record<ActionType, string> = {
@@ -255,6 +256,7 @@ export function ActionItemCard({
                 {ACTION_LABELS[type]}
               </Badge>
             ))}
+            <ItemOverflowMenu item={item} />
           </Group>
         </Group>
 

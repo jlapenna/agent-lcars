@@ -12,6 +12,8 @@ import {
   ActionError,
   approveAndMergePr,
   cancelWorkflowRun as cancelWorkflowRunLib,
+  clearHumanNeededLabel,
+  closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   evictNxCache as evictNxCacheLib,
@@ -145,6 +147,28 @@ export async function createQuickTask(
     const { url, number } = await createQuickTaskLib(description);
     revalidatePath('/');
     return { ok: true, url, number };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function closeIssue(number: number): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await closeIssueLib(number);
+    revalidatePath('/');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function clearHumanNeeded(number: number): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await clearHumanNeededLabel(number);
+    revalidatePath('/');
+    return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }

@@ -1,5 +1,7 @@
 import {
   cancelWorkflowRun,
+  clearHumanNeededLabel,
+  closeIssue,
   createQuickTask,
   deriveQuickTaskTitle,
   dispatchUnstickPrs,
@@ -12,6 +14,74 @@ jest.mock('./github-client', () => ({
   REPO_OWNER: 'supersprinklesracing',
   REPO_NAME: 'members',
 }));
+
+describe('closeIssue', () => {
+  it('closes the given issue on the console repo', async () => {
+    const update = jest.fn().mockResolvedValue({});
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: { issues: { update } },
+    });
+
+    await closeIssue(2709);
+
+    expect(update).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      issue_number: 2709,
+      state: 'closed',
+    });
+  });
+
+  it('propagates a GitHub API error', async () => {
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: {
+        issues: {
+          update: jest
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error('Not Found'), { status: 404 }),
+            ),
+        },
+      },
+    });
+
+    await expect(closeIssue(2709)).rejects.toThrow('Not Found');
+  });
+});
+
+describe('clearHumanNeededLabel', () => {
+  it('removes the human-needed label from the given issue', async () => {
+    const removeLabel = jest.fn().mockResolvedValue({});
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: { issues: { removeLabel } },
+    });
+
+    await clearHumanNeededLabel(2709);
+
+    expect(removeLabel).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      issue_number: 2709,
+      name: 'human-needed',
+    });
+  });
+
+  it('swallows a 404 (label was already absent)', async () => {
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: {
+        issues: {
+          removeLabel: jest
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error('Not Found'), { status: 404 }),
+            ),
+        },
+      },
+    });
+
+    await expect(clearHumanNeededLabel(2709)).resolves.toBeUndefined();
+  });
+});
 
 describe('cancelWorkflowRun', () => {
   it('cancels the given run on the console repo', async () => {

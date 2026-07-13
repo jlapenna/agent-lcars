@@ -17,6 +17,11 @@ jest.mock('./retrigger-button', () => ({
     <button data-testid={`retrigger-${issueNumber}`}>Retrigger</button>
   ),
 }));
+jest.mock('./item-overflow-menu', () => ({
+  ItemOverflowMenu: ({ item }: { item: { number: number } }) => (
+    <button data-testid={`overflow-${item.number}`}>More actions</button>
+  ),
+}));
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -118,6 +123,30 @@ describe('ActionItemsBoard', () => {
     expect(within(claudeRow).getByTestId('retrigger-4')).toBeTruthy();
     const plainRow = screen.getByTestId('compact-item-5');
     expect(within(plainRow).queryByTestId('retrigger-5')).toBeNull();
+  });
+
+  it('offers the overflow menu on every compact row', () => {
+    renderBoard({
+      handedBack: [
+        makeItem({
+          number: 4,
+          title: 'Answered question',
+          actionTypes: ['human-needed'],
+        }),
+      ],
+      waitingOnDeploy: [
+        makeItem({
+          number: 7,
+          title: 'Verify after deploy',
+          actionTypes: ['post-deploy-action'],
+        }),
+      ],
+      rest: [makeItem({ number: 6, title: 'Background item' })],
+    });
+
+    expect(screen.getByTestId('overflow-4')).toBeTruthy();
+    expect(screen.getByTestId('overflow-7')).toBeTruthy();
+    expect(screen.getByTestId('overflow-6')).toBeTruthy();
   });
 
   it('keeps Everything Else collapsed by default with its rows still reachable', () => {

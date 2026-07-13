@@ -5,6 +5,8 @@ import {
   ActionError,
   approveAndMergePr,
   cancelWorkflowRun,
+  clearHumanNeededLabel,
+  closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   evictNxCache as evictNxCacheLib,
@@ -13,6 +15,8 @@ import {
 } from '../lib/backend-actions';
 import {
   cancelRun,
+  clearHumanNeeded,
+  closeIssue,
   createQuickTask,
   dispatchUnstickPrs,
   evictNxCache,
@@ -46,6 +50,8 @@ jest.mock('../lib/backend-actions', () => {
     ActionError,
     approveAndMergePr: jest.fn(),
     cancelWorkflowRun: jest.fn(),
+    clearHumanNeededLabel: jest.fn(),
+    closeIssue: jest.fn(),
     createQuickTask: jest.fn(),
     dispatchUnstickPrs: jest.fn(),
     evictNxCache: jest.fn(),
@@ -183,6 +189,28 @@ describe('agent-console Server Actions', () => {
       });
       expect(revalidatePath).not.toHaveBeenCalled();
     });
+
+    it('closeIssue returns { ok: false, message } instead of throwing', async () => {
+      (closeIssueLib as jest.Mock).mockRejectedValue(
+        new ActionError('Issue not found', 404),
+      );
+
+      await expect(closeIssue(2709)).resolves.toEqual({
+        ok: false,
+        message: 'Issue not found',
+      });
+    });
+
+    it('clearHumanNeeded returns { ok: false, message } instead of throwing', async () => {
+      (clearHumanNeededLabel as jest.Mock).mockRejectedValue(
+        new ActionError('Unexpected error', 500),
+      );
+
+      await expect(clearHumanNeeded(2709)).resolves.toEqual({
+        ok: false,
+        message: 'Unexpected error',
+      });
+    });
   });
 
   describe('when the underlying call succeeds', () => {
@@ -228,6 +256,21 @@ describe('agent-console Server Actions', () => {
         number: 99,
       });
       expect(createQuickTaskLib).toHaveBeenCalledWith('Fix the flaky test');
+    });
+
+    it('closeIssue returns { ok: true } and revalidates', async () => {
+      (closeIssueLib as jest.Mock).mockResolvedValue(undefined);
+
+      await expect(closeIssue(2709)).resolves.toEqual({ ok: true });
+      expect(closeIssueLib).toHaveBeenCalledWith(2709);
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
+    it('clearHumanNeeded returns { ok: true } and revalidates', async () => {
+      (clearHumanNeededLabel as jest.Mock).mockResolvedValue(undefined);
+
+      await expect(clearHumanNeeded(2709)).resolves.toEqual({ ok: true });
+      expect(clearHumanNeededLabel).toHaveBeenCalledWith(2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
   });
