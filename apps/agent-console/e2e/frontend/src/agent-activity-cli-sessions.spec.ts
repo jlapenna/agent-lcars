@@ -28,9 +28,7 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
   }) => {
     await page.goto('/');
 
-    await expect(
-      page.getByText('CLI sessions', { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText('CLI sessions', { exact: true })).toBeVisible();
 
     const liveRow = page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.live}`);
     await expect(liveRow.getByTestId('cli-session-liveness')).toHaveText(
