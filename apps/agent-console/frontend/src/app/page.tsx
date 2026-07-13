@@ -20,6 +20,7 @@ import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { EvictNxCacheButton } from './evict-nx-cache-button';
 import { formatDuration, formatRelativeTime } from './format';
+import { QuickTaskButton } from './quick-task-button';
 import { RefreshButton } from './refresh-button';
 import { ThemeToggle } from './theme-toggle';
 import { UnstickPrsButton } from './unstick-prs-button';
@@ -134,6 +135,7 @@ export default async function Index() {
           </Text>
         </div>
         <Group gap="sm" wrap="nowrap">
+          <QuickTaskButton />
           <UnstickPrsButton />
           <EvictNxCacheButton />
           <RefreshButton

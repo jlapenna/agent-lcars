@@ -26,6 +26,15 @@ function isNotFound(error: unknown): boolean {
   );
 }
 
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status: unknown }).status === 422
+  );
+}
+
 // Replying or retriggering hands the ball back to the agent. The agent
 // applies `human-needed` but nothing ever cleared it, so answered items
 // stayed pinned to the top of "Needs Your Action" indefinitely.
@@ -179,4 +188,66 @@ export async function retriggerIssue(
     issue_number: issueNumber,
     labels: ['claude'],
   });
+}
+
+const QUICK_TASK_LABEL = 'quick-task';
+// Issue titles show up in list views and the run-name banner - a raw,
+// possibly multi-paragraph task description would blow both out, so this
+// keeps just the first line and clips it to something scannable.
+const QUICK_TASK_TITLE_MAX_LENGTH = 80;
+
+export function deriveQuickTaskTitle(description: string): string {
+  const firstLine = description.split('\n', 1)[0].replace(/\s+/g, ' ').trim();
+  if (firstLine.length <= QUICK_TASK_TITLE_MAX_LENGTH) return firstLine;
+  return `${firstLine.slice(0, QUICK_TASK_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+async function ensureQuickTaskLabelExists(): Promise<void> {
+  const octokit = getGithubClient();
+  try {
+    await octokit.rest.issues.createLabel({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      name: QUICK_TASK_LABEL,
+      color: '5319E7',
+      description: 'Filed via the agent console quick task button',
+    });
+  } catch (error) {
+    // 422 = the label already exists; anything else is a real failure.
+    if (!isAlreadyExists(error)) throw error;
+  }
+}
+
+export async function createQuickTask(
+  description: string,
+): Promise<{ url: string; number: number }> {
+  const trimmed = description.trim();
+  if (!trimmed) {
+    throw new ActionError('Task description is required', 400);
+  }
+
+  await ensureQuickTaskLabelExists();
+
+  const octokit = getGithubClient();
+  const { data: issue } = await octokit.rest.issues.create({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    title: deriveQuickTaskTitle(trimmed),
+    body: trimmed,
+    labels: [QUICK_TASK_LABEL],
+  });
+
+  // Added as a follow-up call rather than in the labels above: GitHub only
+  // fires the `issues: labeled` webhook event that claude.yml listens for
+  // when a label is attached after creation, not for one included in the
+  // create() call itself. Same reasoning as retriggerIssue's remove-then-
+  // readd above.
+  await octokit.rest.issues.addLabels({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    issue_number: issue.number,
+    labels: ['claude'],
+  });
+
+  return { url: issue.html_url, number: issue.number };
 }

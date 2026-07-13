@@ -12,6 +12,7 @@ import {
   ActionError,
   approveAndMergePr,
   cancelWorkflowRun as cancelWorkflowRunLib,
+  createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   evictNxCache as evictNxCacheLib,
   postComment,
@@ -55,6 +56,9 @@ function toUserErrorMessage(error: unknown): string {
 // come back as a normal return value, not a thrown Error, to survive to the
 // client in prod. See #2628.
 export type ActionResult = { ok: true } | { ok: false; message: string };
+
+export type QuickTaskResult =
+  { ok: true; url: string; number: number } | { ok: false; message: string };
 
 export async function getActionItems(): Promise<ActionItemsResult> {
   await requireAdmin();
@@ -128,6 +132,19 @@ export async function evictNxCache(capture: boolean): Promise<ActionResult> {
   try {
     await evictNxCacheLib(capture);
     return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function createQuickTask(
+  description: string,
+): Promise<QuickTaskResult> {
+  await requireAdmin();
+  try {
+    const { url, number } = await createQuickTaskLib(description);
+    revalidatePath('/');
+    return { ok: true, url, number };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }

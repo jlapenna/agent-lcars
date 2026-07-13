@@ -5,6 +5,7 @@ import {
   ActionError,
   approveAndMergePr,
   cancelWorkflowRun,
+  createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   evictNxCache as evictNxCacheLib,
   postComment,
@@ -12,6 +13,7 @@ import {
 } from '../lib/backend-actions';
 import {
   cancelRun,
+  createQuickTask,
   dispatchUnstickPrs,
   evictNxCache,
   mergePr,
@@ -44,6 +46,7 @@ jest.mock('../lib/backend-actions', () => {
     ActionError,
     approveAndMergePr: jest.fn(),
     cancelWorkflowRun: jest.fn(),
+    createQuickTask: jest.fn(),
     dispatchUnstickPrs: jest.fn(),
     evictNxCache: jest.fn(),
     postComment: jest.fn(),
@@ -168,6 +171,18 @@ describe('agent-console Server Actions', () => {
         message: 'Resource not accessible',
       });
     });
+
+    it('createQuickTask returns { ok: false, message } instead of throwing', async () => {
+      (createQuickTaskLib as jest.Mock).mockRejectedValue(
+        new ActionError('Task description is required', 400),
+      );
+
+      await expect(createQuickTask('')).resolves.toEqual({
+        ok: false,
+        message: 'Task description is required',
+      });
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
   });
 
   describe('when the underlying call succeeds', () => {
@@ -199,6 +214,21 @@ describe('agent-console Server Actions', () => {
 
       await expect(evictNxCache(true)).resolves.toEqual({ ok: true });
       expect(evictNxCacheLib).toHaveBeenCalledWith(true);
+    });
+
+    it('createQuickTask returns { ok: true, url, number } and revalidates', async () => {
+      (createQuickTaskLib as jest.Mock).mockResolvedValue({
+        url: 'https://github.com/x/y/issues/99',
+        number: 99,
+      });
+
+      await expect(createQuickTask('Fix the flaky test')).resolves.toEqual({
+        ok: true,
+        url: 'https://github.com/x/y/issues/99',
+        number: 99,
+      });
+      expect(createQuickTaskLib).toHaveBeenCalledWith('Fix the flaky test');
+      expect(revalidatePath).toHaveBeenCalledWith('/');
     });
   });
 

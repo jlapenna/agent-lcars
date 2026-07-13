@@ -1,5 +1,7 @@
 import {
   cancelWorkflowRun,
+  createQuickTask,
+  deriveQuickTaskTitle,
   dispatchUnstickPrs,
   evictNxCache,
 } from './backend-actions';
@@ -92,5 +94,119 @@ describe('evictNxCache', () => {
       ref: 'main',
       inputs: { capture: 'true' },
     });
+  });
+});
+
+describe('deriveQuickTaskTitle', () => {
+  it('takes the first line and collapses internal whitespace', () => {
+    expect(
+      deriveQuickTaskTitle('Fix the   flaky   test\nmore detail here'),
+    ).toBe('Fix the flaky test');
+  });
+
+  it('truncates long first lines with an ellipsis', () => {
+    const long = 'x'.repeat(120);
+    const title = deriveQuickTaskTitle(long);
+    expect(title.length).toBe(80);
+    expect(title.endsWith('…')).toBe(true);
+  });
+
+  it('leaves short first lines untouched', () => {
+    expect(deriveQuickTaskTitle('short task')).toBe('short task');
+  });
+});
+
+describe('createQuickTask', () => {
+  function mockOctokit(overrides: {
+    createLabel?: jest.Mock;
+    createIssue?: jest.Mock;
+    addLabels?: jest.Mock;
+  }) {
+    const createLabel =
+      overrides.createLabel ?? jest.fn().mockResolvedValue({});
+    const createIssue =
+      overrides.createIssue ??
+      jest.fn().mockResolvedValue({
+        data: { number: 99, html_url: 'https://github.com/x/y/issues/99' },
+      });
+    const addLabels = overrides.addLabels ?? jest.fn().mockResolvedValue({});
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: {
+        issues: { createLabel, create: createIssue, addLabels },
+      },
+    });
+    return { createLabel, createIssue, addLabels };
+  }
+
+  it('rejects a blank description without calling GitHub', async () => {
+    const { createIssue } = mockOctokit({});
+
+    await expect(createQuickTask('   ')).rejects.toThrow(
+      'Task description is required',
+    );
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
+  it('creates the quick-task label, files the issue, then adds claude as a follow-up call', async () => {
+    const { createLabel, createIssue, addLabels } = mockOctokit({});
+
+    const result = await createQuickTask(
+      '  Fix the flaky test\nmore context  ',
+    );
+
+    expect(createLabel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: 'supersprinklesracing',
+        repo: 'members',
+        name: 'quick-task',
+      }),
+    );
+    expect(createIssue).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      title: 'Fix the flaky test',
+      body: 'Fix the flaky test\nmore context',
+      labels: ['quick-task'],
+    });
+    expect(addLabels).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      issue_number: 99,
+      labels: ['claude'],
+    });
+    // The claude label must be added AFTER the issue is created, and via a
+    // separate call - not folded into the create() labels - or the
+    // `issues: labeled` webhook claude.yml listens for never fires.
+    expect(addLabels.mock.invocationCallOrder[0]).toBeGreaterThan(
+      createIssue.mock.invocationCallOrder[0],
+    );
+    expect(result).toEqual({
+      url: 'https://github.com/x/y/issues/99',
+      number: 99,
+    });
+  });
+
+  it('tolerates the quick-task label already existing (422)', async () => {
+    const { createIssue } = mockOctokit({
+      createLabel: jest
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('exists'), { status: 422 })),
+    });
+
+    await createQuickTask('Some task');
+
+    expect(createIssue).toHaveBeenCalled();
+  });
+
+  it('propagates a non-422 label creation failure', async () => {
+    mockOctokit({
+      createLabel: jest
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error('Forbidden'), { status: 403 }),
+        ),
+    });
+
+    await expect(createQuickTask('Some task')).rejects.toThrow('Forbidden');
   });
 });
