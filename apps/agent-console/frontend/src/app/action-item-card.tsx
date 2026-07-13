@@ -48,23 +48,28 @@ const COLLAPSED_HEIGHT = 120;
 
 // 'clean'/'unknown' need no callout; the rest explain why "Approve & Merge"
 // might not work without a click through to GitHub.
+//
+// 'blocked' is deliberately absent: it's GitHub's catch-all "can't merge
+// yet" state, and for a review-requested item its overwhelmingly common
+// cause is simply the maintainer's own outstanding required approval -
+// exactly what clicking "Approve & Merge" submits before merging (see
+// approveAndMergePr). Treating it as a hard stop disabled the button for
+// every single review-requested PR in the queue, permanently (#2751). A
+// still-running required check is tracked separately via `ciRunning`; any
+// other real leftover block (a second required reviewer, etc.) surfaces as
+// a GitHub error from the merge call itself.
 const MERGEABLE_WARNINGS: Partial<Record<MergeableState, string>> = {
   dirty: 'Merge conflicts',
-  blocked: 'Blocked (branch protection / required checks)',
   unstable: 'Checks unstable',
   behind: 'Base branch has moved',
   draft: 'Draft — mark it ready for review first',
 };
 
-const NOT_MERGEABLE_STATES: MergeableState[] = ['dirty', 'blocked', 'draft'];
+const NOT_MERGEABLE_STATES: MergeableState[] = ['dirty', 'draft'];
 
-// GitHub's 'blocked' state also covers required checks still running (the
-// "CI running…" line already covers that); only warn once checks are done.
 function mergeableWarning(item: {
   mergeableState?: MergeableState;
-  ciRunning?: boolean;
 }): string | undefined {
-  if (item.mergeableState === 'blocked' && item.ciRunning) return undefined;
   return item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState];
 }
 
@@ -228,6 +233,7 @@ export function ActionItemCard({
   const mergeDisabled =
     isPending ||
     item.draft ||
+    item.ciRunning ||
     (item.mergeableState !== undefined &&
       NOT_MERGEABLE_STATES.includes(item.mergeableState));
 

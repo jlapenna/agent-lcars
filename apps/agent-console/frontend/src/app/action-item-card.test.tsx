@@ -2,6 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
 
 import type { ActionItem } from '../lib/action-items';
+import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
@@ -30,10 +31,14 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   };
 }
 
-function renderCard(item: ActionItem) {
+function renderCard(item: ActionItem, primaryAction?: PrimaryAction) {
   render(
     <MantineProvider>
-      <ActionItemCard item={item} updatedAtLabel="now" />
+      <ActionItemCard
+        item={item}
+        updatedAtLabel="now"
+        primaryAction={primaryAction}
+      />
     </MantineProvider>,
   );
 }
@@ -71,5 +76,59 @@ describe('ActionItemCard', () => {
     ]) {
       expect(screen.getByText(label)).toBeTruthy();
     }
+  });
+
+  it('keeps Approve & Merge clickable when blocked only on the pending approval this button submits (#2751)', () => {
+    renderCard(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        draft: false,
+        mergeableState: 'blocked',
+      }),
+      { kind: 'approve-merge' },
+    );
+
+    const button = screen.getByRole('button', {
+      name: 'Approve & Merge',
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(screen.queryByText(/Blocked/)).toBeNull();
+  });
+
+  it('disables Approve & Merge on real merge conflicts', () => {
+    renderCard(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        draft: false,
+        mergeableState: 'dirty',
+      }),
+      { kind: 'approve-merge' },
+    );
+
+    const button = screen.getByRole('button', {
+      name: 'Approve & Merge',
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText(/Merge conflicts/)).toBeTruthy();
+  });
+
+  it('disables Approve & Merge while required checks are still running', () => {
+    renderCard(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        draft: false,
+        mergeableState: 'blocked',
+        ciRunning: true,
+      }),
+      { kind: 'approve-merge' },
+    );
+
+    const button = screen.getByRole('button', {
+      name: 'Approve & Merge',
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
   });
 });
