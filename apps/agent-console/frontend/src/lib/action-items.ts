@@ -4,6 +4,13 @@ import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
  * login, and a newest comment by it means the ball is back with the agent. */
 export const MAINTAINER_LOGIN = 'jlapenna';
 
+/** The machine user the agent fleet claims work as (#2783): claude.yml
+ * assigns it to the anchor issue at run start, claude-automerge.yml assigns
+ * it to agent-authored PRs, and interactive sessions claim with it per the
+ * sprinkles-dev SKILL.md guardrail. (The claude[bot] app identity itself is
+ * not an assignable user, so this account IS the fleet's assignee.) */
+export const AGENT_FLEET_LOGIN = 'jclaw-bot';
+
 export type ActionType =
   'human-needed' | 'run-failed' | 'review-requested' | 'post-deploy-action';
 
@@ -177,6 +184,7 @@ interface SearchIssue {
   updated_at: string;
   user?: { login?: string } | null;
   labels: (string | { name?: string })[];
+  assignees?: ({ login?: string } | null)[] | null;
   pull_request?: unknown;
   parent_issue_url?: string | null;
   sub_issues_summary?: { total: number; completed: number };
@@ -276,10 +284,15 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
   let lastCommentAuthor: string | undefined;
   let takeoverCommand: string | undefined;
   // Comment fetches cost one API call per item, so stay scoped: actionable
-  // items (for the comment preview) plus claude-labeled issues (where the
-  // agent's ack comment carries the session takeover command; PRs never
-  // do - the agent only posts it on the issue it picked up).
-  const wantsTakeover = !isPr && labels.includes('claude');
+  // items (for the comment preview) plus anything the agent fleet has
+  // claimed via the assignee field (#2783) - issues AND PRs alike, since
+  // every session now announces its takeover command where it works:
+  // claude.yml runs on their anchor issue/PR, interactive sessions per
+  // pr.md Step 0 and the SKILL.md claim guardrail.
+  const assigneeLogins = (issue.assignees ?? []).map(
+    (assignee) => assignee?.login ?? '',
+  );
+  const wantsTakeover = assigneeLogins.includes(AGENT_FLEET_LOGIN);
   if (isHumanNeeded || isPostDeploy || wantsTakeover) {
     const scan = await scanComments(issue.number, issue.comments ?? 0);
     if (isHumanNeeded || isPostDeploy) {
@@ -394,13 +407,29 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
 // 'is:pull-request'", 422) - there's no single qualifier meaning "both", so
 // each base query below is expanded into both variants.
 const BASE_QUERIES = [
+  // The assignee field is the ownership spine (#2783): jclaw-bot assigned
+  // means the agent fleet has claimed the item. This single query covers
+  // what used to need an author:app/claude query AND still missed things -
+  // @claude PR threads, runbook anchors, and interactive-session claims
+  // never carry the claude label, but all get the fleet assignee now
+  // (claude.yml claims issues at run start; claude-automerge.yml claims
+  // agent-authored PRs on open).
+  'is:open assignee:jclaw-bot',
+  // jlapenna assigned = the ball is in the maintainer's court: human-needed
+  // endings and failed-run reports assign him automatically, and anything
+  // he owns personally belongs on his console too.
+  'is:open assignee:jlapenna',
+  // Belt and suspenders: a claude-labeled issue whose run never started
+  // (runner outage, queue loss) is dispatched-but-unclaimed - the claim
+  // step only runs once a runner picks the job up, so without this query
+  // exactly the items most in need of attention would be invisible.
   'is:open label:claude',
   // human-needed is one of this dashboard's own action types, but not every
   // human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
   // carry human-needed without ever having the claude label or an agent
-  // author, and without this query it never enters the dashboard at all.
+  // author (or, if labeled by hand, an assignee), and without this query it
+  // never enters the dashboard at all.
   'is:open label:human-needed',
-  'is:open author:app/claude',
   'is:open review-requested:jlapenna',
 ];
 const SEARCH_QUERIES = BASE_QUERIES.flatMap((query) => [

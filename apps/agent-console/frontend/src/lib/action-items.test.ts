@@ -20,6 +20,7 @@ interface FakeSearchItem {
   updated_at: string;
   user?: { login?: string } | null;
   labels: string[];
+  assignees?: { login?: string }[];
   pull_request?: object;
   comments?: number;
 }
@@ -36,12 +37,13 @@ function makeItem(
     updated_at: '2026-07-07T00:00:00Z',
     user: { login: 'someone' },
     labels: [],
+    assignees: [],
     comments: 0,
     ...overrides,
   };
 }
 
-// Every call site targets exactly one of the 8 expanded SEARCH_QUERIES via
+// Every call site targets exactly one of the 10 expanded SEARCH_QUERIES via
 // this predicate, and every non-targeted query resolves empty - keeps each
 // test isolated to the one query path it's exercising.
 function emptySearchPage() {
@@ -398,5 +400,114 @@ describe('getActionItems', () => {
     expect(
       result.warnings.some((w) => w.includes('Failed to classify #20')),
     ).toBe(true);
+  });
+
+  it('surfaces the takeover command on a jclaw-bot-assigned PR', async () => {
+    const PR_Q = (q: string) =>
+      q.includes('assignee:jclaw-bot') && q.includes('is:pull-request');
+    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+      if (!PR_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [
+            makeItem(42, {
+              pull_request: {},
+              assignees: [{ login: 'jclaw-bot' }],
+              comments: 1,
+            }),
+          ],
+        },
+      });
+    });
+    const listComments = jest.fn().mockResolvedValue({
+      data: [
+        {
+          body: 'Session takeover:\n```\n~/p/members/tools/claude-agent-session.sh resume abc-123\n```',
+          html_url: 'https://github.com/o/r/pull/42#issuecomment-1',
+          user: { login: 'claude[bot]' },
+        },
+      ],
+    });
+    const pullsGet = jest.fn().mockResolvedValue({
+      data: {
+        draft: false,
+        mergeable_state: 'clean',
+        head: { sha: 'deadbeef' },
+        body: null,
+        requested_reviewers: [],
+      },
+    });
+    const checksListForRef = jest
+      .fn()
+      .mockResolvedValue({ data: { total_count: 0, check_runs: [] } });
+    setupOctokit({
+      issuesAndPullRequests,
+      listComments,
+      pullsGet,
+      checksListForRef,
+    });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([42]);
+    expect(result.items[0].takeoverCommand).toBe(
+      '~/p/members/tools/claude-agent-session.sh resume abc-123',
+    );
+  });
+
+  it('scans takeover for a jclaw-bot-assigned issue without the claude label (interactive claim)', async () => {
+    const ISSUE_Q = (q: string) =>
+      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
+    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+      if (!ISSUE_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [
+            makeItem(43, { assignees: [{ login: 'jclaw-bot' }], comments: 1 }),
+          ],
+        },
+      });
+    });
+    const listComments = jest.fn().mockResolvedValue({
+      data: [
+        {
+          body: '~/p/members/tools/claude-agent-session.sh resume def-456',
+          html_url: 'https://github.com/o/r/issues/43#issuecomment-1',
+          user: { login: 'jlapenna' },
+        },
+      ],
+    });
+    setupOctokit({ issuesAndPullRequests, listComments });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].takeoverCommand).toBe(
+      '~/p/members/tools/claude-agent-session.sh resume def-456',
+    );
+  });
+
+  it('does not scan comments for a claude-labeled issue nobody has claimed', async () => {
+    // Dispatched-but-unclaimed (runner never started): there is no session
+    // yet, so there is no takeover command to find - the claim assignee,
+    // not the dispatch label, is what says a session exists (#2783).
+    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+      if (!TARGET_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [makeItem(44, { labels: ['claude'], comments: 3 })],
+        },
+      });
+    });
+    const listComments = jest.fn().mockResolvedValue({ data: [] });
+    setupOctokit({ issuesAndPullRequests, listComments });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([44]);
+    expect(result.items[0].takeoverCommand).toBeUndefined();
+    expect(listComments).not.toHaveBeenCalled();
   });
 });
