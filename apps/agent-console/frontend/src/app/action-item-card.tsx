@@ -246,7 +246,12 @@ export function ActionItemCard({
           </Anchor>
           <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
             {item.actionTypes.map((type) => (
-              <Badge key={type} color={ACTION_COLORS[type]} variant="light">
+              <Badge
+                key={type}
+                color={ACTION_COLORS[type]}
+                variant="light"
+                size="sm"
+              >
                 {ACTION_LABELS[type]}
               </Badge>
             ))}
@@ -294,6 +299,7 @@ export function ActionItemCard({
             <Badge
               variant="filled"
               color={liveRun.status === 'running' ? 'blue' : 'gray'}
+              size="sm"
             >
               {liveRun.status === 'running'
                 ? 'Agent working now'

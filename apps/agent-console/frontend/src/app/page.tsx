@@ -7,11 +7,7 @@ import {
   isDeployWaitOnly,
   isHandedBack,
 } from '../lib/action-items';
-import {
-  type AgentRun,
-  getAgentActivity,
-  RUN_TIMEOUT_MINUTES,
-} from '../lib/agent-activity';
+import { getAgentActivity } from '../lib/agent-activity';
 import { getCliSessions } from '../lib/cli-sessions';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { type LiveRunSummary } from './action-item-card';
@@ -19,30 +15,13 @@ import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { EvictNxCacheButton } from './evict-nx-cache-button';
-import { formatDuration, formatRelativeTime } from './format';
+import { formatRelativeTime } from './format';
 import { QuickTaskButton } from './quick-task-button';
 import { RefreshButton } from './refresh-button';
 import { ThemeToggle } from './theme-toggle';
 import { UnstickPrsButton } from './unstick-prs-button';
 
 export const dynamic = 'force-dynamic';
-
-// The card is a client component, so it gets a preformatted summary instead
-// of the raw AgentRun (whose module pulls in the server-only GitHub client).
-function toLiveRunSummary(
-  run: AgentRun | undefined,
-): LiveRunSummary | undefined {
-  if (!run) return undefined;
-  return {
-    id: run.id,
-    status: run.status === 'running' ? 'running' : 'queued',
-    label:
-      run.status === 'running'
-        ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m budget`
-        : `queued for ${formatDuration(run.elapsedSeconds)}`,
-    url: run.url,
-  };
-}
 
 function toCard(item: ActionItem, liveRun?: LiveRunSummary): BoardCard {
   return {
@@ -127,14 +106,14 @@ export default async function Index() {
 
   return (
     <Container size="md" py="xl">
-      <Group justify="space-between" align="flex-start" wrap="nowrap" mb="xl">
+      <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
         <div>
           <Title order={1}>Agent Console</Title>
           <Text c="dimmed" mt={4}>
             supersprinklesracing/members &mdash; Claude issue agent activity
           </Text>
         </div>
-        <Group gap="sm" wrap="nowrap">
+        <Group gap="sm">
           <QuickTaskButton />
           <UnstickPrsButton />
           <EvictNxCacheButton />
