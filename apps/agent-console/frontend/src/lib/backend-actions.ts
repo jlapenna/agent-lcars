@@ -238,11 +238,13 @@ async function ensureQuickTaskLabelExists(): Promise<void> {
 
 export async function createQuickTask(
   description: string,
+  title?: string,
 ): Promise<{ url: string; number: number }> {
   const trimmed = description.trim();
   if (!trimmed) {
     throw new ActionError('Task description is required', 400);
   }
+  const trimmedTitle = title?.trim();
 
   await ensureQuickTaskLabelExists();
 
@@ -250,7 +252,7 @@ export async function createQuickTask(
   const { data: issue } = await octokit.rest.issues.create({
     owner: REPO_OWNER,
     repo: REPO_NAME,
-    title: deriveQuickTaskTitle(trimmed),
+    title: trimmedTitle || deriveQuickTaskTitle(trimmed),
     body: trimmed,
     labels: [QUICK_TASK_LABEL],
   });

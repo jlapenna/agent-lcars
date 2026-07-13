@@ -250,12 +250,17 @@ describe('agent-console Server Actions', () => {
         number: 99,
       });
 
-      await expect(createQuickTask('Fix the flaky test')).resolves.toEqual({
+      await expect(
+        createQuickTask('Fix the flaky test', 'Custom title'),
+      ).resolves.toEqual({
         ok: true,
         url: 'https://github.com/x/y/issues/99',
         number: 99,
       });
-      expect(createQuickTaskLib).toHaveBeenCalledWith('Fix the flaky test');
+      expect(createQuickTaskLib).toHaveBeenCalledWith(
+        'Fix the flaky test',
+        'Custom title',
+      );
     });
 
     it('closeIssue returns { ok: true } and revalidates', async () => {

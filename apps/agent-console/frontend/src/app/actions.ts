@@ -141,10 +141,11 @@ export async function evictNxCache(capture: boolean): Promise<ActionResult> {
 
 export async function createQuickTask(
   description: string,
+  title?: string,
 ): Promise<QuickTaskResult> {
   await requireAdmin();
   try {
-    const { url, number } = await createQuickTaskLib(description);
+    const { url, number } = await createQuickTaskLib(description, title);
     revalidatePath('/');
     return { ok: true, url, number };
   } catch (error) {

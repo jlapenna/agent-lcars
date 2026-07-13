@@ -256,6 +256,29 @@ describe('createQuickTask', () => {
     });
   });
 
+  it('uses the explicit title instead of deriving one when provided', async () => {
+    const { createIssue } = mockOctokit({});
+
+    await createQuickTask(
+      'Fix the flaky test\nmore context',
+      '  Custom title  ',
+    );
+
+    expect(createIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Custom title' }),
+    );
+  });
+
+  it('falls back to the derived title when the explicit title is blank', async () => {
+    const { createIssue } = mockOctokit({});
+
+    await createQuickTask('Fix the flaky test\nmore context', '   ');
+
+    expect(createIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Fix the flaky test' }),
+    );
+  });
+
   it('tolerates the quick-task label already existing (422)', async () => {
     const { createIssue } = mockOctokit({
       createLabel: jest
