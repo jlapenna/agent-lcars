@@ -1,4 +1,4 @@
-import { Firestore } from '@google-cloud/firestore';
+import { Firestore, Timestamp } from '@google-cloud/firestore';
 import {
   getFirestoreEmulatorHost,
   getProjectId,
@@ -8,6 +8,7 @@ import { App, getApps, initializeApp } from 'firebase-admin/app';
 import {
   Firestore as AdminFirestore,
   getFirestore as getAdminFirestore,
+  Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
 import { SessionDoc } from '../lib/types';
@@ -54,13 +55,27 @@ export function getAgentTelemetryWriterFirestore(): AdminFirestore {
   return cachedWriterFirestore;
 }
 
-/** Upserts a session doc at `sessions/{sessionId}` in the telemetry database. */
+/**
+ * Upserts a session doc at `sessions/{sessionId}` in the telemetry database.
+ * `expireAt` is written as a Firestore `Timestamp` (not the ISO string
+ * `SessionDoc` carries it as) because the collection's TTL policy — see
+ * `tools/provision-agent-telemetry-gcp.sh` and issue #2708 — only recognizes
+ * a native Timestamp field. Built via `AdminTimestamp` (the `firebase-admin`
+ * re-export), not the plain `@google-cloud/firestore` `Timestamp` used
+ * below for `listSessionDocs`: `getAgentTelemetryWriterFirestore` is a
+ * `firebase-admin` client, and Next's bundler otherwise emits the two
+ * `Timestamp` classes into separate chunks, so the SDK's `instanceof` check
+ * on write fails with "not a valid Firestore document" (#2762).
+ */
 export async function upsertSession(doc: SessionDoc): Promise<void> {
   const firestore = getAgentTelemetryWriterFirestore();
   await firestore
     .collection(SESSIONS_COLLECTION)
     .doc(doc.sessionId)
-    .set(doc, { merge: true });
+    .set(
+      { ...doc, expireAt: AdminTimestamp.fromDate(new Date(doc.expireAt)) },
+      { merge: true },
+    );
 }
 
 export interface ListSessionDocsOptions {
@@ -87,7 +102,16 @@ export async function listSessionDocs(
     ? collection.where('lastActivityAt', '>=', options.activeSince)
     : collection;
   const snapshot = await query.get();
-  const docs = snapshot.docs.map((doc) => doc.data() as SessionDoc);
+  const docs = snapshot.docs.map((doc) => {
+    const data = doc.data();
+    const expireAt = data['expireAt'];
+    return {
+      ...data,
+      ...(expireAt instanceof Timestamp && {
+        expireAt: expireAt.toDate().toISOString(),
+      }),
+    } as SessionDoc;
+  });
   return docs.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
 }
 

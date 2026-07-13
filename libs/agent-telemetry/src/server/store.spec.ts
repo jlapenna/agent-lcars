@@ -1,3 +1,4 @@
+import { Timestamp } from '@google-cloud/firestore';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import {
   Firestore,
@@ -19,6 +20,7 @@ jest.mock('firebase-admin/app', () => ({
 
 jest.mock('firebase-admin/firestore', () => ({
   getFirestore: jest.fn(),
+  Timestamp: jest.requireActual('@google-cloud/firestore').Timestamp,
 }));
 
 jest.mock('@repo/util-server', () => ({
@@ -35,6 +37,7 @@ function sessionDoc(overrides: Partial<SessionDoc> = {}): SessionDoc {
     liveness: 'live',
     startedAt: '2026-07-10T10:00:00.000Z',
     lastActivityAt: '2026-07-10T10:05:00.000Z',
+    expireAt: '2026-08-09T10:05:00.000Z',
     turns: 1,
     toolCallCounts: {},
     tokens: {
@@ -102,7 +105,20 @@ describe('agent-telemetry store', () => {
         .doc('session-1')
         .get();
       expect(snap.exists).toBe(true);
-      expect(snap.data()).toEqual(doc);
+      expect(snap.data()).toEqual({
+        ...doc,
+        expireAt: Timestamp.fromDate(new Date(doc.expireAt)),
+      });
+    });
+
+    it('writes expireAt as a native Firestore Timestamp, not the ISO string', async () => {
+      await upsertSession(sessionDoc());
+
+      const snap = await fakeFirestore
+        .collection('sessions')
+        .doc('session-1')
+        .get();
+      expect(snap.data()?.['expireAt']).toBeInstanceOf(Timestamp);
     });
 
     it('merges rather than overwrites on repeated upserts', async () => {

@@ -1,4 +1,7 @@
-import type { CliSessionDoc } from '@repo/agent-telemetry';
+import {
+  type CliSessionDoc,
+  SESSION_RETENTION_DAYS,
+} from '@repo/agent-telemetry';
 import {
   getAgentTelemetryWriterFirestore,
   SESSIONS_COLLECTION,
@@ -23,14 +26,26 @@ export const E2E_CLI_SESSION_IDS = {
 const minutesAgo = (minutes: number) =>
   new Date(Date.now() - minutes * 60 * 1000).toISOString();
 
+const expireAtFor = (lastActivityAt: string) => {
+  const expireAt = new Date(lastActivityAt);
+  expireAt.setUTCDate(expireAt.getUTCDate() + SESSION_RETENTION_DAYS);
+  return expireAt.toISOString();
+};
+
 function fixtureSessions(): CliSessionDoc[] {
+  const liveLastActivityAt = minutesAgo(1);
+  const idleLastActivityAt = minutesAgo(20);
+  const endedLastActivityAt = minutesAgo(235);
+  const staleLastActivityAt = minutesAgo(350);
+
   return [
     {
       sessionId: E2E_CLI_SESSION_IDS.live,
       source: 'cli',
       liveness: 'live',
       startedAt: minutesAgo(15),
-      lastActivityAt: minutesAgo(1),
+      lastActivityAt: liveLastActivityAt,
+      expireAt: expireAtFor(liveLastActivityAt),
       turns: 12,
       toolCallCounts: { Read: 5, Edit: 3, Bash: 4 },
       tokens: {
@@ -51,7 +66,8 @@ function fixtureSessions(): CliSessionDoc[] {
       source: 'cli',
       liveness: 'idle',
       startedAt: minutesAgo(120),
-      lastActivityAt: minutesAgo(20),
+      lastActivityAt: idleLastActivityAt,
+      expireAt: expireAtFor(idleLastActivityAt),
       turns: 3,
       toolCallCounts: { Read: 2 },
       tokens: {
@@ -71,7 +87,8 @@ function fixtureSessions(): CliSessionDoc[] {
       source: 'cli',
       liveness: 'ended',
       startedAt: minutesAgo(240),
-      lastActivityAt: minutesAgo(235),
+      lastActivityAt: endedLastActivityAt,
+      expireAt: expireAtFor(endedLastActivityAt),
       turns: 1,
       toolCallCounts: {},
       tokens: {
@@ -89,7 +106,8 @@ function fixtureSessions(): CliSessionDoc[] {
       source: 'cli',
       liveness: 'stale',
       startedAt: minutesAgo(360),
-      lastActivityAt: minutesAgo(350),
+      lastActivityAt: staleLastActivityAt,
+      expireAt: expireAtFor(staleLastActivityAt),
       turns: 2,
       toolCallCounts: {},
       tokens: {

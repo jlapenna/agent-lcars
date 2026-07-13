@@ -15,6 +15,19 @@ firestore:
   database: 'agent-telemetry'
   location: 'us-central1'
   type: 'firestore-native'
+  # Bounds the `sessions` collection, which otherwise grows by ~1 doc/session
+  # forever (237 docs within the first weeks of Slice 1) — see issue #2708.
+  # `expireAt` (lastActivityAt + 30d, computed in
+  # libs/agent-telemetry/src/lib/session-doc.ts) is a Firestore Timestamp
+  # field; deletion is performed by Firestore's own service agent, so no
+  # extra IAM permission (e.g. datastore.entities.delete) is needed on the
+  # writer role above. 30d was chosen to comfortably outlive the console's
+  # 24h `activeSince` read cutoff (#2694/#2701) while Slice 2 (GCS transcript
+  # archive) is still unbuilt; revisit once that lands if ended-session docs
+  # need to live longer as an index into the archive.
+  ttlPolicies:
+    sessions:
+      field: 'expireAt'
 
 # Firestore has no built-in "write-only" or database-scoped role, so both
 # roles are custom, and every grant below is IAM-condition-scoped to this

@@ -5,6 +5,20 @@ import {
   SessionSummary,
 } from './types';
 
+/** Horizon past `lastActivityAt` at which a session doc becomes eligible for
+ * Firestore TTL deletion (see issue #2708). Slice 2's GCS transcript archive
+ * may want ended-session docs retained longer as an index into the archive
+ * — revisit this constant when that lands rather than deleting docs it still
+ * needs. */
+export const SESSION_RETENTION_DAYS = 30;
+
+function computeExpireAt(lastActivityAt: string): string {
+  const retentionMs = SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  return new Date(
+    new Date(lastActivityAt).getTime() + retentionMs,
+  ).toISOString();
+}
+
 /**
  * Maps a {@link SessionSummary} (source-agnostic reducer output) into the
  * source-discriminated `SessionDoc` schema stored at `sessions/{sessionId}`.
@@ -21,6 +35,7 @@ export function buildSessionDoc(
     liveness,
     startedAt: summary.startedAt,
     lastActivityAt: summary.lastActivityAt,
+    expireAt: computeExpireAt(summary.lastActivityAt),
     turns: summary.turns,
     toolCallCounts: summary.toolCallCounts,
     tokens: summary.tokens,

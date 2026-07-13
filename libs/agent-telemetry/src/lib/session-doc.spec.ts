@@ -1,4 +1,4 @@
-import { buildSessionDoc } from './session-doc';
+import { buildSessionDoc, SESSION_RETENTION_DAYS } from './session-doc';
 import { SessionSummary } from './types';
 
 function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
@@ -38,6 +38,7 @@ describe('buildSessionDoc', () => {
       liveness: 'live',
       startedAt: '2026-07-10T10:00:00.000Z',
       lastActivityAt: '2026-07-10T10:05:00.000Z',
+      expireAt: '2026-08-09T10:05:00.000Z',
       turns: 2,
       toolCallCounts: { Bash: 1 },
       tokens: {
@@ -73,6 +74,7 @@ describe('buildSessionDoc', () => {
       liveness: 'ended',
       startedAt: '2026-07-10T10:00:00.000Z',
       lastActivityAt: '2026-07-10T10:05:00.000Z',
+      expireAt: '2026-08-09T10:05:00.000Z',
       turns: 2,
       toolCallCounts: { Bash: 1 },
       tokens: {
@@ -129,6 +131,17 @@ describe('buildSessionDoc', () => {
     );
 
     expect(doc).not.toHaveProperty('artifacts');
+  });
+
+  it('computes expireAt as lastActivityAt + SESSION_RETENTION_DAYS', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ lastActivityAt: '2026-01-01T00:00:00.000Z' }),
+      'ended',
+    );
+
+    const expected = new Date('2026-01-01T00:00:00.000Z');
+    expected.setUTCDate(expected.getUTCDate() + SESSION_RETENTION_DAYS);
+    expect(doc.expireAt).toBe(expected.toISOString());
   });
 
   it('carries lastToolCall/model/permissionMode/title through when present', () => {

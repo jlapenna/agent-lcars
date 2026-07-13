@@ -20,6 +20,7 @@ jest.mock('firebase-admin/app', () => ({
 
 jest.mock('firebase-admin/firestore', () => ({
   getFirestore: jest.fn(),
+  Timestamp: jest.requireActual('@google-cloud/firestore').Timestamp,
 }));
 
 jest.mock('@repo/util-server', () => ({

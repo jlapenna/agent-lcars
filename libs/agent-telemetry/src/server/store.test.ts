@@ -1,4 +1,4 @@
-import { Firestore } from '@google-cloud/firestore';
+import { Firestore, Timestamp } from '@google-cloud/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
 import { mockWhere } from 'firestore-jest-mock/mocks/firestore';
 
@@ -11,6 +11,7 @@ const cliSession: CliSessionDoc = {
   liveness: 'live',
   startedAt: '2026-07-12T00:00:00.000Z',
   lastActivityAt: '2026-07-12T00:05:00.000Z',
+  expireAt: '2026-08-11T00:05:00.000Z',
   turns: 4,
   toolCallCounts: { Read: 2 },
   tokens: {
@@ -30,6 +31,7 @@ const issueAgentSession: IssueAgentSessionDoc = {
   liveness: 'ended',
   startedAt: '2026-07-11T00:00:00.000Z',
   lastActivityAt: '2026-07-11T00:30:00.000Z',
+  expireAt: '2026-08-10T00:30:00.000Z',
   turns: 12,
   toolCallCounts: {},
   tokens: {
@@ -99,5 +101,29 @@ describe('listSessionDocs', () => {
     }) as unknown as Firestore;
 
     expect(await listSessionDocs(firestore)).toEqual([]);
+  });
+
+  it('converts a stored expireAt Timestamp back into an ISO string', async () => {
+    const expireAt = Timestamp.fromDate(new Date('2026-08-11T00:05:00.000Z'));
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: cliSession.sessionId, ...cliSession, expireAt },
+      ],
+    }) as unknown as Firestore;
+
+    const [doc] = await listSessionDocs(firestore);
+
+    expect(doc.expireAt).toBe('2026-08-11T00:05:00.000Z');
+  });
+
+  it('leaves a legacy doc missing expireAt as-is rather than throwing', async () => {
+    const { expireAt: _expireAt, ...legacyDoc } = cliSession;
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [{ id: legacyDoc.sessionId, ...legacyDoc }],
+    }) as unknown as Firestore;
+
+    const [doc] = await listSessionDocs(firestore);
+
+    expect(doc.expireAt).toBeUndefined();
   });
 });

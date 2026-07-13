@@ -70,6 +70,11 @@ interface BaseSessionDoc {
   permissionMode?: string;
   title?: string;
   deliverables: SessionDeliverables;
+  /** ISO timestamp `lastActivityAt + SESSION_RETENTION_DAYS`. Written as a
+   * Firestore `Timestamp` (see `upsertSession`) so the `sessions` collection's
+   * TTL policy (`tools/provision-agent-telemetry-gcp.sh`) can garbage-collect
+   * it — see issue #2708. */
+  expireAt: string;
 }
 
 export interface CliSessionDoc extends BaseSessionDoc {
