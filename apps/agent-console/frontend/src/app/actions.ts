@@ -12,6 +12,8 @@ import {
   ActionError,
   approveAndMergePr,
   cancelWorkflowRun as cancelWorkflowRunLib,
+  dispatchUnstickPrs as dispatchUnstickPrsLib,
+  evictNxCache as evictNxCacheLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
@@ -103,6 +105,28 @@ export async function cancelRun(runId: number): Promise<ActionResult> {
   try {
     await cancelWorkflowRunLib(runId);
     revalidatePath('/');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function dispatchUnstickPrs(
+  context?: string,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await dispatchUnstickPrsLib(context);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function evictNxCache(capture: boolean): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await evictNxCacheLib(capture);
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };

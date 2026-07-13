@@ -5,10 +5,19 @@ import {
   ActionError,
   approveAndMergePr,
   cancelWorkflowRun,
+  dispatchUnstickPrs as dispatchUnstickPrsLib,
+  evictNxCache as evictNxCacheLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
-import { cancelRun, mergePr, replyToItem, retriggerIssue } from './actions';
+import {
+  cancelRun,
+  dispatchUnstickPrs,
+  evictNxCache,
+  mergePr,
+  replyToItem,
+  retriggerIssue,
+} from './actions';
 
 jest.mock('next/cache', () => ({
   revalidatePath: jest.fn(),
@@ -35,6 +44,8 @@ jest.mock('../lib/backend-actions', () => {
     ActionError,
     approveAndMergePr: jest.fn(),
     cancelWorkflowRun: jest.fn(),
+    dispatchUnstickPrs: jest.fn(),
+    evictNxCache: jest.fn(),
     postComment: jest.fn(),
     retriggerIssue: jest.fn(),
   };
@@ -129,6 +140,34 @@ describe('agent-console Server Actions', () => {
         message: 'Unexpected error',
       });
     });
+
+    it('dispatchUnstickPrs returns { ok: false, message } instead of throwing', async () => {
+      (dispatchUnstickPrsLib as jest.Mock).mockRejectedValue(
+        Object.assign(new Error('Forbidden'), {
+          status: 403,
+          response: { data: { message: 'Resource not accessible' } },
+        }),
+      );
+
+      await expect(dispatchUnstickPrs()).resolves.toEqual({
+        ok: false,
+        message: 'Resource not accessible',
+      });
+    });
+
+    it('evictNxCache returns { ok: false, message } instead of throwing', async () => {
+      (evictNxCacheLib as jest.Mock).mockRejectedValue(
+        Object.assign(new Error('Forbidden'), {
+          status: 403,
+          response: { data: { message: 'Resource not accessible' } },
+        }),
+      );
+
+      await expect(evictNxCache(false)).resolves.toEqual({
+        ok: false,
+        message: 'Resource not accessible',
+      });
+    });
   });
 
   describe('when the underlying call succeeds', () => {
@@ -144,6 +183,22 @@ describe('agent-console Server Actions', () => {
 
       await expect(replyToItem(42, 'hi')).resolves.toEqual({ ok: true });
       expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
+    it('dispatchUnstickPrs returns { ok: true } and forwards the context', async () => {
+      (dispatchUnstickPrsLib as jest.Mock).mockResolvedValue(undefined);
+
+      await expect(dispatchUnstickPrs('PR #123 stuck')).resolves.toEqual({
+        ok: true,
+      });
+      expect(dispatchUnstickPrsLib).toHaveBeenCalledWith('PR #123 stuck');
+    });
+
+    it('evictNxCache returns { ok: true } and forwards the capture flag', async () => {
+      (evictNxCacheLib as jest.Mock).mockResolvedValue(undefined);
+
+      await expect(evictNxCache(true)).resolves.toEqual({ ok: true });
+      expect(evictNxCacheLib).toHaveBeenCalledWith(true);
     });
   });
 

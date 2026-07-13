@@ -95,6 +95,34 @@ export async function cancelWorkflowRun(runId: number): Promise<void> {
   });
 }
 
+// Both playbook dispatches below POST the same workflow_dispatch event a
+// human triggers from the Actions tab or `gh workflow run` — see
+// playbook-unstick-prs.yml / playbook-evict-nx-cache.yml.
+const DEFAULT_BRANCH = 'main';
+
+export async function dispatchUnstickPrs(context?: string): Promise<void> {
+  const octokit = getGithubClient();
+  const trimmedContext = context?.trim();
+  await octokit.rest.actions.createWorkflowDispatch({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    workflow_id: 'playbook-unstick-prs.yml',
+    ref: DEFAULT_BRANCH,
+    inputs: trimmedContext ? { context: trimmedContext } : {},
+  });
+}
+
+export async function evictNxCache(capture: boolean): Promise<void> {
+  const octokit = getGithubClient();
+  await octokit.rest.actions.createWorkflowDispatch({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    workflow_id: 'playbook-evict-nx-cache.yml',
+    ref: DEFAULT_BRANCH,
+    inputs: { capture: String(capture) },
+  });
+}
+
 export async function retriggerIssue(
   issueNumber: number,
   note?: string,

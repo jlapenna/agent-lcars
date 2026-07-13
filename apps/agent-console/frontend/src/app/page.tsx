@@ -18,9 +18,11 @@ import { type LiveRunSummary } from './action-item-card';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
+import { EvictNxCacheButton } from './evict-nx-cache-button';
 import { formatDuration, formatRelativeTime } from './format';
 import { RefreshButton } from './refresh-button';
 import { ThemeToggle } from './theme-toggle';
+import { UnstickPrsButton } from './unstick-prs-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,6 +134,8 @@ export default async function Index() {
           </Text>
         </div>
         <Group gap="sm" wrap="nowrap">
+          <UnstickPrsButton />
+          <EvictNxCacheButton />
           <RefreshButton
             generatedAt={generatedAt}
             initialLabel={formatRelativeTime(generatedAt)}

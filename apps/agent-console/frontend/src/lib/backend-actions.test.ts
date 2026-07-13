@@ -1,4 +1,8 @@
-import { cancelWorkflowRun } from './backend-actions';
+import {
+  cancelWorkflowRun,
+  dispatchUnstickPrs,
+  evictNxCache,
+} from './backend-actions';
 import { getGithubClient } from './github-client';
 
 jest.mock('./github-client', () => ({
@@ -37,5 +41,56 @@ describe('cancelWorkflowRun', () => {
     });
 
     await expect(cancelWorkflowRun(12345)).rejects.toThrow('Conflict');
+  });
+});
+
+describe('dispatchUnstickPrs', () => {
+  it('dispatches playbook-unstick-prs.yml with a trimmed context input', async () => {
+    const createWorkflowDispatch = jest.fn().mockResolvedValue({});
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: { actions: { createWorkflowDispatch } },
+    });
+
+    await dispatchUnstickPrs('  PR #123 stuck  ');
+
+    expect(createWorkflowDispatch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      workflow_id: 'playbook-unstick-prs.yml',
+      ref: 'main',
+      inputs: { context: 'PR #123 stuck' },
+    });
+  });
+
+  it('omits the context input when none is given', async () => {
+    const createWorkflowDispatch = jest.fn().mockResolvedValue({});
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: { actions: { createWorkflowDispatch } },
+    });
+
+    await dispatchUnstickPrs();
+
+    expect(createWorkflowDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ inputs: {} }),
+    );
+  });
+});
+
+describe('evictNxCache', () => {
+  it('dispatches playbook-evict-nx-cache.yml with the capture flag stringified', async () => {
+    const createWorkflowDispatch = jest.fn().mockResolvedValue({});
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: { actions: { createWorkflowDispatch } },
+    });
+
+    await evictNxCache(true);
+
+    expect(createWorkflowDispatch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      workflow_id: 'playbook-evict-nx-cache.yml',
+      ref: 'main',
+      inputs: { capture: 'true' },
+    });
   });
 });
