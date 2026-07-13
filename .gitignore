@@ -141,3 +141,5 @@ cs_build_full.json
 # $XDG_STATE_HOME is misconfigured (e.g. a sandboxed agent session);
 # never legitimate repo content.
 /.local/
+
+vitest.config.*.timestamp*
