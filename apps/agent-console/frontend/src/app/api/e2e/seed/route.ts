@@ -16,15 +16,21 @@ export const E2E_CLI_SESSION_IDS = {
   stale: 'e2e-cli-session-stale',
 } as const;
 
+// Timestamps are relative to seeding time, not frozen: the console applies a
+// lastActivityAt recency window both to which sessions it lists at all and to
+// the liveness it displays (see cli-sessions.ts / displayLiveness), so frozen
+// fixture dates would age out of the window and change their rendered state.
+const minutesAgo = (minutes: number) =>
+  new Date(Date.now() - minutes * 60 * 1000).toISOString();
+
 function fixtureSessions(): CliSessionDoc[] {
-  const now = '2026-07-12T12:00:00.000Z';
   return [
     {
       sessionId: E2E_CLI_SESSION_IDS.live,
       source: 'cli',
       liveness: 'live',
-      startedAt: '2026-07-12T11:45:00.000Z',
-      lastActivityAt: now,
+      startedAt: minutesAgo(15),
+      lastActivityAt: minutesAgo(1),
       turns: 12,
       toolCallCounts: { Read: 5, Edit: 3, Bash: 4 },
       tokens: {
@@ -44,8 +50,8 @@ function fixtureSessions(): CliSessionDoc[] {
       sessionId: E2E_CLI_SESSION_IDS.idle,
       source: 'cli',
       liveness: 'idle',
-      startedAt: '2026-07-12T10:00:00.000Z',
-      lastActivityAt: '2026-07-12T10:20:00.000Z',
+      startedAt: minutesAgo(120),
+      lastActivityAt: minutesAgo(20),
       turns: 3,
       toolCallCounts: { Read: 2 },
       tokens: {
@@ -64,8 +70,8 @@ function fixtureSessions(): CliSessionDoc[] {
       sessionId: E2E_CLI_SESSION_IDS.ended,
       source: 'cli',
       liveness: 'ended',
-      startedAt: '2026-07-12T08:00:00.000Z',
-      lastActivityAt: '2026-07-12T08:05:00.000Z',
+      startedAt: minutesAgo(240),
+      lastActivityAt: minutesAgo(235),
       turns: 1,
       toolCallCounts: {},
       tokens: {
@@ -82,8 +88,8 @@ function fixtureSessions(): CliSessionDoc[] {
       sessionId: E2E_CLI_SESSION_IDS.stale,
       source: 'cli',
       liveness: 'stale',
-      startedAt: '2026-07-11T08:00:00.000Z',
-      lastActivityAt: '2026-07-11T08:10:00.000Z',
+      startedAt: minutesAgo(360),
+      lastActivityAt: minutesAgo(350),
       turns: 2,
       toolCallCounts: {},
       tokens: {

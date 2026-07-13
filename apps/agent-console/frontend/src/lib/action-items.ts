@@ -1,5 +1,9 @@
 import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
 
+/** The human this console serves: review requests are matched against this
+ * login, and a newest comment by it means the ball is back with the agent. */
+export const MAINTAINER_LOGIN = 'jlapenna';
+
 export type ActionType =
   'human-needed' | 'run-failed' | 'review-requested' | 'post-deploy-action';
 
@@ -24,6 +28,8 @@ export interface ActionItem {
   takeoverCommand?: string;
   lastCommentBody?: string;
   lastCommentUrl?: string;
+  /** Login of the newest comment's author - the possession signal. */
+  lastCommentAuthor?: string;
   parentNumber?: number;
   subIssues?: SubIssuesSummary;
   linkedIssueNumbers?: number[];
@@ -49,6 +55,24 @@ export function isDeployWaitOnly(item: ActionItem): boolean {
   return (
     item.actionTypes.length > 0 &&
     item.actionTypes.every((type) => type === 'post-deploy-action')
+  );
+}
+
+/**
+ * True when the maintainer already answered a `human-needed` item: the
+ * newest comment is theirs, so the ball is back with the agent even though
+ * the label is still set (replies posted directly on GitHub don't clear it
+ * the way console replies do). Only `human-needed` is possession-based -
+ * a failing CI run or an open review request needs the maintainer no matter
+ * who spoke last.
+ */
+export function isHandedBack(item: ActionItem): boolean {
+  return (
+    item.actionTypes.includes('human-needed') &&
+    item.lastCommentAuthor === MAINTAINER_LOGIN &&
+    item.actionTypes.every(
+      (type) => type === 'human-needed' || type === 'post-deploy-action',
+    )
   );
 }
 
@@ -78,6 +102,7 @@ const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
 interface LastComment {
   body: string;
   url: string;
+  author?: string;
 }
 
 interface CommentScan {
@@ -133,7 +158,13 @@ async function scanComments(
     }
   }
   return {
-    last: last?.body ? { body: last.body, url: last.html_url } : undefined,
+    last: last?.body
+      ? {
+          body: last.body,
+          url: last.html_url,
+          author: last.user?.login ?? undefined,
+        }
+      : undefined,
     takeoverCommand,
   };
 }
@@ -242,6 +273,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
 
   let lastCommentBody: string | undefined;
   let lastCommentUrl: string | undefined;
+  let lastCommentAuthor: string | undefined;
   let takeoverCommand: string | undefined;
   // Comment fetches cost one API call per item, so stay scoped: actionable
   // items (for the comment preview) plus claude-labeled issues (where the
@@ -253,6 +285,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
     if (isHumanNeeded || isPostDeploy) {
       lastCommentBody = scan.last?.body;
       lastCommentUrl = scan.last?.url;
+      lastCommentAuthor = scan.last?.author;
     }
     takeoverCommand = wantsTakeover ? scan.takeoverCommand : undefined;
   }
@@ -280,7 +313,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
     // review at PR creation, but a draft is by definition still being
     // iterated on. It surfaces once the PR is marked ready.
     const reviewRequested = pr.requested_reviewers?.some(
-      (reviewer) => reviewer.login === 'jlapenna',
+      (reviewer) => reviewer.login === MAINTAINER_LOGIN,
     );
     if (reviewRequested && !pr.draft) {
       actionTypes.push('review-requested');
@@ -333,6 +366,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
     takeoverCommand,
     lastCommentBody,
     lastCommentUrl,
+    lastCommentAuthor,
     parentNumber: extractParentNumber(issue.parent_issue_url),
     subIssues:
       subIssuesSummary && subIssuesSummary.total > 0

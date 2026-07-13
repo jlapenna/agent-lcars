@@ -23,12 +23,14 @@ test.afterAll(async () => {
 // default per-PR smoke lane (E2E_GREP=@smoke, #2599), not just the
 // run-e2e-labeled full tier.
 test.describe('Agent Activity panel CLI sessions @smoke', () => {
-  test('renders seeded CLI session docs with distinct liveness, host, branch/worktree, model, turns, tokens, and joined PR', async ({
+  test('renders active sessions inline and finished ones behind the collapsed disclosure', async ({
     page,
   }) => {
     await page.goto('/');
 
-    await expect(page.getByText('CLI sessions')).toBeVisible();
+    await expect(
+      page.getByText('CLI sessions', { exact: true }),
+    ).toBeVisible();
 
     const liveRow = page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.live}`);
     await expect(liveRow.getByTestId('cli-session-liveness')).toHaveText(
@@ -56,18 +58,24 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
     // returns no match, so no "PR #" link should render for this row.
     await expect(idleRow.getByRole('link', { name: /PR #/ })).toHaveCount(0);
 
+    // Finished sessions are history, not activity: they render inside the
+    // "Recent CLI sessions" disclosure, collapsed by default...
     const endedRow = page.getByTestId(
       `cli-session-${E2E_CLI_SESSION_IDS.ended}`,
     );
+    const staleRow = page.getByTestId(
+      `cli-session-${E2E_CLI_SESSION_IDS.stale}`,
+    );
+    await expect(endedRow).toBeHidden();
+    await expect(staleRow).toBeHidden();
+
+    // ...and become visible once expanded.
+    await page.getByTestId('recent-sessions').locator('summary').click();
     await expect(endedRow.getByTestId('cli-session-liveness')).toHaveText(
       'ended',
     );
     await expect(endedRow).toContainText('e2e-fixture-host-3');
     await expect(endedRow).toContainText('1 turns');
-
-    const staleRow = page.getByTestId(
-      `cli-session-${E2E_CLI_SESSION_IDS.stale}`,
-    );
     await expect(staleRow.getByTestId('cli-session-liveness')).toHaveText(
       'stale',
     );

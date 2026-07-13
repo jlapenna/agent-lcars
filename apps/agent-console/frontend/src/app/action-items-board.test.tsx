@@ -1,15 +1,20 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 import type { ActionItem } from '../lib/action-items';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 
-// This suite exercises the board's filtering logic only - ActionItemCard
-// pulls in the 'use server' actions module (auth, firestore, GitHub client),
-// which is out of scope here and already untested on its own.
+// This suite exercises the board's tiering only - ActionItemCard and
+// RetriggerButton pull in the 'use server' actions module (auth, firestore,
+// GitHub client), which is out of scope here and tested on its own.
 jest.mock('./action-item-card', () => ({
   ActionItemCard: ({ item }: { item: { number: number; title: string } }) => (
-    <div>{`#${item.number} ${item.title}`}</div>
+    <div data-testid="full-card">{`#${item.number} ${item.title}`}</div>
+  ),
+}));
+jest.mock('./retrigger-button', () => ({
+  RetriggerButton: ({ issueNumber }: { issueNumber: number }) => (
+    <button data-testid={`retrigger-${issueNumber}`}>Retrigger</button>
   ),
 }));
 
@@ -30,87 +35,99 @@ function card(item: ActionItem): BoardCard {
   return { item, updatedAtLabel: 'now' };
 }
 
-function renderBoard(needsAction: ActionItem[]) {
+function renderBoard({
+  yourQueue = [],
+  handedBack = [],
+  waitingOnDeploy = [],
+  rest = [],
+}: {
+  yourQueue?: ActionItem[];
+  handedBack?: ActionItem[];
+  waitingOnDeploy?: ActionItem[];
+  rest?: ActionItem[];
+}) {
   render(
     <MantineProvider>
       <ActionItemsBoard
-        needsAction={needsAction.map(card)}
-        agentWorking={[]}
-        waitingOnDeploy={[]}
-        rest={[]}
+        yourQueue={yourQueue.map(card)}
+        handedBack={handedBack.map(card)}
+        waitingOnDeploy={waitingOnDeploy.map(card)}
+        rest={rest.map(card)}
       />
     </MantineProvider>,
   );
 }
 
 describe('ActionItemsBoard', () => {
-  it('shows the true-empty message when the section has no items at all', () => {
-    renderBoard([]);
-    expect(screen.getByText('Nothing waiting on you right now.')).toBeTruthy();
+  it('shows the empty-queue message when nothing needs the maintainer', () => {
+    renderBoard({});
+    expect(screen.getByText('Nothing needs you right now.')).toBeTruthy();
   });
 
-  it('filters by search text across number, title, and labels', () => {
-    renderBoard([
-      makeItem({ number: 1, title: 'Fix the thing', labels: ['bug'] }),
-      makeItem({ number: 2, title: 'Add a feature', labels: ['enhancement'] }),
-    ]);
-
-    fireEvent.change(screen.getByPlaceholderText(/search by number/i), {
-      target: { value: 'feature' },
+  it('renders full cards only for Your Queue; other tiers get compact rows', () => {
+    renderBoard({
+      yourQueue: [
+        makeItem({
+          number: 1,
+          title: 'Answer me',
+          actionTypes: ['human-needed'],
+        }),
+      ],
+      waitingOnDeploy: [
+        makeItem({
+          number: 2,
+          title: 'Verify after deploy',
+          actionTypes: ['post-deploy-action'],
+        }),
+      ],
+      rest: [makeItem({ number: 3, title: 'Background item' })],
     });
 
-    expect(screen.queryByText('#1 Fix the thing')).toBeNull();
-    expect(screen.getByText('#2 Add a feature')).toBeTruthy();
+    const fullCards = screen.getAllByTestId('full-card');
+    expect(fullCards).toHaveLength(1);
+    expect(fullCards[0].textContent).toContain('#1 Answer me');
+    expect(screen.getByTestId('compact-item-2')).toBeTruthy();
+    expect(screen.getByTestId('compact-item-3')).toBeTruthy();
   });
 
-  it('shows a distinct message when a filter hides every item in a non-empty section', () => {
-    renderBoard([makeItem({ number: 1, title: 'Fix the thing' })]);
+  it('hides the handed-back and deploy tiers entirely when empty', () => {
+    renderBoard({ yourQueue: [makeItem()] });
+    expect(screen.queryByText(/Handed Back/)).toBeNull();
+    expect(screen.queryByText(/Waiting on Next Deploy/)).toBeNull();
+    expect(screen.queryByText(/Everything Else/)).toBeNull();
+  });
 
-    fireEvent.change(screen.getByPlaceholderText(/search by number/i), {
-      target: { value: 'nonexistent' },
+  it('offers Retrigger on handed-back claude issues but not on other rows', () => {
+    renderBoard({
+      handedBack: [
+        makeItem({
+          number: 4,
+          title: 'Answered question',
+          actionTypes: ['human-needed'],
+          labels: ['claude'],
+        }),
+        makeItem({
+          number: 5,
+          title: 'Answered non-agent question',
+          actionTypes: ['human-needed'],
+        }),
+      ],
     });
 
-    expect(screen.getByText('No matches in this section.')).toBeTruthy();
-    expect(screen.queryByText('Nothing waiting on you right now.')).toBeNull();
+    const claudeRow = screen.getByTestId('compact-item-4');
+    expect(within(claudeRow).getByTestId('retrigger-4')).toBeTruthy();
+    const plainRow = screen.getByTestId('compact-item-5');
+    expect(within(plainRow).queryByTestId('retrigger-5')).toBeNull();
   });
 
-  it('filters by label chip', () => {
-    renderBoard([
-      makeItem({ number: 1, title: 'Fix the thing', labels: ['bug'] }),
-      makeItem({ number: 2, title: 'Add a feature', labels: ['enhancement'] }),
-    ]);
+  it('keeps Everything Else collapsed by default with its rows still reachable', () => {
+    renderBoard({ rest: [makeItem({ number: 6, title: 'Background item' })] });
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'bug' }));
-
-    expect(screen.getByText('#1 Fix the thing')).toBeTruthy();
-    expect(screen.queryByText('#2 Add a feature')).toBeNull();
-  });
-
-  it('filters by kind', () => {
-    renderBoard([
-      makeItem({ number: 1, title: 'An issue', kind: 'issue' }),
-      makeItem({ number: 2, title: 'A pull request', kind: 'pr' }),
-    ]);
-
-    fireEvent.click(screen.getByRole('radio', { name: 'PRs' }));
-
-    expect(screen.queryByText('#1 An issue')).toBeNull();
-    expect(screen.getByText('#2 A pull request')).toBeTruthy();
-  });
-
-  it('shows a clear-filters control only while a filter is active, and clearing restores everything', () => {
-    renderBoard([makeItem({ number: 1, title: 'Fix the thing' })]);
-
-    expect(screen.queryByText('Clear filters')).toBeNull();
-
-    fireEvent.change(screen.getByPlaceholderText(/search by number/i), {
-      target: { value: 'nonexistent' },
-    });
-    expect(screen.getByText('Clear filters')).toBeTruthy();
-    expect(screen.queryByText('#1 Fix the thing')).toBeNull();
-
-    fireEvent.click(screen.getByText('Clear filters'));
-    expect(screen.queryByText('Clear filters')).toBeNull();
-    expect(screen.getByText('#1 Fix the thing')).toBeTruthy();
+    const details = screen.getByTestId('everything-else');
+    expect(details).not.toHaveProperty('open', true);
+    expect(screen.getByText(/Everything Else \(1\)/)).toBeTruthy();
+    expect(
+      within(details as HTMLElement).getByTestId('compact-item-6'),
+    ).toBeTruthy();
   });
 });

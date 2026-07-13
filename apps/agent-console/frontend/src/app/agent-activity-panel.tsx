@@ -58,6 +58,13 @@ function budgetColor(fraction: number): string {
   return 'blue';
 }
 
+/** The issue/PR a live run is working, joined server-side in page.tsx. */
+export interface RunItemRef {
+  number: number;
+  title: string;
+  url: string;
+}
+
 function RunnerBadge({ runner }: { runner: RunnerStatus }) {
   const color = !runner.online ? 'red' : runner.busy ? 'orange' : 'green';
   const label = !runner.online ? 'offline' : runner.busy ? 'busy' : 'idle';
@@ -68,7 +75,37 @@ function RunnerBadge({ runner }: { runner: RunnerStatus }) {
   );
 }
 
-function LiveRunRow({ run }: { run: AgentRun }) {
+/**
+ * One green badge when the whole fleet is healthy and idle; individual
+ * badges only when some runner is busy or offline. Fleet status is context,
+ * not work - it only deserves pixels when it's abnormal.
+ */
+function RunnerSummary({ runners }: { runners?: RunnerStatus[] }) {
+  if (runners === undefined) {
+    return (
+      <Text size="xs" c="dimmed">
+        Runner status unavailable
+      </Text>
+    );
+  }
+  const allIdle = runners.every((runner) => runner.online && !runner.busy);
+  if (runners.length > 0 && allIdle) {
+    return (
+      <Badge variant="light" color="green" size="sm">
+        {runners.length} runners idle
+      </Badge>
+    );
+  }
+  return (
+    <>
+      {runners.map((runner) => (
+        <RunnerBadge key={runner.name} runner={runner} />
+      ))}
+    </>
+  );
+}
+
+function LiveRunRow({ run, item }: { run: AgentRun; item?: RunItemRef }) {
   const budgetFraction = run.elapsedSeconds / (RUN_TIMEOUT_MINUTES * 60);
   return (
     <Stack gap={4}>
@@ -77,16 +114,26 @@ function LiveRunRow({ run }: { run: AgentRun }) {
           variant="filled"
           color={run.status === 'running' ? 'blue' : 'gray'}
           size="sm"
+          style={{ flexShrink: 0 }}
         >
           {run.status === 'running' ? 'running' : 'queued'}
         </Badge>
-        <Text size="sm" style={{ minWidth: 0 }}>
+        <Anchor
+          href={item?.url ?? run.url}
+          target="_blank"
+          rel="noreferrer"
+          size="sm"
+          fw={500}
+          c="inherit"
+          truncate
+          style={{ minWidth: 0 }}
+        >
+          {item ? `#${item.number} ${item.title}` : run.displayTitle}
+        </Anchor>
+        <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
           {run.status === 'running'
-            ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m budget`
-            : `waiting for a runner for ${formatDuration(run.elapsedSeconds)}`}
-        </Text>
-        <Text size="xs" c="dimmed">
-          via {run.event}
+            ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m`
+            : `queued ${formatDuration(run.elapsedSeconds)}`}
         </Text>
         <Group
           gap={6}
@@ -123,9 +170,12 @@ function RecentRunRow({ run }: { run: AgentRun }) {
       <Badge variant="light" color={CONCLUSION_COLORS[conclusion]} size="sm">
         {isLikelyTimeout(run) ? 'timeout' : CONCLUSION_LABELS[conclusion]}
       </Badge>
-      <Text size="xs" c="dimmed">
+      <Text size="xs" c="dimmed" truncate style={{ minWidth: 0 }}>
+        {run.displayTitle}
+      </Text>
+      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
         {formatDuration(run.elapsedSeconds)} · finished{' '}
-        {formatRelativeTime(run.updatedAt)} · via {run.event}
+        {formatRelativeTime(run.updatedAt)}
       </Text>
       <Anchor
         href={run.url}
@@ -140,14 +190,6 @@ function RecentRunRow({ run }: { run: AgentRun }) {
     </Group>
   );
 }
-
-// live/idle are the process still doing something; ended/stale render last.
-const LIVENESS_SORT_ORDER: Record<CliSession['liveness'], number> = {
-  live: 0,
-  idle: 1,
-  ended: 2,
-  stale: 3,
-};
 
 const LIVENESS_LABELS: Record<CliSession['liveness'], string> = {
   live: 'live',
@@ -241,12 +283,21 @@ function CliSessionRow({ session }: { session: CliSession }) {
   );
 }
 
+/**
+ * "In Flight": everything currently moving without the maintainer - live
+ * agent runs (joined to their issue when possible) and live/idle CLI
+ * sessions. Finished work (recent runs, ended/stale sessions) is history,
+ * not activity, so it lives behind collapsed disclosures; native <details>
+ * keeps this a server component.
+ */
 export function AgentActivityPanel({
   activity,
   cliSessions = [],
+  itemsByRunId = {},
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
+  itemsByRunId?: Record<number, RunItemRef>;
 }) {
   const { liveRuns, recentRuns, runners } = activity;
   const allOffline =
@@ -254,23 +305,22 @@ export function AgentActivityPanel({
     runners.length > 0 &&
     runners.every((runner) => !runner.online);
 
+  const activeSessions = cliSessions.filter(
+    (session) => session.liveness === 'live' || session.liveness === 'idle',
+  );
+  const finishedSessions = cliSessions.filter(
+    (session) => session.liveness !== 'live' && session.liveness !== 'idle',
+  );
+
   return (
     <Card withBorder radius="md" padding="md" mb="xl">
       <Stack gap="sm">
         <Group justify="space-between" wrap="nowrap">
           <Title order={2} size="h4">
-            Agent Activity
+            In Flight
           </Title>
           <Group gap={6} wrap="wrap" justify="flex-end">
-            {runners === undefined ? (
-              <Text size="xs" c="dimmed">
-                Runner status unavailable
-              </Text>
-            ) : (
-              runners.map((runner) => (
-                <RunnerBadge key={runner.name} runner={runner} />
-              ))
-            )}
+            <RunnerSummary runners={runners} />
           </Group>
         </Group>
 
@@ -281,48 +331,73 @@ export function AgentActivityPanel({
           </Alert>
         )}
 
-        {liveRuns.length === 0 ? (
+        {liveRuns.length === 0 && activeSessions.length === 0 && (
           <Text size="sm" c="dimmed">
-            No agent runs in flight.
+            No agent runs or CLI sessions in flight.
           </Text>
-        ) : (
+        )}
+
+        {liveRuns.length > 0 && (
           <Stack gap="xs">
             {liveRuns.map((run) => (
-              <LiveRunRow key={run.id} run={run} />
+              <LiveRunRow key={run.id} run={run} item={itemsByRunId[run.id]} />
             ))}
           </Stack>
         )}
 
-        {recentRuns.length > 0 && (
-          <>
-            <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-              Recent runs
-            </Text>
-            <Stack gap={6}>
-              {recentRuns.map((run) => (
-                <RecentRunRow key={run.id} run={run} />
-              ))}
-            </Stack>
-          </>
-        )}
-
-        {cliSessions.length > 0 && (
+        {activeSessions.length > 0 && (
           <>
             <Text size="xs" c="dimmed" fw={600} tt="uppercase">
               CLI sessions
             </Text>
             <Stack gap="xs">
-              {[...cliSessions]
-                .sort(
-                  (a, b) =>
-                    LIVENESS_SORT_ORDER[a.liveness] -
-                    LIVENESS_SORT_ORDER[b.liveness],
-                )
-                .map((session) => (
-                  <CliSessionRow key={session.sessionId} session={session} />
-                ))}
+              {activeSessions.map((session) => (
+                <CliSessionRow key={session.sessionId} session={session} />
+              ))}
             </Stack>
           </>
+        )}
+
+        {recentRuns.length > 0 && (
+          <details data-testid="recent-runs">
+            <summary style={{ cursor: 'pointer' }}>
+              <Text
+                size="xs"
+                c="dimmed"
+                fw={600}
+                tt="uppercase"
+                component="span"
+              >
+                Recent runs ({recentRuns.length})
+              </Text>
+            </summary>
+            <Stack gap={6} mt="xs">
+              {recentRuns.map((run) => (
+                <RecentRunRow key={run.id} run={run} />
+              ))}
+            </Stack>
+          </details>
+        )}
+
+        {finishedSessions.length > 0 && (
+          <details data-testid="recent-sessions">
+            <summary style={{ cursor: 'pointer' }}>
+              <Text
+                size="xs"
+                c="dimmed"
+                fw={600}
+                tt="uppercase"
+                component="span"
+              >
+                Recent CLI sessions ({finishedSessions.length})
+              </Text>
+            </summary>
+            <Stack gap="xs" mt="xs">
+              {finishedSessions.map((session) => (
+                <CliSessionRow key={session.sessionId} session={session} />
+              ))}
+            </Stack>
+          </details>
         )}
       </Stack>
     </Card>

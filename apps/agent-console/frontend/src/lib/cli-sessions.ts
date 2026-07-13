@@ -1,4 +1,5 @@
 import type { CliSessionDoc, SessionLiveness } from '@repo/agent-telemetry';
+import { displayLiveness } from '@repo/agent-telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -6,9 +7,18 @@ import {
 
 import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
 
+/** Sessions with no activity in this window don't render at all - the
+ * telemetry collection keeps one doc per session forever, and the dashboard
+ * is a "what's happening" surface, not a session archive. */
+const ACTIVE_WINDOW_HOURS = 24;
+
+/** Hard cap on rendered sessions even within the window - a busy fleet day
+ * produces 40+ session docs in 24h, and rows past this many are archive
+ * material, not activity. Active (live/idle) sessions are kept first. */
+const MAX_SESSIONS = 20;
+
 export interface JoinedPr {
   number: number;
-  title: string;
   url: string;
 }
 
@@ -33,10 +43,16 @@ export interface CliSession {
   artifacts?: string[];
 }
 
-function toCliSession(doc: CliSessionDoc): CliSession {
+function isActive(liveness: SessionLiveness): boolean {
+  return liveness === 'live' || liveness === 'idle';
+}
+
+function toCliSession(doc: CliSessionDoc, now: string): CliSession {
   return {
     sessionId: doc.sessionId,
-    liveness: doc.liveness,
+    // Recomputed at read time: the stored value is only as fresh as the
+    // watcher's last write (see displayLiveness).
+    liveness: displayLiveness(doc.liveness, doc.lastActivityAt, now),
     host: doc.host,
     branch: doc.branch,
     worktree: doc.worktree,
@@ -47,6 +63,18 @@ function toCliSession(doc: CliSessionDoc): CliSession {
     startedAt: doc.startedAt,
     lastActivityAt: doc.lastActivityAt,
     artifacts: doc.artifacts,
+  };
+}
+
+/** The session's own transcript already names the PRs it touched - use that
+ * before ever asking GitHub. The newest PR number wins. */
+function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
+  const prNumbers = doc.deliverables?.prNumbers;
+  if (!prNumbers || prNumbers.length === 0) return undefined;
+  const number = prNumbers[prNumbers.length - 1];
+  return {
+    number,
+    url: `https://github.com/${REPO_OWNER}/${REPO_NAME}/pull/${number}`,
   };
 }
 
@@ -68,7 +96,7 @@ export async function joinBranchToPr(
   if (!pr) {
     return undefined;
   }
-  return { number: pr.number, title: pr.title, url: pr.html_url };
+  return { number: pr.number, url: pr.html_url };
 }
 
 export interface CliSessionsResult {
@@ -79,20 +107,36 @@ export interface CliSessionsResult {
 }
 
 /**
- * Fetches every `source: 'cli'` session doc from the agent-telemetry store
- * and joins each one's branch to an open PR when it has one. One malformed
- * doc or one failed PR lookup degrades that single session instead of
- * crashing the whole list, matching the defensive pattern in
+ * Fetches recently-active `source: 'cli'` session docs from the
+ * agent-telemetry store and attaches each one's PR when it has one.
+ *
+ * PR attachment is deliberately cheap: the doc's own `deliverables.prNumbers`
+ * costs nothing, and the live branch->PR search runs only for *active*
+ * sessions still missing a PR (a branch can grow a PR after the doc was
+ * written). Searching for every doc - the original behavior - fired one
+ * GitHub search per session per page load, which at 200+ docs blew through
+ * the search API's ~30 req/min budget and flooded the warnings banner with
+ * the resulting failures.
+ *
+ * One malformed doc or one failed PR lookup degrades that single session
+ * instead of crashing the whole list, matching the defensive pattern in
  * `agent-activity.ts` / `action-items.ts`. A store-level failure (e.g. no
  * telemetry infra reachable) degrades to an empty list rather than crashing
  * the dashboard - the existing GitHub-derived view must still work.
  */
 export async function getCliSessions(): Promise<CliSessionsResult> {
+  const now = new Date();
+  const activeSince = new Date(
+    now.getTime() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+
   let docs: CliSessionDoc[];
   try {
     const firestore = await getAgentTelemetryReaderFirestore();
-    const allDocs = await listSessionDocs(firestore);
-    docs = allDocs.filter((doc): doc is CliSessionDoc => doc.source === 'cli');
+    const recentDocs = await listSessionDocs(firestore, { activeSince });
+    docs = recentDocs.filter(
+      (doc): doc is CliSessionDoc => doc.source === 'cli',
+    );
   } catch (error) {
     console.error('agent-console: failed to list CLI sessions:', error);
     return {
@@ -101,21 +145,42 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     };
   }
 
+  const nowIso = now.toISOString();
+  const sessionsByDoc = docs.map(
+    (doc) => [doc, toCliSession(doc, nowIso)] as const,
+  );
+  // Keep active sessions ahead of the cap; listSessionDocs already returns
+  // newest-activity first within each group.
+  const capped = [
+    ...sessionsByDoc.filter(([, session]) => isActive(session.liveness)),
+    ...sessionsByDoc.filter(([, session]) => !isActive(session.liveness)),
+  ].slice(0, MAX_SESSIONS);
+
   const warnings: string[] = [];
-  const sessions = await Promise.all(
-    docs.map(async (doc) => {
-      const session = toCliSession(doc);
-      if (!doc.branch) {
-        return session;
-      }
-      try {
-        session.pr = await joinBranchToPr(doc.branch);
-      } catch (error) {
+  // Dedupe live searches by branch: resumed sessions share a worktree
+  // branch, and one lookup (and, on failure, one warning) answers for all
+  // of them.
+  const searchByBranch = new Map<string, Promise<JoinedPr | undefined>>();
+  const searchBranch = (branch: string): Promise<JoinedPr | undefined> => {
+    let search = searchByBranch.get(branch);
+    if (!search) {
+      search = joinBranchToPr(branch).catch((error) => {
         console.error(
-          `agent-console: failed to join branch "${doc.branch}" to a PR:`,
+          `agent-console: failed to join branch "${branch}" to a PR:`,
           error,
         );
-        warnings.push(`PR lookup failed for branch "${doc.branch}".`);
+        warnings.push(`PR lookup failed for branch "${branch}".`);
+        return undefined;
+      });
+      searchByBranch.set(branch, search);
+    }
+    return search;
+  };
+  const sessions = await Promise.all(
+    capped.map(async ([doc, session]) => {
+      session.pr = prFromDeliverables(doc);
+      if (!session.pr && doc.branch && isActive(session.liveness)) {
+        session.pr = await searchBranch(doc.branch);
       }
       return session;
     }),

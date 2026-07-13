@@ -1,5 +1,6 @@
 import { Firestore } from '@google-cloud/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
+import { mockWhere } from 'firestore-jest-mock/mocks/firestore';
 
 import { CliSessionDoc, IssueAgentSessionDoc } from '../lib/types';
 import { listSessionDocs, SESSIONS_COLLECTION } from './store';
@@ -42,7 +43,28 @@ const issueAgentSession: IssueAgentSessionDoc = {
 };
 
 describe('listSessionDocs', () => {
-  it('returns every doc in the sessions collection, source-agnostic', async () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('returns every doc in the sessions collection, source-agnostic, newest activity first', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: issueAgentSession.sessionId, ...issueAgentSession },
+        { id: cliSession.sessionId, ...cliSession },
+      ],
+    }) as unknown as Firestore;
+
+    const docs = await listSessionDocs(firestore);
+
+    expect(docs).toHaveLength(2);
+    expect(docs.map((doc) => doc.sessionId)).toEqual([
+      'cli-session-1',
+      'runner-session-1',
+    ]);
+  });
+
+  it('applies activeSince as a lastActivityAt range filter', async () => {
+    // FakeFirestore records but does not evaluate query filters, so this
+    // asserts the query shape; the range semantics are Firestore's own.
     const firestore = new FakeFirestore({
       [SESSIONS_COLLECTION]: [
         { id: cliSession.sessionId, ...cliSession },
@@ -50,18 +72,25 @@ describe('listSessionDocs', () => {
       ],
     }) as unknown as Firestore;
 
-    const docs = await listSessionDocs(firestore);
+    await listSessionDocs(firestore, {
+      activeSince: '2026-07-11T12:00:00.000Z',
+    });
 
-    expect(docs).toHaveLength(2);
-    expect(docs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ sessionId: 'cli-session-1', source: 'cli' }),
-        expect.objectContaining({
-          sessionId: 'runner-session-1',
-          source: 'issue-agent',
-        }),
-      ]),
+    expect(mockWhere).toHaveBeenCalledWith(
+      'lastActivityAt',
+      '>=',
+      '2026-07-11T12:00:00.000Z',
     );
+  });
+
+  it('does not filter when no activeSince is given', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [{ id: cliSession.sessionId, ...cliSession }],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore);
+
+    expect(mockWhere).not.toHaveBeenCalled();
   });
 
   it('returns an empty list when the collection has no docs', async () => {

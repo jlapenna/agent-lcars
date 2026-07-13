@@ -63,17 +63,32 @@ export async function upsertSession(doc: SessionDoc): Promise<void> {
     .set(doc, { merge: true });
 }
 
+export interface ListSessionDocsOptions {
+  /** Only return sessions with `lastActivityAt` at or after this ISO
+   * timestamp. Without it the listing is unbounded - the collection grows
+   * by one doc per session forever (200+ within the first weeks of
+   * rollout) - so every recurring reader should pass a cutoff. */
+  activeSince?: string;
+}
+
 /**
- * Lists every session doc in the `agent-telemetry` database. Read-only by
- * design (the console's SA cannot write - see firestore-client.ts) and
- * unfiltered: callers narrow by `source`/`liveness` themselves, since the
- * collection is small (one doc per live-or-recent session, not per event).
+ * Lists session docs in the `agent-telemetry` database, newest activity
+ * first. Read-only by design (the console's SA cannot write - see
+ * firestore-client.ts); callers narrow by `source`/`liveness` themselves.
  */
 export async function listSessionDocs(
   firestore: Firestore,
+  options: ListSessionDocsOptions = {},
 ): Promise<SessionDoc[]> {
-  const snapshot = await firestore.collection(SESSIONS_COLLECTION).get();
-  return snapshot.docs.map((doc) => doc.data() as SessionDoc);
+  const collection = firestore.collection(SESSIONS_COLLECTION);
+  // ISO 8601 UTC timestamps compare correctly as strings, so a plain range
+  // filter works without a Timestamp field or a composite index.
+  const query = options.activeSince
+    ? collection.where('lastActivityAt', '>=', options.activeSince)
+    : collection;
+  const snapshot = await query.get();
+  const docs = snapshot.docs.map((doc) => doc.data() as SessionDoc);
+  return docs.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
 }
 
 /** @internal Reset cached clients for testing only. */

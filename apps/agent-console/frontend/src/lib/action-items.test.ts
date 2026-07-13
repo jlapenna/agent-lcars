@@ -1,4 +1,9 @@
-import { getActionItems, isDeployWaitOnly } from './action-items';
+import {
+  type ActionItem,
+  getActionItems,
+  isDeployWaitOnly,
+  isHandedBack,
+} from './action-items';
 import { getGithubClient } from './github-client';
 
 jest.mock('./github-client', () => ({
@@ -81,6 +86,64 @@ describe('isDeployWaitOnly', () => {
   });
 });
 
+describe('isHandedBack', () => {
+  function makeActionItem(overrides: Partial<ActionItem> = {}): ActionItem {
+    return {
+      kind: 'issue',
+      number: 1,
+      title: 't',
+      url: 'u',
+      updatedAt: 'now',
+      actionTypes: ['human-needed'],
+      labels: [],
+      ...overrides,
+    };
+  }
+
+  it('is true when the maintainer wrote the newest comment on a human-needed item', () => {
+    expect(
+      isHandedBack(makeActionItem({ lastCommentAuthor: 'jlapenna' })),
+    ).toBe(true);
+  });
+
+  it('is false when the agent spoke last', () => {
+    expect(
+      isHandedBack(makeActionItem({ lastCommentAuthor: 'claude[bot]' })),
+    ).toBe(false);
+    expect(isHandedBack(makeActionItem())).toBe(false);
+  });
+
+  it('never hands back items that need the maintainer regardless of possession', () => {
+    expect(
+      isHandedBack(
+        makeActionItem({
+          actionTypes: ['human-needed', 'review-requested'],
+          lastCommentAuthor: 'jlapenna',
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isHandedBack(
+        makeActionItem({
+          actionTypes: ['human-needed', 'run-failed'],
+          lastCommentAuthor: 'jlapenna',
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('still hands back when a post-deploy wait rides along', () => {
+    expect(
+      isHandedBack(
+        makeActionItem({
+          actionTypes: ['human-needed', 'post-deploy-action'],
+          lastCommentAuthor: 'jlapenna',
+        }),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('getActionItems', () => {
   const TARGET_Q = (q: string) =>
     q.includes('label:claude') && q.includes('is:issue');
@@ -105,6 +168,41 @@ describe('getActionItems', () => {
       },
     });
   }
+
+  it('captures the newest comment author on human-needed items (possession signal)', async () => {
+    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+      if (!TARGET_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [
+            makeItem(7, { labels: ['claude', 'human-needed'], comments: 2 }),
+          ],
+        },
+      });
+    });
+    const listComments = jest.fn().mockResolvedValue({
+      data: [
+        {
+          body: 'What should I do here?',
+          html_url: 'https://github.com/o/r/issues/7#issuecomment-1',
+          user: { login: 'claude[bot]' },
+        },
+        {
+          body: 'Use the second option.',
+          html_url: 'https://github.com/o/r/issues/7#issuecomment-2',
+          user: { login: 'jlapenna' },
+        },
+      ],
+    });
+    setupOctokit({ issuesAndPullRequests, listComments });
+
+    const result = await getActionItems();
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].lastCommentAuthor).toBe('jlapenna');
+    expect(isHandedBack(result.items[0])).toBe(true);
+  });
 
   it('paginates a query across multiple pages and collects every item', async () => {
     const issuesAndPullRequests = jest

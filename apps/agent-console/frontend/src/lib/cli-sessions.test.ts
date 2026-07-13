@@ -15,13 +15,16 @@ jest.mock('./github-client', () => ({
   REPO_NAME: 'members',
 }));
 
+const minutesAgo = (minutes: number) =>
+  new Date(Date.now() - minutes * 60 * 1000).toISOString();
+
 function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   return {
     sessionId: 'session-1',
     source: 'cli',
     liveness: 'live',
-    startedAt: '2026-07-12T00:00:00.000Z',
-    lastActivityAt: '2026-07-12T00:05:00.000Z',
+    startedAt: minutesAgo(10),
+    lastActivityAt: minutesAgo(1),
     turns: 3,
     toolCallCounts: {},
     tokens: {
@@ -37,25 +40,38 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   };
 }
 
+function mockSearch(items: unknown[] = []) {
+  const searchMock = jest.fn().mockResolvedValue({ data: { items } });
+  (getGithubClient as jest.Mock).mockReturnValue({
+    rest: { search: { issuesAndPullRequests: searchMock } },
+  });
+  return searchMock;
+}
+
 describe('getCliSessions', () => {
   afterEach(() => jest.resetAllMocks());
 
-  it('joins a CLI session branch to an open PR when one exists', async () => {
+  it('passes a lastActivityAt cutoff to the store instead of listing everything', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([]);
+    mockSearch();
+
+    await getCliSessions();
+
+    expect(listSessionDocs).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ activeSince: expect.any(String) }),
+    );
+    const { activeSince } = (listSessionDocs as jest.Mock).mock.calls[0][1];
+    const cutoffAgeHours =
+      (Date.now() - new Date(activeSince).getTime()) / (60 * 60 * 1000);
+    expect(cutoffAgeHours).toBeCloseTo(24, 1);
+  });
+
+  it('joins an active session branch to an open PR when one exists', async () => {
     (listSessionDocs as jest.Mock).mockResolvedValue([makeCliDoc()]);
-    const searchMock = jest.fn().mockResolvedValue({
-      data: {
-        items: [
-          {
-            number: 2600,
-            title: 'feat: cli sessions',
-            html_url: 'https://github.com/o/r/pull/2600',
-          },
-        ],
-      },
-    });
-    (getGithubClient as jest.Mock).mockReturnValue({
-      rest: { search: { issuesAndPullRequests: searchMock } },
-    });
+    const searchMock = mockSearch([
+      { number: 2600, html_url: 'https://github.com/o/r/pull/2600' },
+    ]);
 
     const { sessions, warnings } = await getCliSessions();
 
@@ -68,11 +84,7 @@ describe('getCliSessions', () => {
       branch: 'feat/agent-console-cli-sessions',
       turns: 3,
       totalTokens: 1200,
-      pr: {
-        number: 2600,
-        title: 'feat: cli sessions',
-        url: 'https://github.com/o/r/pull/2600',
-      },
+      pr: { number: 2600, url: 'https://github.com/o/r/pull/2600' },
     });
     expect(searchMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -81,38 +93,109 @@ describe('getCliSessions', () => {
     );
   });
 
+  it('uses the transcript-recorded PR without a GitHub search when present', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({ deliverables: { prNumbers: [2650, 2662], commitShas: [] } }),
+    ]);
+    const searchMock = mockSearch();
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].pr).toEqual({
+      number: 2662,
+      url: 'https://github.com/supersprinklesracing/members/pull/2662',
+    });
+    expect(searchMock).not.toHaveBeenCalled();
+  });
+
+  it('never searches for ended sessions, even with a branch', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({ liveness: 'ended', lastActivityAt: minutesAgo(120) }),
+    ]);
+    const searchMock = mockSearch();
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].liveness).toBe('ended');
+    expect(sessions[0].pr).toBeUndefined();
+    expect(searchMock).not.toHaveBeenCalled();
+  });
+
+  it('searches a shared branch once and warns once when the lookup fails', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({ sessionId: 'session-1' }),
+      makeCliDoc({ sessionId: 'session-2', lastActivityAt: minutesAgo(2) }),
+    ]);
+    const searchMock = jest.fn().mockRejectedValue(new Error('502'));
+    (getGithubClient as jest.Mock).mockReturnValue({
+      rest: { search: { issuesAndPullRequests: searchMock } },
+    });
+
+    const { sessions, warnings } = await getCliSessions();
+
+    expect(sessions).toHaveLength(2);
+    expect(searchMock).toHaveBeenCalledTimes(1);
+    expect(warnings).toEqual([
+      'PR lookup failed for branch "feat/agent-console-cli-sessions".',
+    ]);
+  });
+
+  it('recomputes liveness from activity recency instead of trusting the stored value', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      // A live session whose watcher process check wrongly wrote 'ended'
+      // (containerized sessions - the watcher cannot see their /proc).
+      makeCliDoc({ sessionId: 'mislabeled', liveness: 'ended' }),
+      // A stored 'live' frozen by a stopped watcher hours ago.
+      makeCliDoc({
+        sessionId: 'frozen',
+        liveness: 'live',
+        lastActivityAt: minutesAgo(120),
+        branch: undefined,
+      }),
+    ]);
+    mockSearch();
+
+    const { sessions } = await getCliSessions();
+    const byId = new Map(sessions.map((s) => [s.sessionId, s.liveness]));
+    expect(byId.get('mislabeled')).toBe('live');
+    expect(byId.get('frozen')).toBe('ended');
+  });
+
+  it('caps the list, keeping active sessions ahead of ended ones', async () => {
+    const docs = [
+      // 25 ended sessions, newest first (as the store returns them)...
+      ...Array.from({ length: 25 }, (_, i) =>
+        makeCliDoc({
+          sessionId: `ended-${i}`,
+          liveness: 'ended',
+          lastActivityAt: minutesAgo(61 + i),
+          branch: undefined,
+        }),
+      ),
+      // ...and one live session older than all of them.
+      makeCliDoc({
+        sessionId: 'live-tail',
+        lastActivityAt: minutesAgo(2),
+        branch: undefined,
+      }),
+    ];
+    (listSessionDocs as jest.Mock).mockResolvedValue(docs);
+    mockSearch();
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions).toHaveLength(20);
+    expect(sessions.map((s) => s.sessionId)).toContain('live-tail');
+  });
+
   it('passes through discovered artifacts', async () => {
     (listSessionDocs as jest.Mock).mockResolvedValue([
       makeCliDoc({ artifacts: ['report.md', 'chart.png'] }),
     ]);
-    (getGithubClient as jest.Mock).mockReturnValue({
-      rest: {
-        search: {
-          issuesAndPullRequests: jest
-            .fn()
-            .mockResolvedValue({ data: { items: [] } }),
-        },
-      },
-    });
+    mockSearch();
 
     const { sessions } = await getCliSessions();
     expect(sessions[0].artifacts).toEqual(['report.md', 'chart.png']);
-  });
-
-  it('leaves pr undefined when the branch has no open PR', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([makeCliDoc()]);
-    (getGithubClient as jest.Mock).mockReturnValue({
-      rest: {
-        search: {
-          issuesAndPullRequests: jest
-            .fn()
-            .mockResolvedValue({ data: { items: [] } }),
-        },
-      },
-    });
-
-    const { sessions } = await getCliSessions();
-    expect(sessions[0].pr).toBeUndefined();
   });
 
   it('filters out non-CLI session docs', async () => {
@@ -122,8 +205,8 @@ describe('getCliSessions', () => {
         sessionId: 'runner-1',
         source: 'issue-agent',
         liveness: 'ended',
-        startedAt: '2026-07-12T00:00:00.000Z',
-        lastActivityAt: '2026-07-12T00:00:00.000Z',
+        startedAt: minutesAgo(60),
+        lastActivityAt: minutesAgo(60),
         turns: 1,
         toolCallCounts: {},
         tokens: {
@@ -135,15 +218,7 @@ describe('getCliSessions', () => {
         deliverables: { prNumbers: [], commitShas: [] },
       },
     ]);
-    (getGithubClient as jest.Mock).mockReturnValue({
-      rest: {
-        search: {
-          issuesAndPullRequests: jest
-            .fn()
-            .mockResolvedValue({ data: { items: [] } }),
-        },
-      },
-    });
+    mockSearch();
 
     const { sessions } = await getCliSessions();
     expect(sessions).toHaveLength(1);
@@ -157,24 +232,6 @@ describe('getCliSessions', () => {
     expect(sessions).toEqual([]);
     expect(warnings).toEqual([
       'CLI sessions unavailable (agent-telemetry store failed).',
-    ]);
-  });
-
-  it('records a warning but keeps the session when the PR join fails', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([makeCliDoc()]);
-    (getGithubClient as jest.Mock).mockReturnValue({
-      rest: {
-        search: {
-          issuesAndPullRequests: jest.fn().mockRejectedValue(new Error('502')),
-        },
-      },
-    });
-
-    const { sessions, warnings } = await getCliSessions();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].pr).toBeUndefined();
-    expect(warnings).toEqual([
-      'PR lookup failed for branch "feat/agent-console-cli-sessions".',
     ]);
   });
 });

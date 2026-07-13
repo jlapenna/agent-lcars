@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 import type { AgentActivity } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
@@ -50,9 +50,12 @@ describe('AgentActivityPanel CLI sessions', () => {
   it('renders nothing extra when there are no CLI sessions', () => {
     renderPanel([]);
     expect(screen.queryByText('CLI sessions')).toBeNull();
+    expect(
+      screen.getByText('No agent runs or CLI sessions in flight.'),
+    ).toBeTruthy();
   });
 
-  it('renders a CLI session with host, branch, turns, tokens, and liveness', () => {
+  it('renders an active CLI session with host, branch, turns, tokens, and liveness', () => {
     renderPanel([
       makeCliSession({ title: 'Merge live CLI sessions into the list' }),
     ]);
@@ -73,16 +76,13 @@ describe('AgentActivityPanel CLI sessions', () => {
       makeCliSession({
         pr: {
           number: 2587,
-          title: 'feat: cli sessions',
           url: 'https://github.com/o/r/pull/2587',
         },
       }),
     ]);
 
     const link = screen.getByRole('link', { name: /PR #2587/ });
-    expect(link.getAttribute('href')).toBe(
-      'https://github.com/o/r/pull/2587',
-    );
+    expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/2587');
   });
 
   it('links to shared artifacts using host + sessionId', () => {
@@ -109,7 +109,7 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(screen.queryByText('Artifacts:')).toBeNull();
   });
 
-  it('visually distinguishes each liveness state', () => {
+  it('keeps live/idle sessions inline and tucks ended/stale behind a collapsed disclosure', () => {
     renderPanel([
       makeCliSession({ sessionId: 's-live', liveness: 'live' }),
       makeCliSession({ sessionId: 's-idle', liveness: 'idle' }),
@@ -117,8 +117,17 @@ describe('AgentActivityPanel CLI sessions', () => {
       makeCliSession({ sessionId: 's-stale', liveness: 'stale' }),
     ]);
 
-    for (const label of ['live', 'idle', 'ended', 'stale']) {
-      expect(screen.getByText(label)).toBeTruthy();
-    }
+    const disclosure = screen.getByTestId('recent-sessions');
+    expect(disclosure).not.toHaveProperty('open', true);
+    expect(screen.getByText(/Recent CLI sessions \(2\)/)).toBeTruthy();
+
+    // The finished sessions live inside the disclosure...
+    const finished = within(disclosure as HTMLElement);
+    expect(finished.getByTestId('cli-session-s-ended')).toBeTruthy();
+    expect(finished.getByTestId('cli-session-s-stale')).toBeTruthy();
+    // ...and the active ones outside it.
+    expect(finished.queryByTestId('cli-session-s-live')).toBeNull();
+    expect(screen.getByTestId('cli-session-s-live')).toBeTruthy();
+    expect(screen.getByTestId('cli-session-s-idle')).toBeTruthy();
   });
 });

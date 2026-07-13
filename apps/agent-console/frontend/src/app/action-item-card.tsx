@@ -9,10 +9,8 @@ import {
   Code,
   CopyButton,
   Group,
-  Popover,
   Stack,
   Text,
-  Textarea,
   TextInput,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
@@ -24,9 +22,11 @@ import type {
   ActionType,
   MergeableState,
 } from '../lib/action-items';
-import { mergePr, replyToItem, retriggerIssue } from './actions';
+import type { PrimaryAction } from '../lib/primary-action';
+import { mergePr, replyToItem } from './actions';
 import { CancelRunButton } from './cancel-run-button';
 import { githubIssueUrl } from './format';
+import { RetriggerButton } from './retrigger-button';
 
 const ACTION_LABELS: Record<ActionType, string> = {
   'human-needed': 'Needs a human',
@@ -146,19 +146,28 @@ function CommentPreview({
   );
 }
 
+/**
+ * A full-weight card, rendered ONLY for items in "Your Queue". It leads
+ * with one primary action derived from why the item needs the maintainer
+ * (see derivePrimaryAction); everything else on the card is context for
+ * making that one decision.
+ */
 export function ActionItemCard({
   item,
   updatedAtLabel,
+  primaryAction,
   liveRun,
 }: {
   item: ActionItem;
   updatedAtLabel: string;
+  primaryAction?: PrimaryAction;
   liveRun?: LiveRunSummary;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
-  const [retriggerOpened, setRetriggerOpened] = useState(false);
-  const [retriggerNote, setRetriggerNote] = useState('');
+  // The reply input renders already open when replying IS the task; on
+  // other cards it stays behind a "Reply…" toggle.
+  const [replyOpen, setReplyOpen] = useState(primaryAction?.kind === 'reply');
   const [error, setError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
@@ -215,25 +224,11 @@ export function ActionItemCard({
       onConfirm: handleMerge,
     });
 
-  const handleRetrigger = () => {
-    setRetriggerOpened(false);
-    setError(undefined);
-    startTransition(async () => {
-      const result = await retriggerIssue(
-        item.number,
-        retriggerNote.trim() || undefined,
-      );
-      if (!result.ok) {
-        setError(result.message);
-        return;
-      }
-      setRetriggerNote('');
-      notifications.show({
-        message: `#${item.number} retriggered`,
-        color: 'green',
-      });
-    });
-  };
+  const mergeDisabled =
+    isPending ||
+    item.draft ||
+    (item.mergeableState !== undefined &&
+      NOT_MERGEABLE_STATES.includes(item.mergeableState));
 
   return (
     <Card withBorder radius="md" padding="md">
@@ -250,106 +245,73 @@ export function ActionItemCard({
             #{item.number} {item.title}
           </Anchor>
           <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
-            {item.draft && (
-              <Badge variant="outline" color="gray" size="sm">
-                Draft
-              </Badge>
-            )}
-            <Badge variant="outline" color="gray" size="sm">
-              {item.kind === 'pr' ? 'PR' : 'Issue'}
-            </Badge>
-          </Group>
-        </Group>
-
-        <Text size="xs" c="dimmed">
-          {item.author && <>by {item.author} · </>}
-          updated {updatedAtLabel}
-        </Text>
-
-        {item.labels.length > 0 && (
-          <Group gap={6}>
-            {item.labels.map((label) => (
-              <Badge key={label} variant="dot" color="gray" size="sm">
-                {label}
-              </Badge>
-            ))}
-          </Group>
-        )}
-
-        {(item.parentNumber || item.subIssues || item.linkedIssueNumbers) && (
-          <Group gap="md">
-            {item.parentNumber && (
-              <Anchor
-                href={githubIssueUrl(item, item.parentNumber)}
-                target="_blank"
-                rel="noreferrer"
-                size="xs"
-                c="dimmed"
-              >
-                ↳ part of #{item.parentNumber}
-              </Anchor>
-            )}
-            {item.subIssues && (
-              <Text size="xs" c="dimmed">
-                sub-issues: {item.subIssues.completed}/{item.subIssues.total}{' '}
-                done
-              </Text>
-            )}
-            {item.linkedIssueNumbers && item.linkedIssueNumbers.length > 0 && (
-              <Text size="xs" c="dimmed">
-                Closes{' '}
-                {item.linkedIssueNumbers.map((n, i) => (
-                  <span key={n}>
-                    {i > 0 && ', '}
-                    <Anchor
-                      href={githubIssueUrl(item, n)}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="xs"
-                      c="dimmed"
-                      inherit
-                    >
-                      #{n}
-                    </Anchor>
-                  </span>
-                ))}
-              </Text>
-            )}
-          </Group>
-        )}
-
-        {(liveRun || item.actionTypes.length > 0) && (
-          <Group gap={6}>
-            {liveRun && (
-              <>
-                <Badge
-                  variant="filled"
-                  color={liveRun.status === 'running' ? 'blue' : 'gray'}
-                >
-                  {liveRun.status === 'running'
-                    ? 'Agent working now'
-                    : 'Agent run queued'}
-                </Badge>
-                <Text size="xs" c="dimmed">
-                  {liveRun.label}
-                </Text>
-                <Anchor
-                  href={liveRun.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="xs"
-                  c="dimmed"
-                >
-                  View run ↗
-                </Anchor>
-                <CancelRunButton runId={liveRun.id} label={item.title} />
-              </>
-            )}
             {item.actionTypes.map((type) => (
               <Badge key={type} color={ACTION_COLORS[type]} variant="light">
                 {ACTION_LABELS[type]}
               </Badge>
             ))}
+          </Group>
+        </Group>
+
+        {/* One dimmed context line replaces the previous stack of label
+            badges and relationship rows - context, not work, so it gets
+            one line of visual weight. */}
+        <Text size="xs" c="dimmed">
+          {item.kind === 'pr' ? 'PR' : 'Issue'}
+          {item.draft ? ' (draft)' : ''}
+          {item.author && <> · by {item.author}</>} · updated {updatedAtLabel}
+          {item.parentNumber && (
+            <>
+              {' · '}
+              <Anchor
+                href={githubIssueUrl(item, item.parentNumber)}
+                target="_blank"
+                rel="noreferrer"
+                c="dimmed"
+                inherit
+              >
+                part of #{item.parentNumber}
+              </Anchor>
+            </>
+          )}
+          {item.subIssues && (
+            <>
+              {' '}
+              · sub-issues {item.subIssues.completed}/{item.subIssues.total}
+            </>
+          )}
+          {item.linkedIssueNumbers && item.linkedIssueNumbers.length > 0 && (
+            <>
+              {' '}
+              · closes {item.linkedIssueNumbers.map((n) => `#${n}`).join(', ')}
+            </>
+          )}
+          {item.labels.length > 0 && <> · {item.labels.join(', ')}</>}
+        </Text>
+
+        {liveRun && (
+          <Group gap={6}>
+            <Badge
+              variant="filled"
+              color={liveRun.status === 'running' ? 'blue' : 'gray'}
+            >
+              {liveRun.status === 'running'
+                ? 'Agent working now'
+                : 'Agent run queued'}
+            </Badge>
+            <Text size="xs" c="dimmed">
+              {liveRun.label}
+            </Text>
+            <Anchor
+              href={liveRun.url}
+              target="_blank"
+              rel="noreferrer"
+              size="xs"
+              c="dimmed"
+            >
+              View run ↗
+            </Anchor>
+            <CancelRunButton runId={liveRun.id} label={item.title} />
           </Group>
         )}
 
@@ -386,6 +348,15 @@ export function ActionItemCard({
           </Text>
         )}
 
+        {item.lastCommentBody && item.lastCommentUrl && (
+          <CommentPreview
+            body={item.lastCommentBody}
+            url={item.lastCommentUrl}
+            expanded={expanded}
+            onToggle={() => setExpanded((prev) => !prev)}
+          />
+        )}
+
         {item.takeoverCommand && (
           <Group gap={6} wrap="nowrap">
             <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
@@ -416,85 +387,33 @@ export function ActionItemCard({
           </Group>
         )}
 
-        {item.lastCommentBody && item.lastCommentUrl && (
-          <CommentPreview
-            body={item.lastCommentBody}
-            url={item.lastCommentUrl}
-            expanded={expanded}
-            onToggle={() => setExpanded((prev) => !prev)}
-          />
+        {replyOpen && (
+          <Group gap="sm" wrap="nowrap" mt={4}>
+            <TextInput
+              value={replyBody}
+              onChange={(e) => setReplyBody(e.currentTarget.value)}
+              onKeyDown={handleReplyKeyDown}
+              placeholder="Reply with @claude…"
+              autoFocus={primaryAction?.kind !== 'reply'}
+              style={{ flex: 1, minWidth: 200 }}
+            />
+            <Button
+              variant={primaryAction?.kind === 'reply' ? 'filled' : 'default'}
+              disabled={isPending || !replyBody.trim()}
+              onClick={handleReply}
+            >
+              Reply
+            </Button>
+          </Group>
         )}
 
         <Group gap="sm" wrap="wrap" mt={4}>
-          <TextInput
-            value={replyBody}
-            onChange={(e) => setReplyBody(e.currentTarget.value)}
-            onKeyDown={handleReplyKeyDown}
-            placeholder="Reply with @claude…"
-            style={{ flex: 1, minWidth: 200 }}
-          />
-          <Button
-            variant="default"
-            disabled={isPending || !replyBody.trim()}
-            onClick={handleReply}
-          >
-            Reply
-          </Button>
-          {item.kind === 'issue' && item.labels.includes('claude') && (
-            <Popover
-              opened={retriggerOpened}
-              onChange={setRetriggerOpened}
-              width={340}
-              position="bottom-end"
-              withArrow
-            >
-              <Popover.Target>
-                <Button
-                  variant="default"
-                  // Retriggering mid-run double-dispatches: the label cycle
-                  // fires a second run while the first still holds the issue.
-                  disabled={isPending || Boolean(liveRun)}
-                  title={
-                    liveRun
-                      ? 'An agent run is already in flight for this item'
-                      : undefined
-                  }
-                  onClick={() => setRetriggerOpened((prev) => !prev)}
-                >
-                  Retrigger
-                </Button>
-              </Popover.Target>
-              <Popover.Dropdown>
-                <Stack gap="xs">
-                  <Textarea
-                    value={retriggerNote}
-                    onChange={(e) => setRetriggerNote(e.currentTarget.value)}
-                    placeholder="Optional steering note — posted on the issue before the fresh run starts"
-                    autosize
-                    minRows={2}
-                  />
-                  <Button
-                    disabled={isPending}
-                    onClick={handleRetrigger}
-                    fullWidth
-                  >
-                    Retrigger now
-                  </Button>
-                </Stack>
-              </Popover.Dropdown>
-            </Popover>
-          )}
-          {item.kind === 'pr' && (
+          {primaryAction?.kind === 'approve-merge' && (
             <Button
               color="dark"
               // item.draft is belt-and-suspenders for the 'draft'
               // mergeable_state: merging a draft always 405s.
-              disabled={
-                isPending ||
-                item.draft ||
-                (item.mergeableState !== undefined &&
-                  NOT_MERGEABLE_STATES.includes(item.mergeableState))
-              }
+              disabled={mergeDisabled}
               title={
                 item.draft ? MERGEABLE_WARNINGS.draft : mergeableWarning(item)
               }
@@ -502,6 +421,36 @@ export function ActionItemCard({
             >
               Approve &amp; Merge
             </Button>
+          )}
+          {primaryAction?.kind === 'fix-ci' && (
+            <Button
+              component="a"
+              href={primaryAction.checkUrl}
+              target="_blank"
+              rel="noreferrer"
+              color="red"
+              variant="light"
+            >
+              Open failing check ↗
+            </Button>
+          )}
+          {!replyOpen && (
+            <Button
+              variant="default"
+              onClick={() => setReplyOpen(true)}
+              disabled={isPending}
+            >
+              Reply…
+            </Button>
+          )}
+          {item.kind === 'issue' && item.labels.includes('claude') && (
+            <RetriggerButton
+              issueNumber={item.number}
+              disabled={Boolean(liveRun)}
+              disabledReason="An agent run is already in flight for this item"
+              onError={setError}
+              size="sm"
+            />
           )}
         </Group>
 
