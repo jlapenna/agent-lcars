@@ -2,6 +2,7 @@
 
 import { Button, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react';
+import { unstable_isUnrecognizedActionError } from 'next/navigation';
 import { useEffect } from 'react';
 
 export default function GlobalError({
@@ -11,6 +12,8 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const isStaleDeploy = unstable_isUnrecognizedActionError(error);
+
   useEffect(() => {
     console.error('Agent Console error boundary caught:', error);
   }, [error]);
@@ -25,11 +28,12 @@ export default function GlobalError({
         />
         <Stack align="center" gap="xs">
           <Title order={1} ta="center">
-            Something went wrong
+            {isStaleDeploy ? 'Console was updated' : 'Something went wrong'}
           </Title>
           <Text c="dimmed" size="lg" ta="center" maw={500}>
-            The console hit an error rendering this page - likely a GitHub API
-            hiccup. Try again, or check the server logs if it keeps happening.
+            {isStaleDeploy
+              ? 'The console was redeployed under this tab. Reload the page to pick up the latest version.'
+              : 'The console hit an error rendering this page - likely a GitHub API hiccup. Try again, or check the server logs if it keeps happening.'}
           </Text>
         </Stack>
 
@@ -43,9 +47,11 @@ export default function GlobalError({
           <Button
             variant="filled"
             leftSection={<IconRefresh aria-hidden="true" size={20} />}
-            onClick={() => reset()}
+            onClick={() =>
+              isStaleDeploy ? window.location.reload() : reset()
+            }
           >
-            Try again
+            {isStaleDeploy ? 'Reload page' : 'Try again'}
           </Button>
         </Group>
       </Stack>
