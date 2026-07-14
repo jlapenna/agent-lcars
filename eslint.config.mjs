@@ -87,6 +87,54 @@ export default [
               sourceTag: 'platform:shared',
               notDependOnLibsWithTags: ['platform:browser'],
             },
+            // scope:* dimension (#2793 follow-through): stops app-domain
+            // coupling at the import site instead of discovering it later as
+            // a phantom Nx-affected edge (libs/app importing @repo/races made
+            // every onecake E2E lane run — and fail — on primes-only PRs).
+            // `scope:shared` is the chassis + generic integrations: it may
+            // never import domain code. `scope:chassis` is the four libs that
+            // still hold cross-domain imports (app, chores, export-sheets,
+            // strava) — permissive until each #2798-style extraction lands;
+            // do NOT add new projects to it. Racing (members+primes) and
+            // onecake domains may never import each other. Members apps span
+            // both domains by design (Slack club hub); primes/onecake apps
+            // are locked to their own.
+            {
+              sourceTag: 'scope:shared',
+              onlyDependOnLibsWithTags: ['scope:shared', 'scope:chassis'],
+            },
+            {
+              sourceTag: 'scope:racing',
+              onlyDependOnLibsWithTags: [
+                'scope:racing',
+                'scope:shared',
+                'scope:chassis',
+              ],
+            },
+            {
+              sourceTag: 'scope:onecake',
+              onlyDependOnLibsWithTags: [
+                'scope:onecake',
+                'scope:shared',
+                'scope:chassis',
+              ],
+            },
+            {
+              sourceTag: 'scope:primes',
+              onlyDependOnLibsWithTags: [
+                'scope:racing',
+                'scope:shared',
+                'scope:chassis',
+              ],
+            },
+            {
+              sourceTag: 'scope:agent-console',
+              onlyDependOnLibsWithTags: ['scope:shared', 'scope:chassis'],
+            },
+            // scope:members, scope:tooling, scope:chassis: deliberately
+            // unconstrained (members legitimately imports both domains;
+            // cli/agent are cross-cutting admin tooling; chassis is the
+            // tracked debt above).
           ],
         },
       ],

@@ -3,16 +3,24 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/util-server/src",
   "projectType": "library",
-  "tags": ["platform:server", "npm:private"],
+  "tags": [
+    "platform:server",
+    "npm:private",
+    "scope:shared"
+  ],
   "targets": {
     "build": {
       "executor": "@nx/js:swc",
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "options": {
         "outputPath": "dist/libs/util-server",
         "main": "libs/util-server/src/index.ts",
         "tsConfig": "libs/util-server/tsconfig.lib.json",
-        "assets": ["libs/util-server/*.md"],
+        "assets": [
+          "libs/util-server/*.md"
+        ],
         "skipTypeCheck": true
       }
     }

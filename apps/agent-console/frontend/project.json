@@ -1,18 +1,25 @@
 {
   "name": "@repo/agent-console/frontend",
-  "tags": ["platform:nextjs"],
+  "tags": [
+    "platform:nextjs",
+    "scope:agent-console"
+  ],
   "$schema": "../../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/agent-console/frontend/src",
   "projectType": "application",
   "targets": {
     "build": {
       "executor": "@nx/next:build",
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "defaultConfiguration": "production",
       "options": {
         "outputPath": "dist/apps/agent-console/frontend",
         "tsConfig": "apps/agent-console/frontend/tsconfig.json",
-        "assets": ["apps/agent-console/frontend/public"]
+        "assets": [
+          "apps/agent-console/frontend/public"
+        ]
       },
       "configurations": {
         "production": {
@@ -27,7 +34,9 @@
     },
     "bundle": {
       "executor": "nx:run-commands",
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "build"
+      ],
       "options": {
         "commands": [
           "mkdir -p dist/apps/agent-console/frontend/.next/standalone/dist/apps/agent-console/frontend/.next dist/apps/agent-console/frontend/.next/standalone/apps/agent-console/frontend",
@@ -66,7 +75,9 @@
     },
     "serve-production": {
       "executor": "nx:run-commands",
-      "dependsOn": ["bundle"],
+      "dependsOn": [
+        "bundle"
+      ],
       "options": {
         "command": "pnpm exec dotenv -e .env.development.local --optional -- node dist/apps/agent-console/frontend/.next/standalone/apps/agent-console/frontend/server.js",
         "env": {

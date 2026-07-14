@@ -3,16 +3,23 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/agent-telemetry/src",
   "projectType": "library",
-  "tags": ["platform:shared"],
+  "tags": [
+    "platform:shared",
+    "scope:shared"
+  ],
   "targets": {
     "build": {
       "executor": "@nx/js:swc",
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "options": {
         "outputPath": "dist/libs/agent-telemetry",
         "main": "libs/agent-telemetry/src/index.ts",
         "tsConfig": "libs/agent-telemetry/tsconfig.lib.json",
-        "assets": ["libs/agent-telemetry/*.md"],
+        "assets": [
+          "libs/agent-telemetry/*.md"
+        ],
         "skipTypeCheck": true,
         "clean": false
       }

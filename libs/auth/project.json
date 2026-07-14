@@ -3,11 +3,17 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/auth/src",
   "projectType": "library",
-  "tags": ["platform:server", "npm:private"],
+  "tags": [
+    "platform:server",
+    "npm:private",
+    "scope:shared"
+  ],
   "targets": {
     "build": {
       "executor": "@nx/js:swc",
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "options": {
         "outputPath": "dist/libs/auth",
         "main": "libs/auth/src/index.ts",
