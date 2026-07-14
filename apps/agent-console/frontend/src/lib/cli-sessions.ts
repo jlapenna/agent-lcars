@@ -99,6 +99,24 @@ export async function joinBranchToPr(
   return { number: pr.number, url: pr.html_url };
 }
 
+/**
+ * True once the given PR has merged. Only called for a session's
+ * transcript-recorded PR (`prFromDeliverables`) - unlike `joinBranchToPr`,
+ * that number is never re-verified against GitHub, so a session whose PR
+ * merged after its last transcript write (the CLI process often keeps
+ * running/idling past that point) would otherwise show `idle`/`live`
+ * forever even though there is nothing left to do (#2879).
+ */
+export async function isPrMerged(number: number): Promise<boolean> {
+  const octokit = getGithubClient();
+  const { data } = await octokit.rest.pulls.get({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    pull_number: number,
+  });
+  return data.merged;
+}
+
 export interface CliSessionsResult {
   sessions: CliSession[];
   /** Human-readable notes when the store or a join degraded instead of
@@ -117,6 +135,12 @@ export interface CliSessionsResult {
  * GitHub search per session per page load, which at 200+ docs blew through
  * the search API's ~30 req/min budget and flooded the warnings banner with
  * the resulting failures.
+ *
+ * An active session with a transcript-recorded PR additionally gets a merge
+ * check: `displayLiveness` only ever decays liveness with *elapsed time*, so
+ * a session whose PR merged while the CLI process kept idling would sit at
+ * `idle`/`live` forever with nothing left to do (#2879) - merged is treated
+ * as a stronger, terminal signal and forces `ended`.
  *
  * One malformed doc or one failed PR lookup degrades that single session
  * instead of crashing the whole list, matching the defensive pattern in
@@ -176,10 +200,31 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     }
     return search;
   };
+  // Dedupe merge checks by PR number: resumed sessions can share a PR.
+  const mergedByPrNumber = new Map<number, Promise<boolean>>();
+  const checkMerged = (number: number): Promise<boolean> => {
+    let check = mergedByPrNumber.get(number);
+    if (!check) {
+      check = isPrMerged(number).catch((error) => {
+        console.error(
+          `agent-console: failed to check merge state for PR #${number}:`,
+          error,
+        );
+        warnings.push(`PR merge check failed for #${number}.`);
+        return false;
+      });
+      mergedByPrNumber.set(number, check);
+    }
+    return check;
+  };
   const sessions = await Promise.all(
     capped.map(async ([doc, session]) => {
       session.pr = prFromDeliverables(doc);
-      if (!session.pr && doc.branch && isActive(session.liveness)) {
+      if (session.pr && isActive(session.liveness)) {
+        if (await checkMerged(session.pr.number)) {
+          session.liveness = 'ended';
+        }
+      } else if (!session.pr && doc.branch && isActive(session.liveness)) {
         session.pr = await searchBranch(doc.branch);
       }
       return session;

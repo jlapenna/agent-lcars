@@ -48,6 +48,17 @@ function mockSearch(items: unknown[] = []) {
   return searchMock;
 }
 
+function mockPullsGet(merged: boolean | Error) {
+  const getMock =
+    merged instanceof Error
+      ? jest.fn().mockRejectedValue(merged)
+      : jest.fn().mockResolvedValue({ data: { merged } });
+  (getGithubClient as jest.Mock).mockReturnValue({
+    rest: { pulls: { get: getMock } },
+  });
+  return getMock;
+}
+
 describe('getCliSessions', () => {
   afterEach(() => jest.resetAllMocks());
 
@@ -106,6 +117,85 @@ describe('getCliSessions', () => {
       url: 'https://github.com/supersprinklesracing/members/pull/2662',
     });
     expect(searchMock).not.toHaveBeenCalled();
+  });
+
+  it('downgrades liveness to ended once a transcript-recorded PR has merged', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({
+        liveness: 'idle',
+        lastActivityAt: minutesAgo(42),
+        deliverables: { prNumbers: [2843], commitShas: [] },
+      }),
+    ]);
+    const getMock = mockPullsGet(true);
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].liveness).toBe('ended');
+    expect(sessions[0].pr).toEqual({
+      number: 2843,
+      url: 'https://github.com/supersprinklesracing/members/pull/2843',
+    });
+    expect(getMock).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      pull_number: 2843,
+    });
+  });
+
+  it('keeps liveness as-is when the transcript-recorded PR is still open', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({
+        liveness: 'idle',
+        lastActivityAt: minutesAgo(20),
+        deliverables: { prNumbers: [2843], commitShas: [] },
+      }),
+    ]);
+    mockPullsGet(false);
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].liveness).toBe('idle');
+  });
+
+  it('never checks merge state for a finished session, even with a recorded PR', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({
+        liveness: 'ended',
+        lastActivityAt: minutesAgo(120),
+        deliverables: { prNumbers: [2843], commitShas: [] },
+      }),
+    ]);
+    const getMock = mockPullsGet(true);
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].liveness).toBe('ended');
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it('degrades gracefully and warns once when the merge check fails, without downgrading liveness', async () => {
+    (listSessionDocs as jest.Mock).mockResolvedValue([
+      makeCliDoc({
+        sessionId: 'session-1',
+        liveness: 'idle',
+        lastActivityAt: minutesAgo(20),
+        deliverables: { prNumbers: [2843], commitShas: [] },
+      }),
+      makeCliDoc({
+        sessionId: 'session-2',
+        liveness: 'idle',
+        lastActivityAt: minutesAgo(21),
+        deliverables: { prNumbers: [2843], commitShas: [] },
+      }),
+    ]);
+    const getMock = mockPullsGet(new Error('502'));
+
+    const { sessions, warnings } = await getCliSessions();
+
+    expect(sessions.map((s) => s.liveness)).toEqual(['idle', 'idle']);
+    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(warnings).toEqual(['PR merge check failed for #2843.']);
   });
 
   it('never searches for ended sessions, even with a branch', async () => {
