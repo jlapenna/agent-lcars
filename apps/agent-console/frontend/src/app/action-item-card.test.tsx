@@ -143,9 +143,7 @@ describe('ActionItemCard', () => {
       }),
     );
 
-    expect(
-      screen.getByRole('button', { name: 'Unstick' }),
-    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Unstick' })).toBeTruthy();
   });
 
   it('omits the Unstick button when the PR has no failed run', () => {
@@ -168,5 +166,18 @@ describe('ActionItemCard', () => {
     );
 
     expect(screen.queryByRole('button', { name: 'Unstick' })).toBeNull();
+  });
+
+  it('renders the takeover command copy control as an icon button, not text (#2880)', () => {
+    renderCard(
+      makeItem({
+        takeoverCommand: 'claude --resume abc123',
+      }),
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Copy takeover command' }),
+    ).toBeTruthy();
+    expect(screen.queryByText('Copy')).toBeNull();
   });
 });

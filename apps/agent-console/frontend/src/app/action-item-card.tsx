@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  ActionIcon,
   Anchor,
   Badge,
   Blockquote,
@@ -12,9 +13,11 @@ import {
   Stack,
   Text,
   TextInput,
+  Tooltip,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
+import { IconCheck, IconLink } from '@tabler/icons-react';
 import { useState, useTransition } from 'react';
 
 import type {
@@ -388,15 +391,18 @@ export function ActionItemCard({
             </Code>
             <CopyButton value={item.takeoverCommand}>
               {({ copied, copy }) => (
-                <Button
-                  variant="subtle"
-                  size="compact-xs"
-                  color={copied ? 'teal' : 'gray'}
-                  onClick={copy}
-                  style={{ flexShrink: 0 }}
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </Button>
+                <Tooltip label={copied ? 'Copied' : 'Copy takeover command'}>
+                  <ActionIcon
+                    variant="subtle"
+                    size="sm"
+                    color={copied ? 'teal' : 'gray'}
+                    onClick={copy}
+                    aria-label="Copy takeover command"
+                    style={{ flexShrink: 0 }}
+                  >
+                    {copied ? <IconCheck size={14} /> : <IconLink size={14} />}
+                  </ActionIcon>
+                </Tooltip>
               )}
             </CopyButton>
           </Group>
