@@ -68,6 +68,10 @@ export function createVitestConfig(options: {
         globals: false,
         environment,
         reporters: ['default'],
+        // Mirrors jest.preset.js's targetDefaults.test passWithNoTests:true
+        // — some migrated libs (e.g. type-only or index-only packages) have
+        // no test files at all.
+        passWithNoTests: true,
         setupFiles,
         coverage: {
           reportsDirectory: path.join(__dirname, 'coverage', projectRelative),
