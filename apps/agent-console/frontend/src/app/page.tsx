@@ -144,17 +144,17 @@ export default async function Index() {
         </details>
       )}
 
-      <AgentActivityPanel
-        activity={activity}
-        cliSessions={cliSessions}
-        itemsByRunId={itemsByRunId}
-      />
-
       <ActionItemsBoard
         yourQueue={yourQueue.map((item) => toCard(item))}
         handedBack={handedBack.map((item) => toCard(item))}
         waitingOnDeploy={waitingOnDeploy.map((item) => toCard(item))}
         rest={rest.map((item) => toCard(item))}
+      />
+
+      <AgentActivityPanel
+        activity={activity}
+        cliSessions={cliSessions}
+        itemsByRunId={itemsByRunId}
       />
     </Container>
   );
