@@ -193,6 +193,45 @@ export default [
     rules: {},
   },
 
+  // E2E fixture/seed clock guardrail (#2710/#2741, PR #2765): seed data and
+  // mock-db fixtures must not be computed from the wall clock. Specs pin the
+  // page clock via `?e2eNow=`; a `Date.now()`-relative fixture drifts
+  // against that pinned now until assertions (or visual baselines) break —
+  // a time bomb that detonates days or months after it's introduced. Pin
+  // fixture instants to constants (see `MOCK_CALENDAR_E2E_NOW` in
+  // libs/races/src/mock-db.ts and `SEED_REFERENCE_NOW` in the primes
+  // seed-feed-events route). If a wall-clock value is genuinely safe (the
+  // consuming spec does NOT pin e2eNow, or the value is a uniqueness
+  // suffix), disable per-line with the reason.
+  {
+    // NOTE: every app/lib has its own eslint.config.mjs spreading this one,
+    // so these globs are matched relative to THAT nested config's directory
+    // (its flat-config basePath), not the repo root — they must stay
+    // basePath-agnostic (`**/`-prefixed, no `apps/*/...` anchors).
+    files: [
+      '**/mock-db.ts',
+      '**/app/api/e2e/**/*.ts',
+      '**/src/**/seed*.ts',
+      '**/src/**/*-seed.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.object.name='Date'][callee.property.name='now']",
+          message:
+            'Wall-clock Date.now() in e2e fixtures/seeds drifts against specs’ pinned ?e2eNow= (#2710/#2741). Pin the instant to a constant, or eslint-disable this line with the reason it is safe.',
+        },
+        {
+          selector: "NewExpression[callee.name='Date'][arguments.length=0]",
+          message:
+            'Wall-clock new Date() in e2e fixtures/seeds drifts against specs’ pinned ?e2eNow= (#2710/#2741). Pin the instant to a constant, or eslint-disable this line with the reason it is safe.',
+        },
+      ],
+    },
+  },
+
   // Override or add rules here
   {
     files: [

@@ -24,6 +24,10 @@ export const E2E_CLI_SESSION_IDS = {
 // the liveness it displays (see cli-sessions.ts / displayLiveness), so frozen
 // fixture dates would age out of the window and change their rendered state.
 const minutesAgo = (minutes: number) =>
+  // The console's e2e specs don't pin ?e2eNow=; page clock and seed share
+  // real now, so this can't drift (and the liveness windows here are
+  // real-now-relative by design).
+  // eslint-disable-next-line no-restricted-syntax
   new Date(Date.now() - minutes * 60 * 1000).toISOString();
 
 const expireAtFor = (lastActivityAt: string) => {
