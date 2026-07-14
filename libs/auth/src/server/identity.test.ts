@@ -1,22 +1,23 @@
 import { Firestore } from 'firebase-admin/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getCanonicalUserId, resolveUserIdFromSlackId } from './identity';
 import { ensureAuthJsUserForSlack, upsertAuthJsAccount } from './queries';
 
 // Mock queries
-jest.mock('./queries', () => ({
-  ...jest.requireActual('./queries'),
-  ensureAuthJsUserForSlack: jest.fn(),
-  upsertAuthJsAccount: jest.fn(),
+vi.mock('./queries', async (importOriginal) => ({
+  ...(await importOriginal()),
+  ensureAuthJsUserForSlack: vi.fn(),
+  upsertAuthJsAccount: vi.fn(),
 }));
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn(),
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn(),
 }));
 
 describe('resolveUserIdFromSlackId', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('should return existing userId if an AuthJsAccount is found', async () => {
@@ -53,7 +54,7 @@ describe('resolveUserIdFromSlackId', () => {
       email: 'test@example.com',
     };
 
-    (ensureAuthJsUserForSlack as jest.Mock).mockResolvedValue({
+    (ensureAuthJsUserForSlack as Mock).mockResolvedValue({
       id: 'generated-uuid-5678',
       email: 'test@example.com',
     });

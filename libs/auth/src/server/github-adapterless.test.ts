@@ -1,55 +1,54 @@
 import { getFirestore } from '@repo/firebase-server';
 import * as utilServer from '@repo/util-server';
 import type { Session } from 'next-auth';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { AuthConfigOptions, getAuthConfig } from './config';
 
-jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn().mockReturnValue({}),
+vi.mock('@auth/firebase-adapter', () => ({
+  FirestoreAdapter: vi.fn().mockReturnValue({}),
 }));
-jest.mock('next-auth/providers/github', () =>
-  jest.fn().mockReturnValue({ id: 'github' }),
-);
-jest.mock('next-auth/providers/credentials', () =>
-  jest.fn().mockImplementation((options) => options),
-);
-
-jest.mock('@repo/service-auth', () => ({
-  getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
+vi.mock('next-auth/providers/github', () => ({
+  default: vi.fn().mockReturnValue({ id: 'github' }),
+}));
+vi.mock('next-auth/providers/credentials', () => ({
+  default: vi.fn().mockImplementation((options) => options),
 }));
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn(),
-  getFirebaseAdminApp: jest.fn(),
-  getFirebaseAuthAdmin: jest.fn(),
+vi.mock('@repo/service-auth', () => ({
+  getAuthSecret: vi.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@repo/slack', () => ({
-  getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn(),
+  getFirebaseAdminApp: vi.fn(),
+  getFirebaseAuthAdmin: vi.fn(),
 }));
 
-jest.mock('@repo/strava', () => ({
-  getSecrets: jest
+vi.mock('@repo/slack', () => ({
+  getSecrets: vi.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  isSlackAdmin: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('@repo/strava', () => ({
+  getSecrets: vi
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
+  isOnecakeAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/util/browser', () => ({
-  getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
+vi.mock('@repo/util/browser', () => ({
+  getNextPublicSlackClientId: vi.fn().mockReturnValue('slack-client-id'),
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  enableTestingHandlers: jest.fn().mockReturnValue(false),
-  getLogLevel: jest.fn().mockReturnValue('warn'),
-  isAdminEmail: jest.fn().mockReturnValue(false),
-  getProjectId: jest.fn().mockReturnValue('demo-project'),
-  getAgentConsoleGithubOauthClientId: jest.fn().mockReturnValue('gh-id'),
-  getAgentConsoleGithubOauthClientSecret: jest
-    .fn()
-    .mockReturnValue('gh-secret'),
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enableTestingHandlers: vi.fn().mockReturnValue(false),
+  getLogLevel: vi.fn().mockReturnValue('warn'),
+  isAdminEmail: vi.fn().mockReturnValue(false),
+  getProjectId: vi.fn().mockReturnValue('demo-project'),
+  getAgentConsoleGithubOauthClientId: vi.fn().mockReturnValue('gh-id'),
+  getAgentConsoleGithubOauthClientSecret: vi.fn().mockReturnValue('gh-secret'),
 }));
 
 const ADAPTERLESS_GITHUB: AuthConfigOptions = {
@@ -61,8 +60,8 @@ const ADAPTERLESS_GITHUB: AuthConfigOptions = {
 
 describe('getAuthConfig adapter-less GitHub mode (agent-console)', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    (utilServer.enableTestingHandlers as jest.Mock).mockReturnValue(false);
+    vi.clearAllMocks();
+    (utilServer.enableTestingHandlers as Mock).mockReturnValue(false);
   });
 
   it('configures the github provider without touching Firestore', async () => {
@@ -77,8 +76,8 @@ describe('getAuthConfig adapter-less GitHub mode (agent-console)', () => {
   });
 
   it('keeps the Firestore adapter and database strategy by default', async () => {
-    (getFirestore as jest.Mock).mockResolvedValue({
-      collection: jest.fn(),
+    (getFirestore as Mock).mockResolvedValue({
+      collection: vi.fn(),
     });
     const config = await getAuthConfig();
 

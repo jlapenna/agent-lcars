@@ -1,68 +1,73 @@
 import { logger } from '@repo/logging';
+import { describe, expect, it, vi } from 'vitest';
 
 import { getAuthConfig } from './config';
 
 // Mock dependencies
-jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn().mockReturnValue({
-    createUser: jest.fn(),
+vi.mock('@auth/firebase-adapter', () => ({
+  FirestoreAdapter: vi.fn().mockReturnValue({
+    createUser: vi.fn(),
   }),
 }));
 
-jest.mock('next-auth/providers/slack', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/strava', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/credentials', () =>
-  jest.fn().mockReturnValue({}),
-);
-
-jest.mock('@repo/service-auth', () => ({
-  getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
+vi.mock('next-auth/providers/slack', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/strava', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/credentials', () => ({
+  default: vi.fn().mockReturnValue({}),
 }));
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn().mockResolvedValue({}),
-  getFirebaseAdminApp: jest.fn(),
+vi.mock('@repo/service-auth', () => ({
+  getAuthSecret: vi.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@repo/logging', () => ({
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn().mockResolvedValue({}),
+  getFirebaseAdminApp: vi.fn(),
+}));
+
+vi.mock('@repo/logging', () => ({
   logger: {
-    debug: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    info: jest.fn(), // Added info mock
+    debug: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(), // Added info mock
   },
   LogLevel: {
     DEBUG: 'debug',
   },
 }));
 
-jest.mock('@repo/slack', () => ({
-  getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
-  getBotDetails: jest
+vi.mock('@repo/slack', () => ({
+  getSecrets: vi.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  getBotDetails: vi
     .fn()
     .mockResolvedValue({ teamId: 'team-id', appId: 'app-id' }),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+  isSlackAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/strava', () => ({
-  getSecrets: jest.fn().mockResolvedValue({
+vi.mock('@repo/strava', () => ({
+  getSecrets: vi.fn().mockResolvedValue({
     clientId: 'id',
     clientSecret: 'secret',
     redirectUri: 'uri',
   }),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
+  isOnecakeAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  enableTestingHandlers: jest.fn().mockReturnValue(false),
-  getLogLevel: jest.fn().mockReturnValue('debug'),
-  getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
-  getProjectId: jest.fn().mockReturnValue('demo-project'),
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enableTestingHandlers: vi.fn().mockReturnValue(false),
+  getLogLevel: vi.fn().mockReturnValue('debug'),
+  getSlackTeamId: vi.fn().mockReturnValue('test-team-id'),
+  getProjectId: vi.fn().mockReturnValue('demo-project'),
 }));
 
-jest.mock('@repo/util/browser', () => ({
-  getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
+vi.mock('@repo/util/browser', () => ({
+  getNextPublicSlackClientId: vi.fn().mockReturnValue('slack-client-id'),
 }));
 
 describe('getAuthConfig', () => {

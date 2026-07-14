@@ -1,97 +1,104 @@
+import { getFirestore } from '@repo/firebase-server';
 import { reconcilePendingInviteForEmail } from '@repo/invites';
 import { logger } from '@repo/logging';
+import { Firestore } from 'firebase-admin/firestore';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getAuthConfig } from './config';
 
 // Minimal provider stubs (we only exercise createUser/signIn here).
-jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn().mockReturnValue({
-    createUser: jest
+vi.mock('@auth/firebase-adapter', () => ({
+  FirestoreAdapter: vi.fn().mockReturnValue({
+    createUser: vi
       .fn()
       .mockImplementation((user) =>
         Promise.resolve({ id: 'user-uuid', ...user }),
       ),
   }),
 }));
-jest.mock('next-auth/providers/slack', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/strava', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/google', () =>
-  jest.fn().mockReturnValue({ id: 'google' }),
-);
-jest.mock('next-auth/providers/nodemailer', () =>
-  jest.fn().mockImplementation((options) => ({ ...options })),
-);
-jest.mock('next-auth/providers/credentials', () =>
-  jest.fn().mockImplementation((options) => options),
-);
-
-jest.mock('@repo/service-auth', () => ({
-  getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
+vi.mock('next-auth/providers/slack', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/strava', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/google', () => ({
+  default: vi.fn().mockReturnValue({ id: 'google' }),
+}));
+vi.mock('next-auth/providers/nodemailer', () => ({
+  default: vi.fn().mockImplementation((options) => ({ ...options })),
+}));
+vi.mock('next-auth/providers/credentials', () => ({
+  default: vi.fn().mockImplementation((options) => options),
 }));
 
-jest.mock('@repo/invites', () => ({
-  reconcilePendingInviteForEmail: jest.fn().mockResolvedValue(undefined),
+vi.mock('@repo/service-auth', () => ({
+  getAuthSecret: vi.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@repo/logging', () => ({
+vi.mock('@repo/invites', () => ({
+  reconcilePendingInviteForEmail: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('@repo/logging', () => ({
   logger: {
-    debug: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    info: jest.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
   },
   LogLevel: { DEBUG: 'debug' },
 }));
 
-jest.mock('@repo/slack', () => ({
-  getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+vi.mock('@repo/slack', () => ({
+  getSecrets: vi.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  isSlackAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/strava', () => ({
-  getSecrets: jest
+vi.mock('@repo/strava', () => ({
+  getSecrets: vi
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
+  isOnecakeAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/util/browser', () => ({
-  getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
+vi.mock('@repo/util/browser', () => ({
+  getNextPublicSlackClientId: vi.fn().mockReturnValue('slack-client-id'),
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  enableTestingHandlers: jest.fn().mockReturnValue(false),
-  getLogLevel: jest.fn().mockReturnValue('warn'),
-  getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
-  isAdminEmail: jest.fn().mockReturnValue(false),
-  getProjectId: jest.fn().mockReturnValue('preem-machine'),
-  isMailConfigured: jest.fn().mockReturnValue(false),
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enableTestingHandlers: vi.fn().mockReturnValue(false),
+  getLogLevel: vi.fn().mockReturnValue('warn'),
+  getSlackTeamId: vi.fn().mockReturnValue('test-team-id'),
+  isAdminEmail: vi.fn().mockReturnValue(false),
+  getProjectId: vi.fn().mockReturnValue('preem-machine'),
+  isMailConfigured: vi.fn().mockReturnValue(false),
 }));
 
-const mockedReconcile = reconcilePendingInviteForEmail as jest.Mock;
+const mockedReconcile = reconcilePendingInviteForEmail as Mock;
 
-function makeUserDocFirestore(userDocExists: boolean) {
-  const mockGet = jest.fn().mockResolvedValue({
+function makeUserDocFirestore(userDocExists: boolean): Firestore {
+  const mockGet = vi.fn().mockResolvedValue({
     exists: userDocExists,
     data: () => ({}),
   });
-  const mockSet = jest.fn().mockResolvedValue({});
+  const mockSet = vi.fn().mockResolvedValue({});
   const mockDoc = { get: mockGet, set: mockSet };
-  const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
+  const mockCollection = { doc: vi.fn().mockReturnValue(mockDoc) };
   return {
-    collection: jest.fn().mockReturnValue(mockCollection),
-  };
+    collection: vi.fn().mockReturnValue(mockCollection),
+  } as unknown as Firestore;
 }
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn(),
-  getFirebaseAdminApp: jest.fn(),
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn(),
+  getFirebaseAdminApp: vi.fn(),
 }));
 
 describe('Pending invite reconciliation on sign-in (#2619)', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     mockedReconcile.mockResolvedValue(undefined);
   });
 
@@ -99,9 +106,7 @@ describe('Pending invite reconciliation on sign-in (#2619)', () => {
     it('reconciles a pending invite for the new account email', async () => {
       const firestore = makeUserDocFirestore(true);
 
-      (
-        jest.requireMock('@repo/firebase-server') as any
-      ).getFirestore.mockResolvedValue(firestore);
+      vi.mocked(getFirestore).mockResolvedValue(firestore);
 
       const config = await getAuthConfig({ providers: ['google', 'email'] });
       const createUserMethod = config.adapter!.createUser as any;
@@ -123,9 +128,7 @@ describe('Pending invite reconciliation on sign-in (#2619)', () => {
     it('does not attempt reconciliation when the new account has no email', async () => {
       const firestore = makeUserDocFirestore(true);
 
-      (
-        jest.requireMock('@repo/firebase-server') as any
-      ).getFirestore.mockResolvedValue(firestore);
+      vi.mocked(getFirestore).mockResolvedValue(firestore);
 
       const config = await getAuthConfig({ providers: ['google', 'email'] });
       const createUserMethod = config.adapter!.createUser as any;
@@ -138,9 +141,7 @@ describe('Pending invite reconciliation on sign-in (#2619)', () => {
     it('logs and swallows a reconciliation failure instead of failing account creation', async () => {
       const firestore = makeUserDocFirestore(true);
 
-      (
-        jest.requireMock('@repo/firebase-server') as any
-      ).getFirestore.mockResolvedValue(firestore);
+      vi.mocked(getFirestore).mockResolvedValue(firestore);
       mockedReconcile.mockRejectedValue(new Error('firestore blip'));
 
       const config = await getAuthConfig({ providers: ['google', 'email'] });
@@ -166,9 +167,7 @@ describe('Pending invite reconciliation on sign-in (#2619)', () => {
     it('reconciles a pending invite for an existing account on ordinary sign-in', async () => {
       const firestore = makeUserDocFirestore(true);
 
-      (
-        jest.requireMock('@repo/firebase-server') as any
-      ).getFirestore.mockResolvedValue(firestore);
+      vi.mocked(getFirestore).mockResolvedValue(firestore);
 
       const config = await getAuthConfig({ providers: ['google', 'email'] });
       const signInCallback = config.callbacks!.signIn as any;
@@ -192,9 +191,7 @@ describe('Pending invite reconciliation on sign-in (#2619)', () => {
       // a new user's doc — and canonical id — don't exist yet at this point.
       const firestore = makeUserDocFirestore(false);
 
-      (
-        jest.requireMock('@repo/firebase-server') as any
-      ).getFirestore.mockResolvedValue(firestore);
+      vi.mocked(getFirestore).mockResolvedValue(firestore);
 
       const config = await getAuthConfig({ providers: ['google', 'email'] });
       const signInCallback = config.callbacks!.signIn as any;
@@ -212,9 +209,7 @@ describe('Pending invite reconciliation on sign-in (#2619)', () => {
     it('logs and swallows a reconciliation failure instead of rejecting sign-in', async () => {
       const firestore = makeUserDocFirestore(true);
 
-      (
-        jest.requireMock('@repo/firebase-server') as any
-      ).getFirestore.mockResolvedValue(firestore);
+      vi.mocked(getFirestore).mockResolvedValue(firestore);
       mockedReconcile.mockRejectedValue(new Error('firestore blip'));
 
       const config = await getAuthConfig({ providers: ['google', 'email'] });

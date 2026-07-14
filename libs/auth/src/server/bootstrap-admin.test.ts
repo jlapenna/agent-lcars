@@ -1,11 +1,13 @@
+import { getFirestore } from '@repo/firebase-server';
 import { logger } from '@repo/logging';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getAuthConfig } from './config';
 
 // Mock dependencies
-jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn().mockReturnValue({
-    createUser: jest
+vi.mock('@auth/firebase-adapter', () => ({
+  FirestoreAdapter: vi.fn().mockReturnValue({
+    createUser: vi
       .fn()
       .mockImplementation((user) =>
         Promise.resolve({ id: 'user-uuid', ...user }),
@@ -13,23 +15,27 @@ jest.mock('@auth/firebase-adapter', () => ({
   }),
 }));
 
-jest.mock('next-auth/providers/slack', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/strava', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/credentials', () =>
-  jest.fn().mockImplementation((options) => options),
-);
-
-jest.mock('@repo/service-auth', () => ({
-  getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
+vi.mock('next-auth/providers/slack', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/strava', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/credentials', () => ({
+  default: vi.fn().mockImplementation((options) => options),
 }));
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn().mockResolvedValue({
-    collection: jest.fn().mockImplementation((name) => {
+vi.mock('@repo/service-auth', () => ({
+  getAuthSecret: vi.fn().mockResolvedValue('test-secret'),
+}));
+
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn().mockResolvedValue({
+    collection: vi.fn().mockImplementation((name) => {
       if (name === 'services/authjs/users') {
         return {
-          doc: jest.fn().mockImplementation((_id) => ({
-            get: jest.fn().mockImplementation(() => {
+          doc: vi.fn().mockImplementation((_id) => ({
+            get: vi.fn().mockImplementation(() => {
               // We'll dynamically override this mock in tests using Jest spy/mock on the returned promise
               return Promise.resolve({
                 exists: true,
@@ -41,72 +47,72 @@ jest.mock('@repo/firebase-server', () => ({
                 }),
               });
             }),
-            set: jest.fn().mockResolvedValue({}),
+            set: vi.fn().mockResolvedValue({}),
           })),
         };
       }
       return {
-        doc: jest.fn().mockReturnValue({
-          get: jest.fn().mockResolvedValue({ exists: false }),
-          set: jest.fn().mockResolvedValue({}),
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({ exists: false }),
+          set: vi.fn().mockResolvedValue({}),
         }),
       };
     }),
   }),
-  getFirebaseAdminApp: jest.fn(),
+  getFirebaseAdminApp: vi.fn(),
 }));
 
-jest.mock('@repo/logging', () => ({
+vi.mock('@repo/logging', () => ({
   logger: {
-    debug: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    info: jest.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
   },
   LogLevel: {
     DEBUG: 'debug',
   },
 }));
 
-jest.mock('@repo/slack', () => ({
-  getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
-  getBotDetails: jest
+vi.mock('@repo/slack', () => ({
+  getSecrets: vi.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  getBotDetails: vi
     .fn()
     .mockResolvedValue({ teamId: 'team-id', appId: 'app-id' }),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+  isSlackAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/strava', () => ({
-  getSecrets: jest.fn().mockResolvedValue({
+vi.mock('@repo/strava', () => ({
+  getSecrets: vi.fn().mockResolvedValue({
     clientId: 'id',
     clientSecret: 'secret',
     redirectUri: 'uri',
   }),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
+  isOnecakeAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  enableTestingHandlers: jest.fn().mockReturnValue(true),
-  getLogLevel: jest.fn().mockReturnValue('debug'),
-  getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
-  isAdminEmail: jest.fn().mockImplementation((email: string) => {
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enableTestingHandlers: vi.fn().mockReturnValue(true),
+  getLogLevel: vi.fn().mockReturnValue('debug'),
+  getSlackTeamId: vi.fn().mockReturnValue('test-team-id'),
+  isAdminEmail: vi.fn().mockImplementation((email: string) => {
     return [
       'jlapenna@supersprinkles.racing',
       'haley@supersprinkles.racing',
       'liz@supersprinkles.racing',
     ].includes(email);
   }),
-  getProjectId: jest.fn().mockReturnValue('demo-project'),
+  getProjectId: vi.fn().mockReturnValue('demo-project'),
 }));
 
-jest.mock('@repo/util/browser', () => ({
-  getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
+vi.mock('@repo/util/browser', () => ({
+  getNextPublicSlackClientId: vi.fn().mockReturnValue('slack-client-id'),
 }));
 
 describe('Admin Bootstrapping', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('Credentials Provider', () => {
@@ -150,7 +156,7 @@ describe('Admin Bootstrapping', () => {
       const config = await getAuthConfig();
       const signInCallback = config.callbacks!.signIn as any;
 
-      const mockGet = jest.fn().mockResolvedValue({
+      const mockGet = vi.fn().mockResolvedValue({
         exists: true,
         data: () => ({
           slack: {
@@ -159,13 +165,11 @@ describe('Admin Bootstrapping', () => {
           },
         }),
       });
-      const mockSet = jest.fn().mockResolvedValue({});
+      const mockSet = vi.fn().mockResolvedValue({});
       const mockDoc = { get: mockGet, set: mockSet };
-      const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
-      const mockFirestore = await jest
-        .requireMock('@repo/firebase-server')
-        .getFirestore();
-      mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+      const mockCollection = { doc: vi.fn().mockReturnValue(mockDoc) };
+      const mockFirestore = await getFirestore();
+      mockFirestore.collection = vi.fn().mockReturnValue(mockCollection);
 
       const user = {
         id: 'user-uuid',
@@ -204,7 +208,7 @@ describe('Admin Bootstrapping', () => {
       const config = await getAuthConfig();
       const signInCallback = config.callbacks!.signIn as any;
 
-      const mockGet = jest.fn().mockResolvedValue({
+      const mockGet = vi.fn().mockResolvedValue({
         exists: true,
         data: () => ({
           slack: {
@@ -213,13 +217,11 @@ describe('Admin Bootstrapping', () => {
           },
         }),
       });
-      const mockSet = jest.fn().mockResolvedValue({});
+      const mockSet = vi.fn().mockResolvedValue({});
       const mockDoc = { get: mockGet, set: mockSet };
-      const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
-      const mockFirestore = await jest
-        .requireMock('@repo/firebase-server')
-        .getFirestore();
-      mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+      const mockCollection = { doc: vi.fn().mockReturnValue(mockDoc) };
+      const mockFirestore = await getFirestore();
+      mockFirestore.collection = vi.fn().mockReturnValue(mockCollection);
 
       const user = {
         id: 'user-uuid',
@@ -245,14 +247,12 @@ describe('Admin Bootstrapping', () => {
       // email, so `mockGet` is exercised here even though this user isn't an
       // admin. No pending invite matches in this test's default `@repo/invites`
       // mock (see invite-reconciliation.test.ts for that behavior).
-      const mockGet = jest.fn().mockResolvedValue({ exists: false });
-      const mockSet = jest.fn();
+      const mockGet = vi.fn().mockResolvedValue({ exists: false });
+      const mockSet = vi.fn();
       const mockDoc = { get: mockGet, set: mockSet };
-      const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
-      const mockFirestore = await jest
-        .requireMock('@repo/firebase-server')
-        .getFirestore();
-      mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+      const mockCollection = { doc: vi.fn().mockReturnValue(mockDoc) };
+      const mockFirestore = await getFirestore();
+      mockFirestore.collection = vi.fn().mockReturnValue(mockCollection);
 
       const user = {
         id: 'user-uuid',
@@ -276,13 +276,11 @@ describe('Admin Bootstrapping', () => {
       const config = await getAuthConfig();
       const createUserMethod = config.adapter!.createUser as any;
 
-      const mockSet = jest.fn().mockResolvedValue({});
+      const mockSet = vi.fn().mockResolvedValue({});
       const mockDoc = { set: mockSet };
-      const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
-      const mockFirestore = await jest
-        .requireMock('@repo/firebase-server')
-        .getFirestore();
-      mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+      const mockCollection = { doc: vi.fn().mockReturnValue(mockDoc) };
+      const mockFirestore = await getFirestore();
+      mockFirestore.collection = vi.fn().mockReturnValue(mockCollection);
 
       const user = {
         name: 'Haley Admin',
@@ -321,13 +319,11 @@ describe('Admin Bootstrapping', () => {
       const config = await getAuthConfig();
       const createUserMethod = config.adapter!.createUser as any;
 
-      const mockSet = jest.fn().mockResolvedValue({});
+      const mockSet = vi.fn().mockResolvedValue({});
       const mockDoc = { set: mockSet };
-      const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
-      const mockFirestore = await jest
-        .requireMock('@repo/firebase-server')
-        .getFirestore();
-      mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+      const mockCollection = { doc: vi.fn().mockReturnValue(mockDoc) };
+      const mockFirestore = await getFirestore();
+      mockFirestore.collection = vi.fn().mockReturnValue(mockCollection);
 
       const user = {
         name: 'Normal User',

@@ -1,19 +1,24 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { signInWithCustomToken } from 'firebase/auth';
 import { useSession } from 'next-auth/react';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { useFirebaseSync } from './useFirebaseSync';
 
-jest.mock('firebase/auth');
+vi.mock('firebase/auth');
+vi.mock('next-auth/react', () => ({
+  useSession: vi.fn(),
+}));
+
 describe('useFirebaseSync', () => {
   const mockAuth = {};
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('should sign in to firebase when session has a firebaseToken', async () => {
-    (useSession as jest.Mock).mockReturnValue({
+    (useSession as Mock).mockReturnValue({
       data: {
         firebaseToken: 'mock-firebase-token',
       },
@@ -31,7 +36,7 @@ describe('useFirebaseSync', () => {
   });
 
   it('should not sign in to firebase when session has no firebaseToken', async () => {
-    (useSession as jest.Mock).mockReturnValue({
+    (useSession as Mock).mockReturnValue({
       data: {},
       status: 'authenticated',
     });
@@ -42,7 +47,7 @@ describe('useFirebaseSync', () => {
   });
 
   it('should not sign in to firebase when status is loading', async () => {
-    (useSession as jest.Mock).mockReturnValue({
+    (useSession as Mock).mockReturnValue({
       status: 'loading',
     });
 
@@ -52,8 +57,8 @@ describe('useFirebaseSync', () => {
   });
 
   it('should not log to console when unauthenticated', () => {
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(jest.fn());
-    (useSession as jest.Mock).mockReturnValue({
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(vi.fn());
+    (useSession as Mock).mockReturnValue({
       data: null,
       status: 'unauthenticated',
     });
@@ -65,10 +70,8 @@ describe('useFirebaseSync', () => {
   });
 
   it('should log error when firebase auth is undefined', async () => {
-    const consoleSpy = jest
-      .spyOn(console, 'error')
-      .mockImplementation(jest.fn());
-    (useSession as jest.Mock).mockReturnValue({
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(vi.fn());
+    (useSession as Mock).mockReturnValue({
       data: {
         firebaseToken: 'mock-firebase-token',
       },

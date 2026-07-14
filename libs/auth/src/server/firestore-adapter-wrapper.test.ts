@@ -1,79 +1,85 @@
 import { FirestoreAdapter } from '@auth/firebase-adapter';
+import { getFirestore } from '@repo/firebase-server';
 import { logger } from '@repo/logging';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getAuthConfig } from './config';
 
 // Mock dependencies
-jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn(),
+vi.mock('@auth/firebase-adapter', () => ({
+  FirestoreAdapter: vi.fn(),
 }));
 
-jest.mock('next-auth/providers/slack', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/strava', () => jest.fn().mockReturnValue({}));
-jest.mock('next-auth/providers/credentials', () =>
-  jest.fn().mockReturnValue({}),
-);
-
-jest.mock('@repo/service-auth', () => ({
-  getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
+vi.mock('next-auth/providers/slack', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/strava', () => ({
+  default: vi.fn().mockReturnValue({}),
+}));
+vi.mock('next-auth/providers/credentials', () => ({
+  default: vi.fn().mockReturnValue({}),
 }));
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn().mockResolvedValue({}),
-  getFirebaseAdminApp: jest.fn(),
+vi.mock('@repo/service-auth', () => ({
+  getAuthSecret: vi.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@repo/logging', () => ({
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn().mockResolvedValue({}),
+  getFirebaseAdminApp: vi.fn(),
+}));
+
+vi.mock('@repo/logging', () => ({
   logger: {
-    debug: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    info: jest.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
   },
   LogLevel: {
     DEBUG: 'debug',
   },
 }));
 
-jest.mock('@repo/slack', () => ({
-  getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
-  getBotDetails: jest
+vi.mock('@repo/slack', () => ({
+  getSecrets: vi.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  getBotDetails: vi
     .fn()
     .mockResolvedValue({ teamId: 'team-id', appId: 'app-id' }),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+  isSlackAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/strava', () => ({
-  getSecrets: jest.fn().mockResolvedValue({
+vi.mock('@repo/strava', () => ({
+  getSecrets: vi.fn().mockResolvedValue({
     clientId: 'id',
     clientSecret: 'secret',
     redirectUri: 'uri',
   }),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
+  isOnecakeAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  enableTestingHandlers: jest.fn().mockReturnValue(false),
-  getLogLevel: jest.fn().mockReturnValue('debug'),
-  getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
-  getProjectId: jest.fn().mockReturnValue('demo-project'),
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enableTestingHandlers: vi.fn().mockReturnValue(false),
+  getLogLevel: vi.fn().mockReturnValue('debug'),
+  getSlackTeamId: vi.fn().mockReturnValue('test-team-id'),
+  getProjectId: vi.fn().mockReturnValue('demo-project'),
 }));
 
-jest.mock('@repo/util/browser', () => ({
-  getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
+vi.mock('@repo/util/browser', () => ({
+  getNextPublicSlackClientId: vi.fn().mockReturnValue('slack-client-id'),
 }));
 
 describe('getAuthConfig Adapter Wrapper', () => {
-  let mockUpdateSession: jest.Mock;
-  let mockGetSessionAndUser: jest.Mock;
+  let mockUpdateSession: Mock;
+  let mockGetSessionAndUser: Mock;
 
   beforeEach(() => {
-    mockUpdateSession = jest.fn();
-    mockGetSessionAndUser = jest.fn();
+    mockUpdateSession = vi.fn();
+    mockGetSessionAndUser = vi.fn();
 
-    (FirestoreAdapter as jest.Mock).mockReturnValue({
-      createUser: jest
+    (FirestoreAdapter as Mock).mockReturnValue({
+      createUser: vi
         .fn()
         .mockImplementation((user) =>
           Promise.resolve({ id: 'user-uuid', ...user }),
@@ -82,7 +88,7 @@ describe('getAuthConfig Adapter Wrapper', () => {
       getSessionAndUser: mockGetSessionAndUser,
     });
 
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('should handle contention error in updateSession by fetching current session', async () => {
@@ -117,12 +123,10 @@ describe('getAuthConfig Adapter Wrapper', () => {
 it('should force deterministic ID in linkAccount', async () => {
   const config = await getAuthConfig();
   const adapter = config.adapter!;
-  const mockFirestore = await jest
-    .requireMock('@repo/firebase-server')
-    .getFirestore();
-  const mockDoc = { set: jest.fn() };
-  const mockCollection = { doc: jest.fn().mockReturnValue(mockDoc) };
-  mockFirestore.collection = jest.fn().mockReturnValue(mockCollection);
+  const mockFirestore = await getFirestore();
+  const mockDoc = { set: vi.fn() };
+  const mockCollection = { doc: vi.fn().mockReturnValue(mockDoc) };
+  mockFirestore.collection = vi.fn().mockReturnValue(mockCollection);
 
   const mockAccount = {
     providerAccountId: 'strava-123',

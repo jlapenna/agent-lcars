@@ -1,10 +1,11 @@
 import { redirect } from 'next/navigation';
 import type { Session } from 'next-auth';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { assertAdmin } from './assert-admin';
 
-jest.mock('next/navigation', () => ({
-  redirect: jest.fn(),
+vi.mock('next/navigation', () => ({
+  redirect: vi.fn(),
 }));
 
 function session(isAdmin: boolean): Session {
@@ -13,7 +14,7 @@ function session(isAdmin: boolean): Session {
 
 describe('assertAdmin', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('does not redirect when the session is an admin', () => {

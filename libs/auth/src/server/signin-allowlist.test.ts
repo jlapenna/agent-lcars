@@ -1,90 +1,91 @@
 import { getFirestore } from '@repo/firebase-server';
 import { logger } from '@repo/logging';
 import * as utilServer from '@repo/util-server';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getAuthConfig } from './config';
 
 // Identifiable provider stubs so we can assert which providers were configured.
-jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn().mockReturnValue({}),
+vi.mock('@auth/firebase-adapter', () => ({
+  FirestoreAdapter: vi.fn().mockReturnValue({}),
 }));
-jest.mock('next-auth/providers/slack', () =>
-  jest.fn().mockReturnValue({ id: 'slack' }),
-);
-jest.mock('next-auth/providers/strava', () =>
-  jest.fn().mockReturnValue({ id: 'strava' }),
-);
-jest.mock('next-auth/providers/google', () =>
-  jest.fn().mockReturnValue({ id: 'google' }),
-);
-jest.mock('next-auth/providers/nodemailer', () =>
-  jest.fn().mockImplementation((options) => ({ ...options })),
-);
-jest.mock('next-auth/providers/credentials', () =>
-  jest.fn().mockImplementation((options) => options),
-);
-
-jest.mock('@repo/service-auth', () => ({
-  getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
+vi.mock('next-auth/providers/slack', () => ({
+  default: vi.fn().mockReturnValue({ id: 'slack' }),
+}));
+vi.mock('next-auth/providers/strava', () => ({
+  default: vi.fn().mockReturnValue({ id: 'strava' }),
+}));
+vi.mock('next-auth/providers/google', () => ({
+  default: vi.fn().mockReturnValue({ id: 'google' }),
+}));
+vi.mock('next-auth/providers/nodemailer', () => ({
+  default: vi.fn().mockImplementation((options) => ({ ...options })),
+}));
+vi.mock('next-auth/providers/credentials', () => ({
+  default: vi.fn().mockImplementation((options) => options),
 }));
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn(),
-  getFirebaseAdminApp: jest.fn(),
+vi.mock('@repo/service-auth', () => ({
+  getAuthSecret: vi.fn().mockResolvedValue('test-secret'),
 }));
 
-jest.mock('@repo/logging', () => ({
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn(),
+  getFirebaseAdminApp: vi.fn(),
+}));
+
+vi.mock('@repo/logging', () => ({
   logger: {
-    debug: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    info: jest.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
   },
   LogLevel: {
     DEBUG: 'debug',
   },
 }));
 
-jest.mock('@repo/slack', () => ({
-  getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+vi.mock('@repo/slack', () => ({
+  getSecrets: vi.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  isSlackAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/strava', () => ({
-  getSecrets: jest
+vi.mock('@repo/strava', () => ({
+  getSecrets: vi
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
+  isOnecakeAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/util/browser', () => ({
-  getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
+vi.mock('@repo/util/browser', () => ({
+  getNextPublicSlackClientId: vi.fn().mockReturnValue('slack-client-id'),
 }));
 
 // Default: gating active (enableTestingHandlers === false) and SMTP configured.
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  enableTestingHandlers: jest.fn().mockReturnValue(false),
-  getLogLevel: jest.fn().mockReturnValue('warn'),
-  getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
-  isAdminEmail: jest.fn().mockReturnValue(false),
-  getProjectId: jest.fn().mockReturnValue('demo-project'),
-  getGoogleClientId: jest.fn().mockReturnValue('google-id'),
-  getGoogleClientSecret: jest.fn().mockReturnValue('google-secret'),
-  getStravaClubId: jest.fn().mockReturnValue('40422'),
-  isMailConfigured: jest.fn().mockReturnValue(true),
-  getMailFrom: jest.fn().mockReturnValue('bot@supersprinkles.racing'),
-  getOptionalMailServer: jest.fn().mockReturnValue('smtp-relay.gmail.com'),
-  getOptionalMailPort: jest.fn().mockReturnValue('587'),
-  getOptionalMailUser: jest.fn().mockReturnValue('bot@supersprinkles.racing'),
-  getOptionalMailPassword: jest.fn().mockReturnValue('secret'),
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enableTestingHandlers: vi.fn().mockReturnValue(false),
+  getLogLevel: vi.fn().mockReturnValue('warn'),
+  getSlackTeamId: vi.fn().mockReturnValue('test-team-id'),
+  isAdminEmail: vi.fn().mockReturnValue(false),
+  getProjectId: vi.fn().mockReturnValue('demo-project'),
+  getGoogleClientId: vi.fn().mockReturnValue('google-id'),
+  getGoogleClientSecret: vi.fn().mockReturnValue('google-secret'),
+  getStravaClubId: vi.fn().mockReturnValue('40422'),
+  isMailConfigured: vi.fn().mockReturnValue(true),
+  getMailFrom: vi.fn().mockReturnValue('bot@supersprinkles.racing'),
+  getOptionalMailServer: vi.fn().mockReturnValue('smtp-relay.gmail.com'),
+  getOptionalMailPort: vi.fn().mockReturnValue('587'),
+  getOptionalMailUser: vi.fn().mockReturnValue('bot@supersprinkles.racing'),
+  getOptionalMailPassword: vi.fn().mockReturnValue('secret'),
 }));
 
 const makeFirestore = () => ({
-  collection: jest.fn().mockReturnValue({
-    doc: jest.fn().mockReturnValue({
-      get: jest.fn().mockResolvedValue({ exists: false }),
-      set: jest.fn().mockResolvedValue({}),
+  collection: vi.fn().mockReturnValue({
+    doc: vi.fn().mockReturnValue({
+      get: vi.fn().mockResolvedValue({ exists: false }),
+      set: vi.fn().mockResolvedValue({}),
     }),
   }),
 });
@@ -97,10 +98,10 @@ const getSignIn = async (options?: any): Promise<any> => {
 
 describe('getAuthConfig allowlist gating', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    (getFirestore as jest.Mock).mockResolvedValue(makeFirestore());
-    (utilServer.enableTestingHandlers as jest.Mock).mockReturnValue(false);
-    (utilServer.isMailConfigured as jest.Mock).mockReturnValue(true);
+    vi.clearAllMocks();
+    (getFirestore as Mock).mockResolvedValue(makeFirestore());
+    (utilServer.enableTestingHandlers as Mock).mockReturnValue(false);
+    (utilServer.isMailConfigured as Mock).mockReturnValue(true);
   });
 
   describe('provider configuration', () => {
@@ -111,7 +112,7 @@ describe('getAuthConfig allowlist gating', () => {
     });
 
     it('omits the email provider and warns when SMTP is not configured', async () => {
-      (utilServer.isMailConfigured as jest.Mock).mockReturnValue(false);
+      (utilServer.isMailConfigured as Mock).mockReturnValue(false);
       const config = await getAuthConfig({ providers: ['email'] });
       const email = config.providers.find((p: any) => p.id === 'email');
       expect(email).toBeUndefined();
@@ -242,7 +243,7 @@ describe('getAuthConfig allowlist gating', () => {
 
   describe('testing-handlers bypass', () => {
     it('bypasses both allowlists when testing handlers are enabled', async () => {
-      (utilServer.enableTestingHandlers as jest.Mock).mockReturnValue(true);
+      (utilServer.enableTestingHandlers as Mock).mockReturnValue(true);
       const signIn = await getSignIn({
         allowedEmails: ['ok@example.com'],
         allowedStravaAthleteIds: ['111'],

@@ -1,4 +1,5 @@
 import type { Session } from 'next-auth';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createAdminAction } from './admin-action';
 
@@ -11,7 +12,7 @@ function session(overrides: Partial<Session['user']> = {}): Session {
 
 describe('createAdminAction', () => {
   it('returns the session when the caller is an admin', async () => {
-    const auth = jest.fn().mockResolvedValue(session({ isAdmin: true }));
+    const auth = vi.fn().mockResolvedValue(session({ isAdmin: true }));
     const adminAction = createAdminAction(auth);
 
     const result = await adminAction();
@@ -21,22 +22,22 @@ describe('createAdminAction', () => {
   });
 
   it('throws Unauthorized when the caller is not an admin', async () => {
-    const auth = jest.fn().mockResolvedValue(session({ isAdmin: false }));
+    const auth = vi.fn().mockResolvedValue(session({ isAdmin: false }));
     const adminAction = createAdminAction(auth);
 
     await expect(adminAction()).rejects.toThrow('Unauthorized');
   });
 
   it('throws Unauthorized when there is no session at all', async () => {
-    const auth = jest.fn().mockResolvedValue(null);
+    const auth = vi.fn().mockResolvedValue(null);
     const adminAction = createAdminAction(auth);
 
     await expect(adminAction()).rejects.toThrow('Unauthorized');
   });
 
   it('each bound instance calls its own injected auth() function', async () => {
-    const authA = jest.fn().mockResolvedValue(session({ isAdmin: true }));
-    const authB = jest.fn().mockResolvedValue(session({ isAdmin: true }));
+    const authA = vi.fn().mockResolvedValue(session({ isAdmin: true }));
+    const authB = vi.fn().mockResolvedValue(session({ isAdmin: true }));
     const adminActionA = createAdminAction(authA);
     const adminActionB = createAdminAction(authB);
 

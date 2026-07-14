@@ -1,92 +1,93 @@
 import { getFirestore } from '@repo/firebase-server';
 import * as strava from '@repo/strava';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getAuthConfig } from './config';
 import { getAuthJsAccount } from './queries';
 
 // Minimal provider stubs (we only exercise the session callback here).
-jest.mock('@auth/firebase-adapter', () => ({
-  FirestoreAdapter: jest.fn().mockReturnValue({}),
+vi.mock('@auth/firebase-adapter', () => ({
+  FirestoreAdapter: vi.fn().mockReturnValue({}),
 }));
-jest.mock('next-auth/providers/slack', () =>
-  jest.fn().mockReturnValue({ id: 'slack' }),
-);
-jest.mock('next-auth/providers/strava', () =>
-  jest.fn().mockReturnValue({ id: 'strava' }),
-);
-jest.mock('next-auth/providers/google', () =>
-  jest.fn().mockReturnValue({ id: 'google' }),
-);
-jest.mock('next-auth/providers/nodemailer', () =>
-  jest.fn().mockImplementation((options) => ({ ...options })),
-);
-jest.mock('next-auth/providers/credentials', () =>
-  jest.fn().mockImplementation((options) => options),
-);
-
-jest.mock('@repo/service-auth', () => ({
-  getAuthSecret: jest.fn().mockResolvedValue('test-secret'),
+vi.mock('next-auth/providers/slack', () => ({
+  default: vi.fn().mockReturnValue({ id: 'slack' }),
+}));
+vi.mock('next-auth/providers/strava', () => ({
+  default: vi.fn().mockReturnValue({ id: 'strava' }),
+}));
+vi.mock('next-auth/providers/google', () => ({
+  default: vi.fn().mockReturnValue({ id: 'google' }),
+}));
+vi.mock('next-auth/providers/nodemailer', () => ({
+  default: vi.fn().mockImplementation((options) => ({ ...options })),
+}));
+vi.mock('next-auth/providers/credentials', () => ({
+  default: vi.fn().mockImplementation((options) => options),
 }));
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirestore: jest.fn(),
-  getFirebaseAdminApp: jest.fn(),
-  getFirebaseAuthAdmin: jest.fn().mockResolvedValue({
-    createCustomToken: jest.fn().mockResolvedValue('mock-firebase-token'),
+vi.mock('@repo/service-auth', () => ({
+  getAuthSecret: vi.fn().mockResolvedValue('test-secret'),
+}));
+
+vi.mock('@repo/firebase-server', () => ({
+  getFirestore: vi.fn(),
+  getFirebaseAdminApp: vi.fn(),
+  getFirebaseAuthAdmin: vi.fn().mockResolvedValue({
+    createCustomToken: vi.fn().mockResolvedValue('mock-firebase-token'),
   }),
 }));
 
-jest.mock('@repo/logging', () => ({
+vi.mock('@repo/logging', () => ({
   logger: {
-    debug: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    info: jest.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
   },
   LogLevel: { DEBUG: 'debug' },
 }));
 
-jest.mock('@repo/slack', () => ({
-  getSecrets: jest.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+vi.mock('@repo/slack', () => ({
+  getSecrets: vi.fn().mockResolvedValue({ clientSecret: 'slack-secret' }),
+  isSlackAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/strava', () => ({
-  getSecrets: jest
+vi.mock('@repo/strava', () => ({
+  getSecrets: vi
     .fn()
     .mockResolvedValue({ clientId: 'id', clientSecret: 'secret' }),
-  isOnecakeAdmin: jest.fn(),
+  isOnecakeAdmin: vi.fn(),
 }));
 
-jest.mock('@repo/util/browser', () => ({
-  getNextPublicSlackClientId: jest.fn().mockReturnValue('slack-client-id'),
+vi.mock('@repo/util/browser', () => ({
+  getNextPublicSlackClientId: vi.fn().mockReturnValue('slack-client-id'),
 }));
 
-jest.mock('./queries', () => ({
-  ...jest.requireActual('./queries'),
-  getAuthJsAccount: jest.fn(),
+vi.mock('./queries', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getAuthJsAccount: vi.fn(),
 }));
 
 // OneCake-shaped environment: Strava-only, with an athlete admin allowlist.
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  enableTestingHandlers: jest.fn().mockReturnValue(false),
-  getLogLevel: jest.fn().mockReturnValue('warn'),
-  getSlackTeamId: jest.fn().mockReturnValue('test-team-id'),
-  isAdminEmail: jest.fn().mockReturnValue(false),
-  getProjectId: jest.fn().mockReturnValue('onecake'),
-  getStravaClubId: jest.fn().mockReturnValue('40422'),
-  isMailConfigured: jest.fn().mockReturnValue(false),
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enableTestingHandlers: vi.fn().mockReturnValue(false),
+  getLogLevel: vi.fn().mockReturnValue('warn'),
+  getSlackTeamId: vi.fn().mockReturnValue('test-team-id'),
+  isAdminEmail: vi.fn().mockReturnValue(false),
+  getProjectId: vi.fn().mockReturnValue('onecake'),
+  getStravaClubId: vi.fn().mockReturnValue('40422'),
+  isMailConfigured: vi.fn().mockReturnValue(false),
 }));
 
 const makeFirestore = () => ({
-  collection: jest.fn().mockReturnValue({
-    doc: jest.fn().mockReturnValue({
-      get: jest.fn().mockResolvedValue({ exists: false }),
-      set: jest.fn().mockResolvedValue({}),
+  collection: vi.fn().mockReturnValue({
+    doc: vi.fn().mockReturnValue({
+      get: vi.fn().mockResolvedValue({ exists: false }),
+      set: vi.fn().mockResolvedValue({}),
       // getRiderProfileRef() attaches a converter before .get()/.set(); return
       // the same doc mock so the chained calls still work.
-      withConverter: jest.fn().mockReturnThis(),
+      withConverter: vi.fn().mockReturnThis(),
     }),
   }),
 });
@@ -100,9 +101,9 @@ const stravaUser = { id: 'uuid-123', email: undefined };
 
 describe('OneCake Strava-athlete admin gate (session callback)', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    (getFirestore as jest.Mock).mockResolvedValue(makeFirestore());
-    (getAuthJsAccount as jest.Mock).mockResolvedValue({
+    vi.clearAllMocks();
+    (getFirestore as Mock).mockResolvedValue(makeFirestore());
+    (getAuthJsAccount as Mock).mockResolvedValue({
       userId: 'uuid-123',
       provider: 'strava',
       providerAccountId: '66304',
@@ -110,7 +111,7 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
   });
 
   it('grants admin to a Strava-only user whose athlete ID is allowlisted', async () => {
-    (strava.isOnecakeAdmin as jest.Mock).mockImplementation(
+    (strava.isOnecakeAdmin as Mock).mockImplementation(
       (id: string) => id === '66304',
     );
 
@@ -127,7 +128,7 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
   });
 
   it('does not grant admin when the athlete ID is not allowlisted', async () => {
-    (strava.isOnecakeAdmin as jest.Mock).mockReturnValue(false);
+    (strava.isOnecakeAdmin as Mock).mockReturnValue(false);
 
     const session = await getSessionCallback();
     const result = await session({
@@ -141,7 +142,7 @@ describe('OneCake Strava-athlete admin gate (session callback)', () => {
 
   it('grants admin from a persisted user-doc flag (runtime promotion)', async () => {
     // Athlete is NOT on the ONECAKE_ADMINS allowlist...
-    (strava.isOnecakeAdmin as jest.Mock).mockReturnValue(false);
+    (strava.isOnecakeAdmin as Mock).mockReturnValue(false);
 
     const session = await getSessionCallback();
     const result = await session({

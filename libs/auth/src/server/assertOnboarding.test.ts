@@ -1,4 +1,5 @@
 import type { Session } from 'next-auth';
+import { describe, expect, it } from 'vitest';
 
 import { assertOnboarding } from './assertOnboarding';
 

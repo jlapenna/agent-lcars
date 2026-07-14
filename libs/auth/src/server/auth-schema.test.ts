@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { AuthJsAccountSchema, AuthJsUserSchema } from './schema';
 
 describe('auth-schema', () => {

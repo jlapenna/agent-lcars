@@ -1,46 +1,47 @@
 import * as utilServer from '@repo/util-server';
 import { headers } from 'next/headers';
 import type { Session } from 'next-auth';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getTestSession } from './test-session';
 
-jest.mock('next/headers', () => ({
-  headers: jest.fn(),
+vi.mock('next/headers', () => ({
+  headers: vi.fn(),
 }));
 
-jest.mock('@repo/firebase-server', () => ({
-  getFirebaseAuthAdmin: jest.fn().mockResolvedValue({
-    createCustomToken: jest.fn().mockResolvedValue('mock-firebase-token'),
+vi.mock('@repo/firebase-server', () => ({
+  getFirebaseAuthAdmin: vi.fn().mockResolvedValue({
+    createCustomToken: vi.fn().mockResolvedValue('mock-firebase-token'),
   }),
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  isE2eTesting: jest.fn().mockReturnValue(false),
-  isMockAuthEnabled: jest.fn().mockReturnValue(false),
-  isImpersonateAutomaticLogin: jest.fn().mockReturnValue(false),
-  getE2eTestingUser: jest.fn().mockReturnValue(undefined),
-  isAdminEmail: jest.fn().mockReturnValue(false),
+vi.mock('@repo/util-server', async (importOriginal) => ({
+  ...(await importOriginal()),
+  isE2eTesting: vi.fn().mockReturnValue(false),
+  isMockAuthEnabled: vi.fn().mockReturnValue(false),
+  isImpersonateAutomaticLogin: vi.fn().mockReturnValue(false),
+  getE2eTestingUser: vi.fn().mockReturnValue(undefined),
+  isAdminEmail: vi.fn().mockReturnValue(false),
 }));
 
 // Not requireActual: @repo/slack's barrel pulls in cloudevents/rag (and
 // transitively @google/genai, which needs a ReadableStream global this test
 // environment doesn't provide). This test only needs isSlackAdmin, reached
 // transitively via the real (unmocked) `./auth` module's getMockSession.
-jest.mock('@repo/slack', () => ({
-  isSlackAdmin: jest.fn().mockReturnValue(false),
+vi.mock('@repo/slack', () => ({
+  isSlackAdmin: vi.fn().mockReturnValue(false),
 }));
 
-jest.mock('@repo/strava', () => ({
-  isOnecakeAdmin: jest.fn().mockReturnValue(false),
+vi.mock('@repo/strava', () => ({
+  isOnecakeAdmin: vi.fn().mockReturnValue(false),
 }));
 
-const mockHeaders = headers as jest.Mock;
-const mockIsE2eTesting = utilServer.isE2eTesting as jest.Mock;
-const mockIsMockAuthEnabled = utilServer.isMockAuthEnabled as jest.Mock;
+const mockHeaders = headers as Mock;
+const mockIsE2eTesting = utilServer.isE2eTesting as Mock;
+const mockIsMockAuthEnabled = utilServer.isMockAuthEnabled as Mock;
 const mockIsImpersonateAutomaticLogin =
-  utilServer.isImpersonateAutomaticLogin as jest.Mock;
-const mockGetE2eTestingUser = utilServer.getE2eTestingUser as jest.Mock;
+  utilServer.isImpersonateAutomaticLogin as Mock;
+const mockGetE2eTestingUser = utilServer.getE2eTestingUser as Mock;
 
 function setHeader(value: string | null) {
   mockHeaders.mockResolvedValue({
@@ -49,7 +50,7 @@ function setHeader(value: string | null) {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   mockIsE2eTesting.mockReturnValue(false);
   mockIsMockAuthEnabled.mockReturnValue(false);
   mockIsImpersonateAutomaticLogin.mockReturnValue(false);
@@ -129,7 +130,7 @@ describe('getTestSession — env impersonation branch', () => {
   });
 
   it('uses the app-specific mock session when provided', async () => {
-    const mockSession = jest.fn().mockResolvedValue({
+    const mockSession = vi.fn().mockResolvedValue({
       user: { id: 'impersonated-user', isAdmin: true },
       expires: new Date().toISOString(),
     });
