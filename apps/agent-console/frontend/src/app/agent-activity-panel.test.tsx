@@ -1,7 +1,7 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 
-import type { AgentActivity } from '../lib/agent-activity';
+import type { AgentActivity, AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import { AgentActivityPanel } from './agent-activity-panel';
 
@@ -46,12 +46,27 @@ function makeCliSession(overrides: Partial<CliSession> = {}): CliSession {
   };
 }
 
-function renderPanel(cliSessions: CliSession[]) {
+function renderPanel(cliSessions: CliSession[], activity: AgentActivity = EMPTY_ACTIVITY) {
   render(
     <MantineProvider>
-      <AgentActivityPanel activity={EMPTY_ACTIVITY} cliSessions={cliSessions} />
+      <AgentActivityPanel activity={activity} cliSessions={cliSessions} />
     </MantineProvider>,
   );
+}
+
+function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
+  return {
+    id: 1,
+    status: 'completed',
+    conclusion: 'success',
+    event: 'workflow_dispatch',
+    url: 'https://github.com/o/r/actions/runs/1',
+    displayTitle: '#123: Fix status tags on mobile',
+    createdAt: '2026-07-12T00:00:00.000Z',
+    updatedAt: '2026-07-12T00:05:00.000Z',
+    elapsedSeconds: 300,
+    ...overrides,
+  };
 }
 
 describe('AgentActivityPanel CLI sessions', () => {
@@ -137,5 +152,30 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(finished.queryByTestId('cli-session-s-live')).toBeNull();
     expect(screen.getByTestId('cli-session-s-live')).toBeTruthy();
     expect(screen.getByTestId('cli-session-s-idle')).toBeTruthy();
+  });
+
+  // A Mantine Badge's label clips with `overflow: hidden`, which resets the
+  // flex item's automatic minimum size to 0 - inside a `wrap="nowrap"`
+  // Group, that lets nowrap siblings squeeze the badge down to no visible
+  // text on narrow viewports unless it opts out with flexShrink: 0.
+  it('keeps the CLI session liveness badge from shrinking away on narrow layouts', () => {
+    renderPanel([makeCliSession({ liveness: 'live' })]);
+    const badge = screen.getByTestId('cli-session-liveness');
+    expect(badge.style.flexShrink).toBe('0');
+  });
+});
+
+describe('AgentActivityPanel recent runs', () => {
+  it('keeps the recent-run conclusion badge from shrinking away on narrow layouts', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        recentRuns: [makeAgentRun()],
+      },
+    );
+    const badge = screen.getByTestId('recent-run-conclusion');
+    expect(badge.style.flexShrink).toBe('0');
+    expect(badge.textContent).toBe('success');
   });
 });

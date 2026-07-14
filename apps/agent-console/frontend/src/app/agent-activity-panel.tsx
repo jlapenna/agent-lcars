@@ -168,7 +168,13 @@ function RecentRunRow({ run }: { run: AgentRun }) {
   const conclusion = run.conclusion ?? 'other';
   return (
     <Group gap="xs" wrap="nowrap">
-      <Badge variant="light" color={CONCLUSION_COLORS[conclusion]} size="sm">
+      <Badge
+        variant="light"
+        color={CONCLUSION_COLORS[conclusion]}
+        size="sm"
+        style={{ flexShrink: 0 }}
+        data-testid="recent-run-conclusion"
+      >
         {isLikelyTimeout(run) ? 'timeout' : CONCLUSION_LABELS[conclusion]}
       </Badge>
       <Text size="xs" c="dimmed" truncate style={{ minWidth: 0 }}>
@@ -216,6 +222,7 @@ function CliSessionRow({ session }: { session: CliSession }) {
           variant="filled"
           color={LIVENESS_COLORS[session.liveness]}
           size="sm"
+          style={{ flexShrink: 0 }}
           data-testid="cli-session-liveness"
         >
           {LIVENESS_LABELS[session.liveness]}
