@@ -113,7 +113,9 @@
       "@repo/chores-members": ["./libs/chores-members/src/index.ts"],
       "@repo/chores-members/*": ["./libs/chores-members/src/*"],
       "@repo/chores-primes": ["./libs/chores-primes/src/index.ts"],
-      "@repo/chores-primes/*": ["./libs/chores-primes/src/*"]
+      "@repo/chores-primes/*": ["./libs/chores-primes/src/*"],
+      "@repo/chores-schema": ["./libs/chores-schema/src/index.ts"],
+      "@repo/chores-schema/*": ["./libs/chores-schema/src/*"]
     }
   }
 }

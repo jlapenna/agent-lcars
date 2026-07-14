@@ -648,6 +648,8 @@ importers:
 
   libs/chores-primes: {}
 
+  libs/chores-schema: {}
+
   libs/chores-shared: {}
 
   libs/cloudevents: {}
