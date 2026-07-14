@@ -18,6 +18,7 @@ import type {
 } from '../lib/agent-activity';
 import { RUN_TIMEOUT_MINUTES } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
+import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
 import {
   formatDuration,
@@ -262,22 +263,24 @@ function CliSessionRow({ session }: { session: CliSession }) {
         </Text>
       </Group>
       {host && artifacts && artifacts.length > 0 && (
-        <Group gap={6} wrap="wrap">
-          <Text size="xs" c="dimmed">
-            Artifacts:
-          </Text>
-          {artifacts.map((filename) => (
-            <Anchor
-              key={filename}
-              href={shareArtifactUrl(host, session.sessionId, filename)}
-              target="_blank"
-              rel="noreferrer"
-              size="xs"
-            >
-              {filename} ↗
-            </Anchor>
-          ))}
-        </Group>
+        <Stack gap={2}>
+          <Group gap={6} wrap="wrap">
+            <Text size="xs" c="dimmed">
+              Artifacts:
+            </Text>
+            {artifacts.map((filename) => {
+              const url = shareArtifactUrl(host, session.sessionId, filename);
+              return (
+                <Group key={filename} gap={4} wrap="nowrap">
+                  <Anchor href={url} target="_blank" rel="noreferrer" size="xs">
+                    {filename} ↗
+                  </Anchor>
+                  <ArtifactPreviewToggle url={url} filename={filename} />
+                </Group>
+              );
+            })}
+          </Group>
+        </Stack>
       )}
     </Stack>
   );

@@ -17,6 +17,14 @@ jest.mock('./cancel-run-button', () => ({
 // module never loads at test time. Every other import from it is type-only.
 jest.mock('../lib/agent-activity', () => ({ RUN_TIMEOUT_MINUTES: 90 }));
 
+// react-markdown/remark-gfm (pulled in via artifact-viewer.tsx) are ESM-only
+// (unified ecosystem) - see artifact-viewer.test.tsx for the same stub.
+jest.mock('react-markdown', () => ({
+  __esModule: true,
+  default: ({ children }: { children: string }) => <>{children}</>,
+}));
+jest.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
+
 const EMPTY_ACTIVITY: AgentActivity = {
   liveRuns: [],
   recentRuns: [],
