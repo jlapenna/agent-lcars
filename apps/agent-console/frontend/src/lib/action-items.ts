@@ -269,7 +269,17 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
     typeof label === 'string' ? label : (label.name ?? ''),
   );
   const isPostDeploy = labels.includes('post-deploy-action');
-  const isHumanNeeded = labels.includes('human-needed');
+  // Every item here already matched an `is:open ...` search query (see
+  // SEARCH_QUERIES below), so open state is already guaranteed - the label
+  // OR the assignee pair alone is the full condition (#2802 groundwork for
+  // retiring the label onto assignee:jlapenna; see orchestration.md §10.2).
+  const assigneeLogins = (issue.assignees ?? []).map(
+    (assignee) => assignee?.login ?? '',
+  );
+  const isHumanNeeded =
+    labels.includes('human-needed') ||
+    (assigneeLogins.includes(AGENT_FLEET_LOGIN) &&
+      assigneeLogins.includes(MAINTAINER_LOGIN));
 
   const actionTypes: ActionType[] = [];
   if (isHumanNeeded) {
@@ -289,9 +299,6 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
   // every session now announces its takeover command where it works:
   // claude.yml runs on their anchor issue/PR, interactive sessions per
   // pr.md Step 0 and the SKILL.md claim guardrail.
-  const assigneeLogins = (issue.assignees ?? []).map(
-    (assignee) => assignee?.login ?? '',
-  );
   const wantsTakeover = assigneeLogins.includes(AGENT_FLEET_LOGIN);
   if (isHumanNeeded || isPostDeploy || wantsTakeover) {
     const scan = await scanComments(issue.number, issue.comments ?? 0);

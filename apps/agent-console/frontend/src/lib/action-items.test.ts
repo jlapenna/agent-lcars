@@ -510,4 +510,63 @@ describe('getActionItems', () => {
     expect(result.items[0].takeoverCommand).toBeUndefined();
     expect(listComments).not.toHaveBeenCalled();
   });
+
+  it('derives human-needed from jclaw-bot + jlapenna assignees even without the label (#2802)', async () => {
+    const ISSUE_Q = (q: string) =>
+      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
+    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+      if (!ISSUE_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [
+            makeItem(50, {
+              assignees: [{ login: 'jclaw-bot' }, { login: 'jlapenna' }],
+              comments: 1,
+            }),
+          ],
+        },
+      });
+    });
+    const listComments = jest.fn().mockResolvedValue({
+      data: [
+        {
+          body: 'What should I do here?',
+          html_url: 'https://github.com/o/r/issues/50#issuecomment-1',
+          user: { login: 'claude[bot]' },
+        },
+      ],
+    });
+    setupOctokit({ issuesAndPullRequests, listComments });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([50]);
+    expect(result.items[0].actionTypes).toContain('human-needed');
+  });
+
+  it('does not derive human-needed from jclaw-bot alone (no maintainer assignee, no label)', async () => {
+    const ISSUE_Q = (q: string) =>
+      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
+    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+      if (!ISSUE_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [
+            makeItem(51, {
+              assignees: [{ login: 'jclaw-bot' }],
+              comments: 0,
+            }),
+          ],
+        },
+      });
+    });
+    setupOctokit({ issuesAndPullRequests });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([51]);
+    expect(result.items[0].actionTypes).not.toContain('human-needed');
+  });
 });
