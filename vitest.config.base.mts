@@ -62,11 +62,28 @@ export function createVitestConfig(options: {
       root: dirname,
       cacheDir: path.join(__dirname, 'node_modules/.vite', projectRelative),
       plugins: [nxViteTsPaths(), nxCopyAssetsPlugin(['*.md'])],
+      resolve: {
+        // Mirrors jest.preset.js's workspace-wide `server-only` ->
+        // server-only-mock.js moduleNameMapper entry. Without this, any
+        // test that imports (directly, or transitively via automocking) a
+        // module whose chain touches the real `server-only` package throws
+        // "This module cannot be imported from a Client Component module" —
+        // Jest's mapper intercepts it globally regardless of whether the
+        // importing module itself is mocked; Vitest needs the equivalent
+        // as a resolve alias since it has no moduleNameMapper concept.
+        alias: {
+          'server-only': path.join(
+            __dirname,
+            'libs/test-utils/src/server-only-mock.js',
+          ),
+        },
+      },
       test: {
         name: projectName,
         watch: false,
         globals: false,
         environment,
+        passWithNoTests: true,
         reporters: ['default'],
         // Mirrors jest.preset.js's targetDefaults.test passWithNoTests:true
         // — some migrated libs (e.g. type-only or index-only packages) have
