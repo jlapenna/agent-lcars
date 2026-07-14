@@ -20,8 +20,8 @@ test.afterAll(async () => {
 });
 
 // @smoke: this is the only spec in the suite so far — it must run in the
-// default per-PR smoke lane (E2E_GREP=@smoke, #2599), not just the
-// run-e2e-labeled full tier.
+// default per-PR smoke lane (E2E_GREP is @smoke|@visual, #2599/#2860), not
+// just the run-e2e-labeled full tier.
 test.describe('Agent Activity panel CLI sessions @smoke', () => {
   test('renders active sessions inline and finished ones behind the collapsed disclosure', async ({
     page,
