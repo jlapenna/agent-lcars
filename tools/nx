@@ -25,6 +25,34 @@ if [ -z "${NX_CACHE_DIRECTORY:-}" ]; then
   fi
 fi
 
+# `nx reset` rm -rf's the ENTIRE cache directory (cleanupCacheEntries in
+# nx/src/command-line/reset). Whenever NX_CACHE_DIRECTORY is in play — the
+# host-wide /shared-cache/nx that CI and agent jobs share across every runner
+# on a host, or the primary checkout's cache borrowed by a worktree above —
+# that directory is shared with OTHER live sessions/jobs, and deleting it
+# yanks in-flight cache writes out from under them: on 2026-07-14 an agent's
+# `nx reset` on spark wiped /shared-cache/nx mid-run and a concurrent green
+# Verify build died writing terminalOutputs (ENOENT, #2887). Stale-graph
+# debugging only ever needs the daemon + workspace-data cleared, so scope
+# bare resets to that, and refuse an explicit cache nuke unless overridden.
+if [ "${1:-}" = "reset" ] && [ -n "${NX_CACHE_DIRECTORY:-}" ] &&
+  [ "${NX_ALLOW_SHARED_CACHE_RESET:-}" != "1" ]; then
+  case " $* " in
+  *" --help "* | *" -h "*) ;; # help output only, nothing gets deleted
+  *" --only-cache "* | *" --onlyCache "*)
+    echo "tools/nx: refusing 'nx reset --only-cache': NX_CACHE_DIRECTORY=$NX_CACHE_DIRECTORY is shared with other sessions/jobs (#2887)." >&2
+    echo "tools/nx: rerun with NX_ALLOW_SHARED_CACHE_RESET=1 if you really mean to delete it for everyone." >&2
+    exit 1
+    ;;
+  *" --only-"* | *" --only"[A-Z]*) ;; # already scoped away from the cache dir
+  *)
+    echo "tools/nx: scoping 'nx reset' to --only-daemon --only-workspace-data: NX_CACHE_DIRECTORY=$NX_CACHE_DIRECTORY is shared with other sessions/jobs and a full reset would delete it out from under them (#2887). Set NX_ALLOW_SHARED_CACHE_RESET=1 to force a full reset." >&2
+    shift
+    set -- reset --only-daemon --only-workspace-data "$@"
+    ;;
+  esac
+fi
+
 # Self-hosted Nx remote cache (the same spark server CI uses). The vars live
 # in the gitignored .nx-remote-cache.env — written by setup-repo.sh, copied
 # into worktrees by setup-worktree.sh — rather than .env.local, so that ONLY
