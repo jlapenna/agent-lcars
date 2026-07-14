@@ -224,6 +224,7 @@ function CliSessionRow({ session }: { session: CliSession }) {
           size="sm"
           style={{ flexShrink: 0 }}
           data-testid="cli-session-liveness"
+          style={{ flexShrink: 0 }}
         >
           {LIVENESS_LABELS[session.liveness]}
         </Badge>

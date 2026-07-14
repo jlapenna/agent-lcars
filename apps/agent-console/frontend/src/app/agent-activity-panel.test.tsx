@@ -132,6 +132,18 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(screen.queryByText('Artifacts:')).toBeNull();
   });
 
+  it('protects the liveness tag from shrinking (and clipping) in its nowrap row', () => {
+    renderPanel([
+      makeCliSession({
+        title: 'A very long session title that squeezes the row width',
+      }),
+    ]);
+
+    expect(screen.getByTestId('cli-session-liveness').style.flexShrink).toBe(
+      '0',
+    );
+  });
+
   it('keeps live/idle sessions inline and tucks ended/stale behind a collapsed disclosure', () => {
     renderPanel([
       makeCliSession({ sessionId: 's-live', liveness: 'live' }),
