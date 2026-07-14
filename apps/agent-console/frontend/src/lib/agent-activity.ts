@@ -5,7 +5,7 @@ import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
 export const RUN_TIMEOUT_MINUTES = 90;
 
 const AGENT_WORKFLOW_FILE = 'claude.yml';
-const AGENT_RUNNER_LABEL = 'claude-workstation';
+const AGENT_RUNNER_LABEL = 'claude-agent';
 const RECENT_RUN_LIMIT = 8;
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
