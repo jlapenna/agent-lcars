@@ -12,6 +12,8 @@ export function createVitestConfig(options: {
   projectName: string;
   environment?: 'node' | 'jsdom';
   needsFirestoreMockShim?: boolean;
+  needsJestDomMatchers?: boolean;
+  needsMatchMediaMock?: boolean;
   overrides?: UserConfig;
 }) {
   const {
@@ -19,12 +21,41 @@ export function createVitestConfig(options: {
     projectName,
     environment = 'node',
     needsFirestoreMockShim = false,
+    needsJestDomMatchers = false,
+    needsMatchMediaMock = false,
     overrides = {},
   } = options;
   const projectRelative = path
     .relative(__dirname, dirname)
     .split(path.sep)
     .join('/');
+
+  const setupFiles = [
+    ...(needsFirestoreMockShim
+      ? [
+          path.join(
+            __dirname,
+            'libs/test-utils/src/firestore/vitest-jest-shim.ts',
+          ),
+        ]
+      : []),
+    ...(needsJestDomMatchers
+      ? [
+          path.join(
+            __dirname,
+            'libs/test-utils/src/dom/vitest-jest-dom-setup.ts',
+          ),
+        ]
+      : []),
+    ...(needsMatchMediaMock
+      ? [
+          path.join(
+            __dirname,
+            'libs/test-utils/src/dom/vitest-matchmedia-mock.ts',
+          ),
+        ]
+      : []),
+  ];
 
   return mergeConfig(
     defineConfig({
@@ -37,14 +68,7 @@ export function createVitestConfig(options: {
         globals: false,
         environment,
         reporters: ['default'],
-        setupFiles: needsFirestoreMockShim
-          ? [
-              path.join(
-                __dirname,
-                'libs/test-utils/src/firestore/vitest-jest-shim.ts',
-              ),
-            ]
-          : [],
+        setupFiles,
         coverage: {
           reportsDirectory: path.join(__dirname, 'coverage', projectRelative),
           provider: 'v8',
