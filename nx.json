@@ -89,8 +89,6 @@
     {
       "plugin": "@nx/vitest",
       "options": {
-        "testTargetName": "test-vitest",
-        "ciTargetName": "test-vitest-ci",
         "testMode": "run"
       }
     }
@@ -109,14 +107,17 @@
       "dependsOn": ["^build"],
       "inputs": ["production", "^production"]
     },
-    "test": {
-      "options": {
-        "silent": true,
-        "forceExit": true,
-        "passWithNoTests": true,
-        "maxWorkers": 4
+    "test": [
+      {
+        "filter": { "plugin": "@nx/jest/plugin" },
+        "options": {
+          "silent": true,
+          "forceExit": true,
+          "passWithNoTests": true,
+          "maxWorkers": 4
+        }
       }
-    },
+    ],
     "e2e": {
       "dependsOn": ["^build"],
       "cache": false
