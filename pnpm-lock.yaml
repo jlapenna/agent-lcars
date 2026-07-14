@@ -644,7 +644,11 @@ importers:
 
   libs/authjs-paths: {}
 
-  libs/chores: {}
+  libs/chores-members: {}
+
+  libs/chores-primes: {}
+
+  libs/chores-shared: {}
 
   libs/cloudevents: {}
 

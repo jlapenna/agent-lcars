@@ -32,8 +32,6 @@
       "@repo/jsx/*": ["libs/jsx/src/*"],
       "@repo/app": ["./libs/app/src/index.ts"],
       "@repo/app/proxy": ["./libs/app/src/proxy/index.ts"],
-      "@repo/chores": ["./libs/chores/src/index.ts"],
-      "@repo/chores/*": ["./libs/chores/src/*"],
       "@repo/comments": ["./libs/comments/src/index.ts"],
       "@repo/comments/*": ["./libs/comments/src/*"],
       "@repo/competitions": ["./libs/competitions/src/index.ts"],
@@ -109,7 +107,13 @@
       "@repo/agent-telemetry": ["./libs/agent-telemetry/src/index.ts"],
       "@repo/agent-telemetry/server": [
         "./libs/agent-telemetry/src/server/index.ts"
-      ]
+      ],
+      "@repo/chores-shared": ["./libs/chores-shared/src/index.ts"],
+      "@repo/chores-shared/*": ["./libs/chores-shared/src/*"],
+      "@repo/chores-members": ["./libs/chores-members/src/index.ts"],
+      "@repo/chores-members/*": ["./libs/chores-members/src/*"],
+      "@repo/chores-primes": ["./libs/chores-primes/src/index.ts"],
+      "@repo/chores-primes/*": ["./libs/chores-primes/src/*"]
     }
   }
 }

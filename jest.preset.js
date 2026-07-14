@@ -51,8 +51,6 @@ module.exports = {
       __dirname,
       'libs/agent-telemetry/src/$1',
     ),
-    '^@repo/chores$': path.join(__dirname, 'libs/chores/src/index.ts'),
-    '^@repo/chores/(.*)$': path.join(__dirname, 'libs/chores/src/$1'),
     '^@repo/results$': path.join(__dirname, 'libs/results/src/index.ts'),
     '^@repo/results/(.*)$': path.join(__dirname, 'libs/results/src/$1'),
     '^@repo/riders$': path.join(__dirname, 'libs/riders/src/index.ts'),
