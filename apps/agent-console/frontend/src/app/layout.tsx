@@ -8,9 +8,19 @@ import {
   mantineHtmlProps,
 } from '@mantine/core';
 import { BrowserErrorReporter } from '@repo/app-providers';
+import type { Viewport } from 'next';
 import { cookies, headers } from 'next/headers';
 
 import { Providers } from './providers';
+
+export const viewport: Viewport = {
+  // Without this, mobile browsers that don't detect our Mantine-driven dark
+  // mode support (it's applied via a CSS custom property, not a literal
+  // `dark`/`light` value some browser heuristics look for) can apply their
+  // own auto-darkening on top of our own colors, inverting some elements
+  // against their non-inverted backgrounds (#2815).
+  colorScheme: 'light dark',
+};
 
 export const metadata = {
   title: 'Agent Console',
