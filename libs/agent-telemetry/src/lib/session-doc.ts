@@ -12,11 +12,16 @@ import {
  * needs. */
 export const SESSION_RETENTION_DAYS = 30;
 
-function computeExpireAt(lastActivityAt: string): string {
+/** Returns `undefined` for a session with no parseable `lastActivityAt`
+ * (e.g. a transcript with no timestamped lines yet — `reducer.ts` falls back
+ * to `''` in that case) rather than throwing on `Invalid Date`. */
+function computeExpireAt(lastActivityAt: string): string | undefined {
+  const lastActivityMs = new Date(lastActivityAt).getTime();
+  if (Number.isNaN(lastActivityMs)) {
+    return undefined;
+  }
   const retentionMs = SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  return new Date(
-    new Date(lastActivityAt).getTime() + retentionMs,
-  ).toISOString();
+  return new Date(lastActivityMs + retentionMs).toISOString();
 }
 
 /**
@@ -30,12 +35,13 @@ export function buildSessionDoc(
   liveness: SessionLiveness,
   options: BuildSessionDocOptions = {},
 ): SessionDoc {
+  const expireAt = computeExpireAt(summary.lastActivityAt);
   const base = {
     sessionId: summary.sessionId,
     liveness,
     startedAt: summary.startedAt,
     lastActivityAt: summary.lastActivityAt,
-    expireAt: computeExpireAt(summary.lastActivityAt),
+    ...(expireAt && { expireAt }),
     turns: summary.turns,
     toolCallCounts: summary.toolCallCounts,
     tokens: summary.tokens,

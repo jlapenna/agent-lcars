@@ -108,7 +108,7 @@ describe('agent-telemetry store', () => {
       expect(snap.exists).toBe(true);
       expect(snap.data()).toEqual({
         ...doc,
-        expireAt: Timestamp.fromDate(new Date(doc.expireAt)),
+        expireAt: Timestamp.fromDate(new Date(doc.expireAt as string)),
       });
     });
 

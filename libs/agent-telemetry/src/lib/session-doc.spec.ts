@@ -145,6 +145,12 @@ describe('buildSessionDoc', () => {
     expect(doc.expireAt).toBe(expected.toISOString());
   });
 
+  it('omits expireAt instead of throwing when lastActivityAt has no parseable timestamp', () => {
+    const doc = buildSessionDoc(baseSummary({ lastActivityAt: '' }), 'ended');
+
+    expect(doc).not.toHaveProperty('expireAt');
+  });
+
   it('carries lastToolCall/model/permissionMode/title through when present', () => {
     const doc = buildSessionDoc(
       baseSummary({

@@ -73,7 +73,12 @@ export async function upsertSession(doc: SessionDoc): Promise<void> {
     .collection(SESSIONS_COLLECTION)
     .doc(doc.sessionId)
     .set(
-      { ...doc, expireAt: AdminTimestamp.fromDate(new Date(doc.expireAt)) },
+      {
+        ...doc,
+        ...(doc.expireAt && {
+          expireAt: AdminTimestamp.fromDate(new Date(doc.expireAt)),
+        }),
+      },
       { merge: true },
     );
 }
