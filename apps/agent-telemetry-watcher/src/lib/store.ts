@@ -1,4 +1,4 @@
-import { Firestore } from '@google-cloud/firestore';
+import { Firestore, Timestamp } from '@google-cloud/firestore';
 import { SessionDoc } from '@repo/agent-telemetry';
 import { logger } from '@repo/logging';
 
@@ -37,10 +37,21 @@ export function createFirestoreStore(
 
   return {
     async upsertSession(doc: SessionDoc): Promise<void> {
+      // `expireAt` must be written as a native Firestore Timestamp (not the
+      // ISO string SessionDoc carries it as) or the sessions TTL policy
+      // (issue #2708/#2761) never sees it as eligible for deletion.
       await firestore
         .collection(SESSIONS_COLLECTION)
         .doc(doc.sessionId)
-        .set(doc, { merge: true });
+        .set(
+          {
+            ...doc,
+            ...(doc.expireAt && {
+              expireAt: Timestamp.fromDate(new Date(doc.expireAt)),
+            }),
+          },
+          { merge: true },
+        );
     },
   };
 }
