@@ -15,6 +15,10 @@ export function createVitestConfig(options: {
   needsJestFnShim?: boolean;
   needsJestDomMatchers?: boolean;
   needsMatchMediaMock?: boolean;
+  /** Project-owned setup files (e.g. a local test-setup.ts), run after the
+   * standard shims above. Explicit list rather than relying on mergeConfig's
+   * array-merge behavior for `overrides.test.setupFiles`. */
+  additionalSetupFiles?: string[];
   overrides?: UserConfig;
 }) {
   const {
@@ -25,6 +29,7 @@ export function createVitestConfig(options: {
     needsJestFnShim = false,
     needsJestDomMatchers = false,
     needsMatchMediaMock = false,
+    additionalSetupFiles = [],
     overrides = {},
   } = options;
   const projectRelative = path
@@ -61,6 +66,7 @@ export function createVitestConfig(options: {
           ),
         ]
       : []),
+    ...additionalSetupFiles,
   ];
 
   return mergeConfig(

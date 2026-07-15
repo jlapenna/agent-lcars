@@ -1,13 +1,14 @@
 import { NextRequest } from 'next/server';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { createAuthProxy } from './create-auth-proxy';
 
-jest.mock('@repo/util-server', () => ({
-  isE2eTesting: jest.fn().mockReturnValue(false),
-  isImpersonate: jest.fn().mockReturnValue(false),
-  isImpersonateAutomaticLogin: jest.fn().mockReturnValue(false),
-  isMockAuthEnabled: jest.fn().mockReturnValue(false),
-  isTrue: jest.fn().mockReturnValue(false),
+vi.mock('@repo/util-server', () => ({
+  isE2eTesting: vi.fn().mockReturnValue(false),
+  isImpersonate: vi.fn().mockReturnValue(false),
+  isImpersonateAutomaticLogin: vi.fn().mockReturnValue(false),
+  isMockAuthEnabled: vi.fn().mockReturnValue(false),
+  isTrue: vi.fn().mockReturnValue(false),
 }));
 
 import {
@@ -18,12 +19,11 @@ import {
   isTrue,
 } from '@repo/util-server';
 
-const mockIsE2eTesting = isE2eTesting as jest.Mock;
-const mockIsImpersonate = isImpersonate as jest.Mock;
-const mockIsImpersonateAutomaticLogin =
-  isImpersonateAutomaticLogin as jest.Mock;
-const mockIsMockAuthEnabled = isMockAuthEnabled as jest.Mock;
-const mockIsTrue = isTrue as jest.Mock;
+const mockIsE2eTesting = isE2eTesting as Mock;
+const mockIsImpersonate = isImpersonate as Mock;
+const mockIsImpersonateAutomaticLogin = isImpersonateAutomaticLogin as Mock;
+const mockIsMockAuthEnabled = isMockAuthEnabled as Mock;
+const mockIsTrue = isTrue as Mock;
 
 function request(
   path: string,

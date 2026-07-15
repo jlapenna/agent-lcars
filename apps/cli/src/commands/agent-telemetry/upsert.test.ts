@@ -9,25 +9,26 @@ import { FakeFirestore } from 'firestore-jest-mock';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { ArgumentsCamelCase } from 'yargs';
 
 import { upsertCommand } from './upsert';
 
-jest.mock('firebase-admin/app', () => ({
-  getApps: jest.fn().mockReturnValue([]),
-  initializeApp: jest.fn().mockReturnValue({}),
+vi.mock('firebase-admin/app', async () => ({
+  getApps: vi.fn().mockReturnValue([]),
+  initializeApp: vi.fn().mockReturnValue({}),
 }));
 
-jest.mock('firebase-admin/firestore', () => ({
-  getFirestore: jest.fn(),
-  Timestamp: jest.requireActual('@google-cloud/firestore').Timestamp,
+vi.mock('firebase-admin/firestore', async () => ({
+  getFirestore: vi.fn(),
+  Timestamp: (await vi.importActual('@google-cloud/firestore')).Timestamp,
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  isEmulator: jest.fn().mockReturnValue(false),
-  getProjectId: jest.fn().mockReturnValue('test-project'),
-  getFirestoreEmulatorHost: jest.fn().mockReturnValue(undefined),
+vi.mock('@repo/util-server', async () => ({
+  ...(await vi.importActual('@repo/util-server')),
+  isEmulator: vi.fn().mockReturnValue(false),
+  getProjectId: vi.fn().mockReturnValue('test-project'),
+  getFirestoreEmulatorHost: vi.fn().mockReturnValue(undefined),
 }));
 
 function transcriptLine(overrides: Record<string, unknown>): string {
@@ -49,18 +50,18 @@ describe('upsertCommand', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     _resetForTesting();
-    jest.spyOn(logger, 'info').mockImplementation();
-    jest.spyOn(logger, 'error').mockImplementation();
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined);
 
     fakeFirestore = new FakeFirestore(
       {},
       { mutable: true },
     ) as unknown as Firestore;
-    (getApps as jest.Mock).mockReturnValue([]);
-    (initializeApp as jest.Mock).mockReturnValue({});
-    (getAdminFirestore as jest.Mock).mockReturnValue(fakeFirestore);
+    (getApps as Mock).mockReturnValue([]);
+    (initializeApp as Mock).mockReturnValue({});
+    (getAdminFirestore as Mock).mockReturnValue(fakeFirestore);
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-telemetry-'));
   });
@@ -166,7 +167,7 @@ describe('upsertCommand', () => {
   });
 
   it('errors out without upserting when the transcript file is missing', async () => {
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('Exit called');
     });
 
