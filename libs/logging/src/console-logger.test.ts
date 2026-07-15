@@ -3,30 +3,48 @@ import {
   getLogLevel,
   isOnGoogleCloud,
 } from '@repo/env';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  type MockInstance,
+  vi,
+} from 'vitest';
 
 import { Logger, setLogDefaults } from './console-logger';
 import { LogLevel } from './log-level';
 
-jest.mock('@repo/env', () => ({
-  ...jest.requireActual('@repo/env'),
-  getLogLevel: jest.fn(),
-  isOnGoogleCloud: jest.fn(),
-  forceStructuredLogging: jest.fn(),
+vi.mock('@repo/env', async () => ({
+  ...(await vi.importActual<object>('@repo/env')),
+  getLogLevel: vi.fn(),
+  isOnGoogleCloud: vi.fn(),
+  forceStructuredLogging: vi.fn(),
 }));
 
 describe('Logger', () => {
-  let consoleLogSpy: jest.SpyInstance;
-  let consoleDebugSpy: jest.SpyInstance;
-  let consoleWarnSpy: jest.SpyInstance;
-  let consoleErrorSpy: jest.SpyInstance;
+  let consoleLogSpy: MockInstance;
+  let consoleDebugSpy: MockInstance;
+  let consoleWarnSpy: MockInstance;
+  let consoleErrorSpy: MockInstance;
   let originalLogLevel: string | undefined;
 
   beforeEach(() => {
     setLogDefaults({ getLogLevel });
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
-    consoleDebugSpy = jest.spyOn(console, 'debug').mockImplementation();
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+    consoleLogSpy = vi
+      .spyOn(console, 'log')
+      .mockImplementation(() => undefined);
+    consoleDebugSpy = vi
+      .spyOn(console, 'debug')
+      .mockImplementation(() => undefined);
+    consoleWarnSpy = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
     originalLogLevel = process.env.LOG_LEVEL;
   });
 
@@ -35,28 +53,28 @@ describe('Logger', () => {
     consoleDebugSpy.mockRestore();
     consoleWarnSpy.mockRestore();
     consoleErrorSpy.mockRestore();
-    (getLogLevel as jest.Mock).mockReturnValue(originalLogLevel);
+    (getLogLevel as Mock).mockReturnValue(originalLogLevel);
   });
 
   describe('getLogLevel', () => {
     it('should return DEBUG by default', () => {
-      (getLogLevel as jest.Mock).mockReturnValue(undefined);
+      (getLogLevel as Mock).mockReturnValue(undefined);
       expect(Logger.getLogLevel()).toBe(LogLevel.DEBUG);
     });
 
     it('should return log level from environment variable', () => {
-      (getLogLevel as jest.Mock).mockReturnValue('ERROR');
+      (getLogLevel as Mock).mockReturnValue('ERROR');
       expect(Logger.getLogLevel()).toBe(LogLevel.ERROR);
 
-      (getLogLevel as jest.Mock).mockReturnValue('warn');
+      (getLogLevel as Mock).mockReturnValue('warn');
       expect(Logger.getLogLevel()).toBe(LogLevel.WARN);
 
-      (getLogLevel as jest.Mock).mockReturnValue('INFO');
+      (getLogLevel as Mock).mockReturnValue('INFO');
       expect(Logger.getLogLevel()).toBe(LogLevel.INFO);
     });
 
     it('should return DEBUG for invalid log level', () => {
-      (getLogLevel as jest.Mock).mockReturnValue('invalid');
+      (getLogLevel as Mock).mockReturnValue('invalid');
       expect(Logger.getLogLevel()).toBe(LogLevel.DEBUG);
     });
   });
@@ -124,7 +142,7 @@ describe('Logger', () => {
       // raw env value (undefined) makes shouldLog(undefined, ERROR) false and
       // silently drops every line — including errors — for services that don't
       // set LOG_LEVEL (e.g. the primes/onecake web apps).
-      (getLogLevel as jest.Mock).mockReturnValue(undefined);
+      (getLogLevel as Mock).mockReturnValue(undefined);
       const logger = new Logger(Logger.getLogLevel());
 
       logger.error('error message');
@@ -157,8 +175,8 @@ describe('Logger', () => {
 
     it('should expand deep objects when running on Google Cloud', () => {
       // Mock isOnGoogleCloud to return true
-      (isOnGoogleCloud as jest.Mock).mockReturnValue(true);
-      (forceStructuredLogging as jest.Mock).mockReturnValue(false);
+      (isOnGoogleCloud as Mock).mockReturnValue(true);
+      (forceStructuredLogging as Mock).mockReturnValue(false);
       setLogDefaults({
         formatter: (args) => JSON.stringify(args),
       });

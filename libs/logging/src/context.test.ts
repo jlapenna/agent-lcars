@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { getContext, RequestContext, runWithContext } from './context';
 
 describe('RequestContext', () => {

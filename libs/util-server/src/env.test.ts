@@ -1,10 +1,12 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { isAuthEnabled, isE2eTesting } from './env';
 
 describe('env', () => {
   const ORIGINAL_ENV = process.env;
 
   beforeEach(() => {
-    jest.resetModules();
+    vi.resetModules();
     process.env = { ...ORIGINAL_ENV };
   });
 

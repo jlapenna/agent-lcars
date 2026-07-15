@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, jest } from '@jest/globals';
 import fetchMock from 'jest-fetch-mock';
+import { afterEach, beforeEach, vi } from 'vitest';
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   fetchMock.enableMocks();
   fetchMock.doMock((_res) =>
     Promise.resolve({
@@ -13,5 +13,5 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  jest.restoreAllMocks();
+  vi.restoreAllMocks();
 });

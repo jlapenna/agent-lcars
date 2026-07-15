@@ -1,5 +1,14 @@
 import { logger } from '@repo/logging';
 import Bottleneck from 'bottleneck';
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  type Mocked,
+  vi,
+} from 'vitest';
 
 import * as env from './env';
 import {
@@ -8,29 +17,34 @@ import {
   throttledFetch,
 } from './rate-limiter';
 
-jest.mock('./env');
-jest.mock('@repo/logging');
-jest.mock('bottleneck');
+vi.mock('./env');
+vi.mock('@repo/logging');
+vi.mock('bottleneck');
 
 describe('rate-limiter', () => {
-  const mockedEnv = env as jest.Mocked<typeof env>;
-  const mockedLogger = logger as jest.Mocked<typeof logger>;
-  const MockedBottleneck = Bottleneck as unknown as jest.Mock;
+  const mockedEnv = env as Mocked<typeof env>;
+  const mockedLogger = logger as Mocked<typeof logger>;
+  const MockedBottleneck = Bottleneck as unknown as Mock;
 
   let mockLimiterInstance: {
-    schedule: jest.Mock;
-    on: jest.Mock;
+    schedule: Mock;
+    on: Mock;
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     mockLimiterInstance = {
-      schedule: jest.fn(),
-      on: jest.fn(),
+      schedule: vi.fn(),
+      on: vi.fn(),
     };
 
-    MockedBottleneck.mockImplementation(() => mockLimiterInstance);
+    // Vitest's automocked class is only `new`-able if the implementation is a
+    // `function`/`class` expression, not an arrow function (unlike Jest,
+    // which special-cases arrow-function mockImplementations invoked via `new`).
+    MockedBottleneck.mockImplementation(function () {
+      return mockLimiterInstance;
+    });
 
     mockedEnv.isTest.mockReturnValue(true);
     mockedEnv.getProviderMinRequestDelayMs.mockReturnValue(500);
@@ -171,13 +185,13 @@ describe('rate-limiter', () => {
       // Create a mock limiter instance for these tests
       limiter = new Bottleneck({ minTime: 0 });
       // Mock schedule to execute the callback immediately
-      (limiter.schedule as jest.Mock).mockImplementation((fn) => fn());
-      global.fetch = jest.fn();
+      (limiter.schedule as Mock).mockImplementation((fn) => fn());
+      global.fetch = vi.fn();
     });
 
     it('should call fetch and return response on success', async () => {
       const mockResponse = { status: 200 } as Response;
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
+      (global.fetch as Mock).mockResolvedValue(mockResponse);
 
       const result = await throttledFetch(limiter, 'http://example.com');
 
@@ -192,7 +206,7 @@ describe('rate-limiter', () => {
 
     it('uses a caller-supplied signal instead of the default timeout', async () => {
       const mockResponse = { status: 200 } as Response;
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
+      (global.fetch as Mock).mockResolvedValue(mockResponse);
       const controller = new AbortController();
 
       await throttledFetch(limiter, 'http://example.com', {
@@ -207,7 +221,7 @@ describe('rate-limiter', () => {
 
     it('should throw error with status for 429 response', async () => {
       const mockResponse = { status: 429 } as Response;
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
+      (global.fetch as Mock).mockResolvedValue(mockResponse);
 
       let error: any;
       try {
@@ -221,7 +235,7 @@ describe('rate-limiter', () => {
 
     it('should throw error with status for 5xx response', async () => {
       const mockResponse = { status: 500 } as Response;
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
+      (global.fetch as Mock).mockResolvedValue(mockResponse);
 
       await expect(
         throttledFetch(limiter, 'http://example.com'),
@@ -230,7 +244,7 @@ describe('rate-limiter', () => {
 
     it('should NOT throw custom error for 4xx (except 429) response', async () => {
       const mockResponse = { status: 404 } as Response;
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
+      (global.fetch as Mock).mockResolvedValue(mockResponse);
 
       const result = await throttledFetch(limiter, 'http://example.com');
       expect(result).toBe(mockResponse);

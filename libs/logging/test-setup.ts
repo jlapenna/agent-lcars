@@ -1,5 +1,3 @@
-import 'whatwg-fetch';
-
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { NextFunction, Request, Response } from 'express';

@@ -1,8 +1,10 @@
+import { describe, expect, it, vi } from 'vitest';
+
 import { retry } from './retry';
 
 describe('retry', () => {
   it('should return the result if the operation succeeds immediately', async () => {
-    const operation = jest.fn().mockResolvedValue('success');
+    const operation = vi.fn().mockResolvedValue('success');
     const result = await retry(operation);
 
     expect(result).toBe('success');
@@ -10,7 +12,7 @@ describe('retry', () => {
   });
 
   it('should retry if the operation fails and eventually succeeds', async () => {
-    const operation = jest
+    const operation = vi
       .fn()
       .mockRejectedValueOnce(new Error('fail 1'))
       .mockRejectedValueOnce(new Error('fail 2'))
@@ -23,7 +25,7 @@ describe('retry', () => {
   });
 
   it('should fail if the operation fails more than the maximum retries', async () => {
-    const operation = jest.fn().mockRejectedValue(new Error('fail forever'));
+    const operation = vi.fn().mockRejectedValue(new Error('fail forever'));
 
     await expect(
       retry(operation, { minTimeout: 1, retries: 2 }),
@@ -32,7 +34,7 @@ describe('retry', () => {
   });
 
   it('should respect the shouldRetry predicate', async () => {
-    const operation = jest.fn().mockRejectedValue(new Error('fatal error'));
+    const operation = vi.fn().mockRejectedValue(new Error('fatal error'));
 
     await expect(
       retry(operation, {

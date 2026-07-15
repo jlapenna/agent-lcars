@@ -1,34 +1,54 @@
 import { forceStructuredLogging, getSlackLogLevel } from '@repo/env';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  type MockInstance,
+  vi,
+} from 'vitest';
 
 import { getTraceId } from './context';
 import { LogLevel } from './log-level';
 import { SlackLogger } from './slack-logger';
 
-jest.mock('@repo/env', () => ({
-  ...jest.requireActual('@repo/env'),
-  getSlackLogLevel: jest.fn(),
-  forceStructuredLogging: jest.fn(),
+vi.mock('@repo/env', async () => ({
+  ...(await vi.importActual<object>('@repo/env')),
+  getSlackLogLevel: vi.fn(),
+  forceStructuredLogging: vi.fn(),
 }));
 
-jest.mock('./context', () => ({
-  ...jest.requireActual('./context'),
-  getTraceId: jest.fn(),
+vi.mock('./context', async () => ({
+  ...(await vi.importActual<object>('./context')),
+  getTraceId: vi.fn(),
 }));
 
 describe('SlackLogger', () => {
-  let consoleInfoSpy: jest.SpyInstance;
-  let consoleDebugSpy: jest.SpyInstance;
-  let consoleWarnSpy: jest.SpyInstance;
-  let consoleErrorSpy: jest.SpyInstance;
-  let consoleLogSpy: jest.SpyInstance;
+  let consoleInfoSpy: MockInstance;
+  let consoleDebugSpy: MockInstance;
+  let consoleWarnSpy: MockInstance;
+  let consoleErrorSpy: MockInstance;
+  let consoleLogSpy: MockInstance;
   let originalSlackLogLevel: string | undefined;
 
   beforeEach(() => {
-    consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation();
-    consoleDebugSpy = jest.spyOn(console, 'debug').mockImplementation();
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+    consoleInfoSpy = vi
+      .spyOn(console, 'info')
+      .mockImplementation(() => undefined);
+    consoleDebugSpy = vi
+      .spyOn(console, 'debug')
+      .mockImplementation(() => undefined);
+    consoleWarnSpy = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    consoleLogSpy = vi
+      .spyOn(console, 'log')
+      .mockImplementation(() => undefined);
     originalSlackLogLevel = process.env.SLACK_LOG_LEVEL;
   });
 
@@ -38,30 +58,30 @@ describe('SlackLogger', () => {
     consoleWarnSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     consoleLogSpy.mockRestore();
-    (getSlackLogLevel as jest.Mock).mockReturnValue(originalSlackLogLevel);
-    (forceStructuredLogging as jest.Mock).mockReturnValue(false);
-    (getTraceId as jest.Mock).mockReturnValue(undefined);
+    (getSlackLogLevel as Mock).mockReturnValue(originalSlackLogLevel);
+    (forceStructuredLogging as Mock).mockReturnValue(false);
+    (getTraceId as Mock).mockReturnValue(undefined);
   });
 
   describe('getSlackLogLevel', () => {
     it('should return DEBUG by default', () => {
-      (getSlackLogLevel as jest.Mock).mockReturnValue(undefined);
+      (getSlackLogLevel as Mock).mockReturnValue(undefined);
       expect(SlackLogger.getSlackLogLevel()).toBe(LogLevel.DEBUG);
     });
 
     it('should return log level from environment variable', () => {
-      (getSlackLogLevel as jest.Mock).mockReturnValue('ERROR');
+      (getSlackLogLevel as Mock).mockReturnValue('ERROR');
       expect(SlackLogger.getSlackLogLevel()).toBe(LogLevel.ERROR);
 
-      (getSlackLogLevel as jest.Mock).mockReturnValue('warn');
+      (getSlackLogLevel as Mock).mockReturnValue('warn');
       expect(SlackLogger.getSlackLogLevel()).toBe(LogLevel.WARN);
 
-      (getSlackLogLevel as jest.Mock).mockReturnValue('INFO');
+      (getSlackLogLevel as Mock).mockReturnValue('INFO');
       expect(SlackLogger.getSlackLogLevel()).toBe(LogLevel.INFO);
     });
 
     it('should return DEBUG for invalid log level', () => {
-      (getSlackLogLevel as jest.Mock).mockReturnValue('invalid');
+      (getSlackLogLevel as Mock).mockReturnValue('invalid');
       expect(SlackLogger.getSlackLogLevel()).toBe(LogLevel.DEBUG);
     });
   });
@@ -199,8 +219,8 @@ describe('SlackLogger', () => {
 
   describe('structured logging trace id', () => {
     it('includes the trace id from the single getTraceId() authority', () => {
-      (forceStructuredLogging as jest.Mock).mockReturnValue(true);
-      (getTraceId as jest.Mock).mockReturnValue('trace-abc-123');
+      (forceStructuredLogging as Mock).mockReturnValue(true);
+      (getTraceId as Mock).mockReturnValue('trace-abc-123');
 
       const logger = new SlackLogger('test', LogLevel.DEBUG);
       logger.info('structured message');
@@ -211,8 +231,8 @@ describe('SlackLogger', () => {
     });
 
     it('omits the trace id field when getTraceId() returns undefined', () => {
-      (forceStructuredLogging as jest.Mock).mockReturnValue(true);
-      (getTraceId as jest.Mock).mockReturnValue(undefined);
+      (forceStructuredLogging as Mock).mockReturnValue(true);
+      (getTraceId as Mock).mockReturnValue(undefined);
 
       const logger = new SlackLogger('test', LogLevel.DEBUG);
       logger.info('structured message');

@@ -1,4 +1,5 @@
 import { Context, NextFn } from '@slack/bolt';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { bindBoltContext, getContext, runWithContext } from './context';
 
@@ -13,7 +14,7 @@ describe('bind-context', () => {
     let mockNext: NextFn;
 
     beforeEach(() => {
-      mockNext = jest.fn().mockResolvedValue(undefined);
+      mockNext = vi.fn().mockResolvedValue(undefined);
     });
 
     it('should extract userId from boltContext.botUserId', async () => {
@@ -79,7 +80,7 @@ describe('bind-context', () => {
 
       // Called WITHOUT existing runWithContext
       // This will create a new context scope for `next`
-      const checkContextNext = jest.fn().mockImplementation(() => {
+      const checkContextNext = vi.fn().mockImplementation(() => {
         expect(getContext()?.userId).toBe('U_NEW');
         return Promise.resolve();
       });

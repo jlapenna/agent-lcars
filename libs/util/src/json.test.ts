@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { stringifyWithBigInt } from './json';
 
 describe('stringifyWithBigInt', () => {
