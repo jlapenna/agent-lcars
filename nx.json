@@ -90,7 +90,16 @@
       "plugin": "@nx/vitest",
       "options": {
         "testMode": "run"
-      }
+      },
+      "exclude": ["apps/primes/frontend/**/*"]
+    },
+    {
+      "plugin": "@nx/vitest",
+      "options": {
+        "testMode": "run",
+        "testTargetName": "test-vitest"
+      },
+      "include": ["apps/primes/frontend/**/*"]
     }
   ],
   "targetDefaults": {
