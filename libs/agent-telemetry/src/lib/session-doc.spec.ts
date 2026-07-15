@@ -1,5 +1,6 @@
 import { buildSessionDoc, SESSION_RETENTION_DAYS } from './session-doc';
 import { SessionSummary } from './types';
+import { describe, it, test, expect } from 'vitest';
 
 function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {

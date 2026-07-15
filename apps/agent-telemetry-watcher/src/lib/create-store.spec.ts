@@ -1,6 +1,7 @@
 import { WatcherConfig } from './config';
 import { createStoreFromConfig } from './create-store';
 import * as store from './store';
+import { describe, it, test, expect, vi } from 'vitest';
 
 describe('createStoreFromConfig', () => {
   const baseConfig: WatcherConfig = {
@@ -13,8 +14,8 @@ describe('createStoreFromConfig', () => {
   };
 
   it('falls back to a log-only store when no credentials or emulator are configured', () => {
-    const fakeStore = { upsertSession: jest.fn() };
-    const logOnlySpy = jest
+    const fakeStore = { upsertSession: vi.fn() };
+    const logOnlySpy = vi
       .spyOn(store, 'createLogOnlyStore')
       .mockReturnValue(fakeStore);
 
@@ -24,8 +25,8 @@ describe('createStoreFromConfig', () => {
   });
 
   it('uses the Firestore emulator when configured', () => {
-    const fakeStore = { upsertSession: jest.fn() };
-    const firestoreSpy = jest
+    const fakeStore = { upsertSession: vi.fn() };
+    const firestoreSpy = vi
       .spyOn(store, 'createFirestoreStore')
       .mockReturnValue(fakeStore);
 
@@ -40,8 +41,8 @@ describe('createStoreFromConfig', () => {
   });
 
   it('uses real Firestore credentials when a project id and writer key are configured', () => {
-    const fakeStore = { upsertSession: jest.fn() };
-    const firestoreSpy = jest
+    const fakeStore = { upsertSession: vi.fn() };
+    const firestoreSpy = vi
       .spyOn(store, 'createFirestoreStore')
       .mockReturnValue(fakeStore);
     const key = JSON.stringify({

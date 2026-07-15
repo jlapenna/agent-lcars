@@ -12,6 +12,7 @@ export function createVitestConfig(options: {
   projectName: string;
   environment?: 'node' | 'jsdom';
   needsFirestoreMockShim?: boolean;
+  needsJestFnShim?: boolean;
   needsJestDomMatchers?: boolean;
   needsMatchMediaMock?: boolean;
   overrides?: UserConfig;
@@ -21,6 +22,7 @@ export function createVitestConfig(options: {
     projectName,
     environment = 'node',
     needsFirestoreMockShim = false,
+    needsJestFnShim = false,
     needsJestDomMatchers = false,
     needsMatchMediaMock = false,
     overrides = {},
@@ -31,7 +33,11 @@ export function createVitestConfig(options: {
     .join('/');
 
   const setupFiles = [
-    ...(needsFirestoreMockShim
+    // Both firestore-jest-mock and jest-fetch-mock's default export only
+    // need the global `jest.fn()` this shim installs (see the shim's own
+    // comment) - needsJestFnShim covers the latter for projects that mock
+    // fetch but don't touch FakeFirestore.
+    ...(needsFirestoreMockShim || needsJestFnShim
       ? [
           path.join(
             __dirname,
@@ -83,7 +89,6 @@ export function createVitestConfig(options: {
         watch: false,
         globals: false,
         environment,
-        passWithNoTests: true,
         reporters: ['default'],
         // Mirrors jest.preset.js's targetDefaults.test passWithNoTests:true
         // — some migrated libs (e.g. type-only or index-only packages) have

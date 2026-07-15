@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { isProcessAliveForCwd } from './process-check';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 describe('isProcessAliveForCwd', () => {
   let procRoot: string;

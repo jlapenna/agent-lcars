@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { discoverSessionArtifacts } from './discover-artifacts';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 describe('discoverSessionArtifacts', () => {
   let root: string;

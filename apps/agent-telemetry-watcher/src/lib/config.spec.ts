@@ -3,6 +3,7 @@ import * as path from 'path';
 
 import { DEFAULT_PROJECT_DIR_ALLOWLIST } from './allowlist';
 import { loadConfig } from './config';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const ENV_KEYS = [
   'AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR',

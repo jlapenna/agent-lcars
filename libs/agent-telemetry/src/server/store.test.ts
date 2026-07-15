@@ -4,6 +4,7 @@ import { mockWhere } from 'firestore-jest-mock/mocks/firestore';
 
 import { CliSessionDoc, IssueAgentSessionDoc } from '../lib/types';
 import { listSessionDocs, SESSIONS_COLLECTION } from './store';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const cliSession: CliSessionDoc = {
   sessionId: 'cli-session-1',
@@ -45,7 +46,7 @@ const issueAgentSession: IssueAgentSessionDoc = {
 };
 
 describe('listSessionDocs', () => {
-  afterEach(() => jest.clearAllMocks());
+  afterEach(() => vi.clearAllMocks());
 
   it('returns every doc in the sessions collection, source-agnostic, newest activity first', async () => {
     const firestore = new FakeFirestore({

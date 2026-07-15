@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { reduceTranscript, reduceTranscripts } from './reducer';
+import { describe, it, test, expect } from 'vitest';
 
 function readFixture(name: string): string {
   return fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');

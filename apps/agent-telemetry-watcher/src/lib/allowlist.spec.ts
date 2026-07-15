@@ -1,4 +1,5 @@
 import { isAllowedProjectDir } from './allowlist';
+import { describe, it, expect } from 'vitest';
 
 describe('isAllowedProjectDir', () => {
   it('allows the primary checkout slug', () => {

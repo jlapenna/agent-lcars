@@ -2,6 +2,7 @@ import { SessionDoc } from '@repo/agent-telemetry';
 
 import { WatcherDaemon } from './daemon';
 import { SessionStore } from './store';
+import { describe, it, test, expect, vi } from 'vitest';
 
 const TRANSCRIPT = (
   sessionId: string,
@@ -144,7 +145,7 @@ describe('WatcherDaemon', () => {
       ),
     };
     let processAlive = true;
-    const readFile = jest.fn((p: string) => files[p as keyof typeof files]);
+    const readFile = vi.fn((p: string) => files[p as keyof typeof files]);
 
     const daemon = new WatcherDaemon({
       claudeProjectsDir: '/root',
@@ -285,7 +286,7 @@ describe('WatcherDaemon', () => {
 
   it('fails soft when the store rejects a write', async () => {
     const store: SessionStore = {
-      upsertSession: jest
+      upsertSession: vi
         .fn()
         .mockRejectedValue(new Error('firestore unavailable')),
     };
@@ -352,7 +353,7 @@ describe('WatcherDaemon', () => {
         '2026-07-12T10:00:00.000Z',
       ),
     };
-    const readFile = jest.fn((p: string) => files[p as keyof typeof files]);
+    const readFile = vi.fn((p: string) => files[p as keyof typeof files]);
 
     const daemon = new WatcherDaemon({
       claudeProjectsDir: '/root',
@@ -468,7 +469,7 @@ describe('WatcherDaemon', () => {
         '2026-07-12T10:00:00.000Z',
       ),
     };
-    const discoverArtifacts = jest.fn(() => ['should-not-appear.md']);
+    const discoverArtifacts = vi.fn(() => ['should-not-appear.md']);
 
     const daemon = new WatcherDaemon({
       claudeProjectsDir: '/root',

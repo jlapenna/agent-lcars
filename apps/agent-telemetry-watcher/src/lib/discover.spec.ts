@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { discoverTranscriptFiles } from './discover';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 describe('discoverTranscriptFiles', () => {
   let root: string;

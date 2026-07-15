@@ -7,27 +7,28 @@ import {
 import { FakeFirestore } from 'firestore-jest-mock';
 
 import { SessionDoc } from '../lib/types';
+import { describe, it, test, expect, beforeEach, vi, type Mock } from 'vitest';
 import {
   _resetForTesting,
   getAgentTelemetryWriterFirestore,
   upsertSession,
 } from './store';
 
-jest.mock('firebase-admin/app', () => ({
-  getApps: jest.fn().mockReturnValue([]),
-  initializeApp: jest.fn().mockReturnValue({}),
+vi.mock('firebase-admin/app', () => ({
+  getApps: vi.fn().mockReturnValue([]),
+  initializeApp: vi.fn().mockReturnValue({}),
 }));
 
-jest.mock('firebase-admin/firestore', () => ({
-  getFirestore: jest.fn(),
-  Timestamp: jest.requireActual('@google-cloud/firestore').Timestamp,
+vi.mock('firebase-admin/firestore', async () => ({
+  getFirestore: vi.fn(),
+  Timestamp: (await vi.importActual('@google-cloud/firestore')).Timestamp,
 }));
 
-jest.mock('@repo/util-server', () => ({
-  ...jest.requireActual('@repo/util-server'),
-  isEmulator: jest.fn().mockReturnValue(false),
-  getProjectId: jest.fn().mockReturnValue('test-project'),
-  getFirestoreEmulatorHost: jest.fn().mockReturnValue(undefined),
+vi.mock('@repo/util-server', async () => ({
+  ...(await vi.importActual('@repo/util-server')),
+  isEmulator: vi.fn().mockReturnValue(false),
+  getProjectId: vi.fn().mockReturnValue('test-project'),
+  getFirestoreEmulatorHost: vi.fn().mockReturnValue(undefined),
 }));
 
 function sessionDoc(overrides: Partial<SessionDoc> = {}): SessionDoc {
@@ -55,15 +56,15 @@ describe('agent-telemetry store', () => {
   let fakeFirestore: Firestore;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     _resetForTesting();
     fakeFirestore = new FakeFirestore(
       {},
       { mutable: true },
     ) as unknown as Firestore;
-    (getApps as jest.Mock).mockReturnValue([]);
-    (initializeApp as jest.Mock).mockReturnValue({});
-    (getAdminFirestore as jest.Mock).mockReturnValue(fakeFirestore);
+    (getApps as Mock).mockReturnValue([]);
+    (initializeApp as Mock).mockReturnValue({});
+    (getAdminFirestore as Mock).mockReturnValue(fakeFirestore);
   });
 
   describe('getAgentTelemetryWriterFirestore', () => {
@@ -86,7 +87,7 @@ describe('agent-telemetry store', () => {
     });
 
     it('reuses an already-initialized app rather than creating a new one', () => {
-      (getApps as jest.Mock).mockReturnValue([{ name: '[DEFAULT]' }]);
+      (getApps as Mock).mockReturnValue([{ name: '[DEFAULT]' }]);
 
       getAgentTelemetryWriterFirestore();
 

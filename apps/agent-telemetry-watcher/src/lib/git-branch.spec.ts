@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { resolveGitBranch } from './git-branch';
+import { describe, it, test, expect, beforeEach, afterEach } from 'vitest';
 
 describe('resolveGitBranch', () => {
   let repoDir: string;
