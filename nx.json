@@ -63,8 +63,16 @@
       "exclude": [
         "apps/members/e2e/**/*",
         "apps/onecake/e2e/**/*",
-        "apps/primes/e2e/**/*"
+        "apps/primes/e2e/**/*",
+        "apps/primes/frontend/**/*"
       ]
+    },
+    {
+      "plugin": "@nx/jest/plugin",
+      "options": {
+        "targetName": "test-jest"
+      },
+      "include": ["apps/primes/frontend/**/*"]
     },
     {
       "plugin": "@nx/next/plugin",
@@ -90,16 +98,7 @@
       "plugin": "@nx/vitest",
       "options": {
         "testMode": "run"
-      },
-      "exclude": ["apps/primes/frontend/**/*"]
-    },
-    {
-      "plugin": "@nx/vitest",
-      "options": {
-        "testMode": "run",
-        "testTargetName": "test-vitest"
-      },
-      "include": ["apps/primes/frontend/**/*"]
+      }
     }
   ],
   "targetDefaults": {
@@ -117,6 +116,17 @@
       "inputs": ["production", "^production"]
     },
     "test": [
+      {
+        "filter": { "plugin": "@nx/jest/plugin" },
+        "options": {
+          "silent": true,
+          "forceExit": true,
+          "passWithNoTests": true,
+          "maxWorkers": 4
+        }
+      }
+    ],
+    "test-jest": [
       {
         "filter": { "plugin": "@nx/jest/plugin" },
         "options": {
