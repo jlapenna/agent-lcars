@@ -20,4 +20,5 @@ RUN apt-get update \
 # Provide pnpm at the version pinned by the repo's packageManager field.
 RUN corepack enable && corepack prepare pnpm@10.34.1 --activate
 
+# Trigger multi-platform rebuild to support arm64 runners natively
 ENV CI=1
