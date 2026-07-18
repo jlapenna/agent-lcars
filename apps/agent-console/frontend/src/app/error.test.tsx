@@ -1,14 +1,15 @@
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { UnrecognizedActionError } from 'next/dist/client/components/unrecognized-action-error';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import GlobalError from './error';
 
 describe('GlobalError', () => {
-  const reset = jest.fn();
+  const reset = vi.fn();
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('renders the generic error message and retries via reset()', () => {

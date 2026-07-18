@@ -1,16 +1,17 @@
 import type { CliSessionDoc } from '@repo/agent-telemetry';
 import { listSessionDocs } from '@repo/agent-telemetry/server';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getCliSessions } from './cli-sessions';
 import { getGithubClient } from './github-client';
 
-jest.mock('@repo/agent-telemetry/server', () => ({
-  getAgentTelemetryReaderFirestore: jest.fn(),
-  listSessionDocs: jest.fn(),
+vi.mock('@repo/agent-telemetry/server', () => ({
+  getAgentTelemetryReaderFirestore: vi.fn(),
+  listSessionDocs: vi.fn(),
 }));
 
-jest.mock('./github-client', () => ({
-  getGithubClient: jest.fn(),
+vi.mock('./github-client', () => ({
+  getGithubClient: vi.fn(),
   REPO_OWNER: 'supersprinklesracing',
   REPO_NAME: 'members',
 }));
@@ -41,8 +42,8 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
 }
 
 function mockSearch(items: unknown[] = []) {
-  const searchMock = jest.fn().mockResolvedValue({ data: { items } });
-  (getGithubClient as jest.Mock).mockReturnValue({
+  const searchMock = vi.fn().mockResolvedValue({ data: { items } });
+  (getGithubClient as Mock).mockReturnValue({
     rest: { search: { issuesAndPullRequests: searchMock } },
   });
   return searchMock;
@@ -51,19 +52,19 @@ function mockSearch(items: unknown[] = []) {
 function mockPullsGet(merged: boolean | Error) {
   const getMock =
     merged instanceof Error
-      ? jest.fn().mockRejectedValue(merged)
-      : jest.fn().mockResolvedValue({ data: { merged } });
-  (getGithubClient as jest.Mock).mockReturnValue({
+      ? vi.fn().mockRejectedValue(merged)
+      : vi.fn().mockResolvedValue({ data: { merged } });
+  (getGithubClient as Mock).mockReturnValue({
     rest: { pulls: { get: getMock } },
   });
   return getMock;
 }
 
 describe('getCliSessions', () => {
-  afterEach(() => jest.resetAllMocks());
+  afterEach(() => vi.resetAllMocks());
 
   it('passes a lastActivityAt cutoff to the store instead of listing everything', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([]);
+    (listSessionDocs as Mock).mockResolvedValue([]);
     mockSearch();
 
     await getCliSessions();
@@ -72,14 +73,14 @@ describe('getCliSessions', () => {
       undefined,
       expect.objectContaining({ activeSince: expect.any(String) }),
     );
-    const { activeSince } = (listSessionDocs as jest.Mock).mock.calls[0][1];
+    const { activeSince } = (listSessionDocs as Mock).mock.calls[0][1];
     const cutoffAgeHours =
       (Date.now() - new Date(activeSince).getTime()) / (60 * 60 * 1000);
     expect(cutoffAgeHours).toBeCloseTo(24, 1);
   });
 
   it('joins an active session branch to an open PR when one exists', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([makeCliDoc()]);
+    (listSessionDocs as Mock).mockResolvedValue([makeCliDoc()]);
     const searchMock = mockSearch([
       { number: 2600, html_url: 'https://github.com/o/r/pull/2600' },
     ]);
@@ -105,7 +106,7 @@ describe('getCliSessions', () => {
   });
 
   it('uses the transcript-recorded PR without a GitHub search when present', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ deliverables: { prNumbers: [2650, 2662], commitShas: [] } }),
     ]);
     const searchMock = mockSearch();
@@ -120,7 +121,7 @@ describe('getCliSessions', () => {
   });
 
   it('downgrades liveness to ended once a transcript-recorded PR has merged', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         liveness: 'idle',
         lastActivityAt: minutesAgo(42),
@@ -144,7 +145,7 @@ describe('getCliSessions', () => {
   });
 
   it('keeps liveness as-is when the transcript-recorded PR is still open', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         liveness: 'idle',
         lastActivityAt: minutesAgo(20),
@@ -159,7 +160,7 @@ describe('getCliSessions', () => {
   });
 
   it('never checks merge state for a finished session, even with a recorded PR', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         liveness: 'ended',
         lastActivityAt: minutesAgo(120),
@@ -175,7 +176,7 @@ describe('getCliSessions', () => {
   });
 
   it('degrades gracefully and warns once when the merge check fails, without downgrading liveness', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         sessionId: 'session-1',
         liveness: 'idle',
@@ -199,7 +200,7 @@ describe('getCliSessions', () => {
   });
 
   it('never searches for ended sessions, even with a branch', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ liveness: 'ended', lastActivityAt: minutesAgo(120) }),
     ]);
     const searchMock = mockSearch();
@@ -212,12 +213,12 @@ describe('getCliSessions', () => {
   });
 
   it('searches a shared branch once and warns once when the lookup fails', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ sessionId: 'session-1' }),
       makeCliDoc({ sessionId: 'session-2', lastActivityAt: minutesAgo(2) }),
     ]);
-    const searchMock = jest.fn().mockRejectedValue(new Error('502'));
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const searchMock = vi.fn().mockRejectedValue(new Error('502'));
+    (getGithubClient as Mock).mockReturnValue({
       rest: { search: { issuesAndPullRequests: searchMock } },
     });
 
@@ -231,7 +232,7 @@ describe('getCliSessions', () => {
   });
 
   it('recomputes liveness from activity recency instead of trusting the stored value', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       // A live session whose watcher process check wrongly wrote 'ended'
       // (containerized sessions - the watcher cannot see their /proc).
       makeCliDoc({ sessionId: 'mislabeled', liveness: 'ended' }),
@@ -269,7 +270,7 @@ describe('getCliSessions', () => {
         branch: undefined,
       }),
     ];
-    (listSessionDocs as jest.Mock).mockResolvedValue(docs);
+    (listSessionDocs as Mock).mockResolvedValue(docs);
     mockSearch();
 
     const { sessions } = await getCliSessions();
@@ -279,7 +280,7 @@ describe('getCliSessions', () => {
   });
 
   it('passes through discovered artifacts', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ artifacts: ['report.md', 'chart.png'] }),
     ]);
     mockSearch();
@@ -289,7 +290,7 @@ describe('getCliSessions', () => {
   });
 
   it('filters out non-CLI session docs', async () => {
-    (listSessionDocs as jest.Mock).mockResolvedValue([
+    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc(),
       {
         sessionId: 'runner-1',
@@ -316,7 +317,7 @@ describe('getCliSessions', () => {
   });
 
   it('degrades to an empty list with a warning when the store fails', async () => {
-    (listSessionDocs as jest.Mock).mockRejectedValue(new Error('boom'));
+    (listSessionDocs as Mock).mockRejectedValue(new Error('boom'));
 
     const { sessions, warnings } = await getCliSessions();
     expect(sessions).toEqual([]);

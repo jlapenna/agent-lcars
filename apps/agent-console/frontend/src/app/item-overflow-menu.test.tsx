@@ -2,6 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import { clearHumanNeeded, closeIssue } from './actions';
@@ -9,22 +10,22 @@ import { ItemOverflowMenu } from './item-overflow-menu';
 
 // 'use server' actions - out of scope here, matching the pattern in
 // action-items-board.test.tsx.
-jest.mock('./actions', () => ({
-  closeIssue: jest.fn(),
-  clearHumanNeeded: jest.fn(),
+vi.mock('./actions', () => ({
+  closeIssue: vi.fn(),
+  clearHumanNeeded: vi.fn(),
 }));
 
 // No ModalsProvider is mounted in these tests (only MantineProvider, matching
 // the rest of this suite), so openConfirmModal is stubbed to invoke its
 // onConfirm immediately - equivalent to the maintainer confirming.
-jest.mock('@mantine/modals', () => ({
+vi.mock('@mantine/modals', () => ({
   modals: {
-    openConfirmModal: jest.fn(({ onConfirm }) => onConfirm()),
+    openConfirmModal: vi.fn(({ onConfirm }) => onConfirm()),
   },
 }));
 
-jest.mock('@mantine/notifications', () => ({
-  notifications: { show: jest.fn() },
+vi.mock('@mantine/notifications', () => ({
+  notifications: { show: vi.fn() },
 }));
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
@@ -55,7 +56,7 @@ async function openMenu() {
 
 describe('ItemOverflowMenu', () => {
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('renders nothing for a PR that is not human-needed', () => {
@@ -80,7 +81,7 @@ describe('ItemOverflowMenu', () => {
   });
 
   it('closes the issue via confirm modal, then notifies', async () => {
-    (closeIssue as jest.Mock).mockResolvedValue({ ok: true });
+    (closeIssue as Mock).mockResolvedValue({ ok: true });
     renderMenu(makeItem());
     await openMenu();
 
@@ -94,7 +95,7 @@ describe('ItemOverflowMenu', () => {
   });
 
   it('surfaces a failed close as a red notification', async () => {
-    (closeIssue as jest.Mock).mockResolvedValue({
+    (closeIssue as Mock).mockResolvedValue({
       ok: false,
       message: 'Issue not found',
     });
@@ -111,7 +112,7 @@ describe('ItemOverflowMenu', () => {
   });
 
   it('clears needs-human without a confirm modal', async () => {
-    (clearHumanNeeded as jest.Mock).mockResolvedValue({ ok: true });
+    (clearHumanNeeded as Mock).mockResolvedValue({ ok: true });
     renderMenu(makeItem({ actionTypes: ['human-needed'] }));
     await openMenu();
 

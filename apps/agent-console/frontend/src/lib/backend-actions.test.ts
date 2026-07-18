@@ -1,3 +1,5 @@
+import { describe, expect, it, type Mock, vi } from 'vitest';
+
 import {
   cancelWorkflowRun,
   clearHumanNeededLabel,
@@ -9,16 +11,16 @@ import {
 } from './backend-actions';
 import { getGithubClient } from './github-client';
 
-jest.mock('./github-client', () => ({
-  getGithubClient: jest.fn(),
+vi.mock('./github-client', () => ({
+  getGithubClient: vi.fn(),
   REPO_OWNER: 'supersprinklesracing',
   REPO_NAME: 'members',
 }));
 
 describe('closeIssue', () => {
   it('closes the given issue on the console repo', async () => {
-    const update = jest.fn().mockResolvedValue({});
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const update = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
       rest: { issues: { update } },
     });
 
@@ -33,10 +35,10 @@ describe('closeIssue', () => {
   });
 
   it('propagates a GitHub API error', async () => {
-    (getGithubClient as jest.Mock).mockReturnValue({
+    (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
-          update: jest
+          update: vi
             .fn()
             .mockRejectedValue(
               Object.assign(new Error('Not Found'), { status: 404 }),
@@ -51,8 +53,8 @@ describe('closeIssue', () => {
 
 describe('clearHumanNeededLabel', () => {
   it('removes the human-needed label from the given issue', async () => {
-    const removeLabel = jest.fn().mockResolvedValue({});
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const removeLabel = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
       rest: { issues: { removeLabel } },
     });
 
@@ -67,10 +69,10 @@ describe('clearHumanNeededLabel', () => {
   });
 
   it('swallows a 404 (label was already absent)', async () => {
-    (getGithubClient as jest.Mock).mockReturnValue({
+    (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
-          removeLabel: jest
+          removeLabel: vi
             .fn()
             .mockRejectedValue(
               Object.assign(new Error('Not Found'), { status: 404 }),
@@ -85,8 +87,8 @@ describe('clearHumanNeededLabel', () => {
 
 describe('cancelWorkflowRun', () => {
   it('cancels the given run on the console repo', async () => {
-    const cancelWorkflowRun_ = jest.fn().mockResolvedValue({});
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const cancelWorkflowRun_ = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
       rest: { actions: { cancelWorkflowRun: cancelWorkflowRun_ } },
     });
 
@@ -100,10 +102,10 @@ describe('cancelWorkflowRun', () => {
   });
 
   it('propagates a GitHub API error (e.g. the run already completed)', async () => {
-    (getGithubClient as jest.Mock).mockReturnValue({
+    (getGithubClient as Mock).mockReturnValue({
       rest: {
         actions: {
-          cancelWorkflowRun: jest
+          cancelWorkflowRun: vi
             .fn()
             .mockRejectedValue(
               Object.assign(new Error('Conflict'), { status: 409 }),
@@ -118,8 +120,8 @@ describe('cancelWorkflowRun', () => {
 
 describe('dispatchUnstickPrs', () => {
   it('dispatches playbook-unstick-prs.yml with a trimmed context input', async () => {
-    const createWorkflowDispatch = jest.fn().mockResolvedValue({});
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
       rest: { actions: { createWorkflowDispatch } },
     });
 
@@ -135,8 +137,8 @@ describe('dispatchUnstickPrs', () => {
   });
 
   it('omits the context input when none is given', async () => {
-    const createWorkflowDispatch = jest.fn().mockResolvedValue({});
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
       rest: { actions: { createWorkflowDispatch } },
     });
 
@@ -150,8 +152,8 @@ describe('dispatchUnstickPrs', () => {
 
 describe('evictNxCache', () => {
   it('dispatches playbook-evict-nx-cache.yml with the capture flag stringified', async () => {
-    const createWorkflowDispatch = jest.fn().mockResolvedValue({});
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
       rest: { actions: { createWorkflowDispatch } },
     });
 
@@ -188,19 +190,18 @@ describe('deriveQuickTaskTitle', () => {
 
 describe('createQuickTask', () => {
   function mockOctokit(overrides: {
-    createLabel?: jest.Mock;
-    createIssue?: jest.Mock;
-    addLabels?: jest.Mock;
+    createLabel?: Mock;
+    createIssue?: Mock;
+    addLabels?: Mock;
   }) {
-    const createLabel =
-      overrides.createLabel ?? jest.fn().mockResolvedValue({});
+    const createLabel = overrides.createLabel ?? vi.fn().mockResolvedValue({});
     const createIssue =
       overrides.createIssue ??
-      jest.fn().mockResolvedValue({
+      vi.fn().mockResolvedValue({
         data: { number: 99, html_url: 'https://github.com/x/y/issues/99' },
       });
-    const addLabels = overrides.addLabels ?? jest.fn().mockResolvedValue({});
-    (getGithubClient as jest.Mock).mockReturnValue({
+    const addLabels = overrides.addLabels ?? vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: { createLabel, create: createIssue, addLabels },
       },
@@ -281,7 +282,7 @@ describe('createQuickTask', () => {
 
   it('tolerates the quick-task label already existing (422)', async () => {
     const { createIssue } = mockOctokit({
-      createLabel: jest
+      createLabel: vi
         .fn()
         .mockRejectedValue(Object.assign(new Error('exists'), { status: 422 })),
     });
@@ -293,7 +294,7 @@ describe('createQuickTask', () => {
 
   it('propagates a non-422 label creation failure', async () => {
     mockOctokit({
-      createLabel: jest
+      createLabel: vi
         .fn()
         .mockRejectedValue(
           Object.assign(new Error('Forbidden'), { status: 403 }),

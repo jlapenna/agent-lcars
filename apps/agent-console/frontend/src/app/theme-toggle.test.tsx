@@ -1,33 +1,42 @@
 import * as mantineCore from '@mantine/core';
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen } from '@testing-library/react';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
 import { ThemeToggle } from './theme-toggle';
 
-jest.mock('@mantine/core', () => {
-  const originalModule = jest.requireActual('@mantine/core');
+vi.mock('@mantine/core', async (importOriginal) => {
+  const originalModule = await importOriginal<typeof import('@mantine/core')>();
   return {
     ...originalModule,
-    useMantineColorScheme: jest.fn(),
-    useComputedColorScheme: jest.fn(),
+    useMantineColorScheme: vi.fn(),
+    useComputedColorScheme: vi.fn(),
   };
 });
 
 describe('ThemeToggle', () => {
-  const setColorScheme = jest.fn();
+  const setColorScheme = vi.fn();
 
   beforeEach(() => {
-    (mantineCore.useMantineColorScheme as jest.Mock).mockReturnValue({
+    (mantineCore.useMantineColorScheme as Mock).mockReturnValue({
       setColorScheme,
     });
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('renders correctly', () => {
-    (mantineCore.useComputedColorScheme as jest.Mock).mockReturnValue('light');
+    (mantineCore.useComputedColorScheme as Mock).mockReturnValue('light');
     render(
       <MantineProvider>
         <ThemeToggle />
@@ -40,7 +49,7 @@ describe('ThemeToggle', () => {
   });
 
   it('toggles from light to dark and sets the SSR cookie', () => {
-    (mantineCore.useComputedColorScheme as jest.Mock).mockReturnValue('light');
+    (mantineCore.useComputedColorScheme as Mock).mockReturnValue('light');
     render(
       <MantineProvider>
         <ThemeToggle />
@@ -56,7 +65,7 @@ describe('ThemeToggle', () => {
   });
 
   it('toggles from dark to light', () => {
-    (mantineCore.useComputedColorScheme as jest.Mock).mockReturnValue('dark');
+    (mantineCore.useComputedColorScheme as Mock).mockReturnValue('dark');
     render(
       <MantineProvider>
         <ThemeToggle />

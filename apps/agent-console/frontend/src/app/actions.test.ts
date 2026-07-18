@@ -1,4 +1,5 @@
 import { revalidatePath } from 'next/cache';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { auth } from '../auth';
 import {
@@ -25,18 +26,18 @@ import {
   retriggerIssue,
 } from './actions';
 
-jest.mock('next/cache', () => ({
-  revalidatePath: jest.fn(),
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
 }));
 
-jest.mock('../lib/action-items', () => ({
-  getActionItems: jest.fn(),
+vi.mock('../lib/action-items', () => ({
+  getActionItems: vi.fn(),
 }));
 
 // Mocked in full (rather than jest.requireActual) because the real module
 // transitively pulls in @octokit/rest, which ships ESM Jest isn't
 // configured to transform.
-jest.mock('../lib/backend-actions', () => {
+vi.mock('../lib/backend-actions', () => {
   class ActionError extends Error {
     constructor(
       message: string,
@@ -48,15 +49,15 @@ jest.mock('../lib/backend-actions', () => {
   }
   return {
     ActionError,
-    approveAndMergePr: jest.fn(),
-    cancelWorkflowRun: jest.fn(),
-    clearHumanNeededLabel: jest.fn(),
-    closeIssue: jest.fn(),
-    createQuickTask: jest.fn(),
-    dispatchUnstickPrs: jest.fn(),
-    evictNxCache: jest.fn(),
-    postComment: jest.fn(),
-    retriggerIssue: jest.fn(),
+    approveAndMergePr: vi.fn(),
+    cancelWorkflowRun: vi.fn(),
+    clearHumanNeededLabel: vi.fn(),
+    closeIssue: vi.fn(),
+    createQuickTask: vi.fn(),
+    dispatchUnstickPrs: vi.fn(),
+    evictNxCache: vi.fn(),
+    postComment: vi.fn(),
+    retriggerIssue: vi.fn(),
   };
 });
 
@@ -64,7 +65,7 @@ jest.mock('../lib/backend-actions', () => {
 // re-exports app-auth.ts, which transitively pulls in next-auth/next-server
 // and needs a `Request` global this test environment doesn't provide. The
 // factory below reimplements createAdminAction's actual guard logic.
-jest.mock('@repo/auth/server', () => ({
+vi.mock('@repo/auth/server', () => ({
   createAdminAction:
     (authFn: () => Promise<{ user?: { isAdmin?: boolean } } | null>) =>
     async () => {
@@ -76,12 +77,12 @@ jest.mock('@repo/auth/server', () => ({
     },
 }));
 
-jest.mock('../auth', () => ({ auth: jest.fn() }));
+vi.mock('../auth', () => ({ auth: vi.fn() }));
 
 describe('agent-console Server Actions', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    (auth as jest.Mock).mockResolvedValue({
+    vi.clearAllMocks();
+    (auth as Mock).mockResolvedValue({
       user: { id: 'admin-1', isAdmin: true },
     });
   });
@@ -91,7 +92,7 @@ describe('agent-console Server Actions', () => {
   // so GitHub's real message has to come back as a normal return value. #2628
   describe('when the underlying GitHub call fails', () => {
     it('mergePr returns { ok: false, message } instead of throwing', async () => {
-      (approveAndMergePr as jest.Mock).mockRejectedValue(
+      (approveAndMergePr as Mock).mockRejectedValue(
         new ActionError('Pull Request has merge conflicts', 405),
       );
 
@@ -103,7 +104,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('replyToItem returns { ok: false, message } instead of throwing', async () => {
-      (postComment as jest.Mock).mockRejectedValue(
+      (postComment as Mock).mockRejectedValue(
         new ActionError('Comment body is required', 400),
       );
 
@@ -114,7 +115,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('retriggerIssue returns { ok: false, message } instead of throwing', async () => {
-      (retriggerIssueLib as jest.Mock).mockRejectedValue(
+      (retriggerIssueLib as Mock).mockRejectedValue(
         new ActionError(
           'Issue does not carry the claude label; nothing to retrigger',
           400,
@@ -128,7 +129,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('cancelRun returns { ok: false, message } instead of throwing', async () => {
-      (cancelWorkflowRun as jest.Mock).mockRejectedValue(
+      (cancelWorkflowRun as Mock).mockRejectedValue(
         Object.assign(new Error('Conflict'), {
           status: 409,
           response: { data: { message: 'Run already completed' } },
@@ -142,7 +143,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('falls back to a generic message for a non-Error, non-GitHub rejection', async () => {
-      (approveAndMergePr as jest.Mock).mockRejectedValue('boom');
+      (approveAndMergePr as Mock).mockRejectedValue('boom');
 
       await expect(mergePr(42)).resolves.toEqual({
         ok: false,
@@ -151,7 +152,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('dispatchUnstickPrs returns { ok: false, message } instead of throwing', async () => {
-      (dispatchUnstickPrsLib as jest.Mock).mockRejectedValue(
+      (dispatchUnstickPrsLib as Mock).mockRejectedValue(
         Object.assign(new Error('Forbidden'), {
           status: 403,
           response: { data: { message: 'Resource not accessible' } },
@@ -165,7 +166,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('evictNxCache returns { ok: false, message } instead of throwing', async () => {
-      (evictNxCacheLib as jest.Mock).mockRejectedValue(
+      (evictNxCacheLib as Mock).mockRejectedValue(
         Object.assign(new Error('Forbidden'), {
           status: 403,
           response: { data: { message: 'Resource not accessible' } },
@@ -179,7 +180,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('createQuickTask returns { ok: false, message } instead of throwing', async () => {
-      (createQuickTaskLib as jest.Mock).mockRejectedValue(
+      (createQuickTaskLib as Mock).mockRejectedValue(
         new ActionError('Task description is required', 400),
       );
 
@@ -191,7 +192,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('closeIssue returns { ok: false, message } instead of throwing', async () => {
-      (closeIssueLib as jest.Mock).mockRejectedValue(
+      (closeIssueLib as Mock).mockRejectedValue(
         new ActionError('Issue not found', 404),
       );
 
@@ -202,7 +203,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('clearHumanNeeded returns { ok: false, message } instead of throwing', async () => {
-      (clearHumanNeededLabel as jest.Mock).mockRejectedValue(
+      (clearHumanNeededLabel as Mock).mockRejectedValue(
         new ActionError('Unexpected error', 500),
       );
 
@@ -215,21 +216,21 @@ describe('agent-console Server Actions', () => {
 
   describe('when the underlying call succeeds', () => {
     it('mergePr returns { ok: true } and revalidates', async () => {
-      (approveAndMergePr as jest.Mock).mockResolvedValue(undefined);
+      (approveAndMergePr as Mock).mockResolvedValue(undefined);
 
       await expect(mergePr(42)).resolves.toEqual({ ok: true });
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
     it('replyToItem returns { ok: true } and revalidates', async () => {
-      (postComment as jest.Mock).mockResolvedValue({ url: 'https://x' });
+      (postComment as Mock).mockResolvedValue({ url: 'https://x' });
 
       await expect(replyToItem(42, 'hi')).resolves.toEqual({ ok: true });
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
     it('dispatchUnstickPrs returns { ok: true } and forwards the context', async () => {
-      (dispatchUnstickPrsLib as jest.Mock).mockResolvedValue(undefined);
+      (dispatchUnstickPrsLib as Mock).mockResolvedValue(undefined);
 
       await expect(dispatchUnstickPrs('PR #123 stuck')).resolves.toEqual({
         ok: true,
@@ -238,14 +239,14 @@ describe('agent-console Server Actions', () => {
     });
 
     it('evictNxCache returns { ok: true } and forwards the capture flag', async () => {
-      (evictNxCacheLib as jest.Mock).mockResolvedValue(undefined);
+      (evictNxCacheLib as Mock).mockResolvedValue(undefined);
 
       await expect(evictNxCache(true)).resolves.toEqual({ ok: true });
       expect(evictNxCacheLib).toHaveBeenCalledWith(true);
     });
 
     it('createQuickTask returns { ok: true, url, number } and revalidates', async () => {
-      (createQuickTaskLib as jest.Mock).mockResolvedValue({
+      (createQuickTaskLib as Mock).mockResolvedValue({
         url: 'https://github.com/x/y/issues/99',
         number: 99,
       });
@@ -264,7 +265,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('closeIssue returns { ok: true } and revalidates', async () => {
-      (closeIssueLib as jest.Mock).mockResolvedValue(undefined);
+      (closeIssueLib as Mock).mockResolvedValue(undefined);
 
       await expect(closeIssue(2709)).resolves.toEqual({ ok: true });
       expect(closeIssueLib).toHaveBeenCalledWith(2709);
@@ -272,7 +273,7 @@ describe('agent-console Server Actions', () => {
     });
 
     it('clearHumanNeeded returns { ok: true } and revalidates', async () => {
-      (clearHumanNeededLabel as jest.Mock).mockResolvedValue(undefined);
+      (clearHumanNeededLabel as Mock).mockResolvedValue(undefined);
 
       await expect(clearHumanNeeded(2709)).resolves.toEqual({ ok: true });
       expect(clearHumanNeededLabel).toHaveBeenCalledWith(2709);
@@ -282,7 +283,7 @@ describe('agent-console Server Actions', () => {
 
   describe('when the caller is not an admin', () => {
     beforeEach(() => {
-      (auth as jest.Mock).mockResolvedValue({
+      (auth as Mock).mockResolvedValue({
         user: { id: 'not-admin', isAdmin: false },
       });
     });

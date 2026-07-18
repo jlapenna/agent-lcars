@@ -1,3 +1,5 @@
+import { describe, expect, it, type Mock, vi } from 'vitest';
+
 import {
   type ActionItem,
   getActionItems,
@@ -6,8 +8,8 @@ import {
 } from './action-items';
 import { getGithubClient } from './github-client';
 
-jest.mock('./github-client', () => ({
-  getGithubClient: jest.fn(),
+vi.mock('./github-client', () => ({
+  getGithubClient: vi.fn(),
   REPO_OWNER: 'supersprinklesracing',
   REPO_NAME: 'members',
 }));
@@ -152,16 +154,16 @@ describe('getActionItems', () => {
 
   function setupOctokit({
     issuesAndPullRequests,
-    listComments = jest.fn().mockResolvedValue({ data: [] }),
-    pullsGet = jest.fn(),
-    checksListForRef = jest.fn(),
+    listComments = vi.fn().mockResolvedValue({ data: [] }),
+    pullsGet = vi.fn(),
+    checksListForRef = vi.fn(),
   }: {
-    issuesAndPullRequests: jest.Mock;
-    listComments?: jest.Mock;
-    pullsGet?: jest.Mock;
-    checksListForRef?: jest.Mock;
+    issuesAndPullRequests: Mock;
+    listComments?: Mock;
+    pullsGet?: Mock;
+    checksListForRef?: Mock;
   }) {
-    (getGithubClient as jest.Mock).mockReturnValue({
+    (getGithubClient as Mock).mockReturnValue({
       rest: {
         search: { issuesAndPullRequests },
         issues: { listComments },
@@ -172,7 +174,7 @@ describe('getActionItems', () => {
   }
 
   it('captures the newest comment author on human-needed items (possession signal)', async () => {
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!TARGET_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -183,7 +185,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const listComments = jest.fn().mockResolvedValue({
+    const listComments = vi.fn().mockResolvedValue({
       data: [
         {
           body: 'What should I do here?',
@@ -207,28 +209,26 @@ describe('getActionItems', () => {
   });
 
   it('paginates a query across multiple pages and collects every item', async () => {
-    const issuesAndPullRequests = jest
-      .fn()
-      .mockImplementation(({ q, page }) => {
-        if (!TARGET_Q(q)) return emptySearchPage();
-        if (page === 1) {
-          return Promise.resolve({
-            data: {
-              total_count: 120,
-              items: Array.from({ length: 100 }, (_, i) => makeItem(i + 1)),
-            },
-          });
-        }
-        if (page === 2) {
-          return Promise.resolve({
-            data: {
-              total_count: 120,
-              items: Array.from({ length: 20 }, (_, i) => makeItem(i + 101)),
-            },
-          });
-        }
-        return emptySearchPage();
-      });
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q, page }) => {
+      if (!TARGET_Q(q)) return emptySearchPage();
+      if (page === 1) {
+        return Promise.resolve({
+          data: {
+            total_count: 120,
+            items: Array.from({ length: 100 }, (_, i) => makeItem(i + 1)),
+          },
+        });
+      }
+      if (page === 2) {
+        return Promise.resolve({
+          data: {
+            total_count: 120,
+            items: Array.from({ length: 20 }, (_, i) => makeItem(i + 101)),
+          },
+        });
+      }
+      return emptySearchPage();
+    });
     setupOctokit({ issuesAndPullRequests });
 
     const result = await getActionItems();
@@ -238,19 +238,17 @@ describe('getActionItems', () => {
   });
 
   it('flags truncation once a query hits the 1000-result page cap', async () => {
-    const issuesAndPullRequests = jest
-      .fn()
-      .mockImplementation(({ q, page }) => {
-        if (!TARGET_Q(q)) return emptySearchPage();
-        return Promise.resolve({
-          data: {
-            total_count: 1500,
-            items: Array.from({ length: 100 }, (_, i) =>
-              makeItem(page * 1000 + i),
-            ),
-          },
-        });
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q, page }) => {
+      if (!TARGET_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1500,
+          items: Array.from({ length: 100 }, (_, i) =>
+            makeItem(page * 1000 + i),
+          ),
+        },
       });
+    });
     setupOctokit({ issuesAndPullRequests });
 
     const result = await getActionItems();
@@ -264,7 +262,7 @@ describe('getActionItems', () => {
   it('records a warning and keeps other queries when one search query rejects', async () => {
     const FAILING_Q = (q: string) =>
       q.includes('label:human-needed') && q.includes('is:issue');
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (FAILING_Q(q)) return Promise.reject(new Error('502 Bad Gateway'));
       if (TARGET_Q(q)) {
         return Promise.resolve({
@@ -284,7 +282,7 @@ describe('getActionItems', () => {
   });
 
   it('flags truncated check runs on a PR without dropping the item', async () => {
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!TARGET_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -293,7 +291,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const pullsGet = jest.fn().mockResolvedValue({
+    const pullsGet = vi.fn().mockResolvedValue({
       data: {
         draft: false,
         mergeable_state: 'clean',
@@ -302,7 +300,7 @@ describe('getActionItems', () => {
         requested_reviewers: [],
       },
     });
-    const checksListForRef = jest.fn().mockImplementation(({ page }) => {
+    const checksListForRef = vi.fn().mockImplementation(({ page }) => {
       return Promise.resolve({
         data: {
           total_count: 600,
@@ -326,7 +324,7 @@ describe('getActionItems', () => {
   });
 
   it('sorts a review-requested PR ahead of a run-failed PR, tied with human-needed', async () => {
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!TARGET_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -339,7 +337,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const pullsGet = jest.fn().mockImplementation(({ pull_number }) =>
+    const pullsGet = vi.fn().mockImplementation(({ pull_number }) =>
       Promise.resolve({
         data: {
           draft: false,
@@ -350,7 +348,7 @@ describe('getActionItems', () => {
         },
       }),
     );
-    const checksListForRef = jest.fn().mockImplementation(({ ref }) =>
+    const checksListForRef = vi.fn().mockImplementation(({ ref }) =>
       Promise.resolve({
         data: {
           total_count: ref === 'sha-1' ? 1 : 0,
@@ -376,7 +374,7 @@ describe('getActionItems', () => {
   });
 
   it('drops an item and records a warning when classification throws, without affecting siblings', async () => {
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!TARGET_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -385,7 +383,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const pullsGet = jest
+    const pullsGet = vi
       .fn()
       .mockImplementation(({ pull_number }) =>
         pull_number === 20
@@ -405,7 +403,7 @@ describe('getActionItems', () => {
   it('surfaces the takeover command on a jclaw-bot-assigned PR', async () => {
     const PR_Q = (q: string) =>
       q.includes('assignee:jclaw-bot') && q.includes('is:pull-request');
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!PR_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -420,7 +418,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const listComments = jest.fn().mockResolvedValue({
+    const listComments = vi.fn().mockResolvedValue({
       data: [
         {
           body: 'Session takeover:\n```\n~/p/members/tools/claude-agent-session.sh resume abc-123\n```',
@@ -429,7 +427,7 @@ describe('getActionItems', () => {
         },
       ],
     });
-    const pullsGet = jest.fn().mockResolvedValue({
+    const pullsGet = vi.fn().mockResolvedValue({
       data: {
         draft: false,
         mergeable_state: 'clean',
@@ -438,7 +436,7 @@ describe('getActionItems', () => {
         requested_reviewers: [],
       },
     });
-    const checksListForRef = jest
+    const checksListForRef = vi
       .fn()
       .mockResolvedValue({ data: { total_count: 0, check_runs: [] } });
     setupOctokit({
@@ -459,7 +457,7 @@ describe('getActionItems', () => {
   it('scans takeover for a jclaw-bot-assigned issue without the claude label (interactive claim)', async () => {
     const ISSUE_Q = (q: string) =>
       q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!ISSUE_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -470,7 +468,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const listComments = jest.fn().mockResolvedValue({
+    const listComments = vi.fn().mockResolvedValue({
       data: [
         {
           body: '~/p/members/tools/claude-agent-session.sh resume def-456',
@@ -492,7 +490,7 @@ describe('getActionItems', () => {
     // Dispatched-but-unclaimed (runner never started): there is no session
     // yet, so there is no takeover command to find - the claim assignee,
     // not the dispatch label, is what says a session exists (#2783).
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!TARGET_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -501,7 +499,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const listComments = jest.fn().mockResolvedValue({ data: [] });
+    const listComments = vi.fn().mockResolvedValue({ data: [] });
     setupOctokit({ issuesAndPullRequests, listComments });
 
     const result = await getActionItems();
@@ -514,7 +512,7 @@ describe('getActionItems', () => {
   it('derives human-needed from jclaw-bot + jlapenna assignees even without the label (#2802)', async () => {
     const ISSUE_Q = (q: string) =>
       q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!ISSUE_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {
@@ -528,7 +526,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    const listComments = jest.fn().mockResolvedValue({
+    const listComments = vi.fn().mockResolvedValue({
       data: [
         {
           body: 'What should I do here?',
@@ -548,7 +546,7 @@ describe('getActionItems', () => {
   it('does not derive human-needed from jclaw-bot alone (no maintainer assignee, no label)', async () => {
     const ISSUE_Q = (q: string) =>
       q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = jest.fn().mockImplementation(({ q }) => {
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
       if (!ISSUE_Q(q)) return emptySearchPage();
       return Promise.resolve({
         data: {

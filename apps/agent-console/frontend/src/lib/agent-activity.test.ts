@@ -1,11 +1,13 @@
+import { describe, expect, it, type Mock, vi } from 'vitest';
+
 import {
   getAgentActivity,
   issueNumberFromDisplayTitle,
 } from './agent-activity';
 import { getGithubClient } from './github-client';
 
-jest.mock('./github-client', () => ({
-  getGithubClient: jest.fn(),
+vi.mock('./github-client', () => ({
+  getGithubClient: vi.fn(),
   REPO_OWNER: 'supersprinklesracing',
   REPO_NAME: 'members',
 }));
@@ -52,10 +54,10 @@ describe('getAgentActivity', () => {
     listWorkflowRuns,
     listSelfHostedRunnersForRepo,
   }: {
-    listWorkflowRuns: jest.Mock;
-    listSelfHostedRunnersForRepo: jest.Mock;
+    listWorkflowRuns: Mock;
+    listSelfHostedRunnersForRepo: Mock;
   }) {
-    (getGithubClient as jest.Mock).mockReturnValue({
+    (getGithubClient as Mock).mockReturnValue({
       rest: {
         actions: {
           listWorkflowRuns,
@@ -66,7 +68,7 @@ describe('getAgentActivity', () => {
   }
 
   it('parses issueNumber onto live runs from the run-name display title', async () => {
-    const listWorkflowRuns = jest.fn().mockImplementation(({ status }) => {
+    const listWorkflowRuns = vi.fn().mockImplementation(({ status }) => {
       if (status === undefined) {
         return Promise.resolve({
           data: { workflow_runs: [makeRun({ id: 1, status: 'in_progress' })] },
@@ -74,7 +76,7 @@ describe('getAgentActivity', () => {
       }
       return Promise.resolve({ data: { workflow_runs: [] } });
     });
-    const listSelfHostedRunnersForRepo = jest
+    const listSelfHostedRunnersForRepo = vi
       .fn()
       .mockResolvedValue({ data: { runners: [] } });
     setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
@@ -87,7 +89,7 @@ describe('getAgentActivity', () => {
   });
 
   it('falls back to undefined issueNumber for a legacy title', async () => {
-    const listWorkflowRuns = jest.fn().mockImplementation(({ status }) => {
+    const listWorkflowRuns = vi.fn().mockImplementation(({ status }) => {
       if (status === undefined) {
         return Promise.resolve({
           data: {
@@ -97,7 +99,7 @@ describe('getAgentActivity', () => {
       }
       return Promise.resolve({ data: { workflow_runs: [] } });
     });
-    const listSelfHostedRunnersForRepo = jest
+    const listSelfHostedRunnersForRepo = vi
       .fn()
       .mockResolvedValue({ data: { runners: [] } });
     setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
@@ -109,10 +111,10 @@ describe('getAgentActivity', () => {
   });
 
   it('degrades the runner section and records a warning instead of throwing', async () => {
-    const listWorkflowRuns = jest
+    const listWorkflowRuns = vi
       .fn()
       .mockResolvedValue({ data: { workflow_runs: [] } });
-    const listSelfHostedRunnersForRepo = jest
+    const listSelfHostedRunnersForRepo = vi
       .fn()
       .mockRejectedValue(new Error('403 admin:read required'));
     setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });

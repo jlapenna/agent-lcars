@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import type { ActionItem } from './action-items';
 import { derivePrimaryAction } from './primary-action';
 

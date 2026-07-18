@@ -1,5 +1,6 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentActivity, AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
@@ -8,22 +9,22 @@ import { AgentActivityPanel } from './agent-activity-panel';
 // CancelRunButton is a 'use server' client component wired to backend
 // actions - out of scope here, matching the pattern in
 // action-items-board.test.tsx.
-jest.mock('./cancel-run-button', () => ({
+vi.mock('./cancel-run-button', () => ({
   CancelRunButton: () => null,
 }));
 
 // agent-activity.ts pulls in the server-only (ESM) GitHub client - stub the
 // one runtime value this panel actually uses (RUN_TIMEOUT_MINUTES) so the
 // module never loads at test time. Every other import from it is type-only.
-jest.mock('../lib/agent-activity', () => ({ RUN_TIMEOUT_MINUTES: 90 }));
+vi.mock('../lib/agent-activity', () => ({ RUN_TIMEOUT_MINUTES: 90 }));
 
 // react-markdown/remark-gfm (pulled in via artifact-viewer.tsx) are ESM-only
 // (unified ecosystem) - see artifact-viewer.test.tsx for the same stub.
-jest.mock('react-markdown', () => ({
+vi.mock('react-markdown', () => ({
   __esModule: true,
   default: ({ children }: { children: string }) => <>{children}</>,
 }));
-jest.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
+vi.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
 
 const EMPTY_ACTIVITY: AgentActivity = {
   liveRuns: [],
@@ -46,7 +47,10 @@ function makeCliSession(overrides: Partial<CliSession> = {}): CliSession {
   };
 }
 
-function renderPanel(cliSessions: CliSession[], activity: AgentActivity = EMPTY_ACTIVITY) {
+function renderPanel(
+  cliSessions: CliSession[],
+  activity: AgentActivity = EMPTY_ACTIVITY,
+) {
   render(
     <MantineProvider>
       <AgentActivityPanel activity={activity} cliSessions={cliSessions} />
@@ -179,13 +183,10 @@ describe('AgentActivityPanel CLI sessions', () => {
 
 describe('AgentActivityPanel recent runs', () => {
   it('keeps the recent-run conclusion badge from shrinking away on narrow layouts', () => {
-    renderPanel(
-      [],
-      {
-        ...EMPTY_ACTIVITY,
-        recentRuns: [makeAgentRun()],
-      },
-    );
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [makeAgentRun()],
+    });
     const badge = screen.getByTestId('recent-run-conclusion');
     expect(badge.style.flexShrink).toBe('0');
     expect(badge.textContent).toBe('success');

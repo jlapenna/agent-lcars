@@ -1,16 +1,17 @@
 import { MantineProvider } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { createQuickTask } from './actions';
 import { QuickTaskButton } from './quick-task-button';
 
-jest.mock('./actions', () => ({
-  createQuickTask: jest.fn(),
+vi.mock('./actions', () => ({
+  createQuickTask: vi.fn(),
 }));
 
-jest.mock('@mantine/notifications', () => ({
-  notifications: { show: jest.fn() },
+vi.mock('@mantine/notifications', () => ({
+  notifications: { show: vi.fn() },
 }));
 
 function renderButton() {
@@ -28,7 +29,7 @@ function openDialog() {
 
 describe('QuickTaskButton', () => {
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('opens a full screen dialog rather than an inline dropdown', async () => {
@@ -57,7 +58,7 @@ describe('QuickTaskButton', () => {
   });
 
   it('files the task with a blank title, letting the backend derive one', async () => {
-    (createQuickTask as jest.Mock).mockResolvedValue({
+    (createQuickTask as Mock).mockResolvedValue({
       ok: true,
       url: 'https://github.com/x/y/issues/99',
       number: 99,
@@ -82,7 +83,7 @@ describe('QuickTaskButton', () => {
   });
 
   it('forwards an explicit title when one is entered', async () => {
-    (createQuickTask as jest.Mock).mockResolvedValue({
+    (createQuickTask as Mock).mockResolvedValue({
       ok: true,
       url: 'https://github.com/x/y/issues/99',
       number: 99,
@@ -107,7 +108,7 @@ describe('QuickTaskButton', () => {
   });
 
   it('surfaces a failed dispatch as a red notification', async () => {
-    (createQuickTask as jest.Mock).mockResolvedValue({
+    (createQuickTask as Mock).mockResolvedValue({
       ok: false,
       message: 'Task description is required',
     });

@@ -1,18 +1,19 @@
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ArtifactPreviewToggle, classifyArtifact } from './artifact-viewer';
 
 // react-markdown/remark-gfm are ESM-only (unified ecosystem) - stubbed here
 // rather than added to the jest.config esmModules allowlist, matching the
 // existing pattern in agent-activity-panel.test.tsx for ESM-only deps.
-jest.mock('react-markdown', () => ({
+vi.mock('react-markdown', () => ({
   __esModule: true,
   default: ({ children }: { children: string }) => (
     <div data-testid="markdown-stub">{children}</div>
   ),
 }));
-jest.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
+vi.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
 
 describe('classifyArtifact', () => {
   it.each([
@@ -45,7 +46,7 @@ describe('ArtifactPreviewToggle', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('renders nothing for file types outside the preview scope', () => {
@@ -60,7 +61,7 @@ describe('ArtifactPreviewToggle', () => {
   });
 
   it('fetches and renders markdown content when toggled open', async () => {
-    const fetchMock = jest.fn().mockResolvedValue({
+    const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       statusText: 'OK',
@@ -79,7 +80,7 @@ describe('ArtifactPreviewToggle', () => {
   });
 
   it('shows an error message when the markdown fetch fails', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 404,
       statusText: 'Not Found',

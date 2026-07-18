@@ -1,5 +1,6 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
@@ -7,17 +8,17 @@ import { ActionItemsBoard, type BoardCard } from './action-items-board';
 // This suite exercises the board's tiering only - ActionItemCard and
 // RetriggerButton pull in the 'use server' actions module (auth, firestore,
 // GitHub client), which is out of scope here and tested on its own.
-jest.mock('./action-item-card', () => ({
+vi.mock('./action-item-card', () => ({
   ActionItemCard: ({ item }: { item: { number: number; title: string } }) => (
     <div data-testid="full-card">{`#${item.number} ${item.title}`}</div>
   ),
 }));
-jest.mock('./retrigger-button', () => ({
+vi.mock('./retrigger-button', () => ({
   RetriggerButton: ({ issueNumber }: { issueNumber: number }) => (
     <button data-testid={`retrigger-${issueNumber}`}>Retrigger</button>
   ),
 }));
-jest.mock('./item-overflow-menu', () => ({
+vi.mock('./item-overflow-menu', () => ({
   ItemOverflowMenu: ({ item }: { item: { number: number } }) => (
     <button data-testid={`overflow-${item.number}`}>More actions</button>
   ),

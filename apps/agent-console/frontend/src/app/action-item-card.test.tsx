@@ -1,5 +1,6 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import type { PrimaryAction } from '../lib/primary-action';
@@ -7,15 +8,15 @@ import { ActionItemCard } from './action-item-card';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
 // out of scope here, matching the pattern in action-items-board.test.tsx.
-jest.mock('./actions', () => ({
-  mergePr: jest.fn(),
-  replyToItem: jest.fn(),
-  dispatchUnstickPrs: jest.fn(),
+vi.mock('./actions', () => ({
+  mergePr: vi.fn(),
+  replyToItem: vi.fn(),
+  dispatchUnstickPrs: vi.fn(),
 }));
-jest.mock('./cancel-run-button', () => ({
+vi.mock('./cancel-run-button', () => ({
   CancelRunButton: () => null,
 }));
-jest.mock('./retrigger-button', () => ({
+vi.mock('./retrigger-button', () => ({
   RetriggerButton: () => null,
 }));
 
