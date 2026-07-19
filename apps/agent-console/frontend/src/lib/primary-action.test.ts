@@ -12,6 +12,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
     updatedAt: '2026-07-12T00:00:00Z',
     actionTypes: [],
     labels: [],
+    assigneeLogins: [],
     ...overrides,
   };
 }

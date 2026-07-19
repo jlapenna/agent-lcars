@@ -27,6 +27,7 @@ import type { CliSession } from '../lib/cli-sessions';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
 import { formatDuration, formatRelativeTime, shareArtifactUrl } from './format';
+import { TakeoverCommand } from './takeover-command';
 
 const CONCLUSION_LABELS: Record<AgentRunConclusion, string> = {
   success: 'success',
@@ -80,9 +81,11 @@ const PIPELINE_COLORS: Record<AgentPipeline, string> = {
 /**
  * Subtle pipeline source tag on run rows - context, not status, so it stays
  * small and outlined rather than competing visually with the
- * status/conclusion badge next to it.
+ * status/conclusion badge next to it. Exported (#3024) for reuse on the
+ * /agents page, which needs the same badge outside a run/session row (e.g.
+ * the fleet snapshot bar's per-pipeline live counts).
  */
-function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
+export function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
   return (
     <Badge
       variant="outline"
@@ -101,7 +104,7 @@ function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
  * zero registered runners is the normal idle state, not an outage, so it no
  * longer deserves any pixels.
  */
-function FleetChip({ fleet }: { fleet?: FleetSummary }) {
+export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
   if (fleet === undefined) {
     return (
       <Text size="xs" c="dimmed" data-testid="fleet-chip">
@@ -124,7 +127,7 @@ function FleetChip({ fleet }: { fleet?: FleetSummary }) {
  * normal), so the real health signal is a live run stuck waiting for a
  * runner the autoscaler should have supplied by now.
  */
-function QueueHealthAlert({ liveRuns }: { liveRuns: AgentRun[] }) {
+export function QueueHealthAlert({ liveRuns }: { liveRuns: AgentRun[] }) {
   const stalledRun = findStalledQueuedRun(liveRuns);
   if (!stalledRun) return null;
   return (
@@ -135,7 +138,13 @@ function QueueHealthAlert({ liveRuns }: { liveRuns: AgentRun[] }) {
   );
 }
 
-function LiveRunRow({ run, item }: { run: AgentRun; item?: RunItemRef }) {
+export function LiveRunRow({
+  run,
+  item,
+}: {
+  run: AgentRun;
+  item?: RunItemRef;
+}) {
   const budgetFraction = run.elapsedSeconds / (RUN_TIMEOUT_MINUTES * 60);
   return (
     <Stack gap={4}>
@@ -202,7 +211,7 @@ function LiveRunRow({ run, item }: { run: AgentRun; item?: RunItemRef }) {
  * (`issueUrlForRun` undefined) fall back to the run's own title/url - the
  * same target as the secondary "View run" link.
  */
-function FinishedRunRow({ run }: { run: AgentRun }) {
+export function FinishedRunRow({ run }: { run: AgentRun }) {
   const conclusion = run.conclusion ?? 'other';
   const issueUrl = issueUrlForRun(run);
   return (
@@ -261,7 +270,20 @@ const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
   stale: 'red',
 };
 
-function CliSessionRow({ session }: { session: CliSession }) {
+export function CliSessionRow({
+  session,
+  takeoverCommand,
+}: {
+  session: CliSession;
+  /**
+   * The takeover command of the action item this session is working, when
+   * one exists (see claimed-idle.ts's sessionReferencesItemNumber join,
+   * used by the /agents page's Active Agents section). The home page's
+   * In Flight panel never passes this - CLI sessions there render exactly
+   * as before.
+   */
+  takeoverCommand?: string;
+}) {
   const { host, artifacts } = session;
   return (
     <Stack gap={2} data-testid={`cli-session-${session.sessionId}`}>
@@ -306,6 +328,7 @@ function CliSessionRow({ session }: { session: CliSession }) {
           last active {formatRelativeTime(session.lastActivityAt)}
         </Text>
       </Group>
+      {takeoverCommand && <TakeoverCommand command={takeoverCommand} />}
       {host && artifacts && artifacts.length > 0 && (
         <Stack gap={2}>
           <Group gap={6} wrap="wrap">

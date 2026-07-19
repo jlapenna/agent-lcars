@@ -1,4 +1,4 @@
-import { Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { assertAdmin } from '@repo/auth/server';
 
 import { auth } from '../auth';
@@ -110,6 +110,9 @@ export default async function Index() {
           </Text>
         </div>
         <Group gap="sm">
+          <Anchor href="/agents" size="sm">
+            Agent status →
+          </Anchor>
           <QuickTaskButton />
           <UnstickPrsButton />
           <EvictNxCacheButton />

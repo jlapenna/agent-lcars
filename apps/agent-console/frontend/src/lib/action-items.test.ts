@@ -63,6 +63,7 @@ describe('isDeployWaitOnly', () => {
         updatedAt: 'now',
         actionTypes: ['post-deploy-action'],
         labels: [],
+        assigneeLogins: [],
       }),
     ).toBe(true);
     expect(
@@ -74,6 +75,7 @@ describe('isDeployWaitOnly', () => {
         updatedAt: 'now',
         actionTypes: ['post-deploy-action', 'human-needed'],
         labels: [],
+        assigneeLogins: [],
       }),
     ).toBe(false);
     expect(
@@ -85,6 +87,7 @@ describe('isDeployWaitOnly', () => {
         updatedAt: 'now',
         actionTypes: [],
         labels: [],
+        assigneeLogins: [],
       }),
     ).toBe(false);
   });
@@ -100,6 +103,7 @@ describe('isHandedBack', () => {
       updatedAt: 'now',
       actionTypes: ['human-needed'],
       labels: [],
+      assigneeLogins: [],
       ...overrides,
     };
   }
@@ -452,6 +456,32 @@ describe('getActionItems', () => {
     expect(result.items[0].takeoverCommand).toBe(
       '~/p/members/tools/claude-agent-session.sh resume abc-123',
     );
+  });
+
+  it('surfaces assignee logins on the item (#3024 stale-claim detection)', async () => {
+    const ISSUE_Q = (q: string) =>
+      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
+      if (!ISSUE_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [
+            makeItem(70, {
+              assignees: [{ login: 'jclaw-bot' }],
+              comments: 0,
+            }),
+          ],
+        },
+      });
+    });
+    const listComments = vi.fn().mockResolvedValue({ data: [] });
+    setupOctokit({ issuesAndPullRequests, listComments });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([70]);
+    expect(result.items[0].assigneeLogins).toEqual(['jclaw-bot']);
   });
 
   it('scans takeover for a jclaw-bot-assigned issue without the claude label (interactive claim)', async () => {

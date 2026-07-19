@@ -1,23 +1,18 @@
 'use client';
 
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Blockquote,
   Button,
   Card,
-  Code,
-  CopyButton,
   Group,
   Stack,
   Text,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconLink } from '@tabler/icons-react';
 import { useState, useTransition } from 'react';
 
 import type {
@@ -30,6 +25,7 @@ import { mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { RetriggerButton } from './retrigger-button';
+import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
 
 const ACTION_LABELS: Record<ActionType, string> = {
@@ -343,36 +339,7 @@ export function ActionItemCard({
         )}
 
         {item.takeoverCommand && (
-          <Group gap={6} wrap="nowrap">
-            <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-              Takeover:
-            </Text>
-            <Code
-              style={{
-                overflowX: 'auto',
-                whiteSpace: 'nowrap',
-                minWidth: 0,
-              }}
-            >
-              {item.takeoverCommand}
-            </Code>
-            <CopyButton value={item.takeoverCommand}>
-              {({ copied, copy }) => (
-                <Tooltip label={copied ? 'Copied' : 'Copy takeover command'}>
-                  <ActionIcon
-                    variant="subtle"
-                    size="sm"
-                    color={copied ? 'teal' : 'gray'}
-                    onClick={copy}
-                    aria-label="Copy takeover command"
-                    style={{ flexShrink: 0 }}
-                  >
-                    {copied ? <IconCheck size={14} /> : <IconLink size={14} />}
-                  </ActionIcon>
-                </Tooltip>
-              )}
-            </CopyButton>
-          </Group>
+          <TakeoverCommand command={item.takeoverCommand} />
         )}
 
         {replyOpen && (

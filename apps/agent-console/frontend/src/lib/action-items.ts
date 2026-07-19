@@ -31,6 +31,11 @@ export interface ActionItem {
   updatedAt: string;
   actionTypes: ActionType[];
   labels: string[];
+  /** GitHub logins assigned to this item (#2783 ownership spine) - e.g.
+   * `jclaw-bot` means the agent fleet has claimed it. Used by the /agents
+   * page's stale-claim detection (see claimed-idle.ts); no console surface
+   * needed it before that. */
+  assigneeLogins: string[];
   /** Newest `claude-agent-session.sh resume <id>` command the agent posted. */
   takeoverCommand?: string;
   lastCommentBody?: string;
@@ -382,6 +387,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
     updatedAt: issue.updated_at,
     actionTypes,
     labels: labels.filter((label) => !LABELS_SHOWN_AS_ACTION_TYPES.has(label)),
+    assigneeLogins: assigneeLogins.filter((login) => login.length > 0),
     takeoverCommand,
     lastCommentBody,
     lastCommentUrl,
