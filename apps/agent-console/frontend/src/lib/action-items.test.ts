@@ -509,6 +509,30 @@ describe('getActionItems', () => {
     expect(listComments).not.toHaveBeenCalled();
   });
 
+  it('surfaces a dispatched-but-unclaimed opencode-labeled issue via the label:opencode query (#3012)', async () => {
+    // Same belt-and-suspenders shape as the claude-labeled case above,
+    // parity for the experimental opencode.yml pipeline: without this
+    // query a stalled opencode run (runner never picked it up) would be
+    // invisible on the console.
+    const OPENCODE_Q = (q: string) =>
+      q.includes('label:opencode') && q.includes('is:issue');
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
+      if (!OPENCODE_Q(q)) return emptySearchPage();
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [makeItem(60, { labels: ['opencode'], comments: 0 })],
+        },
+      });
+    });
+    setupOctokit({ issuesAndPullRequests });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([60]);
+    expect(result.items[0].labels).toContain('opencode');
+  });
+
   it('derives human-needed from jclaw-bot + jlapenna assignees even without the label (#2802)', async () => {
     const ISSUE_Q = (q: string) =>
       q.includes('assignee:jclaw-bot') && q.includes('is:issue');

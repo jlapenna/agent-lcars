@@ -431,6 +431,11 @@ const BASE_QUERIES = [
   // step only runs once a runner picks the job up, so without this query
   // exactly the items most in need of attention would be invisible.
   'is:open label:claude',
+  // Same belt-and-suspenders parity for the experimental OpenCode pipeline
+  // (opencode.yml, #2988/#2994) - dispatched via the `opencode` label
+  // instead of `claude`, so it needs its own dispatched-but-unclaimed
+  // query or a stalled opencode run is invisible too.
+  'is:open label:opencode',
   // human-needed is one of this dashboard's own action types, but not every
   // human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
   // carry human-needed without ever having the claude label or an agent

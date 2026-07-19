@@ -1,4 +1,5 @@
 import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
+import { type Pipeline, pipelineForLabels } from './primary-action';
 
 export class ActionError extends Error {
   constructor(
@@ -10,11 +11,31 @@ export class ActionError extends Error {
   }
 }
 
-// The claude.yml workflow's issue_comment trigger only fires for comments
-// that contain the literal "@claude" - a reply posted from this console has
-// to carry it too, or the agent will never see it.
-function ensureTriggersAgent(body: string): string {
-  return /@claude/i.test(body) ? body : `${body}\n\n@claude`;
+// The comment string ensured/appended when a reply doesn't already trigger
+// the target pipeline. "/oc" is the shorter of opencode.yml's two accepted
+// triggers (`contains(body, '/opencode') || contains(body, '/oc')`) and
+// sufficient on its own.
+const PIPELINE_MENTION: Record<Pipeline, string> = {
+  claude: '@claude',
+  opencode: '/oc',
+};
+
+// Whether a body ALREADY triggers the target pipeline - has to check both
+// of opencode.yml's accepted strings, since neither is a substring of the
+// other ("/opencode" does NOT contain "/oc": the third character is 'p',
+// not 'c').
+const PIPELINE_MENTION_RE: Record<Pipeline, RegExp> = {
+  claude: /@claude/i,
+  opencode: /\/opencode|\/oc/i,
+};
+
+// The target pipeline's issue_comment trigger only fires for comments that
+// contain its mention string - a reply posted from this console has to
+// carry it too, or the agent will never see it.
+function ensureMention(body: string, pipeline: Pipeline): string {
+  return PIPELINE_MENTION_RE[pipeline].test(body)
+    ? body
+    : `${body}\n\n${PIPELINE_MENTION[pipeline]}`;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -67,6 +88,7 @@ export async function clearHumanNeededLabel(
 export async function postComment(
   issueNumber: number,
   body: string,
+  labels: string[] = [],
 ): Promise<{ url: string }> {
   if (!body.trim()) {
     throw new ActionError('Comment body is required', 400);
@@ -76,7 +98,7 @@ export async function postComment(
     owner: REPO_OWNER,
     repo: REPO_NAME,
     issue_number: issueNumber,
-    body: ensureTriggersAgent(body),
+    body: ensureMention(body, pipelineForLabels(labels)),
   });
   await clearHumanNeededLabel(issueNumber);
   return { url: data.html_url };
@@ -153,20 +175,27 @@ export async function evictNxCache(capture: boolean): Promise<void> {
 export async function retriggerIssue(
   issueNumber: number,
   note?: string,
+  pipeline: Pipeline = 'claude',
 ): Promise<void> {
   const octokit = getGithubClient();
+  // Pipeline's two values ('claude' | 'opencode') are themselves the label
+  // names that dispatch each pipeline (claude.yml / opencode.yml's
+  // `issues: labeled` triggers) - no separate lookup table needed.
+  const label: string = pipeline;
 
   const { data: issue } = await octokit.rest.issues.get({
     owner: REPO_OWNER,
     repo: REPO_NAME,
     issue_number: issueNumber,
   });
-  const hasClaudeLabel = issue.labels.some((label) =>
-    typeof label === 'string' ? label === 'claude' : label.name === 'claude',
+  const hasLabel = issue.labels.some((issueLabel) =>
+    typeof issueLabel === 'string'
+      ? issueLabel === label
+      : issueLabel.name === label,
   );
-  if (!hasClaudeLabel) {
+  if (!hasLabel) {
     throw new ActionError(
-      'Issue does not carry the claude label; nothing to retrigger',
+      `Issue does not carry the ${label} label; nothing to retrigger`,
       400,
     );
   }
@@ -174,11 +203,11 @@ export async function retriggerIssue(
   await clearHumanNeededLabel(issueNumber);
 
   // A steering note goes up BEFORE the retrigger so the fresh run reads it
-  // as part of the thread. Deliberately NOT run through ensureTriggersAgent:
-  // on a claude-labeled issue a comment containing @claude dispatches a run
-  // all by itself, so appending it here and then cycling the label would
-  // double-dispatch. Same reason for the early return below when the note
-  // already carries @claude.
+  // as part of the thread. Deliberately NOT run through ensureMention: on a
+  // labeled issue a comment already containing the pipeline's own mention
+  // dispatches a run all by itself, so appending it here and then cycling
+  // the label would double-dispatch. Same reason for the early return below
+  // when the note already carries it.
   const trimmedNote = note?.trim();
   if (trimmedNote) {
     await octokit.rest.issues.createComment({
@@ -187,7 +216,7 @@ export async function retriggerIssue(
       issue_number: issueNumber,
       body: trimmedNote,
     });
-    if (/@claude/i.test(trimmedNote)) {
+    if (PIPELINE_MENTION_RE[pipeline].test(trimmedNote)) {
       return;
     }
   }
@@ -198,13 +227,13 @@ export async function retriggerIssue(
     owner: REPO_OWNER,
     repo: REPO_NAME,
     issue_number: issueNumber,
-    name: 'claude',
+    name: label,
   });
   await octokit.rest.issues.addLabels({
     owner: REPO_OWNER,
     repo: REPO_NAME,
     issue_number: issueNumber,
-    labels: ['claude'],
+    labels: [label],
   });
 }
 

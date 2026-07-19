@@ -20,6 +20,7 @@ import {
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
+import type { Pipeline } from '../lib/primary-action';
 
 // LAN preview goes through the shared test-session adapter inside auth()
 // (IMPERSONATE_AUTOMATIC_LOGIN), so no bypass is needed here.
@@ -70,10 +71,11 @@ export async function getActionItems(): Promise<ActionItemsResult> {
 export async function replyToItem(
   number: number,
   body: string,
+  labels: string[] = [],
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await postComment(number, body);
+    await postComment(number, body, labels);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -95,10 +97,11 @@ export async function mergePr(number: number): Promise<ActionResult> {
 export async function retriggerIssue(
   number: number,
   note?: string,
+  pipeline?: Pipeline,
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await retriggerIssueLib(number, note);
+    await retriggerIssueLib(number, note, pipeline);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {

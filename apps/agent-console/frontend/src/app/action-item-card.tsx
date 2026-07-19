@@ -25,7 +25,7 @@ import type {
   ActionType,
   MergeableState,
 } from '../lib/action-items';
-import type { PrimaryAction } from '../lib/primary-action';
+import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
 import { mergePr, replyToItem } from './actions';
 import { CancelRunButton } from './cancel-run-button';
 import { githubIssueUrl } from './format';
@@ -181,11 +181,16 @@ export function ActionItemCard({
   const [error, setError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
+  // Which pipeline a reply/retrigger on this item routes to (claude vs the
+  // experimental opencode.yml, #2988/#2994) - see pipelineForLabels.
+  const pipeline = pipelineForLabels(item.labels);
+  const replyMention = pipeline === 'opencode' ? '/oc' : '@claude';
+
   const handleReply = () => {
     if (!replyBody.trim()) return;
     setError(undefined);
     startTransition(async () => {
-      const result = await replyToItem(item.number, replyBody);
+      const result = await replyToItem(item.number, replyBody, item.labels);
       if (!result.ok) {
         setError(result.message);
         return;
@@ -414,7 +419,7 @@ export function ActionItemCard({
               value={replyBody}
               onChange={(e) => setReplyBody(e.currentTarget.value)}
               onKeyDown={handleReplyKeyDown}
-              placeholder="Reply with @claude…"
+              placeholder={`Reply with ${replyMention}…`}
               autoFocus={primaryAction?.kind !== 'reply'}
               style={{ flex: 1, minWidth: 200 }}
             />
@@ -464,15 +469,18 @@ export function ActionItemCard({
               Reply…
             </Button>
           )}
-          {item.kind === 'issue' && item.labels.includes('claude') && (
-            <RetriggerButton
-              issueNumber={item.number}
-              disabled={Boolean(liveRun)}
-              disabledReason="An agent run is already in flight for this item"
-              onError={setError}
-              size="sm"
-            />
-          )}
+          {item.kind === 'issue' &&
+            (item.labels.includes('claude') ||
+              item.labels.includes('opencode')) && (
+              <RetriggerButton
+                issueNumber={item.number}
+                pipeline={pipeline}
+                disabled={Boolean(liveRun)}
+                disabledReason="An agent run is already in flight for this item"
+                onError={setError}
+                size="sm"
+              />
+            )}
           {item.kind === 'pr' && item.actionTypes.includes('run-failed') && (
             <UnstickPrsButton
               size="sm"

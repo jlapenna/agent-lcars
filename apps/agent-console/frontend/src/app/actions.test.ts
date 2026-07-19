@@ -229,6 +229,23 @@ describe('agent-console Server Actions', () => {
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
+    it('replyToItem forwards the item labels to postComment for mention routing', async () => {
+      (postComment as Mock).mockResolvedValue({ url: 'https://x' });
+
+      await replyToItem(42, 'hi', ['opencode']);
+
+      expect(postComment).toHaveBeenCalledWith(42, 'hi', ['opencode']);
+    });
+
+    it('retriggerIssue forwards the pipeline to retriggerIssueLib', async () => {
+      (retriggerIssueLib as Mock).mockResolvedValue(undefined);
+
+      await expect(retriggerIssue(42, undefined, 'opencode')).resolves.toEqual({
+        ok: true,
+      });
+      expect(retriggerIssueLib).toHaveBeenCalledWith(42, undefined, 'opencode');
+    });
+
     it('dispatchUnstickPrs returns { ok: true } and forwards the context', async () => {
       (dispatchUnstickPrsLib as Mock).mockResolvedValue(undefined);
 

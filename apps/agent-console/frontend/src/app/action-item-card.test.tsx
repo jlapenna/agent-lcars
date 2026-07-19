@@ -17,7 +17,9 @@ vi.mock('./cancel-run-button', () => ({
   CancelRunButton: () => null,
 }));
 vi.mock('./retrigger-button', () => ({
-  RetriggerButton: () => null,
+  RetriggerButton: ({ pipeline }: { pipeline?: string }) => (
+    <div data-testid="retrigger-button" data-pipeline={pipeline ?? 'claude'} />
+  ),
 }));
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
@@ -180,5 +182,55 @@ describe('ActionItemCard', () => {
       screen.getByRole('button', { name: 'Copy takeover command' }),
     ).toBeTruthy();
     expect(screen.queryByText('Copy')).toBeNull();
+  });
+
+  describe('retrigger + reply pipeline routing (#3012)', () => {
+    it('offers Retrigger, cycling claude, for a claude-labeled issue', () => {
+      renderCard(makeItem({ kind: 'issue', labels: ['claude'] }));
+
+      const button = screen.getByTestId('retrigger-button');
+      expect(button.dataset.pipeline).toBe('claude');
+    });
+
+    it('offers Retrigger, cycling opencode, for an opencode-only issue', () => {
+      renderCard(makeItem({ kind: 'issue', labels: ['opencode'] }));
+
+      const button = screen.getByTestId('retrigger-button');
+      expect(button.dataset.pipeline).toBe('opencode');
+    });
+
+    it('offers Retrigger, cycling claude, when an issue carries both labels', () => {
+      renderCard(makeItem({ kind: 'issue', labels: ['claude', 'opencode'] }));
+
+      const button = screen.getByTestId('retrigger-button');
+      expect(button.dataset.pipeline).toBe('claude');
+    });
+
+    it('omits Retrigger for an issue with neither pipeline label', () => {
+      renderCard(makeItem({ kind: 'issue', labels: ['human-needed'] }));
+
+      expect(screen.queryByTestId('retrigger-button')).toBeNull();
+    });
+
+    it('omits Retrigger for a PR even with the claude label (issues only)', () => {
+      renderCard(makeItem({ kind: 'pr', labels: ['claude'] }));
+
+      expect(screen.queryByTestId('retrigger-button')).toBeNull();
+    });
+
+    it('shows the /oc reply placeholder for an opencode-only item', () => {
+      renderCard(
+        makeItem({ labels: ['opencode'] }),
+        { kind: 'reply' }, // opens the reply input
+      );
+
+      expect(screen.getByPlaceholderText('Reply with /oc…')).toBeTruthy();
+    });
+
+    it('shows the @claude reply placeholder by default', () => {
+      renderCard(makeItem({ labels: [] }), { kind: 'reply' });
+
+      expect(screen.getByPlaceholderText('Reply with @claude…')).toBeTruthy();
+    });
   });
 });

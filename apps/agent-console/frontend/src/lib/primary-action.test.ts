@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ActionItem } from './action-items';
-import { derivePrimaryAction } from './primary-action';
+import { derivePrimaryAction, pipelineForLabels } from './primary-action';
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -83,5 +83,24 @@ describe('derivePrimaryAction', () => {
       derivePrimaryAction(makeItem({ actionTypes: ['post-deploy-action'] })),
     ).toBeUndefined();
     expect(derivePrimaryAction(makeItem())).toBeUndefined();
+  });
+});
+
+describe('pipelineForLabels', () => {
+  it('routes to opencode when only the opencode label is present', () => {
+    expect(pipelineForLabels(['opencode'])).toBe('opencode');
+  });
+
+  it('routes to claude when only the claude label is present', () => {
+    expect(pipelineForLabels(['claude'])).toBe('claude');
+  });
+
+  it('routes to claude when neither pipeline label is present', () => {
+    expect(pipelineForLabels([])).toBe('claude');
+    expect(pipelineForLabels(['human-needed'])).toBe('claude');
+  });
+
+  it('routes to claude when both labels are present - one console action must never dispatch two pipelines', () => {
+    expect(pipelineForLabels(['claude', 'opencode'])).toBe('claude');
   });
 });

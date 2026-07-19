@@ -4,21 +4,26 @@ import { Button, Popover, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
+import type { Pipeline } from '../lib/primary-action';
 import { retriggerIssue } from './actions';
 
 /**
  * Retrigger-with-steering-note, shared by queue cards and compact rows.
- * Only rendered for claude-labeled issues (the server 400s otherwise) and
- * disabled while a run is in flight (the label cycle would double-dispatch).
+ * Only rendered for claude- or opencode-labeled issues (the server 400s
+ * otherwise) and disabled while a run is in flight (the label cycle would
+ * double-dispatch). `pipeline` selects which label gets cycled - defaults
+ * to `claude` for existing call sites that haven't been made pipeline-aware.
  */
 export function RetriggerButton({
   issueNumber,
+  pipeline = 'claude',
   disabled,
   disabledReason,
   onError,
   size = 'compact-sm',
 }: {
   issueNumber: number;
+  pipeline?: Pipeline;
   disabled?: boolean;
   disabledReason?: string;
   onError?: (message: string) => void;
@@ -34,6 +39,7 @@ export function RetriggerButton({
       const result = await retriggerIssue(
         issueNumber,
         note.trim() || undefined,
+        pipeline,
       );
       if (!result.ok) {
         onError?.(result.message);

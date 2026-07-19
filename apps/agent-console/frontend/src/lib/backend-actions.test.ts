@@ -8,6 +8,8 @@ import {
   deriveQuickTaskTitle,
   dispatchUnstickPrs,
   evictNxCache,
+  postComment,
+  retriggerIssue,
 } from './backend-actions';
 import { getGithubClient } from './github-client';
 
@@ -82,6 +84,98 @@ describe('clearHumanNeededLabel', () => {
     });
 
     await expect(clearHumanNeededLabel(2709)).resolves.toBeUndefined();
+  });
+});
+
+describe('postComment (mention routing)', () => {
+  function mockOctokit() {
+    const createComment = vi.fn().mockResolvedValue({
+      data: { html_url: 'https://github.com/o/r/issues/1#issuecomment-1' },
+    });
+    const removeLabel = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { createComment, removeLabel } },
+    });
+    return { createComment, removeLabel };
+  }
+
+  it('rejects a blank body without calling GitHub', async () => {
+    const { createComment } = mockOctokit();
+
+    await expect(postComment(2709, '   ')).rejects.toThrow(
+      'Comment body is required',
+    );
+    expect(createComment).not.toHaveBeenCalled();
+  });
+
+  it('appends @claude by default when no labels are given', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(2709, 'Use option 2');
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Use option 2\n\n@claude' }),
+    );
+  });
+
+  it('appends @claude for an item carrying only the claude label', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(2709, 'Use option 2', ['claude']);
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Use option 2\n\n@claude' }),
+    );
+  });
+
+  it('appends /oc for an item carrying only the opencode label', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(2709, 'Use option 2', ['opencode']);
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Use option 2\n\n/oc' }),
+    );
+  });
+
+  it('appends @claude (not /oc) when both labels are present - never dispatch two pipelines from one reply', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(2709, 'Use option 2', ['claude', 'opencode']);
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Use option 2\n\n@claude' }),
+    );
+  });
+
+  it('does not double-append @claude when the body already contains it', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(2709, 'Ping @claude please', ['claude']);
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Ping @claude please' }),
+    );
+  });
+
+  it('does not double-append /oc when the body already contains /opencode', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(2709, 'Please /opencode this', ['opencode']);
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Please /opencode this' }),
+    );
+  });
+
+  it('clears the human-needed label after posting', async () => {
+    const { removeLabel } = mockOctokit();
+
+    await postComment(2709, 'hi', ['claude']);
+
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'human-needed' }),
+    );
   });
 });
 
@@ -166,6 +260,92 @@ describe('evictNxCache', () => {
       ref: 'main',
       inputs: { capture: 'true' },
     });
+  });
+});
+
+describe('retriggerIssue (pipeline routing)', () => {
+  function mockOctokit(labels: string[]) {
+    const get = vi.fn().mockResolvedValue({ data: { labels } });
+    const removeLabel = vi.fn().mockResolvedValue({});
+    const addLabels = vi.fn().mockResolvedValue({});
+    const createComment = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { get, removeLabel, addLabels, createComment } },
+    });
+    return { get, removeLabel, addLabels, createComment };
+  }
+
+  it('defaults to cycling the claude label', async () => {
+    const { removeLabel, addLabels } = mockOctokit(['claude']);
+
+    await retriggerIssue(2709);
+
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'claude' }),
+    );
+    expect(addLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['claude'] }),
+    );
+  });
+
+  it('cycles the opencode label for the opencode pipeline', async () => {
+    const { removeLabel, addLabels } = mockOctokit(['opencode']);
+
+    await retriggerIssue(2709, undefined, 'opencode');
+
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'opencode' }),
+    );
+    expect(addLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['opencode'] }),
+    );
+  });
+
+  it('400s when the issue lacks the target pipeline label', async () => {
+    mockOctokit(['claude']);
+
+    await expect(retriggerIssue(2709, undefined, 'opencode')).rejects.toThrow(
+      'Issue does not carry the opencode label; nothing to retrigger',
+    );
+  });
+
+  it('posts the steering note and still cycles the label when the note carries no mention', async () => {
+    const { createComment, removeLabel, addLabels } = mockOctokit(['opencode']);
+
+    await retriggerIssue(2709, 'try a different approach', 'opencode');
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'try a different approach' }),
+    );
+    expect(removeLabel).toHaveBeenCalled();
+    expect(addLabels).toHaveBeenCalled();
+  });
+
+  it('skips the label cycle when the note already carries the pipeline mention (would double-dispatch)', async () => {
+    const { createComment, removeLabel, addLabels } = mockOctokit(['opencode']);
+
+    await retriggerIssue(2709, 'please /oc retry this', 'opencode');
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'please /oc retry this' }),
+    );
+    // clearHumanNeededLabel legitimately calls removeLabel for the
+    // human-needed label before the note check - the label CYCLE (the
+    // opencode label itself) is what must be skipped.
+    expect(removeLabel).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'opencode' }),
+    );
+    expect(addLabels).not.toHaveBeenCalled();
+  });
+
+  it('a claude-pipeline note carrying /oc does not trigger the claude early-return', async () => {
+    const { removeLabel, addLabels } = mockOctokit(['claude']);
+
+    await retriggerIssue(2709, 'please /oc retry this', 'claude');
+
+    // /oc means nothing to claude.yml's trigger - the label still cycles.
+    expect(removeLabel).toHaveBeenCalled();
+    expect(addLabels).toHaveBeenCalled();
   });
 });
 
