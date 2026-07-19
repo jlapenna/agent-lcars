@@ -269,17 +269,16 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
     typeof label === 'string' ? label : (label.name ?? ''),
   );
   const isPostDeploy = labels.includes('post-deploy-action');
-  // Every item here already matched an `is:open ...` search query (see
-  // SEARCH_QUERIES below), so open state is already guaranteed - the label
-  // OR the assignee pair alone is the full condition (#2802 groundwork for
-  // retiring the label onto assignee:jlapenna; see orchestration.md §10.2).
   const assigneeLogins = (issue.assignees ?? []).map(
     (assignee) => assignee?.login ?? '',
   );
-  const isHumanNeeded =
-    labels.includes('human-needed') ||
-    (assigneeLogins.includes(AGENT_FLEET_LOGIN) &&
-      assigneeLogins.includes(MAINTAINER_LOGIN));
+  // Label only, deliberately (#2802 decided: keep the label). An
+  // assignee-pair fallback was tried as migration groundwork, but assignees
+  // are additive-only — un-parking removes the label, never the assignees —
+  // so the pair kept items in Your Queue forever after they were answered,
+  // and claude.yml's deliverable check + pr-heal's park-check key on the
+  // label anyway (#3023).
+  const isHumanNeeded = labels.includes('human-needed');
 
   const actionTypes: ActionType[] = [];
   if (isHumanNeeded) {

@@ -533,7 +533,11 @@ describe('getActionItems', () => {
     expect(result.items[0].labels).toContain('opencode');
   });
 
-  it('derives human-needed from jclaw-bot + jlapenna assignees even without the label (#2802)', async () => {
+  it('does NOT derive human-needed from the assignee pair alone — label only (#2802 decided, #3023)', async () => {
+    // Assignees are additive-only: un-parking removes the label but never
+    // the assignees, so a pair-based derivation kept answered items in the
+    // queue forever. The label is the single park signal, matching
+    // claude.yml's deliverable check and pr-heal's park-check.
     const ISSUE_Q = (q: string) =>
       q.includes('assignee:jclaw-bot') && q.includes('is:issue');
     const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
@@ -564,7 +568,7 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([50]);
-    expect(result.items[0].actionTypes).toContain('human-needed');
+    expect(result.items[0].actionTypes).not.toContain('human-needed');
   });
 
   it('does not derive human-needed from jclaw-bot alone (no maintainer assignee, no label)', async () => {

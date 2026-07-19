@@ -49,26 +49,21 @@ export default async function Index() {
     new Set([...itemWarnings, ...activity.warnings, ...cliSessionWarnings]),
   );
 
-  // Join live agent runs to items, preferring the run-name-derived issue
-  // number (see claude.yml and opencode.yml - issueNumberFromDisplayTitle
-  // accepts both run-name formats) - it's immune to title edits and
-  // duplicate titles, and pipeline-agnostic by construction. Runs that
-  // predate that rollout (issueNumber undefined) fall back to the old
-  // title-string match. An item with a live run is the AGENT's to act on,
-  // whatever its labels say - it must never be presented as waiting on the
-  // maintainer.
+  // Join live agent runs to items by the run-name-derived issue number (see
+  // claude.yml and opencode.yml - issueNumberFromDisplayTitle accepts both
+  // run-name formats) - immune to title edits and duplicate titles, and
+  // pipeline-agnostic by construction. The old exact-title fallback for
+  // runs predating the run-name rollout is gone (#3023): every live run
+  // has carried a parseable run-name for months, and matching on a
+  // human-editable title string was the fragile path. An item with a live
+  // run is the AGENT's to act on, whatever its labels say - it must never
+  // be presented as waiting on the maintainer.
   const liveRunByNumber = new Map(
     activity.liveRuns
       .filter((run) => run.issueNumber !== undefined)
       .map((run) => [run.issueNumber as number, run]),
   );
-  const liveRunByTitle = new Map(
-    activity.liveRuns
-      .filter((run) => run.issueNumber === undefined)
-      .map((run) => [run.displayTitle, run]),
-  );
-  const liveRunFor = (item: ActionItem) =>
-    liveRunByNumber.get(item.number) ?? liveRunByTitle.get(item.title);
+  const liveRunFor = (item: ActionItem) => liveRunByNumber.get(item.number);
 
   // The reverse join: live runs annotated with the item they're working, so
   // the In Flight panel can link the issue instead of the raw run title.

@@ -290,7 +290,9 @@ export async function createQuickTask(
   // fires the `issues: labeled` webhook event that claude.yml listens for
   // when a label is attached after creation, not for one included in the
   // create() call itself. Same reasoning as retriggerIssue's remove-then-
-  // readd above.
+  // readd above. Always the `claude` pipeline, intentionally: quick tasks
+  // are fire-and-forget maintainer asks, and opencode is an experimental
+  // pipeline you opt into per-issue by labeling it yourself (#3023).
   await octokit.rest.issues.addLabels({
     owner: REPO_OWNER,
     repo: REPO_NAME,
