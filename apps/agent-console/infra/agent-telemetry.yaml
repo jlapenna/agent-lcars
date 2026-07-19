@@ -129,9 +129,11 @@ storage:
     uniformBucketLevelAccess: true
     publicAccessPrevention: true
     # runs/<github-run-id>/<transcript-filename>.jsonl, one object per
-    # transcript file found under /root/.claude/projects/*/*.jsonl at the
+    # transcript file found under $HOME/.claude/projects/*/*.jsonl at the
     # end of the run (normally exactly one; the container is fresh per run,
-    # so everything found there belongs to this run's session(s)).
+    # so everything found there belongs to this run's session(s)). $HOME
+    # tracks whichever user the job runs as — the ARC scale-set runners
+    # (#2974) run as `runner`, not root.
     objectLayout: 'runs/<github-run-id>/<transcript-filename>.jsonl'
     grants:
       - principal: 'serviceAccount:agent-telemetry-writer@supersprinklesracing.iam.gserviceaccount.com'
