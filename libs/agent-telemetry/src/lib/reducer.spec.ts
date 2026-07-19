@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { describe, expect, it } from 'vitest';
 
 import { reduceTranscript, reduceTranscripts } from './reducer';
-import { describe, it, test, expect } from 'vitest';
 
 function readFixture(name: string): string {
   return fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
@@ -152,5 +152,61 @@ describe('reduceTranscript', () => {
 
     expect(summaries).toHaveLength(1);
     expect(summaries[0].turns).toBe(1);
+  });
+
+  it('accumulates per-turn costUSD and captures the terminal result line', () => {
+    const [summary] = reduceTranscript(
+      readFixture('session-with-result.jsonl'),
+    );
+
+    expect(summary.totalCostUsd).toBeCloseTo(0.045 + 0.081);
+    expect(summary.result).toEqual({ subtype: 'success', isError: false });
+    expect(summary.deliverables.prNumbers).toEqual([99]);
+  });
+
+  it('captures an error_max_turns result line', () => {
+    const content = [
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        uuid: 'u1',
+        timestamp: '2026-07-16T00:00:00.000Z',
+        sessionId: 'session-max-turns',
+        entrypoint: 'claude-code-github-action',
+        message: { role: 'user', content: [{ type: 'text', text: 'Go' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'error_max_turns',
+        is_error: true,
+        num_turns: 200,
+        sessionId: 'session-max-turns',
+        timestamp: '2026-07-16T01:00:00.000Z',
+      }),
+    ].join('\n');
+
+    const [summary] = reduceTranscript(content);
+
+    expect(summary.result).toEqual({
+      subtype: 'error_max_turns',
+      isError: true,
+    });
+  });
+
+  it('omits totalCostUsd entirely when no line ever reported costUSD', () => {
+    const [summary] = reduceTranscript(readFixture('normal-session.jsonl'));
+    expect(summary).not.toHaveProperty('totalCostUsd');
+  });
+
+  it('ignores a result line missing subtype or is_error rather than throwing', () => {
+    const content = JSON.stringify({
+      type: 'result',
+      sessionId: 'session-malformed-result',
+      timestamp: '2026-07-16T00:00:00.000Z',
+    });
+
+    expect(() => reduceTranscript(content)).not.toThrow();
+    const [summary] = reduceTranscript(content);
+    expect(summary).not.toHaveProperty('result');
   });
 });

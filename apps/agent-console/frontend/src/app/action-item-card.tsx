@@ -33,6 +33,7 @@ const ACTION_LABELS: Record<ActionType, string> = {
   'run-failed': 'CI run failed',
   'review-requested': 'Review requested',
   'post-deploy-action': 'Awaiting next deploy',
+  'silent-error': 'Silent error',
 };
 
 const ACTION_COLORS: Record<ActionType, string> = {
@@ -40,6 +41,7 @@ const ACTION_COLORS: Record<ActionType, string> = {
   'run-failed': 'red',
   'review-requested': 'grape',
   'post-deploy-action': 'gray',
+  'silent-error': 'orange',
 };
 
 const TRUNCATION_THRESHOLD = 400;
@@ -320,6 +322,12 @@ export function ActionItemCard({
         {item.ciRunning && (
           <Text size="xs" c="dimmed">
             CI running…
+          </Text>
+        )}
+
+        {item.silentErrorDiagnosis && (
+          <Text size="xs" c="orange" data-testid="silent-error-diagnosis">
+            🔍 {item.silentErrorDiagnosis}
           </Text>
         )}
 

@@ -1,4 +1,5 @@
 import { Card, Stack, Text, Title } from '@mantine/core';
+import type { IssueAgentSessionDoc } from '@repo/agent-telemetry';
 
 import type { AgentPipeline, AgentRun } from '../../lib/agent-activity';
 import { FinishedRunRow } from '../agent-activity-panel';
@@ -18,8 +19,12 @@ const PIPELINE_TITLES: Record<AgentPipeline, string> = {
  */
 export function RecentOutcomesSection({
   recentRuns,
+  sessionsByRunId = {},
 }: {
   recentRuns: AgentRun[];
+  /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
+   * `indexSessionsByNumericRunId` in run-classification.ts. */
+  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
 }) {
   return (
     <Card withBorder radius="md" padding="md" data-testid="recent-outcomes">
@@ -42,7 +47,11 @@ export function RecentOutcomesSection({
               </Text>
               <Stack gap={6}>
                 {runs.map((run) => (
-                  <FinishedRunRow key={run.id} run={run} />
+                  <FinishedRunRow
+                    key={run.id}
+                    run={run}
+                    session={sessionsByRunId[run.id]}
+                  />
                 ))}
               </Stack>
             </Stack>

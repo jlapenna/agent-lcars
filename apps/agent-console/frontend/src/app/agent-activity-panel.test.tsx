@@ -1,4 +1,5 @@
 import { MantineProvider } from '@mantine/core';
+import type { IssueAgentSessionDoc } from '@repo/agent-telemetry';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -21,6 +22,7 @@ vi.mock('./cancel-run-button', () => ({
 // truth for their actual behavior; keep these two in sync with it.
 vi.mock('../lib/agent-activity', () => ({
   RUN_TIMEOUT_MINUTES: 90,
+  MAX_TURNS_BUDGET: 200,
   QUEUE_STALL_THRESHOLD_SECONDS: 300,
   displayRunTitle: (run: AgentRun) =>
     run.pipeline === 'opencode'
@@ -68,10 +70,15 @@ function makeCliSession(overrides: Partial<CliSession> = {}): CliSession {
 function renderPanel(
   cliSessions: CliSession[],
   activity: AgentActivity = EMPTY_ACTIVITY,
+  sessionsByRunId?: Record<number, IssueAgentSessionDoc>,
 ) {
   render(
     <MantineProvider>
-      <AgentActivityPanel activity={activity} cliSessions={cliSessions} />
+      <AgentActivityPanel
+        activity={activity}
+        cliSessions={cliSessions}
+        sessionsByRunId={sessionsByRunId}
+      />
     </MantineProvider>,
   );
 }
@@ -88,6 +95,29 @@ function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
     createdAt: '2026-07-12T00:00:00.000Z',
     updatedAt: '2026-07-12T00:05:00.000Z',
     elapsedSeconds: 300,
+    ...overrides,
+  };
+}
+
+function makeIssueAgentSessionDoc(
+  overrides: Partial<IssueAgentSessionDoc> = {},
+): IssueAgentSessionDoc {
+  return {
+    sessionId: 'session-runner-1',
+    source: 'issue-agent',
+    liveness: 'ended',
+    startedAt: '2026-07-12T00:00:00.000Z',
+    lastActivityAt: '2026-07-12T00:05:00.000Z',
+    turns: 5,
+    toolCallCounts: {},
+    tokens: {
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    },
+    deliverables: { prNumbers: [42], commitShas: [] },
+    runId: '1',
     ...overrides,
   };
 }
@@ -250,6 +280,167 @@ describe('AgentActivityPanel recent runs', () => {
       recentRuns: [makeAgentRun()],
     });
     expect(screen.getByText('Recently finished (1)')).toBeTruthy();
+  });
+
+  it('shows a plain "cancelled" badge for a quick cancel, and "timeout" for a near-budget one', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [
+        makeAgentRun({
+          id: 10,
+          conclusion: 'cancelled',
+          elapsedSeconds: 5,
+        }),
+      ],
+    });
+    expect(screen.getByTestId('recent-run-conclusion').textContent).toBe(
+      'cancelled',
+    );
+  });
+
+  it('shows "timeout" instead of "cancelled" for a run killed near the wall-clock budget', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [
+        makeAgentRun({
+          id: 11,
+          conclusion: 'cancelled',
+          elapsedSeconds: 90 * 60,
+        }),
+      ],
+    });
+    expect(screen.getByTestId('recent-run-conclusion').textContent).toBe(
+      'timeout',
+    );
+  });
+
+  it('shows a "silent error" badge and diagnosis when the joined session flags a known error signature despite a success conclusion', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        recentRuns: [makeAgentRun({ id: 12, conclusion: 'success' })],
+      },
+      {
+        12: makeIssueAgentSessionDoc({
+          result: { subtype: 'error_max_turns', isError: true },
+        }),
+      },
+    );
+    expect(screen.getByTestId('recent-run-conclusion').textContent).toBe(
+      'silent error',
+    );
+    expect(screen.getByTestId('finished-run-diagnosis').textContent).toContain(
+      'failure signature',
+    );
+  });
+
+  it('shows a "silent error" badge when the joined session recorded zero turns despite a success conclusion', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        recentRuns: [makeAgentRun({ id: 15, conclusion: 'success' })],
+      },
+      {
+        // Zero recorded turns despite a success conclusion is a
+        // session-provable anomaly (see run-status-classifier.ts) - unlike
+        // "no PR/commit", which claude.yml's own server-side gates already
+        // rule out before a run can report success at all.
+        15: makeIssueAgentSessionDoc({ turns: 0 }),
+      },
+    );
+    expect(screen.getByTestId('recent-run-conclusion').textContent).toBe(
+      'silent error',
+    );
+    expect(screen.getByTestId('finished-run-diagnosis').textContent).toContain(
+      'zero turns',
+    );
+  });
+
+  it('does not flag a success run whose session shows real turns but no PR/commit (e.g. a comment-only reply)', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        recentRuns: [makeAgentRun({ id: 14, conclusion: 'success' })],
+      },
+      {
+        14: makeIssueAgentSessionDoc({
+          turns: 3,
+          deliverables: { prNumbers: [], commitShas: [] },
+        }),
+      },
+    );
+    expect(screen.getByTestId('recent-run-conclusion').textContent).toBe(
+      'success',
+    );
+    expect(screen.queryByTestId('finished-run-diagnosis')).toBeNull();
+  });
+
+  it('renders no diagnosis line for an ordinary success with no joined session', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [makeAgentRun({ id: 13, conclusion: 'success' })],
+    });
+    expect(screen.queryByTestId('finished-run-diagnosis')).toBeNull();
+  });
+});
+
+describe('AgentActivityPanel live run budget gauges', () => {
+  it('shows turns and cost when a live claude run has a joined session', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        liveRuns: [
+          makeAgentRun({
+            id: 20,
+            status: 'running',
+            pipeline: 'claude',
+            elapsedSeconds: 60,
+          }),
+        ],
+      },
+      {
+        20: makeIssueAgentSessionDoc({ turns: 42, totalCostUsd: 1.5 }),
+      },
+    );
+    expect(screen.getByTestId('live-run-turns').textContent).toBe(
+      '42 of 200 turns',
+    );
+    expect(screen.getByTestId('live-run-cost').textContent).toBe('$1.50');
+  });
+
+  it('omits the turn gauge for a live opencode run (no turn cap) but keeps the cost gauge', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        liveRuns: [
+          makeAgentRun({
+            id: 21,
+            status: 'running',
+            pipeline: 'opencode',
+            displayTitle: 'opencode #21: Fix it',
+          }),
+        ],
+      },
+      {
+        21: makeIssueAgentSessionDoc({ totalCostUsd: 0.3 }),
+      },
+    );
+    expect(screen.queryByTestId('live-run-turns')).toBeNull();
+    expect(screen.getByTestId('live-run-cost').textContent).toBe('$0.30');
+  });
+
+  it('renders no budget gauge chrome when no session is joined (PRD story 16)', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [makeAgentRun({ id: 22, status: 'running' })],
+    });
+    expect(screen.queryByTestId('live-run-turns')).toBeNull();
+    expect(screen.queryByTestId('live-run-cost')).toBeNull();
   });
 });
 

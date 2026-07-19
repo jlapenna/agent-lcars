@@ -1,4 +1,5 @@
 import { MantineProvider } from '@mantine/core';
+import type { IssueAgentSessionDoc } from '@repo/agent-telemetry';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -10,8 +11,17 @@ import { RecentOutcomesSection } from './recent-outcomes-section';
 // row - FinishedRunRow's own rendering is covered by
 // agent-activity-panel.test.tsx.
 vi.mock('../agent-activity-panel', () => ({
-  FinishedRunRow: ({ run }: { run: AgentRun }) => (
-    <div data-testid={`finished-run-${run.id}`}>{run.pipeline}</div>
+  FinishedRunRow: ({
+    run,
+    session,
+  }: {
+    run: AgentRun;
+    session?: IssueAgentSessionDoc;
+  }) => (
+    <div data-testid={`finished-run-${run.id}`}>
+      {run.pipeline}
+      {session ? ` (${session.sessionId})` : ''}
+    </div>
   ),
 }));
 
@@ -59,6 +69,38 @@ describe('RecentOutcomesSection', () => {
     expect(screen.getByTestId('finished-run-1')).toBeTruthy();
     expect(screen.getByTestId('finished-run-2')).toBeTruthy();
     expect(screen.getByTestId('finished-run-3')).toBeTruthy();
+  });
+
+  it('forwards the joined session doc to FinishedRunRow when one exists', () => {
+    render(
+      <MantineProvider>
+        <RecentOutcomesSection
+          recentRuns={[makeAgentRun({ id: 1, pipeline: 'claude' })]}
+          sessionsByRunId={{
+            1: {
+              sessionId: 'runner-session-1',
+              source: 'issue-agent',
+              liveness: 'ended',
+              startedAt: '2026-07-18T00:00:00.000Z',
+              lastActivityAt: '2026-07-18T00:05:00.000Z',
+              turns: 3,
+              toolCallCounts: {},
+              tokens: {
+                inputTokens: 0,
+                outputTokens: 0,
+                cacheCreationTokens: 0,
+                cacheReadTokens: 0,
+              },
+              deliverables: { prNumbers: [], commitShas: [] },
+              runId: '1',
+            },
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('finished-run-1')).toHaveTextContent(
+      '(runner-session-1)',
+    );
   });
 
   it('omits a pipeline heading entirely when that pipeline has no recent runs', () => {

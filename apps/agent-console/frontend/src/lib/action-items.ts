@@ -12,7 +12,24 @@ export const MAINTAINER_LOGIN = 'jlapenna';
 export const AGENT_FLEET_LOGIN = 'jclaw-bot';
 
 export type ActionType =
-  'human-needed' | 'run-failed' | 'review-requested' | 'post-deploy-action';
+  | 'human-needed'
+  | 'run-failed'
+  | 'review-requested'
+  | 'post-deploy-action'
+  // A finished run's GitHub conclusion said success, but its joined session
+  // telemetry shows a session-provable anomaly (an error result - expired
+  // token, max-turns exhaustion, a crash - or essentially zero recorded
+  // work: zero turns, or zero cost across at most one turn). Deliberately
+  // NOT "no PR/commit" - claude.yml's own server-side gates already fail
+  // the job before a run can report success with no deliverable evidence in
+  // GitHub state (#2497), so re-checking that here would just flood this
+  // tier with routine comment-only replies. See run-status-classifier.ts
+  // for the exact signature set. Derived by run-classification.ts's
+  // deriveSilentErrorDiagnoses, not by classifyIssue below (this is the one
+  // ActionType this module never sets itself - see page.tsx, the only place
+  // with both the item list and the run/session telemetry needed to compute
+  // it).
+  | 'silent-error';
 
 export type MergeableState =
   'clean' | 'dirty' | 'blocked' | 'unstable' | 'behind' | 'draft' | 'unknown';
@@ -50,6 +67,10 @@ export interface ActionItem {
   failingChecks?: { name: string; url: string }[];
   /** Some check run on the PR's head is still queued or in progress. */
   ciRunning?: boolean;
+  /** Set alongside the `silent-error` actionType - the classifier's short
+   * explanation of what looks wrong despite GitHub reporting success (see
+   * `run-classification.ts`'s `deriveSilentErrorDiagnoses`). */
+  silentErrorDiagnosis?: string;
 }
 
 export interface ActionItemsResult {
@@ -95,6 +116,7 @@ const ACTION_PRIORITY: Record<ActionType, number> = {
   'human-needed': 0,
   'review-requested': 0,
   'run-failed': 1,
+  'silent-error': 1,
   'post-deploy-action': 2,
 };
 

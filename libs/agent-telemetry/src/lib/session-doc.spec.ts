@@ -1,6 +1,7 @@
+import { describe, expect, it } from 'vitest';
+
 import { buildSessionDoc, SESSION_RETENTION_DAYS } from './session-doc';
 import { SessionSummary } from './types';
-import { describe, it, test, expect } from 'vitest';
 
 function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -209,5 +210,39 @@ describe('buildSessionDoc', () => {
       permissionMode: 'default',
       title: 'Fix flaky test',
     });
+  });
+
+  it('carries totalCostUsd/result through when present, on either source', () => {
+    const cliDoc = buildSessionDoc(
+      baseSummary({
+        totalCostUsd: 0.42,
+        result: { subtype: 'success', isError: false },
+      }),
+      'ended',
+    );
+    expect(cliDoc).toMatchObject({
+      totalCostUsd: 0.42,
+      result: { subtype: 'success', isError: false },
+    });
+
+    const issueAgentDoc = buildSessionDoc(
+      baseSummary({
+        source: 'issue-agent',
+        totalCostUsd: 0,
+        result: { subtype: 'error_max_turns', isError: true },
+      }),
+      'ended',
+      { runId: 'run-123' },
+    );
+    expect(issueAgentDoc).toMatchObject({
+      totalCostUsd: 0,
+      result: { subtype: 'error_max_turns', isError: true },
+    });
+  });
+
+  it('omits totalCostUsd/result entirely when absent from the summary', () => {
+    const doc = buildSessionDoc(baseSummary(), 'idle');
+    expect(doc).not.toHaveProperty('totalCostUsd');
+    expect(doc).not.toHaveProperty('result');
   });
 });

@@ -1,4 +1,5 @@
 import { Card, Stack, Text, Title } from '@mantine/core';
+import type { IssueAgentSessionDoc } from '@repo/agent-telemetry';
 
 import type { ActionItem } from '../../lib/action-items';
 import type { AgentRun } from '../../lib/agent-activity';
@@ -24,11 +25,15 @@ export function ActiveAgentsSection({
   itemsByRunId,
   activeSessions,
   items,
+  sessionsByRunId = {},
 }: {
   liveRuns: AgentRun[];
   itemsByRunId: Record<number, RunItemRef>;
   activeSessions: CliSession[];
   items: ActionItem[];
+  /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
+   * `indexSessionsByNumericRunId` in run-classification.ts. */
+  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
 }) {
   const hasActivity = liveRuns.length > 0 || activeSessions.length > 0;
 
@@ -48,7 +53,12 @@ export function ActiveAgentsSection({
         {liveRuns.length > 0 && (
           <Stack gap="xs">
             {liveRuns.map((run) => (
-              <LiveRunRow key={run.id} run={run} item={itemsByRunId[run.id]} />
+              <LiveRunRow
+                key={run.id}
+                run={run}
+                item={itemsByRunId[run.id]}
+                session={sessionsByRunId[run.id]}
+              />
             ))}
           </Stack>
         )}

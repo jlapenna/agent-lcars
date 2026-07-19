@@ -18,6 +18,25 @@ export interface SessionDeliverables {
   commitShas: string[];
 }
 
+/**
+ * Claude Code's headless result-message summary, captured from a terminal
+ * `type: "result"` transcript line (issue-agent/headless `-p` runs write one
+ * when the session ends). Field names/semantics mirror the signatures
+ * `.github/workflows/claude.yml`'s own "Verify Claude run status" /
+ * "Report failure on the issue" steps already grep out of the raw Actions
+ * log (`is_error`, and the literal `subtype` value `error_max_turns` next to
+ * its `--max-turns 200` budget) — reusing them here means the run-status
+ * classifier's diagnoses match a heuristic already proven correct in
+ * production, not a freshly-invented shape.
+ */
+export interface SessionResult {
+  /** 'success' | 'error_max_turns' | 'error_during_execution' (Claude Code's
+   * own result-message subtypes) — kept as a plain string rather than a
+   * union since new subtypes are the CLI's to add, not this schema's. */
+  subtype: string;
+  isError: boolean;
+}
+
 export interface SessionSummary {
   sessionId: string;
   source: SessionSource;
@@ -38,6 +57,16 @@ export interface SessionSummary {
   /** Filenames the share-media hook has written under this session's share
    * dir on its host (see `discoverSessionArtifacts` in the watcher). */
   artifacts?: string[];
+  /** Running total accumulated from each turn's `costUSD` field (present on
+   * some transcript lines alongside `usage`), when the transcript carries
+   * it — omitted rather than `0` when no line ever reported a cost, so a
+   * genuinely-unmeasured session is distinguishable from a real $0 one only
+   * by this field's absence, matching every other "was this present in the
+   * transcript" optional field on this type. */
+  totalCostUsd?: number;
+  /** Present only for sessions whose transcript included a terminal
+   * `type: "result"` line — see {@link SessionResult}. */
+  result?: SessionResult;
 }
 
 export interface ReduceTranscriptOptions {
@@ -76,6 +105,10 @@ interface BaseSessionDoc {
    * it — see issue #2708. Omitted when `lastActivityAt` has no parseable
    * timestamp (e.g. a transcript with no timestamped lines yet). */
   expireAt?: string;
+  /** See {@link SessionSummary.totalCostUsd}. */
+  totalCostUsd?: number;
+  /** See {@link SessionSummary.result} / {@link SessionResult}. */
+  result?: SessionResult;
 }
 
 export interface CliSessionDoc extends BaseSessionDoc {

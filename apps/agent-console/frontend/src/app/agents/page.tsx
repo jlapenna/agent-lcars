@@ -6,6 +6,8 @@ import { type ActionItem } from '../../lib/action-items';
 import { getAgentActivity } from '../../lib/agent-activity';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
+import { indexSessionsByNumericRunId } from '../../lib/run-classification';
+import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { getActionItems } from '../actions';
 import type { RunItemRef } from '../agent-activity-panel';
 import { formatRelativeTime } from '../format';
@@ -26,16 +28,31 @@ export default async function AgentsPage() {
     { items, warnings: itemWarnings },
     activity,
     { sessions: cliSessions, warnings: cliSessionWarnings },
+    { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
     getActionItems(),
     getAgentActivity(),
     getCliSessions(),
+    getRunnerSessionsByRunId(),
   ]);
   // Deduped the same way as the home page (page.tsx): parallel fetchers can
   // degrade the same way (e.g. one rate-limit hit per PR-join), and each
   // unique problem only needs saying once.
   const warnings = Array.from(
-    new Set([...itemWarnings, ...activity.warnings, ...cliSessionWarnings]),
+    new Set([
+      ...itemWarnings,
+      ...activity.warnings,
+      ...cliSessionWarnings,
+      ...runnerSessionWarnings,
+    ]),
+  );
+
+  // run.id -> joined session doc, for every run this page renders (live and
+  // recent alike) - powers Active Agents' budget gauges and Recent
+  // Outcomes' classification/diagnosis (see agent-activity-panel.tsx).
+  const sessionsByRunId = indexSessionsByNumericRunId(
+    [...activity.liveRuns, ...activity.recentRuns],
+    runnerSessionsByRunId,
   );
 
   // Same run<->item join as the home page (see its comment for why
@@ -131,11 +148,15 @@ export default async function AgentsPage() {
         itemsByRunId={itemsByRunId}
         activeSessions={activeSessions}
         items={items}
+        sessionsByRunId={sessionsByRunId}
       />
 
       <ClaimedIdleSection items={claimedIdle} />
 
-      <RecentOutcomesSection recentRuns={activity.recentRuns} />
+      <RecentOutcomesSection
+        recentRuns={activity.recentRuns}
+        sessionsByRunId={sessionsByRunId}
+      />
     </Container>
   );
 }

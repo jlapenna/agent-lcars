@@ -9,51 +9,59 @@ import {
   Text,
   Title,
 } from '@mantine/core';
+import type {
+  IssueAgentSessionDoc,
+  RunStatusClassification,
+} from '@repo/agent-telemetry';
 
 import type {
   AgentActivity,
   AgentPipeline,
   AgentRun,
-  AgentRunConclusion,
   FleetSummary,
 } from '../lib/agent-activity';
 import {
   displayRunTitle,
   findStalledQueuedRun,
   issueUrlForRun,
+  MAX_TURNS_BUDGET,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
+import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
-import { formatDuration, formatRelativeTime, shareArtifactUrl } from './format';
+import {
+  formatCost,
+  formatDuration,
+  formatRelativeTime,
+  shareArtifactUrl,
+} from './format';
 import { TakeoverCommand } from './takeover-command';
 
-const CONCLUSION_LABELS: Record<AgentRunConclusion, string> = {
-  success: 'success',
-  failure: 'failed',
+// Labels/colors are keyed by the run-status classifier's own output
+// (@repo/agent-telemetry's classifyRunStatus, wrapped for this app by
+// classifyAgentRun) rather than the raw GitHub conclusion - this is also
+// where the old "cancelled at ~the timeout budget -> show 'timeout'
+// instead" special case now lives, moved into the classifier itself so
+// there's one source of truth instead of a UI-local re-derivation.
+const STATUS_LABELS: Record<RunStatusClassification, string> = {
+  running: 'running',
+  succeeded: 'success',
+  failed: 'failed',
+  timeout: 'timeout',
   cancelled: 'cancelled',
-  other: 'other',
+  'silent-error': 'silent error',
 };
 
-const CONCLUSION_COLORS: Record<AgentRunConclusion, string> = {
-  success: 'green',
-  failure: 'red',
+const STATUS_COLORS: Record<RunStatusClassification, string> = {
+  running: 'blue',
+  succeeded: 'green',
+  failed: 'red',
+  timeout: 'yellow',
   cancelled: 'yellow',
-  other: 'gray',
+  'silent-error': 'orange',
 };
-
-// A cancelled run at (or near) the timeout budget almost certainly WAS the
-// timeout - claude.yml's kill posts nothing to the issue by itself, so this
-// is the place that difference becomes visible.
-const LIKELY_TIMEOUT_FRACTION = 0.95;
-
-function isLikelyTimeout(run: AgentRun): boolean {
-  return (
-    run.conclusion === 'cancelled' &&
-    run.elapsedSeconds >= RUN_TIMEOUT_MINUTES * 60 * LIKELY_TIMEOUT_FRACTION
-  );
-}
 
 function budgetColor(fraction: number): string {
   if (fraction >= 0.8) return 'red';
@@ -141,9 +149,15 @@ export function QueueHealthAlert({ liveRuns }: { liveRuns: AgentRun[] }) {
 export function LiveRunRow({
   run,
   item,
+  session,
 }: {
   run: AgentRun;
   item?: RunItemRef;
+  /** The joined `issue-agent` session doc for this run (by runId), when the
+   * telemetry shipper has one - powers the turns/cost budget gauges below
+   * the wall-clock bar. Undefined renders exactly as before this telemetry
+   * existed (PRD user story 16) - no empty chrome, no "unavailable" noise. */
+  session?: IssueAgentSessionDoc;
 }) {
   const budgetFraction = run.elapsedSeconds / (RUN_TIMEOUT_MINUTES * 60);
   return (
@@ -199,6 +213,25 @@ export function LiveRunRow({
           size="sm"
         />
       )}
+      {run.status === 'running' &&
+        session &&
+        // opencode.yml has no turn cap (its action takes no max_turns
+        // input), so the turn gauge is claude-pipeline-only - see
+        // MAX_TURNS_BUDGET's doc comment.
+        (run.pipeline === 'claude' || session.totalCostUsd !== undefined) && (
+          <Group gap={6} wrap="wrap">
+            {run.pipeline === 'claude' && (
+              <Text size="xs" c="dimmed" data-testid="live-run-turns">
+                {session.turns} of {MAX_TURNS_BUDGET} turns
+              </Text>
+            )}
+            {session.totalCostUsd !== undefined && (
+              <Text size="xs" c="dimmed" data-testid="live-run-cost">
+                {formatCost(session.totalCostUsd)}
+              </Text>
+            )}
+          </Group>
+        )}
     </Stack>
   );
 }
@@ -210,48 +243,67 @@ export function LiveRunRow({
  * to its raw Actions log. Runs that predate the run-name rollout
  * (`issueUrlForRun` undefined) fall back to the run's own title/url - the
  * same target as the secondary "View run" link.
+ *
+ * The status badge and any diagnosis line come from the run-status
+ * classifier (classifyAgentRun/@repo/agent-telemetry), joined to the run's
+ * session doc by runId when one exists - a silent-error run (GitHub said
+ * success, but the session shows a known failure signature or shipped
+ * nothing) gets a distinct badge + a short explanation, not just "success".
  */
-export function FinishedRunRow({ run }: { run: AgentRun }) {
-  const conclusion = run.conclusion ?? 'other';
+export function FinishedRunRow({
+  run,
+  session,
+}: {
+  run: AgentRun;
+  session?: IssueAgentSessionDoc;
+}) {
+  const classification = classifyAgentRun(run, session);
   const issueUrl = issueUrlForRun(run);
   return (
-    <Group gap="xs" wrap="nowrap" data-testid="finished-run-row">
-      <Badge
-        variant="light"
-        color={CONCLUSION_COLORS[conclusion]}
-        size="sm"
-        style={{ flexShrink: 0 }}
-        data-testid="recent-run-conclusion"
-      >
-        {isLikelyTimeout(run) ? 'timeout' : CONCLUSION_LABELS[conclusion]}
-      </Badge>
-      <PipelineBadge pipeline={run.pipeline} />
-      <Anchor
-        href={issueUrl ?? run.url}
-        target="_blank"
-        rel="noreferrer"
-        size="xs"
-        truncate
-        style={{ minWidth: 0 }}
-        data-testid="recent-run-issue-link"
-      >
-        {displayRunTitle(run)}
-      </Anchor>
-      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-        {formatDuration(run.elapsedSeconds)} · finished{' '}
-        {formatRelativeTime(run.updatedAt)}
-      </Text>
-      <Anchor
-        href={run.url}
-        target="_blank"
-        rel="noreferrer"
-        size="xs"
-        c="dimmed"
-        style={{ marginLeft: 'auto', flexShrink: 0 }}
-      >
-        View run ↗
-      </Anchor>
-    </Group>
+    <Stack gap={2} data-testid="finished-run-row">
+      <Group gap="xs" wrap="nowrap">
+        <Badge
+          variant="light"
+          color={STATUS_COLORS[classification.status]}
+          size="sm"
+          style={{ flexShrink: 0 }}
+          data-testid="recent-run-conclusion"
+        >
+          {STATUS_LABELS[classification.status]}
+        </Badge>
+        <PipelineBadge pipeline={run.pipeline} />
+        <Anchor
+          href={issueUrl ?? run.url}
+          target="_blank"
+          rel="noreferrer"
+          size="xs"
+          truncate
+          style={{ minWidth: 0 }}
+          data-testid="recent-run-issue-link"
+        >
+          {displayRunTitle(run)}
+        </Anchor>
+        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+          {formatDuration(run.elapsedSeconds)} · finished{' '}
+          {formatRelativeTime(run.updatedAt)}
+        </Text>
+        <Anchor
+          href={run.url}
+          target="_blank"
+          rel="noreferrer"
+          size="xs"
+          c="dimmed"
+          style={{ marginLeft: 'auto', flexShrink: 0 }}
+        >
+          View run ↗
+        </Anchor>
+      </Group>
+      {classification.diagnosis && (
+        <Text size="xs" c="orange" data-testid="finished-run-diagnosis">
+          {classification.diagnosis}
+        </Text>
+      )}
+    </Stack>
   );
 }
 
@@ -364,10 +416,15 @@ export function AgentActivityPanel({
   activity,
   cliSessions = [],
   itemsByRunId = {},
+  sessionsByRunId = {},
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
   itemsByRunId?: Record<number, RunItemRef>;
+  /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
+   * `indexSessionsByNumericRunId` in run-classification.ts. Absent/empty
+   * renders exactly as before this telemetry existed (PRD user story 16). */
+  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
 }) {
   const { liveRuns, recentRuns, fleet } = activity;
 
@@ -401,7 +458,12 @@ export function AgentActivityPanel({
         {liveRuns.length > 0 && (
           <Stack gap="xs">
             {liveRuns.map((run) => (
-              <LiveRunRow key={run.id} run={run} item={itemsByRunId[run.id]} />
+              <LiveRunRow
+                key={run.id}
+                run={run}
+                item={itemsByRunId[run.id]}
+                session={sessionsByRunId[run.id]}
+              />
             ))}
           </Stack>
         )}
@@ -434,7 +496,11 @@ export function AgentActivityPanel({
             </summary>
             <Stack gap={6} mt="xs">
               {recentRuns.map((run) => (
-                <FinishedRunRow key={run.id} run={run} />
+                <FinishedRunRow
+                  key={run.id}
+                  run={run}
+                  session={sessionsByRunId[run.id]}
+                />
               ))}
             </Stack>
           </details>

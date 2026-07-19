@@ -1,8 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
-import { issueNumberFromDisplayTitle } from './agent-activity';
+import {
+  issueNumberFromDisplayTitle,
+  MAX_TURNS_BUDGET,
+} from './agent-activity';
 import { pipelineForLabels } from './primary-action';
 
 // The console re-implements, in TypeScript, contracts whose other half
@@ -109,5 +113,11 @@ describe('agent-PR author allowlists agree across the menders', () => {
 describe('human-needed park signal (label, not assignees — #2802/#3023)', () => {
   it.each(['claude.yml', 'pr-heal.yml'])('%s keys on the label', (file) => {
     expect(workflow(file)).toContain('human-needed');
+  });
+});
+
+describe('turn budget (console budget gauge ↔ claude.yml claude_args)', () => {
+  it("MAX_TURNS_BUDGET matches claude.yml's --max-turns value", () => {
+    expect(workflow('claude.yml')).toContain(`--max-turns ${MAX_TURNS_BUDGET}`);
   });
 });

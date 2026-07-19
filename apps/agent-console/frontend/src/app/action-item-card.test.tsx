@@ -231,4 +231,27 @@ describe('ActionItemCard', () => {
       expect(screen.getByPlaceholderText('Reply with @claude…')).toBeTruthy();
     });
   });
+
+  describe('silent-error diagnosis', () => {
+    it('shows the silent-error badge and diagnosis text when both are set', () => {
+      renderCard(
+        makeItem({
+          actionTypes: ['silent-error'],
+          silentErrorDiagnosis:
+            'GitHub reported success, but the session shows a failure signature or recorded essentially no work.',
+        }),
+      );
+
+      expect(screen.getByText('Silent error')).toBeTruthy();
+      expect(screen.getByTestId('silent-error-diagnosis')).toHaveTextContent(
+        'GitHub reported success, but the session shows a failure signature or recorded essentially no work.',
+      );
+    });
+
+    it('renders no diagnosis line when the item has none', () => {
+      renderCard(makeItem({ actionTypes: [] }));
+
+      expect(screen.queryByTestId('silent-error-diagnosis')).toBeNull();
+    });
+  });
 });

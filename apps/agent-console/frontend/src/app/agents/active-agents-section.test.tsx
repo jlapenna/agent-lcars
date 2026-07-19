@@ -1,4 +1,5 @@
 import { MantineProvider } from '@mantine/core';
+import type { IssueAgentSessionDoc } from '@repo/agent-telemetry';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -13,9 +14,18 @@ import { ActiveAgentsSection } from './active-agents-section';
 // (the takeover-command join in particular) - the row components' own
 // rendering is covered by agent-activity-panel.test.tsx.
 vi.mock('../agent-activity-panel', () => ({
-  LiveRunRow: ({ run, item }: { run: AgentRun; item?: RunItemRef }) => (
+  LiveRunRow: ({
+    run,
+    item,
+    session,
+  }: {
+    run: AgentRun;
+    item?: RunItemRef;
+    session?: IssueAgentSessionDoc;
+  }) => (
     <div data-testid={`live-run-${run.id}`}>
       {item ? `#${item.number}` : ''}
+      {session ? ` (${session.sessionId})` : ''}
     </div>
   ),
   CliSessionRow: ({
@@ -103,6 +113,41 @@ describe('ActiveAgentsSection', () => {
       </MantineProvider>,
     );
     expect(screen.getByTestId('live-run-42')).toHaveTextContent('#7');
+  });
+
+  it('forwards the joined session doc to LiveRunRow when one exists', () => {
+    render(
+      <MantineProvider>
+        <ActiveAgentsSection
+          liveRuns={[makeAgentRun({ id: 42 })]}
+          itemsByRunId={{}}
+          activeSessions={[]}
+          items={[]}
+          sessionsByRunId={{
+            42: {
+              sessionId: 'runner-session-1',
+              source: 'issue-agent',
+              liveness: 'live',
+              startedAt: '2026-07-18T00:00:00.000Z',
+              lastActivityAt: '2026-07-18T00:00:00.000Z',
+              turns: 3,
+              toolCallCounts: {},
+              tokens: {
+                inputTokens: 0,
+                outputTokens: 0,
+                cacheCreationTokens: 0,
+                cacheReadTokens: 0,
+              },
+              deliverables: { prNumbers: [], commitShas: [] },
+              runId: '42',
+            },
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('live-run-42')).toHaveTextContent(
+      '(runner-session-1)',
+    );
   });
 
   it('renders one row per active CLI session', () => {

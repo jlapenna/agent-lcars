@@ -1,5 +1,10 @@
 import { findDeliverables } from './deliverables';
-import { ReduceTranscriptOptions, SessionSummary, TokenUsage } from './types';
+import {
+  ReduceTranscriptOptions,
+  SessionResult,
+  SessionSummary,
+  TokenUsage,
+} from './types';
 import {
   asArray,
   asBoolean,
@@ -30,6 +35,8 @@ interface SessionState {
   firstUserPrompt?: string;
   prNumbers: Set<number>;
   commitShas: Set<string>;
+  totalCostUsd?: number;
+  result?: SessionResult;
 }
 
 function createState(sessionId: string, host?: string): SessionState {
@@ -168,6 +175,26 @@ function applyLine(state: SessionState, raw: Record<string, unknown>) {
     state.aiTitle = aiTitle;
   }
 
+  // Per-turn cost, when the transcript line carries it (sibling of
+  // `message`/`usage`, not inside them) — accumulated the same way Claude
+  // Code's own cumulative session-cost tracking works, so it reads as a
+  // running total during a still-live session, not just at the end.
+  const costUsd = asNumber(raw['costUSD']);
+  if (costUsd !== undefined) {
+    state.totalCostUsd = (state.totalCostUsd ?? 0) + costUsd;
+  }
+
+  // Terminal result line (headless `-p`/stream-json runs only — see
+  // SessionResult's doc comment in types.ts). Only one is expected per
+  // session; a later one (shouldn't happen) simply wins.
+  if (asString(raw['type']) === 'result') {
+    const subtype = asString(raw['subtype']);
+    const isError = asBoolean(raw['is_error']);
+    if (subtype !== undefined && isError !== undefined) {
+      state.result = { subtype, isError };
+    }
+  }
+
   const message = asRecord(raw['message']);
   if (message) {
     applyMessage(state, message, isSidechain, timestamp);
@@ -200,6 +227,10 @@ function finalizeState(state: SessionState): SessionSummary {
     tokens: state.tokens,
     ...(state.lastToolCall && { lastToolCall: state.lastToolCall }),
     ...(title && { title }),
+    ...(state.totalCostUsd !== undefined && {
+      totalCostUsd: state.totalCostUsd,
+    }),
+    ...(state.result && { result: state.result }),
     deliverables: {
       ...(state.branch && { branch: state.branch }),
       prNumbers: Array.from(state.prNumbers),

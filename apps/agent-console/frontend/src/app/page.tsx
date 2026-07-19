@@ -10,6 +10,11 @@ import {
 import { getAgentActivity } from '../lib/agent-activity';
 import { getCliSessions } from '../lib/cli-sessions';
 import { derivePrimaryAction } from '../lib/primary-action';
+import {
+  deriveSilentErrorDiagnoses,
+  indexSessionsByNumericRunId,
+} from '../lib/run-classification';
+import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
@@ -35,19 +40,52 @@ export default async function Index() {
   assertAdmin(session, '/login');
 
   const [
-    { items, warnings: itemWarnings },
+    { items: rawItems, warnings: itemWarnings },
     activity,
     { sessions: cliSessions, warnings: cliSessionWarnings },
+    { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
     getActionItems(),
     getAgentActivity(),
     getCliSessions(),
+    getRunnerSessionsByRunId(),
   ]);
   // Deduped: parallel fetchers can degrade the same way (e.g. one rate-limit
   // hit per PR-join), and each unique problem only needs saying once.
   const warnings = Array.from(
-    new Set([...itemWarnings, ...activity.warnings, ...cliSessionWarnings]),
+    new Set([
+      ...itemWarnings,
+      ...activity.warnings,
+      ...cliSessionWarnings,
+      ...runnerSessionWarnings,
+    ]),
   );
+
+  // run.id -> joined session doc, for every run this page renders (live and
+  // recent alike) - powers the In Flight budget gauges and the Recent
+  // Outcomes classification/diagnosis (see agent-activity-panel.tsx).
+  const sessionsByRunId = indexSessionsByNumericRunId(
+    [...activity.liveRuns, ...activity.recentRuns],
+    runnerSessionsByRunId,
+  );
+
+  // Elevate finished runs the classifier flagged `silent-error` (GitHub said
+  // success, but the session shows a known failure signature or recorded
+  // essentially no work) into "Needs Your Action", even though nothing in
+  // the item's own GitHub state says anything is wrong.
+  const silentErrorByIssue = deriveSilentErrorDiagnoses(
+    activity.recentRuns,
+    runnerSessionsByRunId,
+  );
+  const items: ActionItem[] = rawItems.map((item) => {
+    const diagnosis = silentErrorByIssue.get(item.number);
+    if (!diagnosis) return item;
+    return {
+      ...item,
+      actionTypes: [...item.actionTypes, 'silent-error'],
+      silentErrorDiagnosis: diagnosis,
+    };
+  });
 
   // Join live agent runs to items by the run-name-derived issue number (see
   // claude.yml and opencode.yml - issueNumberFromDisplayTitle accepts both
@@ -154,6 +192,7 @@ export default async function Index() {
         activity={activity}
         cliSessions={cliSessions}
         itemsByRunId={itemsByRunId}
+        sessionsByRunId={sessionsByRunId}
       />
     </Container>
   );

@@ -39,6 +39,11 @@ export function formatDuration(totalSeconds: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+/** Running cost for the in-flight budget gauge: "$0.42", "$3.10". */
+export function formatCost(usd: number): string {
+  return `$${usd.toFixed(2)}`;
+}
+
 /**
  * The share-media skill's convention: files land at
  * `/home/jlapenna/share/<conversation-id>/<filename>` on `host`, served at

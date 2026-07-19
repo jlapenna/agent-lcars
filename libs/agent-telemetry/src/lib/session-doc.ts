@@ -49,6 +49,10 @@ export function buildSessionDoc(
     ...(summary.model && { model: summary.model }),
     ...(summary.permissionMode && { permissionMode: summary.permissionMode }),
     ...(summary.title && { title: summary.title }),
+    ...(summary.totalCostUsd !== undefined && {
+      totalCostUsd: summary.totalCostUsd,
+    }),
+    ...(summary.result && { result: summary.result }),
     deliverables: summary.deliverables,
   };
 

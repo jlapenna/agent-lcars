@@ -8,6 +8,12 @@ import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
 // run.
 export const RUN_TIMEOUT_MINUTES = 90;
 
+// Mirrors claude.yml's `--max-turns 200` claude_args. opencode.yml has no
+// equivalent turn cap (its action takes no max_turns/max_steps input), so
+// the turn-budget gauge only ever renders for `pipeline === 'claude'` runs -
+// see LiveRunRow in agent-activity-panel.tsx.
+export const MAX_TURNS_BUDGET = 200;
+
 export type AgentPipeline = 'claude' | 'opencode';
 
 const WORKFLOW_FILES: Record<AgentPipeline, string> = {
