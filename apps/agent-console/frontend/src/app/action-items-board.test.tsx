@@ -14,8 +14,19 @@ vi.mock('./action-item-card', () => ({
   ),
 }));
 vi.mock('./retrigger-button', () => ({
-  RetriggerButton: ({ issueNumber }: { issueNumber: number }) => (
-    <button data-testid={`retrigger-${issueNumber}`}>Retrigger</button>
+  RetriggerButton: ({
+    issueNumber,
+    pipeline,
+  }: {
+    issueNumber: number;
+    pipeline?: string;
+  }) => (
+    <button
+      data-testid={`retrigger-${issueNumber}`}
+      data-pipeline={pipeline ?? 'claude'}
+    >
+      Retrigger
+    </button>
   ),
 }));
 vi.mock('./item-overflow-menu', () => ({
@@ -124,6 +135,53 @@ describe('ActionItemsBoard', () => {
     expect(within(claudeRow).getByTestId('retrigger-4')).toBeTruthy();
     const plainRow = screen.getByTestId('compact-item-5');
     expect(within(plainRow).queryByTestId('retrigger-5')).toBeNull();
+  });
+
+  describe('handed-back retrigger pipeline routing (#3012)', () => {
+    it('offers Retrigger, cycling opencode, for an opencode-only handed-back issue', () => {
+      renderBoard({
+        handedBack: [
+          makeItem({
+            number: 8,
+            actionTypes: ['human-needed'],
+            labels: ['opencode'],
+          }),
+        ],
+      });
+
+      const button = screen.getByTestId('retrigger-8');
+      expect(button.dataset.pipeline).toBe('opencode');
+    });
+
+    it('offers Retrigger, cycling claude, when a handed-back issue carries both labels', () => {
+      renderBoard({
+        handedBack: [
+          makeItem({
+            number: 9,
+            actionTypes: ['human-needed'],
+            labels: ['claude', 'opencode'],
+          }),
+        ],
+      });
+
+      const button = screen.getByTestId('retrigger-9');
+      expect(button.dataset.pipeline).toBe('claude');
+    });
+
+    it('omits Retrigger on a handed-back PR even with the claude label (issues only)', () => {
+      renderBoard({
+        handedBack: [
+          makeItem({
+            kind: 'pr',
+            number: 10,
+            actionTypes: ['human-needed'],
+            labels: ['claude'],
+          }),
+        ],
+      });
+
+      expect(screen.queryByTestId('retrigger-10')).toBeNull();
+    });
   });
 
   it('offers the overflow menu on every compact row', () => {

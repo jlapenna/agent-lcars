@@ -100,6 +100,20 @@ export function displayRunTitle(run: AgentRun): string {
 }
 
 /**
+ * Direct link to the issue/PR a run worked, derived from its parsed
+ * `issueNumber`. Always an `/issues/<N>` path - GitHub redirects that route
+ * to `/pull/<N>` automatically when N is actually a PR, so one path covers
+ * both kinds without the run needing to know which it is. Undefined for
+ * runs that predate the run-name rollout (see `issueNumber`'s own doc) -
+ * callers should fall back to the run's own title/url in that case.
+ */
+export function issueUrlForRun(run: AgentRun): string | undefined {
+  return run.issueNumber === undefined
+    ? undefined
+    : `https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/${run.issueNumber}`;
+}
+
+/**
  * A live run queued longer than this almost certainly means the autoscaler
  * isn't supplying it a runner - distinct from "zero runners registered",
  * which is a normal scaled-to-zero idle state on its own.

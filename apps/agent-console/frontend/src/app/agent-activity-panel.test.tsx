@@ -30,6 +30,10 @@ vi.mock('../lib/agent-activity', () => ({
     liveRuns
       .filter((run) => run.status === 'queued' && run.elapsedSeconds > 300)
       .sort((a, b) => b.elapsedSeconds - a.elapsedSeconds)[0],
+  issueUrlForRun: (run: AgentRun) =>
+    run.issueNumber === undefined
+      ? undefined
+      : `https://github.com/supersprinklesracing/members/issues/${run.issueNumber}`,
 }));
 
 // react-markdown/remark-gfm (pulled in via artifact-viewer.tsx) are ESM-only
@@ -97,9 +101,12 @@ describe('AgentActivityPanel CLI sessions', () => {
     ).toBeTruthy();
   });
 
-  it('renders an active CLI session with host, branch, turns, tokens, and liveness', () => {
+  it('renders an active CLI session with host, branch, and liveness', () => {
     renderPanel([
-      makeCliSession({ title: 'Merge live CLI sessions into the list' }),
+      makeCliSession({
+        title: 'Merge live CLI sessions into the list',
+        model: 'claude-sonnet-5',
+      }),
     ]);
 
     expect(screen.getByText('CLI sessions')).toBeTruthy();
@@ -109,8 +116,16 @@ describe('AgentActivityPanel CLI sessions', () => {
     ).toBeTruthy();
     expect(screen.getByText('joes-workstation')).toBeTruthy();
     expect(screen.getByText(/feat\/agent-console-cli-sessions/)).toBeTruthy();
-    expect(screen.getByText('4 turns')).toBeTruthy();
-    expect(screen.getByText('1.2k tokens')).toBeTruthy();
+  });
+
+  it('omits the model, turn count, and token count texts (#3012)', () => {
+    renderPanel([
+      makeCliSession({ model: 'claude-sonnet-5', turns: 4, totalTokens: 1200 }),
+    ]);
+
+    expect(screen.queryByText('claude-sonnet-5')).toBeNull();
+    expect(screen.queryByText('4 turns')).toBeNull();
+    expect(screen.queryByText('1.2k tokens')).toBeNull();
   });
 
   it('links to the joined PR when one exists', () => {
@@ -205,6 +220,36 @@ describe('AgentActivityPanel recent runs', () => {
     const badge = screen.getByTestId('recent-run-conclusion');
     expect(badge.style.flexShrink).toBe('0');
     expect(badge.textContent).toBe('success');
+  });
+
+  it('links a finished run title to its issue/PR when issueNumber is known (#3012)', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [makeAgentRun({ issueNumber: 42 })],
+    });
+    const link = screen.getByTestId('recent-run-issue-link');
+    expect(link.getAttribute('href')).toBe(
+      'https://github.com/supersprinklesracing/members/issues/42',
+    );
+  });
+
+  it('falls back to the run URL when a legacy run has no parsed issueNumber (#3012)', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [makeAgentRun({ issueNumber: undefined })],
+    });
+    const link = screen.getByTestId('recent-run-issue-link');
+    expect(link.getAttribute('href')).toBe(
+      'https://github.com/o/r/actions/runs/1',
+    );
+  });
+
+  it('renames the disclosure to "Recently finished" (#3012)', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [makeAgentRun()],
+    });
+    expect(screen.getByText('Recently finished (1)')).toBeTruthy();
   });
 });
 

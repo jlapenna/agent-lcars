@@ -20,17 +20,13 @@ import type {
 import {
   displayRunTitle,
   findStalledQueuedRun,
+  issueUrlForRun,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
-import {
-  formatDuration,
-  formatRelativeTime,
-  formatTokenCount,
-  shareArtifactUrl,
-} from './format';
+import { formatDuration, formatRelativeTime, shareArtifactUrl } from './format';
 
 const CONCLUSION_LABELS: Record<AgentRunConclusion, string> = {
   success: 'success',
@@ -198,10 +194,19 @@ function LiveRunRow({ run, item }: { run: AgentRun; item?: RunItemRef }) {
   );
 }
 
-function RecentRunRow({ run }: { run: AgentRun }) {
+/**
+ * A finished run row: unlike the old title-only text, the run's title is
+ * now a real link to the issue/PR it worked (derived from `issueNumber`),
+ * so a finished run can be followed straight to its outcome instead of only
+ * to its raw Actions log. Runs that predate the run-name rollout
+ * (`issueUrlForRun` undefined) fall back to the run's own title/url - the
+ * same target as the secondary "View run" link.
+ */
+function FinishedRunRow({ run }: { run: AgentRun }) {
   const conclusion = run.conclusion ?? 'other';
+  const issueUrl = issueUrlForRun(run);
   return (
-    <Group gap="xs" wrap="nowrap">
+    <Group gap="xs" wrap="nowrap" data-testid="finished-run-row">
       <Badge
         variant="light"
         color={CONCLUSION_COLORS[conclusion]}
@@ -212,9 +217,17 @@ function RecentRunRow({ run }: { run: AgentRun }) {
         {isLikelyTimeout(run) ? 'timeout' : CONCLUSION_LABELS[conclusion]}
       </Badge>
       <PipelineBadge pipeline={run.pipeline} />
-      <Text size="xs" c="dimmed" truncate style={{ minWidth: 0 }}>
+      <Anchor
+        href={issueUrl ?? run.url}
+        target="_blank"
+        rel="noreferrer"
+        size="xs"
+        truncate
+        style={{ minWidth: 0 }}
+        data-testid="recent-run-issue-link"
+      >
         {displayRunTitle(run)}
-      </Text>
+      </Anchor>
       <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
         {formatDuration(run.elapsedSeconds)} · finished{' '}
         {formatRelativeTime(run.updatedAt)}
@@ -289,17 +302,6 @@ function CliSessionRow({ session }: { session: CliSession }) {
             {session.worktree ? ` (${session.worktree})` : ''}
           </Text>
         )}
-        {session.model && (
-          <Text size="xs" c="dimmed">
-            {session.model}
-          </Text>
-        )}
-        <Text size="xs" c="dimmed">
-          {session.turns} turns
-        </Text>
-        <Text size="xs" c="dimmed">
-          {formatTokenCount(session.totalTokens)} tokens
-        </Text>
         <Text size="xs" c="dimmed">
           last active {formatRelativeTime(session.lastActivityAt)}
         </Text>
@@ -404,12 +406,12 @@ export function AgentActivityPanel({
                 tt="uppercase"
                 component="span"
               >
-                Recent runs ({recentRuns.length})
+                Recently finished ({recentRuns.length})
               </Text>
             </summary>
             <Stack gap={6} mt="xs">
               {recentRuns.map((run) => (
-                <RecentRunRow key={run.id} run={run} />
+                <FinishedRunRow key={run.id} run={run} />
               ))}
             </Stack>
           </details>

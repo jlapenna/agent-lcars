@@ -1,8 +1,8 @@
 import { Group, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../lib/action-items';
-import type { PrimaryAction } from '../lib/primary-action';
-import { ActionItemCard, type LiveRunSummary } from './action-item-card';
+import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
+import { ActionItemCard } from './action-item-card';
 import { CompactItemRow } from './compact-item-row';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { RetriggerButton } from './retrigger-button';
@@ -11,7 +11,6 @@ export interface BoardCard {
   item: ActionItem;
   updatedAtLabel: string;
   primaryAction?: PrimaryAction;
-  liveRun?: LiveRunSummary;
 }
 
 /**
@@ -44,17 +43,14 @@ export function ActionItemsBoard({
           </Text>
         ) : (
           <Stack gap="sm">
-            {yourQueue.map(
-              ({ item, updatedAtLabel, primaryAction, liveRun }) => (
-                <ActionItemCard
-                  key={`${item.kind}-${item.number}`}
-                  item={item}
-                  updatedAtLabel={updatedAtLabel}
-                  primaryAction={primaryAction}
-                  liveRun={liveRun}
-                />
-              ),
-            )}
+            {yourQueue.map(({ item, updatedAtLabel, primaryAction }) => (
+              <ActionItemCard
+                key={`${item.kind}-${item.number}`}
+                item={item}
+                updatedAtLabel={updatedAtLabel}
+                primaryAction={primaryAction}
+              />
+            ))}
           </Stack>
         )}
       </div>
@@ -76,12 +72,15 @@ export function ActionItemsBoard({
                 hint={`you replied · updated ${updatedAtLabel}`}
                 action={
                   <Group gap={4} wrap="nowrap">
-                    {item.kind === 'issue' && item.labels.includes('claude') && (
-                      <RetriggerButton
-                        issueNumber={item.number}
-                        size="compact-xs"
-                      />
-                    )}
+                    {item.kind === 'issue' &&
+                      (item.labels.includes('claude') ||
+                        item.labels.includes('opencode')) && (
+                        <RetriggerButton
+                          issueNumber={item.number}
+                          pipeline={pipelineForLabels(item.labels)}
+                          size="compact-xs"
+                        />
+                      )}
                     <ItemOverflowMenu item={item} />
                   </Group>
                 }

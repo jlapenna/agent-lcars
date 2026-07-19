@@ -6,6 +6,7 @@ import {
   findStalledQueuedRun,
   getAgentActivity,
   issueNumberFromDisplayTitle,
+  issueUrlForRun,
 } from './agent-activity';
 import { getGithubClient } from './github-client';
 
@@ -90,6 +91,20 @@ describe('displayRunTitle', () => {
       displayTitle: '#42: Fix the thing',
     });
     expect(displayRunTitle(run)).toBe('#42: Fix the thing');
+  });
+});
+
+describe('issueUrlForRun', () => {
+  it('links to /issues/<N> using the parsed issue number', () => {
+    const run = makeAgentRun({ issueNumber: 42 });
+    expect(issueUrlForRun(run)).toBe(
+      'https://github.com/supersprinklesracing/members/issues/42',
+    );
+  });
+
+  it('returns undefined for a legacy run with no parsed issue number', () => {
+    const run = makeAgentRun({ issueNumber: undefined });
+    expect(issueUrlForRun(run)).toBeUndefined();
   });
 });
 

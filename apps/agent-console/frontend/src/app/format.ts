@@ -39,13 +39,6 @@ export function formatDuration(totalSeconds: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-/** Compact token count for session rows: "842", "12.3k", "1.2M". */
-export function formatTokenCount(tokens: number): string {
-  if (tokens < 1000) return `${tokens}`;
-  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(1)}k`;
-  return `${(tokens / 1_000_000).toFixed(1)}M`;
-}
-
 /**
  * The share-media skill's convention: files land at
  * `/home/jlapenna/share/<conversation-id>/<filename>` on `host`, served at

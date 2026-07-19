@@ -37,9 +37,12 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
     await expect(liveRow).toContainText('e2e-fixture-host-1');
     await expect(liveRow).toContainText('e2e-agent-console-fixture-branch');
     await expect(liveRow).toContainText('agent-console-e2e-fixture');
-    await expect(liveRow).toContainText('claude-sonnet-5');
-    await expect(liveRow).toContainText('12 turns');
-    await expect(liveRow).toContainText('12.2k tokens');
+    // Model, turn count, and token count are no longer rendered (#3012) -
+    // the row now only carries liveness, title/branch, host, worktree, PR
+    // link, artifacts, and last-active.
+    await expect(liveRow).not.toContainText('claude-sonnet-5');
+    await expect(liveRow).not.toContainText('12 turns');
+    await expect(liveRow).not.toContainText('12.2k tokens');
     await expect(
       liveRow.getByRole('link', { name: `PR #${E2E_FIXTURE_PR_NUMBER} ↗` }),
     ).toBeVisible();
@@ -49,8 +52,8 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
       'idle',
     );
     await expect(idleRow).toContainText('e2e-fixture-host-2');
-    await expect(idleRow).toContainText('claude-opus-4-8');
-    await expect(idleRow).toContainText('3 turns');
+    await expect(idleRow).not.toContainText('claude-opus-4-8');
+    await expect(idleRow).not.toContainText('3 turns');
     // No PR fixture is registered for the idle session's branch — the
     // GitHub fixture route (api/e2e/github/search/issues) legitimately
     // returns no match, so no "PR #" link should render for this row.
@@ -73,12 +76,12 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
       'ended',
     );
     await expect(endedRow).toContainText('e2e-fixture-host-3');
-    await expect(endedRow).toContainText('1 turns');
+    await expect(endedRow).not.toContainText('1 turns');
     await expect(staleRow.getByTestId('cli-session-liveness')).toHaveText(
       'stale',
     );
     await expect(staleRow).toContainText('e2e-fixture-host-4');
-    await expect(staleRow).toContainText('2 turns');
+    await expect(staleRow).not.toContainText('2 turns');
 
     // Liveness badges are distinct per row, not just present somewhere on
     // the page: assert the full set of rendered labels matches exactly

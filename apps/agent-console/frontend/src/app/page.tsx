@@ -10,7 +10,6 @@ import {
 import { getAgentActivity } from '../lib/agent-activity';
 import { getCliSessions } from '../lib/cli-sessions';
 import { derivePrimaryAction } from '../lib/primary-action';
-import { type LiveRunSummary } from './action-item-card';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
@@ -23,12 +22,11 @@ import { UnstickPrsButton } from './unstick-prs-button';
 
 export const dynamic = 'force-dynamic';
 
-function toCard(item: ActionItem, liveRun?: LiveRunSummary): BoardCard {
+function toCard(item: ActionItem): BoardCard {
   return {
     item,
     updatedAtLabel: formatRelativeTime(item.updatedAt),
     primaryAction: derivePrimaryAction(item),
-    liveRun,
   };
 }
 

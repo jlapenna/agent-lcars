@@ -13,9 +13,6 @@ vi.mock('./actions', () => ({
   replyToItem: vi.fn(),
   dispatchUnstickPrs: vi.fn(),
 }));
-vi.mock('./cancel-run-button', () => ({
-  CancelRunButton: () => null,
-}));
 vi.mock('./retrigger-button', () => ({
   RetriggerButton: ({ pipeline }: { pipeline?: string }) => (
     <div data-testid="retrigger-button" data-pipeline={pipeline ?? 'claude'} />

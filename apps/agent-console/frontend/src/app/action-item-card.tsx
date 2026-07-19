@@ -27,7 +27,6 @@ import type {
 } from '../lib/action-items';
 import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
 import { mergePr, replyToItem } from './actions';
-import { CancelRunButton } from './cancel-run-button';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { RetriggerButton } from './retrigger-button';
@@ -75,14 +74,6 @@ function mergeableWarning(item: {
   mergeableState?: MergeableState;
 }): string | undefined {
   return item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState];
-}
-
-/** Preformatted live-run info; built server-side in page.tsx. */
-export interface LiveRunSummary {
-  id: number;
-  status: 'queued' | 'running';
-  label: string;
-  url: string;
 }
 
 function CommentPreview({
@@ -166,12 +157,10 @@ export function ActionItemCard({
   item,
   updatedAtLabel,
   primaryAction,
-  liveRun,
 }: {
   item: ActionItem;
   updatedAtLabel: string;
   primaryAction?: PrimaryAction;
-  liveRun?: LiveRunSummary;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
@@ -311,33 +300,6 @@ export function ActionItemCard({
           {item.labels.length > 0 && <> · {item.labels.join(', ')}</>}
         </Text>
 
-        {liveRun && (
-          <Group gap={6}>
-            <Badge
-              variant="filled"
-              color={liveRun.status === 'running' ? 'blue' : 'gray'}
-              size="sm"
-            >
-              {liveRun.status === 'running'
-                ? 'Agent working now'
-                : 'Agent run queued'}
-            </Badge>
-            <Text size="xs" c="dimmed">
-              {liveRun.label}
-            </Text>
-            <Anchor
-              href={liveRun.url}
-              target="_blank"
-              rel="noreferrer"
-              size="xs"
-              c="dimmed"
-            >
-              View run ↗
-            </Anchor>
-            <CancelRunButton runId={liveRun.id} label={item.title} />
-          </Group>
-        )}
-
         {item.failingChecks && item.failingChecks.length > 0 && (
           <Text size="xs" c="red">
             Failed:{' '}
@@ -475,8 +437,6 @@ export function ActionItemCard({
               <RetriggerButton
                 issueNumber={item.number}
                 pipeline={pipeline}
-                disabled={Boolean(liveRun)}
-                disabledReason="An agent run is already in flight for this item"
                 onError={setError}
                 size="sm"
               />
