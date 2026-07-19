@@ -4,3 +4,4 @@ assertNotBrowser();
 
 export * from './firestore-client';
 export * from './store';
+export * from './transcript-store';

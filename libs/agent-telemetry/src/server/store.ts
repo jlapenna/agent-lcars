@@ -1,4 +1,4 @@
-import { Firestore, Timestamp } from '@google-cloud/firestore';
+import { Firestore, Query, Timestamp } from '@google-cloud/firestore';
 import {
   getFirestoreEmulatorHost,
   getProjectId,
@@ -11,7 +11,7 @@ import {
   Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
-import { SessionDoc } from '../lib/types';
+import { SessionDoc, SessionSource } from '../lib/types';
 import { AGENT_TELEMETRY_DATABASE_ID } from './firestore-client';
 
 export const SESSIONS_COLLECTION = 'sessions';
@@ -83,29 +83,65 @@ export async function upsertSession(doc: SessionDoc): Promise<void> {
     );
 }
 
+/** Default page size for `listSessionDocs` when the caller doesn't ask for a
+ * specific `limit` - generous enough for the dashboard's 24h window, small
+ * enough to keep the archive page's default 14-day window cheap. */
+const DEFAULT_LIST_LIMIT = 100;
+/** Hard ceiling on `limit`, regardless of what a caller (ultimately a
+ * client-controlled query param on the /sessions archive page) requests -
+ * this is a read-only reader path with no auth boundary of its own beyond
+ * the console's admin gate, so the cap is enforced here rather than trusted
+ * to every caller. */
+const MAX_LIST_LIMIT = 200;
+
 export interface ListSessionDocsOptions {
   /** Only return sessions with `lastActivityAt` at or after this ISO
    * timestamp. Without it the listing is unbounded - the collection grows
    * by one doc per session forever (200+ within the first weeks of
    * rollout) - so every recurring reader should pass a cutoff. */
   activeSince?: string;
+  /** Narrows to one source. Combined with `activeSince` this is a
+   * range+equality compound query - see the composite indexes provisioned
+   * for `sessions` in apps/agent-console/infra/agent-telemetry.yaml's
+   * firestore.indexes section (source+lastActivityAt). */
+  source?: SessionSource;
+  /** Narrows to one issue-agent session's issue. Combined with
+   * `activeSince` this is also a compound query - see the
+   * issueNumber+lastActivityAt (and source+issueNumber+lastActivityAt)
+   * composite indexes alongside the `source` ones. */
+  issueNumber?: number;
+  /** Caps the number of docs returned (post-sort, newest activity first).
+   * Clamped to [1, {@link MAX_LIST_LIMIT}]; defaults to
+   * {@link DEFAULT_LIST_LIMIT} when omitted. */
+  limit?: number;
 }
 
 /**
  * Lists session docs in the `agent-telemetry` database, newest activity
  * first. Read-only by design (the console's SA cannot write - see
- * firestore-client.ts); callers narrow by `source`/`liveness` themselves.
+ * firestore-client.ts); callers narrow by `liveness` themselves (not a
+ * stored/queryable field in the sense that matters here - see
+ * `displayLiveness`, which recomputes it at read time).
  */
 export async function listSessionDocs(
   firestore: Firestore,
   options: ListSessionDocsOptions = {},
 ): Promise<SessionDoc[]> {
   const collection = firestore.collection(SESSIONS_COLLECTION);
-  // ISO 8601 UTC timestamps compare correctly as strings, so a plain range
-  // filter works without a Timestamp field or a composite index.
-  const query = options.activeSince
-    ? collection.where('lastActivityAt', '>=', options.activeSince)
-    : collection;
+  // ISO 8601 UTC timestamps compare correctly as strings, so the
+  // activeSince range filter works without a Timestamp field. source/
+  // issueNumber are plain equality filters; composing any of them with the
+  // range filter needs the composite indexes documented above.
+  let query: Query = collection;
+  if (options.activeSince) {
+    query = query.where('lastActivityAt', '>=', options.activeSince);
+  }
+  if (options.source) {
+    query = query.where('source', '==', options.source);
+  }
+  if (options.issueNumber !== undefined) {
+    query = query.where('issueNumber', '==', options.issueNumber);
+  }
   const snapshot = await query.get();
   const docs = snapshot.docs.map((doc) => {
     const data = doc.data();
@@ -117,7 +153,43 @@ export async function listSessionDocs(
       }),
     } as SessionDoc;
   });
-  return docs.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
+  const sorted = docs.sort((a, b) =>
+    b.lastActivityAt.localeCompare(a.lastActivityAt),
+  );
+  const limit = Math.min(
+    Math.max(1, options.limit ?? DEFAULT_LIST_LIMIT),
+    MAX_LIST_LIMIT,
+  );
+  return sorted.slice(0, limit);
+}
+
+/**
+ * Fetches a single session doc by id, or `undefined` if it doesn't exist
+ * (never throws for a missing doc - only for a real Firestore failure, left
+ * to the caller). Powers the /sessions/[id] detail page.
+ */
+export async function getSessionDoc(
+  firestore: Firestore,
+  sessionId: string,
+): Promise<SessionDoc | undefined> {
+  const snapshot = await firestore
+    .collection(SESSIONS_COLLECTION)
+    .doc(sessionId)
+    .get();
+  if (!snapshot.exists) {
+    return undefined;
+  }
+  const data = snapshot.data();
+  if (!data) {
+    return undefined;
+  }
+  const expireAt = data['expireAt'];
+  return {
+    ...data,
+    ...(expireAt instanceof Timestamp && {
+      expireAt: expireAt.toDate().toISOString(),
+    }),
+  } as SessionDoc;
 }
 
 /** @internal Reset cached clients for testing only. */

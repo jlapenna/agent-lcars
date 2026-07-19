@@ -5,9 +5,9 @@ import {
   getFirestore as getAdminFirestore,
 } from 'firebase-admin/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { SessionDoc } from '../lib/types';
-import { describe, it, test, expect, beforeEach, vi, type Mock } from 'vitest';
 import {
   _resetForTesting,
   getAgentTelemetryWriterFirestore,

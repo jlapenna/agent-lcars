@@ -32,6 +32,27 @@ firestore:
   ttlPolicies:
     sessions:
       field: 'expireAt'
+  # Composite indexes required by libs/agent-telemetry/src/server/store.ts's
+  # `listSessionDocs` once it composes the `activeSince` range filter
+  # (lastActivityAt >=) with an equality filter (`source` and/or
+  # `issueNumber`) — Firestore auto-indexes a single range filter or any
+  # number of equality-only filters, but a range filter combined with an
+  # equality filter on a *different* field always needs an explicit
+  # composite index (confirmed empty via `gcloud firestore indexes composite
+  # list --database=agent-telemetry` before these were created). Powers the
+  # /sessions archive page's `source`/`issue` query params (PRD #2112 slice
+  # 3/7/8). Provisioned 2026-07-19 via:
+  #   gcloud firestore indexes composite create --database=agent-telemetry \
+  #     --collection-group=sessions \
+  #     --field-config=field-path=<f1>,order=ascending \
+  #     --field-config=field-path=<f2>,order=ascending \
+  #     [--field-config=field-path=<f3>,order=ascending] \
+  #     --project=supersprinklesracing
+  indexes:
+    sessions:
+      - fields: ['source', 'lastActivityAt']
+      - fields: ['issueNumber', 'lastActivityAt']
+      - fields: ['source', 'issueNumber', 'lastActivityAt']
 
 # Firestore has no built-in "write-only" or database-scoped role, so both
 # roles are custom, and every grant below is IAM-condition-scoped to this

@@ -297,6 +297,16 @@ export function FinishedRunRow({
         >
           View run ↗
         </Anchor>
+        {session && (
+          <Anchor
+            href={`/sessions/${session.sessionId}`}
+            size="xs"
+            c="dimmed"
+            data-testid="finished-run-session-link"
+          >
+            session
+          </Anchor>
+        )}
       </Group>
       {classification.diagnosis && (
         <Text size="xs" c="orange" data-testid="finished-run-diagnosis">
@@ -307,14 +317,16 @@ export function FinishedRunRow({
   );
 }
 
-const LIVENESS_LABELS: Record<CliSession['liveness'], string> = {
+// Exported (mirroring PipelineBadge/FleetChip's #3024 precedent) for reuse
+// on the /sessions archive page's liveness column.
+export const LIVENESS_LABELS: Record<CliSession['liveness'], string> = {
   live: 'live',
   idle: 'idle',
   ended: 'ended',
   stale: 'stale',
 };
 
-const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
+export const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
   live: 'green',
   idle: 'yellow',
   ended: 'gray',
@@ -352,6 +364,14 @@ export function CliSessionRow({
         <Text size="sm" fw={500} style={{ minWidth: 0 }} truncate>
           {session.title ?? session.branch ?? session.sessionId}
         </Text>
+        <Anchor
+          href={`/sessions/${session.sessionId}`}
+          size="xs"
+          c="dimmed"
+          data-testid="cli-session-link"
+        >
+          session
+        </Anchor>
         {session.pr && (
           <Anchor
             href={session.pr.url}

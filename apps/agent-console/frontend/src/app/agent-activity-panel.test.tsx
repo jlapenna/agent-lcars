@@ -172,6 +172,13 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/2587');
   });
 
+  it('always links to the session detail page', () => {
+    renderPanel([makeCliSession({ sessionId: 'abc-123' })]);
+
+    const link = screen.getByTestId('cli-session-link');
+    expect(link.getAttribute('href')).toBe('/sessions/abc-123');
+  });
+
   it('links to shared artifacts using host + sessionId', () => {
     renderPanel([
       makeCliSession({
@@ -384,6 +391,27 @@ describe('AgentActivityPanel recent runs', () => {
       recentRuns: [makeAgentRun({ id: 13, conclusion: 'success' })],
     });
     expect(screen.queryByTestId('finished-run-diagnosis')).toBeNull();
+  });
+
+  it('links to the session detail page when a session doc is joined', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        recentRuns: [makeAgentRun({ id: 14 })],
+      },
+      { 14: makeIssueAgentSessionDoc({ sessionId: 'session-runner-14' }) },
+    );
+    const link = screen.getByTestId('finished-run-session-link');
+    expect(link.getAttribute('href')).toBe('/sessions/session-runner-14');
+  });
+
+  it('renders no session link when no session doc is joined', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [makeAgentRun({ id: 15 })],
+    });
+    expect(screen.queryByTestId('finished-run-session-link')).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
+import { describe, expect, it } from 'vitest';
+
 import { computeLiveness, displayLiveness } from './liveness';
-import { describe, it, expect } from 'vitest';
 
 const NOW = '2026-07-10T10:10:00.000Z';
 

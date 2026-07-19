@@ -1,10 +1,10 @@
 import { Firestore, Timestamp } from '@google-cloud/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
 import { mockWhere } from 'firestore-jest-mock/mocks/firestore';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CliSessionDoc, IssueAgentSessionDoc } from '../lib/types';
-import { listSessionDocs, SESSIONS_COLLECTION } from './store';
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { getSessionDoc, listSessionDocs, SESSIONS_COLLECTION } from './store';
 
 const cliSession: CliSessionDoc = {
   sessionId: 'cli-session-1',
@@ -126,5 +126,103 @@ describe('listSessionDocs', () => {
     const [doc] = await listSessionDocs(firestore);
 
     expect(doc.expireAt).toBeUndefined();
+  });
+
+  it('applies source as an equality filter', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: cliSession.sessionId, ...cliSession },
+        { id: issueAgentSession.sessionId, ...issueAgentSession },
+      ],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, { source: 'cli' });
+
+    expect(mockWhere).toHaveBeenCalledWith('source', '==', 'cli');
+  });
+
+  it('applies issueNumber as an equality filter', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: issueAgentSession.sessionId, ...issueAgentSession },
+      ],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, { issueNumber: 2541 });
+
+    expect(mockWhere).toHaveBeenCalledWith('issueNumber', '==', 2541);
+  });
+
+  it('composes activeSince, source, and issueNumber filters together', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: issueAgentSession.sessionId, ...issueAgentSession },
+      ],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, {
+      activeSince: '2026-07-11T00:00:00.000Z',
+      source: 'issue-agent',
+      issueNumber: 2541,
+    });
+
+    expect(mockWhere).toHaveBeenCalledWith(
+      'lastActivityAt',
+      '>=',
+      '2026-07-11T00:00:00.000Z',
+    );
+    expect(mockWhere).toHaveBeenCalledWith('source', '==', 'issue-agent');
+    expect(mockWhere).toHaveBeenCalledWith('issueNumber', '==', 2541);
+  });
+
+  it('defaults to 100 docs and clamps a larger limit to 200', async () => {
+    const manyDocs = Array.from({ length: 250 }, (_, i) => ({
+      id: `session-${i}`,
+      ...cliSession,
+      sessionId: `session-${i}`,
+      lastActivityAt: new Date(2026, 6, 1, 0, i).toISOString(),
+    }));
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: manyDocs,
+    }) as unknown as Firestore;
+
+    expect(await listSessionDocs(firestore)).toHaveLength(100);
+    expect(await listSessionDocs(firestore, { limit: 1000 })).toHaveLength(200);
+    expect(await listSessionDocs(firestore, { limit: 5 })).toHaveLength(5);
+  });
+});
+
+describe('getSessionDoc', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('returns the doc when it exists', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [{ id: cliSession.sessionId, ...cliSession }],
+    }) as unknown as Firestore;
+
+    const doc = await getSessionDoc(firestore, cliSession.sessionId);
+
+    expect(doc?.sessionId).toBe(cliSession.sessionId);
+  });
+
+  it('returns undefined when the doc does not exist', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [],
+    }) as unknown as Firestore;
+
+    expect(await getSessionDoc(firestore, 'missing-session')).toBeUndefined();
+  });
+
+  it('converts a stored expireAt Timestamp back into an ISO string', async () => {
+    const expireAt = Timestamp.fromDate(new Date('2026-08-11T00:05:00.000Z'));
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: cliSession.sessionId, ...cliSession, expireAt },
+      ],
+    }) as unknown as Firestore;
+
+    const doc = await getSessionDoc(firestore, cliSession.sessionId);
+
+    expect(doc?.expireAt).toBe('2026-08-11T00:05:00.000Z');
   });
 });
