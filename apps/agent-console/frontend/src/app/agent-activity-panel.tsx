@@ -12,11 +12,16 @@ import {
 
 import type {
   AgentActivity,
+  AgentPipeline,
   AgentRun,
   AgentRunConclusion,
-  RunnerStatus,
+  FleetSummary,
 } from '../lib/agent-activity';
-import { RUN_TIMEOUT_MINUTES } from '../lib/agent-activity';
+import {
+  displayRunTitle,
+  findStalledQueuedRun,
+  RUN_TIMEOUT_MINUTES,
+} from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
@@ -66,43 +71,71 @@ export interface RunItemRef {
   url: string;
 }
 
-function RunnerBadge({ runner }: { runner: RunnerStatus }) {
-  const color = !runner.online ? 'red' : runner.busy ? 'orange' : 'green';
-  const label = !runner.online ? 'offline' : runner.busy ? 'busy' : 'idle';
+const PIPELINE_LABELS: Record<AgentPipeline, string> = {
+  claude: 'claude',
+  opencode: 'opencode',
+};
+
+const PIPELINE_COLORS: Record<AgentPipeline, string> = {
+  claude: 'blue',
+  opencode: 'violet',
+};
+
+/**
+ * Subtle pipeline source tag on run rows - context, not status, so it stays
+ * small and outlined rather than competing visually with the
+ * status/conclusion badge next to it.
+ */
+function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
   return (
-    <Badge variant="light" color={color} size="sm">
-      {runner.name}: {label}
+    <Badge
+      variant="outline"
+      color={PIPELINE_COLORS[pipeline]}
+      size="xs"
+      style={{ flexShrink: 0 }}
+    >
+      {PIPELINE_LABELS[pipeline]}
     </Badge>
   );
 }
 
 /**
- * One green badge when the whole fleet is healthy and idle; individual
- * badges only when some runner is busy or offline. Fleet status is context,
- * not work - it only deserves pixels when it's abnormal.
+ * A dimmed count chip when the fleet has any online runners; nothing at all
+ * when it's scaled to zero. Since #2974's autoscaler scale-set migration,
+ * zero registered runners is the normal idle state, not an outage, so it no
+ * longer deserves any pixels.
  */
-function RunnerSummary({ runners }: { runners?: RunnerStatus[] }) {
-  if (runners === undefined) {
+function FleetChip({ fleet }: { fleet?: FleetSummary }) {
+  if (fleet === undefined) {
     return (
-      <Text size="xs" c="dimmed">
+      <Text size="xs" c="dimmed" data-testid="fleet-chip">
         Runner status unavailable
       </Text>
     );
   }
-  const allIdle = runners.every((runner) => runner.online && !runner.busy);
-  if (runners.length > 0 && allIdle) {
-    return (
-      <Badge variant="light" color="green" size="sm">
-        {runners.length} runners idle
-      </Badge>
-    );
-  }
+  if (fleet.online === 0) return null;
   return (
-    <>
-      {runners.map((runner) => (
-        <RunnerBadge key={runner.name} runner={runner} />
-      ))}
-    </>
+    <Text size="xs" c="dimmed" data-testid="fleet-chip">
+      {fleet.online} runner{fleet.online === 1 ? '' : 's'} active
+      {fleet.busy > 0 ? ` (${fleet.busy} busy)` : ''}
+    </Text>
+  );
+}
+
+/**
+ * The autoscaler-aware replacement for the old "all runners offline" alert:
+ * that condition can no longer fire meaningfully (a scaled-to-zero pool is
+ * normal), so the real health signal is a live run stuck waiting for a
+ * runner the autoscaler should have supplied by now.
+ */
+function QueueHealthAlert({ liveRuns }: { liveRuns: AgentRun[] }) {
+  const stalledRun = findStalledQueuedRun(liveRuns);
+  if (!stalledRun) return null;
+  return (
+    <Alert color="red" variant="light" data-testid="queue-health-alert">
+      A run has been queued for {formatDuration(stalledRun.elapsedSeconds)} —
+      the runner autoscaler may not be supplying runners.
+    </Alert>
   );
 }
 
@@ -119,6 +152,7 @@ function LiveRunRow({ run, item }: { run: AgentRun; item?: RunItemRef }) {
         >
           {run.status === 'running' ? 'running' : 'queued'}
         </Badge>
+        <PipelineBadge pipeline={run.pipeline} />
         <Anchor
           href={item?.url ?? run.url}
           target="_blank"
@@ -129,7 +163,7 @@ function LiveRunRow({ run, item }: { run: AgentRun; item?: RunItemRef }) {
           truncate
           style={{ minWidth: 0 }}
         >
-          {item ? `#${item.number} ${item.title}` : run.displayTitle}
+          {item ? `#${item.number} ${item.title}` : displayRunTitle(run)}
         </Anchor>
         <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
           {run.status === 'running'
@@ -177,8 +211,9 @@ function RecentRunRow({ run }: { run: AgentRun }) {
       >
         {isLikelyTimeout(run) ? 'timeout' : CONCLUSION_LABELS[conclusion]}
       </Badge>
+      <PipelineBadge pipeline={run.pipeline} />
       <Text size="xs" c="dimmed" truncate style={{ minWidth: 0 }}>
-        {run.displayTitle}
+        {displayRunTitle(run)}
       </Text>
       <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
         {formatDuration(run.elapsedSeconds)} · finished{' '}
@@ -224,7 +259,6 @@ function CliSessionRow({ session }: { session: CliSession }) {
           size="sm"
           style={{ flexShrink: 0 }}
           data-testid="cli-session-liveness"
-          style={{ flexShrink: 0 }}
         >
           {LIVENESS_LABELS[session.liveness]}
         </Badge>
@@ -310,11 +344,7 @@ export function AgentActivityPanel({
   cliSessions?: CliSession[];
   itemsByRunId?: Record<number, RunItemRef>;
 }) {
-  const { liveRuns, recentRuns, runners } = activity;
-  const allOffline =
-    runners !== undefined &&
-    runners.length > 0 &&
-    runners.every((runner) => !runner.online);
+  const { liveRuns, recentRuns, fleet } = activity;
 
   const activeSessions = cliSessions.filter(
     (session) => session.liveness === 'live' || session.liveness === 'idle',
@@ -331,16 +361,11 @@ export function AgentActivityPanel({
             In Flight
           </Title>
           <Group gap={6} wrap="wrap" justify="flex-end">
-            <RunnerSummary runners={runners} />
+            <FleetChip fleet={fleet} />
           </Group>
         </Group>
 
-        {allOffline && (
-          <Alert color="red" variant="light">
-            All agent runners are offline — dispatched runs will queue but never
-            start. Check the runner fleet before retriggering anything.
-          </Alert>
-        )}
+        <QueueHealthAlert liveRuns={liveRuns} />
 
         {liveRuns.length === 0 && activeSessions.length === 0 && (
           <Text size="sm" c="dimmed">

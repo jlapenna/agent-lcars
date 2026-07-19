@@ -52,11 +52,13 @@ export default async function Index() {
   );
 
   // Join live agent runs to items, preferring the run-name-derived issue
-  // number (see claude.yml) - it's immune to title edits and duplicate
-  // titles. Runs that predate that rollout (issueNumber undefined) fall
-  // back to the old title-string match. An item with a live run is the
-  // AGENT's to act on, whatever its labels say - it must never be presented
-  // as waiting on the maintainer.
+  // number (see claude.yml and opencode.yml - issueNumberFromDisplayTitle
+  // accepts both run-name formats) - it's immune to title edits and
+  // duplicate titles, and pipeline-agnostic by construction. Runs that
+  // predate that rollout (issueNumber undefined) fall back to the old
+  // title-string match. An item with a live run is the AGENT's to act on,
+  // whatever its labels say - it must never be presented as waiting on the
+  // maintainer.
   const liveRunByNumber = new Map(
     activity.liveRuns
       .filter((run) => run.issueNumber !== undefined)
@@ -110,7 +112,8 @@ export default async function Index() {
         <div>
           <Title order={1}>Agent Console</Title>
           <Text c="dimmed" mt={4}>
-            supersprinklesracing/members &mdash; Claude issue agent activity
+            supersprinklesracing/members &mdash; Claude + OpenCode agent
+            activity
           </Text>
         </div>
         <Group gap="sm">

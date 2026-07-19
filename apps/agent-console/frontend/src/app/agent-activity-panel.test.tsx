@@ -14,9 +14,23 @@ vi.mock('./cancel-run-button', () => ({
 }));
 
 // agent-activity.ts pulls in the server-only (ESM) GitHub client - stub the
-// one runtime value this panel actually uses (RUN_TIMEOUT_MINUTES) so the
-// module never loads at test time. Every other import from it is type-only.
-vi.mock('../lib/agent-activity', () => ({ RUN_TIMEOUT_MINUTES: 90 }));
+// runtime values this panel actually uses so the module never loads (and
+// its assertNotBrowser() guard never fires) at test time. Every other
+// import from it is type-only. The two pure helpers are reimplemented here
+// rather than imported for real - agent-activity.test.ts is the source of
+// truth for their actual behavior; keep these two in sync with it.
+vi.mock('../lib/agent-activity', () => ({
+  RUN_TIMEOUT_MINUTES: 90,
+  QUEUE_STALL_THRESHOLD_SECONDS: 300,
+  displayRunTitle: (run: AgentRun) =>
+    run.pipeline === 'opencode'
+      ? run.displayTitle.replace(/^opencode\s+/, '')
+      : run.displayTitle,
+  findStalledQueuedRun: (liveRuns: AgentRun[]) =>
+    liveRuns
+      .filter((run) => run.status === 'queued' && run.elapsedSeconds > 300)
+      .sort((a, b) => b.elapsedSeconds - a.elapsedSeconds)[0],
+}));
 
 // react-markdown/remark-gfm (pulled in via artifact-viewer.tsx) are ESM-only
 // (unified ecosystem) - see artifact-viewer.test.tsx for the same stub.
@@ -29,7 +43,7 @@ vi.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
 const EMPTY_ACTIVITY: AgentActivity = {
   liveRuns: [],
   recentRuns: [],
-  runners: [],
+  fleet: { online: 0, busy: 0 },
   warnings: [],
 };
 
@@ -61,6 +75,7 @@ function renderPanel(
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
+    pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',
     event: 'workflow_dispatch',
@@ -190,5 +205,115 @@ describe('AgentActivityPanel recent runs', () => {
     const badge = screen.getByTestId('recent-run-conclusion');
     expect(badge.style.flexShrink).toBe('0');
     expect(badge.textContent).toBe('success');
+  });
+});
+
+describe('AgentActivityPanel pipeline badges', () => {
+  it('tags a claude live run and leaves its title untouched', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({
+          id: 1,
+          pipeline: 'claude',
+          status: 'running',
+          displayTitle: '#42: Fix the thing',
+        }),
+      ],
+    });
+    expect(screen.getByText('claude')).toBeTruthy();
+    expect(screen.getByText('#42: Fix the thing')).toBeTruthy();
+  });
+
+  it('tags an opencode live run and strips the redundant "opencode " title prefix', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({
+          id: 2,
+          pipeline: 'opencode',
+          status: 'running',
+          displayTitle: 'opencode #43: Fix the other thing',
+        }),
+      ],
+    });
+    expect(screen.getByText('opencode')).toBeTruthy();
+    expect(screen.getByText('#43: Fix the other thing')).toBeTruthy();
+    expect(screen.queryByText('opencode #43: Fix the other thing')).toBeNull();
+  });
+
+  it('tags a recent opencode run row the same way', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [
+        makeAgentRun({
+          id: 3,
+          pipeline: 'opencode',
+          displayTitle: 'opencode #44: Fix a third thing',
+        }),
+      ],
+    });
+    expect(screen.getByText('opencode')).toBeTruthy();
+    expect(screen.getByText('#44: Fix a third thing')).toBeTruthy();
+  });
+});
+
+describe('AgentActivityPanel fleet chip', () => {
+  it('renders an active-runner count with a busy breakdown when the fleet has online runners', () => {
+    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 2, busy: 1 } });
+    expect(screen.getByTestId('fleet-chip').textContent).toBe(
+      '2 runners active (1 busy)',
+    );
+  });
+
+  it('renders singular wording and no parenthetical when exactly one runner is online and idle', () => {
+    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 1, busy: 0 } });
+    expect(screen.getByTestId('fleet-chip').textContent).toBe(
+      '1 runner active',
+    );
+  });
+
+  it('renders nothing when the fleet is scaled to zero - that is normal, not an outage', () => {
+    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 0, busy: 0 } });
+    expect(screen.queryByTestId('fleet-chip')).toBeNull();
+  });
+
+  it('renders an unavailable message when the runner API failed', () => {
+    renderPanel([], { ...EMPTY_ACTIVITY, fleet: undefined });
+    expect(screen.getByTestId('fleet-chip').textContent).toBe(
+      'Runner status unavailable',
+    );
+  });
+});
+
+describe('AgentActivityPanel queue health alert', () => {
+  it('warns when a live run has been queued past the stall threshold', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({ id: 4, status: 'queued', elapsedSeconds: 301 }),
+      ],
+    });
+    expect(screen.getByTestId('queue-health-alert').textContent).toContain(
+      'the runner autoscaler may not be supplying runners.',
+    );
+  });
+
+  it('says nothing when a queued run is still within a normal spin-up window', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [makeAgentRun({ id: 5, status: 'queued', elapsedSeconds: 60 })],
+    });
+    expect(screen.queryByTestId('queue-health-alert')).toBeNull();
+  });
+
+  it('says nothing for a running (non-queued) live run, however long it has been running', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({ id: 6, status: 'running', elapsedSeconds: 3600 }),
+      ],
+    });
+    expect(screen.queryByTestId('queue-health-alert')).toBeNull();
   });
 });

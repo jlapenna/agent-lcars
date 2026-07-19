@@ -1,11 +1,20 @@
+import type { Octokit } from '@octokit/rest';
+
 import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
 
-// Mirrors timeout-minutes in .github/workflows/claude.yml so the live-run
-// progress bar reflects the real kill budget.
+// Mirrors timeout-minutes in .github/workflows/claude.yml AND
+// .github/workflows/opencode.yml (both 90m) so the live-run progress bar
+// reflects the real kill budget regardless of which pipeline produced the
+// run.
 export const RUN_TIMEOUT_MINUTES = 90;
 
-const AGENT_WORKFLOW_FILE = 'claude.yml';
-const AGENT_RUNNER_LABEL = 'claude-agent';
+export type AgentPipeline = 'claude' | 'opencode';
+
+const WORKFLOW_FILES: Record<AgentPipeline, string> = {
+  claude: 'claude.yml',
+  opencode: 'opencode.yml',
+};
+
 const RECENT_RUN_LIMIT = 8;
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
@@ -13,20 +22,28 @@ export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
 
 export interface AgentRun {
   id: number;
+  /**
+   * Which workflow this run was fetched from. Derived from the fetch source
+   * (which workflow_id produced it), never string-sniffed from the title -
+   * titles are free text a human could edit.
+   */
+  pipeline: AgentPipeline;
   status: AgentRunStatus;
   conclusion?: AgentRunConclusion;
   event: string;
   url: string;
   /**
-   * claude.yml's `run-name` sets this to `#<issue/PR number>: <title>`, which
+   * claude.yml's `run-name` sets this to `#<issue/PR number>: <title>`;
+   * opencode.yml's mirrors it as `opencode #<number>: <title>`. Either form
    * lets the dashboard join live runs to action items without any
    * runner-side telemetry.
    */
   displayTitle: string;
   /**
-   * Parsed from the leading `#<number>:` of displayTitle. Undefined for runs
-   * that predate the run-name rollout - callers should fall back to a
-   * title-string match against `displayTitle` for those.
+   * Parsed from the leading `#<number>:` (optionally preceded by `opencode
+   * `) of displayTitle. Undefined for runs that predate the run-name
+   * rollout - callers should fall back to a title-string match against
+   * `displayTitle` for those.
    */
   issueNumber?: number;
   createdAt: string;
@@ -38,28 +55,69 @@ export interface AgentRun {
   elapsedSeconds: number;
 }
 
-export interface RunnerStatus {
-  name: string;
-  online: boolean;
-  busy: boolean;
+/**
+ * Reduced view of `listSelfHostedRunnersForRepo`. #2974 migrated every
+ * workflow to autoscaler scale sets: runners are now ephemeral, register
+ * with empty label arrays, and legitimately scale to zero when idle. There
+ * is nothing meaningful left to show per-runner (the old per-runner
+ * name/label badges), so only the fleet-wide aggregate is tracked.
+ */
+export interface FleetSummary {
+  online: number;
+  busy: number;
 }
 
 export interface AgentActivity {
   liveRuns: AgentRun[];
   recentRuns: AgentRun[];
   /** undefined = runner API unavailable (e.g. token lacks admin:read). */
-  runners?: RunnerStatus[];
+  fleet?: FleetSummary;
   /** Human-readable notes when a section above degraded instead of crashing. */
   warnings: string[];
 }
 
-const DISPLAY_TITLE_NUMBER_RE = /^#(\d+):/;
+const DISPLAY_TITLE_NUMBER_RE = /^(?:opencode\s+)?#(\d+):/;
 
 export function issueNumberFromDisplayTitle(
   displayTitle: string,
 ): number | undefined {
   const match = displayTitle.match(DISPLAY_TITLE_NUMBER_RE);
   return match ? Number(match[1]) : undefined;
+}
+
+const OPENCODE_TITLE_PREFIX_RE = /^opencode\s+/;
+
+/**
+ * opencode.yml's run-name repeats the pipeline name ahead of the `#N:` join
+ * key (`opencode #42: Fix the thing`). A pipeline badge already renders
+ * "opencode" next to the row, so strip the redundant word from the title
+ * text itself to avoid saying it twice.
+ */
+export function displayRunTitle(run: AgentRun): string {
+  return run.pipeline === 'opencode'
+    ? run.displayTitle.replace(OPENCODE_TITLE_PREFIX_RE, '')
+    : run.displayTitle;
+}
+
+/**
+ * A live run queued longer than this almost certainly means the autoscaler
+ * isn't supplying it a runner - distinct from "zero runners registered",
+ * which is a normal scaled-to-zero idle state on its own.
+ */
+export const QUEUE_STALL_THRESHOLD_SECONDS = 300;
+
+/** The longest-stalled queued live run, if any - used to drive the queue
+ * health warning (and its "queued for Xm" message). */
+export function findStalledQueuedRun(
+  liveRuns: AgentRun[],
+): AgentRun | undefined {
+  return liveRuns
+    .filter(
+      (run) =>
+        run.status === 'queued' &&
+        run.elapsedSeconds > QUEUE_STALL_THRESHOLD_SECONDS,
+    )
+    .sort((a, b) => b.elapsedSeconds - a.elapsedSeconds)[0];
 }
 
 interface WorkflowRunLike {
@@ -80,7 +138,7 @@ function toConclusion(raw: string | null): AgentRunConclusion | undefined {
   return 'other';
 }
 
-function toAgentRun(run: WorkflowRunLike): AgentRun {
+function toAgentRun(run: WorkflowRunLike, pipeline: AgentPipeline): AgentRun {
   const status: AgentRunStatus =
     run.status === 'completed'
       ? 'completed'
@@ -96,6 +154,7 @@ function toAgentRun(run: WorkflowRunLike): AgentRun {
     status === 'completed' ? new Date(run.updated_at).getTime() : Date.now();
   return {
     id: run.id,
+    pipeline,
     status,
     conclusion: toConclusion(run.conclusion),
     event: run.event,
@@ -108,87 +167,120 @@ function toAgentRun(run: WorkflowRunLike): AgentRun {
   };
 }
 
-// claude.yml fires on EVERY issue comment and label event; almost all runs
-// skip at the job-level `if:` and complete in seconds with conclusion
-// `skipped`. During a busy comment stretch the newest 50+ runs can ALL be
-// skipped no-ops, so "recent real runs" cannot be derived from a single
-// recency-ordered page - query per real conclusion instead (the API's
-// `status` param also accepts conclusions) and merge.
+// Both claude.yml and opencode.yml fire on EVERY issue comment and label
+// event; almost all runs skip at the job-level `if:` and complete in
+// seconds with conclusion `skipped`. During a busy comment stretch the
+// newest 50+ runs can ALL be skipped no-ops, so "recent real runs" cannot be
+// derived from a single recency-ordered page - query per real conclusion
+// instead (the API's `status` param also accepts conclusions) and merge.
 const RECENT_CONCLUSIONS = ['success', 'failure', 'cancelled'] as const;
+
+async function fetchLiveRuns(
+  octokit: Octokit,
+  pipeline: AgentPipeline,
+): Promise<AgentRun[]> {
+  const response = await octokit.rest.actions.listWorkflowRuns({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    workflow_id: WORKFLOW_FILES[pipeline],
+    per_page: 30,
+  });
+  return response.data.workflow_runs
+    .map((run) => toAgentRun(run, pipeline))
+    .filter((run) => run.status !== 'completed');
+}
+
+async function fetchRecentRuns(
+  octokit: Octokit,
+  pipeline: AgentPipeline,
+): Promise<AgentRun[]> {
+  const responses = await Promise.all(
+    RECENT_CONCLUSIONS.map((status) =>
+      octokit.rest.actions.listWorkflowRuns({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        workflow_id: WORKFLOW_FILES[pipeline],
+        status,
+        per_page: RECENT_RUN_LIMIT,
+      }),
+    ),
+  );
+  return responses
+    .flatMap((response) => response.data.workflow_runs)
+    .map((run) => toAgentRun(run, pipeline));
+}
 
 export async function getAgentActivity(): Promise<AgentActivity> {
   const octokit = getGithubClient();
 
-  // Same defensive pattern as getActionItems: any of the three halves
-  // failing (API hiccup, missing token permission) degrades that panel
-  // section instead of crashing the whole dashboard. Live runs are always
-  // the newest rows, so one small unfiltered page covers them.
-  const [liveResult, runnersResult, recentResult] = await Promise.allSettled([
-    octokit.rest.actions.listWorkflowRuns({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
-      workflow_id: AGENT_WORKFLOW_FILE,
-      per_page: 30,
-    }),
+  // Same defensive pattern as getActionItems: any half failing (API hiccup,
+  // missing token permission) degrades that section instead of crashing the
+  // whole dashboard. Live runs are always the newest rows, so one small
+  // unfiltered page per pipeline covers them. The runner fleet listing is
+  // shared across both pipelines - it's a repo-wide pool, not per-workflow.
+  const [
+    liveClaude,
+    liveOpencode,
+    recentClaude,
+    recentOpencode,
+    runnersResult,
+  ] = await Promise.allSettled([
+    fetchLiveRuns(octokit, 'claude'),
+    fetchLiveRuns(octokit, 'opencode'),
+    fetchRecentRuns(octokit, 'claude'),
+    fetchRecentRuns(octokit, 'opencode'),
     octokit.rest.actions.listSelfHostedRunnersForRepo({
       owner: REPO_OWNER,
       repo: REPO_NAME,
       per_page: 100,
     }),
-    Promise.all(
-      RECENT_CONCLUSIONS.map((status) =>
-        octokit.rest.actions.listWorkflowRuns({
-          owner: REPO_OWNER,
-          repo: REPO_NAME,
-          workflow_id: AGENT_WORKFLOW_FILE,
-          status,
-          per_page: RECENT_RUN_LIMIT,
-        }),
-      ),
-    ),
   ]);
 
   const warnings: string[] = [];
 
   let liveRuns: AgentRun[] = [];
-  if (liveResult.status === 'fulfilled') {
-    liveRuns = liveResult.value.data.workflow_runs
-      .map(toAgentRun)
-      .filter((run) => run.status !== 'completed');
-  } else {
-    console.error(
-      'agent-console: failed to list live agent runs:',
-      liveResult.reason,
-    );
-    warnings.push('Live agent runs unavailable (GitHub API request failed).');
+  for (const result of [liveClaude, liveOpencode]) {
+    if (result.status === 'fulfilled') {
+      liveRuns = liveRuns.concat(result.value);
+    } else {
+      console.error(
+        'agent-console: failed to list live agent runs:',
+        result.reason,
+      );
+      warnings.push('Live agent runs unavailable (GitHub API request failed).');
+    }
   }
 
   let recentRuns: AgentRun[] = [];
-  if (recentResult.status === 'fulfilled') {
-    recentRuns = recentResult.value
-      .flatMap((response) => response.data.workflow_runs)
-      .map(toAgentRun)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, RECENT_RUN_LIMIT);
-  } else {
-    console.error(
-      'agent-console: failed to list recent agent runs:',
-      recentResult.reason,
-    );
-    warnings.push('Recent agent runs unavailable (GitHub API request failed).');
+  for (const result of [recentClaude, recentOpencode]) {
+    if (result.status === 'fulfilled') {
+      recentRuns = recentRuns.concat(result.value);
+    } else {
+      console.error(
+        'agent-console: failed to list recent agent runs:',
+        result.reason,
+      );
+      warnings.push(
+        'Recent agent runs unavailable (GitHub API request failed).',
+      );
+    }
   }
+  recentRuns = recentRuns
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, RECENT_RUN_LIMIT);
 
-  let runners: RunnerStatus[] | undefined;
+  let fleet: FleetSummary | undefined;
   if (runnersResult.status === 'fulfilled') {
-    runners = runnersResult.value.data.runners
-      .filter((runner) =>
-        runner.labels.some((label) => label.name === AGENT_RUNNER_LABEL),
-      )
-      .map((runner) => ({
-        name: runner.name,
-        online: runner.status === 'online',
-        busy: runner.busy,
-      }));
+    fleet = runnersResult.value.data.runners.reduce<FleetSummary>(
+      (acc, runner) => {
+        if (runner.status === 'online') {
+          acc.online += 1;
+          if (runner.busy) acc.busy += 1;
+        }
+        return acc;
+      },
+      { online: 0, busy: 0 },
+    );
   } else {
     console.error(
       'agent-console: failed to list self-hosted runners:',
@@ -199,5 +291,10 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     );
   }
 
-  return { liveRuns, recentRuns, runners, warnings };
+  return {
+    liveRuns,
+    recentRuns,
+    fleet,
+    warnings: Array.from(new Set(warnings)),
+  };
 }
