@@ -36,6 +36,7 @@ export interface EnvVars {
 
   // Canonical cross-provider matcher feature flags (#1675 §6). Default off.
   CANONICAL_MATCHER_ENABLED?: string;
+  CANONICAL_MINT_ON_CREATE?: string;
   CANONICAL_AUTO_MERGE_ENABLED?: string;
 
   NEXT_PUBLIC_ANALYTICS_ID?: string;

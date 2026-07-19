@@ -251,6 +251,15 @@ export const getCanonicalMatcherEnabled = () =>
 export const getCanonicalAutoMergeEnabled = () =>
   isTrue('CANONICAL_AUTO_MERGE_ENABLED');
 
+/**
+ * D4.1 (#3062): whether creating an organizer race in /manage mints its
+ * canonical doc immediately as a draft (#2964), instead of waiting for the
+ * two-phase publish. Default OFF; the sweep chore and create-flow duplicate
+ * dialog are inert while off. Enable only after the D4 cutover checklist.
+ */
+export const getCanonicalMintOnCreateEnabled = () =>
+  isTrue('CANONICAL_MINT_ON_CREATE');
+
 export const getRagDriveFolders = () => splitEnvList('RAG_DRIVE_FOLDERS');
 
 export const getRoadResultsTeamId = () => required('ROADRESULTS_TEAM_ID');
