@@ -93,6 +93,13 @@ export interface IssueAgentSessionDoc extends BaseSessionDoc {
   source: 'issue-agent';
   runId?: string;
   issueNumber?: number;
+  /** `gs://` URI of this run's archived transcript (Slice 2's runner-mode
+   * shipper — see claude.yml's "Ship session telemetry" step and
+   * apps/agent-console/infra/agent-telemetry.yaml). Issue-agent sessions
+   * only: `cli` docs are built from a transcript already on local disk, so
+   * there is no runner-container-destroyed-on-exit problem to solve for
+   * them. */
+  transcriptGcsUri?: string;
 }
 
 /** Source-discriminated document shape stored at `sessions/{sessionId}`. */
@@ -103,4 +110,6 @@ export interface BuildSessionDocOptions {
   runId?: string;
   /** `issue-agent` sessions only. */
   issueNumber?: number;
+  /** `issue-agent` sessions only. */
+  transcriptGcsUri?: string;
 }

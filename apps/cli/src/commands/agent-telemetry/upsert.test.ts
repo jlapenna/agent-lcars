@@ -127,7 +127,52 @@ describe('upsertCommand', () => {
     );
   });
 
-  it('carries --run-id/--issue-number into an issue-agent session doc', async () => {
+  it('carries --run-id/--issue-number/--transcript-gcs-uri into an issue-agent session doc', async () => {
+    const transcriptFile = writeTranscript(tmpDir, [
+      transcriptLine({
+        uuid: 'uuid-1',
+        entrypoint: 'claude-code-github-action',
+        cwd: '/home/runner/work/members/members',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Implement the store' }],
+        },
+      }),
+    ]);
+
+    const argv = {
+      'transcript-file': transcriptFile,
+      'run-id': 'run-123',
+      'issue-number': 2539,
+      'transcript-gcs-uri':
+        'gs://supersprinklesracing-agent-session-transcripts/runs/run-123/session-cli-upsert.jsonl',
+      _: [],
+      $0: 'test',
+    } as unknown as ArgumentsCamelCase<{
+      'transcript-file': string;
+      'run-id'?: string;
+      'issue-number'?: number;
+      'transcript-gcs-uri'?: string;
+    }>;
+
+    await upsertCommand.handler(argv);
+
+    const snap = await fakeFirestore
+      .collection('sessions')
+      .doc('session-cli-upsert')
+      .get();
+    const data = snap.data();
+    expect(data?.['source']).toBe('issue-agent');
+    expect(data?.['runId']).toBe('run-123');
+    expect(data?.['issueNumber']).toBe(2539);
+    expect(data?.['transcriptGcsUri']).toBe(
+      'gs://supersprinklesracing-agent-session-transcripts/runs/run-123/session-cli-upsert.jsonl',
+    );
+    expect(data?.['host']).toBeUndefined();
+    expect(data?.['cwd']).toBeUndefined();
+  });
+
+  it('omits transcriptGcsUri when --transcript-gcs-uri is not passed', async () => {
     const transcriptFile = writeTranscript(tmpDir, [
       transcriptLine({
         uuid: 'uuid-1',
@@ -150,6 +195,7 @@ describe('upsertCommand', () => {
       'transcript-file': string;
       'run-id'?: string;
       'issue-number'?: number;
+      'transcript-gcs-uri'?: string;
     }>;
 
     await upsertCommand.handler(argv);
@@ -159,11 +205,7 @@ describe('upsertCommand', () => {
       .doc('session-cli-upsert')
       .get();
     const data = snap.data();
-    expect(data?.['source']).toBe('issue-agent');
-    expect(data?.['runId']).toBe('run-123');
-    expect(data?.['issueNumber']).toBe(2539);
-    expect(data?.['host']).toBeUndefined();
-    expect(data?.['cwd']).toBeUndefined();
+    expect(data?.['transcriptGcsUri']).toBeUndefined();
   });
 
   it('errors out without upserting when the transcript file is missing', async () => {

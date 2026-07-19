@@ -12,6 +12,7 @@ interface UpsertArgs {
   'transcript-file': string;
   'run-id'?: string;
   'issue-number'?: number;
+  'transcript-gcs-uri'?: string;
 }
 
 export const upsertCommand: CommandModule<unknown, UpsertArgs> = {
@@ -33,6 +34,11 @@ export const upsertCommand: CommandModule<unknown, UpsertArgs> = {
         type: 'number',
         describe:
           'GitHub issue number the run was dispatched for (issue-agent sessions only)',
+      })
+      .option('transcript-gcs-uri', {
+        type: 'string',
+        describe:
+          "gs:// URI of this run's archived transcript in the agent-session-transcripts bucket (issue-agent sessions only)",
       }),
   handler: async (argv: ArgumentsCamelCase<UpsertArgs>) => {
     const transcriptFile = argv['transcript-file'];
@@ -62,6 +68,7 @@ export const upsertCommand: CommandModule<unknown, UpsertArgs> = {
     const doc = buildSessionDoc(summary, liveness, {
       runId: argv['run-id'],
       issueNumber: argv['issue-number'],
+      transcriptGcsUri: argv['transcript-gcs-uri'],
     });
 
     await upsertSession(doc);

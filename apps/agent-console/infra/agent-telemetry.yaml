@@ -1,9 +1,12 @@
-# Agent Telemetry infra (Agent Console v2 program, Slice 1 — issue #2538).
+# Agent Telemetry infra (Agent Console v2 program, Slice 1 — issue #2538 —
+# plus Slice 2's runner-mode shipper + GCS transcript archive).
 #
 # A dedicated Firestore database + a write-only and a read-only service
 # account for session telemetry (CLI + issue-agent runner sessions), isolated
-# from the app's (default) Firestore database. See PRD #2112 and
-# docs/firestore.md.
+# from the app's (default) Firestore database, plus a GCS bucket archiving
+# full transcripts for issue-agent runs (the runner container is destroyed
+# the moment the job ends, so this is the only durable copy of a
+# crashed/timed-out run's transcript). See PRD #2112 and docs/firestore.md.
 #
 # This file is the source-of-truth inventory of what's provisioned. The
 # provisioning script (tools/provision-agent-telemetry-gcp.sh) recreates it
@@ -22,9 +25,10 @@ firestore:
   # field; deletion is performed by Firestore's own service agent, so no
   # extra IAM permission (e.g. datastore.entities.delete) is needed on the
   # writer role above. 30d was chosen to comfortably outlive the console's
-  # 24h `activeSince` read cutoff (#2694/#2701) while Slice 2 (GCS transcript
-  # archive) is still unbuilt; revisit once that lands if ended-session docs
-  # need to live longer as an index into the archive.
+  # 24h `activeSince` read cutoff (#2694/#2701); now that Slice 2's GCS
+  # transcript archive has landed, revisit whether ended-session docs need
+  # to live longer as an index into the archive (the archived transcript
+  # itself has no TTL — only the Firestore doc pointing at it does).
   ttlPolicies:
     sessions:
       field: 'expireAt'
@@ -65,7 +69,7 @@ serviceAccounts:
     grants:
       - principal: 'principalSet://iam.googleapis.com/projects/972941236852/locations/global/workloadIdentityPools/claude-agent-pool/attribute.repository/supersprinklesracing/members'
         role: 'roles/iam.workloadIdentityUser'
-        reason: 'claude.yml runner mints a token for this SA (runner-mode shipper, Slice 2 — not built yet)'
+        reason: 'claude.yml''s "Authenticate telemetry writer" step mints an access token for this SA (runner-mode shipper, Slice 2 — see the storage section below and the "Ship session telemetry" step)'
       - principal: 'user:jlapenna@gmail.com'
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'
@@ -89,3 +93,29 @@ serviceAccounts:
       - principal: 'user:jlapenna@gmail.com'
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'
+
+# Slice 2's GCS transcript archive. The runner container claude.yml runs on
+# is destroyed the instant the job ends, so this bucket is the only durable
+# copy of a run's full Claude Code transcript (particularly valuable for a
+# crashed/timed-out/turn-budget-exhausted run, where the transcript is
+# otherwise the only record of what was attempted). Shipping is best-effort
+# (claude.yml's "Ship session telemetry" step, `if: always()` +
+# `continue-on-error: true`) — a failed upload must never fail the run.
+storage:
+  transcriptsBucket:
+    name: 'supersprinklesracing-agent-session-transcripts'
+    location: 'us-central1'
+    uniformBucketLevelAccess: true
+    publicAccessPrevention: true
+    # runs/<github-run-id>/<transcript-filename>.jsonl, one object per
+    # transcript file found under /root/.claude/projects/*/*.jsonl at the
+    # end of the run (normally exactly one; the container is fresh per run,
+    # so everything found there belongs to this run's session(s)).
+    objectLayout: 'runs/<github-run-id>/<transcript-filename>.jsonl'
+    grants:
+      - principal: 'serviceAccount:agent-telemetry-writer@supersprinklesracing.iam.gserviceaccount.com'
+        role: 'roles/storage.objectCreator'
+        reason: "claude.yml uploads each run's transcript(s) via the GCS JSON API using this SA's WIF-minted access token (no gcloud CLI on the runner container, curl only)"
+      - principal: 'serviceAccount:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com'
+        role: 'roles/storage.objectViewer'
+        reason: 'agent-console reads archived transcripts back out for the session detail page (follow-up PR, PRD #2112) — granted directly since the console reads with its own runtime identity, not an impersonation call like the Firestore reader path above'

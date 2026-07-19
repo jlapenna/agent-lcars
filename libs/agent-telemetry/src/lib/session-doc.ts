@@ -60,6 +60,9 @@ export function buildSessionDoc(
       ...(options.issueNumber !== undefined && {
         issueNumber: options.issueNumber,
       }),
+      ...(options.transcriptGcsUri && {
+        transcriptGcsUri: options.transcriptGcsUri,
+      }),
     };
   }
 

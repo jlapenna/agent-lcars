@@ -90,6 +90,47 @@ describe('buildSessionDoc', () => {
     });
     expect(doc).not.toHaveProperty('host');
     expect(doc).not.toHaveProperty('cwd');
+    expect(doc).not.toHaveProperty('transcriptGcsUri');
+  });
+
+  it('carries transcriptGcsUri onto an issue-agent doc when present', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent' }),
+      'ended',
+      {
+        runId: 'run-123',
+        issueNumber: 2539,
+        transcriptGcsUri:
+          'gs://supersprinklesracing-agent-session-transcripts/runs/run-123/session-1.jsonl',
+      },
+    );
+
+    expect(doc).toMatchObject({
+      transcriptGcsUri:
+        'gs://supersprinklesracing-agent-session-transcripts/runs/run-123/session-1.jsonl',
+    });
+  });
+
+  it('omits transcriptGcsUri when absent rather than writing undefined', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent' }),
+      'ended',
+      { runId: 'run-123' },
+    );
+
+    expect(doc).not.toHaveProperty('transcriptGcsUri');
+  });
+
+  it('never carries transcriptGcsUri onto a cli doc even if passed by mistake', () => {
+    // BuildSessionDocOptions doesn't discriminate by source, so a caller
+    // could pass transcriptGcsUri alongside a cli summary — the builder
+    // itself must still gate it to the issue-agent branch, since only
+    // IssueAgentSessionDoc declares the field.
+    const doc = buildSessionDoc(baseSummary({ source: 'cli' }), 'live', {
+      transcriptGcsUri: 'gs://bucket/runs/1/session.jsonl',
+    });
+
+    expect(doc).not.toHaveProperty('transcriptGcsUri');
   });
 
   it('omits optional fields entirely rather than writing undefined', () => {
