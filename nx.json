@@ -64,7 +64,8 @@
         "apps/members/e2e/**/*",
         "apps/onecake/e2e/**/*",
         "apps/primes/e2e/**/*",
-        "apps/primes/frontend/**/*"
+        "apps/primes/frontend/**/*",
+        "apps/primes/infra/**/*"
       ]
     },
     {
