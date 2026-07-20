@@ -24,6 +24,26 @@ const [summary] = reduceTranscript(fs.readFileSync(transcriptPath, 'utf8'));
 const summaries = reduceTranscripts([part1Content, part2Content]);
 ```
 
+## Agent identity & the transcript-adapter seam
+
+Every `SessionSummary`/`SessionDoc` carries an optional `agent` field
+(`SessionAgent`: `'claude-code' | 'codex' | 'gemini' | 'antigravity' |
+'opencode'`) naming which coding agent produced it. It's optional because
+every session shipped before this field existed has no such key — resolve
+the effective value with `sessionAgent(docOrSummary)` rather than reading
+`.agent` directly; it defaults to `'claude-code'` when absent, since that
+reducer was the only one that ever existed.
+
+`reduceTranscript`/`reduceTranscripts` remain Claude-Code-only and always
+stamp `agent: 'claude-code'`. `TranscriptAdapter` (`transcript-adapter.ts`)
+is a parallel seam for future agents: an adapter pairs a cheap
+content-sniffing `detect()` with a `reduce()` that turns one file's lines
+into summaries. `claudeCodeAdapter` wraps the existing reducer; new agents
+register their own adapter in `TRANSCRIPT_ADAPTERS`. Consumers resolve an
+adapter either by content (`adapterFor`) or by name
+(`getTranscriptAdapter`) — see `apps/agent-telemetry-watcher`'s multi-root
+`watchRoots` config for the name-keyed case.
+
 ## CLI
 
 ```bash

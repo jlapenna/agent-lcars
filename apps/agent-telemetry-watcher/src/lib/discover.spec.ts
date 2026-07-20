@@ -3,7 +3,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { discoverTranscriptFiles } from './discover';
+import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
+import { WatchRootConfig } from './watch-roots';
 
 describe('discoverTranscriptFiles', () => {
   let root: string;
@@ -57,5 +58,125 @@ describe('discoverTranscriptFiles', () => {
     expect(discoverTranscriptFiles(path.join(root, 'missing'), ['*'])).toEqual(
       [],
     );
+  });
+});
+
+describe('discoverAcrossRoots', () => {
+  let rootA: string;
+  let rootB: string;
+
+  beforeEach(() => {
+    rootA = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'agent-telemetry-watcher-root-a-'),
+    );
+    rootB = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'agent-telemetry-watcher-root-b-'),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(rootA, { recursive: true, force: true });
+    fs.rmSync(rootB, { recursive: true, force: true });
+  });
+
+  it('discovers files from multiple roots independently, tagging each with its own root', () => {
+    fs.mkdirSync(path.join(rootA, '-home-jlapenna-p-members'));
+    fs.writeFileSync(
+      path.join(rootA, '-home-jlapenna-p-members', 'session-a.jsonl'),
+      '',
+    );
+    fs.mkdirSync(path.join(rootB, 'any-project-dir'));
+    fs.writeFileSync(
+      path.join(rootB, 'any-project-dir', 'session-b.jsonl'),
+      '',
+    );
+
+    const claudeRoot: WatchRootConfig = {
+      path: rootA,
+      adapter: 'claude-code',
+      projectDirAllowlist: ['-home-jlapenna-p-members*'],
+    };
+    const codexRoot: WatchRootConfig = {
+      path: rootB,
+      adapter: 'codex',
+    };
+
+    const discovered = discoverAcrossRoots([claudeRoot, codexRoot]);
+
+    expect(discovered).toEqual([
+      {
+        file: path.join(rootA, '-home-jlapenna-p-members', 'session-a.jsonl'),
+        root: claudeRoot,
+      },
+      {
+        file: path.join(rootB, 'any-project-dir', 'session-b.jsonl'),
+        root: codexRoot,
+      },
+    ]);
+  });
+
+  it("applies each root's own allowlist independently (a dir allowed under one root can be rejected under another)", () => {
+    fs.mkdirSync(path.join(rootA, 'allowed-here'));
+    fs.writeFileSync(path.join(rootA, 'allowed-here', 'session-x.jsonl'), '');
+    fs.mkdirSync(path.join(rootB, 'allowed-here'));
+    fs.writeFileSync(path.join(rootB, 'allowed-here', 'session-y.jsonl'), '');
+
+    const permissiveRoot: WatchRootConfig = {
+      path: rootA,
+      adapter: 'claude-code',
+      projectDirAllowlist: ['allowed-here'],
+    };
+    const restrictiveRoot: WatchRootConfig = {
+      path: rootB,
+      adapter: 'claude-code',
+      projectDirAllowlist: ['not-this-one'],
+    };
+
+    const discovered = discoverAcrossRoots([permissiveRoot, restrictiveRoot]);
+
+    expect(discovered.map((d) => d.file)).toEqual([
+      path.join(rootA, 'allowed-here', 'session-x.jsonl'),
+    ]);
+  });
+
+  it('treats an omitted projectDirAllowlist as unfiltered (matches every project dir)', () => {
+    fs.mkdirSync(path.join(rootA, 'totally-unscoped-dir-name'));
+    fs.writeFileSync(
+      path.join(rootA, 'totally-unscoped-dir-name', 'session-z.jsonl'),
+      '',
+    );
+
+    const noAllowlistRoot: WatchRootConfig = {
+      path: rootA,
+      adapter: 'claude-code',
+    };
+
+    const discovered = discoverAcrossRoots([noAllowlistRoot]);
+
+    expect(discovered.map((d) => d.file)).toEqual([
+      path.join(rootA, 'totally-unscoped-dir-name', 'session-z.jsonl'),
+    ]);
+  });
+
+  it('returns an empty list for an empty watchRoots array', () => {
+    expect(discoverAcrossRoots([])).toEqual([]);
+  });
+
+  it("passes each root's own path and resolved allowlist to the injected discover function", () => {
+    const calls: Array<{ rootPath: string; allowlist: string[] }> = [];
+    const roots: WatchRootConfig[] = [
+      { path: rootA, adapter: 'claude-code', projectDirAllowlist: ['a-*'] },
+      { path: rootB, adapter: 'codex' },
+    ];
+
+    discoverAcrossRoots(roots, (rootPath, allowlist) => {
+      calls.push({ rootPath, allowlist });
+      return [];
+    });
+
+    expect(calls).toEqual([
+      { rootPath: rootA, allowlist: ['a-*'] },
+      { rootPath: rootB, allowlist: ['*'] },
+    ]);
   });
 });

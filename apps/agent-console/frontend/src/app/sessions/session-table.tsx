@@ -1,6 +1,7 @@
 import {
   Anchor,
   Badge,
+  Group,
   Table,
   TableScrollContainer,
   TableTbody,
@@ -15,7 +16,11 @@ import {
   sessionDurationSeconds,
   type SessionRow,
 } from '../../lib/session-archive';
-import { LIVENESS_COLORS, LIVENESS_LABELS } from '../agent-activity-panel';
+import {
+  AgentBadge,
+  LIVENESS_COLORS,
+  LIVENESS_LABELS,
+} from '../agent-activity-panel';
 import { formatCost, formatDuration, formatRelativeTime } from '../format';
 
 /**
@@ -70,14 +75,17 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                 </Badge>
               </TableTd>
               <TableTd>
-                <Anchor
-                  href={`/sessions/${row.sessionId}`}
-                  size="sm"
-                  truncate
-                  style={{ maxWidth: 280, display: 'block' }}
-                >
-                  {row.title}
-                </Anchor>
+                <Group gap={6} wrap="nowrap">
+                  <Anchor
+                    href={`/sessions/${row.sessionId}`}
+                    size="sm"
+                    truncate
+                    style={{ maxWidth: 280, display: 'block' }}
+                  >
+                    {row.title}
+                  </Anchor>
+                  <AgentBadge agent={row.agent} />
+                </Group>
               </TableTd>
               <TableTd>
                 {row.issueNumber !== undefined && row.issueUrl && (

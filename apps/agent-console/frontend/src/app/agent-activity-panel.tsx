@@ -12,6 +12,7 @@ import {
 import type {
   IssueAgentSessionDoc,
   RunStatusClassification,
+  SessionAgent,
 } from '@repo/agent-telemetry';
 
 import type {
@@ -102,6 +103,56 @@ export function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
       style={{ flexShrink: 0 }}
     >
       {PIPELINE_LABELS[pipeline]}
+    </Badge>
+  );
+}
+
+// Labels/colors for the *coding agent* that produced a session (#3123 phase
+// 1 - the discriminator + watcher/adapter seam this badge is the only
+// visible surface of so far; no non-claude-code agent ships yet). Distinct
+// from PIPELINE_LABELS/PIPELINE_COLORS above, which tag a GitHub Actions
+// *run* by which workflow dispatched it (claude.yml vs opencode.yml) - a
+// session's `agent` instead names which tool actually produced the
+// transcript, an orthogonal axis that matters once opencode.yml (or a
+// non-Claude CLI) starts shipping its own session docs.
+const AGENT_LABELS: Record<SessionAgent, string> = {
+  'claude-code': 'claude code',
+  codex: 'codex',
+  gemini: 'gemini',
+  antigravity: 'antigravity',
+  opencode: 'opencode',
+};
+
+const AGENT_COLORS: Record<SessionAgent, string> = {
+  'claude-code': 'gray',
+  codex: 'teal',
+  gemini: 'blue',
+  antigravity: 'grape',
+  opencode: 'violet',
+};
+
+/**
+ * Session-identity badge: which coding agent produced this session's
+ * transcript. Renders nothing for `'claude-code'` - both `sessionAgent()`'s
+ * default for any doc predating #3123 and, today, every single session that
+ * exists - so the overwhelmingly common case stays visually quiet and only
+ * a genuinely different agent earns a badge. Callers resolve the value via
+ * `sessionAgent(doc)` (or a view-model field already resolved that way, see
+ * `CliSession.agent`/`SessionRow.agent`) rather than passing the raw
+ * optional field through.
+ */
+export function AgentBadge({ agent }: { agent: SessionAgent }) {
+  if (agent === 'claude-code') {
+    return null;
+  }
+  return (
+    <Badge
+      variant="outline"
+      color={AGENT_COLORS[agent]}
+      size="xs"
+      style={{ flexShrink: 0 }}
+    >
+      {AGENT_LABELS[agent]}
     </Badge>
   );
 }
@@ -364,6 +415,7 @@ export function CliSessionRow({
         <Text size="sm" fw={500} style={{ minWidth: 0 }} truncate>
           {session.title ?? session.branch ?? session.sessionId}
         </Text>
+        <AgentBadge agent={session.agent} />
         <Anchor
           href={`/sessions/${session.sessionId}`}
           size="xs"

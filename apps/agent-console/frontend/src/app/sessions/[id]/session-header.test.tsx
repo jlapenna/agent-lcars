@@ -203,4 +203,19 @@ describe('SessionHeader', () => {
     renderHeader(cliDoc());
     expect(screen.queryByText(/resume-archive/)).toBeNull();
   });
+
+  it('renders no agent badge when the doc has no agent field (defaults to claude-code)', () => {
+    renderHeader(cliDoc());
+    expect(screen.queryByText('claude code')).toBeNull();
+  });
+
+  it('renders no agent badge for an explicit claude-code doc', () => {
+    renderHeader(cliDoc({ agent: 'claude-code' }));
+    expect(screen.queryByText('claude code')).toBeNull();
+  });
+
+  it('renders an agent badge for a non-claude-code doc', () => {
+    renderHeader(agentDoc({ agent: 'antigravity' }));
+    expect(screen.getByText('antigravity')).toBeTruthy();
+  });
 });

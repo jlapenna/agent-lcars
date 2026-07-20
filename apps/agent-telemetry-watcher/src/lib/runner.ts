@@ -22,7 +22,7 @@ export interface StartRideAlongOptions {
   /** Test-only injection points, mirrored 1:1 from `WatcherDaemonOptions` —
    * production callers (main.ts) never set these, so the daemon uses real
    * `fs`/`/proc`/`git`. */
-  discover?: (claudeProjectsDir: string, allowlist: string[]) => string[];
+  discover?: (rootPath: string, allowlist: string[]) => string[];
   readFile?: (filePath: string) => string;
   statFile?: (filePath: string) => { mtimeMs: number; size: number };
   isProcessAliveForCwd?: (cwd: string) => boolean;
@@ -70,8 +70,13 @@ export function startRideAlong(options: StartRideAlongOptions): WatcherDaemon {
   const { config, store } = options;
 
   const daemon = new WatcherDaemon({
-    claudeProjectsDir: config.claudeProjectsDir,
-    allowlist: RUNNER_ALLOWLIST,
+    watchRoots: [
+      {
+        path: config.claudeProjectsDir,
+        adapter: 'claude-code',
+        projectDirAllowlist: RUNNER_ALLOWLIST,
+      },
+    ],
     host: config.host,
     store,
     heartbeatIntervalMs: config.heartbeatIntervalMs,

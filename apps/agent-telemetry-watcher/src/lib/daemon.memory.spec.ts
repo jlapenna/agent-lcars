@@ -96,5 +96,18 @@ describe('WatcherDaemon tick() memory usage', () => {
     // holds every file's content plus the reduced state simultaneously).
     // The streaming fix should stay well under half of that.
     expect(rssDeltaMb).toBeLessThan(totalMb * 0.5);
-  }, 60_000);
+    // Timeout raised 60s -> 120s (#3123 phase 1 CI investigation): CI failed
+    // once at 70.488s against this 200MB+ synthetic corpus while the
+    // multi-root/adapter refactor's own local runs stayed well under 20s -
+    // investigated by diffing daemon.ts's per-file change-detection path
+    // against origin/main (the stat-then-skip gate for unchanged files is
+    // untouched; no adapter/detect() work happens before that gate) and by
+    // running this exact spec's child-process workload directly (bypassing
+    // vitest) interleaved against an origin/main worktree on the same
+    // machine, 3 runs each: both clustered at 14.5-17.5s with no consistent
+    // gap between them. The CI timeout reflects this test's real cost on
+    // loaded CI hardware for a deliberately oversized (200MB+) fixture, not
+    // a regression - see #2606 (the original OOM issue this spec guards)
+    // for why the fixture has to be this large to be a meaningful check.
+  }, 120_000);
 });

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { isAllowedProjectDir } from './allowlist';
+import { WatchRootConfig } from './watch-roots';
 
 /**
  * Lists every `*.jsonl` transcript file under allowlisted project dirs in
@@ -40,5 +41,41 @@ export function discoverTranscriptFiles(
     }
   }
 
+  return files;
+}
+
+export interface DiscoveredFile {
+  file: string;
+  /** The watch root this file was discovered under — carries the adapter to
+   * reduce it with and (for logging/debugging) which allowlist scoped it
+   * in. */
+  root: WatchRootConfig;
+}
+
+/**
+ * Discovers transcript files across every configured watch root
+ * independently, tagging each with the root it came from. A root with no
+ * `projectDirAllowlist` watches every project dir under it unfiltered
+ * (`['*']`) rather than none — see {@link WatchRootConfig.projectDirAllowlist}'s
+ * doc comment for why an *absent* allowlist means "no restriction" while an
+ * *empty* one (`[]`) would mean "nothing matches" per `isAllowedProjectDir`.
+ * Roots are independent: the same project-dir basename can be in scope
+ * under one root and out of scope under another, and a file path colliding
+ * across two roots is not deduplicated (roots are expected to point at
+ * disjoint directory trees).
+ */
+export function discoverAcrossRoots(
+  watchRoots: WatchRootConfig[],
+  discover: (
+    rootPath: string,
+    allowlist: string[],
+  ) => string[] = discoverTranscriptFiles,
+): DiscoveredFile[] {
+  const files: DiscoveredFile[] = [];
+  for (const root of watchRoots) {
+    for (const file of discover(root.path, root.projectDirAllowlist ?? ['*'])) {
+      files.push({ file, root });
+    }
+  }
   return files;
 }

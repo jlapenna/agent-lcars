@@ -12,8 +12,13 @@ declare const global: { gc?: () => void };
 async function main() {
   const claudeProjectsDir = process.argv[2];
   const daemon = new WatcherDaemon({
-    claudeProjectsDir,
-    allowlist: ['*'],
+    watchRoots: [
+      {
+        path: claudeProjectsDir,
+        adapter: 'claude-code',
+        projectDirAllowlist: ['*'],
+      },
+    ],
     host: 'oom-regression-test',
     store: { upsertSession: () => Promise.resolve() },
     heartbeatIntervalMs: 10_000,

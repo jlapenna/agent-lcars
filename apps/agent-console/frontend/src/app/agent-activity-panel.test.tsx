@@ -57,6 +57,7 @@ function makeCliSession(overrides: Partial<CliSession> = {}): CliSession {
   return {
     sessionId: 'session-1',
     liveness: 'live',
+    agent: 'claude-code',
     host: 'joes-workstation',
     branch: 'feat/agent-console-cli-sessions',
     turns: 4,
@@ -245,6 +246,16 @@ describe('AgentActivityPanel CLI sessions', () => {
     renderPanel([makeCliSession({ liveness: 'live' })]);
     const badge = screen.getByTestId('cli-session-liveness');
     expect(badge.style.flexShrink).toBe('0');
+  });
+
+  it('renders no agent badge for a claude-code session (the overwhelming default)', () => {
+    renderPanel([makeCliSession({ agent: 'claude-code' })]);
+    expect(screen.queryByText('claude code')).toBeNull();
+  });
+
+  it('renders an agent badge for a non-claude-code session', () => {
+    renderPanel([makeCliSession({ agent: 'opencode' })]);
+    expect(screen.getByText('opencode')).toBeTruthy();
   });
 });
 

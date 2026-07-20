@@ -1,18 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { WatcherConfig } from './config';
-import { createStoreFromConfig } from './create-store';
+import { createStoreFromConfig, StoreConfig } from './create-store';
 import * as store from './store';
 
 describe('createStoreFromConfig', () => {
-  const baseConfig: WatcherConfig = {
-    claudeProjectsDir: '/root/.claude/projects',
-    allowlist: ['*'],
-    host: 'test-host',
-    heartbeatIntervalMs: 10_000,
-    stalenessWindowMs: 50_000,
-    shareDir: '/root/share',
-  };
+  // StoreConfig (not the full WatcherConfig) is deliberately all this test
+  // needs - createStoreFromConfig only ever reads the three firestore-*
+  // fields, so an empty base object with no firestore config set is a
+  // legitimate "falls back to log-only" starting point.
+  const baseConfig: StoreConfig = {};
 
   it('falls back to a log-only store when no credentials or emulator are configured', () => {
     const fakeStore = { upsertSession: vi.fn() };

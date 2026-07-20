@@ -129,6 +129,13 @@ describe('toSessionRow', () => {
     expect(row.runId).toBeUndefined();
   });
 
+  it('resolves agent via sessionAgent(), defaulting to claude-code when the doc has none', () => {
+    expect(toSessionRow(cliDoc(), now).agent).toBe('claude-code');
+    expect(toSessionRow(cliDoc({ agent: 'opencode' }), now).agent).toBe(
+      'opencode',
+    );
+  });
+
   it('builds an issue-agent row with issue/run links when present', () => {
     const row = toSessionRow(
       agentDoc({ issueNumber: 42, runId: '999888777' }),

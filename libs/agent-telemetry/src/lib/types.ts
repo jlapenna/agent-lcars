@@ -1,5 +1,26 @@
 export type SessionSource = 'cli' | 'issue-agent';
 
+/**
+ * Which coding agent produced a session's transcript. `'claude-code'` is the
+ * only one with a working {@link TranscriptAdapter} today (see
+ * `transcript-adapter.ts`) — the rest name agents phase 2/3 of #3123 are
+ * expected to add adapters for, so the watcher's multi-root config
+ * (apps/agent-telemetry-watcher) and the console's badge rendering have
+ * somewhere to point before those adapters exist.
+ */
+export type SessionAgent =
+  'claude-code' | 'codex' | 'gemini' | 'antigravity' | 'opencode';
+
+/** Every {@link SessionAgent} value, for validating config/env input against
+ * the union at runtime (TypeScript unions have no runtime representation). */
+export const SESSION_AGENTS: readonly SessionAgent[] = [
+  'claude-code',
+  'codex',
+  'gemini',
+  'antigravity',
+  'opencode',
+];
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -40,6 +61,12 @@ export interface SessionResult {
 export interface SessionSummary {
   sessionId: string;
   source: SessionSource;
+  /** Which coding agent produced this transcript. Omitted (rather than
+   * defaulted here) for any summary a pre-#3123 reducer produced or a
+   * hand-built test fixture that predates this field — use the
+   * {@link sessionAgent} helper to resolve the effective value (defaults to
+   * `'claude-code'` when absent) instead of reading this field directly. */
+  agent?: SessionAgent;
   host?: string;
   cwd?: string;
   worktree?: string;
@@ -89,6 +116,10 @@ export interface ComputeLivenessInput {
 interface BaseSessionDoc {
   sessionId: string;
   liveness: SessionLiveness;
+  /** See {@link SessionSummary.agent} — threaded through unchanged by
+   * `buildSessionDoc`. Use the {@link sessionAgent} helper to resolve the
+   * effective value rather than reading this field directly. */
+  agent?: SessionAgent;
   startedAt: string;
   lastActivityAt: string;
   turns: number;

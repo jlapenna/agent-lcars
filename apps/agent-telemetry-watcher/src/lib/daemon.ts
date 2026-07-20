@@ -1,18 +1,19 @@
 import {
   buildSessionDoc,
   computeLiveness,
-  reduceTranscripts,
+  getTranscriptAdapter,
   SessionSummary,
 } from '@repo/agent-telemetry';
 import { logger } from '@repo/logging';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { discoverTranscriptFiles } from './discover';
+import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover-artifacts';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { isProcessAliveForCwd as defaultIsProcessAliveForCwd } from './process-check';
 import { SessionStore } from './store';
+import { WatchRootConfig } from './watch-roots';
 
 export interface FileStat {
   mtimeMs: number;
@@ -20,10 +21,13 @@ export interface FileStat {
 }
 
 export interface WatcherDaemonOptions {
-  /** Root of `~/.claude/projects` (or a bind-mounted fixture dir in tests/Docker). */
-  claudeProjectsDir: string;
-  /** `*`-wildcard glob patterns matched against project-dir basenames. */
-  allowlist: string[];
+  /** Every root this daemon instance discovers transcripts under — see
+   * `watch-roots.ts`. The host watcher (main.ts) normally has exactly one
+   * (today's `~/.claude/projects`, `claude-code`); runner mode
+   * (`runner.ts`) also passes exactly one, allowlist-free. Multiple roots
+   * are discovered, change-detected, and reduced fully independently of
+   * each other within the same tick. */
+  watchRoots: WatchRootConfig[];
   host: string;
   store: SessionStore;
   heartbeatIntervalMs: number;
@@ -34,7 +38,15 @@ export interface WatcherDaemonOptions {
    */
   stalenessWindowMs: number;
   /** Root of `~/share` (share-media skill convention). Artifact discovery is
-   * skipped entirely when unset. */
+   * skipped entirely when unset. Deliberately NOT per-root: it's keyed only
+   * by `sessionId` (globally unique regardless of which root/agent produced
+   * the session), so scanning it once for every tracked session is already
+   * correct for every root — a root whose agent never writes artifacts
+   * there simply always gets `[]` back (fails soft, no per-root gating
+   * needed). Same reasoning applies to `isProcessAliveForCwd` below: a
+   * `cwd` from a non-local-process agent just won't match any `/proc`
+   * entry, so it degrades to "not alive" on its own without root-specific
+   * logic. */
   shareDir?: string;
   /** Runner-mode only (`source: 'issue-agent'` sessions, see
    * `runner.ts`/`runner-config.ts`): tagged onto every doc this daemon
@@ -46,7 +58,7 @@ export interface WatcherDaemonOptions {
   now?: () => string;
   readFile?: (filePath: string) => string;
   statFile?: (filePath: string) => FileStat;
-  discover?: (claudeProjectsDir: string, allowlist: string[]) => string[];
+  discover?: (rootPath: string, allowlist: string[]) => string[];
   isProcessAliveForCwd?: (cwd: string) => boolean;
   resolveGitBranch?: (cwd: string) => string | undefined;
   discoverArtifacts?: (shareDir: string, sessionId: string) => string[];
@@ -60,11 +72,12 @@ interface TrackedSession {
 
 /**
  * Long-lived per-host daemon: on every tick, discovers allowlisted
- * transcripts, reduces them, resolves liveness, and upserts each known
- * session doc to the store. Fails soft everywhere — a bad file, a reducer
- * error, or a store write failure logs and moves on rather than crashing
- * the process, since one broken transcript should never take down telemetry
- * for every other live session.
+ * transcripts across every configured watch root, reduces each one with its
+ * root's own adapter, resolves liveness, and upserts each known session doc
+ * to the store. Fails soft everywhere — a bad file, a missing adapter, a
+ * reducer error, or a store write failure logs and moves on rather than
+ * crashing the process, since one broken transcript should never take down
+ * telemetry for every other live session.
  */
 export class WatcherDaemon {
   private readonly sessions = new Map<string, TrackedSession>();
@@ -92,18 +105,21 @@ export class WatcherDaemon {
     const discoverArtifacts =
       this.options.discoverArtifacts ?? defaultDiscoverArtifacts;
 
-    const files = discover(
-      this.options.claudeProjectsDir,
-      this.options.allowlist,
-    );
+    const discovered = discoverAcrossRoots(this.options.watchRoots, discover);
 
     // Transcript filenames are `<sessionId>.jsonl` — a file that hasn't
     // changed since it was last read can't have produced a different
     // summary, so skip re-reading/re-reducing it and just refresh its
     // session's heartbeat (this is also what makes an `ended` session's
     // now-immutable file permanently skipped, with no extra bookkeeping).
-    const changedFiles = new Map<string, FileStat>();
-    for (const file of files) {
+    // File paths are assumed unique across roots (roots are expected to
+    // point at disjoint trees), so a single fileStats map keyed by path is
+    // still correct with multiple roots.
+    const changedFiles = new Map<
+      string,
+      { stat: FileStat; root: WatchRootConfig }
+    >();
+    for (const { file, root } of discovered) {
       let stat: FileStat;
       try {
         stat = statFile(file);
@@ -128,38 +144,62 @@ export class WatcherDaemon {
         continue;
       }
 
-      changedFiles.set(file, stat);
+      changedFiles.set(file, { stat, root });
     }
 
-    // Lazily read one changed file's content at a time (rather than
-    // collecting them all into an array first) so peak memory stays
-    // bounded to a single transcript even on the first tick, when every
-    // discovered file is "changed".
-    const fileStats = this.fileStats;
-    function* readChangedContents() {
-      for (const [file, stat] of changedFiles) {
-        try {
-          const content = readFile(file);
-          fileStats.set(file, stat);
-          yield content;
-        } catch (error) {
+    // Read and reduce one changed file at a time (never batching multiple
+    // files' contents into memory simultaneously - see #2606's OOM
+    // regression, guarded by daemon.memory.spec.ts) via its root's own
+    // adapter, resolved by name from the shared registry. A file maps 1:1
+    // to a sessionId by construction (`<sessionId>.jsonl`), so per-file
+    // adapter.reduce() calls are equivalent to the old batched
+    // reduceTranscripts() call for every case this daemon actually sees -
+    // cross-file merging for one session (which reduceTranscripts also
+    // supports) only matters for callers walking an arbitrary multi-file
+    // directory, not this daemon's discovery.
+    const missingAdapterWarned = new Set<string>();
+    const summaries: SessionSummary[] = [];
+    for (const [file, { stat, root }] of changedFiles) {
+      const adapter = getTranscriptAdapter(root.adapter);
+      if (!adapter) {
+        if (!missingAdapterWarned.has(root.adapter)) {
+          missingAdapterWarned.add(root.adapter);
           logger.warn(
-            `agent-telemetry-watcher: failed to read transcript ${file}, skipping`,
-            error,
+            `agent-telemetry-watcher: no transcript adapter registered for agent "${root.adapter}" (root ${root.path}), skipping its files`,
           );
         }
+        continue;
       }
-    }
 
-    let summaries: SessionSummary[] = [];
-    if (changedFiles.size > 0) {
+      let content: string;
       try {
-        summaries = reduceTranscripts(readChangedContents(), {
-          host: this.options.host,
-        });
+        content = readFile(file);
       } catch (error) {
         logger.warn(
-          'agent-telemetry-watcher: failed to reduce transcripts this tick, skipping',
+          `agent-telemetry-watcher: failed to read transcript ${file}, skipping`,
+          error,
+        );
+        continue;
+      }
+      this.fileStats.set(file, stat);
+
+      try {
+        const fileSummaries = adapter.reduce(content.split('\n'));
+        // Host is attached here (not inside the adapter, which has no
+        // options param) so it's stamped uniformly regardless of which
+        // adapter produced the summary - mirrors the old reduceTranscripts
+        // call's `{ host }` option, which every summary from a call got
+        // whether or not it ended up cli- or issue-agent-sourced.
+        for (const summary of fileSummaries) {
+          summaries.push(
+            this.options.host
+              ? { ...summary, host: this.options.host }
+              : summary,
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          `agent-telemetry-watcher: failed to reduce transcript ${file} (agent ${root.adapter}), skipping`,
           error,
         );
       }

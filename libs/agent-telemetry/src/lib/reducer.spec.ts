@@ -14,6 +14,7 @@ describe('reduceTranscript', () => {
 
     expect(summary.sessionId).toBe('session-normal-1');
     expect(summary.source).toBe('issue-agent');
+    expect(summary.agent).toBe('claude-code');
     expect(summary.cwd).toBe('/home/dev/project');
     expect(summary.branch).toBe('main');
     expect(summary.model).toBe('claude-sonnet-5');
@@ -196,6 +197,26 @@ describe('reduceTranscript', () => {
   it('omits totalCostUsd entirely when no line ever reported costUSD', () => {
     const [summary] = reduceTranscript(readFixture('normal-session.jsonl'));
     expect(summary).not.toHaveProperty('totalCostUsd');
+  });
+
+  it('always stamps agent: claude-code, regardless of source', () => {
+    const [cliSummary] = reduceTranscript(
+      readFixture('session-with-result.jsonl'),
+    );
+    expect(cliSummary.agent).toBe('claude-code');
+
+    const content = JSON.stringify({
+      type: 'user',
+      isSidechain: false,
+      uuid: 'u1',
+      timestamp: '2026-07-16T00:00:00.000Z',
+      sessionId: 'session-issue-agent',
+      entrypoint: 'claude-code-github-action',
+      message: { role: 'user', content: [{ type: 'text', text: 'go' }] },
+    });
+    const [issueAgentSummary] = reduceTranscript(content);
+    expect(issueAgentSummary.source).toBe('issue-agent');
+    expect(issueAgentSummary.agent).toBe('claude-code');
   });
 
   it('ignores a result line missing subtype or is_error rather than throwing', () => {

@@ -1,4 +1,4 @@
-import { loadConfig, WatcherConfig } from './config';
+import { defaultClaudeProjectsDir, loadConfig, WatcherConfig } from './config';
 
 export interface RunnerConfig extends Pick<
   WatcherConfig,
@@ -9,13 +9,16 @@ export interface RunnerConfig extends Pick<
   | 'firestoreWriterKeyJson'
   | 'firestoreEmulatorHost'
 > {
-  /** Root to discover transcripts under. Defaults to `loadConfig()`'s own
-   * default (`~/.claude/projects`, optionally overridden by
-   * `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`); claude.yml's "Start telemetry
-   * ride-along" step also passes `--projects-dir "$HOME/.claude/projects"`
-   * explicitly and defensively. Runner mode has no allowlist concept (see
-   * `runner.ts`'s `RUNNER_ALLOWLIST`), so this is the only discovery knob
-   * that matters here. */
+  /** Root to discover transcripts under. Defaults to
+   * `defaultClaudeProjectsDir()` (`~/.claude/projects`, optionally
+   * overridden by `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`) - deliberately NOT
+   * `loadConfig().watchRoots[0].path`, since `AGENT_TELEMETRY_WATCH_ROOTS`
+   * (the host watcher's multi-root override) has no bearing on runner mode;
+   * claude.yml's "Start telemetry ride-along" step also passes
+   * `--projects-dir "$HOME/.claude/projects"` explicitly and defensively.
+   * Runner mode has no allowlist concept (see `runner.ts`'s
+   * `RUNNER_ALLOWLIST`), so this is the only discovery knob that matters
+   * here. */
   claudeProjectsDir: string;
   /** GitHub Actions run id — tags every doc this run ships as `runId`. */
   runId?: string;
@@ -79,7 +82,7 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
     flags.issueNumber !== undefined ? Number(flags.issueNumber) : undefined;
 
   return {
-    claudeProjectsDir: flags.projectsDir ?? base.claudeProjectsDir,
+    claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
     host: base.host,
     heartbeatIntervalMs: base.heartbeatIntervalMs,
     stalenessWindowMs: base.stalenessWindowMs,

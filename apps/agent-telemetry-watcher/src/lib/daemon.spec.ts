@@ -79,8 +79,9 @@ describe('WatcherDaemon', () => {
     };
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -107,8 +108,9 @@ describe('WatcherDaemon', () => {
     let files: Record<string, string> = {};
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -148,8 +150,9 @@ describe('WatcherDaemon', () => {
     const readFile = vi.fn((p: string) => files[p as keyof typeof files]);
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -191,8 +194,9 @@ describe('WatcherDaemon', () => {
     let now = '2026-07-12T10:00:01.000Z';
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -226,8 +230,9 @@ describe('WatcherDaemon', () => {
     };
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -260,8 +265,9 @@ describe('WatcherDaemon', () => {
     };
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -298,8 +304,9 @@ describe('WatcherDaemon', () => {
     };
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -326,8 +333,9 @@ describe('WatcherDaemon', () => {
     };
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -356,8 +364,9 @@ describe('WatcherDaemon', () => {
     const readFile = vi.fn((p: string) => files[p as keyof typeof files]);
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -401,8 +410,9 @@ describe('WatcherDaemon', () => {
     };
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -436,8 +446,9 @@ describe('WatcherDaemon', () => {
     let artifacts: string[] = [];
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -472,8 +483,9 @@ describe('WatcherDaemon', () => {
     const discoverArtifacts = vi.fn(() => ['should-not-appear.md']);
 
     const daemon = new WatcherDaemon({
-      claudeProjectsDir: '/root',
-      allowlist: ['*'],
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
       host: 'test-host',
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
@@ -491,5 +503,143 @@ describe('WatcherDaemon', () => {
 
     expect(discoverArtifacts).not.toHaveBeenCalled();
     expect(upserts[0]).not.toHaveProperty('artifacts');
+  });
+
+  describe('multi-root', () => {
+    it('discovers and reduces transcripts from multiple watch roots independently on the same tick', async () => {
+      const { store, upserts } = createFakeStore();
+      const claudeFiles = {
+        '/root-a/proj/session-claude.jsonl': TRANSCRIPT(
+          'session-claude',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      // A second root using an agent with no registered TranscriptAdapter
+      // yet - its files must be skipped (fail soft), not crash the tick or
+      // block the first root's own upsert.
+      const codexFiles = {
+        '/root-b/proj/session-codex.jsonl': TRANSCRIPT(
+          'session-codex',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          {
+            path: '/root-a',
+            adapter: 'claude-code',
+            projectDirAllowlist: ['*'],
+          },
+          { path: '/root-b', adapter: 'codex' },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: (rootPath) =>
+          rootPath === '/root-a'
+            ? Object.keys(claudeFiles)
+            : Object.keys(codexFiles),
+        readFile: (p: string) =>
+          (claudeFiles as Record<string, string>)[p] ??
+          (codexFiles as Record<string, string>)[p],
+        statFile: (p: string) =>
+          fakeStat(
+            (claudeFiles as Record<string, string>)[p] ??
+              (codexFiles as Record<string, string>)[p],
+          ),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+      });
+
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).toMatchObject({ sessionId: 'session-claude' });
+    });
+
+    it("applies each root's own allowlist when resolving which project dirs to discover under", async () => {
+      const { store } = createFakeStore();
+      const seenAllowlists: Record<string, string[]> = {};
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          {
+            path: '/root-a',
+            adapter: 'claude-code',
+            projectDirAllowlist: ['-home-a-*'],
+          },
+          {
+            path: '/root-b',
+            adapter: 'claude-code',
+            projectDirAllowlist: ['-home-b-*'],
+          },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: (rootPath, allowlist) => {
+          seenAllowlists[rootPath] = allowlist;
+          return [];
+        },
+        readFile: () => '',
+        statFile: () => fakeStat(''),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+      });
+
+      await daemon.tick();
+
+      expect(seenAllowlists).toEqual({
+        '/root-a': ['-home-a-*'],
+        '/root-b': ['-home-b-*'],
+      });
+    });
+
+    it('ships summaries from a second root even when the first root has no changed files', async () => {
+      const { store, upserts } = createFakeStore();
+      const codexFiles = {
+        '/root-b/proj/session-only.jsonl': TRANSCRIPT(
+          'session-only',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          {
+            path: '/root-a',
+            adapter: 'claude-code',
+            projectDirAllowlist: ['*'],
+          },
+          {
+            path: '/root-b',
+            adapter: 'claude-code',
+            projectDirAllowlist: ['*'],
+          },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: (rootPath) =>
+          rootPath === '/root-b' ? Object.keys(codexFiles) : [],
+        readFile: (p: string) => codexFiles[p as keyof typeof codexFiles],
+        statFile: (p: string) =>
+          fakeStat(codexFiles[p as keyof typeof codexFiles]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+      });
+
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).toMatchObject({ sessionId: 'session-only' });
+    });
   });
 });

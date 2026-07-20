@@ -8,12 +8,16 @@ import {
   Title,
 } from '@mantine/core';
 import type { SessionDoc } from '@repo/agent-telemetry';
-import { displayLiveness } from '@repo/agent-telemetry';
+import { displayLiveness, sessionAgent } from '@repo/agent-telemetry';
 import type { ReactNode } from 'react';
 
 import { REPO_NAME, REPO_OWNER } from '../../../lib/github-client';
 import { sessionDurationSeconds } from '../../../lib/session-archive';
-import { LIVENESS_COLORS, LIVENESS_LABELS } from '../../agent-activity-panel';
+import {
+  AgentBadge,
+  LIVENESS_COLORS,
+  LIVENESS_LABELS,
+} from '../../agent-activity-panel';
 import { ArtifactPreviewToggle } from '../../artifact-viewer';
 import {
   formatCost,
@@ -90,6 +94,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         >
           {LIVENESS_LABELS[liveness]}
         </Badge>
+        <AgentBadge agent={sessionAgent(doc)} />
         <Title order={1} size="h3">
           {doc.title ?? doc.sessionId}
         </Title>

@@ -1,5 +1,9 @@
-import type { CliSessionDoc, SessionLiveness } from '@repo/agent-telemetry';
-import { displayLiveness } from '@repo/agent-telemetry';
+import type {
+  CliSessionDoc,
+  SessionAgent,
+  SessionLiveness,
+} from '@repo/agent-telemetry';
+import { displayLiveness, sessionAgent } from '@repo/agent-telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -25,6 +29,11 @@ export interface JoinedPr {
 export interface CliSession {
   sessionId: string;
   liveness: SessionLiveness;
+  /** Resolved via `sessionAgent()` at fetch time (never the doc's raw
+   * optional `agent` field), so it's always a concrete value here -
+   * defaults to `'claude-code'` for the overwhelming majority of sessions
+   * that predate #3123 or simply never carried a different agent. */
+  agent: SessionAgent;
   host?: string;
   branch?: string;
   worktree?: string;
@@ -53,6 +62,7 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
     // Recomputed at read time: the stored value is only as fresh as the
     // watcher's last write (see displayLiveness).
     liveness: displayLiveness(doc.liveness, doc.lastActivityAt, now),
+    agent: sessionAgent(doc),
     host: doc.host,
     branch: doc.branch,
     worktree: doc.worktree,

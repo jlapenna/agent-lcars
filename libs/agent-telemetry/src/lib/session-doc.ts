@@ -66,6 +66,7 @@ export function buildSessionDoc(
   const base = {
     sessionId: summary.sessionId,
     liveness,
+    ...(summary.agent && { agent: summary.agent }),
     startedAt: summary.startedAt,
     lastActivityAt: summary.lastActivityAt,
     ...(expireAt && { expireAt }),

@@ -9,6 +9,7 @@ function makeRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
     sessionId: 'session-1',
     source: 'cli',
+    agent: 'claude-code',
     title: 'Fix flaky login test',
     prUrls: [],
     turns: 4,
@@ -112,5 +113,15 @@ describe('SessionTable', () => {
   it('formats total tokens with thousands separators', () => {
     renderTable([makeRow({ totalTokens: 12345 })]);
     expect(screen.getByText('12,345')).toBeTruthy();
+  });
+
+  it('renders no agent badge for a claude-code row (the overwhelming default)', () => {
+    renderTable([makeRow({ agent: 'claude-code' })]);
+    expect(screen.queryByText('claude code')).toBeNull();
+  });
+
+  it('renders an agent badge for a non-claude-code row', () => {
+    renderTable([makeRow({ agent: 'codex' })]);
+    expect(screen.getByText('codex')).toBeTruthy();
   });
 });

@@ -1,9 +1,10 @@
 import type {
+  SessionAgent,
   SessionDoc,
   SessionLiveness,
   SessionSource,
 } from '@repo/agent-telemetry';
-import { displayLiveness } from '@repo/agent-telemetry';
+import { displayLiveness, sessionAgent } from '@repo/agent-telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -80,6 +81,9 @@ export function sessionDurationSeconds(
 export interface SessionRow {
   sessionId: string;
   source: SessionSource;
+  /** Resolved via `sessionAgent()` at fetch time - see `CliSession.agent`'s
+   * doc comment in cli-sessions.ts for why this is always concrete here. */
+  agent: SessionAgent;
   title: string;
   issueNumber?: number;
   issueUrl?: string;
@@ -124,6 +128,7 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
   return {
     sessionId: doc.sessionId,
     source: doc.source,
+    agent: sessionAgent(doc),
     title,
     ...(doc.source === 'issue-agent' &&
       doc.issueNumber !== undefined && {

@@ -256,10 +256,18 @@ export interface EnvVars {
   // Agent telemetry host watcher (issue #2540). See
   // apps/agent-console/infra/agent-telemetry.yaml for the dedicated
   // Firestore database + writer SA this daemon authenticates as.
-  /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts. */
+  /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts.
+   * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
-  /** Comma-separated `*`-wildcard glob patterns; defaults to the members-repo slug only. */
+  /** Comma-separated `*`-wildcard glob patterns; defaults to the members-repo slug only.
+   * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST?: string;
+  /** JSON array of `{ path, adapter, projectDirAllowlist? }` watch-root objects
+   * (#3123 phase 1's multi-root/multi-agent watcher config) - when set, fully
+   * replaces the single default root the two vars above configure. See
+   * `apps/agent-telemetry-watcher/src/lib/config.ts`'s `loadConfig` for the
+   * exact format and validation. */
+  AGENT_TELEMETRY_WATCH_ROOTS?: string;
   /** Overrides `os.hostname()` for the `host` field on shipped session docs. */
   AGENT_TELEMETRY_HOST?: string;
   /** GCP project the dedicated `agent-telemetry` Firestore database lives in. */

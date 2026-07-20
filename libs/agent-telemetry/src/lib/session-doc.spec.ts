@@ -292,4 +292,23 @@ describe('buildSessionDoc', () => {
     expect(doc).not.toHaveProperty('totalCostUsd');
     expect(doc).not.toHaveProperty('result');
   });
+
+  it('threads agent through onto the doc when present on the summary', () => {
+    const doc = buildSessionDoc(baseSummary({ agent: 'opencode' }), 'live');
+    expect(doc).toMatchObject({ agent: 'opencode' });
+  });
+
+  it('omits agent entirely when absent from the summary (legacy reducer output)', () => {
+    const doc = buildSessionDoc(baseSummary(), 'idle');
+    expect(doc).not.toHaveProperty('agent');
+  });
+
+  it('threads agent through on an issue-agent doc too', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent', agent: 'claude-code' }),
+      'ended',
+      { runId: 'run-123' },
+    );
+    expect(doc).toMatchObject({ agent: 'claude-code' });
+  });
 });

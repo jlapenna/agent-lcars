@@ -15,13 +15,18 @@ function runHostWatcher(): void {
   const config = loadConfig();
   const store = createStoreFromConfig(config);
 
+  const rootsDescription = config.watchRoots
+    .map(
+      (root) =>
+        `${root.path} (${root.adapter}, allowlist: ${(root.projectDirAllowlist ?? ['*']).join(', ')})`,
+    )
+    .join('; ');
   logger.info(
-    `agent-telemetry-watcher: starting; watching ${config.claudeProjectsDir} (allowlist: ${config.allowlist.join(', ')}), heartbeat every ${config.heartbeatIntervalMs}ms`,
+    `agent-telemetry-watcher: starting; watching ${rootsDescription}, heartbeat every ${config.heartbeatIntervalMs}ms`,
   );
 
   const daemon = new WatcherDaemon({
-    claudeProjectsDir: config.claudeProjectsDir,
-    allowlist: config.allowlist,
+    watchRoots: config.watchRoots,
     host: config.host,
     store,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
@@ -31,9 +36,10 @@ function runHostWatcher(): void {
 
   // Real-time nudge on file changes; the periodic tick (started below) is
   // the source of truth for staleness/liveness regardless of fs events.
-  const watcher = chokidar.watch(`${config.claudeProjectsDir}/**/*.jsonl`, {
-    ignoreInitial: true,
-  });
+  const watcher = chokidar.watch(
+    config.watchRoots.map((root) => `${root.path}/**/*.jsonl`),
+    { ignoreInitial: true },
+  );
   watcher.on('add', () => void daemon.tick());
   watcher.on('change', () => void daemon.tick());
   watcher.on('error', (error) =>

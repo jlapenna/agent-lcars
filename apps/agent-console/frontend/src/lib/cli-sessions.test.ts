@@ -105,6 +105,23 @@ describe('getCliSessions', () => {
     );
   });
 
+  it('resolves agent via sessionAgent(), defaulting to claude-code when the doc has none', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({ sessionId: 'legacy' }),
+      makeCliDoc({ sessionId: 'opencode-session', agent: 'opencode' }),
+    ]);
+    mockSearch();
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions.find((s) => s.sessionId === 'legacy')?.agent).toBe(
+      'claude-code',
+    );
+    expect(
+      sessions.find((s) => s.sessionId === 'opencode-session')?.agent,
+    ).toBe('opencode');
+  });
+
   it('uses the transcript-recorded PR without a GitHub search when present', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ deliverables: { prNumbers: [2650, 2662], commitShas: [] } }),

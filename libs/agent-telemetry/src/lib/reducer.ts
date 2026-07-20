@@ -214,6 +214,12 @@ function finalizeState(state: SessionState): SessionSummary {
   return {
     sessionId: state.sessionId,
     source: state.source,
+    // This reducer only ever parses Claude Code's own transcript format
+    // (see reduceTranscript(s)'s doc comment below), so every summary it
+    // produces is unconditionally 'claude-code' — never inferred from the
+    // transcript content itself. Other agents get their own adapter/reducer
+    // (see transcript-adapter.ts) that stamps their own identity instead.
+    agent: 'claude-code',
     ...(state.host && { host: state.host }),
     ...(state.cwd && { cwd: state.cwd }),
     ...(state.worktree && { worktree: state.worktree }),
@@ -249,6 +255,62 @@ function resolveTitle(state: SessionState): string | undefined {
 }
 
 /**
+ * Core line-by-line reduction shared by every entry point below. Operates on
+ * already-split lines (any `Iterable<string>`) specifically so a caller that
+ * already has a line array in hand — {@link reduceTranscriptLines}'s callers,
+ * namely `claudeCodeAdapter.reduce` in transcript-adapter.ts — never pays for
+ * a join-then-resplit round trip through a string-based API. That round trip
+ * was cheap enough to miss in small unit tests but measurably slow (~5x) on
+ * a per-file basis against a large (2MB+) real transcript — see
+ * daemon.memory.spec.ts, which times a full multi-hundred-MB corpus tick.
+ */
+function reduceLines(
+  lines: Iterable<string>,
+  options: ReduceTranscriptOptions = {},
+): SessionSummary[] {
+  const states = new Map<string, SessionState>();
+  const seenUuids = new Set<string>();
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    const raw = asRecord(parsed);
+    if (!raw) {
+      continue;
+    }
+
+    const sessionId = asString(raw['sessionId']);
+    if (!sessionId) {
+      continue;
+    }
+
+    const uuid = asString(raw['uuid']);
+    if (uuid) {
+      if (seenUuids.has(uuid)) {
+        continue;
+      }
+      seenUuids.add(uuid);
+    }
+
+    const state = states.get(sessionId) ?? createState(sessionId, options.host);
+    applyLine(state, raw);
+    states.set(sessionId, state);
+  }
+
+  return Array.from(states.values()).map(finalizeState);
+}
+
+/**
  * Reduces one or more raw Claude Code transcript file contents (JSONL) into
  * a session summary per distinct `sessionId` found across all of them.
  * Pass multiple file contents, in chronological order, to correctly reduce
@@ -262,49 +324,27 @@ export function reduceTranscripts(
   rawContents: Iterable<string>,
   options: ReduceTranscriptOptions = {},
 ): SessionSummary[] {
-  const states = new Map<string, SessionState>();
-  const seenUuids = new Set<string>();
-
-  for (const content of rawContents) {
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        continue;
-      }
-
-      const raw = asRecord(parsed);
-      if (!raw) {
-        continue;
-      }
-
-      const sessionId = asString(raw['sessionId']);
-      if (!sessionId) {
-        continue;
-      }
-
-      const uuid = asString(raw['uuid']);
-      if (uuid) {
-        if (seenUuids.has(uuid)) {
-          continue;
-        }
-        seenUuids.add(uuid);
-      }
-
-      const state =
-        states.get(sessionId) ?? createState(sessionId, options.host);
-      applyLine(state, raw);
-      states.set(sessionId, state);
+  function* linesFromContents() {
+    for (const content of rawContents) {
+      yield* content.split('\n');
     }
   }
+  return reduceLines(linesFromContents(), options);
+}
 
-  return Array.from(states.values()).map(finalizeState);
+/**
+ * Reduces a single file's already-split lines directly — the array a caller
+ * gets from `content.split('\n')` (or, for `TranscriptAdapter.reduce`
+ * implementations, the `lines` parameter itself) — without the join+resplit
+ * {@link reduceTranscript}'s string-based API would otherwise force. See
+ * {@link reduceLines}'s doc comment for why this exists as its own entry
+ * point rather than just being an implementation detail.
+ */
+export function reduceTranscriptLines(
+  lines: string[],
+  options: ReduceTranscriptOptions = {},
+): SessionSummary[] {
+  return reduceLines(lines, options);
 }
 
 /** Convenience wrapper around {@link reduceTranscripts} for a single file. */

@@ -60,6 +60,7 @@ function makeSession(overrides: Partial<CliSession> = {}): CliSession {
   return {
     sessionId: 'session-1',
     liveness: 'live',
+    agent: 'claude-code',
     turns: 1,
     totalTokens: 10,
     startedAt: '2026-07-18T00:00:00.000Z',
