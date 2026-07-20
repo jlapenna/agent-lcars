@@ -1,4 +1,5 @@
-import { SessionDoc } from '@repo/agent-telemetry';
+import { SessionDoc, SessionSummary } from '@repo/agent-telemetry';
+import { logger } from '@repo/logging';
 import { describe, expect, it, vi } from 'vitest';
 
 import { WatcherDaemon } from './daemon';
@@ -640,6 +641,277 @@ describe('WatcherDaemon', () => {
 
       expect(upserts).toHaveLength(1);
       expect(upserts[0]).toMatchObject({ sessionId: 'session-only' });
+    });
+  });
+
+  describe('antigravity summary source (#3123 phase 3)', () => {
+    const ANTIGRAVITY_SUMMARY: SessionSummary = {
+      sessionId: 'convo-antigravity-1',
+      source: 'cli',
+      agent: 'antigravity',
+      cwd: '/home/jlapenna/p/members',
+      startedAt: '2026-07-12T09:00:00.000Z',
+      lastActivityAt: '2026-07-12T09:55:00.000Z',
+      turns: 12,
+      toolCallCounts: {},
+      tokens: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+      deliverables: { prNumbers: [], commitShas: [] },
+    };
+
+    it('upserts a session doc from a polled antigravity summary, without any watch roots configured', async () => {
+      const { store, upserts } = createFakeStore();
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:00.000Z',
+        discover: () => [],
+        readFile: () => '',
+        statFile: () => fakeStat(''),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+        antigravitySummaryDb: {
+          path: '/fake/conversation_summaries.db',
+          workspacePrefixes: ['/home/jlapenna/p/members'],
+        },
+        pollAntigravitySummaries: () => [ANTIGRAVITY_SUMMARY],
+      });
+
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).toMatchObject({
+        sessionId: 'convo-antigravity-1',
+        source: 'cli',
+        agent: 'antigravity',
+        liveness: 'ended', // no /proc signal for antigravity - see daemon.ts's tickAntigravitySummaries comment.
+      });
+    });
+
+    it('does not poll antigravity summaries when antigravitySummaryDb is unset', async () => {
+      const { store, upserts } = createFakeStore();
+      const poll = vi.fn(() => [ANTIGRAVITY_SUMMARY]);
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:00.000Z',
+        discover: () => [],
+        readFile: () => '',
+        statFile: () => fakeStat(''),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+        pollAntigravitySummaries: poll,
+      });
+
+      await daemon.tick();
+
+      expect(poll).not.toHaveBeenCalled();
+      expect(upserts).toHaveLength(0);
+    });
+
+    it('skips re-upserting an antigravity summary unchanged since the last tick', async () => {
+      const { store, upserts } = createFakeStore();
+      const poll = vi.fn(() => [ANTIGRAVITY_SUMMARY]);
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:00.000Z',
+        discover: () => [],
+        readFile: () => '',
+        statFile: () => fakeStat(''),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+        antigravitySummaryDb: {
+          path: '/fake/conversation_summaries.db',
+          workspacePrefixes: ['/home/jlapenna/p/members'],
+        },
+        pollAntigravitySummaries: poll,
+      });
+
+      await daemon.tick();
+      await daemon.tick();
+      await daemon.tick();
+
+      expect(poll).toHaveBeenCalledTimes(3); // polled every tick...
+      expect(upserts).toHaveLength(1); // ...but only upserted once, since the row never changed.
+    });
+
+    it('re-upserts an antigravity summary once its lastActivityAt changes', async () => {
+      const { store, upserts } = createFakeStore();
+      let summary = ANTIGRAVITY_SUMMARY;
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:00.000Z',
+        discover: () => [],
+        readFile: () => '',
+        statFile: () => fakeStat(''),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+        antigravitySummaryDb: {
+          path: '/fake/conversation_summaries.db',
+          workspacePrefixes: ['/home/jlapenna/p/members'],
+        },
+        pollAntigravitySummaries: () => [summary],
+      });
+
+      await daemon.tick();
+      expect(upserts).toHaveLength(1);
+
+      summary = {
+        ...ANTIGRAVITY_SUMMARY,
+        lastActivityAt: '2026-07-12T11:00:00.000Z',
+      };
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(2);
+      expect(upserts[1].lastActivityAt).toBe('2026-07-12T11:00:00.000Z');
+    });
+
+    it('fails soft when the store rejects an antigravity upsert, and retries next tick', async () => {
+      let shouldFail = true;
+      const store: SessionStore = {
+        upsertSession: vi.fn(async () => {
+          if (shouldFail) {
+            throw new Error('firestore unavailable');
+          }
+        }),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:00.000Z',
+        discover: () => [],
+        readFile: () => '',
+        statFile: () => fakeStat(''),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+        antigravitySummaryDb: {
+          path: '/fake/conversation_summaries.db',
+          workspacePrefixes: ['/home/jlapenna/p/members'],
+        },
+        pollAntigravitySummaries: () => [ANTIGRAVITY_SUMMARY],
+      });
+
+      await expect(daemon.tick()).resolves.toBeUndefined();
+      expect(store.upsertSession).toHaveBeenCalledTimes(1);
+
+      shouldFail = false;
+      await daemon.tick();
+
+      // The failed upsert must not have been cached as "seen" - the
+      // second tick (same, unchanged summary) must retry it.
+      expect(store.upsertSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails soft and warns exactly once per process when the DB reports unavailable across many ticks', async () => {
+      const { store, upserts } = createFakeStore();
+      const warnSpy = vi
+        .spyOn(logger, 'warn')
+        .mockImplementation(() => undefined);
+      const poll = vi.fn(
+        (
+          _dbPath: string,
+          _prefixes: string[],
+          options?: { onUnavailable?: (error: unknown) => void },
+        ) => {
+          options?.onUnavailable?.(new Error('ENOENT: no such file'));
+          return [];
+        },
+      );
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:00.000Z',
+        discover: () => [],
+        readFile: () => '',
+        statFile: () => fakeStat(''),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+        antigravitySummaryDb: {
+          path: '/fake/conversation_summaries.db',
+          workspacePrefixes: ['/home/jlapenna/p/members'],
+        },
+        pollAntigravitySummaries: poll,
+      });
+
+      await daemon.tick();
+      await daemon.tick();
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(0);
+      const antigravityWarnCalls = warnSpy.mock.calls.filter(([message]) =>
+        String(message).includes('antigravity summary DB unavailable'),
+      );
+      expect(antigravityWarnCalls).toHaveLength(1);
+
+      warnSpy.mockRestore();
+    });
+
+    it('discovers/upserts both file-based and antigravity sessions on the same tick without interference', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-mixed.jsonl': TRANSCRIPT(
+          'session-mixed',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: () => undefined,
+        antigravitySummaryDb: {
+          path: '/fake/conversation_summaries.db',
+          workspacePrefixes: ['/home/jlapenna/p/members'],
+        },
+        pollAntigravitySummaries: () => [ANTIGRAVITY_SUMMARY],
+      });
+
+      await daemon.tick();
+
+      expect(upserts.map((doc) => doc.sessionId).sort()).toEqual([
+        'convo-antigravity-1',
+        'session-mixed',
+      ]);
     });
   });
 });

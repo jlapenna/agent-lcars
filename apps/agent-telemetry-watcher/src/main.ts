@@ -25,6 +25,12 @@ function runHostWatcher(): void {
     `agent-telemetry-watcher: starting; watching ${rootsDescription}, heartbeat every ${config.heartbeatIntervalMs}ms`,
   );
 
+  if (config.antigravitySummaryDb) {
+    logger.info(
+      `agent-telemetry-watcher: also polling antigravity summary DB at ${config.antigravitySummaryDb.path} (workspace prefixes: ${config.antigravitySummaryDb.workspacePrefixes.join(', ')})`,
+    );
+  }
+
   const daemon = new WatcherDaemon({
     watchRoots: config.watchRoots,
     host: config.host,
@@ -32,6 +38,7 @@ function runHostWatcher(): void {
     heartbeatIntervalMs: config.heartbeatIntervalMs,
     stalenessWindowMs: config.stalenessWindowMs,
     shareDir: config.shareDir,
+    antigravitySummaryDb: config.antigravitySummaryDb,
   });
 
   // Real-time nudge on file changes; the periodic tick (started below) is

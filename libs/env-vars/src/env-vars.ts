@@ -280,4 +280,11 @@ export interface EnvVars {
   AGENT_TELEMETRY_STALENESS_WINDOW_MS?: string;
   /** Root of `~/share` (share-media skill convention) to scan for session artifacts; defaults to `~/share`. */
   AGENT_TELEMETRY_SHARE_DIR?: string;
+  /** Absolute path to Antigravity's global summary-tier SQLite DB
+   * (`conversation_summaries.db`) - default-enabled at
+   * `~/.gemini/antigravity-cli/conversation_summaries.db` when unset; an
+   * explicit empty string disables this source entirely (e.g. a host with
+   * no Antigravity CLI installed). See #3123 phase 3 and
+   * `apps/agent-telemetry-watcher/src/lib/antigravity-summary-source.ts`. */
+  AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB?: string;
 }

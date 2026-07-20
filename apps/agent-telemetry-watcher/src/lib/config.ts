@@ -4,6 +4,10 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { DEFAULT_PROJECT_DIR_ALLOWLIST } from './allowlist';
+import {
+  AntigravitySummaryDbConfig,
+  DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+} from './antigravity-summary-source';
 import { WatchRootConfig } from './watch-roots';
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -18,6 +22,15 @@ export interface WatcherConfig {
   firestoreProjectId?: string;
   firestoreWriterKeyJson?: string;
   firestoreEmulatorHost?: string;
+  /** Optional Antigravity summary-DB poller config (#3123 phase 3) —
+   * default-enabled (see `defaultAntigravitySummaryDbPath` below), so this is
+   * only ever `undefined` when `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` is
+   * explicitly set to the empty string (opt-out, e.g. a host with no
+   * Antigravity CLI installed at all). A default-enabled path that simply
+   * doesn't exist on a given host is a *runtime* fail-soft concern (see
+   * `pollAntigravitySummaries`/`daemon.ts`), not a config-time one — this
+   * stays set either way. */
+  antigravitySummaryDb?: AntigravitySummaryDbConfig;
 }
 
 /** `~/.claude/projects` (or `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR` when set) —
@@ -33,6 +46,19 @@ export function defaultClaudeProjectsDir(): string {
   return (
     optional('AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR') ??
     path.join(os.homedir(), '.claude', 'projects')
+  );
+}
+
+/** `~/.gemini/antigravity-cli/conversation_summaries.db` — the Antigravity
+ * CLI's global summary-tier SQLite DB (see `antigravity-summary-source.ts`).
+ * Exported (like `defaultClaudeProjectsDir` above) so tests/other callers
+ * can reference the same default without re-deriving it. */
+export function defaultAntigravitySummaryDbPath(): string {
+  return path.join(
+    os.homedir(),
+    '.gemini',
+    'antigravity-cli',
+    'conversation_summaries.db',
   );
 }
 
@@ -154,6 +180,19 @@ export function loadConfig(): WatcherConfig {
     ? parseWatchRootsJson(watchRootsRaw)
     : [defaultWatchRoot()];
 
+  // Default-enabled: unset means "use the default path", an explicit empty
+  // string means "disable entirely" (e.g. a host with no Antigravity CLI) -
+  // distinct from `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`'s override-only
+  // semantics above since this source has no equivalent opt-in trigger.
+  const antigravityDbRaw = optional('AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB');
+  const antigravitySummaryDb: AntigravitySummaryDbConfig | undefined =
+    antigravityDbRaw === ''
+      ? undefined
+      : {
+          path: antigravityDbRaw ?? defaultAntigravitySummaryDbPath(),
+          workspacePrefixes: DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+        };
+
   return {
     watchRoots,
     host: optional('AGENT_TELEMETRY_HOST') ?? os.hostname(),
@@ -164,5 +203,6 @@ export function loadConfig(): WatcherConfig {
     firestoreProjectId: optional('AGENT_TELEMETRY_PROJECT_ID'),
     firestoreWriterKeyJson: optional('AGENT_TELEMETRY_WRITER_KEY_JSON'),
     firestoreEmulatorHost: optional('FIRESTORE_EMULATOR_HOST'),
+    ...(antigravitySummaryDb && { antigravitySummaryDb }),
   };
 }

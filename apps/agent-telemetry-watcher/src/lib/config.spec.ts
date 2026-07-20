@@ -3,6 +3,7 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_PROJECT_DIR_ALLOWLIST } from './allowlist';
+import { DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES } from './antigravity-summary-source';
 import { loadConfig } from './config';
 
 const ENV_KEYS = [
@@ -15,6 +16,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS',
   'AGENT_TELEMETRY_STALENESS_WINDOW_MS',
   'AGENT_TELEMETRY_SHARE_DIR',
+  'AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB',
   'FIRESTORE_EMULATOR_HOST',
 ] as const;
 
@@ -170,6 +172,42 @@ describe('loadConfig', () => {
       ]);
 
       expect(() => loadConfig()).toThrow(/projectDirAllowlist/);
+    });
+  });
+
+  describe('AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB (#3123 phase 3)', () => {
+    it('defaults to enabled at ~/.gemini/antigravity-cli/conversation_summaries.db with the members workspace prefix', () => {
+      const config = loadConfig();
+
+      expect(config.antigravitySummaryDb).toEqual({
+        path: path.join(
+          os.homedir(),
+          '.gemini',
+          'antigravity-cli',
+          'conversation_summaries.db',
+        ),
+        workspacePrefixes: DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+      });
+    });
+
+    it('respects a custom DB path override', () => {
+      process.env['AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB'] =
+        '/custom/summaries.db';
+
+      const config = loadConfig();
+
+      expect(config.antigravitySummaryDb).toEqual({
+        path: '/custom/summaries.db',
+        workspacePrefixes: DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+      });
+    });
+
+    it('disables entirely when set to the empty string', () => {
+      process.env['AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB'] = '';
+
+      const config = loadConfig();
+
+      expect(config.antigravitySummaryDb).toBeUndefined();
     });
   });
 });
