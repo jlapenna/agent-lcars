@@ -56,6 +56,38 @@ for `.github/workflows/claude.yml` runs ships via two complementary paths:
    [orchestration.md §8](../../.agents/skills/sprinkles-dev/references/orchestration.md)
    for the full description.
 
+3. **OpenCode pipeline (`source: 'issue-agent'`, `agent: 'opencode'`,
+   archive-first stub — #3123 phase 2):**
+   `.github/workflows/opencode.yml`'s `Authenticate telemetry
+writer` + `Ship session archive` steps (after "Run OpenCode",
+   `if: always()`, `continue-on-error: true`) follow the same archive-first
+   pattern as claude.yml's authoritative path, but with **no transcript
+   reducer** — OpenCode's session storage is a SQLite database (`opencode.db`
+   plus a `log/` dir), not a `.jsonl` transcript file, and
+   `libs/agent-telemetry/src/lib/transcript-adapter.ts` has no adapter for
+   that format yet. Instead the workflow uploads the raw session storage
+   untouched to
+   `gs://supersprinklesracing-agent-session-transcripts/runs/<run-id>/opencode/`
+   and upserts a **stub** session doc (`agent-telemetry upsert-stub
+--session-id opencode-run-<run-id> --agent opencode`) with zero turns and
+   zero tokens — just a `transcriptGcsUri` pointer, a `startedAt` timestamp,
+   `source: 'issue-agent'`, and `agent: 'opencode'`. The agent console's
+   transcript UI gated on `sessionAgent(doc) === 'claude-code'` so these
+   stubs are never rendered as transcripts.
+
+   **Deliberate ordering (unlike claude.yml):** WIF auth is placed **after**
+   "Run OpenCode", not before it. OpenCode's own agent has unrestricted tool
+   access (including arbitrary `gh` calls and shell commands), and the
+   telemetry writer SA credential is powerful enough to upsert session docs
+   and upload to GCS. By keeping the auth step after the agent finishes,
+   there is no window where the agent's own bash could accidentally or
+   instrumentally inherit write access to the telemetry store — the
+   claude.yml approach (pre-authenticate, then rely on a later readonly
+   credential step to overwrite the ambient SA token) works there because
+   claude.yml's credential setup has a dedicated readonly re-auth step
+   before the agent's bash ever runs; this pipeline has no such step, so
+   the simpler "auth after agent" model is the correct one.
+
 ## What it does
 
 On an interval (`AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`, default 10s, with
