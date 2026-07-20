@@ -1,4 +1,5 @@
 import type { SessionDoc } from '@repo/agent-telemetry';
+import { sessionAgent } from '@repo/agent-telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
@@ -25,6 +26,17 @@ export type SessionDetailResult =
  * this app). A transcript-fetch failure never reaches this level at all -
  * `getSessionTranscript` already absorbs it into its own `warning` field, so
  * the header still renders even when the transcript can't be shown.
+ *
+ * Only fetched for `sessionAgent(doc) === 'claude-code'` (#3123 phase 2):
+ * `getSessionTranscript` parses `transcriptGcsUri` as a single Claude Code
+ * `.jsonl` object, which is all that exists for every session shipped
+ * before this phase. Non-Claude agents now archive-first (e.g. opencode.yml
+ * uploading OpenCode's raw SQLite session storage under a `runs/<id>/opencode/`
+ * GCS *prefix*, not one parseable file - see `types.ts`'s `transcriptGcsUri`
+ * doc comment) - fetching that as a transcript would fail-soft into a scary
+ * warning on every one of their session pages for no benefit, since there's
+ * nothing renderable yet. The page instead shows a short note that the
+ * archive exists without attempting to fetch/parse it.
  */
 export async function getSessionDetail(
   sessionId: string,
@@ -46,7 +58,9 @@ export async function getSessionDetail(
   }
 
   const transcript =
-    doc.source === 'issue-agent' && doc.transcriptGcsUri
+    doc.source === 'issue-agent' &&
+    doc.transcriptGcsUri &&
+    sessionAgent(doc) === 'claude-code'
       ? await getSessionTranscript(doc.transcriptGcsUri)
       : undefined;
 

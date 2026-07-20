@@ -101,9 +101,12 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).not.toHaveBeenCalled();
   });
 
-  it('fetches and attaches the transcript for an issue-agent session that has one', async () => {
+  it('fetches and attaches the transcript for a claude-code issue-agent session that has one', async () => {
     (getSessionDoc as Mock).mockResolvedValue(
-      agentDoc({ transcriptGcsUri: 'gs://bucket/runs/1/a.jsonl' }),
+      agentDoc({
+        agent: 'claude-code',
+        transcriptGcsUri: 'gs://bucket/runs/1/a.jsonl',
+      }),
     );
     (getSessionTranscript as Mock).mockResolvedValue({ events: [] });
 
@@ -115,6 +118,45 @@ describe('getSessionDetail', () => {
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.transcript).toEqual({ events: [] });
+    }
+  });
+
+  it('fetches the transcript for a legacy doc with no agent field (defaults to claude-code)', async () => {
+    (getSessionDoc as Mock).mockResolvedValue(
+      agentDoc({ transcriptGcsUri: 'gs://bucket/runs/1/a.jsonl' }),
+    );
+    (getSessionTranscript as Mock).mockResolvedValue({ events: [] });
+
+    const result = await getSessionDetail('agent-1');
+
+    expect(getSessionTranscript).toHaveBeenCalledWith(
+      'gs://bucket/runs/1/a.jsonl',
+    );
+    expect(result.status).toBe('ok');
+  });
+
+  it('does not fetch a transcript for a non-claude-code agent even when transcriptGcsUri is set (#3123 phase 2)', async () => {
+    (getSessionDoc as Mock).mockResolvedValue(
+      agentDoc({
+        agent: 'opencode',
+        transcriptGcsUri:
+          'gs://supersprinklesracing-agent-session-transcripts/runs/1/opencode/',
+      }),
+    );
+
+    const result = await getSessionDetail('agent-1');
+
+    expect(getSessionTranscript).not.toHaveBeenCalled();
+    expect(result.status).toBe('ok');
+    expect(result).not.toHaveProperty('transcript');
+    if (result.status === 'ok') {
+      // The doc itself (and its transcriptGcsUri) still comes through for
+      // the page to render its own archive-note fallback from.
+      expect(result.doc).toMatchObject({
+        agent: 'opencode',
+        transcriptGcsUri:
+          'gs://supersprinklesracing-agent-session-transcripts/runs/1/opencode/',
+      });
     }
   });
 });

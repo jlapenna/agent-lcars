@@ -100,12 +100,14 @@ serviceAccounts:
       # backs this principalSet. Unlike the pool/roles above, the provider
       # itself is NOT created by tools/provision-agent-telemetry-gcp.sh —
       # it's managed by live gcloud only. Its current attribute condition
-      # (widened 2026-07-20, live gcloud change, orchestrating session
-      # c566c8de — see #3113):
+      # (widened again 2026-07-19, live gcloud change, orchestrating session
+      # c566c8de — see #3123 phase 2, following the claude.yml/deploy.yml
+      # widening from #3113 below):
       #   assertion.repository=='supersprinklesracing/members' &&
       #   (assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/claude.yml') ||
-      #    assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/deploy.yml'))
-      # It trusts exactly two job refs:
+      #    assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/deploy.yml') ||
+      #    assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/opencode.yml'))
+      # It trusts exactly three job refs:
       #   - claude.yml: the runner-mode shipper (this writer SA, "Ship
       #     session telemetry") plus the claude-agent-readonly SA's
       #     read-only observability auth ("Authenticate to GCP" above).
@@ -115,9 +117,16 @@ serviceAccounts:
       #     which made deploy.yml's first ride-along publish fail with
       #     "credential rejected by the attribute condition" (run
       #     29713808422, fixed by rerunning after the live widening).
+      #   - opencode.yml: archive-first session shipping (#3123 phase 2) —
+      #     its own "Authenticate telemetry writer" step mints a token for
+      #     this SA to upload OpenCode's raw local session storage (no
+      #     `TranscriptAdapter` for it yet) and upsert a STUB session doc
+      #     via `agent-telemetry upsert-stub`, pointing at the archive. See
+      #     the storage section below for the `runs/<run-id>/opencode/`
+      #     object layout this produces.
       - principal: 'principalSet://iam.googleapis.com/projects/972941236852/locations/global/workloadIdentityPools/claude-agent-pool/attribute.repository/supersprinklesracing/members'
         role: 'roles/iam.workloadIdentityUser'
-        reason: 'claude.yml''s "Authenticate telemetry writer" step mints an access token for this SA (runner-mode shipper, Slice 2 — see the storage section below and the "Ship session telemetry" step); deploy.yml''s publish-ride-along job (#3111) mints one too, to publish the ride-along bundle'
+        reason: 'claude.yml''s "Authenticate telemetry writer" step mints an access token for this SA (runner-mode shipper, Slice 2 — see the storage section below and the "Ship session telemetry" step); deploy.yml''s publish-ride-along job (#3111) mints one too, to publish the ride-along bundle; opencode.yml''s own "Authenticate telemetry writer" step (#3123 phase 2) mints one to run its "Ship session archive" step'
       - principal: 'user:jlapenna@gmail.com'
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'
@@ -142,30 +151,46 @@ serviceAccounts:
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'
 
-# Slice 2's GCS transcript archive. The runner container claude.yml runs on
-# is destroyed the instant the job ends, so this bucket is the only durable
-# copy of a run's full Claude Code transcript (particularly valuable for a
-# crashed/timed-out/turn-budget-exhausted run, where the transcript is
+# Slice 2's GCS transcript archive. The runner container claude.yml/
+# opencode.yml run on is destroyed the instant the job ends, so this bucket
+# is the only durable copy of a run's full session data (particularly
+# valuable for a crashed/timed-out/turn-budget-exhausted run, where it's
 # otherwise the only record of what was attempted). Shipping is best-effort
-# (claude.yml's "Ship session telemetry" step, `if: always()` +
-# `continue-on-error: true`) — a failed upload must never fail the run.
+# on both pipelines (`if: always()` + `continue-on-error: true` on the
+# relevant step) — a failed upload must never fail the run.
 storage:
   transcriptsBucket:
     name: 'supersprinklesracing-agent-session-transcripts'
     location: 'us-central1'
     uniformBucketLevelAccess: true
     publicAccessPrevention: true
-    # runs/<github-run-id>/<transcript-filename>.jsonl, one object per
-    # transcript file found under $HOME/.claude/projects/*/*.jsonl at the
-    # end of the run (normally exactly one; the container is fresh per run,
-    # so everything found there belongs to this run's session(s)). $HOME
-    # tracks whichever user the job runs as — the ARC scale-set runners
-    # (#2974) run as `runner`, not root.
-    objectLayout: 'runs/<github-run-id>/<transcript-filename>.jsonl'
+    # Two distinct layouts share this bucket, one per pipeline:
+    #   - claude.yml: runs/<github-run-id>/<transcript-filename>.jsonl, one
+    #     object per transcript file found under
+    #     $HOME/.claude/projects/*/*.jsonl at the end of the run (normally
+    #     exactly one; the container is fresh per run, so everything found
+    #     there belongs to this run's session(s)). $HOME tracks whichever
+    #     user the job runs as — the ARC scale-set runners (#2974) run as
+    #     `runner`, not root.
+    #   - opencode.yml (#3123 phase 2, archive-first shipping): runs/
+    #     <github-run-id>/opencode/<relative-path>, one object per regular
+    #     file found under OpenCode's local session data dir ($HOME/.local/
+    #     share/opencode or $XDG_DATA_HOME/opencode, whichever exists) —
+    #     typically its SQLite `opencode.db` plus any sibling files, minus
+    #     its own `log/` subtree (debug output, not session data) and
+    #     anything over 100MB. There is no `TranscriptAdapter` for this
+    #     format yet (see libs/agent-telemetry/src/lib/transcript-adapter.ts),
+    #     so unlike the claude.yml layout this is raw, unparsed storage, not
+    #     a reduced transcript — the matching Firestore session doc's
+    #     `transcriptGcsUri` points at the `runs/<run-id>/opencode/` prefix
+    #     itself (a directory, not one object) and the console renders a
+    #     "not yet renderable" note instead of a transcript timeline for it
+    #     (see session-detail.ts / app/sessions/[id]/page.tsx).
+    objectLayout: 'runs/<github-run-id>/<transcript-filename>.jsonl (claude.yml) | runs/<github-run-id>/opencode/<relative-path> (opencode.yml)'
     grants:
       - principal: 'serviceAccount:agent-telemetry-writer@supersprinklesracing.iam.gserviceaccount.com'
         role: 'roles/storage.objectCreator'
-        reason: "claude.yml uploads each run's transcript(s) via the GCS JSON API using this SA's WIF-minted access token (no gcloud CLI on the runner container, curl only)"
+        reason: "claude.yml uploads each run's transcript(s), and opencode.yml each run's raw session archive, via the GCS JSON API using this SA's WIF-minted access token (no gcloud CLI on the runner container, curl only)"
       - principal: 'serviceAccount:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com'
         role: 'roles/storage.objectViewer'
         reason: 'agent-console reads archived transcripts back out for the session detail page (follow-up PR, PRD #2112) — granted directly since the console reads with its own runtime identity, not an impersonation call like the Firestore reader path above'

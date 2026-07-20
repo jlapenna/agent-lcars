@@ -160,12 +160,20 @@ export interface IssueAgentSessionDoc extends BaseSessionDoc {
   source: 'issue-agent';
   runId?: string;
   issueNumber?: number;
-  /** `gs://` URI of this run's archived transcript (Slice 2's runner-mode
+  /** `gs://` URI of this run's archived session data (Slice 2's runner-mode
    * shipper — see claude.yml's "Ship session telemetry" step and
    * apps/agent-console/infra/agent-telemetry.yaml). Issue-agent sessions
    * only: `cli` docs are built from a transcript already on local disk, so
    * there is no runner-container-destroyed-on-exit problem to solve for
-   * them. */
+   * them.
+   *
+   * Not always a single Claude Code `.jsonl` object: #3123 phase 2's
+   * archive-first strategy for agents this repo has no `TranscriptAdapter`
+   * for yet (opencode.yml's "Ship session archive" step) uploads that
+   * agent's raw local session storage as-is and points this at the
+   * `runs/<run-id>/<agent>/` GCS *prefix* it was archived under, not one
+   * file — see `sessionAgent(doc)` on the owning doc before assuming this is
+   * a fetchable single transcript object; only `'claude-code'` docs are. */
   transcriptGcsUri?: string;
 }
 
