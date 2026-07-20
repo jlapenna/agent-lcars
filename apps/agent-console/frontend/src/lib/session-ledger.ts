@@ -35,7 +35,11 @@ export interface WeekLedgerRow extends LedgerTotals {
 export interface SessionLedger {
   /** Sorted by cost desc, then tokens desc (see {@link compareLedgerTotals}) - not capped; the page renders the top N. */
   byIssue: IssueLedgerRow[];
-  /** Same sort as byIssue. */
+  /** Sorted chronologically, newest ISO week first (see
+   * {@link compareWeekKeysDesc}) - unlike byIssue's cost-ranked order, a
+   * cost/token ranking would scramble the calendar sequence here, and this
+   * is a dashboard where the most recent week is what you want up top. Not
+   * capped; the page renders the top N. */
   byWeek: WeekLedgerRow[];
 }
 
@@ -55,6 +59,25 @@ function compareLedgerTotals(a: LedgerTotals, b: LedgerTotals): number {
   if (a.costUsd !== undefined) return -1;
   if (b.costUsd !== undefined) return 1;
   return b.tokens - a.tokens;
+}
+
+/**
+ * Chronological, newest-first comparator for the per-week rollup: this is a
+ * dashboard, so a maintainer wants the most recent week at the top, not
+ * buried below however many weeks rank higher by cost/tokens (see
+ * {@link compareLedgerTotals}, which is right for byIssue but would scramble
+ * byWeek's calendar order). ISO week keys are zero-padded four-digit-year,
+ * two-digit-week strings ("2026-W01"), so plain string comparison already
+ * orders correctly across a year boundary - "2025-W52" sorts before
+ * "2026-W01" because '5' < '6' in the year's third digit, no numeric
+ * parsing needed. The 'unknown' bucket (unparseable `startedAt`) has no
+ * calendar position, so it's always sorted last regardless of direction.
+ */
+function compareWeekKeysDesc(a: WeekLedgerRow, b: WeekLedgerRow): number {
+  if (a.isoWeek === 'unknown') return b.isoWeek === 'unknown' ? 0 : 1;
+  if (b.isoWeek === 'unknown') return -1;
+  if (a.isoWeek === b.isoWeek) return 0;
+  return a.isoWeek < b.isoWeek ? 1 : -1;
 }
 
 /**
@@ -136,7 +159,7 @@ export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
     .sort(compareLedgerTotals);
   const byWeek = Array.from(byWeekMap.entries())
     .map(([isoWeek, totals]) => ({ isoWeek, ...totals }))
-    .sort(compareLedgerTotals);
+    .sort(compareWeekKeysDesc);
 
   return { byIssue, byWeek };
 }

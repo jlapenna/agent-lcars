@@ -182,6 +182,64 @@ describe('aggregateSessionLedger', () => {
     ]);
   });
 
+  it('sorts weeks chronologically descending (newest first), not by cost/tokens', () => {
+    const { byWeek } = aggregateSessionLedger([
+      // Deliberately inserted out of chronological order, and with costs
+      // that would scramble the order if compareLedgerTotals were reused
+      // (the per-issue table's cost-desc sort makes sense there but would
+      // be wrong here - see compareWeekKeysDesc's doc comment).
+      cliDoc({
+        sessionId: 'w2',
+        startedAt: '2026-01-12T10:00:00.000Z', // 2026-W03
+        totalCostUsd: 0.1,
+      }),
+      cliDoc({
+        sessionId: 'w1',
+        startedAt: '2026-01-05T10:00:00.000Z', // 2026-W02
+        totalCostUsd: 9,
+      }),
+      cliDoc({
+        sessionId: 'w3',
+        startedAt: '2026-01-19T10:00:00.000Z', // 2026-W04
+        totalCostUsd: 5,
+      }),
+    ]);
+
+    expect(byWeek.map((r) => r.isoWeek)).toEqual([
+      '2026-W04',
+      '2026-W03',
+      '2026-W02',
+    ]);
+  });
+
+  it('orders weeks correctly across a year boundary (ISO week strings sort lexicographically)', () => {
+    const { byWeek } = aggregateSessionLedger([
+      // Monday 2025-12-22 falls in ISO week 2025-W52 (2025's last full ISO
+      // week - 2025 has no W53).
+      cliDoc({ sessionId: 'y1', startedAt: '2025-12-22T10:00:00.000Z' }),
+      // Monday 2026-01-05 begins ISO week 2026-W02.
+      cliDoc({ sessionId: 'y2', startedAt: '2026-01-05T10:00:00.000Z' }),
+      // Monday 2025-12-29 begins ISO week 2026-W01 (the last few days of
+      // the calendar year already belong to the next ISO year).
+      cliDoc({ sessionId: 'y3', startedAt: '2025-12-29T10:00:00.000Z' }),
+    ]);
+
+    expect(byWeek.map((r) => r.isoWeek)).toEqual([
+      '2026-W02',
+      '2026-W01',
+      '2025-W52',
+    ]);
+  });
+
+  it('sorts the unknown-week bucket last regardless of the other weeks present', () => {
+    const { byWeek } = aggregateSessionLedger([
+      cliDoc({ sessionId: 'u1', startedAt: '' }),
+      cliDoc({ sessionId: 'u2', startedAt: '2026-01-05T10:00:00.000Z' }), // 2026-W02
+    ]);
+
+    expect(byWeek.map((r) => r.isoWeek)).toEqual(['2026-W02', 'unknown']);
+  });
+
   it('aggregates a realistic mixed-source, mixed-cost, multi-week set correctly', () => {
     const ledger = aggregateSessionLedger([
       cliDoc({
