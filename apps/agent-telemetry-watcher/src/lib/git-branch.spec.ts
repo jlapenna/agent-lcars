@@ -2,9 +2,9 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { resolveGitBranch } from './git-branch';
-import { describe, it, test, expect, beforeEach, afterEach } from 'vitest';
 
 describe('resolveGitBranch', () => {
   let repoDir: string;

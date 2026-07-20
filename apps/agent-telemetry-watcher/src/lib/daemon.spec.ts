@@ -1,8 +1,8 @@
 import { SessionDoc } from '@repo/agent-telemetry';
+import { describe, expect, it, vi } from 'vitest';
 
 import { WatcherDaemon } from './daemon';
 import { SessionStore } from './store';
-import { describe, it, test, expect, vi } from 'vitest';
 
 const TRANSCRIPT = (
   sessionId: string,

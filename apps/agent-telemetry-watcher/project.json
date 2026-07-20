@@ -3,30 +3,21 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/agent-telemetry-watcher/src",
   "projectType": "application",
-  "tags": [
-    "platform:server",
-    "scope:agent-console"
-  ],
+  "tags": ["platform:server", "scope:agent-console"],
   "targets": {
     "build": {
       "executor": "@nx/esbuild:esbuild",
-      "outputs": [
-        "{options.outputPath}"
-      ],
+      "outputs": ["{options.outputPath}"],
       "defaultConfiguration": "production",
       "options": {
         "platform": "node",
         "outputPath": "apps/agent-telemetry-watcher/dist",
-        "format": [
-          "cjs"
-        ],
+        "format": ["cjs"],
         "bundle": true,
         "thirdParty": true,
         "main": "apps/agent-telemetry-watcher/src/main.ts",
         "tsConfig": "apps/agent-telemetry-watcher/tsconfig.build.json",
-        "assets": [
-          "apps/agent-telemetry-watcher/src/assets"
-        ],
+        "assets": ["apps/agent-telemetry-watcher/src/assets"],
         "skipTypeCheck": true,
         "esbuildOptions": {
           "sourcemap": true,
@@ -44,10 +35,7 @@
               ".js": ".js"
             }
           },
-          "external": [
-            "@google-cloud/*",
-            "google-gax"
-          ]
+          "external": ["@google-cloud/*", "google-gax"]
         }
       }
     },
@@ -55,9 +43,7 @@
       "continuous": true,
       "executor": "@nx/js:node",
       "defaultConfiguration": "development",
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "options": {
         "buildTarget": "@repo/agent-telemetry-watcher:build",
         "runBuildTargetDependencies": false
@@ -71,11 +57,28 @@
         }
       }
     },
+    "bundle": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "platform": "node",
+        "outputPath": "dist/apps/agent-telemetry-watcher",
+        "outputFileName": "ride-along.cjs",
+        "format": ["cjs"],
+        "bundle": true,
+        "thirdParty": true,
+        "target": "node24",
+        "main": "apps/agent-telemetry-watcher/src/main.ts",
+        "tsConfig": "apps/agent-telemetry-watcher/tsconfig.build.json",
+        "skipTypeCheck": true,
+        "esbuildOptions": {
+          "sourcemap": false
+        }
+      }
+    },
     "docker-build": {
       "executor": "nx:run-commands",
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "options": {
         "command": "docker build -f apps/agent-telemetry-watcher/Dockerfile -t agent-telemetry-watcher:local .",
         "cwd": "{workspaceRoot}"

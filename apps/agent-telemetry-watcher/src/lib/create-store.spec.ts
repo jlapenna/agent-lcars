@@ -1,7 +1,8 @@
+import { describe, expect, it, vi } from 'vitest';
+
 import { WatcherConfig } from './config';
 import { createStoreFromConfig } from './create-store';
 import * as store from './store';
-import { describe, it, test, expect, vi } from 'vitest';
 
 describe('createStoreFromConfig', () => {
   const baseConfig: WatcherConfig = {
@@ -65,5 +66,23 @@ describe('createStoreFromConfig', () => {
         },
       }),
     );
+  });
+
+  it('falls back to ambient Application Default Credentials when only a project id is configured (runner mode)', () => {
+    const fakeStore = { upsertSession: vi.fn() };
+    const firestoreSpy = vi
+      .spyOn(store, 'createFirestoreStore')
+      .mockReturnValue(fakeStore);
+
+    createStoreFromConfig({
+      firestoreProjectId: 'supersprinklesracing',
+    });
+
+    // Exact args (not objectContaining): no `credentials` key must be
+    // present at all — that's what makes @google-cloud/firestore fall back
+    // to ambient ADC instead of the writer-key-JSON path exercised above.
+    expect(firestoreSpy).toHaveBeenCalledWith({
+      projectId: 'supersprinklesracing',
+    });
   });
 });

@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { isProcessAliveForCwd } from './process-check';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 describe('isProcessAliveForCwd', () => {
   let procRoot: string;

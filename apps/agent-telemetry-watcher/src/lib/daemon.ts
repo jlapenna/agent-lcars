@@ -36,6 +36,13 @@ export interface WatcherDaemonOptions {
   /** Root of `~/share` (share-media skill convention). Artifact discovery is
    * skipped entirely when unset. */
   shareDir?: string;
+  /** Runner-mode only (`source: 'issue-agent'` sessions, see
+   * `runner.ts`/`runner-config.ts`): tagged onto every doc this daemon
+   * instance upserts. `buildSessionDoc` only ever reads these for
+   * `issue-agent` docs, so a host-watcher instance simply never sets them. */
+  runId?: string;
+  /** Runner-mode only, see `runId`. */
+  issueNumber?: number;
   now?: () => string;
   readFile?: (filePath: string) => string;
   statFile?: (filePath: string) => FileStat;
@@ -189,9 +196,14 @@ export class WatcherDaemon {
         ? discoverArtifacts(this.options.shareDir, sessionId)
         : [];
       const summary =
-        artifacts.length > 0 ? { ...tracked.summary, artifacts } : tracked.summary;
+        artifacts.length > 0
+          ? { ...tracked.summary, artifacts }
+          : tracked.summary;
 
-      const doc = buildSessionDoc(summary, liveness);
+      const doc = buildSessionDoc(summary, liveness, {
+        runId: this.options.runId,
+        issueNumber: this.options.issueNumber,
+      });
 
       try {
         await this.options.store.upsertSession(doc);
