@@ -29,19 +29,29 @@ function renderTable(rows: SessionRow[]) {
   );
 }
 
+// Below `sm`, SessionTable renders a card list instead of the 12-column
+// table (#3107); both branches render unconditionally in jsdom (which
+// doesn't evaluate the visibleFrom/hiddenFrom CSS media queries that keep
+// only one visible in a real browser - see InvitesTable.test.tsx for the
+// same pattern elsewhere in this repo), so any row content shared by both
+// views appears twice and needs getAllBy* rather than getBy*.
 describe('SessionTable', () => {
   it('renders an empty state with no rows', () => {
     renderTable([]);
     expect(screen.getByTestId('session-table-empty')).toBeTruthy();
+    expect(screen.queryByTestId('session-cards')).toBeNull();
   });
 
-  it('links a row title to its session detail page', () => {
+  it('links a row title to its session detail page in both views', () => {
     renderTable([makeRow({ sessionId: 'abc-123' })]);
-    const link = screen.getByRole('link', { name: 'Fix flaky login test' });
-    expect(link.getAttribute('href')).toBe('/sessions/abc-123');
+    const links = screen.getAllByRole('link', { name: 'Fix flaky login test' });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link.getAttribute('href')).toBe('/sessions/abc-123');
+    }
   });
 
-  it('links the issue number when present', () => {
+  it('links the issue number when present in both views', () => {
     renderTable([
       makeRow({
         source: 'issue-agent',
@@ -49,8 +59,13 @@ describe('SessionTable', () => {
         issueUrl: 'https://github.com/o/r/issues/42',
       }),
     ]);
-    const link = screen.getByRole('link', { name: '#42' });
-    expect(link.getAttribute('href')).toBe('https://github.com/o/r/issues/42');
+    const links = screen.getAllByRole('link', { name: '#42' });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link.getAttribute('href')).toBe(
+        'https://github.com/o/r/issues/42',
+      );
+    }
   });
 
   it('renders no issue link when the row has none', () => {
@@ -58,7 +73,7 @@ describe('SessionTable', () => {
     expect(screen.queryByText('#42')).toBeNull();
   });
 
-  it('links every PR number', () => {
+  it('links every PR number in both views', () => {
     renderTable([
       makeRow({
         prUrls: [
@@ -67,20 +82,37 @@ describe('SessionTable', () => {
         ],
       }),
     ]);
-    expect(screen.getByRole('link', { name: '#10' }).getAttribute('href')).toBe(
-      'https://github.com/o/r/pull/10',
-    );
-    expect(screen.getByRole('link', { name: '#20' }).getAttribute('href')).toBe(
-      'https://github.com/o/r/pull/20',
-    );
+    const pr10 = screen.getAllByRole('link', { name: '#10' });
+    const pr20 = screen.getAllByRole('link', { name: '#20' });
+    expect(pr10).toHaveLength(2);
+    expect(pr20).toHaveLength(2);
+    for (const link of pr10) {
+      expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/10');
+    }
+    for (const link of pr20) {
+      expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/20');
+    }
   });
 
-  it('shows the host for a CLI session', () => {
+  it('shows the host for a CLI session in the table column', () => {
     renderTable([makeRow({ source: 'cli', host: 'joes-workstation' })]);
     expect(screen.getByText('joes-workstation')).toBeTruthy();
   });
 
-  it('links the run for an issue-agent session', () => {
+  it('folds the host into the card meta line', () => {
+    renderTable([
+      makeRow({
+        sessionId: 'card-host',
+        source: 'cli',
+        host: 'joes-workstation',
+      }),
+    ]);
+    expect(screen.getByTestId('session-card-meta').textContent).toContain(
+      'joes-workstation',
+    );
+  });
+
+  it('links the run for an issue-agent session in the table only (dropped as card noise)', () => {
     renderTable([
       makeRow({
         source: 'issue-agent',
@@ -88,31 +120,38 @@ describe('SessionTable', () => {
         runUrl: 'https://github.com/o/r/actions/runs/999',
       }),
     ]);
-    const link = screen.getByRole('link', { name: /run/ });
-    expect(link.getAttribute('href')).toBe(
+    const links = screen.getAllByRole('link', { name: /run/ });
+    expect(links).toHaveLength(1);
+    expect(links[0].getAttribute('href')).toBe(
       'https://github.com/o/r/actions/runs/999',
     );
   });
 
   it('shows a formatted cost when the row has one', () => {
     renderTable([makeRow({ sessionId: 's-cost', totalCostUsd: 1.5 })]);
-    expect(screen.getByText('$1.50')).toBeTruthy();
+    expect(screen.getAllByText('$1.50').length).toBeGreaterThan(0);
   });
 
-  it('shows an em-dash for cost when the row has none', () => {
+  it('shows an em-dash for cost when the row has none (table only - the card drops it entirely)', () => {
     renderTable([makeRow({ sessionId: 's-no-cost' })]);
     expect(screen.queryByText('$')).toBeNull();
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 
-  it('renders the liveness badge with its label', () => {
+  it('renders the liveness badge with its label in both views', () => {
     renderTable([makeRow({ liveness: 'live' })]);
     expect(screen.getByTestId('session-row-liveness').textContent).toBe('live');
+    expect(screen.getByTestId('session-card-liveness').textContent).toBe(
+      'live',
+    );
   });
 
   it('formats total tokens with thousands separators', () => {
     renderTable([makeRow({ totalTokens: 12345 })]);
     expect(screen.getByText('12,345')).toBeTruthy();
+    expect(screen.getByTestId('session-card-meta').textContent).toContain(
+      '12,345 tok',
+    );
   });
 
   it('renders no agent badge for a claude-code row (the overwhelming default)', () => {
@@ -120,8 +159,17 @@ describe('SessionTable', () => {
     expect(screen.queryByText('claude code')).toBeNull();
   });
 
-  it('renders an agent badge for a non-claude-code row', () => {
+  it('renders an agent badge for a non-claude-code row in both views', () => {
     renderTable([makeRow({ agent: 'codex' })]);
-    expect(screen.getByText('codex')).toBeTruthy();
+    expect(screen.getAllByText('codex')).toHaveLength(2);
+  });
+
+  it('renders one card per row, scoped under the mobile card list', () => {
+    renderTable([
+      makeRow({ sessionId: 's1' }),
+      makeRow({ sessionId: 's2', title: 'Second session' }),
+    ]);
+    expect(screen.getByTestId('session-card-s1')).toBeTruthy();
+    expect(screen.getByTestId('session-card-s2')).toBeTruthy();
   });
 });

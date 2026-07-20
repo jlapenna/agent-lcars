@@ -3,6 +3,7 @@ import {
   Group,
   Stack,
   Table,
+  TableScrollContainer,
   TableTbody,
   TableTd,
   TableTh,
@@ -26,76 +27,162 @@ import { formatCost } from '../format';
  * useful to show at once. */
 const MAX_LEDGER_ROWS = 15;
 
+function IssueCell({
+  issueNumber,
+}: {
+  issueNumber: IssueLedgerRow['issueNumber'];
+}) {
+  if (issueNumber === 'no-issue') {
+    return (
+      <Text size="sm" c="dimmed">
+        no issue
+      </Text>
+    );
+  }
+  return (
+    <Anchor
+      href={`https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/${issueNumber}`}
+      target="_blank"
+      rel="noreferrer"
+      size="sm"
+    >
+      #{issueNumber}
+    </Anchor>
+  );
+}
+
+/**
+ * `sm` and up: the full per-issue breakdown (Issue/Sessions/Turns/Tokens/
+ * Cost), wrapped in its own scroll container (#3107) so an unusually wide
+ * issue-number column can never push the page body sideways - unlike the
+ * session table, this one rarely needs the scroll in practice at `sm`+
+ * widths, but the container costs nothing when unused.
+ */
 function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
   return (
-    <Table verticalSpacing="xs" fz="sm">
-      <TableThead>
-        <TableTr>
-          <TableTh>Issue</TableTh>
-          <TableTh>Sessions</TableTh>
-          <TableTh>Turns</TableTh>
-          <TableTh>Tokens</TableTh>
-          <TableTh>Cost</TableTh>
-        </TableTr>
-      </TableThead>
-      <TableTbody>
-        {rows.slice(0, MAX_LEDGER_ROWS).map((row) => (
-          <TableTr key={row.issueNumber} data-testid="ledger-issue-row">
-            <TableTd>
-              {row.issueNumber === 'no-issue' ? (
-                <Text size="sm" c="dimmed">
-                  no issue
-                </Text>
-              ) : (
-                <Anchor
-                  href={`https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/${row.issueNumber}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="sm"
-                >
-                  #{row.issueNumber}
-                </Anchor>
-              )}
-            </TableTd>
-            <TableTd>{row.sessions}</TableTd>
-            <TableTd>{row.turns}</TableTd>
-            <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
-            <TableTd>
-              {row.costUsd !== undefined ? formatCost(row.costUsd) : '—'}
-            </TableTd>
+    <TableScrollContainer minWidth={360} visibleFrom="sm">
+      <Table verticalSpacing="xs" fz="sm">
+        <TableThead>
+          <TableTr>
+            <TableTh>Issue</TableTh>
+            <TableTh>Sessions</TableTh>
+            <TableTh>Turns</TableTh>
+            <TableTh>Tokens</TableTh>
+            <TableTh>Cost</TableTh>
           </TableTr>
-        ))}
-      </TableTbody>
-    </Table>
+        </TableThead>
+        <TableTbody>
+          {rows.map((row) => (
+            <TableTr key={row.issueNumber} data-testid="ledger-issue-row">
+              <TableTd>
+                <IssueCell issueNumber={row.issueNumber} />
+              </TableTd>
+              <TableTd>{row.sessions}</TableTd>
+              <TableTd>{row.turns}</TableTd>
+              <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
+              <TableTd>
+                {row.costUsd !== undefined ? formatCost(row.costUsd) : '—'}
+              </TableTd>
+            </TableTr>
+          ))}
+        </TableTbody>
+      </Table>
+    </TableScrollContainer>
+  );
+}
+
+/**
+ * Below `sm`: Turns/Cost drop (both are one tap away on the session
+ * table/detail page) so Issue/Sessions/Tokens - what a maintainer actually
+ * scans a budget ledger for on a phone - fits at 360px without the table
+ * needing its own horizontal scroll at all. Still wrapped in a scroll
+ * container defensively, since a long issue title... there isn't one here
+ * (issue numbers are short), but an unexpectedly narrow viewport should
+ * scroll the table, never the page.
+ */
+function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
+  return (
+    <TableScrollContainer minWidth={240} hiddenFrom="sm">
+      <Table verticalSpacing="xs" fz="sm">
+        <TableThead>
+          <TableTr>
+            <TableTh>Issue</TableTh>
+            <TableTh>Sessions</TableTh>
+            <TableTh>Tokens</TableTh>
+          </TableTr>
+        </TableThead>
+        <TableTbody>
+          {rows.map((row) => (
+            <TableTr
+              key={row.issueNumber}
+              data-testid="ledger-issue-row-compact"
+            >
+              <TableTd>
+                <IssueCell issueNumber={row.issueNumber} />
+              </TableTd>
+              <TableTd>{row.sessions}</TableTd>
+              <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
+            </TableTr>
+          ))}
+        </TableTbody>
+      </Table>
+    </TableScrollContainer>
   );
 }
 
 function WeekLedgerTable({ rows }: { rows: WeekLedgerRow[] }) {
   return (
-    <Table verticalSpacing="xs" fz="sm">
-      <TableThead>
-        <TableTr>
-          <TableTh>Week</TableTh>
-          <TableTh>Sessions</TableTh>
-          <TableTh>Turns</TableTh>
-          <TableTh>Tokens</TableTh>
-          <TableTh>Cost</TableTh>
-        </TableTr>
-      </TableThead>
-      <TableTbody>
-        {rows.slice(0, MAX_LEDGER_ROWS).map((row) => (
-          <TableTr key={row.isoWeek} data-testid="ledger-week-row">
-            <TableTd>{row.isoWeek}</TableTd>
-            <TableTd>{row.sessions}</TableTd>
-            <TableTd>{row.turns}</TableTd>
-            <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
-            <TableTd>
-              {row.costUsd !== undefined ? formatCost(row.costUsd) : '—'}
-            </TableTd>
+    <TableScrollContainer minWidth={360} visibleFrom="sm">
+      <Table verticalSpacing="xs" fz="sm">
+        <TableThead>
+          <TableTr>
+            <TableTh>Week</TableTh>
+            <TableTh>Sessions</TableTh>
+            <TableTh>Turns</TableTh>
+            <TableTh>Tokens</TableTh>
+            <TableTh>Cost</TableTh>
           </TableTr>
-        ))}
-      </TableTbody>
-    </Table>
+        </TableThead>
+        <TableTbody>
+          {rows.map((row) => (
+            <TableTr key={row.isoWeek} data-testid="ledger-week-row">
+              <TableTd>{row.isoWeek}</TableTd>
+              <TableTd>{row.sessions}</TableTd>
+              <TableTd>{row.turns}</TableTd>
+              <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
+              <TableTd>
+                {row.costUsd !== undefined ? formatCost(row.costUsd) : '—'}
+              </TableTd>
+            </TableTr>
+          ))}
+        </TableTbody>
+      </Table>
+    </TableScrollContainer>
+  );
+}
+
+function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
+  return (
+    <TableScrollContainer minWidth={240} hiddenFrom="sm">
+      <Table verticalSpacing="xs" fz="sm">
+        <TableThead>
+          <TableTr>
+            <TableTh>Week</TableTh>
+            <TableTh>Sessions</TableTh>
+            <TableTh>Tokens</TableTh>
+          </TableTr>
+        </TableThead>
+        <TableTbody>
+          {rows.map((row) => (
+            <TableTr key={row.isoWeek} data-testid="ledger-week-row-compact">
+              <TableTd>{row.isoWeek}</TableTd>
+              <TableTd>{row.sessions}</TableTd>
+              <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
+            </TableTr>
+          ))}
+        </TableTbody>
+      </Table>
+    </TableScrollContainer>
   );
 }
 
@@ -115,6 +202,9 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
     return null;
   }
 
+  const byIssue = ledger.byIssue.slice(0, MAX_LEDGER_ROWS);
+  const byWeek = ledger.byWeek.slice(0, MAX_LEDGER_ROWS);
+
   return (
     <Stack gap="sm" mb="xl" data-testid="session-ledger">
       <Title order={2} size="h4">
@@ -125,13 +215,15 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
           <Text size="xs" c="dimmed" fw={600} tt="uppercase">
             By issue
           </Text>
-          <IssueLedgerTable rows={ledger.byIssue} />
+          <IssueLedgerTable rows={byIssue} />
+          <IssueLedgerTableCompact rows={byIssue} />
         </Stack>
         <Stack gap={4} style={{ flex: '1 1 320px' }}>
           <Text size="xs" c="dimmed" fw={600} tt="uppercase">
             By week
           </Text>
-          <WeekLedgerTable rows={ledger.byWeek} />
+          <WeekLedgerTable rows={byWeek} />
+          <WeekLedgerTableCompact rows={byWeek} />
         </Stack>
       </Group>
       <Text size="xs" c="dimmed">
