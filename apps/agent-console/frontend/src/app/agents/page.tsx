@@ -111,6 +111,9 @@ export default async function AgentsPage() {
           <Anchor href="/" size="sm">
             ← Task queue
           </Anchor>
+          <Anchor href="/sessions" size="sm">
+            Session archive →
+          </Anchor>
           <RefreshButton
             generatedAt={generatedAt}
             initialLabel={formatRelativeTime(generatedAt)}

@@ -151,6 +151,9 @@ export default async function Index() {
           <Anchor href="/agents" size="sm">
             Agent status →
           </Anchor>
+          <Anchor href="/sessions" size="sm">
+            Session archive →
+          </Anchor>
           <QuickTaskButton />
           <UnstickPrsButton />
           <EvictNxCacheButton />
