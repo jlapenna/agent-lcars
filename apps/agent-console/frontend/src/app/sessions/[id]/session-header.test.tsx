@@ -175,4 +175,32 @@ describe('SessionHeader', () => {
       'live',
     );
   });
+
+  it('renders a resume-archive command for an issue-agent session with a transcriptGcsUri (#3107)', () => {
+    renderHeader(
+      agentDoc({
+        transcriptGcsUri:
+          'gs://supersprinklesracing-agent-session-transcripts/runs/999/agent-1.jsonl',
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        '~/p/members/tools/claude-agent-session.sh resume-archive gs://supersprinklesracing-agent-session-transcripts/runs/999/agent-1.jsonl',
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Copy takeover command' }),
+    ).toBeTruthy();
+  });
+
+  it('omits the resume-archive command for an issue-agent session with no transcriptGcsUri', () => {
+    renderHeader(agentDoc());
+    expect(screen.queryByText(/resume-archive/)).toBeNull();
+  });
+
+  it('omits the resume-archive command for a cli session even if transcriptGcsUri were somehow present', () => {
+    renderHeader(cliDoc());
+    expect(screen.queryByText(/resume-archive/)).toBeNull();
+  });
 });

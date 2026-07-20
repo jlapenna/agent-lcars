@@ -21,6 +21,7 @@ import {
   formatRelativeTime,
   shareArtifactUrl,
 } from '../../format';
+import { TakeoverCommand } from '../../takeover-command';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -196,6 +197,21 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
               );
             })}
           </Group>
+        </Stack>
+      )}
+
+      {doc.source === 'issue-agent' && doc.transcriptGcsUri && (
+        <Stack gap={4}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
+            Resume from archive
+          </Text>
+          <Text size="xs" c="dimmed">
+            This runner&apos;s container is gone, but its transcript is archived
+            — run this on a workstation checkout to resume it there.
+          </Text>
+          <TakeoverCommand
+            command={`~/p/members/tools/claude-agent-session.sh resume-archive ${doc.transcriptGcsUri}`}
+          />
         </Stack>
       )}
 
