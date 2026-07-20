@@ -20,15 +20,22 @@ firestore:
   type: 'firestore-native'
   # Bounds the `sessions` collection, which otherwise grows by ~1 doc/session
   # forever (237 docs within the first weeks of Slice 1) — see issue #2708.
-  # `expireAt` (lastActivityAt + 30d, computed in
-  # libs/agent-telemetry/src/lib/session-doc.ts) is a Firestore Timestamp
-  # field; deletion is performed by Firestore's own service agent, so no
-  # extra IAM permission (e.g. datastore.entities.delete) is needed on the
-  # writer role above. 30d was chosen to comfortably outlive the console's
-  # 24h `activeSince` read cutoff (#2694/#2701); now that Slice 2's GCS
-  # transcript archive has landed, revisit whether ended-session docs need
-  # to live longer as an index into the archive (the archived transcript
-  # itself has no TTL — only the Firestore doc pointing at it does).
+  # `expireAt` is a Firestore Timestamp field computed per-source in
+  # libs/agent-telemetry/src/lib/session-doc.ts (#3107 follow-up 2):
+  #   - `source: 'cli'`:         lastActivityAt + CLI_SESSION_RETENTION_DAYS (30d)
+  #   - `source: 'issue-agent'`: lastActivityAt + ISSUE_AGENT_SESSION_RETENTION_DAYS (365d)
+  # 30d for `cli` docs comfortably outlives the console's 24h `activeSince`
+  # read cutoff (#2694/#2701) without retaining a developer's own
+  # host/cwd/branch detail indefinitely (privacy + noise). `issue-agent`
+  # docs get 365d instead: they're the only index into Slice 2's durable GCS
+  # transcript archive (`transcriptGcsUri`) — that archived transcript has
+  # no TTL of its own, so once the Firestore doc pointing at it expires, the
+  # archive becomes unbrowsable from the console. Since the field is
+  # value-driven (Firestore just deletes whatever `expireAt` says, whatever
+  # source computed it), this split needed no infra change here — only the
+  # app-level computation changed; deletion is still performed by
+  # Firestore's own service agent, so no extra IAM permission (e.g.
+  # datastore.entities.delete) is needed on the writer role above.
   ttlPolicies:
     sessions:
       field: 'expireAt'

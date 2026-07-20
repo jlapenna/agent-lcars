@@ -99,9 +99,12 @@ interface BaseSessionDoc {
   permissionMode?: string;
   title?: string;
   deliverables: SessionDeliverables;
-  /** ISO timestamp `lastActivityAt + SESSION_RETENTION_DAYS`. Written as a
-   * Firestore `Timestamp` (see `upsertSession`) so the `sessions` collection's
-   * TTL policy (`tools/provision-agent-telemetry-gcp.sh`) can garbage-collect
+  /** ISO timestamp `lastActivityAt + CLI_SESSION_RETENTION_DAYS` (`cli`
+   * docs) or `lastActivityAt + ISSUE_AGENT_SESSION_RETENTION_DAYS`
+   * (`issue-agent` docs) — see `session-doc.ts` for why the two sources get
+   * different retention (#3107 follow-up 2). Written as a Firestore
+   * `Timestamp` (see `upsertSession`) so the `sessions` collection's TTL
+   * policy (`tools/provision-agent-telemetry-gcp.sh`) can garbage-collect
    * it — see issue #2708. Omitted when `lastActivityAt` has no parseable
    * timestamp (e.g. a transcript with no timestamped lines yet). */
   expireAt?: string;

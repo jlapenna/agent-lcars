@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionDoc, SESSION_RETENTION_DAYS } from './session-doc';
+import {
+  buildSessionDoc,
+  CLI_SESSION_RETENTION_DAYS,
+  ISSUE_AGENT_SESSION_RETENTION_DAYS,
+  SESSION_RETENTION_DAYS,
+} from './session-doc';
 import { SessionSummary } from './types';
 
 function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
@@ -70,13 +75,18 @@ describe('buildSessionDoc', () => {
       { runId: 'run-123', issueNumber: 2539 },
     );
 
+    const expectedExpireAt = new Date('2026-07-10T10:05:00.000Z');
+    expectedExpireAt.setUTCDate(
+      expectedExpireAt.getUTCDate() + ISSUE_AGENT_SESSION_RETENTION_DAYS,
+    );
+
     expect(doc).toEqual({
       sessionId: 'session-1',
       source: 'issue-agent',
       liveness: 'ended',
       startedAt: '2026-07-10T10:00:00.000Z',
       lastActivityAt: '2026-07-10T10:05:00.000Z',
-      expireAt: '2026-08-09T10:05:00.000Z',
+      expireAt: expectedExpireAt.toISOString(),
       turns: 2,
       toolCallCounts: { Bash: 1 },
       tokens: {
@@ -176,19 +186,56 @@ describe('buildSessionDoc', () => {
     expect(doc).not.toHaveProperty('artifacts');
   });
 
-  it('computes expireAt as lastActivityAt + SESSION_RETENTION_DAYS', () => {
+  it('computes expireAt as lastActivityAt + CLI_SESSION_RETENTION_DAYS for cli docs', () => {
     const doc = buildSessionDoc(
-      baseSummary({ lastActivityAt: '2026-01-01T00:00:00.000Z' }),
+      baseSummary({
+        source: 'cli',
+        lastActivityAt: '2026-01-01T00:00:00.000Z',
+      }),
       'ended',
     );
 
     const expected = new Date('2026-01-01T00:00:00.000Z');
-    expected.setUTCDate(expected.getUTCDate() + SESSION_RETENTION_DAYS);
+    expected.setUTCDate(expected.getUTCDate() + CLI_SESSION_RETENTION_DAYS);
     expect(doc.expireAt).toBe(expected.toISOString());
   });
 
-  it('omits expireAt instead of throwing when lastActivityAt has no parseable timestamp', () => {
-    const doc = buildSessionDoc(baseSummary({ lastActivityAt: '' }), 'ended');
+  it('computes expireAt as lastActivityAt + ISSUE_AGENT_SESSION_RETENTION_DAYS for issue-agent docs', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        source: 'issue-agent',
+        lastActivityAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'ended',
+      { runId: 'run-123' },
+    );
+
+    const expected = new Date('2026-01-01T00:00:00.000Z');
+    expected.setUTCDate(
+      expected.getUTCDate() + ISSUE_AGENT_SESSION_RETENTION_DAYS,
+    );
+    expect(doc.expireAt).toBe(expected.toISOString());
+  });
+
+  it('SESSION_RETENTION_DAYS remains an alias for CLI_SESSION_RETENTION_DAYS (existing export contract)', () => {
+    expect(SESSION_RETENTION_DAYS).toBe(CLI_SESSION_RETENTION_DAYS);
+  });
+
+  it('omits expireAt instead of throwing when lastActivityAt has no parseable timestamp (cli)', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'cli', lastActivityAt: '' }),
+      'ended',
+    );
+
+    expect(doc).not.toHaveProperty('expireAt');
+  });
+
+  it('omits expireAt instead of throwing when lastActivityAt has no parseable timestamp (issue-agent)', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent', lastActivityAt: '' }),
+      'ended',
+      { runId: 'run-123' },
+    );
 
     expect(doc).not.toHaveProperty('expireAt');
   });
