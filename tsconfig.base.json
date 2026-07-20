@@ -22,6 +22,8 @@
     "paths": {
       "@repo/firestore": ["libs/firestore/src/index.ts"],
       "@repo/firestore/*": ["libs/firestore/src/*"],
+      "@repo/firestore-rate-limit": ["libs/firestore-rate-limit/src/index.ts"],
+      "@repo/firestore-rate-limit/*": ["libs/firestore-rate-limit/src/*"],
       "@repo/youtube": ["libs/youtube/src/index.ts"],
       "@repo/youtube/*": ["libs/youtube/src/*"],
       "@repo/squareup": ["libs/squareup/src/index.ts"],
