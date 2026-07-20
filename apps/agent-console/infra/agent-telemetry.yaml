@@ -95,9 +95,29 @@ serviceAccounts:
     email: 'agent-telemetry-writer@supersprinklesracing.iam.gserviceaccount.com'
     role: 'agentTelemetryWriter'
     grants:
+      # The `claude-agent-pool/providers/claude-agent-github` WIF provider
+      # (projects/972941236852/locations/global/workloadIdentityPools/claude-agent-pool/providers/claude-agent-github)
+      # backs this principalSet. Unlike the pool/roles above, the provider
+      # itself is NOT created by tools/provision-agent-telemetry-gcp.sh —
+      # it's managed by live gcloud only. Its current attribute condition
+      # (widened 2026-07-20, live gcloud change, orchestrating session
+      # c566c8de — see #3113):
+      #   assertion.repository=='supersprinklesracing/members' &&
+      #   (assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/claude.yml') ||
+      #    assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/deploy.yml'))
+      # It trusts exactly two job refs:
+      #   - claude.yml: the runner-mode shipper (this writer SA, "Ship
+      #     session telemetry") plus the claude-agent-readonly SA's
+      #     read-only observability auth ("Authenticate to GCP" above).
+      #   - deploy.yml: the `publish-ride-along` job impersonates this same
+      #     writer SA to upload the agent-telemetry-watcher ride-along
+      #     bundle (#3111). Originally trusted claude.yml job refs only,
+      #     which made deploy.yml's first ride-along publish fail with
+      #     "credential rejected by the attribute condition" (run
+      #     29713808422, fixed by rerunning after the live widening).
       - principal: 'principalSet://iam.googleapis.com/projects/972941236852/locations/global/workloadIdentityPools/claude-agent-pool/attribute.repository/supersprinklesracing/members'
         role: 'roles/iam.workloadIdentityUser'
-        reason: 'claude.yml''s "Authenticate telemetry writer" step mints an access token for this SA (runner-mode shipper, Slice 2 — see the storage section below and the "Ship session telemetry" step)'
+        reason: 'claude.yml''s "Authenticate telemetry writer" step mints an access token for this SA (runner-mode shipper, Slice 2 — see the storage section below and the "Ship session telemetry" step); deploy.yml''s publish-ride-along job (#3111) mints one too, to publish the ride-along bundle'
       - principal: 'user:jlapenna@gmail.com'
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'
