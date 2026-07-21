@@ -129,6 +129,7 @@ resource "google_project_iam_member" "deployer_roles" {
     "roles/firebase.admin",
     "roles/iam.serviceAccountAdmin",
     "roles/iam.serviceAccountUser",
+    "roles/resourcemanager.projectIamAdmin",
     "roles/serviceusage.serviceUsageConsumer",
   ])
   project = var.project_id
