@@ -23,15 +23,14 @@ COPY . .
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     HUSKY=0 CI=true pnpm install --frozen-lockfile
 RUN --mount=type=cache,target=/repo/.nx/cache \
-    ./tools/nx build @agent-lcars/telemetry-watcher --configuration=production
+    ./tools/nx bundle @agent-lcars/telemetry-watcher
 
 FROM node:24-slim AS runtime
 WORKDIR /app
 
 RUN adduser --disabled-password --gecos "" watcher
-COPY --from=build /repo/apps/telemetry-watcher/dist ./dist
-COPY --from=build /repo/node_modules ./node_modules
+COPY --from=build /repo/dist/apps/telemetry-watcher/ride-along.cjs ./ride-along.cjs
 USER watcher
 
 ENV NODE_ENV=production
-ENTRYPOINT ["node", "dist/main.js"]
+ENTRYPOINT ["node", "ride-along.cjs"]
