@@ -4,9 +4,9 @@
 # homelab-ansible convention — see the issue body for why this supersedes
 # the PRD's original "bundled systemd unit" plan.
 #
-# Build from the repo root: docker build -f apps/agent-telemetry-watcher/Dockerfile -t agent-telemetry-watcher .
+# Build from the repo root: docker build -f apps/telemetry-watcher/Dockerfile -t agent-telemetry-watcher .
 #
-# This is built directly from the live members checkout (see homelab's
+# This is built directly from the live agent-lcars checkout (see homelab's
 # agent-telemetry-watcher/docker-compose.yml for why), which changes on
 # essentially every commit — so `COPY . .` below is cache-invalidated on
 # every single build regardless of whether package.json/pnpm-lock.yaml
@@ -23,13 +23,13 @@ COPY . .
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     HUSKY=0 CI=true pnpm install --frozen-lockfile
 RUN --mount=type=cache,target=/repo/.nx/cache \
-    ./tools/nx build @repo/agent-telemetry-watcher --configuration=production
+    ./tools/nx build @agent-lcars/telemetry-watcher --configuration=production
 
 FROM node:24-slim AS runtime
 WORKDIR /app
 
 RUN adduser --disabled-password --gecos "" watcher
-COPY --from=build /repo/apps/agent-telemetry-watcher/dist ./dist
+COPY --from=build /repo/apps/telemetry-watcher/dist ./dist
 COPY --from=build /repo/node_modules ./node_modules
 USER watcher
 

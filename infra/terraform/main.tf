@@ -24,6 +24,16 @@ resource "google_firebase_project" "this" {
   depends_on = [google_project_service.services]
 }
 
+resource "google_firebase_app_hosting_domain" "production" {
+  provider        = google-beta
+  project         = var.project_id
+  location        = var.region
+  backend         = "agent-lcars"
+  domain_id       = "agent-console.supersprinkles.racing"
+  deletion_policy = "ABANDON"
+  depends_on      = [google_firebase_project.this]
+}
+
 resource "google_firestore_database" "default" {
   provider                = google-beta
   project                 = var.project_id
@@ -65,6 +75,12 @@ resource "google_storage_bucket_iam_member" "public_tools" {
   member = "allUsers"
 }
 
+resource "google_storage_bucket_iam_member" "deployer_tools" {
+  bucket = google_storage_bucket.tools.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
 resource "google_service_account" "telemetry_writer" {
   account_id   = "telemetry-writer"
   display_name = "Agent LCARS telemetry writer"
@@ -74,6 +90,27 @@ resource "google_project_iam_member" "writer_firestore" {
   project = var.project_id
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.telemetry_writer.email}"
+}
+
+resource "google_project_iam_member" "apphosting_firestore" {
+  project    = var.project_id
+  role       = "roles/datastore.viewer"
+  member     = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+  depends_on = [google_firebase_project.this]
+}
+
+resource "google_storage_bucket_iam_member" "apphosting_transcripts" {
+  bucket = google_storage_bucket.transcripts.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "apphosting_secrets" {
+  for_each  = google_secret_manager_secret.runtime
+  project   = var.project_id
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
 }
 
 resource "google_storage_bucket_iam_member" "writer_transcripts" {
@@ -126,6 +163,14 @@ resource "google_service_account_iam_member" "members_writer_impersonation" {
 resource "google_secret_manager_secret" "runtime" {
   for_each  = toset(["AUTH_SECRET", "AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET", "AGENT_LCARS_GITHUB_TOKEN"])
   secret_id = each.value
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_secret_manager_secret" "telemetry_writer_key" {
+  secret_id = "AGENT_TELEMETRY_WRITER_KEY_JSON"
   replication {
     auto {}
   }

@@ -1,0 +1,16 @@
+{
+  "apphosting": [
+    {
+      "backendId": "agent-lcars",
+      "rootDir": "apps/console",
+      "ignore": [
+        "node_modules",
+        ".git",
+        ".nx",
+        "coverage",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ]
+}
