@@ -44,7 +44,7 @@ describe('sessionReferencesItemNumber', () => {
 
   it('matches when the item number appears in the branch, bounded by non-digits', () => {
     const session = makeSession({
-      branch: 'agent-console-agents-page-3024',
+      branch: 'agent-lcars-agents-page-3024',
     });
     expect(sessionReferencesItemNumber(session, 3024)).toBe(true);
   });

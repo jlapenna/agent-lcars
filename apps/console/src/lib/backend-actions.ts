@@ -80,7 +80,7 @@ export async function clearHumanNeededLabel(
     // succeeded, so a failed label cleanup should not fail the request.
     if (!isNotFound(error)) {
       console.error(
-        `agent-console: failed to clear human-needed on #${issueNumber}:`,
+        `agent-lcars: failed to clear human-needed on #${issueNumber}:`,
         error,
       );
     }

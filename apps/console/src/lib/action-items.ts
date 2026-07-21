@@ -391,7 +391,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
       ciRunning = checkRuns.some((run) => run.status !== 'completed');
     } catch (error) {
       console.error(
-        `agent-console: failed to list check runs for #${issue.number}:`,
+        `agent-lcars: failed to list check runs for #${issue.number}:`,
         error,
       );
       warnings.push(`Check runs unavailable for #${issue.number}.`);
@@ -520,7 +520,7 @@ export async function getActionItems(): Promise<ActionItemsResult> {
   for (const [i, result] of results.entries()) {
     if (result.status === 'rejected') {
       console.error(
-        `agent-console: search query failed (${SEARCH_QUERIES[i]}):`,
+        `agent-lcars: search query failed (${SEARCH_QUERIES[i]}):`,
         result.reason,
       );
       warnings.push(`Search query failed: "${SEARCH_QUERIES[i]}".`);
@@ -547,7 +547,7 @@ export async function getActionItems(): Promise<ActionItemsResult> {
   for (const [i, result] of classified.entries()) {
     if (result.status === 'rejected') {
       console.error(
-        'agent-console: failed to classify an item:',
+        'agent-lcars: failed to classify an item:',
         result.reason,
       );
       warnings.push(`Failed to classify #${issuesToClassify[i].number}.`);

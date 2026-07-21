@@ -58,7 +58,7 @@ const ADAPTERLESS_GITHUB: AuthConfigOptions = {
   newUserRoute: null,
 };
 
-describe('getAuthConfig adapter-less GitHub mode (agent-console)', () => {
+describe('getAuthConfig adapter-less GitHub mode (agent-lcars)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (utilServer.enableTestingHandlers as Mock).mockReturnValue(false);

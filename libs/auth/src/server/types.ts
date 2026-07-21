@@ -51,7 +51,7 @@ declare module 'next-auth' {
        * from whichever admin mechanism applies to the signed-in identity:
        * Slack workspace admin (web/bot), OneCake Strava-athlete allowlist
        * (ONECAKE_ADMINS), admin email (ADMIN_EMAILS), or GitHub-login
-       * allowlist (agent-console). Do NOT read admin status off `slack` —
+       * allowlist (agent-lcars). Do NOT read admin status off `slack` —
        * Slack is just one identity provider.
        */
       isAdmin: boolean;
@@ -60,7 +60,7 @@ declare module 'next-auth' {
       /**
        * Onboarding and compliance gates. Absent for apps that run without
        * the Firestore adapter (adapter-less JWT sessions, e.g.
-       * agent-console) and for injected test sessions. Sourced from
+       * agent-lcars) and for injected test sessions. Sourced from
        * `@repo/onboarding` (#2267) so this shape can't drift from the
        * completion predicate or the UI gatekeeper.
        */

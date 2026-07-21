@@ -105,7 +105,7 @@ function forwardE2eAuthUser(request: NextRequest): NextResponse | undefined {
 /**
  * Builds the app's Edge middleware. Two gating models are supported:
  *
- * - **Public-allowlist** (members, onecake, agent-console): everything
+ * - **Public-allowlist** (members, onecake, agent-lcars): everything
  *   requires a session except `publicRoutes`/`publicPrefixes`; API paths get
  *   a 401, pages redirect to `/login`.
  * - **Protected-allowlist** (`protectedPatterns`; primes): only matching

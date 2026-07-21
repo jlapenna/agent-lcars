@@ -1,15 +1,15 @@
-# Agent Telemetry Watcher
+# Agent LCARS Telemetry Watcher
 
 Per-host daemon (issue #2540) that watches interactive Claude Code and Codex
 CLI sessions on a workstation and reports summary-only telemetry to the
-`agent-telemetry` Firestore store the [Agent LCARS](../agent-console)
+`agent-telemetry` Firestore store the [Agent LCARS](../console)
 reads from.
 
 ## CI issue-agent telemetry paths
 
 Interactive (`source: 'cli'`) telemetry is this daemon's normal host-watcher
-mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry
-for `.github/workflows/claude.yml` runs ships via two complementary paths:
+mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry is
+provided by the standalone runner bundle:
 
 1. **Mid-run, live (`runner ride-along` — issue #3107 follow-up 5):**
    claude.yml's "Start telemetry ride-along" step downloads a **prebuilt**
@@ -24,77 +24,16 @@ for `.github/workflows/claude.yml` runs ships via two complementary paths:
    many unrelated Claude Code projects under the same
    `~/.claude/projects` root, so there's no privacy boundary to enforce the
    way `DEFAULT_PROJECT_DIR_ALLOWLIST` enforces one for interactive hosts.
-   This is what lights up the Agent LCARS's In-Flight UI (#3092) with
-   live turns/tokens mid-run instead of leaving it blind until the job
-   ends — with **zero console changes**, since that UI already renders
-   gauges whenever a live session doc exists.
+   This lights up Agent LCARS's In-Flight UI (#3092) with live turns and
+   tokens while the job is running.
 
    The bundle is published by `.github/workflows/deploy.yml`'s
    `publish-ride-along` job on every main push that touches this app or
    `libs/telemetry`, as a **sha-named** object
    (`gs://supersprinklesracing-agent-session-transcripts/tools/ride-along/<sha>.cjs`)
    — the writer SA can only create objects, never overwrite a mutable
-   `latest` pointer, so claude.yml's consumer step lists the
-   `tools/ride-along/` prefix and picks the newest by `timeCreated`. No
-   bundle published yet is expected (and fails soft) on the first rollout
-   after this feature merges. This costs **no per-run install**: the
-   original design explored here (harvest branch
-   `feat/agent-telemetry-runner-shipper`, closed PR #3094, commit
-   `c107dc83`) paid a full `pnpm install --frozen-lockfile` + build on
-   every single run before the agent's first turn — the prebuilt bundle is
-   what made ride-along viable to actually ship.
-
-2. **Job-end, authoritative (via `apps/cli`, unrelated to this app's own
-   `runner` mode):** claude.yml's `Authenticate telemetry writer` +
-   `Ship session telemetry`
-   steps (near the end of the job, `if: always()`) upload the runner's full
-   transcript to GCS and upsert a final `source: 'issue-agent'` session doc
-   — marked `ended`, with `transcriptGcsUri` attached — via `apps/cli`'s
-   `agent-telemetry upsert --run-id --issue-number --transcript-gcs-uri`.
-   This step kills the ride-along process (by PID file) before its own
-   upsert, so its write is always the one that lands last — see
-   [orchestration.md §8](../../.agents/skills/sprinkles-dev/references/orchestration.md)
-   for the full description.
-
-3. **OpenCode pipeline (`source: 'issue-agent'`, `agent: 'opencode'`,
-   archive-first stub — #3123 phase 2):**
-   `.github/workflows/opencode.yml`'s `Authenticate telemetry
-writer` + `Ship session archive` steps (after "Run OpenCode",
-   `if: always()`, `continue-on-error: true`) follow the same archive-first
-   pattern as claude.yml's authoritative path, but with **no transcript
-   reducer** — OpenCode's session storage is a SQLite database (`opencode.db`
-   plus a `log/` dir), not a `.jsonl` transcript file, and
-   `libs/telemetry/src/lib/transcript-adapter.ts` has no adapter for
-   that format yet. Instead the workflow uploads the raw session storage
-   untouched to
-   `gs://supersprinklesracing-agent-session-transcripts/runs/<run-id>/opencode/`
-   and upserts a **stub** session doc (`agent-telemetry upsert-stub
---session-id opencode-run-<run-id> --agent opencode`) with zero turns and
-   zero tokens — just a `transcriptGcsUri` pointer, a `startedAt` timestamp,
-   `source: 'issue-agent'`, and `agent: 'opencode'`. The Agent LCARS's
-   transcript UI gated on `sessionAgent(doc) === 'claude-code'` so these
-   stubs are never rendered as transcripts.
-
-   **Deliberate ordering (unlike claude.yml):** WIF auth is placed **after**
-   "Run OpenCode", not before it. OpenCode's own agent has unrestricted tool
-   access (including arbitrary `gh` calls and shell commands), and the
-   telemetry writer SA credential is powerful enough to upsert session docs
-   and upload to GCS. By keeping the auth step after the agent finishes,
-   there is no window where the agent's own bash could accidentally or
-   instrumentally inherit write access to the telemetry store — the
-   claude.yml approach (pre-authenticate, then rely on a later readonly
-   credential step to overwrite the ambient SA token) works there because
-   claude.yml's credential setup has a dedicated readonly re-auth step
-   before the agent's bash ever runs; this pipeline has no such step, so
-   the simpler "auth after agent" model is the correct one.
-
-4. **Codex pipeline (`source: 'issue-agent'`, `agent: 'codex'`):**
-   `codex.yml` archives the action-created date-partitioned JSONL rollouts
-   under `runs/<run-id>/codex/` and writes an ended stub doc after the agent
-   exits. Writer authentication deliberately happens after Codex, so the
-   agent never inherits telemetry write credentials. Interactive Codex
-   sessions use the full reducer described below; the runner path remains
-   archive-first so telemetry cannot delay or fail the worker.
+   `latest` pointer. Consumers use the versioned public bundle URL, so no
+   source checkout or per-run install is required.
 
 ## What it does
 

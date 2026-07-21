@@ -2,7 +2,7 @@
   "name": "@agent-lcars/console",
   "tags": [
     "platform:nextjs",
-    "scope:agent-console"
+    "scope:console"
   ],
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/console/src",

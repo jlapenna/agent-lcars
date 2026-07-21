@@ -60,7 +60,7 @@ function fixtureSessions(): CliSessionDoc[] {
       },
       host: 'e2e-fixture-host-1',
       branch: E2E_FIXTURE_BRANCH,
-      worktree: 'agent-console-e2e-fixture',
+      worktree: 'agent-lcars-e2e-fixture',
       model: 'claude-sonnet-5',
       title: 'E2E fixture: live CLI session',
       deliverables: { prNumbers: [], commitShas: [] },
@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
     await Promise.all(fixtureSessions().map((doc) => upsertSession(doc)));
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('agent-console: error in E2E seed API:', error);
+    console.error('agent-lcars: error in E2E seed API:', error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },
       { status: 500 },

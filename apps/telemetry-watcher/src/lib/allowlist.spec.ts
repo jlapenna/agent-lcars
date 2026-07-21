@@ -10,7 +10,7 @@ describe('isAllowedProjectDir', () => {
   it('allows worktree slugs nested under the primary checkout', () => {
     expect(
       isAllowedProjectDir(
-        '-home-jlapenna-p-members-claude-worktrees-agent-telemetry-watcher',
+        '-home-jlapenna-p-members-claude-worktrees-agent-lcars-telemetry-watcher',
       ),
     ).toBe(true);
   });

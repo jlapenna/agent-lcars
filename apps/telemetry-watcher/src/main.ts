@@ -22,12 +22,12 @@ function runHostWatcher(): void {
     )
     .join('; ');
   logger.info(
-    `agent-telemetry-watcher: starting; watching ${rootsDescription}, heartbeat every ${config.heartbeatIntervalMs}ms`,
+    `agent-lcars-telemetry-watcher: starting; watching ${rootsDescription}, heartbeat every ${config.heartbeatIntervalMs}ms`,
   );
 
   if (config.antigravitySummaryDb) {
     logger.info(
-      `agent-telemetry-watcher: also polling antigravity summary DB at ${config.antigravitySummaryDb.path} (workspace prefixes: ${config.antigravitySummaryDb.workspacePrefixes.join(', ')})`,
+      `agent-lcars-telemetry-watcher: also polling antigravity summary DB at ${config.antigravitySummaryDb.path} (workspace prefixes: ${config.antigravitySummaryDb.workspacePrefixes.join(', ')})`,
     );
   }
 
@@ -50,13 +50,13 @@ function runHostWatcher(): void {
   watcher.on('add', () => void daemon.tick());
   watcher.on('change', () => void daemon.tick());
   watcher.on('error', (error) =>
-    logger.warn('agent-telemetry-watcher: chokidar watch error', error),
+    logger.warn('agent-lcars-telemetry-watcher: chokidar watch error', error),
   );
 
   daemon.start();
 
   const shutdown = async (signal: string) => {
-    logger.info(`agent-telemetry-watcher: received ${signal}, shutting down`);
+    logger.info(`agent-lcars-telemetry-watcher: received ${signal}, shutting down`);
     daemon.stop();
     await watcher.close();
     process.exit(0);
@@ -83,7 +83,7 @@ function runRunnerRideAlong(argv: string[]): void {
 
     const shutdown = (signal: string) => {
       logger.info(
-        `agent-telemetry-watcher: runner ride-along received ${signal}, shutting down`,
+        `agent-lcars-telemetry-watcher: runner ride-along received ${signal}, shutting down`,
       );
       daemon.stop();
       process.exit(0);
@@ -96,7 +96,7 @@ function runRunnerRideAlong(argv: string[]): void {
     // authoritative finalize upsert.
   } catch (error) {
     logger.error(
-      'agent-telemetry-watcher: runner ride-along crashed on startup; exiting 0 anyway (telemetry must never fail the agent job)',
+      'agent-lcars-telemetry-watcher: runner ride-along crashed on startup; exiting 0 anyway (telemetry must never fail the agent job)',
       error,
     );
     process.exit(0);
@@ -114,13 +114,13 @@ function main(): void {
     // nonzero exit and fail the agent job).
     process.on('uncaughtException', (error) => {
       logger.error(
-        'agent-telemetry-watcher: uncaught exception in runner ride-along (ignored)',
+        'agent-lcars-telemetry-watcher: uncaught exception in runner ride-along (ignored)',
         error,
       );
     });
     process.on('unhandledRejection', (reason) => {
       logger.error(
-        'agent-telemetry-watcher: unhandled rejection in runner ride-along (ignored)',
+        'agent-lcars-telemetry-watcher: unhandled rejection in runner ride-along (ignored)',
         reason,
       );
     });

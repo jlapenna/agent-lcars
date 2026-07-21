@@ -10,7 +10,7 @@ describe('discoverTranscriptFiles', () => {
   let root: string;
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-telemetry-watcher-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-lcars-telemetry-watcher-'));
   });
 
   afterEach(() => {
@@ -67,10 +67,10 @@ describe('discoverAcrossRoots', () => {
 
   beforeEach(() => {
     rootA = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'agent-telemetry-watcher-root-a-'),
+      path.join(os.tmpdir(), 'agent-lcars-telemetry-watcher-root-a-'),
     );
     rootB = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'agent-telemetry-watcher-root-b-'),
+      path.join(os.tmpdir(), 'agent-lcars-telemetry-watcher-root-b-'),
     );
   });
 

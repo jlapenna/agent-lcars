@@ -36,7 +36,7 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
     },
     deliverables: { prNumbers: [], commitShas: [] },
     host: 'joes-workstation',
-    branch: 'feat/agent-console-cli-sessions',
+    branch: 'feat/agent-lcars-cli-sessions',
     ...overrides,
   };
 }
@@ -93,14 +93,14 @@ describe('getCliSessions', () => {
       sessionId: 'session-1',
       liveness: 'live',
       host: 'joes-workstation',
-      branch: 'feat/agent-console-cli-sessions',
+      branch: 'feat/agent-lcars-cli-sessions',
       turns: 3,
       totalTokens: 1200,
       pr: { number: 2600, url: 'https://github.com/o/r/pull/2600' },
     });
     expect(searchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        q: expect.stringContaining('head:feat/agent-console-cli-sessions'),
+        q: expect.stringContaining('head:feat/agent-lcars-cli-sessions'),
       }),
     );
   });
@@ -244,7 +244,7 @@ describe('getCliSessions', () => {
     expect(sessions).toHaveLength(2);
     expect(searchMock).toHaveBeenCalledTimes(1);
     expect(warnings).toEqual([
-      'PR lookup failed for branch "feat/agent-console-cli-sessions".',
+      'PR lookup failed for branch "feat/agent-lcars-cli-sessions".',
     ]);
   });
 

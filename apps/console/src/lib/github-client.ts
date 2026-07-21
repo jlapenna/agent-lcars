@@ -10,7 +10,7 @@ export function getGithubClient(): Octokit {
   if (!client) {
     client = new Octokit({
       auth: required('AGENT_LCARS_GITHUB_TOKEN'),
-      // Only ever set by the agent-console e2e suite, which has no real
+      // Only ever set by the agent-lcars e2e suite, which has no real
       // GitHub credentials and instead points this at its own fixture route
       // (apps/console/src/app/api/e2e/github) so PR-join
       // assertions don't depend on the real GitHub API. Never set in prod

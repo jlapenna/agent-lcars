@@ -26,7 +26,7 @@ export type StoreConfig = Pick<
 export function createStoreFromConfig(config: StoreConfig): SessionStore {
   if (config.firestoreEmulatorHost) {
     logger.info(
-      `agent-telemetry-watcher: using Firestore emulator at ${config.firestoreEmulatorHost}`,
+      `agent-lcars-telemetry-watcher: using Firestore emulator at ${config.firestoreEmulatorHost}`,
     );
     return createFirestoreStore({
       projectId: config.firestoreProjectId ?? 'demo-agent-telemetry',
@@ -57,13 +57,13 @@ export function createStoreFromConfig(config: StoreConfig): SessionStore {
     // client resolves that env var as Application Default Credentials
     // automatically when no explicit `credentials` option is passed.
     logger.info(
-      `agent-telemetry-watcher: using ambient Application Default Credentials for project ${config.firestoreProjectId}`,
+      `agent-lcars-telemetry-watcher: using ambient Application Default Credentials for project ${config.firestoreProjectId}`,
     );
     return createFirestoreStore({ projectId: config.firestoreProjectId });
   }
 
   logger.warn(
-    'agent-telemetry-watcher: AGENT_TELEMETRY_PROJECT_ID/AGENT_TELEMETRY_WRITER_KEY_JSON not set; falling back to a log-only store',
+    'agent-lcars-telemetry-watcher: AGENT_TELEMETRY_PROJECT_ID/AGENT_TELEMETRY_WRITER_KEY_JSON not set; falling back to a log-only store',
   );
   return createLogOnlyStore();
 }
