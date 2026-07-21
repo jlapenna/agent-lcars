@@ -164,7 +164,7 @@ export class WatcherDaemon {
         stat = statFile(file);
       } catch (error) {
         logger.warn(
-          `agent-telemetry-watcher: failed to stat transcript ${file}, skipping`,
+          `agent-lcars-telemetry-watcher: failed to stat transcript ${file}, skipping`,
           error,
         );
         continue;
@@ -206,7 +206,7 @@ export class WatcherDaemon {
         if (!missingAdapterWarned.has(root.adapter)) {
           missingAdapterWarned.add(root.adapter);
           logger.warn(
-            `agent-telemetry-watcher: no transcript adapter registered for agent "${root.adapter}" (root ${root.path}), skipping its files`,
+            `agent-lcars-telemetry-watcher: no transcript adapter registered for agent "${root.adapter}" (root ${root.path}), skipping its files`,
           );
         }
         continue;
@@ -217,7 +217,7 @@ export class WatcherDaemon {
         content = readFile(file);
       } catch (error) {
         logger.warn(
-          `agent-telemetry-watcher: failed to read transcript ${file}, skipping`,
+          `agent-lcars-telemetry-watcher: failed to read transcript ${file}, skipping`,
           error,
         );
         continue;
@@ -250,7 +250,7 @@ export class WatcherDaemon {
         this.sessionIdsByFile.set(file, acceptedSessionIds);
       } catch (error) {
         logger.warn(
-          `agent-telemetry-watcher: failed to reduce transcript ${file} (agent ${root.adapter}), skipping`,
+          `agent-lcars-telemetry-watcher: failed to reduce transcript ${file} (agent ${root.adapter}), skipping`,
           error,
         );
       }
@@ -305,7 +305,7 @@ export class WatcherDaemon {
         this.lastWrittenDocs.set(sessionId, serializedDoc);
       } catch (error) {
         logger.warn(
-          `agent-telemetry-watcher: failed to upsert session ${sessionId}, will retry next tick`,
+          `agent-lcars-telemetry-watcher: failed to upsert session ${sessionId}, will retry next tick`,
           error,
         );
       }
@@ -337,7 +337,7 @@ export class WatcherDaemon {
         if (!this.antigravityDbUnavailableWarned) {
           this.antigravityDbUnavailableWarned = true;
           logger.warn(
-            `agent-telemetry-watcher: antigravity summary DB unavailable at ${dbPath} (expected on hosts without the Antigravity CLI installed) - polling disabled silently for the rest of this process`,
+            `agent-lcars-telemetry-watcher: antigravity summary DB unavailable at ${dbPath} (expected on hosts without the Antigravity CLI installed) - polling disabled silently for the rest of this process`,
             error,
           );
         }
@@ -380,7 +380,7 @@ export class WatcherDaemon {
         );
       } catch (error) {
         logger.warn(
-          `agent-telemetry-watcher: failed to upsert antigravity session ${summary.sessionId}, will retry next tick`,
+          `agent-lcars-telemetry-watcher: failed to upsert antigravity session ${summary.sessionId}, will retry next tick`,
           error,
         );
         // Deliberately not caching lastActivityAt on failure - the next

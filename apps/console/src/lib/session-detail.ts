@@ -46,7 +46,7 @@ export async function getSessionDetail(
     const firestore = await getAgentTelemetryReaderFirestore();
     doc = await getSessionDoc(firestore, sessionId);
   } catch (error) {
-    console.error('agent-console: failed to load session detail:', error);
+    console.error('agent-lcars: failed to load session detail:', error);
     return {
       status: 'error',
       warning: 'Session detail unavailable (agent-telemetry store failed).',

@@ -3,7 +3,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/telemetry-watcher/src",
   "projectType": "application",
-  "tags": ["platform:server", "scope:agent-console"],
+  "tags": ["platform:server", "scope:console"],
   "targets": {
     "build": {
       "executor": "@nx/esbuild:esbuild",
@@ -80,7 +80,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
       "options": {
-        "command": "docker build -f apps/telemetry-watcher/Dockerfile -t agent-telemetry-watcher:local .",
+        "command": "docker build -f apps/telemetry-watcher/Dockerfile -t agent-lcars-telemetry-watcher:local .",
         "cwd": "{workspaceRoot}"
       }
     },

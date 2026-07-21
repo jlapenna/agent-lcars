@@ -35,8 +35,8 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
       'live',
     );
     await expect(liveRow).toContainText('e2e-fixture-host-1');
-    await expect(liveRow).toContainText('e2e-agent-console-fixture-branch');
-    await expect(liveRow).toContainText('agent-console-e2e-fixture');
+    await expect(liveRow).toContainText('e2e-agent-lcars-fixture-branch');
+    await expect(liveRow).toContainText('agent-lcars-e2e-fixture');
     // Model, turn count, and token count are no longer rendered (#3012) -
     // the row now only carries liveness, title/branch, host, worktree, PR
     // link, artifacts, and last-active.

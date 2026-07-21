@@ -269,7 +269,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       liveRuns = liveRuns.concat(result.value);
     } else {
       console.error(
-        'agent-console: failed to list live agent runs:',
+        'agent-lcars: failed to list live agent runs:',
         result.reason,
       );
       warnings.push('Live agent runs unavailable (GitHub API request failed).');
@@ -282,7 +282,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       recentRuns = recentRuns.concat(result.value);
     } else {
       console.error(
-        'agent-console: failed to list recent agent runs:',
+        'agent-lcars: failed to list recent agent runs:',
         result.reason,
       );
       warnings.push(
@@ -308,7 +308,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     );
   } else {
     console.error(
-      'agent-console: failed to list self-hosted runners:',
+      'agent-lcars: failed to list self-hosted runners:',
       runnersResult.reason,
     );
     warnings.push(

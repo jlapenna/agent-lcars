@@ -59,7 +59,7 @@ function makeCliSession(overrides: Partial<CliSession> = {}): CliSession {
     liveness: 'live',
     agent: 'claude-code',
     host: 'joes-workstation',
-    branch: 'feat/agent-console-cli-sessions',
+    branch: 'feat/agent-lcars-cli-sessions',
     turns: 4,
     totalTokens: 1200,
     startedAt: '2026-07-12T00:00:00.000Z',
@@ -146,7 +146,7 @@ describe('AgentActivityPanel CLI sessions', () => {
       screen.getByText('Merge live CLI sessions into the list'),
     ).toBeTruthy();
     expect(screen.getByText('joes-workstation')).toBeTruthy();
-    expect(screen.getByText(/feat\/agent-console-cli-sessions/)).toBeTruthy();
+    expect(screen.getByText(/feat\/agent-lcars-cli-sessions/)).toBeTruthy();
   });
 
   it('omits the model, turn count, and token count texts (#3012)', () => {

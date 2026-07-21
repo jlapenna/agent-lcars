@@ -127,7 +127,7 @@ serviceAccounts:
       #     session telemetry") plus the claude-agent-readonly SA's
       #     read-only observability auth ("Authenticate to GCP" above).
       #   - deploy.yml: the `publish-ride-along` job impersonates this same
-      #     writer SA to upload the agent-telemetry-watcher ride-along
+      #     writer SA to upload the agent-lcars-telemetry-watcher ride-along
       #     bundle (#3111). Originally trusted claude.yml job refs only,
       #     which made deploy.yml's first ride-along publish fail with
       #     "credential rejected by the attribute condition" (run
@@ -163,7 +163,7 @@ serviceAccounts:
     grants:
       - principal: 'serviceAccount:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com'
         role: 'roles/iam.serviceAccountTokenCreator'
-        reason: 'agent-console frontend (issue #2541) impersonates this SA to read session docs'
+        reason: 'agent-lcars frontend (issue #2541) impersonates this SA to read session docs'
       - principal: 'user:jlapenna@gmail.com'
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'
@@ -212,4 +212,4 @@ storage:
         reason: "Agent workflows upload Claude, Codex, and OpenCode session archives via the GCS JSON API using this SA's WIF-minted access token"
       - principal: 'serviceAccount:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com'
         role: 'roles/storage.objectViewer'
-        reason: 'agent-console reads archived transcripts back out for the session detail page (follow-up PR, PRD #2112) — granted directly since the console reads with its own runtime identity, not an impersonation call like the Firestore reader path above'
+        reason: 'agent-lcars reads archived transcripts back out for the session detail page (follow-up PR, PRD #2112) — granted directly since the console reads with its own runtime identity, not an impersonation call like the Firestore reader path above'

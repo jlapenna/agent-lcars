@@ -11,7 +11,7 @@ import {
 /**
  * Stands in for `GET /search/issues` (Octokit's `search.issuesAndPullRequests`)
  * when `github-client.ts` is pointed at `AGENT_CONSOLE_GITHUB_API_BASE_URL` —
- * only ever set by the agent-console e2e suite, which has no real GitHub
+ * only ever set by the agent-lcars e2e suite, which has no real GitHub
  * token and would otherwise 401 against the real API. `getCliSessions()`'s
  * `joinBranchToPr()` is the one caller this needs to satisfy so the "joined
  * PR" acceptance criterion is verifiable without live GitHub access; every

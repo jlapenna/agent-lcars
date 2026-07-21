@@ -4,10 +4,10 @@
 # homelab-ansible convention — see the issue body for why this supersedes
 # the PRD's original "bundled systemd unit" plan.
 #
-# Build from the repo root: docker build -f apps/telemetry-watcher/Dockerfile -t agent-telemetry-watcher .
+# Build from the repo root: docker build -f apps/telemetry-watcher/Dockerfile -t agent-lcars-telemetry-watcher .
 #
 # This is built directly from the live agent-lcars checkout (see homelab's
-# agent-telemetry-watcher/docker-compose.yml for why), which changes on
+# agent-lcars-telemetry-watcher/docker-compose.yml for why), which changes on
 # essentially every commit — so `COPY . .` below is cache-invalidated on
 # every single build regardless of whether package.json/pnpm-lock.yaml
 # actually changed. Cache mounts on the install/build steps let the

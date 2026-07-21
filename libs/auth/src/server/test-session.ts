@@ -43,7 +43,7 @@ export interface TestSessionOptions {
  * The ONE test-session adapter (#2127). Every non-production identity
  * injection across the four Next.js apps resolves here, replacing the three
  * previous per-app mechanisms (members' local `getMockSession` auto-login,
- * primes' inline `X-e2e-auth-user` parsing, agent-console's
+ * primes' inline `X-e2e-auth-user` parsing, agent-lcars's
  * `SKIP_AUTH_FOR_LAN_PREVIEW` bypass).
  *
  * Activation, in precedence order:

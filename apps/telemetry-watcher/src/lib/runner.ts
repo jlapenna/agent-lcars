@@ -93,7 +93,7 @@ export function startRideAlong(options: StartRideAlongOptions): WatcherDaemon {
   });
 
   logger.info(
-    `agent-telemetry-watcher: runner ride-along starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir} every ${config.heartbeatIntervalMs}ms`,
+    `agent-lcars-telemetry-watcher: runner ride-along starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir} every ${config.heartbeatIntervalMs}ms`,
   );
 
   if (options.autoStart ?? true) {

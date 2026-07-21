@@ -7,7 +7,7 @@ import type { CliSession } from './cli-sessions';
  * number, or a live branch->PR search result, see `cli-sessions.ts`) or
  * because the number appears in the session's branch name (this repo's
  * branch convention is `<slug>-<issueNumber>`, e.g. this very page's own
- * `agent-console-agents-page-3024` - useful for a session still working an
+ * `agent-lcars-agents-page-3024` - useful for a session still working an
  * issue that has no PR open yet). The branch match is bounded by
  * non-digit/start/end so item #3 doesn't false-match a branch mentioning
  * `#30` or `#303`.

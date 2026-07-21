@@ -35,7 +35,7 @@ export async function getSessionTranscript(
     raw = await fetchSessionTranscript(transcriptGcsUri);
   } catch (error) {
     console.error(
-      'agent-console: failed to fetch session transcript from storage:',
+      'agent-lcars: failed to fetch session transcript from storage:',
       error,
     );
     return {

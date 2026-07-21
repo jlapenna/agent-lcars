@@ -186,7 +186,7 @@ export async function getSessionArchive(
       limit: ARCHIVE_LIST_LIMIT,
     });
   } catch (error) {
-    console.error('agent-console: failed to list session archive:', error);
+    console.error('agent-lcars: failed to list session archive:', error);
     return {
       rows: [],
       ledger: { byIssue: [], byWeek: [] },

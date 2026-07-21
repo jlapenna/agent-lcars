@@ -91,7 +91,7 @@ export default [
               ],
             },
             {
-              sourceTag: 'scope:agent-console',
+              sourceTag: 'scope:console',
               onlyDependOnLibsWithTags: ['scope:shared', 'scope:chassis'],
             },
             // scope:members, scope:tooling, scope:chassis: deliberately

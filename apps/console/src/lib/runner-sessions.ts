@@ -50,7 +50,7 @@ export async function getRunnerSessionsByRunId(): Promise<RunnerSessionsResult> 
     }
     return { sessionsByRunId, warnings: [] };
   } catch (error) {
-    console.error('agent-console: failed to list runner sessions:', error);
+    console.error('agent-lcars: failed to list runner sessions:', error);
     return {
       sessionsByRunId: new Map(),
       warnings: [

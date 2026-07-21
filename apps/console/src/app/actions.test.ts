@@ -79,7 +79,7 @@ vi.mock('@/lib/auth-guards', () => ({
 
 vi.mock('../auth', () => ({ auth: vi.fn() }));
 
-describe('agent-console Server Actions', () => {
+describe('agent-lcars Server Actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (auth as Mock).mockResolvedValue({

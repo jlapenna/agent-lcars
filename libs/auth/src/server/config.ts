@@ -103,13 +103,13 @@ export interface AuthConfigOptions {
    * Allowlist gating GitHub sign-in by login. GitHub carries a verified
    * login rather than a workspace/club identity, so this is both the
    * sign-in gate and the admin source: every allowed login is an admin
-   * (agent-console's single-admin model).
+   * (agent-lcars's single-admin model).
    */
   allowedGithubLogins?: string[];
   /**
    * When false, run without the Firestore adapter entirely: JWT sessions,
    * no onboarding/rider-profile reads, no Firebase custom token
-   * (agent-console — its GCP project has no Firestore database).
+   * (agent-lcars — its GCP project has no Firestore database).
    */
   adapter?: boolean;
   /** Allowlist gating email-bearing providers (google, email). */
@@ -207,7 +207,7 @@ export const getAuthConfig = async (
   }
 
   if (requestedProviders.includes('github')) {
-    // The accessor names are historical: agent-console is the only GitHub
+    // The accessor names are historical: agent-lcars is the only GitHub
     // OAuth consumer, and its client id/secret live under AGENT_CONSOLE_*.
     providers.push(
       GitHub({
@@ -622,7 +622,7 @@ export const getAuthConfig = async (
           const emailAdmin =
             !!session.user.email && isAdminEmail(session.user.email);
 
-          // GitHub-login allowlist (agent-console): every allowed login is
+          // GitHub-login allowlist (agent-lcars): every allowed login is
           // an admin — the allowlist is also the sign-in gate.
           const githubAdmin =
             !!appToken?.githubLogin &&
@@ -632,7 +632,7 @@ export const getAuthConfig = async (
           // authorization consumers read. Admin is NOT surfaced via `slack`.
           // Sources: Slack-workspace admin, OneCake Strava-athlete allowlist
           // (ONECAKE_ADMINS), admin email (ADMIN_EMAILS), GitHub-login
-          // allowlist (agent-console), or a persisted grant on the user doc
+          // allowlist (agent-lcars), or a persisted grant on the user doc
           // set at runtime via the admin UI (appUser.isAdmin).
           // Database sessions recompute this every request, so a grant/revoke
           // takes effect on the next page load.

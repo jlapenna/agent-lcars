@@ -172,7 +172,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
       (doc): doc is CliSessionDoc => doc.source === 'cli',
     );
   } catch (error) {
-    console.error('agent-console: failed to list CLI sessions:', error);
+    console.error('agent-lcars: failed to list CLI sessions:', error);
     return {
       sessions: [],
       warnings: ['CLI sessions unavailable (agent-telemetry store failed).'],
@@ -200,7 +200,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     if (!search) {
       search = joinBranchToPr(branch).catch((error) => {
         console.error(
-          `agent-console: failed to join branch "${branch}" to a PR:`,
+          `agent-lcars: failed to join branch "${branch}" to a PR:`,
           error,
         );
         warnings.push(`PR lookup failed for branch "${branch}".`);
@@ -217,7 +217,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     if (!check) {
       check = isPrMerged(number).catch((error) => {
         console.error(
-          `agent-console: failed to check merge state for PR #${number}:`,
+          `agent-lcars: failed to check merge state for PR #${number}:`,
           error,
         );
         warnings.push(`PR merge check failed for #${number}.`);

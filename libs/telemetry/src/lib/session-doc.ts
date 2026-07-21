@@ -16,7 +16,7 @@ export const CLI_SESSION_RETENTION_DAYS = 30;
 
 /** @deprecated Alias for {@link CLI_SESSION_RETENTION_DAYS} (same value),
  * kept only so existing importers that predate the per-source retention
- * split (#3107 follow-up 2) — e.g. agent-console's e2e seed fixtures, which
+ * split (#3107 follow-up 2) — e.g. agent-lcars's e2e seed fixtures, which
  * only ever build `source: 'cli'` docs — don't need to change. New code
  * should import `CLI_SESSION_RETENTION_DAYS` directly. */
 export const SESSION_RETENTION_DAYS = CLI_SESSION_RETENTION_DAYS;

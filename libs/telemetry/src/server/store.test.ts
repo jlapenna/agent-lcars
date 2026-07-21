@@ -22,7 +22,7 @@ const cliSession: CliSessionDoc = {
     cacheReadTokens: 0,
   },
   host: 'joes-workstation',
-  branch: 'feat/agent-console-cli-sessions',
+  branch: 'feat/agent-lcars-cli-sessions',
   deliverables: { prNumbers: [], commitShas: [] },
 };
 

@@ -9,7 +9,7 @@ const getAdminGithubLogin = () => required('AGENT_LCARS_ADMIN_GITHUB_LOGIN');
 /**
  * Mock session for the shared test-session adapter (LAN preview:
  * IMPERSONATE_AUTOMATIC_LOGIN=true + E2E_TESTING_USER=<name>).
- * agent-console is a single-admin app, so the injected identity is an
+ * agent-lcars is a single-admin app, so the injected identity is an
  * admin — this replaces the old SKIP_AUTH_FOR_LAN_PREVIEW bypass.
  */
 async function getMockSession(userId: string): Promise<Session> {

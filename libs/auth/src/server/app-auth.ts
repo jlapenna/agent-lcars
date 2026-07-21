@@ -17,7 +17,7 @@ export interface CreateAppAuthOptions {
   /**
    * App-specific mock-session shape for the test-session adapter and the
    * `/api/auth/session` impersonation override (e.g. members includes Slack
-   * identity + onboarding; agent-console grants admin). Defaults to the
+   * identity + onboarding; agent-lcars grants admin). Defaults to the
    * basic shared mock session.
    */
   mockSession?: (userId: string) => Promise<Session>;
