@@ -1,4 +1,4 @@
-import { _resetForTesting } from '@repo/agent-telemetry/server';
+import { _resetForTesting } from '@agent-lcars/telemetry/server';
 import { logger } from '@repo/logging';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import {

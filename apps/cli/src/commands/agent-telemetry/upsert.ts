@@ -2,8 +2,8 @@ import {
   buildSessionDoc,
   computeLiveness,
   reduceTranscript,
-} from '@repo/agent-telemetry';
-import { upsertSession } from '@repo/agent-telemetry/server';
+} from '@agent-lcars/telemetry';
+import { upsertSession } from '@agent-lcars/telemetry/server';
 import { logger } from '@repo/logging';
 import * as fs from 'fs';
 import type { ArgumentsCamelCase, CommandModule } from 'yargs';

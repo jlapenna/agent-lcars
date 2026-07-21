@@ -43,13 +43,13 @@ module.exports = {
       __dirname,
       'libs/competitions/src/$1',
     ),
-    '^@repo/agent-telemetry$': path.join(
+    '^@agent-lcars/telemetry$': path.join(
       __dirname,
-      'libs/agent-telemetry/src/index.ts',
+      'libs/telemetry/src/index.ts',
     ),
-    '^@repo/agent-telemetry/(.*)$': path.join(
+    '^@agent-lcars/telemetry/(.*)$': path.join(
       __dirname,
-      'libs/agent-telemetry/src/$1',
+      'libs/telemetry/src/$1',
     ),
     '^@repo/results$': path.join(__dirname, 'libs/results/src/index.ts'),
     '^@repo/results/(.*)$': path.join(__dirname, 'libs/results/src/$1'),

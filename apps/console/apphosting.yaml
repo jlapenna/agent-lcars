@@ -1,0 +1,89 @@
+# Settings for Agent LCARS Frontend (on Cloud Run).
+# See https://firebase.google.com/docs/app-hosting/configure#cloud-run
+scripts:
+  buildCommand: . tools/cloud-build-prebuild.sh && ./tools/nx bundle @agent-lcars/console --verbose
+  runCommand: node dist/apps/console/.next/standalone/apps/console/server.js
+outputFiles:
+  serverApp:
+    include:
+      - dist/apps/console/.next/standalone
+      - dist/apps/console/.next/static
+runConfig:
+  minInstances: 0
+  cpu: 1
+  memoryMiB: 1024
+env:
+  # Defined Values
+  - variable: CI
+    value: 'true'
+    availability:
+      - BUILD
+  - variable: CLOUD_BUILD
+    value: 'true'
+    availability:
+      - BUILD
+  - variable: FORCE_COLOR
+    value: '0'
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NODE_OPTIONS
+    value: '--max-old-space-size=3072'
+    availability:
+      - BUILD
+  - variable: NX_DAEMON
+    value: 'false'
+    availability:
+      - BUILD
+  - variable: NO_COLOR
+    value: '1'
+    availability:
+      - BUILD
+  - variable: NX_SKIP_NX_CACHE
+    value: 'true'
+    availability:
+      - BUILD
+  - variable: PATH
+    value: /workspace/node_modules/.go/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    availability:
+      - BUILD
+
+  # Project Identification (Plain config values)
+  - variable: PROJECT_ID
+    value: 'agent-lcars'
+    availability:
+      - RUNTIME
+      - BUILD
+
+  # NextAuth URL
+  - variable: AUTH_URL
+    value: 'https://agent-console.supersprinkles.racing'
+    availability:
+      - RUNTIME
+
+  # Not sensitive - just the allowlisted GitHub login
+  - variable: AGENT_LCARS_ADMIN_GITHUB_LOGIN
+    value: 'jlapenna'
+    availability:
+      - RUNTIME
+
+  # Actual Secrets from GCP Secret Manager
+  - variable: AUTH_SECRET
+    secret: AUTH_SECRET
+    availability:
+      - RUNTIME
+  - variable: AUTH_GITHUB_ID
+    secret: AUTH_GITHUB_ID
+    availability:
+      - RUNTIME
+  - variable: AUTH_GITHUB_SECRET
+    secret: AUTH_GITHUB_SECRET
+    availability:
+      - RUNTIME
+  # Calls the GitHub API directly from server actions - there's no separate
+  # backend service (single consumer, no shared/Firestore state, so the
+  # split wasn't earning its keep).
+  - variable: AGENT_LCARS_GITHUB_TOKEN
+    secret: AGENT_LCARS_GITHUB_TOKEN
+    availability:
+      - RUNTIME

@@ -2,12 +2,5 @@
   "extends": "./tsconfig.base.json",
   "compileOnSave": false,
   "files": [],
-  "references": [
-    {
-      "path": "./apps/primes/e2e/frontend"
-    },
-    {
-      "path": "./apps/primes/e2e/backend"
-    }
-  ]
+  "references": []
 }

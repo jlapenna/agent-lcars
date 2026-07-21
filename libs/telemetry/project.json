@@ -1,0 +1,28 @@
+{
+  "name": "@agent-lcars/telemetry",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/telemetry/src",
+  "projectType": "library",
+  "tags": [
+    "platform:shared",
+    "scope:shared"
+  ],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:swc",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "options": {
+        "outputPath": "dist/libs/telemetry",
+        "main": "libs/telemetry/src/index.ts",
+        "tsConfig": "libs/telemetry/tsconfig.lib.json",
+        "assets": [
+          "libs/telemetry/*.md"
+        ],
+        "skipTypeCheck": true,
+        "clean": false
+      }
+    }
+  }
+}

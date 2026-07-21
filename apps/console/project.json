@@ -1,0 +1,91 @@
+{
+  "name": "@agent-lcars/console",
+  "tags": [
+    "platform:nextjs",
+    "scope:agent-console"
+  ],
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/console/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "@nx/next:build",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "defaultConfiguration": "production",
+      "options": {
+        "outputPath": "dist/apps/console",
+        "tsConfig": "apps/console/tsconfig.json",
+        "assets": [
+          "apps/console/public"
+        ]
+      },
+      "configurations": {
+        "production": {
+          "optimization": true,
+          "extractLicenses": true,
+          "inspect": false
+        },
+        "development": {
+          "debug": true
+        }
+      }
+    },
+    "bundle": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "build"
+      ],
+      "options": {
+        "commands": [
+          "mkdir -p dist/apps/console/.next/standalone/dist/apps/console/.next dist/apps/console/.next/standalone/apps/console",
+          "cp -r dist/apps/console/public dist/apps/console/.next/standalone/apps/console/",
+          "cp -r dist/apps/console/.next/static dist/apps/console/.next/standalone/dist/apps/console/.next/"
+        ],
+        "parallel": false
+      }
+    },
+    "deploy": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "firebase deploy --project=agent-lcars --only apphosting:agent-lcars"
+      },
+      "configurations": {
+        "production": {}
+      }
+    },
+    "serve": {
+      "executor": "@nx/next:server",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "@agent-lcars/console:build",
+        "dev": true
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "@agent-lcars/console:build:development",
+          "dev": true
+        },
+        "production": {
+          "buildTarget": "@agent-lcars/console:build:production",
+          "dev": false
+        }
+      }
+    },
+    "serve-production": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "bundle"
+      ],
+      "options": {
+        "command": "pnpm exec dotenv -e .env.development.local --optional -- node dist/apps/console/.next/standalone/apps/console/server.js",
+        "env": {
+          "PORT": "4203",
+          "HOSTNAME": "127.0.0.1",
+          "NODE_OPTIONS": "--max-old-space-size=8192"
+        }
+      }
+    }
+  }
+}

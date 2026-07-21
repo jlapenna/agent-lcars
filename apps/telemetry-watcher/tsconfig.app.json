@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../dist/out-tsc",
+    "rootDir": "src",
+    "composite": true,
+    "module": "commonjs",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "jest.config.ts",
+    "jest.config.cts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts"
+  ],
+  "references": [
+    { "path": "../../libs/telemetry/tsconfig.lib.json" },
+    { "path": "../../libs/env-vars/tsconfig.lib.json" },
+    { "path": "../../libs/logging/tsconfig.lib.json" }
+  ]
+}

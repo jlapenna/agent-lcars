@@ -3,8 +3,8 @@ import {
   buildStubSummary,
   SESSION_AGENTS,
   SessionAgent,
-} from '@repo/agent-telemetry';
-import { upsertSession } from '@repo/agent-telemetry/server';
+} from '@agent-lcars/telemetry';
+import { upsertSession } from '@agent-lcars/telemetry/server';
 import { logger } from '@repo/logging';
 import type { ArgumentsCamelCase, CommandModule } from 'yargs';
 

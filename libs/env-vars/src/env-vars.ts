@@ -254,7 +254,7 @@ export interface EnvVars {
   NEXT_PUBLIC_DEBUG_LINKS?: string;
 
   // Agent telemetry host watcher (issue #2540). See
-  // apps/agent-console/infra/agent-telemetry.yaml for the dedicated
+  // infra-inventory/agent-telemetry.yaml for the dedicated
   // Firestore database + writer SA this daemon authenticates as.
   /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts.
    * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
@@ -269,7 +269,7 @@ export interface EnvVars {
   /** JSON array of `{ path, adapter, projectDirAllowlist?, recursive?, cwdAllowlist? }` watch-root objects
    * (#3123 phase 1's multi-root/multi-agent watcher config) - when set, fully
    * replaces the single default root the two vars above configure. See
-   * `apps/agent-telemetry-watcher/src/lib/config.ts`'s `loadConfig` for the
+   * `apps/telemetry-watcher/src/lib/config.ts`'s `loadConfig` for the
    * exact format and validation. */
   AGENT_TELEMETRY_WATCH_ROOTS?: string;
   /** Overrides `os.hostname()` for the `host` field on shipped session docs. */
@@ -289,6 +289,6 @@ export interface EnvVars {
    * `~/.gemini/antigravity-cli/conversation_summaries.db` when unset; an
    * explicit empty string disables this source entirely (e.g. a host with
    * no Antigravity CLI installed). See #3123 phase 3 and
-   * `apps/agent-telemetry-watcher/src/lib/antigravity-summary-source.ts`. */
+   * `apps/telemetry-watcher/src/lib/antigravity-summary-source.ts`. */
   AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB?: string;
 }

@@ -1,4 +1,4 @@
-import { reduceTranscript } from '@repo/agent-telemetry';
+import { reduceTranscript } from '@agent-lcars/telemetry';
 import { logger } from '@repo/logging';
 import * as fs from 'fs';
 import type { CommandModule } from 'yargs';

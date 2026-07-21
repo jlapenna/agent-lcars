@@ -1,0 +1,64 @@
+{
+  "name": "@agent-lcars/console-e2e",
+  "tags": ["platform:web"],
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/console-e2e/src",
+  "implicitDependencies": ["@agent-lcars/console"],
+  "targets": {
+    "killports": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./tools/kill-e2e-ports.sh"
+      }
+    },
+    "e2e": {
+      "executor": "nx:run-commands",
+      "defaultConfiguration": "emulator",
+      "dependsOn": [
+        "@agent-lcars/console:build",
+        "@agent-lcars/console:bundle",
+        "@agent-lcars/console-e2e:killports"
+      ],
+      "configurations": {
+        "emulator": {
+          "command": "pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional -- pnpm exec firebase emulators:exec --only auth,firestore,eventarc --project=demo-no-project \"pnpm exec nx run @agent-lcars/console-e2e:e2e-run\""
+        },
+        "live": {
+          "command": "pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional -- nx run @agent-lcars/console-e2e:e2e-run"
+        }
+      },
+      "options": {
+        "forwardAllArgs": false,
+        "parallel": false,
+        "env": {
+          "AUTH_URL": "http://localhost:4200",
+          "E2E_TESTING": "true",
+          "AGENT_CONSOLE_GITHUB_API_BASE_URL": "http://localhost:4200/api/e2e/github"
+        }
+      }
+    },
+    "e2e-run": {
+      "executor": "@nx/playwright:playwright",
+      "outputs": [
+        "{workspaceRoot}/dist/.playwright/apps/console-e2e"
+      ],
+      "options": {
+        "config": "apps/console-e2e/playwright.config.ts",
+        "skipInstall": true
+      }
+    },
+    "e2e-docker": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./tools/e2e-docker.sh @agent-lcars/console-e2e"
+      }
+    },
+    "e2e-docker-update": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./tools/e2e-docker.sh @agent-lcars/console-e2e --update"
+      }
+    }
+  }
+}

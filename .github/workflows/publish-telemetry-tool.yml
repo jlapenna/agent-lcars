@@ -1,0 +1,24 @@
+name: Publish telemetry tool
+on:
+  push:
+    tags: ['telemetry-v*']
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm nx bundle @agent-lcars/telemetry-watcher
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Upload immutable bundle
+        run: gcloud storage cp dist/apps/telemetry-watcher/ride-along.cjs "gs://agent-lcars-tools/telemetry/${GITHUB_REF_NAME}/ride-along.cjs" --cache-control='public,max-age=31536000,immutable'
