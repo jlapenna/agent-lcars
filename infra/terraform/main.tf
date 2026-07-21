@@ -125,10 +125,15 @@ resource "google_service_account" "github_deployer" {
 }
 
 resource "google_project_iam_member" "deployer_roles" {
-  for_each = toset(["roles/firebase.admin", "roles/serviceusage.serviceUsageConsumer"])
-  project  = var.project_id
-  role     = each.value
-  member   = "serviceAccount:${google_service_account.github_deployer.email}"
+  for_each = toset([
+    "roles/firebase.admin",
+    "roles/iam.serviceAccountAdmin",
+    "roles/iam.serviceAccountUser",
+    "roles/serviceusage.serviceUsageConsumer",
+  ])
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
 resource "google_iam_workload_identity_pool" "github" {
