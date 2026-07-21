@@ -11,45 +11,48 @@ locals {
 }
 
 resource "google_project_service" "services" {
-  for_each = local.services
-  project = var.project_id
-  service = each.value
+  for_each           = local.services
+  project            = var.project_id
+  service            = each.value
   disable_on_destroy = false
 }
 
 resource "google_firebase_project" "this" {
-  provider = google-beta
-  project = var.project_id
+  provider   = google-beta
+  project    = var.project_id
   depends_on = [google_project_service.services]
 }
 
 resource "google_firestore_database" "default" {
-  provider = google-beta
-  project = var.project_id
-  name = "(default)"
-  location_id = "nam5"
-  type = "FIRESTORE_NATIVE"
+  provider                = google-beta
+  project                 = var.project_id
+  name                    = "(default)"
+  location_id             = "nam5"
+  type                    = "FIRESTORE_NATIVE"
   delete_protection_state = "DELETE_PROTECTION_ENABLED"
-  deletion_policy = "ABANDON"
-  depends_on = [google_firebase_project.this]
+  deletion_policy         = "ABANDON"
+  depends_on              = [google_firebase_project.this]
 }
 
 resource "google_storage_bucket" "transcripts" {
-  name = "${var.project_id}-session-transcripts"
-  location = "US"
+  name                        = "${var.project_id}-session-transcripts"
+  location                    = "US"
   uniform_bucket_level_access = true
-  public_access_prevention = "enforced"
+  public_access_prevention    = "enforced"
   versioning { enabled = true }
   lifecycle_rule {
-    condition { age = 90; with_state = "ARCHIVED" }
+    condition {
+      age        = 90
+      with_state = "ARCHIVED"
+    }
     action { type = "Delete" }
   }
   depends_on = [google_project_service.services]
 }
 
 resource "google_storage_bucket" "tools" {
-  name = "${var.project_id}-tools"
-  location = "US"
+  name                        = "${var.project_id}-tools"
+  location                    = "US"
   uniform_bucket_level_access = true
   versioning { enabled = true }
   depends_on = [google_project_service.services]
@@ -57,50 +60,50 @@ resource "google_storage_bucket" "tools" {
 
 resource "google_storage_bucket_iam_member" "public_tools" {
   bucket = google_storage_bucket.tools.name
-  role = "roles/storage.objectViewer"
+  role   = "roles/storage.objectViewer"
   member = "allUsers"
 }
 
 resource "google_service_account" "telemetry_writer" {
-  account_id = "telemetry-writer"
+  account_id   = "telemetry-writer"
   display_name = "Agent LCARS telemetry writer"
 }
 
 resource "google_project_iam_member" "writer_firestore" {
   project = var.project_id
-  role = "roles/datastore.user"
-  member = "serviceAccount:${google_service_account.telemetry_writer.email}"
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.telemetry_writer.email}"
 }
 
 resource "google_storage_bucket_iam_member" "writer_transcripts" {
   bucket = google_storage_bucket.transcripts.name
-  role = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.telemetry_writer.email}"
 }
 
 resource "google_service_account" "github_deployer" {
-  account_id = "github-deployer"
+  account_id   = "github-deployer"
   display_name = "Agent LCARS GitHub Actions deployer"
 }
 
 resource "google_project_iam_member" "deployer_roles" {
   for_each = toset(["roles/firebase.admin", "roles/serviceusage.serviceUsageConsumer"])
-  project = var.project_id
-  role = each.value
-  member = "serviceAccount:${google_service_account.github_deployer.email}"
+  project  = var.project_id
+  role     = each.value
+  member   = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
 resource "google_iam_workload_identity_pool" "github" {
   workload_identity_pool_id = "github"
-  display_name = "GitHub Actions"
+  display_name              = "GitHub Actions"
 }
 
 resource "google_iam_workload_identity_pool_provider" "github" {
-  workload_identity_pool_id = google_iam_workload_identity_pool.github.workload_identity_pool_id
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
   workload_identity_pool_provider_id = "github"
-  display_name = "GitHub"
+  display_name                       = "GitHub"
   attribute_mapping = {
-    "google.subject" = "assertion.sub"
+    "google.subject"       = "assertion.sub"
     "attribute.repository" = "assertion.repository"
   }
   attribute_condition = "assertion.repository in ['${var.github_owner}/${var.github_repository}', '${var.github_owner}/supersprinklesracing']"
@@ -109,35 +112,42 @@ resource "google_iam_workload_identity_pool_provider" "github" {
 
 resource "google_service_account_iam_member" "github_impersonation" {
   service_account_id = google_service_account.github_deployer.name
-  role = "roles/iam.workloadIdentityUser"
-  member = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
 resource "google_service_account_iam_member" "members_writer_impersonation" {
   service_account_id = google_service_account.telemetry_writer.name
-  role = "roles/iam.workloadIdentityUser"
-  member = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/supersprinklesracing"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/supersprinklesracing"
 }
 
 resource "google_secret_manager_secret" "runtime" {
-  for_each = toset(["AUTH_SECRET", "AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET", "AGENT_LCARS_GITHUB_TOKEN"])
+  for_each  = toset(["AUTH_SECRET", "AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET", "AGENT_LCARS_GITHUB_TOKEN"])
   secret_id = each.value
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.services]
 }
 
 resource "google_billing_budget" "monthly" {
   billing_account = var.billing_account
-  display_name = "Agent LCARS monthly budget"
+  display_name    = "Agent LCARS monthly budget"
   budget_filter { projects = ["projects/${var.project_id}"] }
-  amount { specified_amount { currency_code = "USD"; units = "5" } }
+  amount {
+    specified_amount {
+      currency_code = "USD"
+      units         = "5"
+    }
+  }
   dynamic "threshold_rules" {
     for_each = toset([0.5, 0.9, 1.0])
     content { threshold_percent = threshold_rules.value }
   }
   all_updates_rule {
     monitoring_notification_channels = var.budget_notification_channels
-    disable_default_iam_recipients = false
+    disable_default_iam_recipients   = false
   }
   depends_on = [google_project_service.services]
 }
