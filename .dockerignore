@@ -1,0 +1,10 @@
+.git
+.github
+.nx
+.terraform
+**/.next
+**/coverage
+**/dist
+**/node_modules
+firebase-debug*.log
+terraform.tfstate*
