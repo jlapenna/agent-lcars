@@ -14,10 +14,11 @@ export const RUN_TIMEOUT_MINUTES = 90;
 // see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
-export type AgentPipeline = 'claude' | 'opencode';
+export type AgentPipeline = 'claude' | 'codex' | 'opencode';
 
 const WORKFLOW_FILES: Record<AgentPipeline, string> = {
   claude: 'claude.yml',
+  codex: 'codex.yml',
   opencode: 'opencode.yml',
 };
 
@@ -82,7 +83,7 @@ export interface AgentActivity {
   warnings: string[];
 }
 
-const DISPLAY_TITLE_NUMBER_RE = /^(?:opencode\s+)?#(\d+):/;
+const DISPLAY_TITLE_NUMBER_RE = /^(?:(?:codex|opencode)\s+)?#(\d+):/;
 
 export function issueNumberFromDisplayTitle(
   displayTitle: string,
@@ -91,7 +92,7 @@ export function issueNumberFromDisplayTitle(
   return match ? Number(match[1]) : undefined;
 }
 
-const OPENCODE_TITLE_PREFIX_RE = /^opencode\s+/;
+const PIPELINE_TITLE_PREFIX_RE = /^(?:codex|opencode)\s+/;
 
 /**
  * opencode.yml's run-name repeats the pipeline name ahead of the `#N:` join
@@ -100,8 +101,8 @@ const OPENCODE_TITLE_PREFIX_RE = /^opencode\s+/;
  * text itself to avoid saying it twice.
  */
 export function displayRunTitle(run: AgentRun): string {
-  return run.pipeline === 'opencode'
-    ? run.displayTitle.replace(OPENCODE_TITLE_PREFIX_RE, '')
+  return run.pipeline !== 'claude'
+    ? run.displayTitle.replace(PIPELINE_TITLE_PREFIX_RE, '')
     : run.displayTitle;
 }
 
@@ -240,14 +241,18 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   // shared across both pipelines - it's a repo-wide pool, not per-workflow.
   const [
     liveClaude,
+    liveCodex,
     liveOpencode,
     recentClaude,
+    recentCodex,
     recentOpencode,
     runnersResult,
   ] = await Promise.allSettled([
     fetchLiveRuns(octokit, 'claude'),
+    fetchLiveRuns(octokit, 'codex'),
     fetchLiveRuns(octokit, 'opencode'),
     fetchRecentRuns(octokit, 'claude'),
+    fetchRecentRuns(octokit, 'codex'),
     fetchRecentRuns(octokit, 'opencode'),
     octokit.rest.actions.listSelfHostedRunnersForRepo({
       owner: REPO_OWNER,
@@ -259,7 +264,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   const warnings: string[] = [];
 
   let liveRuns: AgentRun[] = [];
-  for (const result of [liveClaude, liveOpencode]) {
+  for (const result of [liveClaude, liveCodex, liveOpencode]) {
     if (result.status === 'fulfilled') {
       liveRuns = liveRuns.concat(result.value);
     } else {
@@ -272,7 +277,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   }
 
   let recentRuns: AgentRun[] = [];
-  for (const result of [recentClaude, recentOpencode]) {
+  for (const result of [recentClaude, recentCodex, recentOpencode]) {
     if (result.status === 'fulfilled') {
       recentRuns = recentRuns.concat(result.value);
     } else {

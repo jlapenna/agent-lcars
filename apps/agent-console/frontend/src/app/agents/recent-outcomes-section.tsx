@@ -4,10 +4,11 @@ import type { IssueAgentSessionDoc } from '@repo/agent-telemetry';
 import type { AgentPipeline, AgentRun } from '../../lib/agent-activity';
 import { FinishedRunRow } from '../agent-activity-panel';
 
-const PIPELINES: AgentPipeline[] = ['claude', 'opencode'];
+const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
 const PIPELINE_TITLES: Record<AgentPipeline, string> = {
   claude: 'claude',
+  codex: 'codex',
   opencode: 'opencode',
 };
 

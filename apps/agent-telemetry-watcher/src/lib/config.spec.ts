@@ -8,6 +8,8 @@ import { loadConfig } from './config';
 
 const ENV_KEYS = [
   'AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR',
+  'AGENT_TELEMETRY_CODEX_SESSIONS_DIR',
+  'AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST',
   'AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST',
   'AGENT_TELEMETRY_WATCH_ROOTS',
   'AGENT_TELEMETRY_HOST',
@@ -40,7 +42,7 @@ describe('loadConfig', () => {
     }
   });
 
-  it("defaults to exactly one watch root matching today's behavior: ~/.claude/projects, claude-code, the default allowlist", () => {
+  it('defaults to scoped Claude Code and Codex watch roots', () => {
     const config = loadConfig();
 
     expect(config.watchRoots).toEqual([
@@ -48,6 +50,12 @@ describe('loadConfig', () => {
         path: path.join(os.homedir(), '.claude', 'projects'),
         adapter: 'claude-code',
         projectDirAllowlist: DEFAULT_PROJECT_DIR_ALLOWLIST,
+      },
+      {
+        path: path.join(os.homedir(), '.codex', 'sessions'),
+        adapter: 'codex',
+        recursive: true,
+        cwdAllowlist: ['/home/jlapenna/p/members*'],
       },
     ]);
     expect(config.heartbeatIntervalMs).toBe(10_000);
@@ -79,13 +87,11 @@ describe('loadConfig', () => {
 
       const config = loadConfig();
 
-      expect(config.watchRoots).toEqual([
-        {
-          path: '/custom/projects',
-          adapter: 'claude-code',
-          projectDirAllowlist: DEFAULT_PROJECT_DIR_ALLOWLIST,
-        },
-      ]);
+      expect(config.watchRoots[0]).toEqual({
+        path: '/custom/projects',
+        adapter: 'claude-code',
+        projectDirAllowlist: DEFAULT_PROJECT_DIR_ALLOWLIST,
+      });
     });
 
     it("parses a comma-separated AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST as the default root's allowlist", () => {
@@ -98,6 +104,18 @@ describe('loadConfig', () => {
         '-home-alice-*',
         '-home-bob-*',
       ]);
+    });
+  });
+
+  it('supports Codex root and cwd-scope overrides', () => {
+    process.env['AGENT_TELEMETRY_CODEX_SESSIONS_DIR'] = '/custom/codex';
+    process.env['AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST'] = '/repo/a*, /repo/b';
+
+    expect(loadConfig().watchRoots[1]).toEqual({
+      path: '/custom/codex',
+      adapter: 'codex',
+      recursive: true,
+      cwdAllowlist: ['/repo/a*', '/repo/b'],
     });
   });
 

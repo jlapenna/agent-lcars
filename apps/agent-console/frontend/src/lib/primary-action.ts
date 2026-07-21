@@ -1,6 +1,6 @@
 import type { ActionItem } from './action-items';
 
-export type Pipeline = 'claude' | 'opencode';
+export type Pipeline = 'claude' | 'codex' | 'opencode';
 
 /**
  * Which agent pipeline - claude.yml, or the experimental opencode.yml
@@ -17,9 +17,9 @@ export type Pipeline = 'claude' | 'opencode';
  * pipelines at once.
  */
 export function pipelineForLabels(labels: string[]): Pipeline {
-  return labels.includes('opencode') && !labels.includes('claude')
-    ? 'opencode'
-    : 'claude';
+  if (labels.includes('claude')) return 'claude';
+  if (labels.includes('codex')) return 'codex';
+  return labels.includes('opencode') ? 'opencode' : 'claude';
 }
 
 /**

@@ -12,6 +12,7 @@ import { WatchRootConfig } from './watch-roots';
 export function discoverTranscriptFiles(
   claudeProjectsDir: string,
   allowlist: string[],
+  recursive = false,
 ): string[] {
   let projectDirs: fs.Dirent[];
   try {
@@ -27,6 +28,10 @@ export function discoverTranscriptFiles(
     }
 
     const projectDir = path.join(claudeProjectsDir, entry.name);
+    if (recursive) {
+      files.push(...discoverJsonlRecursively(projectDir));
+      continue;
+    }
     let transcriptEntries: fs.Dirent[];
     try {
       transcriptEntries = fs.readdirSync(projectDir, { withFileTypes: true });
@@ -41,6 +46,26 @@ export function discoverTranscriptFiles(
     }
   }
 
+  return files;
+}
+
+function discoverJsonlRecursively(root: string): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...discoverJsonlRecursively(entryPath));
+    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      files.push(entryPath);
+    }
+  }
   return files;
 }
 
@@ -69,11 +94,16 @@ export function discoverAcrossRoots(
   discover: (
     rootPath: string,
     allowlist: string[],
+    recursive?: boolean,
   ) => string[] = discoverTranscriptFiles,
 ): DiscoveredFile[] {
   const files: DiscoveredFile[] = [];
   for (const root of watchRoots) {
-    for (const file of discover(root.path, root.projectDirAllowlist ?? ['*'])) {
+    for (const file of discover(
+      root.path,
+      root.projectDirAllowlist ?? ['*'],
+      root.recursive,
+    )) {
       files.push({ file, root });
     }
   }

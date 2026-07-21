@@ -138,6 +138,16 @@ describe('postComment (mention routing)', () => {
     );
   });
 
+  it('appends /codex for an item carrying the codex label', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(2709, 'Use option 2', ['codex']);
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Use option 2\n\n/codex' }),
+    );
+  });
+
   it('appends @claude (not /oc) when both labels are present - never dispatch two pipelines from one reply', async () => {
     const { createComment } = mockOctokit();
 

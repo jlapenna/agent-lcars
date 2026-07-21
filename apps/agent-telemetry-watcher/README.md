@@ -1,11 +1,11 @@
 # Agent Telemetry Watcher
 
-Per-host daemon (issue #2540) that watches interactive Claude Code CLI
-sessions on a workstation and reports summary-only telemetry to the
+Per-host daemon (issue #2540) that watches interactive Claude Code and Codex
+CLI sessions on a workstation and reports summary-only telemetry to the
 `agent-telemetry` Firestore store the [agent console](../agent-console)
 reads from.
 
-## Two shipping paths for CI issue-agent (`claude.yml`) runs
+## CI issue-agent telemetry paths
 
 Interactive (`source: 'cli'`) telemetry is this daemon's normal host-watcher
 mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry
@@ -88,18 +88,29 @@ writer` + `Ship session archive` steps (after "Run OpenCode",
    before the agent's bash ever runs; this pipeline has no such step, so
    the simpler "auth after agent" model is the correct one.
 
+4. **Codex pipeline (`source: 'issue-agent'`, `agent: 'codex'`):**
+   `codex.yml` archives the action-created date-partitioned JSONL rollouts
+   under `runs/<run-id>/codex/` and writes an ended stub doc after the agent
+   exits. Writer authentication deliberately happens after Codex, so the
+   agent never inherits telemetry write credentials. Interactive Codex
+   sessions use the full reducer described below; the runner path remains
+   archive-first so telemetry cannot delay or fail the worker.
+
 ## What it does
 
 On an interval (`AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`, default 10s, with
 an immediate first tick on start and an `fs.watch`-driven nudge on file
 changes in between), the daemon:
 
-1. Discovers transcript files under `~/.claude/projects/**/*.jsonl` whose
+1. Discovers Claude transcripts under `~/.claude/projects/**/*.jsonl` whose
    project-dir basename matches the configured allowlist
    (`AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`, `*`-wildcard glob patterns;
    default `-home-jlapenna-p-members*`). Interactive transcripts can contain
    other projects' data, so this scoping is a privacy boundary, not just a
-   filter (PRD #2112 amendment 2026-07-10, decision 3).
+   filter (PRD #2112 amendment 2026-07-10, decision 3). It also recursively
+   discovers Codex rollouts under `~/.codex/sessions/**/*.jsonl`, filtering
+   reduced summaries by cwd (default `/home/jlapenna/p/members*`) before
+   anything is shipped.
 2. Skips re-reading any file whose mtime/size hasn't changed since the last
    tick, and reduces the rest via `@repo/agent-telemetry`'s
    `reduceTranscripts` into counters/deliverables/timeline summaries —
@@ -124,6 +135,8 @@ All via environment variables (see `src/lib/config.ts`):
 | --------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------- |
 | `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`   | `~/.claude/projects`        | Root to watch (overridable for Docker bind mounts / test fixtures).                           |
 | `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST` | `-home-jlapenna-p-members*` | Comma-separated `*`-wildcard globs matched against project-dir names.                         |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`    | `~/.codex/sessions`         | Recursive root for Codex rollout JSONL.                                                       |
+| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`   | `/home/jlapenna/p/members*` | Cwd glob privacy boundary for Codex summaries.                                                |
 | `AGENT_TELEMETRY_HOST`                  | `os.hostname()`             | Host label recorded on each session doc.                                                      |
 | `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS` | `10000`                     | Tick interval.                                                                                |
 | `AGENT_TELEMETRY_STALENESS_WINDOW_MS`   | `heartbeatIntervalMs * 5`   | How long a session can go unrediscovered before it's marked `stale`.                          |

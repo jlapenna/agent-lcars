@@ -79,11 +79,13 @@ export interface RunItemRef {
 
 const PIPELINE_LABELS: Record<AgentPipeline, string> = {
   claude: 'claude',
+  codex: 'codex',
   opencode: 'opencode',
 };
 
 const PIPELINE_COLORS: Record<AgentPipeline, string> = {
   claude: 'blue',
+  codex: 'teal',
   opencode: 'violet',
 };
 

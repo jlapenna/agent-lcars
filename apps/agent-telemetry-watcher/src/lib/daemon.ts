@@ -8,6 +8,7 @@ import { logger } from '@repo/logging';
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { isAllowedProjectDir } from './allowlist';
 import {
   AntigravitySummaryDbConfig,
   pollAntigravitySummaries as defaultPollAntigravitySummaries,
@@ -102,6 +103,9 @@ export class WatcherDaemon {
   private readonly sessions = new Map<string, TrackedSession>();
   /** Per-file mtime/size as of the last tick that successfully read it. */
   private readonly fileStats = new Map<string, FileStat>();
+  /** Session ids produced by each file. Codex rollout filenames contain a
+   * timestamp prefix, so basename alone is not a reliable session id. */
+  private readonly sessionIdsByFile = new Map<string, string[]>();
   /** Per-conversation `lastActivityAt` (i.e. `last_modified_time`) as of the
    * last tick that successfully upserted an antigravity summary row - the
    * DB-row analogue of `fileStats` above, used the same way: an unchanged
@@ -167,9 +171,11 @@ export class WatcherDaemon {
         previousStat.mtimeMs === stat.mtimeMs &&
         previousStat.size === stat.size
       ) {
-        const tracked = this.sessions.get(path.basename(file, '.jsonl'));
-        if (tracked) {
-          tracked.lastHeartbeatAt = now;
+        for (const sessionId of this.sessionIdsByFile.get(file) ?? [
+          path.basename(file, '.jsonl'),
+        ]) {
+          const tracked = this.sessions.get(sessionId);
+          if (tracked) tracked.lastHeartbeatAt = now;
         }
         continue;
       }
@@ -220,13 +226,23 @@ export class WatcherDaemon {
         // adapter produced the summary - mirrors the old reduceTranscripts
         // call's `{ host }` option, which every summary from a call got
         // whether or not it ended up cli- or issue-agent-sourced.
+        const acceptedSessionIds: string[] = [];
         for (const summary of fileSummaries) {
+          if (
+            root.cwdAllowlist &&
+            (!summary.cwd ||
+              !isAllowedProjectDir(summary.cwd, root.cwdAllowlist))
+          ) {
+            continue;
+          }
           summaries.push(
             this.options.host
               ? { ...summary, host: this.options.host }
               : summary,
           );
+          acceptedSessionIds.push(summary.sessionId);
         }
+        this.sessionIdsByFile.set(file, acceptedSessionIds);
       } catch (error) {
         logger.warn(
           `agent-telemetry-watcher: failed to reduce transcript ${file} (agent ${root.adapter}), skipping`,

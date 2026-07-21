@@ -49,6 +49,13 @@ export function defaultClaudeProjectsDir(): string {
   );
 }
 
+export function defaultCodexSessionsDir(): string {
+  return (
+    optional('AGENT_TELEMETRY_CODEX_SESSIONS_DIR') ??
+    path.join(os.homedir(), '.codex', 'sessions')
+  );
+}
+
 /** `~/.gemini/antigravity-cli/conversation_summaries.db` — the Antigravity
  * CLI's global summary-tier SQLite DB (see `antigravity-summary-source.ts`).
  * Exported (like `defaultClaudeProjectsDir` above) so tests/other callers
@@ -83,6 +90,18 @@ function defaultWatchRoot(): WatchRootConfig {
     projectDirAllowlist: allowlistRaw
       ? parseAllowlistCsv(allowlistRaw)
       : DEFAULT_PROJECT_DIR_ALLOWLIST,
+  };
+}
+
+function defaultCodexWatchRoot(): WatchRootConfig {
+  const cwdAllowlistRaw = optional('AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST');
+  return {
+    path: defaultCodexSessionsDir(),
+    adapter: 'codex',
+    recursive: true,
+    cwdAllowlist: cwdAllowlistRaw
+      ? parseAllowlistCsv(cwdAllowlistRaw)
+      : ['/home/jlapenna/p/members*'],
   };
 }
 
@@ -128,10 +147,29 @@ function validateWatchRoot(entry: unknown, index: number): WatchRootConfig {
     );
   }
 
+  const recursive = record['recursive'];
+  if (recursive !== undefined && typeof recursive !== 'boolean') {
+    throw new Error(
+      `AGENT_TELEMETRY_WATCH_ROOTS[${index}].recursive must be a boolean when present`,
+    );
+  }
+  const cwdAllowlist = record['cwdAllowlist'];
+  if (
+    cwdAllowlist !== undefined &&
+    (!Array.isArray(cwdAllowlist) ||
+      !cwdAllowlist.every((pattern) => typeof pattern === 'string'))
+  ) {
+    throw new Error(
+      `AGENT_TELEMETRY_WATCH_ROOTS[${index}].cwdAllowlist must be an array of strings when present`,
+    );
+  }
+
   return {
     path: rootPath,
     adapter,
     ...(allowlist && { projectDirAllowlist: allowlist as string[] }),
+    ...(recursive !== undefined && { recursive }),
+    ...(cwdAllowlist && { cwdAllowlist: cwdAllowlist as string[] }),
   };
 }
 
@@ -178,7 +216,7 @@ export function loadConfig(): WatcherConfig {
   const watchRootsRaw = optional('AGENT_TELEMETRY_WATCH_ROOTS');
   const watchRoots = watchRootsRaw
     ? parseWatchRootsJson(watchRootsRaw)
-    : [defaultWatchRoot()];
+    : [defaultWatchRoot(), defaultCodexWatchRoot()];
 
   // Default-enabled: unset means "use the default path", an explicit empty
   // string means "disable entirely" (e.g. a host with no Antigravity CLI) -

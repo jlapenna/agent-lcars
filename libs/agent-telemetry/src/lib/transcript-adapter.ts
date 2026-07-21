@@ -1,6 +1,11 @@
+import { codexAdapter } from './codex-transcript-adapter';
 import { reduceTranscriptLines } from './reducer';
+import { TranscriptAdapter } from './transcript-adapter-types';
 import { SessionAgent, SessionSummary } from './types';
 import { asRecord } from './unknown-value';
+
+export { codexAdapter } from './codex-transcript-adapter';
+export type { TranscriptAdapter } from './transcript-adapter-types';
 
 /**
  * The seam phase 2/3 of #3123 build on to add non-Claude-Code agents to the
@@ -22,25 +27,6 @@ import { asRecord } from './unknown-value';
  * existing reducer ignores unknown line types) and add it to
  * {@link TRANSCRIPT_ADAPTERS}.
  */
-export interface TranscriptAdapter {
-  agent: SessionAgent;
-  /** Cheap sniff: can this adapter parse this file's first lines? Must not
-   * throw on malformed input — return `false` instead. `filePath` is
-   * available for adapters whose format is easier to identify by naming
-   * convention than by content (unused by `claudeCodeAdapter`, which keys
-   * off content only). */
-  detect(firstLines: string[], filePath: string): boolean;
-  /** Reduces one already-`split('\n')` file's lines into zero or more
-   * session summaries. Takes a single file's lines (not multiple files
-   * batched together, unlike `reduceTranscripts`) because the watcher's
-   * transcript files are named `<sessionId>.jsonl` — one file per session —
-   * so cross-file merging within one call is never needed on that path; a
-   * caller that DOES need to merge a resumed session spanning multiple
-   * files (e.g. an offline CLI reduce over an arbitrary directory) should
-   * use `reduceTranscripts` directly instead of going through an adapter. */
-  reduce(lines: string[]): SessionSummary[];
-}
-
 /** Whether a trimmed, non-empty line parses as a JSON object carrying a
  * `sessionId` string — the one field every Claude Code transcript line
  * (`user`/`assistant`/`result`/etc.) is keyed on, per `reducer.ts`. This is
@@ -81,7 +67,10 @@ export const claudeCodeAdapter: TranscriptAdapter = {
  * {@link adapterFor}). Claude Code is the only one implemented as of #3123
  * phase 1 — see {@link SessionAgent}'s doc comment for the others this
  * registry is expected to grow. */
-export const TRANSCRIPT_ADAPTERS: TranscriptAdapter[] = [claudeCodeAdapter];
+export const TRANSCRIPT_ADAPTERS: TranscriptAdapter[] = [
+  claudeCodeAdapter,
+  codexAdapter,
+];
 
 /**
  * Content-sniffing lookup: the first registered adapter whose `detect`

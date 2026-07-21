@@ -38,10 +38,15 @@ function workflow(name: string): string {
   return readFileSync(join(WORKFLOWS_DIR, name), 'utf8');
 }
 
-describe('run-name join (console ↔ claude.yml/opencode.yml)', () => {
+describe('run-name join (console ↔ agent workflows)', () => {
   it('claude.yml run-name starts with the #N: prefix the console parses', () => {
     expect(workflow('claude.yml')).toMatch(/^run-name: ["']#\$\{\{/m);
     expect(issueNumberFromDisplayTitle('#123: fix the thing')).toBe(123);
+  });
+
+  it('codex.yml run-name starts with the codex #N: prefix the console parses', () => {
+    expect(workflow('codex.yml')).toMatch(/^run-name: ["']codex #\$\{\{/m);
+    expect(issueNumberFromDisplayTitle('codex #124: fix the thing')).toBe(124);
   });
 
   it('opencode.yml run-name starts with the opencode #N: prefix the console parses', () => {
@@ -53,16 +58,33 @@ describe('run-name join (console ↔ claude.yml/opencode.yml)', () => {
     );
   });
 
-  it('pr-heal.yml in-flight dedupe matches BOTH run-name prefixes', () => {
+  it('pr-heal.yml in-flight dedupe matches all run-name prefixes', () => {
     const prHeal = workflow('pr-heal.yml');
     // The literal grep -E pattern shipped in the dedupe step (#3023).
-    expect(prHeal).toContain('^(opencode )?#$n:');
+    expect(prHeal).toContain('^((codex|opencode) )?#$n:');
     // And it scans both pipelines' run lists, not just claude.yml's.
-    expect(prHeal).toContain('claude.yml opencode.yml');
+    expect(prHeal).toContain('claude.yml codex.yml opencode.yml');
     // The pattern itself accepts both live formats.
-    const pattern = (n: number) => new RegExp(`^(opencode )?#${n}:`);
+    const pattern = (n: number) => new RegExp(`^((codex|opencode) )?#${n}:`);
     expect('#77: title').toMatch(pattern(77));
     expect('opencode #77: title').toMatch(pattern(77));
+    expect('codex #77: title').toMatch(pattern(77));
+  });
+
+  it('codex.yml dispatches on the codex label and /codex mentions', () => {
+    const codex = workflow('codex.yml');
+    expect(codex).toContain("github.event.label.name == 'codex'");
+    expect(codex).toContain("contains(github.event.comment.body, '/codex')");
+  });
+
+  it('codex.yml uses serialized ChatGPT subscription authentication', () => {
+    const codex = workflow('codex.yml');
+    expect(codex).toContain('group: codex-subscription-auth');
+    expect(codex).toContain('--secret=CODEX_AUTH_JSON');
+    expect(codex).toContain('secrets versions add CODEX_AUTH_JSON');
+    expect(codex).toContain('@openai/codex@0.144.6');
+    expect(codex).not.toContain('OPENAI_API_KEY');
+    expect(codex).not.toContain('openai/codex-action');
   });
 });
 
@@ -92,6 +114,7 @@ describe('dispatch labels and mention triggers', () => {
     // The console applies the same precedence: claude wins on dual-label.
     expect(pipelineForLabels(['claude', 'opencode'])).toBe('claude');
     expect(pipelineForLabels(['opencode'])).toBe('opencode');
+    expect(pipelineForLabels(['codex', 'opencode'])).toBe('codex');
     expect(pipelineForLabels(['claude'])).toBe('claude');
   });
 });

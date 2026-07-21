@@ -92,6 +92,11 @@ describe('pipelineForLabels', () => {
     expect(pipelineForLabels(['opencode'])).toBe('opencode');
   });
 
+  it('routes to codex when the codex label is present without claude', () => {
+    expect(pipelineForLabels(['codex'])).toBe('codex');
+    expect(pipelineForLabels(['codex', 'opencode'])).toBe('codex');
+  });
+
   it('routes to claude when only the claude label is present', () => {
     expect(pipelineForLabels(['claude'])).toBe('claude');
   });
@@ -102,6 +107,6 @@ describe('pipelineForLabels', () => {
   });
 
   it('routes to claude when both labels are present - one console action must never dispatch two pipelines', () => {
-    expect(pipelineForLabels(['claude', 'opencode'])).toBe('claude');
+    expect(pipelineForLabels(['claude', 'codex', 'opencode'])).toBe('claude');
   });
 });

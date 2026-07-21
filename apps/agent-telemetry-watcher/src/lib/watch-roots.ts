@@ -24,4 +24,9 @@ export interface WatchRootConfig {
    * `RUNNER_ALLOWLIST` comment). The default host-watcher root always sets
    * this explicitly. */
   projectDirAllowlist?: string[];
+  /** Descend recursively below `path`. Codex stores rollouts under
+   * `sessions/YYYY/MM/DD/`, unlike Claude Code's one project-dir level. */
+  recursive?: boolean;
+  /** Optional privacy boundary applied to the reduced summary's cwd. */
+  cwdAllowlist?: string[];
 }

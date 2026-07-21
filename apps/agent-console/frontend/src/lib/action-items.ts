@@ -463,6 +463,9 @@ const BASE_QUERIES = [
   // instead of `claude`, so it needs its own dispatched-but-unclaimed
   // query or a stalled opencode run is invisible too.
   'is:open label:opencode',
+  // Codex uses an independent label-triggered worker too; keep a queued run
+  // visible before its first claim step executes.
+  'is:open label:codex',
   // human-needed is one of this dashboard's own action types, but not every
   // human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
   // carry human-needed without ever having the claude label or an agent

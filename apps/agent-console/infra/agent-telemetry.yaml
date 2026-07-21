@@ -14,6 +14,20 @@
 # rebuilt (e.g. in a new project, or after an accidental deletion).
 project: 'supersprinklesracing'
 
+# ChatGPT-managed Codex authentication for the independent issue worker.
+# Seeded from a trusted workstation login and refreshed in place by Codex.
+# The claude-agent-readonly runner identity has accessor + version-adder on
+# this secret only (not project-wide Secret Manager access). Codex jobs are
+# globally serialized so two runners never rotate the same refresh token.
+secrets:
+  codexAuth:
+    name: 'CODEX_AUTH_JSON'
+    consumers:
+      - 'serviceAccount:claude-agent-readonly@supersprinklesracing.iam.gserviceaccount.com'
+    roles:
+      - 'roles/secretmanager.secretAccessor'
+      - 'roles/secretmanager.secretVersionAdder'
+
 firestore:
   database: 'agent-telemetry'
   location: 'us-central1'
@@ -105,9 +119,10 @@ serviceAccounts:
       # widening from #3113 below):
       #   assertion.repository=='supersprinklesracing/members' &&
       #   (assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/claude.yml') ||
+      #    assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/codex.yml') ||
       #    assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/deploy.yml') ||
       #    assertion.job_workflow_ref.startsWith('supersprinklesracing/members/.github/workflows/opencode.yml'))
-      # It trusts exactly three job refs:
+      # It trusts exactly four job refs:
       #   - claude.yml: the runner-mode shipper (this writer SA, "Ship
       #     session telemetry") plus the claude-agent-readonly SA's
       #     read-only observability auth ("Authenticate to GCP" above).
@@ -124,9 +139,11 @@ serviceAccounts:
       #     via `agent-telemetry upsert-stub`, pointing at the archive. See
       #     the storage section below for the `runs/<run-id>/opencode/`
       #     object layout this produces.
+      #   - codex.yml: archive-first Codex rollout shipping and readonly GCP
+      #     access for the independent Codex issue worker.
       - principal: 'principalSet://iam.googleapis.com/projects/972941236852/locations/global/workloadIdentityPools/claude-agent-pool/attribute.repository/supersprinklesracing/members'
         role: 'roles/iam.workloadIdentityUser'
-        reason: 'claude.yml''s "Authenticate telemetry writer" step mints an access token for this SA (runner-mode shipper, Slice 2 — see the storage section below and the "Ship session telemetry" step); deploy.yml''s publish-ride-along job (#3111) mints one too, to publish the ride-along bundle; opencode.yml''s own "Authenticate telemetry writer" step (#3123 phase 2) mints one to run its "Ship session archive" step'
+        reason: 'claude.yml and codex.yml mint access tokens for their session shippers; deploy.yml publishes the ride-along bundle; opencode.yml archives raw session storage'
       - principal: 'user:jlapenna@gmail.com'
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'
@@ -152,7 +169,7 @@ serviceAccounts:
         reason: 'manual ops / verification'
 
 # Slice 2's GCS transcript archive. The runner container claude.yml/
-# opencode.yml run on is destroyed the instant the job ends, so this bucket
+# codex.yml/opencode.yml run on is destroyed the instant the job ends, so this bucket
 # is the only durable copy of a run's full session data (particularly
 # valuable for a crashed/timed-out/turn-budget-exhausted run, where it's
 # otherwise the only record of what was attempted). Shipping is best-effort
@@ -186,11 +203,13 @@ storage:
     #     itself (a directory, not one object) and the console renders a
     #     "not yet renderable" note instead of a transcript timeline for it
     #     (see session-detail.ts / app/sessions/[id]/page.tsx).
-    objectLayout: 'runs/<github-run-id>/<transcript-filename>.jsonl (claude.yml) | runs/<github-run-id>/opencode/<relative-path> (opencode.yml)'
+    #   - codex.yml: runs/<github-run-id>/codex/YYYY/MM/DD/<rollout>.jsonl,
+    #     preserving Codex's date-partitioned session layout.
+    objectLayout: 'runs/<github-run-id>/<transcript-filename>.jsonl (claude.yml) | runs/<github-run-id>/codex/<relative-path> (codex.yml) | runs/<github-run-id>/opencode/<relative-path> (opencode.yml)'
     grants:
       - principal: 'serviceAccount:agent-telemetry-writer@supersprinklesracing.iam.gserviceaccount.com'
         role: 'roles/storage.objectCreator'
-        reason: "claude.yml uploads each run's transcript(s), and opencode.yml each run's raw session archive, via the GCS JSON API using this SA's WIF-minted access token (no gcloud CLI on the runner container, curl only)"
+        reason: "Agent workflows upload Claude, Codex, and OpenCode session archives via the GCS JSON API using this SA's WIF-minted access token"
       - principal: 'serviceAccount:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com'
         role: 'roles/storage.objectViewer'
         reason: 'agent-console reads archived transcripts back out for the session detail page (follow-up PR, PRD #2112) — granted directly since the console reads with its own runtime identity, not an impersonation call like the Firestore reader path above'

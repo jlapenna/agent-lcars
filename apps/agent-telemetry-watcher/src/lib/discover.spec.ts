@@ -162,6 +162,18 @@ describe('discoverAcrossRoots', () => {
     expect(discoverAcrossRoots([])).toEqual([]);
   });
 
+  it('recursively discovers Codex date-partitioned rollout files', () => {
+    const dateDir = path.join(rootA, '2026', '07', '20');
+    fs.mkdirSync(dateDir, { recursive: true });
+    fs.writeFileSync(path.join(dateDir, 'rollout-session.jsonl'), '');
+
+    expect(
+      discoverAcrossRoots([
+        { path: rootA, adapter: 'codex', recursive: true },
+      ]).map((entry) => entry.file),
+    ).toEqual([path.join(dateDir, 'rollout-session.jsonl')]);
+  });
+
   it("passes each root's own path and resolved allowlist to the injected discover function", () => {
     const calls: Array<{ rootPath: string; allowlist: string[] }> = [];
     const roots: WatchRootConfig[] = [

@@ -259,10 +259,14 @@ export interface EnvVars {
   /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts.
    * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
+  /** Root of Codex's date-partitioned rollout JSONL tree. */
+  AGENT_TELEMETRY_CODEX_SESSIONS_DIR?: string;
+  /** Comma-separated cwd globs limiting which Codex sessions may ship. */
+  AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST?: string;
   /** Comma-separated `*`-wildcard glob patterns; defaults to the members-repo slug only.
    * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST?: string;
-  /** JSON array of `{ path, adapter, projectDirAllowlist? }` watch-root objects
+  /** JSON array of `{ path, adapter, projectDirAllowlist?, recursive?, cwdAllowlist? }` watch-root objects
    * (#3123 phase 1's multi-root/multi-agent watcher config) - when set, fully
    * replaces the single default root the two vars above configure. See
    * `apps/agent-telemetry-watcher/src/lib/config.ts`'s `loadConfig` for the

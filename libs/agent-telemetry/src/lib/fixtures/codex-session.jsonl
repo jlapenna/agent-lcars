@@ -1,0 +1,8 @@
+{"timestamp":"2026-07-20T10:00:00.000Z","type":"session_meta","payload":{"id":"codex-session-1","session_id":"codex-session-1","cwd":"/home/jlapenna/p/members","originator":"codex-tui","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-07-20T10:00:01.000Z","type":"turn_context","payload":{"cwd":"/home/jlapenna/p/members","model":"gpt-5.6","approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}
+{"timestamp":"2026-07-20T10:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Fix telemetry support"}}
+{"timestamp":"2026-07-20T10:00:03.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-07-20T10:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call-1"}}
+{"timestamp":"2026-07-20T10:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-1","output":"[codex-workers abcdef1234567] Add support https://github.com/jlapenna/members/pull/42"}}
+{"timestamp":"2026-07-20T10:00:06.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"cached_input_tokens":40,"output_tokens":30,"reasoning_output_tokens":10,"total_tokens":150},"last_token_usage":{"input_tokens":120,"cached_input_tokens":40,"output_tokens":30,"reasoning_output_tokens":10,"total_tokens":150}}}}
+{"timestamp":"2026-07-20T10:00:07.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}

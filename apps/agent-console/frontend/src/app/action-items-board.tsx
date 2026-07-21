@@ -74,6 +74,7 @@ export function ActionItemsBoard({
                   <Group gap={4} wrap="nowrap">
                     {item.kind === 'issue' &&
                       (item.labels.includes('claude') ||
+                        item.labels.includes('codex') ||
                         item.labels.includes('opencode')) && (
                         <RetriggerButton
                           issueNumber={item.number}

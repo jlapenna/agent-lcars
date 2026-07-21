@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   adapterFor,
   claudeCodeAdapter,
+  codexAdapter,
   getTranscriptAdapter,
   TRANSCRIPT_ADAPTERS,
 } from './transcript-adapter';
@@ -79,6 +80,11 @@ describe('adapterFor', () => {
     expect(adapterFor(lines, '/some/session.jsonl')).toBe(claudeCodeAdapter);
   });
 
+  it('resolves the codex adapter by content sniffing', () => {
+    const lines = readFixtureLines('codex-session.jsonl');
+    expect(adapterFor(lines, '/some/rollout.jsonl')).toBe(codexAdapter);
+  });
+
   it('returns undefined when no adapter recognizes the content', () => {
     expect(adapterFor(['not a transcript line'], 'x.jsonl')).toBeUndefined();
   });
@@ -89,9 +95,12 @@ describe('getTranscriptAdapter', () => {
     expect(getTranscriptAdapter('claude-code')).toBe(claudeCodeAdapter);
   });
 
+  it('resolves codex by name', () => {
+    expect(getTranscriptAdapter('codex')).toBe(codexAdapter);
+  });
+
   it('returns undefined for an agent with no registered adapter yet', () => {
     expect(getTranscriptAdapter('opencode')).toBeUndefined();
-    expect(getTranscriptAdapter('codex')).toBeUndefined();
     expect(getTranscriptAdapter('gemini')).toBeUndefined();
     expect(getTranscriptAdapter('antigravity')).toBeUndefined();
   });

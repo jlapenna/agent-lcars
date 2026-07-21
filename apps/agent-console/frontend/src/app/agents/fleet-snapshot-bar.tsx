@@ -7,7 +7,7 @@ import {
   QueueHealthAlert,
 } from '../agent-activity-panel';
 
-const PIPELINES: AgentPipeline[] = ['claude', 'opencode'];
+const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
 /**
  * The top strip of the /agents page: "what's the fleet doing right now" at

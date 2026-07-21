@@ -17,6 +17,7 @@ export class ActionError extends Error {
 // sufficient on its own.
 const PIPELINE_MENTION: Record<Pipeline, string> = {
   claude: '@claude',
+  codex: '/codex',
   opencode: '/oc',
 };
 
@@ -26,6 +27,7 @@ const PIPELINE_MENTION: Record<Pipeline, string> = {
 // not 'c').
 const PIPELINE_MENTION_RE: Record<Pipeline, RegExp> = {
   claude: /@claude/i,
+  codex: /\/codex/i,
   opencode: /\/opencode|\/oc/i,
 };
 

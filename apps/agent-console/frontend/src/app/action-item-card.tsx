@@ -171,7 +171,12 @@ export function ActionItemCard({
   // Which pipeline a reply/retrigger on this item routes to (claude vs the
   // experimental opencode.yml, #2988/#2994) - see pipelineForLabels.
   const pipeline = pipelineForLabels(item.labels);
-  const replyMention = pipeline === 'opencode' ? '/oc' : '@claude';
+  const replyMention =
+    pipeline === 'opencode'
+      ? '/oc'
+      : pipeline === 'codex'
+        ? '/codex'
+        : '@claude';
 
   const handleReply = () => {
     if (!replyBody.trim()) return;
@@ -408,6 +413,7 @@ export function ActionItemCard({
           )}
           {item.kind === 'issue' &&
             (item.labels.includes('claude') ||
+              item.labels.includes('codex') ||
               item.labels.includes('opencode')) && (
               <RetriggerButton
                 issueNumber={item.number}
