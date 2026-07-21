@@ -11,6 +11,10 @@ locals {
   ])
 }
 
+data "google_project" "this" {
+  project_id = var.project_id
+}
+
 resource "google_project_service" "services" {
   for_each           = local.services
   project            = var.project_id
@@ -186,7 +190,7 @@ resource "google_secret_manager_secret" "telemetry_writer_key" {
 resource "google_billing_budget" "monthly" {
   billing_account = var.billing_account
   display_name    = "Agent LCARS monthly budget"
-  budget_filter { projects = ["projects/${var.project_id}"] }
+  budget_filter { projects = ["projects/${data.google_project.this.number}"] }
   amount {
     specified_amount {
       currency_code = "USD"
@@ -196,10 +200,6 @@ resource "google_billing_budget" "monthly" {
   dynamic "threshold_rules" {
     for_each = toset([0.5, 0.9, 1.0])
     content { threshold_percent = threshold_rules.value }
-  }
-  all_updates_rule {
-    monitoring_notification_channels = var.budget_notification_channels
-    disable_default_iam_recipients   = false
   }
   depends_on = [google_project_service.services]
 }
