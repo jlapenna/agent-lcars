@@ -274,7 +274,12 @@ export class WatcherDaemon {
         Date.parse(now) - Date.parse(tracked.lastHeartbeatAt) <=
         this.options.stalenessWindowMs;
       const processAlive = tracked.summary.cwd
-        ? isProcessAliveForCwd(tracked.summary.cwd)
+        ? isProcessAliveForCwd(
+            tracked.summary.cwd,
+            '/proc',
+            tracked.summary.sessionId,
+            tracked.summary.startedAt,
+          )
         : false;
 
       const liveness = computeLiveness({

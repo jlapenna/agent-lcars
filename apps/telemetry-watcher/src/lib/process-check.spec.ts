@@ -22,6 +22,21 @@ describe('isProcessAliveForCwd', () => {
     fs.symlinkSync(cwd, path.join(pidDir, 'cwd'));
   }
 
+  function fakeIdentifiedProcess(
+    pid: number,
+    cwd: string,
+    cmdline: string[],
+    startTicks: number,
+  ) {
+    fakeProcess(pid, cwd);
+    const pidDir = path.join(procRoot, String(pid));
+    fs.writeFileSync(path.join(pidDir, 'cmdline'), `${cmdline.join('\0')}\0`);
+    const fields = Array.from({ length: 20 }, () => '0');
+    fields[18] = String(startTicks);
+    fs.writeFileSync(path.join(pidDir, 'stat'), `${pid} (codex) S ${fields.join(' ')}`);
+    fs.writeFileSync(path.join(procRoot, 'stat'), 'btime 1000\n');
+  }
+
   it('is true when a process has a matching cwd', () => {
     fakeProcess(123, '/home/jlapenna/p/members');
     fakeProcess(456, '/tmp/unrelated');
@@ -56,6 +71,50 @@ describe('isProcessAliveForCwd', () => {
     expect(isProcessAliveForCwd('/home/jlapenna/p/members', procRoot)).toBe(
       false,
     );
+  });
+
+  it('matches a resumed process by session id without matching sibling sessions', () => {
+    fakeIdentifiedProcess(
+      123,
+      '/home/jlapenna/p/members',
+      ['codex', 'resume', 'current-session'],
+      500,
+    );
+
+    expect(
+      isProcessAliveForCwd(
+        '/home/jlapenna/p/members',
+        procRoot,
+        'current-session',
+        '1970-01-01T00:00:00.000Z',
+      ),
+    ).toBe(true);
+    expect(
+      isProcessAliveForCwd(
+        '/home/jlapenna/p/members',
+        procRoot,
+        'historical-session',
+        '1970-01-01T00:00:00.000Z',
+      ),
+    ).toBe(false);
+  });
+
+  it('matches a new process by transcript and process start time', () => {
+    fakeIdentifiedProcess(
+      123,
+      '/home/jlapenna/p/members',
+      ['claude', '--dangerously-skip-permissions'],
+      500,
+    );
+
+    expect(
+      isProcessAliveForCwd(
+        '/home/jlapenna/p/members/.agents/skills',
+        procRoot,
+        'new-session',
+        '1970-01-01T00:16:45.000Z',
+      ),
+    ).toBe(true);
   });
 
   it('ignores non-numeric entries and broken symlinks without throwing', () => {
