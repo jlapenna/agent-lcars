@@ -3,10 +3,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/app-providers/src",
   "projectType": "library",
-  "tags": [
-    "platform:browser",
-    "scope:shared"
-  ],
+  "tags": ["platform:browser", "scope:shared"],
   "// targets": "to see all targets run: nx show project app-providers --web",
   "targets": {}
 }

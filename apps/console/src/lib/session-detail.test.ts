@@ -116,9 +116,7 @@ describe('getSessionDetail', () => {
       'gs://bucket/runs/1/a.jsonl',
     );
     expect(result.status).toBe('ok');
-    if (result.status === 'ok') {
-      expect(result.transcript).toEqual({ events: [] });
-    }
+    expect(result).toMatchObject({ transcript: { events: [] } });
   });
 
   it('fetches the transcript for a legacy doc with no agent field (defaults to claude-code)', async () => {
@@ -149,14 +147,14 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).not.toHaveBeenCalled();
     expect(result.status).toBe('ok');
     expect(result).not.toHaveProperty('transcript');
-    if (result.status === 'ok') {
-      // The doc itself (and its transcriptGcsUri) still comes through for
-      // the page to render its own archive-note fallback from.
-      expect(result.doc).toMatchObject({
+    // The doc itself (and its transcriptGcsUri) still comes through for
+    // the page to render its own archive-note fallback from.
+    expect(result).toMatchObject({
+      doc: {
         agent: 'opencode',
         transcriptGcsUri:
           'gs://supersprinklesracing-agent-session-transcripts/runs/1/opencode/',
-      });
-    }
+      },
+    });
   });
 });

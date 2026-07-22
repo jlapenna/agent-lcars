@@ -1,128 +1,33 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "platformAutomerge": true,
-  "rebaseWhen": "conflicted",
-  "schedule": ["after 8pm on monday"],
   "extends": [
     "config:recommended",
     "monorepo:nx",
     "monorepo:nextjs",
-    "monorepo:google-api-dotnet-client",
     "monorepo:react"
   ],
   "labels": ["dependencies"],
-  "ignoreDeps": ["pytest", "pytest-cov", "pytest-asyncio", "python"],
+  "platformAutomerge": true,
+  "rebaseWhen": "conflicted",
+  "schedule": ["after 8pm on monday"],
   "packageRules": [
     {
-      "description": "Disable specific packages",
-      "enabled": false,
-      "matchPackageNames": ["domexception", "lodash.isequal", "request"]
-    },
-    {
-      "description": "pnpm is pinned to 10.x via engines/packageManager (Cloud Build compatibility, see PR #1394); major bumps just fail CI on every rebase until someone does the upgrade deliberately",
+      "description": "Keep pnpm on the supported 10.x line until the runtime toolchain is upgraded deliberately",
       "enabled": false,
       "matchPackageNames": ["pnpm"],
       "matchUpdateTypes": ["major"]
     },
     {
-      "matchUpdateTypes": ["minor", "patch"],
+      "description": "Group and automerge updates that preserve the declared compatibility range",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "all non-major dependencies",
       "groupSlug": "all-minor-patch",
-      "automerge": true,
-      "automergeType": "pr",
-      "schedule": ["after 8pm on monday"]
-    },
-    {
-      "description": "Auto-merge googleapis major updates",
-      "matchPackageNames": ["googleapis"],
       "automerge": true,
       "automergeType": "pr"
     }
   ],
-  "pep621": {
-    "enabled": true
-  },
-  "ignorePaths": ["openclaw/**", "sparkrun/**", "sparkstack-registry/**"],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": ["//docker-compose\\.yml$//"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s*- [A-Z_]+_VERSION=(?<currentValue>.*?)\\n"
-      ],
-      "extractVersionTemplate": "^v?(?<version>.*)$"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"gogcli\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "steipete/gogcli"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"goplaces\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "steipete/goplaces"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"camsnap\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "steipete/camsnap"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"opencode\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "anomalyco/opencode"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"blogwatcher\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "go",
-      "depNameTemplate": "github.com/Hyaxia/blogwatcher"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"wacli\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "go",
-      "depNameTemplate": "github.com/steipete/wacli"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"openai-whisper\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "pypi",
-      "depNameTemplate": "openai-whisper"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "//^services/openclaw/docker/build-versions\\.json$//"
-      ],
-      "matchStrings": ["\"nano-pdf\":\\s*\"v?(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "pypi",
-      "depNameTemplate": "nano-pdf"
-    }
-  ]
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  }
 }

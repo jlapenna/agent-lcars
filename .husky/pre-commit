@@ -1,0 +1,18 @@
+#!/bin/bash
+
+set -e
+
+export NX_TUI=false
+export NX_DAEMON=false
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+
+if [ "$branch" = "main" ]; then
+  echo "======================================================================"
+  echo "ERROR: direct commits to main are forbidden."
+  echo "Create a feature branch and submit changes through a pull request."
+  echo "======================================================================"
+  exit 1
+fi
+
+pnpm exec lint-staged

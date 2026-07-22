@@ -9,11 +9,9 @@ export function valueOrUndefined<T>(value: T): T | undefined {
 }
 
 export type KnownKeys<T> = keyof {
-  [K in keyof T as string extends K
-    ? never
-    : number extends K
-      ? never
-      : K]: unknown;
+  [
+    K in keyof T as string extends K ? never : number extends K ? never : K
+  ]: unknown;
 };
 
 /** Undefined Type Guard */

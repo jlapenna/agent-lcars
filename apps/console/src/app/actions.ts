@@ -1,7 +1,8 @@
 'use server';
 
-import { createAdminAction } from '@/lib/auth-guards';
 import { revalidatePath } from 'next/cache';
+
+import { createAdminAction } from '@/lib/auth-guards';
 
 import { auth } from '../auth';
 import {

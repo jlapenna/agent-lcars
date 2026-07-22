@@ -1,10 +1,11 @@
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+
 import {
   forceStructuredLogging,
   getLogLevel,
   getSlackLogLevel,
   isOnGoogleCloud,
 } from './logging-accessors';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 describe('logging-accessors', () => {
   const ORIGINAL_ENV = process.env;

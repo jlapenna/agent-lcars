@@ -1,3 +1,5 @@
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+
 import {
   getEnvValue,
   isTrue,
@@ -5,7 +7,6 @@ import {
   required,
   splitEnvList,
 } from './env-util';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 describe('env-util', () => {
   const ORIGINAL_ENV = process.env;

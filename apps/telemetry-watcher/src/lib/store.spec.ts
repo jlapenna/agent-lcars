@@ -1,5 +1,5 @@
-import { Timestamp } from '@google-cloud/firestore';
 import { SessionDoc } from '@agent-lcars/telemetry';
+import { Timestamp } from '@google-cloud/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

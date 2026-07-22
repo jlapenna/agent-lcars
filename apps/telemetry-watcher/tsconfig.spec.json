@@ -4,7 +4,7 @@
     "outDir": "../../dist/out-tsc",
     "rootDir": "src",
     "module": "commonjs",
-    "types": ["jest", "node"]
+    "types": ["node"]
   },
   "include": ["src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
   "references": [{ "path": "./tsconfig.app.json" }]

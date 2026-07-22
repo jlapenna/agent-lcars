@@ -1,9 +1,9 @@
-import { Alert, Box, Stack, Text } from '@mantine/core';
 import type {
   TranscriptElisionDivider,
   TranscriptTimelineEvent,
 } from '@agent-lcars/telemetry';
 import { isElisionDivider } from '@agent-lcars/telemetry';
+import { Alert, Box, Stack, Text } from '@mantine/core';
 
 const ROLE_BORDER_COLOR: Record<'user' | 'assistant', string> = {
   user: 'var(--mantine-color-blue-5)',

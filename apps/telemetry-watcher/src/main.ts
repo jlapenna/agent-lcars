@@ -56,7 +56,9 @@ function runHostWatcher(): void {
   daemon.start();
 
   const shutdown = async (signal: string) => {
-    logger.info(`agent-lcars-telemetry-watcher: received ${signal}, shutting down`);
+    logger.info(
+      `agent-lcars-telemetry-watcher: received ${signal}, shutting down`,
+    );
     daemon.stop();
     await watcher.close();
     process.exit(0);

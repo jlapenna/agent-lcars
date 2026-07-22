@@ -47,9 +47,7 @@ export default function GlobalError({
           <Button
             variant="filled"
             leftSection={<IconRefresh aria-hidden="true" size={20} />}
-            onClick={() =>
-              isStaleDeploy ? window.location.reload() : reset()
-            }
+            onClick={() => (isStaleDeploy ? window.location.reload() : reset())}
           >
             {isStaleDeploy ? 'Reload page' : 'Try again'}
           </Button>

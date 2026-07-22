@@ -35,7 +35,8 @@ function buildFirestore(projectId: string): Firestore {
  * `@repo/firebase-server`. Distinct from `getAgentTelemetryWriterFirestore`
  * in store.ts, which `upsertSession` uses and this client cannot do.
  */
-export function getAgentTelemetryReaderFirestore(): Firestore | Promise<Firestore> {
+export function getAgentTelemetryReaderFirestore():
+  Firestore | Promise<Firestore> {
   if (cachedFirestore) {
     return cachedFirestore;
   }
