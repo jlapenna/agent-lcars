@@ -146,11 +146,13 @@ export interface CliSessionsResult {
  * the search API's ~30 req/min budget and flooded the warnings banner with
  * the resulting failures.
  *
- * An active session with a transcript-recorded PR additionally gets a merge
+ * An idle session with a transcript-recorded PR additionally gets a merge
  * check: `displayLiveness` only ever decays liveness with *elapsed time*, so
- * a session whose PR merged while the CLI process kept idling would sit at
- * `idle`/`live` forever with nothing left to do (#2879) - merged is treated
- * as a stronger, terminal signal and forces `ended`.
+ * a session whose PR merged while the CLI process kept idling would otherwise
+ * sit at `idle` forever with nothing left to do (#2879). Fresh transcript
+ * activity remains authoritative, though: a `live` session may continue with
+ * more work after producing or merging an earlier PR, so a merged deliverable
+ * must never hide it from the active-agents view.
  *
  * One malformed doc or one failed PR lookup degrades that single session
  * instead of crashing the whole list, matching the defensive pattern in
@@ -230,7 +232,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   const sessions = await Promise.all(
     capped.map(async ([doc, session]) => {
       session.pr = prFromDeliverables(doc);
-      if (session.pr && isActive(session.liveness)) {
+      if (session.pr && session.liveness === 'idle') {
         if (await checkMerged(session.pr.number)) {
           session.liveness = 'ended';
         }

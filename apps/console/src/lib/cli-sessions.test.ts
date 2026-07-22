@@ -161,6 +161,26 @@ describe('getCliSessions', () => {
     });
   });
 
+  it('keeps a live session visible when an earlier transcript-recorded PR has merged', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({
+        liveness: 'live',
+        lastActivityAt: minutesAgo(1),
+        deliverables: { prNumbers: [2843], commitShas: [] },
+      }),
+    ]);
+    const getMock = mockPullsGet(true);
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].liveness).toBe('live');
+    expect(sessions[0].pr).toEqual({
+      number: 2843,
+      url: 'https://github.com/supersprinklesracing/members/pull/2843',
+    });
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
   it('keeps liveness as-is when the transcript-recorded PR is still open', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
