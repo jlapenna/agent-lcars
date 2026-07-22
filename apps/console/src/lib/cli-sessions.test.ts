@@ -137,7 +137,7 @@ describe('getCliSessions', () => {
     expect(searchMock).not.toHaveBeenCalled();
   });
 
-  it('downgrades liveness to ended once a transcript-recorded PR has merged', async () => {
+  it('keeps an idle running session visible when a recorded PR has merged', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         liveness: 'idle',
@@ -149,16 +149,12 @@ describe('getCliSessions', () => {
 
     const { sessions } = await getCliSessions();
 
-    expect(sessions[0].liveness).toBe('ended');
+    expect(sessions[0].liveness).toBe('idle');
     expect(sessions[0].pr).toEqual({
       number: 2843,
       url: 'https://github.com/supersprinklesracing/members/pull/2843',
     });
-    expect(getMock).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'members',
-      pull_number: 2843,
-    });
+    expect(getMock).not.toHaveBeenCalled();
   });
 
   it('keeps a live session visible when an earlier transcript-recorded PR has merged', async () => {
@@ -210,30 +206,6 @@ describe('getCliSessions', () => {
 
     expect(sessions[0].liveness).toBe('ended');
     expect(getMock).not.toHaveBeenCalled();
-  });
-
-  it('degrades gracefully and warns once when the merge check fails, without downgrading liveness', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({
-        sessionId: 'session-1',
-        liveness: 'idle',
-        lastActivityAt: minutesAgo(20),
-        deliverables: { prNumbers: [2843], commitShas: [] },
-      }),
-      makeCliDoc({
-        sessionId: 'session-2',
-        liveness: 'idle',
-        lastActivityAt: minutesAgo(21),
-        deliverables: { prNumbers: [2843], commitShas: [] },
-      }),
-    ]);
-    const getMock = mockPullsGet(new Error('502'));
-
-    const { sessions, warnings } = await getCliSessions();
-
-    expect(sessions.map((s) => s.liveness)).toEqual(['idle', 'idle']);
-    expect(getMock).toHaveBeenCalledTimes(1);
-    expect(warnings).toEqual(['PR merge check failed for #2843.']);
   });
 
   it('never searches for ended sessions, even with a branch', async () => {
