@@ -94,7 +94,8 @@ describe('isProcessAliveForCwd', () => {
         '/home/jlapenna/p/members',
         procRoot,
         'historical-session',
-        '1970-01-01T00:00:00.000Z',
+        '1970-01-01T00:16:45.000Z',
+        'codex',
       ),
     ).toBe(false);
   });

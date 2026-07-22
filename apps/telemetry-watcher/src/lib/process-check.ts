@@ -59,6 +59,10 @@ export function isProcessAliveForCwd(
         // historical transcript for that repo appear alive.
         if (sessionId) {
           if (cmdline.includes(sessionId)) return true;
+          // A resumed Codex invocation names its authoritative session in
+          // argv. Never let start-time correlation attach that process to a
+          // different transcript that happened to begin around the same time.
+          if (agent === 'codex' && cmdline.includes('resume')) continue;
         }
 
         // Fresh, non-resumed Codex/Claude invocations do not put their new
