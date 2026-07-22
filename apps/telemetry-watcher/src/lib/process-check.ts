@@ -17,6 +17,7 @@ export function isProcessAliveForCwd(
   procRoot = '/proc',
   sessionId?: string,
   sessionStartedAt?: string,
+  agent?: string,
 ): boolean {
   let pids: string[];
   try {
@@ -37,13 +38,26 @@ export function isProcessAliveForCwd(
         procCwd === cwd ||
         (procCwd !== procFsRoot && cwd.startsWith(`${procCwd}${path.sep}`))
       ) {
+        // Preserve the original helper contract for callers/tests that only
+        // ask about a cwd and have no session identity available.
+        if (!sessionId && !sessionStartedAt) return true;
+
+        const cmdline = fs
+          .readFileSync(path.join(procRoot, pid, 'cmdline'), 'utf8')
+          .split('\0')
+          .filter(Boolean);
+        const executable = path.basename(cmdline[0] ?? '');
+        if (
+          (agent === 'codex' && executable !== 'codex') ||
+          (agent === 'claude-code' && executable !== 'claude')
+        ) {
+          continue;
+        }
+
         // Resumed Codex processes carry the authoritative session id in
         // argv. This prevents one CLI at a shared repo cwd from making every
         // historical transcript for that repo appear alive.
         if (sessionId) {
-          const cmdline = fs
-            .readFileSync(path.join(procRoot, pid, 'cmdline'), 'utf8')
-            .split('\0');
           if (cmdline.includes(sessionId)) return true;
         }
 
@@ -78,10 +92,6 @@ export function isProcessAliveForCwd(
             return true;
           }
         }
-
-        // Preserve the original helper contract for callers/tests that only
-        // ask about a cwd and have no session identity available.
-        if (!sessionId && !sessionStartedAt) return true;
       }
     } catch {
       // Process exited mid-scan, or we lack permission to read it — skip.

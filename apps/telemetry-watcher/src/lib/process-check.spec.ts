@@ -113,8 +113,28 @@ describe('isProcessAliveForCwd', () => {
         procRoot,
         'new-session',
         '1970-01-01T00:16:45.000Z',
+        'claude-code',
       ),
     ).toBe(true);
+  });
+
+  it('does not correlate an agent session with a non-agent process', () => {
+    fakeIdentifiedProcess(
+      123,
+      '/home/jlapenna/p/members',
+      ['node', 'nx-daemon.js'],
+      500,
+    );
+
+    expect(
+      isProcessAliveForCwd(
+        '/home/jlapenna/p/members',
+        procRoot,
+        'historical-session',
+        '1970-01-01T00:16:45.000Z',
+        'claude-code',
+      ),
+    ).toBe(false);
   });
 
   it('ignores non-numeric entries and broken symlinks without throwing', () => {

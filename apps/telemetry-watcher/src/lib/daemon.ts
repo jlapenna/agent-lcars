@@ -279,6 +279,7 @@ export class WatcherDaemon {
             '/proc',
             tracked.summary.sessionId,
             tracked.summary.startedAt,
+            tracked.summary.agent,
           )
         : false;
 
