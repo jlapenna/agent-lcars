@@ -1,25 +1,18 @@
 {
   "name": "@agent-lcars/console",
-  "tags": [
-    "platform:nextjs",
-    "scope:console"
-  ],
+  "tags": ["platform:nextjs", "scope:console"],
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/console/src",
   "projectType": "application",
   "targets": {
     "build": {
       "executor": "@nx/next:build",
-      "outputs": [
-        "{options.outputPath}"
-      ],
+      "outputs": ["{options.outputPath}"],
       "defaultConfiguration": "production",
       "options": {
         "outputPath": "dist/apps/console",
         "tsConfig": "apps/console/tsconfig.json",
-        "assets": [
-          "apps/console/public"
-        ]
+        "assets": ["apps/console/public"]
       },
       "configurations": {
         "production": {
@@ -34,9 +27,7 @@
     },
     "bundle": {
       "executor": "nx:run-commands",
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "options": {
         "commands": [
           "mkdir -p dist/apps/console/.next/standalone/dist/apps/console/.next dist/apps/console/.next/standalone/apps/console",
@@ -75,9 +66,7 @@
     },
     "serve-production": {
       "executor": "nx:run-commands",
-      "dependsOn": [
-        "bundle"
-      ],
+      "dependsOn": ["bundle"],
       "options": {
         "command": "pnpm exec dotenv -e .env.development.local --optional -- node dist/apps/console/.next/standalone/apps/console/server.js",
         "env": {

@@ -1,4 +1,5 @@
 import { Anchor, Container, Group, Stack, Text, Title } from '@mantine/core';
+
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../auth';

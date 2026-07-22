@@ -10,7 +10,9 @@ describe('discoverTranscriptFiles', () => {
   let root: string;
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-lcars-telemetry-watcher-'));
+    root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'agent-lcars-telemetry-watcher-'),
+    );
   });
 
   afterEach(() => {

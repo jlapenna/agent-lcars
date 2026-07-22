@@ -1,5 +1,5 @@
-import { Firestore, Timestamp } from '@google-cloud/firestore';
 import { SessionDoc } from '@agent-lcars/telemetry';
+import { Firestore, Timestamp } from '@google-cloud/firestore';
 import { logger } from '@repo/logging';
 
 const AGENT_TELEMETRY_DATABASE_ID =

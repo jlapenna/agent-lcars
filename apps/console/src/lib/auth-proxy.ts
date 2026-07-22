@@ -23,13 +23,17 @@ export function createAuthProxy(
     }
     if (
       publicRoutes.includes(request.nextUrl.pathname) ||
-      publicPrefixes.some((prefix) => request.nextUrl.pathname.startsWith(prefix))
+      publicPrefixes.some((prefix) =>
+        request.nextUrl.pathname.startsWith(prefix),
+      )
     ) {
       return NextResponse.next();
     }
     const loggedIn = request.cookies
       .getAll()
-      .some((cookie) => SESSION_COOKIES.some((name) => cookie.name.startsWith(name)));
+      .some((cookie) =>
+        SESSION_COOKIES.some((name) => cookie.name.startsWith(name)),
+      );
     if (loggedIn) return NextResponse.next();
     if (request.nextUrl.pathname.startsWith('/api')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

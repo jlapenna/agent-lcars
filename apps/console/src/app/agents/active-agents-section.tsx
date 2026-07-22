@@ -1,5 +1,5 @@
-import { Card, Stack, Text, Title } from '@mantine/core';
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import { Card, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import type { AgentRun } from '../../lib/agent-activity';

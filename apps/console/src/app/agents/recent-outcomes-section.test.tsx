@@ -1,5 +1,5 @@
-import { MantineProvider } from '@mantine/core';
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 

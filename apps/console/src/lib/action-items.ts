@@ -546,10 +546,7 @@ export async function getActionItems(): Promise<ActionItemsResult> {
   const items: ActionItem[] = [];
   for (const [i, result] of classified.entries()) {
     if (result.status === 'rejected') {
-      console.error(
-        'agent-lcars: failed to classify an item:',
-        result.reason,
-      );
+      console.error('agent-lcars: failed to classify an item:', result.reason);
       warnings.push(`Failed to classify #${issuesToClassify[i].number}.`);
       continue;
     }

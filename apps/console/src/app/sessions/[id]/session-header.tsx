@@ -1,3 +1,5 @@
+import type { SessionDoc } from '@agent-lcars/telemetry';
+import { displayLiveness, sessionAgent } from '@agent-lcars/telemetry';
 import {
   Anchor,
   Badge,
@@ -7,8 +9,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import type { SessionDoc } from '@agent-lcars/telemetry';
-import { displayLiveness, sessionAgent } from '@agent-lcars/telemetry';
 import type { ReactNode } from 'react';
 
 import { REPO_NAME, REPO_OWNER } from '../../../lib/github-client';

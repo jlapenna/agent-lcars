@@ -1,4 +1,12 @@
 {
   "extends": "./tsconfig.base.json",
-  "exclude": ["out-tsc", "dist", "node_modules", ".next", "**/*.spec.*", "**/*.test.*", "eslint.config.*"]
+  "exclude": [
+    "out-tsc",
+    "dist",
+    "node_modules",
+    ".next",
+    "**/*.spec.*",
+    "**/*.test.*",
+    "eslint.config.*"
+  ]
 }

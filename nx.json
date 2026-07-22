@@ -8,25 +8,17 @@
     "default": ["{projectRoot}/**/*", "sharedGlobals"],
     "production": [
       "default",
-      "!{projectRoot}/.eslintrc.json",
       "!{projectRoot}/eslint.config.mjs",
-      "!{projectRoot}/lint-staged.config.js",
       "!{projectRoot}/**/?(*.)+(spec|test).[jt]s?(x)?(.snap)",
       "!{projectRoot}/tsconfig.spec.json",
-      "!{projectRoot}/jest.config.[jt]s",
       "!{projectRoot}/src/test-setup.[jt]s",
       "!{projectRoot}/test-setup.[jt]s"
-    ],
-    "goInputs": [
-      "{projectRoot}/**/*.go",
-      "{workspaceRoot}/go.work",
-      "{workspaceRoot}/go.work.sum",
-      "{projectRoot}/go.mod",
-      "{projectRoot}/go.sum"
     ],
     "sharedGlobals": [
       "{workspaceRoot}/tsconfig.base.json",
       "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/package.json",
+      "{workspaceRoot}/pnpm-lock.yaml",
       "{workspaceRoot}/patches/**"
     ]
   },
@@ -56,26 +48,6 @@
       }
     },
     {
-      "plugin": "@nx/jest/plugin",
-      "options": {
-        "targetName": "test"
-      },
-      "exclude": [
-        "apps/members/e2e/**/*",
-        "apps/onecake/e2e/**/*",
-        "apps/primes/e2e/**/*",
-        "apps/primes/frontend/**/*",
-        "apps/primes/infra/**/*"
-      ]
-    },
-    {
-      "plugin": "@nx/jest/plugin",
-      "options": {
-        "targetName": "test-jest"
-      },
-      "include": ["apps/primes/frontend/**/*"]
-    },
-    {
       "plugin": "@nx/next/plugin",
       "options": {
         "devTargetName": "serve"
@@ -85,14 +57,6 @@
       "plugin": "@nx/playwright/plugin",
       "options": {
         "targetName": "playwright-e2e"
-      }
-    },
-    {
-      "plugin": "@nx/rollup/plugin",
-      "options": {
-        "buildTargetName": "build",
-        "buildDepsTargetName": "build-deps",
-        "watchDepsTargetName": "watch-deps"
       }
     },
     {
@@ -116,49 +80,12 @@
       "dependsOn": ["^build"],
       "inputs": ["production", "^production"]
     },
-    "test": [
-      {
-        "filter": { "plugin": "@nx/jest/plugin" },
-        "options": {
-          "silent": true,
-          "forceExit": true,
-          "passWithNoTests": true,
-          "maxWorkers": 4
-        }
-      }
-    ],
-    "test-jest": [
-      {
-        "filter": { "plugin": "@nx/jest/plugin" },
-        "options": {
-          "silent": true,
-          "forceExit": true,
-          "passWithNoTests": true,
-          "maxWorkers": 4
-        }
-      }
-    ],
     "e2e": {
       "dependsOn": ["^build"],
       "cache": false
     },
     "e2e-run": {
       "cache": false
-    },
-    "e2e-docker": {
-      "inputs": [
-        "default",
-        "^production",
-        "{workspaceRoot}/tools/e2e-docker.sh",
-        "{workspaceRoot}/tools/e2e/Dockerfile"
-      ]
-    },
-    "copy-json-assets": {
-      "inputs": [
-        "default",
-        "^production",
-        "{workspaceRoot}/tools/patch-cli-dist.cjs"
-      ]
     },
     "@nx/js:tsc": {
       "cache": true,
@@ -180,7 +107,7 @@
     },
     "@nx/react": {
       "library": {
-        "unitTestRunner": "jest"
+        "unitTestRunner": "vitest"
       }
     }
   },

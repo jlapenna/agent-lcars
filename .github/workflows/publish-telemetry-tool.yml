@@ -1,24 +1,77 @@
 name: Publish telemetry tool
+
 on:
   push:
     tags: ['telemetry-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable release version (for example, telemetry-v1.2.3)
+        required: true
+        type: string
+
 permissions:
   contents: read
   id-token: write
+
+concurrency:
+  group: publish-telemetry-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 24, cache: pnpm }
+      - uses: actions/checkout@v7
+
+      - name: Validate immutable release version
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^telemetry-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid telemetry release version: $RELEASE_VERSION" >&2
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
       - run: pnpm install --frozen-lockfile
-      - run: pnpm nx bundle @agent-lcars/telemetry-watcher
-      - uses: google-github-actions/auth@v2
+
+      - name: Verify telemetry projects
+        run: |
+          pnpm exec nx run-many \
+            -t test typecheck build \
+            -p @agent-lcars/telemetry @agent-lcars/telemetry-watcher
+          pnpm exec nx run @agent-lcars/telemetry-watcher:bundle
+
+      - name: Generate checksum
+        run: |
+          cd dist/apps/telemetry-watcher
+          sha256sum ride-along.cjs > ride-along.cjs.sha256
+
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - name: Upload immutable bundle
-        run: gcloud storage cp dist/apps/telemetry-watcher/ride-along.cjs "gs://agent-lcars-tools/telemetry/${GITHUB_REF_NAME}/ride-along.cjs" --cache-control='public,max-age=31536000,immutable'
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Upload immutable bundle and checksum
+        run: |
+          destination="gs://agent-lcars-tools/telemetry/${RELEASE_VERSION}"
+          gcloud storage cp --no-clobber \
+            dist/apps/telemetry-watcher/ride-along.cjs \
+            "${destination}/ride-along.cjs" \
+            --cache-control='public,max-age=31536000,immutable'
+          gcloud storage cp --no-clobber \
+            dist/apps/telemetry-watcher/ride-along.cjs.sha256 \
+            "${destination}/ride-along.cjs.sha256" \
+            --cache-control='public,max-age=31536000,immutable'

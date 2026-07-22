@@ -1,3 +1,8 @@
+import type {
+  IssueAgentSessionDoc,
+  RunStatusClassification,
+  SessionAgent,
+} from '@agent-lcars/telemetry';
 import {
   Alert,
   Anchor,
@@ -9,11 +14,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import type {
-  IssueAgentSessionDoc,
-  RunStatusClassification,
-  SessionAgent,
-} from '@agent-lcars/telemetry';
 
 import type {
   AgentActivity,

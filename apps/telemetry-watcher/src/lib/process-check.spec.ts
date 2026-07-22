@@ -33,7 +33,10 @@ describe('isProcessAliveForCwd', () => {
     fs.writeFileSync(path.join(pidDir, 'cmdline'), `${cmdline.join('\0')}\0`);
     const fields = Array.from({ length: 20 }, () => '0');
     fields[18] = String(startTicks);
-    fs.writeFileSync(path.join(pidDir, 'stat'), `${pid} (codex) S ${fields.join(' ')}`);
+    fs.writeFileSync(
+      path.join(pidDir, 'stat'),
+      `${pid} (codex) S ${fields.join(' ')}`,
+    );
     fs.writeFileSync(path.join(procRoot, 'stat'), 'btime 1000\n');
   }
 
@@ -58,10 +61,7 @@ describe('isProcessAliveForCwd', () => {
     fakeProcess(123, '/home/jlapenna/p/members');
 
     expect(
-      isProcessAliveForCwd(
-        '/home/jlapenna/p/members/.agents/skills',
-        procRoot,
-      ),
+      isProcessAliveForCwd('/home/jlapenna/p/members/.agents/skills', procRoot),
     ).toBe(true);
   });
 

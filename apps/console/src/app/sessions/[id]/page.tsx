@@ -1,3 +1,5 @@
+import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import { sessionAgent } from '@agent-lcars/telemetry';
 import {
   Anchor,
   Code,
@@ -7,10 +9,9 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
-import { sessionAgent } from '@agent-lcars/telemetry';
-import { assertAdmin } from '@/lib/auth-guards';
 import { notFound } from 'next/navigation';
+
+import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../../auth';
 import { getSessionDetail } from '../../../lib/session-detail';

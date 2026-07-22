@@ -4,7 +4,7 @@
     "rootDir": "src",
     "outDir": "dist",
     "jsx": "preserve",
-    "types": ["jest", "node"],
+    "types": ["node"],
     "noImplicitAny": false,
     "noPropertyAccessFromIndexSignature": false,
     "tsBuildInfoFile": "dist/tsconfig.spec.tsbuildinfo"
