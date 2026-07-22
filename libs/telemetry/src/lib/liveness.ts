@@ -8,6 +8,7 @@ const LIVE_THRESHOLD_MS = 2 * 60 * 1000;
  * watcher's last write, so the display window absorbs one missed tick. */
 const DISPLAY_LIVE_THRESHOLD_MS = 5 * 60 * 1000;
 const DISPLAY_IDLE_THRESHOLD_MS = 60 * 60 * 1000;
+const DISPLAY_OBSERVATION_THRESHOLD_MS = 10 * 60 * 1000;
 
 /**
  * Derives liveness from watcher/process signals rather than trusting a raw
@@ -41,9 +42,19 @@ export function displayLiveness(
   stored: SessionLiveness,
   lastActivityAt: string,
   now: string,
+  observedAt?: string,
 ): SessionLiveness {
   const ageMs = Date.parse(now) - Date.parse(lastActivityAt);
   if (ageMs <= DISPLAY_LIVE_THRESHOLD_MS) return 'live';
+  const observationAgeMs = observedAt
+    ? Date.parse(now) - Date.parse(observedAt)
+    : Number.POSITIVE_INFINITY;
+  if (
+    observationAgeMs <= DISPLAY_OBSERVATION_THRESHOLD_MS &&
+    (stored === 'live' || stored === 'idle')
+  ) {
+    return stored;
+  }
   if (stored === 'ended' || stored === 'stale') return stored;
   return ageMs <= DISPLAY_IDLE_THRESHOLD_MS ? 'idle' : 'ended';
 }

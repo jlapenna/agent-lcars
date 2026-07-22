@@ -61,7 +61,12 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
     sessionId: doc.sessionId,
     // Recomputed at read time: the stored value is only as fresh as the
     // watcher's last write (see displayLiveness).
-    liveness: displayLiveness(doc.liveness, doc.lastActivityAt, now),
+    liveness: displayLiveness(
+      doc.liveness,
+      doc.lastActivityAt,
+      now,
+      doc.observedAt,
+    ),
     agent: sessionAgent(doc),
     host: doc.host,
     branch: doc.branch,

@@ -39,6 +39,25 @@ describe('isProcessAliveForCwd', () => {
     );
   });
 
+  it('matches a repository-root process for a nested transcript cwd', () => {
+    fakeProcess(123, '/home/jlapenna/p/members');
+
+    expect(
+      isProcessAliveForCwd(
+        '/home/jlapenna/p/members/.agents/skills',
+        procRoot,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not let a process at filesystem root match every cwd', () => {
+    fakeProcess(123, '/');
+
+    expect(isProcessAliveForCwd('/home/jlapenna/p/members', procRoot)).toBe(
+      false,
+    );
+  });
+
   it('ignores non-numeric entries and broken symlinks without throwing', () => {
     fs.mkdirSync(path.join(procRoot, 'self'));
     const pidDir = path.join(procRoot, '789');

@@ -86,4 +86,26 @@ describe('displayLiveness', () => {
       'ended',
     );
   });
+
+  it('trusts a recent watcher observation for an idle running process', () => {
+    expect(
+      displayLiveness(
+        'idle',
+        '2026-07-10T08:00:00.000Z',
+        NOW,
+        '2026-07-10T10:05:00.000Z',
+      ),
+    ).toBe('idle');
+  });
+
+  it('decays again when the watcher observation is stale', () => {
+    expect(
+      displayLiveness(
+        'idle',
+        '2026-07-10T08:00:00.000Z',
+        NOW,
+        '2026-07-10T09:59:00.000Z',
+      ),
+    ).toBe('ended');
+  });
 });

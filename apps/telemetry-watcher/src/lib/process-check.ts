@@ -20,7 +20,15 @@ export function isProcessAliveForCwd(cwd: string, procRoot = '/proc'): boolean {
   for (const pid of pids) {
     try {
       const procCwd = fs.readlinkSync(path.join(procRoot, pid, 'cwd'));
-      if (procCwd === cwd) {
+      // Claude can record a nested tool cwd while its long-lived parent CLI
+      // process remains at the repository root. Treat that ancestor process
+      // as owning the session too, but never let filesystem root match every
+      // session on the host.
+      const procFsRoot = path.parse(procCwd).root;
+      if (
+        procCwd === cwd ||
+        (procCwd !== procFsRoot && cwd.startsWith(`${procCwd}${path.sep}`))
+      ) {
         return true;
       }
     } catch {

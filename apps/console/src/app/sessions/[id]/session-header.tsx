@@ -66,7 +66,12 @@ function formatTokens(doc: SessionDoc): string {
  * whole page - see session-detail.ts/session-transcript.ts.
  */
 export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
-  const liveness = displayLiveness(doc.liveness, doc.lastActivityAt, now);
+  const liveness = displayLiveness(
+    doc.liveness,
+    doc.lastActivityAt,
+    now,
+    doc.observedAt,
+  );
   const durationSeconds = sessionDurationSeconds(
     doc.startedAt,
     doc.lastActivityAt,

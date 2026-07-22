@@ -128,6 +128,11 @@ export class WatcherDaemon {
 
   async tick(): Promise<void> {
     const now = (this.options.now ?? (() => new Date().toISOString()))();
+    // Persist proof that the watcher is healthy without writing every 10s.
+    // A five-minute bucket gives the console two missed buckets of tolerance.
+    const observedAt = new Date(
+      Math.floor(Date.parse(now) / (5 * 60 * 1000)) * 5 * 60 * 1000,
+    ).toISOString();
     const discover = this.options.discover ?? discoverTranscriptFiles;
     const readFile =
       this.options.readFile ?? ((p: string) => fs.readFileSync(p, 'utf8'));
@@ -294,6 +299,7 @@ export class WatcherDaemon {
       const doc = buildSessionDoc(summary, liveness, {
         runId: this.options.runId,
         issueNumber: this.options.issueNumber,
+        observedAt,
       });
       const serializedDoc = JSON.stringify(doc);
       if (this.lastWrittenDocs.get(sessionId) === serializedDoc) {

@@ -116,6 +116,9 @@ export interface ComputeLivenessInput {
 interface BaseSessionDoc {
   sessionId: string;
   liveness: SessionLiveness;
+  /** Most recent time a host watcher directly observed this CLI session.
+   * Quantized by the watcher to avoid a Firestore write every tick. */
+  observedAt?: string;
   /** See {@link SessionSummary.agent} — threaded through unchanged by
    * `buildSessionDoc`. Use the {@link sessionAgent} helper to resolve the
    * effective value rather than reading this field directly. */
@@ -181,6 +184,8 @@ export interface IssueAgentSessionDoc extends BaseSessionDoc {
 export type SessionDoc = CliSessionDoc | IssueAgentSessionDoc;
 
 export interface BuildSessionDocOptions {
+  /** Host-watcher observation time for CLI liveness. */
+  observedAt?: string;
   /** `issue-agent` sessions only. */
   runId?: string;
   /** `issue-agent` sessions only. */

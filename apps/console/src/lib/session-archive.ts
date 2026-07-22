@@ -148,7 +148,12 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
     ...(doc.totalCostUsd !== undefined && { totalCostUsd: doc.totalCostUsd }),
     startedAt: doc.startedAt,
     lastActivityAt: doc.lastActivityAt,
-    liveness: displayLiveness(doc.liveness, doc.lastActivityAt, now),
+    liveness: displayLiveness(
+      doc.liveness,
+      doc.lastActivityAt,
+      now,
+      doc.observedAt,
+    ),
   };
 }
 

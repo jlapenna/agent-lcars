@@ -101,6 +101,7 @@ export function buildSessionDoc(
   return {
     ...base,
     source: 'cli',
+    ...(options.observedAt && { observedAt: options.observedAt }),
     ...(summary.host && { host: summary.host }),
     ...(summary.cwd && { cwd: summary.cwd }),
     ...(summary.worktree && { worktree: summary.worktree }),
