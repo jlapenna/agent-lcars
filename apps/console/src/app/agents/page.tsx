@@ -7,7 +7,12 @@ import { type ActionItem } from '../../lib/action-items';
 import { getAgentActivity } from '../../lib/agent-activity';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
-import { repoItemKey } from '../../lib/github-client';
+import {
+  getWatchedRepos,
+  parseRepoFilterParam,
+  repoItemKey,
+  repoKey,
+} from '../../lib/github-client';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { getActionItems } from '../actions';
@@ -22,9 +27,18 @@ import { RecentOutcomesSection } from './recent-outcomes-section';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AgentsPage() {
+interface PageProps {
+  searchParams: Promise<{ repo?: string }>;
+}
+
+export default async function AgentsPage({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
+
+  const watchedRepos = getWatchedRepos();
+  const repoFilter = parseRepoFilterParam((await searchParams).repo);
+  const matchesFilter = (repo: { owner: string; name: string }) =>
+    !repoFilter || repoKey(repo) === repoKey(repoFilter);
 
   const [
     { items, warnings: itemWarnings },
@@ -100,14 +114,49 @@ export default async function AgentsPage() {
 
   const generatedAt = new Date().toISOString();
 
+  // Applied last, after every cross-repo join above already ran against the
+  // full, unfiltered data - see page.tsx's identical comment for why.
+  const filteredItems = items.filter((item) => matchesFilter(item.repo));
+  const filteredActiveSessions = activeSessions.filter(
+    (s) => !s.repo || matchesFilter(s.repo),
+  );
+  const filteredActivity = repoFilter
+    ? {
+        ...activity,
+        liveRuns: activity.liveRuns.filter((run) => matchesFilter(run.repo)),
+        recentRuns: activity.recentRuns.filter((run) =>
+          matchesFilter(run.repo),
+        ),
+      }
+    : activity;
+  const filteredClaimedIdle = claimedIdle.filter((item) =>
+    matchesFilter(item.repo),
+  );
+
+  const subtitlePrefix =
+    watchedRepos.length <= 1
+      ? undefined
+      : repoFilter
+        ? repoKey(repoFilter)
+        : `${watchedRepos.length} repos`;
+
   return (
     <Container size="md" py="xl">
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
         <div>
           <Title order={1}>Agent Status</Title>
           <Text c="dimmed" mt={4}>
+            {subtitlePrefix && `${subtitlePrefix} — `}
             Fleet-wide view of every claude/opencode run and CLI session, agent
             by agent.
+            {repoFilter && (
+              <>
+                {' · '}
+                <Anchor href="/agents" size="sm">
+                  show all repos
+                </Anchor>
+              </>
+            )}
           </Text>
         </div>
         <Group gap="sm">
@@ -145,22 +194,22 @@ export default async function AgentsPage() {
       )}
 
       <FleetSnapshotBar
-        activity={activity}
-        activeCliSessionCount={activeSessions.length}
+        activity={filteredActivity}
+        activeCliSessionCount={filteredActiveSessions.length}
       />
 
       <ActiveAgentsSection
-        liveRuns={activity.liveRuns}
+        liveRuns={filteredActivity.liveRuns}
         itemsByRunId={itemsByRunId}
-        activeSessions={activeSessions}
-        items={items}
+        activeSessions={filteredActiveSessions}
+        items={filteredItems}
         sessionsByRunId={sessionsByRunId}
       />
 
-      <ClaimedIdleSection items={claimedIdle} />
+      <ClaimedIdleSection items={filteredClaimedIdle} />
 
       <RecentOutcomesSection
-        recentRuns={activity.recentRuns}
+        recentRuns={filteredActivity.recentRuns}
         sessionsByRunId={sessionsByRunId}
       />
     </Container>

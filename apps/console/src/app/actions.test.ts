@@ -291,6 +291,7 @@ describe('agent-lcars Server Actions', () => {
       expect(createQuickTaskLib).toHaveBeenCalledWith(
         'Fix the flaky test',
         'Custom title',
+        undefined,
       );
     });
 
@@ -360,6 +361,16 @@ describe('agent-lcars Server Actions', () => {
       const result = await clearHumanNeeded(UNWATCHED_REPO, 2709);
       expect(result.ok).toBe(false);
       expect(clearHumanNeededLabel).not.toHaveBeenCalled();
+    });
+
+    it('createQuickTask rejects an unwatched repo without calling createQuickTaskLib', async () => {
+      const result = await createQuickTask(
+        'Some task',
+        undefined,
+        UNWATCHED_REPO,
+      );
+      expect(result.ok).toBe(false);
+      expect(createQuickTaskLib).not.toHaveBeenCalled();
     });
   });
 

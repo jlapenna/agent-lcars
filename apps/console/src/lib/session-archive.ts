@@ -81,6 +81,9 @@ export function sessionDurationSeconds(
 export interface SessionRow {
   sessionId: string;
   source: SessionSource;
+  /** Falls back to the primary watched repo for docs written before Phase
+   * 0's `repo` field existed - see `toSessionRow`. */
+  repo: WatchedRepo;
   /** Resolved via `sessionAgent()` at fetch time - see `CliSession.agent`'s
    * doc comment in cli-sessions.ts for why this is always concrete here. */
   agent: SessionAgent;
@@ -131,6 +134,7 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
   return {
     sessionId: doc.sessionId,
     source: doc.source,
+    repo,
     agent: sessionAgent(doc),
     title,
     ...(doc.source === 'issue-agent' &&

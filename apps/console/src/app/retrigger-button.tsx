@@ -4,8 +4,8 @@ import { Button, Popover, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
-import type { WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
+import type { WatchedRepo } from '../lib/watched-repo';
 import { retriggerIssue } from './actions';
 
 /**

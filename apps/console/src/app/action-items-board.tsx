@@ -1,6 +1,7 @@
 import { Group, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../lib/action-items';
+import { getWatchedRepos } from '../lib/github-client';
 import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
 import { CompactItemRow } from './compact-item-row';
@@ -54,6 +55,11 @@ export function ActionItemsBoard({
   waitingOnDeploy: BoardCard[];
   rest: BoardCard[];
 }) {
+  // Server component - safe to resolve here directly, then thread down as a
+  // plain boolean prop to ActionItemCard (a client component that can't
+  // call getWatchedRepos() itself - see its own doc comment).
+  const multiRepo = getWatchedRepos().length > 1;
+
   return (
     <Stack gap="xl">
       <div>
@@ -75,6 +81,7 @@ export function ActionItemsBoard({
                 item={item}
                 updatedAtLabel={updatedAtLabel}
                 primaryAction={primaryAction}
+                multiRepo={multiRepo}
               />
             ))}
           </Stack>
@@ -101,6 +108,7 @@ export function ActionItemsBoard({
                         item.labels.includes('codex') ||
                         item.labels.includes('opencode')) && (
                         <RetriggerButton
+                          repo={item.repo}
                           issueNumber={item.number}
                           pipeline={pipelineForLabels(item.labels)}
                           size="compact-xs"

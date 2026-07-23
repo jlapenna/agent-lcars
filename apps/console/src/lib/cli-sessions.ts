@@ -55,6 +55,8 @@ export interface CliSession {
   /** Filenames shared under this session's share dir on `host` - only
    * meaningful together with `host` (the join key for the share URL). */
   artifacts?: string[];
+  /** Undefined for docs written before Phase 0's `repo` field existed. */
+  repo?: WatchedRepo;
 }
 
 function isActive(liveness: SessionLiveness): boolean {
@@ -83,6 +85,7 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
     startedAt: doc.startedAt,
     lastActivityAt: doc.lastActivityAt,
     artifacts: doc.artifacts,
+    repo: doc.repo,
   };
 }
 

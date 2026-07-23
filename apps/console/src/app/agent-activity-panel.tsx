@@ -29,6 +29,7 @@ import {
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
+import { getWatchedRepos, repoKey } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
@@ -160,6 +161,29 @@ export function AgentBadge({ agent }: { agent: SessionAgent }) {
 }
 
 /**
+ * Which watched repo an item/run/session belongs to. Renders nothing when
+ * only one repo is configured - the overwhelmingly common case today - so
+ * every row stays exactly as quiet as it was before multi-repo support
+ * existed, matching AgentBadge's "quiet unless it's informative" precedent.
+ */
+export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
+  if (getWatchedRepos().length <= 1) {
+    return null;
+  }
+  return (
+    <Badge
+      variant="outline"
+      color="gray"
+      size="xs"
+      style={{ flexShrink: 0 }}
+      data-testid="repo-badge"
+    >
+      {repoKey(repo)}
+    </Badge>
+  );
+}
+
+/**
  * A dimmed count chip when the fleet has any online runners; nothing at all
  * when it's scaled to zero. Since #2974's autoscaler scale-set migration,
  * zero registered runners is the normal idle state, not an outage, so it no
@@ -225,6 +249,7 @@ export function LiveRunRow({
           {run.status === 'running' ? 'running' : 'queued'}
         </Badge>
         <PipelineBadge pipeline={run.pipeline} />
+        <RepoBadge repo={run.repo} />
         <Anchor
           href={item?.url ?? run.url}
           target="_blank"
@@ -329,6 +354,7 @@ export function FinishedRunRow({
           {STATUS_LABELS[classification.status]}
         </Badge>
         <PipelineBadge pipeline={run.pipeline} />
+        <RepoBadge repo={run.repo} />
         <Anchor
           href={issueUrl ?? run.url}
           target="_blank"
@@ -422,6 +448,7 @@ export function CliSessionRow({
           {session.title ?? session.branch ?? session.sessionId}
         </Text>
         <AgentBadge agent={session.agent} />
+        {session.repo && <RepoBadge repo={session.repo} />}
         <Anchor
           href={`/sessions/${session.sessionId}`}
           size="xs"

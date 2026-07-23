@@ -102,8 +102,18 @@ export interface FleetSummary {
 export interface AgentActivity {
   liveRuns: AgentRun[];
   recentRuns: AgentRun[];
-  /** undefined = runner API unavailable (e.g. token lacks admin:read). */
+  /** undefined = runner API unavailable (e.g. token lacks admin:read).
+   * Deduped by runner id across every watched repo (see `fleetByRepo` for
+   * the un-deduped per-repo view), so this never double-counts an
+   * org-level runner group shared across repos. */
   fleet?: FleetSummary;
+  /** Per-repo runner counts, keyed by `repoKey()` - each repo's own
+   * `listSelfHostedRunnersForRepo` view, NOT deduped against the others (an
+   * org-shared runner genuinely shows up in both repos' own API response,
+   * so this reflects what each repo actually reports). Only present when
+   * more than one repo is watched; a single-repo config has nothing to
+   * break out. */
+  fleetByRepo?: Record<string, FleetSummary>;
   /** Human-readable notes when a section above degraded instead of crashing. */
   warnings: string[];
 }
@@ -352,21 +362,29 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     .slice(0, RECENT_RUN_LIMIT);
 
   let fleet: FleetSummary | undefined;
+  let fleetByRepo: Record<string, FleetSummary> | undefined;
   // Keyed by runner id (not summed inline): an org-level runner group
   // registers identically against every repo it's shared with, so listing
   // it per watched repo would otherwise count the same runner once per
   // repo that can see it.
   const runnersById = new Map<number, { status: string; busy: boolean }>();
   let anyFleetResult = false;
+  const perRepoFleet: Record<string, FleetSummary> = {};
   for (const [i, result] of runnerResults.entries()) {
     if (result.status === 'fulfilled') {
       anyFleetResult = true;
+      const repoTotal = { online: 0, busy: 0 };
       for (const runner of result.value.response.data.runners) {
         runnersById.set(runner.id, {
           status: runner.status,
           busy: runner.busy,
         });
+        if (runner.status === 'online') {
+          repoTotal.online += 1;
+          if (runner.busy) repoTotal.busy += 1;
+        }
       }
+      perRepoFleet[repoKey(repos[i])] = repoTotal;
     } else {
       console.error(
         'agent-lcars: failed to list self-hosted runners (%s):',
@@ -386,12 +404,16 @@ export async function getAgentActivity(): Promise<AgentActivity> {
         if (runner.busy) fleet.busy += 1;
       }
     }
+    if (repos.length > 1) {
+      fleetByRepo = perRepoFleet;
+    }
   }
 
   return {
     liveRuns,
     recentRuns,
     fleet,
+    fleetByRepo,
     warnings: Array.from(new Set(warnings)),
   };
 }

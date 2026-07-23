@@ -1,6 +1,20 @@
 import { Octokit } from '@octokit/rest';
 import { optional, required } from '@repo/util-server';
 
+import {
+  type AgentPipeline,
+  repoItemKey,
+  repoKey,
+  type WatchedRepo,
+} from './watched-repo';
+
+// Re-exported for existing importers - this file used to define these
+// itself, but they now live in watched-repo.ts (a client-bundle-safe file
+// with no @repo/util-server dependency) so client components can import
+// them without accidentally pulling this file's server-only deps
+// (firebase-admin, google-auth-library, ...) into a browser bundle.
+export { type AgentPipeline, repoItemKey, repoKey, type WatchedRepo };
+
 let client: Octokit | undefined;
 
 export function getGithubClient(): Octokit {
@@ -18,24 +32,6 @@ export function getGithubClient(): Octokit {
     });
   }
   return client;
-}
-
-/** Which coding-agent workflow pipeline a repo runs, and the filename each
- * one lives under by default (see agent-activity.ts's WORKFLOW_FILES).
- * Lives here, not in agent-activity.ts, so WatchedRepo below can reference
- * it without a circular import (agent-activity.ts already imports from this
- * file) - re-exported from agent-activity.ts for existing importers. */
-export type AgentPipeline = 'claude' | 'codex' | 'opencode';
-
-export interface WatchedRepo {
-  owner: string;
-  name: string;
-  /** Per-pipeline override of agent-activity.ts's default WORKFLOW_FILES
-   * filenames. A key absent from this map falls back to the default
-   * filename; an explicit `null` marks a pipeline this repo doesn't run at
-   * all, so it's simply not fetched for this repo (rather than 404ing
-   * against a guessed filename). */
-  workflowFiles?: Partial<Record<AgentPipeline, string | null>>;
 }
 
 /** The only repo this console has ever watched - kept as the fallback so an
@@ -167,16 +163,18 @@ export function resolveWatchedRepo(candidate: {
   return match;
 }
 
-export function repoKey(repo: { owner: string; name: string }): string {
-  return `${repo.owner}/${repo.name}`;
-}
-
-/** Cross-repo-safe join/dedupe key for issue and PR numbers, which only
- * disambiguate within a single repo. GitHub Actions run ids are already
- * globally unique across repos and never need this. */
-export function repoItemKey(
-  repo: { owner: string; name: string },
-  number: number,
-): string {
-  return `${repoKey(repo)}#${number}`;
+/**
+ * Defensive parsing for the dashboard's optional `?repo=owner/name` filter
+ * query param - any missing or unrecognized value falls back to "no
+ * filter" (show every watched repo) rather than throwing, matching
+ * parseSessionArchiveQuery's philosophy (no filter chrome beyond a simple
+ * query param a maintainer edits by hand or a repo badge links to - see
+ * #2694/#3019).
+ */
+export function parseRepoFilterParam(
+  raw: string | string[] | undefined,
+): WatchedRepo | undefined {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return undefined;
+  return getWatchedRepos().find((repo) => repoKey(repo) === value);
 }

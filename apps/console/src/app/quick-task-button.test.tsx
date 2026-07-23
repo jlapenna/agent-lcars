@@ -72,7 +72,11 @@ describe('QuickTaskButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
 
     await waitFor(() =>
-      expect(createQuickTask).toHaveBeenCalledWith('Fix the flaky test', ''),
+      expect(createQuickTask).toHaveBeenCalledWith(
+        'Fix the flaky test',
+        '',
+        undefined,
+      ),
     );
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -103,6 +107,52 @@ describe('QuickTaskButton', () => {
       expect(createQuickTask).toHaveBeenCalledWith(
         'Fix the flaky test',
         'Custom title',
+        undefined,
+      ),
+    );
+  });
+
+  it("offers no repo picker with a single watched repo (today's default)", async () => {
+    render(
+      <MantineProvider>
+        <QuickTaskButton
+          watchedRepos={[{ owner: 'supersprinklesracing', name: 'members' }]}
+        />
+      </MantineProvider>,
+    );
+    await openDialog();
+
+    expect(screen.queryByLabelText('Repo')).toBeNull();
+  });
+
+  it('offers a repo picker and forwards the selected repo when more than one is watched', async () => {
+    (createQuickTask as Mock).mockResolvedValue({
+      ok: true,
+      url: 'https://github.com/org-b/repo-b/issues/1',
+      number: 1,
+    });
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    render(
+      <MantineProvider>
+        <QuickTaskButton watchedRepos={[repoA, repoB]} />
+      </MantineProvider>,
+    );
+    await openDialog();
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Repo' }));
+    fireEvent.click(await screen.findByText('org-b/repo-b'));
+
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Fix the flaky test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+
+    await waitFor(() =>
+      expect(createQuickTask).toHaveBeenCalledWith(
+        'Fix the flaky test',
+        '',
+        repoB,
       ),
     );
   });

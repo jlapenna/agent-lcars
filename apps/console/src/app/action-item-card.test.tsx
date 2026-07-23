@@ -34,19 +34,39 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   };
 }
 
-function renderCard(item: ActionItem, primaryAction?: PrimaryAction) {
+function renderCard(
+  item: ActionItem,
+  primaryAction?: PrimaryAction,
+  multiRepo?: boolean,
+) {
   render(
     <MantineProvider>
       <ActionItemCard
         item={item}
         updatedAtLabel="now"
         primaryAction={primaryAction}
+        multiRepo={multiRepo}
       />
     </MantineProvider>,
   );
 }
 
 describe('ActionItemCard', () => {
+  it('shows no repo badge by default (multiRepo unset)', () => {
+    renderCard(makeItem());
+    expect(screen.queryByTestId('repo-badge')).toBeNull();
+  });
+
+  it('shows the repo badge when multiRepo is true', () => {
+    renderCard(
+      makeItem({ repo: { owner: 'org-a', name: 'repo-a' } }),
+      undefined,
+      true,
+    );
+    const badge = screen.getByTestId('repo-badge');
+    expect(badge.textContent).toBe('org-a/repo-a');
+  });
+
   it('keeps the header row wrapping instead of squeezing the title next to badges', () => {
     renderCard(
       makeItem({
