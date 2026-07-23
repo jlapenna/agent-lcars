@@ -42,7 +42,14 @@ permissions:
   actions: write
 
 concurrency:
-  group: opencode-issue-${{ github.event.issue.number || github.event.inputs.issue }}
+  # Bot-authored comment events get their own per-run group instead of
+  # sharing the issue's group. GitHub only keeps one PENDING run per
+  # concurrency group, and queueing happens before job-level `if:` is
+  # checked — without this, the agent's own progress-update comment could
+  # fire a fresh issue_comment event that evicts an already-queued human
+  # `/opencode ...` follow-up from the pending slot before it ever runs.
+  # Ported from claude.yml's identical carve-out.
+  group: ${{ format('opencode-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') && format('-bot-noop-{0}', github.run_id) || '') }}
   cancel-in-progress: false
 
 jobs:
@@ -221,11 +228,15 @@ jobs:
           # Only matters when both pipelines are dispatched against
           # overlapping issues (a testing artifact, not normal usage), but
           # cheap to guard against.
-          prs=$(gh pr list --repo "$REPO" --state all --limit 50 \
+          # test(...) boundary, not contains(): an unanchored substring
+          # match on "#4" also hits "#42"/"#400" in any PR title/body. -S
+          # "sort:updated-desc" so a push to an OLDER existing PR isn't
+          # missed once >50 PRs exist (default sort is by creation date).
+          prs=$(gh pr list --repo "$REPO" --state all --limit 50 -S "sort:updated-desc" \
             --json number,title,body,updatedAt,author \
             --jq "[.[] | select(.updatedAt >= \"$STARTED_AT\")
                        | select(.author.login != \"app/claude\")
-                       | select((.title + \" \" + (.body // \"\")) | contains(\"#$NUM\"))]
+                       | select((.title + \" \" + (.body // \"\")) | test(\"#$NUM([^0-9]|\$)\"))]
                   | length" 2>/dev/null || echo 0)
           if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM created/updated since $STARTED_AT"; fi
 
