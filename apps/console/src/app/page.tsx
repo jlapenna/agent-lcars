@@ -21,7 +21,7 @@ import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { EvictNxCacheButton } from './evict-nx-cache-button';
-import { formatRelativeTime } from './format';
+import { formatCompactRelativeTime, formatRelativeTime } from './format';
 import { QuickTaskButton } from './quick-task-button';
 import { RefreshButton } from './refresh-button';
 import { ThemeToggle } from './theme-toggle';
@@ -32,7 +32,7 @@ export const dynamic = 'force-dynamic';
 function toCard(item: ActionItem): BoardCard {
   return {
     item,
-    updatedAtLabel: formatRelativeTime(item.updatedAt),
+    updatedAtLabel: formatCompactRelativeTime(item.updatedAt),
     primaryAction: derivePrimaryAction(item),
   };
 }

@@ -116,6 +116,28 @@ describe('ActionItemsBoard', () => {
     expect(screen.queryByText(/Everything Else/)).toBeNull();
   });
 
+  it('renders consistent two-line headings with counts in the description', () => {
+    renderBoard({
+      handedBack: [makeItem({ number: 4 })],
+      waitingOnDeploy: [makeItem({ number: 5 }), makeItem({ number: 6 })],
+    });
+
+    expect(screen.getByRole('heading', { name: 'Handed Back' })).toBeTruthy();
+    expect(
+      screen.getByText(
+        '1 item · You answered; the agent hasn’t picked these back up yet.',
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'Waiting on Next Deploy' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        '2 items · Verified and closed automatically after the affected app’s next deploy.',
+      ),
+    ).toBeTruthy();
+  });
+
   it('offers Retrigger on handed-back claude issues but not on other rows', () => {
     renderBoard({
       handedBack: [

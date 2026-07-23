@@ -1,0 +1,9 @@
+# actionlint doesn't know about self-hosted runner labels by default, so it
+# flags `runs-on: [claude-agent-lcars]` (claude.yml, opencode.yml) as an
+# unknown label. Declare it here so CI's actionlint step (.github/workflows/
+# ci.yml) stays green - this label has no runner registered behind it yet
+# (tracked in jlapenna/homelab, see the workflow files' own comments), but
+# is a valid `runs-on` value the moment that lands.
+self-hosted-runner:
+  labels:
+    - claude-agent-lcars

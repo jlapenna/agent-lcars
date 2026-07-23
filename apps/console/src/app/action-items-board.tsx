@@ -13,6 +13,29 @@ export interface BoardCard {
   primaryAction?: PrimaryAction;
 }
 
+function SectionHeading({
+  title,
+  count,
+  description,
+  primary = false,
+}: {
+  title: string;
+  count: number;
+  description: string;
+  primary?: boolean;
+}) {
+  return (
+    <>
+      <Title order={primary ? 2 : 3} size={primary ? undefined : 'h4'} mb={2}>
+        {title}
+      </Title>
+      <Text c="dimmed" size="sm" mb="sm">
+        {count} {count === 1 ? 'item' : 'items'} · {description}
+      </Text>
+    </>
+  );
+}
+
 /**
  * The task board, tiered by whose move it is. Only "Your Queue" gets
  * full-weight cards with actions; every other tier renders one-line rows,
@@ -34,9 +57,12 @@ export function ActionItemsBoard({
   return (
     <Stack gap="xl">
       <div>
-        <Title order={2} mb="sm">
-          Your Queue ({yourQueue.length})
-        </Title>
+        <SectionHeading
+          title="Your Queue"
+          count={yourQueue.length}
+          description="Needs your decision or response."
+          primary
+        />
         {yourQueue.length === 0 ? (
           <Text c="dimmed" size="sm">
             Nothing needs you right now.
@@ -57,13 +83,11 @@ export function ActionItemsBoard({
 
       {handedBack.length > 0 && (
         <div>
-          <Title order={3} size="h4" mb={4}>
-            Handed Back ({handedBack.length})
-          </Title>
-          <Text c="dimmed" size="sm" mb="sm">
-            You answered; the agent hasn&rsquo;t picked these back up yet.
-            Retrigger one if it&rsquo;s stalled.
-          </Text>
+          <SectionHeading
+            title="Handed Back"
+            count={handedBack.length}
+            description="You answered; the agent hasn’t picked these back up yet."
+          />
           <Stack gap={6}>
             {handedBack.map(({ item, updatedAtLabel }) => (
               <CompactItemRow
@@ -93,13 +117,11 @@ export function ActionItemsBoard({
 
       {waitingOnDeploy.length > 0 && (
         <div>
-          <Title order={3} size="h4" mb={4}>
-            Waiting on Next Deploy ({waitingOnDeploy.length})
-          </Title>
-          <Text c="dimmed" size="sm" mb="sm">
-            Verified and closed automatically by the post-deploy agent after the
-            next deploy of the affected app.
-          </Text>
+          <SectionHeading
+            title="Waiting on Next Deploy"
+            count={waitingOnDeploy.length}
+            description="Verified and closed automatically after the affected app’s next deploy."
+          />
           <Stack gap={6}>
             {waitingOnDeploy.map(({ item, updatedAtLabel }) => (
               <CompactItemRow

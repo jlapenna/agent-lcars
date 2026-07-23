@@ -22,6 +22,8 @@ export const SESSION_AGENTS: readonly SessionAgent[] = [
 ];
 
 export interface TokenUsage {
+  /** Non-cached input only. Providers whose input total includes cache reads
+   * must subtract `cacheReadTokens` when adapting their native usage. */
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
