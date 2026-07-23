@@ -24,6 +24,28 @@ export function formatRelativeTime(iso: string): string {
   return 'just now';
 }
 
+/** Dense queue-row timestamp: "now", "15m ago", "2h ago", "1d ago". */
+export function formatCompactRelativeTime(iso: string): string {
+  const seconds = Math.max(
+    0,
+    Math.round((Date.now() - new Date(iso).getTime()) / 1000),
+  );
+  if (seconds < 60) return 'now';
+  const units: [string, number][] = [
+    ['y', 60 * 60 * 24 * 365],
+    ['mo', 60 * 60 * 24 * 30],
+    ['w', 60 * 60 * 24 * 7],
+    ['d', 60 * 60 * 24],
+    ['h', 60 * 60],
+    ['m', 60],
+  ];
+  for (const [unit, secondsPerUnit] of units) {
+    const value = Math.floor(seconds / secondsPerUnit);
+    if (value >= 1) return `${value}${unit} ago`;
+  }
+  return 'now';
+}
+
 // Parent/linked references are virtually always issues (trackers, "closes
 // #N"), so always link to /issues/N rather than trying to guess kind.
 export function githubIssueUrl(item: { url: string }, number: number): string {

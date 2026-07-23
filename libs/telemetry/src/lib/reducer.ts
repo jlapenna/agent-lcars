@@ -28,6 +28,7 @@ interface SessionState {
   startedAt?: string;
   lastActivityAt?: string;
   turns: number;
+  seenAssistantMessageIds: Set<string>;
   toolCallCounts: Record<string, number>;
   tokens: TokenUsage;
   lastToolCall?: { name: string; timestamp: string };
@@ -45,6 +46,7 @@ function createState(sessionId: string, host?: string): SessionState {
     source: 'cli',
     host,
     turns: 0,
+    seenAssistantMessageIds: new Set(),
     toolCallCounts: {},
     tokens: {
       inputTokens: 0,
@@ -102,12 +104,23 @@ function applyMessage(
   }
 
   if (role === 'assistant') {
-    if (!isSidechain) {
+    // Claude Code emits one row per streamed content block (thinking, text,
+    // each tool use), but every row for the same API response repeats the
+    // response's full usage object and message id. Count the response once;
+    // tool blocks below still remain independently discoverable.
+    const messageId = asString(message['id']);
+    const isNewAssistantMessage =
+      !messageId || !state.seenAssistantMessageIds.has(messageId);
+    if (messageId) {
+      state.seenAssistantMessageIds.add(messageId);
+    }
+
+    if (!isSidechain && isNewAssistantMessage) {
       state.turns += 1;
     }
 
     const usage = asRecord(message['usage']);
-    if (usage) {
+    if (usage && isNewAssistantMessage) {
       state.tokens.inputTokens += asNumber(usage['input_tokens']) ?? 0;
       state.tokens.outputTokens += asNumber(usage['output_tokens']) ?? 0;
       state.tokens.cacheCreationTokens +=

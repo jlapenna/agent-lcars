@@ -19,7 +19,12 @@ export function CompactItemRow({
   action?: React.ReactNode;
 }) {
   return (
-    <Group gap="xs" wrap="nowrap" data-testid={`compact-item-${item.number}`}>
+    <Group
+      gap="xs"
+      wrap="wrap"
+      align="center"
+      data-testid={`compact-item-${item.number}`}
+    >
       <Badge variant="outline" color="gray" size="xs" style={{ flexShrink: 0 }}>
         {item.kind === 'pr' ? 'PR' : 'Issue'}
       </Badge>
@@ -29,12 +34,11 @@ export function CompactItemRow({
         rel="noreferrer"
         size="sm"
         c="inherit"
-        truncate
-        style={{ minWidth: 0 }}
+        style={{ minWidth: 180, flex: '1 1 18rem' }}
       >
         #{item.number} {item.title}
       </Anchor>
-      <Text size="xs" c="dimmed" style={{ marginLeft: 'auto', flexShrink: 0 }}>
+      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
         {hint}
       </Text>
       {action}

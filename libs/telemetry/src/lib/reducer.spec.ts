@@ -96,6 +96,66 @@ describe('reduceTranscript', () => {
     });
   });
 
+  it('counts streamed assistant blocks with the same message id once', () => {
+    const usage = {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_creation_input_tokens: 20,
+      cache_read_input_tokens: 300,
+    };
+    const content = [
+      {
+        type: 'assistant',
+        uuid: 'a1-thinking',
+        sessionId: 'session-streamed',
+        timestamp: '2026-07-21T12:00:00.000Z',
+        message: {
+          id: 'msg-one-response',
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Working…' }],
+          usage,
+        },
+      },
+      {
+        type: 'assistant',
+        uuid: 'a1-tool-one',
+        sessionId: 'session-streamed',
+        timestamp: '2026-07-21T12:00:01.000Z',
+        message: {
+          id: 'msg-one-response',
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'tool-1', name: 'Read' }],
+          usage,
+        },
+      },
+      {
+        type: 'assistant',
+        uuid: 'a1-tool-two',
+        sessionId: 'session-streamed',
+        timestamp: '2026-07-21T12:00:02.000Z',
+        message: {
+          id: 'msg-one-response',
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'tool-2', name: 'Edit' }],
+          usage,
+        },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n');
+
+    const [summary] = reduceTranscript(content);
+
+    expect(summary.turns).toBe(1);
+    expect(summary.tokens).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheCreationTokens: 20,
+      cacheReadTokens: 300,
+    });
+    expect(summary.toolCallCounts).toEqual({ Read: 1, Edit: 1 });
+  });
+
   it('reduces a resumed session spanning multiple files into one summary keyed by sessionId', () => {
     const summaries = reduceTranscripts([
       readFixture('resumed-session-part1.jsonl'),

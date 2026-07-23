@@ -99,11 +99,17 @@ export const codexAdapter: TranscriptAdapter = {
           const info = asRecord(payload['info']);
           const total = info && asRecord(info['total_token_usage']);
           if (total) {
+            // Codex/OpenAI reports cached input as a subset of input_tokens,
+            // unlike Claude's mutually exclusive usage fields. Normalize to
+            // the shared TokenUsage contract so input + output means fresh
+            // tokens for either agent and cache reads are not counted twice.
+            const inclusiveInput = asNumber(total['input_tokens']) ?? 0;
+            const cachedInput = asNumber(total['cached_input_tokens']) ?? 0;
             tokens = {
-              inputTokens: asNumber(total['input_tokens']) ?? 0,
+              inputTokens: Math.max(0, inclusiveInput - cachedInput),
               outputTokens: asNumber(total['output_tokens']) ?? 0,
               cacheCreationTokens: 0,
-              cacheReadTokens: asNumber(total['cached_input_tokens']) ?? 0,
+              cacheReadTokens: cachedInput,
             };
           }
         }
