@@ -129,6 +129,36 @@ describe('aggregateSessionLedger', () => {
     expect(byIssue.map((r) => r.issueNumber)).toEqual([2, 1, 3, 4]);
   });
 
+  // Composite-key exit criterion (same class of check as the action-items
+  // dedup test and the #18 board-key fix): two watched repos each with
+  // their own issue #42 must survive as two distinct ledger rows, not
+  // merge their costs into one.
+  it('does not conflate identical issue numbers across two different watched repos', () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    const { byIssue } = aggregateSessionLedger([
+      agentDoc({
+        sessionId: 'a1',
+        issueNumber: 42,
+        repo: repoA,
+        totalCostUsd: 1,
+      }),
+      agentDoc({
+        sessionId: 'a2',
+        issueNumber: 42,
+        repo: repoB,
+        totalCostUsd: 2,
+      }),
+    ]);
+
+    const rows42 = byIssue.filter((r) => r.issueNumber === 42);
+    expect(rows42).toHaveLength(2);
+    expect(rows42.map((r) => r.costUsd).sort()).toEqual([1, 2]);
+    expect(rows42.map((r) => r.repo)).toEqual(
+      expect.arrayContaining([repoA, repoB]),
+    );
+  });
+
   it('breaks a cost tie by tokens desc', () => {
     const { byIssue } = aggregateSessionLedger([
       agentDoc({

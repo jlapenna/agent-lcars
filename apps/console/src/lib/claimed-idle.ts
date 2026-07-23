@@ -1,9 +1,10 @@
 import { type ActionItem, AGENT_FLEET_LOGIN } from './action-items';
 import type { CliSession } from './cli-sessions';
+import { repoKey } from './watched-repo';
 
 /**
- * True when a CLI session is plausibly working the given item number -
- * either through its joined PR (the strong signal: a transcript-recorded PR
+ * True when a CLI session is plausibly working the given item - either
+ * through its joined PR (the strong signal: a transcript-recorded PR
  * number, or a live branch->PR search result, see `cli-sessions.ts`) or
  * because the number appears in the session's branch name (this repo's
  * branch convention is `<slug>-<issueNumber>`, e.g. this very page's own
@@ -11,14 +12,25 @@ import type { CliSession } from './cli-sessions';
  * issue that has no PR open yet). The branch match is bounded by
  * non-digit/start/end so item #3 doesn't false-match a branch mentioning
  * `#30` or `#303`.
+ *
+ * Requires the session's own repo to match the item's repo first - item
+ * numbers (and the PR numbers joined onto a session) only disambiguate
+ * within one repo, so without this check two watched repos each holding a
+ * `#42` would false-match every CLI session working either one to *both*
+ * items. A session with no `repo` (legacy telemetry doc predating Phase 0)
+ * still matches on number alone, same fail-open behavior as every other
+ * repo-less-doc fallback in this app.
  */
 export function sessionReferencesItemNumber(
-  session: Pick<CliSession, 'pr' | 'branch'>,
-  itemNumber: number,
+  session: Pick<CliSession, 'pr' | 'branch' | 'repo'>,
+  item: Pick<ActionItem, 'number' | 'repo'>,
 ): boolean {
-  if (session.pr?.number === itemNumber) return true;
+  if (session.repo && repoKey(session.repo) !== repoKey(item.repo)) {
+    return false;
+  }
+  if (session.pr?.number === item.number) return true;
   if (!session.branch) return false;
-  return new RegExp(`(?:^|[^0-9])${itemNumber}(?:[^0-9]|$)`).test(
+  return new RegExp(`(?:^|[^0-9])${item.number}(?:[^0-9]|$)`).test(
     session.branch,
   );
 }
@@ -32,9 +44,7 @@ export function findItemForSession(
   session: CliSession,
   items: ActionItem[],
 ): ActionItem | undefined {
-  return items.find((item) =>
-    sessionReferencesItemNumber(session, item.number),
-  );
+  return items.find((item) => sessionReferencesItemNumber(session, item));
 }
 
 /**
@@ -55,7 +65,7 @@ export function deriveClaimedIdle(
       item.assigneeLogins.includes(AGENT_FLEET_LOGIN) &&
       !hasLiveRun(item) &&
       !activeSessions.some((session) =>
-        sessionReferencesItemNumber(session, item.number),
+        sessionReferencesItemNumber(session, item),
       ),
   );
 }

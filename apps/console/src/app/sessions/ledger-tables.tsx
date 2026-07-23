@@ -13,12 +13,13 @@ import {
   Title,
 } from '@mantine/core';
 
-import { primaryWatchedRepo } from '../../lib/github-client';
+import { primaryWatchedRepo, repoItemKey } from '../../lib/github-client';
 import type {
   IssueLedgerRow,
   SessionLedger,
   WeekLedgerRow,
 } from '../../lib/session-ledger';
+import { RepoBadge } from '../agent-activity-panel';
 import { formatCost } from '../format';
 
 /** Each ledger is already fully sorted (cost desc, then tokens desc) by
@@ -27,32 +28,41 @@ import { formatCost } from '../format';
  * useful to show at once. */
 const MAX_LEDGER_ROWS = 15;
 
-function IssueCell({
-  issueNumber,
-}: {
-  issueNumber: IssueLedgerRow['issueNumber'];
-}) {
-  if (issueNumber === 'no-issue') {
+/** React key for an issue-ledger row - the bare issue number collides once
+ * two watched repos can each have their own #42 (same class of bug Codex
+ * caught in the board's row keys, #18); 'no-issue' is already a unique
+ * literal on its own, so it's returned as-is. */
+function issueRowKey(row: IssueLedgerRow): string | number {
+  return row.issueNumber === 'no-issue'
+    ? row.issueNumber
+    : repoItemKey(row.repo ?? primaryWatchedRepo(), row.issueNumber);
+}
+
+function IssueCell({ row }: { row: IssueLedgerRow }) {
+  if (row.issueNumber === 'no-issue') {
     return (
       <Text size="sm" c="dimmed">
         no issue
       </Text>
     );
   }
-  // The ledger aggregates across the whole doc set with no per-row repo
-  // attribution (see session-ledger.ts), so this links against the primary
-  // watched repo - correct as long as exactly one repo is configured;
-  // revisit alongside #12's per-repo ledger work if that changes.
-  const repo = primaryWatchedRepo();
+  // row.repo is only absent for the 'no-issue' catch-all (handled above) -
+  // every real issueNumber row carries one, already resolved against
+  // primaryWatchedRepo() by aggregateSessionLedger for docs predating
+  // Phase 0's `repo` field. Kept here too as a type-safe fallback.
+  const repo = row.repo ?? primaryWatchedRepo();
   return (
-    <Anchor
-      href={`https://github.com/${repo.owner}/${repo.name}/issues/${issueNumber}`}
-      target="_blank"
-      rel="noreferrer"
-      size="sm"
-    >
-      #{issueNumber}
-    </Anchor>
+    <Group gap={6} wrap="nowrap">
+      <Anchor
+        href={`https://github.com/${repo.owner}/${repo.name}/issues/${row.issueNumber}`}
+        target="_blank"
+        rel="noreferrer"
+        size="sm"
+      >
+        #{row.issueNumber}
+      </Anchor>
+      <RepoBadge repo={repo} />
+    </Group>
   );
 }
 
@@ -78,9 +88,9 @@ function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
         </TableThead>
         <TableTbody>
           {rows.map((row) => (
-            <TableTr key={row.issueNumber} data-testid="ledger-issue-row">
+            <TableTr key={issueRowKey(row)} data-testid="ledger-issue-row">
               <TableTd>
-                <IssueCell issueNumber={row.issueNumber} />
+                <IssueCell row={row} />
               </TableTd>
               <TableTd>{row.sessions}</TableTd>
               <TableTd>{row.turns}</TableTd>
@@ -119,11 +129,11 @@ function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
         <TableTbody>
           {rows.map((row) => (
             <TableTr
-              key={row.issueNumber}
+              key={issueRowKey(row)}
               data-testid="ledger-issue-row-compact"
             >
               <TableTd>
-                <IssueCell issueNumber={row.issueNumber} />
+                <IssueCell row={row} />
               </TableTd>
               <TableTd>{row.sessions}</TableTd>
               <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
