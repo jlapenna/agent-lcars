@@ -39,26 +39,74 @@ function makeSession(overrides: Partial<CliSession> = {}): CliSession {
 describe('sessionReferencesItemNumber', () => {
   it("matches on the session's joined PR number", () => {
     const session = makeSession({ pr: { number: 42, url: 'u' } });
-    expect(sessionReferencesItemNumber(session, 42)).toBe(true);
-    expect(sessionReferencesItemNumber(session, 43)).toBe(false);
+    expect(sessionReferencesItemNumber(session, makeItem({ number: 42 }))).toBe(
+      true,
+    );
+    expect(sessionReferencesItemNumber(session, makeItem({ number: 43 }))).toBe(
+      false,
+    );
   });
 
   it('matches when the item number appears in the branch, bounded by non-digits', () => {
     const session = makeSession({
       branch: 'agent-lcars-agents-page-3024',
     });
-    expect(sessionReferencesItemNumber(session, 3024)).toBe(true);
+    expect(
+      sessionReferencesItemNumber(session, makeItem({ number: 3024 })),
+    ).toBe(true);
   });
 
   it('does not false-match a shorter number embedded in a longer one', () => {
     const session = makeSession({ branch: 'fix-primes-backend-oom-2819' });
-    expect(sessionReferencesItemNumber(session, 281)).toBe(false);
-    expect(sessionReferencesItemNumber(session, 819)).toBe(false);
-    expect(sessionReferencesItemNumber(session, 2819)).toBe(true);
+    expect(
+      sessionReferencesItemNumber(session, makeItem({ number: 281 })),
+    ).toBe(false);
+    expect(
+      sessionReferencesItemNumber(session, makeItem({ number: 819 })),
+    ).toBe(false);
+    expect(
+      sessionReferencesItemNumber(session, makeItem({ number: 2819 })),
+    ).toBe(true);
   });
 
   it('returns false with neither a PR nor a branch', () => {
-    expect(sessionReferencesItemNumber(makeSession(), 42)).toBe(false);
+    expect(
+      sessionReferencesItemNumber(makeSession(), makeItem({ number: 42 })),
+    ).toBe(false);
+  });
+
+  // Regression for the same collision class Codex caught in the board's
+  // React keys and the ledger's issue rows: item numbers only disambiguate
+  // within one repo.
+  it('does not match a same-numbered item in a different repo', () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    const session = makeSession({
+      repo: repoA,
+      pr: { number: 42, url: 'u' },
+    });
+    expect(
+      sessionReferencesItemNumber(
+        session,
+        makeItem({ number: 42, repo: repoB }),
+      ),
+    ).toBe(false);
+    expect(
+      sessionReferencesItemNumber(
+        session,
+        makeItem({ number: 42, repo: repoA }),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches on number alone when the session predates Phase 0 (no repo)', () => {
+    const session = makeSession({ pr: { number: 42, url: 'u' } });
+    expect(
+      sessionReferencesItemNumber(
+        session,
+        makeItem({ number: 42, repo: { owner: 'org-a', name: 'repo-a' } }),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -104,6 +152,18 @@ describe('deriveClaimedIdle', () => {
   it('does not let an unrelated active session mask a genuinely stale claim', () => {
     const items = [makeItem({ number: 1, assigneeLogins: ['jclaw-bot'] })];
     const sessions = [makeSession({ pr: { number: 999, url: 'u' } })];
+    expect(deriveClaimedIdle(items, noLiveRun, sessions)).toEqual(items);
+  });
+
+  it('does not let a same-numbered session in a different repo mask a genuinely stale claim', () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    const items = [
+      makeItem({ number: 1, repo: repoA, assigneeLogins: ['jclaw-bot'] }),
+    ];
+    const sessions = [
+      makeSession({ repo: repoB, pr: { number: 1, url: 'u' } }),
+    ];
     expect(deriveClaimedIdle(items, noLiveRun, sessions)).toEqual(items);
   });
 });

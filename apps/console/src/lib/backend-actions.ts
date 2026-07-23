@@ -173,9 +173,9 @@ export async function cancelWorkflowRun(
 const DEFAULT_BRANCH = 'main';
 
 // dispatchUnstickPrs/evictNxCache are global console-level ops actions, not
-// scoped to any one action item - no UI picker exists for them yet (see
-// #11's Phase 2 UI follow-up), so they default to the primary watched repo,
-// reproducing today's single-repo behavior exactly until that picker lands.
+// scoped to any one action item. Unlike createQuickTask below, neither has
+// a repo picker (#11 only added one to quick-task-button.tsx) or a tracked
+// follow-up to add one - both simply target the primary watched repo.
 export async function dispatchUnstickPrs(
   context?: string,
   repo: WatchedRepo = primaryWatchedRepo(),
@@ -299,9 +299,8 @@ async function ensureQuickTaskLabelExists(repo: WatchedRepo): Promise<void> {
   }
 }
 
-// Files against the primary watched repo - no repo picker exists yet on
-// quick-task-button.tsx (see #11's Phase 2 UI follow-up), so this
-// reproduces today's single-repo behavior exactly until that picker lands.
+// Defaults to the primary watched repo; quick-task-button.tsx overrides
+// this via its own repo picker once more than one repo is watched (#11).
 export async function createQuickTask(
   description: string,
   title?: string,

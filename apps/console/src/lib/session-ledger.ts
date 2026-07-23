@@ -1,5 +1,11 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
 
+import {
+  primaryWatchedRepo,
+  repoItemKey,
+  type WatchedRepo,
+} from './github-client';
+
 export interface LedgerTotals {
   sessions: number;
   turns: number;
@@ -22,6 +28,16 @@ export interface IssueLedgerRow extends LedgerTotals {
    * bucket for every CLI session (which never carries one) and any
    * issue-agent session missing one (legacy docs predating the field). */
   issueNumber: number | 'no-issue';
+  /**
+   * Which repo `issueNumber` belongs to - undefined for the 'no-issue'
+   * bucket, which stays a single cross-repo catch-all rather than being
+   * split per repo (unlike a real issue number, "no issue" never claims to
+   * identify one specific GitHub entity, so mixing repos into it doesn't
+   * misattribute anyone's cost - see aggregateSessionLedger). Falls back to
+   * primaryWatchedRepo() for docs written before Phase 0's `repo` field
+   * existed, same as every other repo-less-doc fallback in this app.
+   */
+  repo?: WatchedRepo;
 }
 
 export interface WeekLedgerRow extends LedgerTotals {
@@ -108,6 +124,22 @@ function isoWeekKey(iso: string): string {
   return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
 }
 
+function accumulateTotals(
+  base: LedgerTotals,
+  turns: number,
+  tokens: number,
+  costUsd: number | undefined,
+): LedgerTotals {
+  return {
+    sessions: base.sessions + 1,
+    turns: base.turns + turns,
+    tokens: base.tokens + tokens,
+    ...((base.costUsd !== undefined || costUsd !== undefined) && {
+      costUsd: (base.costUsd ?? 0) + (costUsd ?? 0),
+    }),
+  };
+}
+
 function accumulate<K>(
   buckets: Map<K, LedgerTotals>,
   key: K,
@@ -117,14 +149,7 @@ function accumulate<K>(
 ): void {
   const existing = buckets.get(key);
   const base: LedgerTotals = existing ?? { sessions: 0, turns: 0, tokens: 0 };
-  buckets.set(key, {
-    sessions: base.sessions + 1,
-    turns: base.turns + turns,
-    tokens: base.tokens + tokens,
-    ...((base.costUsd !== undefined || costUsd !== undefined) && {
-      costUsd: (base.costUsd ?? 0) + (costUsd ?? 0),
-    }),
-  });
+  buckets.set(key, accumulateTotals(base, turns, tokens, costUsd));
 }
 
 /**
@@ -135,16 +160,47 @@ function accumulate<K>(
  * network dependency of its own, so it's fully deterministic from its input.
  */
 export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
-  const byIssueMap = new Map<number | 'no-issue', LedgerTotals>();
+  // Keyed by repoItemKey(repo, issueNumber), NOT the bare issue number - two
+  // watched repos can each have their own #42, and merging them into one
+  // row would misattribute one repo's cost onto the other's issue (the
+  // same class of bug Codex caught as a React key collision in the board -
+  // see #18). The 'no-issue' catch-all is the one deliberate exception
+  // (see IssueLedgerRow.repo's doc comment): it stays a single bucket
+  // across every repo.
+  const byIssueMap = new Map<
+    string,
+    LedgerTotals & { issueNumber: number | 'no-issue'; repo?: WatchedRepo }
+  >();
   const byWeekMap = new Map<string, LedgerTotals>();
 
   for (const doc of docs) {
     const tokens = doc.tokens.inputTokens + doc.tokens.outputTokens;
-    const issueKey: number | 'no-issue' =
-      doc.source === 'issue-agent' && doc.issueNumber !== undefined
-        ? doc.issueNumber
-        : 'no-issue';
-    accumulate(byIssueMap, issueKey, doc.turns, tokens, doc.totalCostUsd);
+    if (doc.source === 'issue-agent' && doc.issueNumber !== undefined) {
+      const repo = doc.repo ?? primaryWatchedRepo();
+      const key = repoItemKey(repo, doc.issueNumber);
+      const existing = byIssueMap.get(key);
+      byIssueMap.set(key, {
+        issueNumber: doc.issueNumber,
+        repo,
+        ...accumulateTotals(
+          existing ?? { sessions: 0, turns: 0, tokens: 0 },
+          doc.turns,
+          tokens,
+          doc.totalCostUsd,
+        ),
+      });
+    } else {
+      const existing = byIssueMap.get('no-issue');
+      byIssueMap.set('no-issue', {
+        issueNumber: 'no-issue',
+        ...accumulateTotals(
+          existing ?? { sessions: 0, turns: 0, tokens: 0 },
+          doc.turns,
+          tokens,
+          doc.totalCostUsd,
+        ),
+      });
+    }
     accumulate(
       byWeekMap,
       isoWeekKey(doc.startedAt),
@@ -154,9 +210,7 @@ export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
     );
   }
 
-  const byIssue = Array.from(byIssueMap.entries())
-    .map(([issueNumber, totals]) => ({ issueNumber, ...totals }))
-    .sort(compareLedgerTotals);
+  const byIssue = Array.from(byIssueMap.values()).sort(compareLedgerTotals);
   const byWeek = Array.from(byWeekMap.entries())
     .map(([isoWeek, totals]) => ({ isoWeek, ...totals }))
     .sort(compareWeekKeysDesc);
