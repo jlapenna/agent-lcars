@@ -317,10 +317,14 @@ jobs:
                   | length" 2>/dev/null || echo 0)
           if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM created/updated since $STARTED_AT"; fi
 
-          # (b) issue closed.
+          # (b) issue closed since this run started. closedAt, not just
+          # current state==CLOSED: a pre-existing closure (e.g. another
+          # pipeline closed it moments before this run started) must not
+          # count as this run's deliverable.
           if [ -z "$found" ]; then
-            state=$(gh issue view "$NUM" --repo "$REPO" --json state --jq .state 2>/dev/null || echo "")
-            if [ "$state" = "CLOSED" ]; then found="issue #$NUM closed"; fi
+            closed_at=$(gh issue view "$NUM" --repo "$REPO" --json state,closedAt \
+              --jq 'if .state == "CLOSED" then .closedAt else "" end' 2>/dev/null || echo "")
+            if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then found="issue #$NUM closed at $closed_at (after $STARTED_AT)"; fi
           fi
 
           # (c) human-needed label (sanctioned blocked ending).
