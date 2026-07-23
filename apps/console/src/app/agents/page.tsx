@@ -10,6 +10,7 @@ import { getCliSessions } from '../../lib/cli-sessions';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
+  primaryWatchedRepo,
   repoItemKey,
   repoKey,
 } from '../../lib/github-client';
@@ -117,8 +118,12 @@ export default async function AgentsPage({ searchParams }: PageProps) {
   // Applied last, after every cross-repo join above already ran against the
   // full, unfiltered data - see page.tsx's identical comment for why.
   const filteredItems = items.filter((item) => matchesFilter(item.repo));
-  const filteredActiveSessions = activeSessions.filter(
-    (s) => !s.repo || matchesFilter(s.repo),
+  // A doc with no `repo` predates Phase 0's field - session-archive.ts and
+  // cli-sessions.ts both already treat that as belonging to the primary
+  // repo when building links, so the filter must agree (see page.tsx's
+  // identical comment).
+  const filteredActiveSessions = activeSessions.filter((s) =>
+    matchesFilter(s.repo ?? primaryWatchedRepo()),
   );
   const filteredActivity = repoFilter
     ? {

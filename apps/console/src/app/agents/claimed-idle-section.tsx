@@ -1,6 +1,7 @@
 import { Card, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
+import { repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
 import { formatRelativeTime } from '../format';
 import { TakeoverCommand } from '../takeover-command';
@@ -34,7 +35,10 @@ export function ClaimedIdleSection({ items }: { items: ActionItem[] }) {
         ) : (
           <Stack gap="xs">
             {items.map((item) => (
-              <Stack key={`${item.kind}-${item.number}`} gap={4}>
+              <Stack
+                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
+                gap={4}
+              >
                 <CompactItemRow
                   item={item}
                   hint={`updated ${formatRelativeTime(item.updatedAt)}`}

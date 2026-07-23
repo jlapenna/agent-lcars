@@ -13,6 +13,7 @@ import { getCliSessions } from '../lib/cli-sessions';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
+  primaryWatchedRepo,
   repoItemKey,
   repoKey,
 } from '../lib/github-client';
@@ -172,8 +173,13 @@ export default async function Index({ searchParams }: PageProps) {
         ),
       }
     : activity;
+  // A doc with no `repo` predates Phase 0's field - session-archive.ts and
+  // cli-sessions.ts both already treat that as belonging to the primary
+  // repo when building links, so the filter must agree: otherwise every
+  // legacy session stays visible under every repo filter instead of just
+  // the primary one.
   const filteredCliSessions = repoFilter
-    ? cliSessions.filter((s) => !s.repo || matchesFilter(s.repo))
+    ? cliSessions.filter((s) => matchesFilter(s.repo ?? primaryWatchedRepo()))
     : cliSessions;
 
   const subtitle =

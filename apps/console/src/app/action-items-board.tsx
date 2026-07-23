@@ -3,6 +3,7 @@ import { Group, Stack, Text, Title } from '@mantine/core';
 import type { ActionItem } from '../lib/action-items';
 import { getWatchedRepos } from '../lib/github-client';
 import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
+import { repoKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import { CompactItemRow } from './compact-item-row';
 import { ItemOverflowMenu } from './item-overflow-menu';
@@ -77,7 +78,7 @@ export function ActionItemsBoard({
           <Stack gap="sm">
             {yourQueue.map(({ item, updatedAtLabel, primaryAction }) => (
               <ActionItemCard
-                key={`${item.kind}-${item.number}`}
+                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
                 item={item}
                 updatedAtLabel={updatedAtLabel}
                 primaryAction={primaryAction}
@@ -98,7 +99,7 @@ export function ActionItemsBoard({
           <Stack gap={6}>
             {handedBack.map(({ item, updatedAtLabel }) => (
               <CompactItemRow
-                key={`${item.kind}-${item.number}`}
+                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
                 item={item}
                 hint={`you replied · updated ${updatedAtLabel}`}
                 action={
@@ -133,7 +134,7 @@ export function ActionItemsBoard({
           <Stack gap={6}>
             {waitingOnDeploy.map(({ item, updatedAtLabel }) => (
               <CompactItemRow
-                key={`${item.kind}-${item.number}`}
+                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
                 item={item}
                 hint={`updated ${updatedAtLabel}`}
                 action={<ItemOverflowMenu item={item} />}
@@ -157,7 +158,7 @@ export function ActionItemsBoard({
           <Stack gap={6} mt="sm">
             {rest.map(({ item, updatedAtLabel }) => (
               <CompactItemRow
-                key={`${item.kind}-${item.number}`}
+                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
                 item={item}
                 hint={`updated ${updatedAtLabel}`}
                 action={<ItemOverflowMenu item={item} />}
