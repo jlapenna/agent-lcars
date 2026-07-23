@@ -21,7 +21,7 @@ import {
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
-import type { WatchedRepo } from '../lib/github-client';
+import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
 
 // LAN preview goes through the shared test-session adapter inside auth()
@@ -78,7 +78,7 @@ export async function replyToItem(
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await postComment(repo, number, body, labels);
+    await postComment(resolveWatchedRepo(repo), number, body, labels);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -92,7 +92,7 @@ export async function mergePr(
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await approveAndMergePr(repo, number);
+    await approveAndMergePr(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -108,7 +108,7 @@ export async function retriggerIssue(
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await retriggerIssueLib(repo, number, note, pipeline);
+    await retriggerIssueLib(resolveWatchedRepo(repo), number, note, pipeline);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -122,7 +122,7 @@ export async function cancelRun(
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await cancelWorkflowRunLib(repo, runId);
+    await cancelWorkflowRunLib(resolveWatchedRepo(repo), runId);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -172,7 +172,7 @@ export async function closeIssue(
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await closeIssueLib(repo, number);
+    await closeIssueLib(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -186,7 +186,7 @@ export async function clearHumanNeeded(
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await clearHumanNeededLabel(repo, number);
+    await clearHumanNeededLabel(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {

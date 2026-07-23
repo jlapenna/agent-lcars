@@ -50,6 +50,38 @@ describe('resolveGitRepo', () => {
     });
   });
 
+  it('resolves owner/name from a full ssh:// remote URL', () => {
+    execFileSync('git', [
+      '-C',
+      repoDir,
+      'remote',
+      'add',
+      'origin',
+      'ssh://git@github.com/supersprinklesracing/members.git',
+    ]);
+
+    expect(resolveGitRepo(repoDir)).toEqual({
+      owner: 'supersprinklesracing',
+      name: 'members',
+    });
+  });
+
+  it('resolves owner/name from a full ssh:// remote URL without a .git suffix', () => {
+    execFileSync('git', [
+      '-C',
+      repoDir,
+      'remote',
+      'add',
+      'origin',
+      'ssh://git@github.com/supersprinklesracing/members',
+    ]);
+
+    expect(resolveGitRepo(repoDir)).toEqual({
+      owner: 'supersprinklesracing',
+      name: 'members',
+    });
+  });
+
   it('resolves owner/name from an HTTPS remote URL with a .git suffix', () => {
     execFileSync('git', [
       '-C',

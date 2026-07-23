@@ -315,6 +315,54 @@ describe('agent-lcars Server Actions', () => {
     });
   });
 
+  // Security-critical (see the resolveWatchedRepo doc comment in
+  // github-client.ts): Server Action arguments are client-controlled at the
+  // HTTP boundary regardless of their TS signature, so a client-supplied
+  // repo outside the configured watched list must be rejected server-side
+  // rather than trusted straight through to the GitHub client.
+  describe('repo validation rejects an unwatched repo', () => {
+    const UNWATCHED_REPO = { owner: 'someone-elses', name: 'private-repo' };
+
+    it('mergePr rejects without calling approveAndMergePr', async () => {
+      const result = await mergePr(UNWATCHED_REPO, 42);
+      expect(result).toEqual({
+        ok: false,
+        message: 'someone-elses/private-repo is not a watched repo',
+      });
+      expect(approveAndMergePr).not.toHaveBeenCalled();
+    });
+
+    it('replyToItem rejects without calling postComment', async () => {
+      const result = await replyToItem(UNWATCHED_REPO, 42, 'hi');
+      expect(result.ok).toBe(false);
+      expect(postComment).not.toHaveBeenCalled();
+    });
+
+    it('retriggerIssue rejects without calling retriggerIssueLib', async () => {
+      const result = await retriggerIssue(UNWATCHED_REPO, 42);
+      expect(result.ok).toBe(false);
+      expect(retriggerIssueLib).not.toHaveBeenCalled();
+    });
+
+    it('cancelRun rejects without calling cancelWorkflowRun', async () => {
+      const result = await cancelRun(UNWATCHED_REPO, 123);
+      expect(result.ok).toBe(false);
+      expect(cancelWorkflowRun).not.toHaveBeenCalled();
+    });
+
+    it('closeIssue rejects without calling closeIssueLib', async () => {
+      const result = await closeIssue(UNWATCHED_REPO, 2709);
+      expect(result.ok).toBe(false);
+      expect(closeIssueLib).not.toHaveBeenCalled();
+    });
+
+    it('clearHumanNeeded rejects without calling clearHumanNeededLabel', async () => {
+      const result = await clearHumanNeeded(UNWATCHED_REPO, 2709);
+      expect(result.ok).toBe(false);
+      expect(clearHumanNeededLabel).not.toHaveBeenCalled();
+    });
+  });
+
   describe('when the caller is not an admin', () => {
     beforeEach(() => {
       (auth as Mock).mockResolvedValue({

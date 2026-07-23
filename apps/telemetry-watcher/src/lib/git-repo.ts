@@ -1,9 +1,10 @@
 import { execFileSync } from 'child_process';
 
 /**
- * Parses `owner/name` out of a GitHub `origin` remote URL, in either form
+ * Parses `owner/name` out of a GitHub `origin` remote URL, in any form
  * `git remote get-url` commonly reports:
- *  - SSH: `git@github.com:owner/name.git` (or without the `.git` suffix)
+ *  - SCP-like SSH: `git@github.com:owner/name.git` (or without `.git`)
+ *  - Full SSH URL: `ssh://git@github.com/owner/name.git` (or without `.git`)
  *  - HTTPS: `https://github.com/owner/name.git` or `.../owner/name`
  *    (tolerating an optional `user@` prefix)
  * Returns `undefined` for anything else (e.g. a non-GitHub host), so a
@@ -12,11 +13,17 @@ import { execFileSync } from 'child_process';
 function parseGitHubRemote(
   remoteUrl: string,
 ): { owner: string; name: string } | undefined {
-  const sshMatch = remoteUrl.match(
+  const scpMatch = remoteUrl.match(
     /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/,
   );
-  if (sshMatch) {
-    return { owner: sshMatch[1], name: sshMatch[2] };
+  if (scpMatch) {
+    return { owner: scpMatch[1], name: scpMatch[2] };
+  }
+  const sshUrlMatch = remoteUrl.match(
+    /^ssh:\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/,
+  );
+  if (sshUrlMatch) {
+    return { owner: sshUrlMatch[1], name: sshUrlMatch[2] };
   }
   const httpsMatch = remoteUrl.match(
     /^https:\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/,

@@ -137,6 +137,36 @@ export function primaryWatchedRepo(): WatchedRepo {
   return getWatchedRepos()[0];
 }
 
+export class UnwatchedRepoError extends Error {
+  constructor(owner: string, name: string) {
+    super(`${owner}/${name} is not a watched repo`);
+    this.name = 'UnwatchedRepoError';
+  }
+}
+
+/**
+ * Resolves a client-supplied repo identifier against the canonical watched
+ * list, rather than trusting the caller's object directly. Server Action
+ * arguments are client-controlled at the HTTP boundary regardless of their
+ * TS signature - without this, an authenticated client could pass an
+ * arbitrary `{owner, name}` and use the console's GitHub credentials
+ * against any repo they can reach, not just the configured watched set.
+ * Every Server Action in app/actions.ts that accepts a client-supplied repo
+ * must call this before passing it to backend-actions.ts.
+ */
+export function resolveWatchedRepo(candidate: {
+  owner: string;
+  name: string;
+}): WatchedRepo {
+  const match = getWatchedRepos().find(
+    (repo) => repo.owner === candidate.owner && repo.name === candidate.name,
+  );
+  if (!match) {
+    throw new UnwatchedRepoError(candidate.owner, candidate.name);
+  }
+  return match;
+}
+
 export function repoKey(repo: { owner: string; name: string }): string {
   return `${repo.owner}/${repo.name}`;
 }

@@ -285,8 +285,9 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   // missing token permission) degrades that section instead of crashing the
   // whole dashboard. Live runs are always the newest rows, so one small
   // unfiltered page per pair covers them. The runner fleet listing is
-  // fetched per repo and summed - each repo's runners are still a
-  // repo-wide pool, not per-workflow.
+  // fetched per repo - deduped by runner id before summing (below), since
+  // an org-level runner group shared across watched repos would otherwise
+  // be double-counted once for each repo that can see it.
   const [liveResults, recentResults, runnerResults] = await Promise.all([
     Promise.allSettled(
       pairs.map(({ repo, pipeline, workflowFile }) =>
@@ -351,16 +352,20 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     .slice(0, RECENT_RUN_LIMIT);
 
   let fleet: FleetSummary | undefined;
-  const fleetTotal = { online: 0, busy: 0 };
+  // Keyed by runner id (not summed inline): an org-level runner group
+  // registers identically against every repo it's shared with, so listing
+  // it per watched repo would otherwise count the same runner once per
+  // repo that can see it.
+  const runnersById = new Map<number, { status: string; busy: boolean }>();
   let anyFleetResult = false;
   for (const [i, result] of runnerResults.entries()) {
     if (result.status === 'fulfilled') {
       anyFleetResult = true;
       for (const runner of result.value.response.data.runners) {
-        if (runner.status === 'online') {
-          fleetTotal.online += 1;
-          if (runner.busy) fleetTotal.busy += 1;
-        }
+        runnersById.set(runner.id, {
+          status: runner.status,
+          busy: runner.busy,
+        });
       }
     } else {
       console.error(
@@ -374,7 +379,13 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     }
   }
   if (anyFleetResult) {
-    fleet = fleetTotal;
+    fleet = { online: 0, busy: 0 };
+    for (const runner of runnersById.values()) {
+      if (runner.status === 'online') {
+        fleet.online += 1;
+        if (runner.busy) fleet.busy += 1;
+      }
+    }
   }
 
   return {
