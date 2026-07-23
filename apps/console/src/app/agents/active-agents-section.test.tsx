@@ -44,6 +44,7 @@ vi.mock('../agent-activity-panel', () => ({
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
+    repo: { owner: 'supersprinklesracing', name: 'members' },
     pipeline: 'claude',
     status: 'running',
     event: 'issues',
@@ -72,6 +73,7 @@ function makeSession(overrides: Partial<CliSession> = {}): CliSession {
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     kind: 'issue',
+    repo: { owner: 'supersprinklesracing', name: 'members' },
     number: 1,
     title: 'Fix the thing',
     url: 'https://github.com/supersprinklesracing/members/issues/1',

@@ -7,6 +7,7 @@ import { type ActionItem } from '../../lib/action-items';
 import { getAgentActivity } from '../../lib/agent-activity';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
+import { repoItemKey } from '../../lib/github-client';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { getActionItems } from '../actions';
@@ -63,7 +64,7 @@ export default async function AgentsPage() {
   const liveRunByNumber = new Map(
     activity.liveRuns
       .filter((run) => run.issueNumber !== undefined)
-      .map((run) => [run.issueNumber as number, run]),
+      .map((run) => [repoItemKey(run.repo, run.issueNumber as number), run]),
   );
   const liveRunByTitle = new Map(
     activity.liveRuns
@@ -71,7 +72,8 @@ export default async function AgentsPage() {
       .map((run) => [run.displayTitle, run]),
   );
   const liveRunFor = (item: ActionItem) =>
-    liveRunByNumber.get(item.number) ?? liveRunByTitle.get(item.title);
+    liveRunByNumber.get(repoItemKey(item.repo, item.number)) ??
+    liveRunByTitle.get(item.title);
 
   const itemsByRunId: Record<number, RunItemRef> = {};
   for (const item of items) {

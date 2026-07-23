@@ -11,6 +11,7 @@ import {
 function makeRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
+    repo: { owner: 'supersprinklesracing', name: 'members' },
     pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',
@@ -102,7 +103,9 @@ describe('deriveSilentErrorDiagnoses', () => {
 
     const diagnoses = deriveSilentErrorDiagnoses([run], sessionsByRunId);
 
-    expect(diagnoses.get(42)).toContain('failure signature');
+    expect(diagnoses.get('supersprinklesracing/members#42')).toContain(
+      'failure signature',
+    );
   });
 
   it('skips runs with no parsed issueNumber', () => {

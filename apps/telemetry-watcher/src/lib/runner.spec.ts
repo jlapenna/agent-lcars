@@ -95,6 +95,37 @@ describe('startRideAlong', () => {
     });
   });
 
+  it('tags upserted docs with the configured repo', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/home/runner/.claude/projects/proj/session-repo.jsonl':
+        ISSUE_AGENT_TRANSCRIPT('session-repo', '2026-07-19T10:00:00.000Z'),
+    };
+
+    const daemon = startRideAlong({
+      config: baseConfig({
+        repo: { owner: 'supersprinklesracing', name: 'members' },
+      }),
+      store,
+      autoStart: false,
+      now: () => '2026-07-19T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: () => ({ mtimeMs: 1, size: 10 }),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: () => undefined,
+      resolveGitRepo: () => undefined,
+    });
+
+    await daemon.tick();
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).toMatchObject({
+      source: 'issue-agent',
+      repo: { owner: 'supersprinklesracing', name: 'members' },
+    });
+  });
+
   it('omits runId/issueNumber from the doc when the config has neither', async () => {
     const { store, upserts } = createFakeStore();
     const files = {

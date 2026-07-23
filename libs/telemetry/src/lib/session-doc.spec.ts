@@ -311,4 +311,59 @@ describe('buildSessionDoc', () => {
     );
     expect(doc).toMatchObject({ agent: 'claude-code' });
   });
+
+  it('threads repo through from summary.repo on a cli doc', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        repo: { owner: 'supersprinklesracing', name: 'members' },
+      }),
+      'live',
+    );
+    expect(doc).toMatchObject({
+      repo: { owner: 'supersprinklesracing', name: 'members' },
+    });
+  });
+
+  it('omits repo entirely when absent from the summary (cli)', () => {
+    const doc = buildSessionDoc(baseSummary(), 'idle');
+    expect(doc).not.toHaveProperty('repo');
+  });
+
+  it('threads repo through from options.repo on an issue-agent doc, not from summary.repo', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        source: 'issue-agent',
+        // A summary-level repo (as a cli source would carry) must be
+        // ignored on this branch — only options.repo is consulted.
+        repo: { owner: 'wrong-owner', name: 'wrong-name' },
+      }),
+      'ended',
+      {
+        runId: 'run-123',
+        repo: { owner: 'supersprinklesracing', name: 'members' },
+      },
+    );
+    expect(doc).toMatchObject({
+      repo: { owner: 'supersprinklesracing', name: 'members' },
+    });
+  });
+
+  it('omits repo entirely when absent from options (issue-agent)', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent' }),
+      'ended',
+      { runId: 'run-123' },
+    );
+    expect(doc).not.toHaveProperty('repo');
+  });
+
+  it('never carries options.repo onto a cli doc', () => {
+    // BuildSessionDocOptions doesn't discriminate by source, so a caller
+    // could pass repo alongside a cli summary — the builder itself must
+    // still gate it to the issue-agent branch.
+    const doc = buildSessionDoc(baseSummary({ source: 'cli' }), 'live', {
+      repo: { owner: 'supersprinklesracing', name: 'members' },
+    });
+    expect(doc).not.toHaveProperty('repo');
+  });
 });

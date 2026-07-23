@@ -10,11 +10,16 @@ import {
 } from './agent-activity';
 import { getGithubClient } from './github-client';
 
-vi.mock('./github-client', () => ({
-  getGithubClient: vi.fn(),
-  REPO_OWNER: 'supersprinklesracing',
-  REPO_NAME: 'members',
-}));
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+
+vi.mock('./github-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./github-client')>();
+  return {
+    ...actual,
+    getGithubClient: vi.fn(),
+    getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
+  };
+});
 
 interface FakeWorkflowRun {
   id: number;
@@ -46,6 +51,7 @@ function makeRun(overrides: Partial<FakeWorkflowRun> = {}): FakeWorkflowRun {
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
+    repo: DEFAULT_REPO,
     pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',

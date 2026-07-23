@@ -1,6 +1,17 @@
 import type { Octokit } from '@octokit/rest';
 
-import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
+import {
+  getGithubClient,
+  getWatchedRepos,
+  repoKey,
+  type WatchedRepo,
+} from './github-client';
+
+// Re-exported from github-client.ts, which owns this type (agent-activity.ts
+// can't own it: WatchedRepo.workflowFiles needs to reference it, and
+// github-client.ts is imported from here, not the other way around).
+export type { AgentPipeline } from './github-client';
+import type { AgentPipeline } from './github-client';
 
 // Mirrors timeout-minutes in .github/workflows/claude.yml AND
 // .github/workflows/opencode.yml (both 90m) so the live-run progress bar
@@ -14,13 +25,24 @@ export const RUN_TIMEOUT_MINUTES = 90;
 // see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
-export type AgentPipeline = 'claude' | 'codex' | 'opencode';
-
 const WORKFLOW_FILES: Record<AgentPipeline, string> = {
   claude: 'claude.yml',
   codex: 'codex.yml',
   opencode: 'opencode.yml',
 };
+
+/** Resolves which workflow filename a `(repo, pipeline)` pair fetches from,
+ * honoring WatchedRepo.workflowFiles' per-repo override/opt-out - see its
+ * doc comment in github-client.ts. Undefined means this repo doesn't run
+ * this pipeline at all. */
+function resolveWorkflowFile(
+  repo: WatchedRepo,
+  pipeline: AgentPipeline,
+): string | undefined {
+  const override = repo.workflowFiles?.[pipeline];
+  if (override === null) return undefined;
+  return override ?? WORKFLOW_FILES[pipeline];
+}
 
 const RECENT_RUN_LIMIT = 8;
 
@@ -29,6 +51,9 @@ export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
 
 export interface AgentRun {
   id: number;
+  /** Which watched repo this run belongs to - threaded from the
+   * `(repo, pipeline)` fetch pair, never re-derived from the run itself. */
+  repo: WatchedRepo;
   /**
    * Which workflow this run was fetched from. Derived from the fetch source
    * (which workflow_id produced it), never string-sniffed from the title -
@@ -117,7 +142,7 @@ export function displayRunTitle(run: AgentRun): string {
 export function issueUrlForRun(run: AgentRun): string | undefined {
   return run.issueNumber === undefined
     ? undefined
-    : `https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/${run.issueNumber}`;
+    : `https://github.com/${run.repo.owner}/${run.repo.name}/issues/${run.issueNumber}`;
 }
 
 /**
@@ -159,7 +184,11 @@ function toConclusion(raw: string | null): AgentRunConclusion | undefined {
   return 'other';
 }
 
-function toAgentRun(run: WorkflowRunLike, pipeline: AgentPipeline): AgentRun {
+function toAgentRun(
+  run: WorkflowRunLike,
+  repo: WatchedRepo,
+  pipeline: AgentPipeline,
+): AgentRun {
   const status: AgentRunStatus =
     run.status === 'completed'
       ? 'completed'
@@ -175,6 +204,7 @@ function toAgentRun(run: WorkflowRunLike, pipeline: AgentPipeline): AgentRun {
     status === 'completed' ? new Date(run.updated_at).getTime() : Date.now();
   return {
     id: run.id,
+    repo,
     pipeline,
     status,
     conclusion: toConclusion(run.conclusion),
@@ -198,29 +228,33 @@ const RECENT_CONCLUSIONS = ['success', 'failure', 'cancelled'] as const;
 
 async function fetchLiveRuns(
   octokit: Octokit,
+  repo: WatchedRepo,
   pipeline: AgentPipeline,
+  workflowFile: string,
 ): Promise<AgentRun[]> {
   const response = await octokit.rest.actions.listWorkflowRuns({
-    owner: REPO_OWNER,
-    repo: REPO_NAME,
-    workflow_id: WORKFLOW_FILES[pipeline],
+    owner: repo.owner,
+    repo: repo.name,
+    workflow_id: workflowFile,
     per_page: 30,
   });
   return response.data.workflow_runs
-    .map((run) => toAgentRun(run, pipeline))
+    .map((run) => toAgentRun(run, repo, pipeline))
     .filter((run) => run.status !== 'completed');
 }
 
 async function fetchRecentRuns(
   octokit: Octokit,
+  repo: WatchedRepo,
   pipeline: AgentPipeline,
+  workflowFile: string,
 ): Promise<AgentRun[]> {
   const responses = await Promise.all(
     RECENT_CONCLUSIONS.map((status) =>
       octokit.rest.actions.listWorkflowRuns({
-        owner: REPO_OWNER,
-        repo: REPO_NAME,
-        workflow_id: WORKFLOW_FILES[pipeline],
+        owner: repo.owner,
+        repo: repo.name,
+        workflow_id: workflowFile,
         status,
         per_page: RECENT_RUN_LIMIT,
       }),
@@ -228,65 +262,83 @@ async function fetchRecentRuns(
   );
   return responses
     .flatMap((response) => response.data.workflow_runs)
-    .map((run) => toAgentRun(run, pipeline));
+    .map((run) => toAgentRun(run, repo, pipeline));
 }
+
+const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
 export async function getAgentActivity(): Promise<AgentActivity> {
   const octokit = getGithubClient();
+  const repos = getWatchedRepos();
+
+  // One (repo, pipeline) pair per fetch, skipping pairs a repo has opted out
+  // of (see resolveWorkflowFile) - naive N-repo x M-pipeline fan-out,
+  // deliberately unthrottled for now (see #13, filed alongside this change).
+  const pairs = repos.flatMap((repo) =>
+    PIPELINES.flatMap((pipeline) => {
+      const workflowFile = resolveWorkflowFile(repo, pipeline);
+      return workflowFile ? [{ repo, pipeline, workflowFile }] : [];
+    }),
+  );
 
   // Same defensive pattern as getActionItems: any half failing (API hiccup,
   // missing token permission) degrades that section instead of crashing the
   // whole dashboard. Live runs are always the newest rows, so one small
-  // unfiltered page per pipeline covers them. The runner fleet listing is
-  // shared across both pipelines - it's a repo-wide pool, not per-workflow.
-  const [
-    liveClaude,
-    liveCodex,
-    liveOpencode,
-    recentClaude,
-    recentCodex,
-    recentOpencode,
-    runnersResult,
-  ] = await Promise.allSettled([
-    fetchLiveRuns(octokit, 'claude'),
-    fetchLiveRuns(octokit, 'codex'),
-    fetchLiveRuns(octokit, 'opencode'),
-    fetchRecentRuns(octokit, 'claude'),
-    fetchRecentRuns(octokit, 'codex'),
-    fetchRecentRuns(octokit, 'opencode'),
-    octokit.rest.actions.listSelfHostedRunnersForRepo({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
-      per_page: 100,
-    }),
+  // unfiltered page per pair covers them. The runner fleet listing is
+  // fetched per repo and summed - each repo's runners are still a
+  // repo-wide pool, not per-workflow.
+  const [liveResults, recentResults, runnerResults] = await Promise.all([
+    Promise.allSettled(
+      pairs.map(({ repo, pipeline, workflowFile }) =>
+        fetchLiveRuns(octokit, repo, pipeline, workflowFile),
+      ),
+    ),
+    Promise.allSettled(
+      pairs.map(({ repo, pipeline, workflowFile }) =>
+        fetchRecentRuns(octokit, repo, pipeline, workflowFile),
+      ),
+    ),
+    Promise.allSettled(
+      repos.map((repo) =>
+        octokit.rest.actions
+          .listSelfHostedRunnersForRepo({
+            owner: repo.owner,
+            repo: repo.name,
+            per_page: 100,
+          })
+          .then((response) => ({ repo, response })),
+      ),
+    ),
   ]);
 
   const warnings: string[] = [];
 
   let liveRuns: AgentRun[] = [];
-  for (const result of [liveClaude, liveCodex, liveOpencode]) {
+  for (const [i, result] of liveResults.entries()) {
     if (result.status === 'fulfilled') {
       liveRuns = liveRuns.concat(result.value);
     } else {
       console.error(
-        'agent-lcars: failed to list live agent runs:',
+        `agent-lcars: failed to list live agent runs (${repoKey(pairs[i].repo)}/${pairs[i].pipeline}):`,
         result.reason,
       );
-      warnings.push('Live agent runs unavailable (GitHub API request failed).');
+      warnings.push(
+        `Live agent runs unavailable for ${repoKey(pairs[i].repo)} (GitHub API request failed).`,
+      );
     }
   }
 
   let recentRuns: AgentRun[] = [];
-  for (const result of [recentClaude, recentCodex, recentOpencode]) {
+  for (const [i, result] of recentResults.entries()) {
     if (result.status === 'fulfilled') {
       recentRuns = recentRuns.concat(result.value);
     } else {
       console.error(
-        'agent-lcars: failed to list recent agent runs:',
+        `agent-lcars: failed to list recent agent runs (${repoKey(pairs[i].repo)}/${pairs[i].pipeline}):`,
         result.reason,
       );
       warnings.push(
-        'Recent agent runs unavailable (GitHub API request failed).',
+        `Recent agent runs unavailable for ${repoKey(pairs[i].repo)} (GitHub API request failed).`,
       );
     }
   }
@@ -295,25 +347,29 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     .slice(0, RECENT_RUN_LIMIT);
 
   let fleet: FleetSummary | undefined;
-  if (runnersResult.status === 'fulfilled') {
-    fleet = runnersResult.value.data.runners.reduce<FleetSummary>(
-      (acc, runner) => {
+  const fleetTotal = { online: 0, busy: 0 };
+  let anyFleetResult = false;
+  for (const [i, result] of runnerResults.entries()) {
+    if (result.status === 'fulfilled') {
+      anyFleetResult = true;
+      for (const runner of result.value.response.data.runners) {
         if (runner.status === 'online') {
-          acc.online += 1;
-          if (runner.busy) acc.busy += 1;
+          fleetTotal.online += 1;
+          if (runner.busy) fleetTotal.busy += 1;
         }
-        return acc;
-      },
-      { online: 0, busy: 0 },
-    );
-  } else {
-    console.error(
-      'agent-lcars: failed to list self-hosted runners:',
-      runnersResult.reason,
-    );
-    warnings.push(
-      'Runner fleet status unavailable (GitHub API request failed).',
-    );
+      }
+    } else {
+      console.error(
+        `agent-lcars: failed to list self-hosted runners (${repoKey(repos[i])}):`,
+        result.reason,
+      );
+      warnings.push(
+        `Runner fleet status unavailable for ${repoKey(repos[i])} (GitHub API request failed).`,
+      );
+    }
+  }
+  if (anyFleetResult) {
+    fleet = fleetTotal;
   }
 
   return {

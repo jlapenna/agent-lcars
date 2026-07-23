@@ -10,7 +10,7 @@ import {
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
-import { REPO_NAME, REPO_OWNER } from './github-client';
+import { primaryWatchedRepo, type WatchedRepo } from './github-client';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 
 export const DEFAULT_ARCHIVE_DAYS = 14;
@@ -102,16 +102,16 @@ export interface SessionRow {
   liveness: SessionLiveness;
 }
 
-function issueUrl(issueNumber: number): string {
-  return `https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/${issueNumber}`;
+function issueUrl(repo: WatchedRepo, issueNumber: number): string {
+  return `https://github.com/${repo.owner}/${repo.name}/issues/${issueNumber}`;
 }
 
-function prUrl(number: number): string {
-  return `https://github.com/${REPO_OWNER}/${REPO_NAME}/pull/${number}`;
+function prUrl(repo: WatchedRepo, number: number): string {
+  return `https://github.com/${repo.owner}/${repo.name}/pull/${number}`;
 }
 
-function runUrl(runId: string): string {
-  return `https://github.com/${REPO_OWNER}/${REPO_NAME}/actions/runs/${runId}`;
+function runUrl(repo: WatchedRepo, runId: string): string {
+  return `https://github.com/${repo.owner}/${repo.name}/actions/runs/${runId}`;
 }
 
 /** Converts a stored doc into the archive table's row view-model. `now` is
@@ -124,6 +124,9 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
     (doc.source === 'issue-agent' && doc.issueNumber !== undefined
       ? `Issue #${doc.issueNumber}`
       : doc.sessionId);
+  // Falls back to the primary watched repo for docs written before Phase
+  // 0's `repo` field existed.
+  const repo = doc.repo ?? primaryWatchedRepo();
 
   return {
     sessionId: doc.sessionId,
@@ -133,15 +136,15 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
     ...(doc.source === 'issue-agent' &&
       doc.issueNumber !== undefined && {
         issueNumber: doc.issueNumber,
-        issueUrl: issueUrl(doc.issueNumber),
+        issueUrl: issueUrl(repo, doc.issueNumber),
       }),
     prUrls: doc.deliverables.prNumbers.map((number) => ({
       number,
-      url: prUrl(number),
+      url: prUrl(repo, number),
     })),
     ...(doc.source === 'cli' && doc.host && { host: doc.host }),
     ...(doc.source === 'issue-agent' &&
-      doc.runId && { runId: doc.runId, runUrl: runUrl(doc.runId) }),
+      doc.runId && { runId: doc.runId, runUrl: runUrl(repo, doc.runId) }),
     ...(doc.model && { model: doc.model }),
     turns: doc.turns,
     totalTokens,

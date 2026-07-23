@@ -92,6 +92,7 @@ export function buildSessionDoc(
       ...(options.issueNumber !== undefined && {
         issueNumber: options.issueNumber,
       }),
+      ...(options.repo && { repo: options.repo }),
       ...(options.transcriptGcsUri && {
         transcriptGcsUri: options.transcriptGcsUri,
       }),
@@ -106,6 +107,7 @@ export function buildSessionDoc(
     ...(summary.cwd && { cwd: summary.cwd }),
     ...(summary.worktree && { worktree: summary.worktree }),
     ...(summary.branch && { branch: summary.branch }),
+    ...(summary.repo && { repo: summary.repo }),
     ...(summary.artifacts &&
       summary.artifacts.length > 0 && { artifacts: summary.artifacts }),
   };

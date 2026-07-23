@@ -10,11 +10,13 @@ vi.mock('@agent-lcars/telemetry/server', () => ({
   listSessionDocs: vi.fn(),
 }));
 
-vi.mock('./github-client', () => ({
-  getGithubClient: vi.fn(),
-  REPO_OWNER: 'supersprinklesracing',
-  REPO_NAME: 'members',
-}));
+vi.mock('./github-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./github-client')>();
+  return {
+    ...actual,
+    getGithubClient: vi.fn(),
+  };
+});
 
 const minutesAgo = (minutes: number) =>
   new Date(Date.now() - minutes * 60 * 1000).toISOString();
@@ -236,7 +238,7 @@ describe('getCliSessions', () => {
     expect(sessions).toHaveLength(2);
     expect(searchMock).toHaveBeenCalledTimes(1);
     expect(warnings).toEqual([
-      'PR lookup failed for branch "feat/agent-lcars-cli-sessions".',
+      'PR lookup failed for branch "feat/agent-lcars-cli-sessions" (supersprinklesracing/members).',
     ]);
   });
 

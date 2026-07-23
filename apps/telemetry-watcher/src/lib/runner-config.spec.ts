@@ -12,6 +12,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_STALENESS_WINDOW_MS',
   'AGENT_TELEMETRY_SHARE_DIR',
   'FIRESTORE_EMULATOR_HOST',
+  'GITHUB_REPOSITORY',
 ] as const;
 
 describe('loadRunnerConfig', () => {
@@ -89,5 +90,66 @@ describe('loadRunnerConfig', () => {
     const config = loadRunnerConfig(['--run-id']);
 
     expect(config.runId).toBeUndefined();
+  });
+
+  it('parses --repo owner/name', () => {
+    const config = loadRunnerConfig(['--repo', 'supersprinklesracing/members']);
+
+    expect(config.repo).toEqual({
+      owner: 'supersprinklesracing',
+      name: 'members',
+    });
+  });
+
+  it('ignores a malformed --repo value (no slash) rather than crashing', () => {
+    const config = loadRunnerConfig(['--repo', 'not-a-repo']);
+
+    expect(config.repo).toBeUndefined();
+  });
+
+  it('ignores a malformed --repo value (too many slashes)', () => {
+    const config = loadRunnerConfig(['--repo', 'a/b/c']);
+
+    expect(config.repo).toBeUndefined();
+  });
+
+  it('ignores a malformed --repo value (empty owner or name)', () => {
+    expect(loadRunnerConfig(['--repo', '/members']).repo).toBeUndefined();
+    expect(
+      loadRunnerConfig(['--repo', 'supersprinklesracing/']).repo,
+    ).toBeUndefined();
+  });
+
+  it('falls back to GITHUB_REPOSITORY when --repo is not passed', () => {
+    process.env['GITHUB_REPOSITORY'] = 'supersprinklesracing/members';
+
+    const config = loadRunnerConfig([]);
+
+    expect(config.repo).toEqual({
+      owner: 'supersprinklesracing',
+      name: 'members',
+    });
+  });
+
+  it('ignores a malformed GITHUB_REPOSITORY rather than crashing', () => {
+    process.env['GITHUB_REPOSITORY'] = 'not-a-repo';
+
+    const config = loadRunnerConfig([]);
+
+    expect(config.repo).toBeUndefined();
+  });
+
+  it('prefers the --repo flag over GITHUB_REPOSITORY when both are present', () => {
+    process.env['GITHUB_REPOSITORY'] = 'env-owner/env-repo';
+
+    const config = loadRunnerConfig(['--repo', 'flag-owner/flag-repo']);
+
+    expect(config.repo).toEqual({ owner: 'flag-owner', name: 'flag-repo' });
+  });
+
+  it('omits repo entirely when neither --repo nor GITHUB_REPOSITORY is set', () => {
+    const config = loadRunnerConfig([]);
+
+    expect(config.repo).toBeUndefined();
   });
 });

@@ -182,7 +182,12 @@ export function ActionItemCard({
     if (!replyBody.trim()) return;
     setError(undefined);
     startTransition(async () => {
-      const result = await replyToItem(item.number, replyBody, item.labels);
+      const result = await replyToItem(
+        item.repo,
+        item.number,
+        replyBody,
+        item.labels,
+      );
       if (!result.ok) {
         setError(result.message);
         return;
@@ -205,7 +210,7 @@ export function ActionItemCard({
   const handleMerge = () => {
     setError(undefined);
     startTransition(async () => {
-      const result = await mergePr(item.number);
+      const result = await mergePr(item.repo, item.number);
       if (!result.ok) {
         setError(result.message);
         return;
@@ -416,6 +421,7 @@ export function ActionItemCard({
               item.labels.includes('codex') ||
               item.labels.includes('opencode')) && (
               <RetriggerButton
+                repo={item.repo}
                 issueNumber={item.number}
                 pipeline={pipeline}
                 onError={setError}

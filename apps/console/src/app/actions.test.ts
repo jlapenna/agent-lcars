@@ -79,6 +79,8 @@ vi.mock('@/lib/auth-guards', () => ({
 
 vi.mock('../auth', () => ({ auth: vi.fn() }));
 
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+
 describe('agent-lcars Server Actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -96,7 +98,7 @@ describe('agent-lcars Server Actions', () => {
         new ActionError('Pull Request has merge conflicts', 405),
       );
 
-      await expect(mergePr(42)).resolves.toEqual({
+      await expect(mergePr(DEFAULT_REPO, 42)).resolves.toEqual({
         ok: false,
         message: 'Pull Request has merge conflicts',
       });
@@ -108,7 +110,7 @@ describe('agent-lcars Server Actions', () => {
         new ActionError('Comment body is required', 400),
       );
 
-      await expect(replyToItem(42, '')).resolves.toEqual({
+      await expect(replyToItem(DEFAULT_REPO, 42, '')).resolves.toEqual({
         ok: false,
         message: 'Comment body is required',
       });
@@ -122,7 +124,7 @@ describe('agent-lcars Server Actions', () => {
         ),
       );
 
-      await expect(retriggerIssue(42)).resolves.toEqual({
+      await expect(retriggerIssue(DEFAULT_REPO, 42)).resolves.toEqual({
         ok: false,
         message: 'Issue does not carry the claude label; nothing to retrigger',
       });
@@ -136,7 +138,7 @@ describe('agent-lcars Server Actions', () => {
         }),
       );
 
-      await expect(cancelRun(123)).resolves.toEqual({
+      await expect(cancelRun(DEFAULT_REPO, 123)).resolves.toEqual({
         ok: false,
         message: 'Run already completed',
       });
@@ -145,7 +147,7 @@ describe('agent-lcars Server Actions', () => {
     it('falls back to a generic message for a non-Error, non-GitHub rejection', async () => {
       (approveAndMergePr as Mock).mockRejectedValue('boom');
 
-      await expect(mergePr(42)).resolves.toEqual({
+      await expect(mergePr(DEFAULT_REPO, 42)).resolves.toEqual({
         ok: false,
         message: 'Unexpected error',
       });
@@ -196,7 +198,7 @@ describe('agent-lcars Server Actions', () => {
         new ActionError('Issue not found', 404),
       );
 
-      await expect(closeIssue(2709)).resolves.toEqual({
+      await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toEqual({
         ok: false,
         message: 'Issue not found',
       });
@@ -207,7 +209,7 @@ describe('agent-lcars Server Actions', () => {
         new ActionError('Unexpected error', 500),
       );
 
-      await expect(clearHumanNeeded(2709)).resolves.toEqual({
+      await expect(clearHumanNeeded(DEFAULT_REPO, 2709)).resolves.toEqual({
         ok: false,
         message: 'Unexpected error',
       });
@@ -218,32 +220,43 @@ describe('agent-lcars Server Actions', () => {
     it('mergePr returns { ok: true } and revalidates', async () => {
       (approveAndMergePr as Mock).mockResolvedValue(undefined);
 
-      await expect(mergePr(42)).resolves.toEqual({ ok: true });
+      await expect(mergePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
     it('replyToItem returns { ok: true } and revalidates', async () => {
       (postComment as Mock).mockResolvedValue({ url: 'https://x' });
 
-      await expect(replyToItem(42, 'hi')).resolves.toEqual({ ok: true });
+      await expect(replyToItem(DEFAULT_REPO, 42, 'hi')).resolves.toEqual({
+        ok: true,
+      });
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
     it('replyToItem forwards the item labels to postComment for mention routing', async () => {
       (postComment as Mock).mockResolvedValue({ url: 'https://x' });
 
-      await replyToItem(42, 'hi', ['opencode']);
+      await replyToItem(DEFAULT_REPO, 42, 'hi', ['opencode']);
 
-      expect(postComment).toHaveBeenCalledWith(42, 'hi', ['opencode']);
+      expect(postComment).toHaveBeenCalledWith(DEFAULT_REPO, 42, 'hi', [
+        'opencode',
+      ]);
     });
 
     it('retriggerIssue forwards the pipeline to retriggerIssueLib', async () => {
       (retriggerIssueLib as Mock).mockResolvedValue(undefined);
 
-      await expect(retriggerIssue(42, undefined, 'opencode')).resolves.toEqual({
+      await expect(
+        retriggerIssue(DEFAULT_REPO, 42, undefined, 'opencode'),
+      ).resolves.toEqual({
         ok: true,
       });
-      expect(retriggerIssueLib).toHaveBeenCalledWith(42, undefined, 'opencode');
+      expect(retriggerIssueLib).toHaveBeenCalledWith(
+        DEFAULT_REPO,
+        42,
+        undefined,
+        'opencode',
+      );
     });
 
     it('dispatchUnstickPrs returns { ok: true } and forwards the context', async () => {
@@ -284,16 +297,20 @@ describe('agent-lcars Server Actions', () => {
     it('closeIssue returns { ok: true } and revalidates', async () => {
       (closeIssueLib as Mock).mockResolvedValue(undefined);
 
-      await expect(closeIssue(2709)).resolves.toEqual({ ok: true });
-      expect(closeIssueLib).toHaveBeenCalledWith(2709);
+      await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toEqual({
+        ok: true,
+      });
+      expect(closeIssueLib).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
     it('clearHumanNeeded returns { ok: true } and revalidates', async () => {
       (clearHumanNeededLabel as Mock).mockResolvedValue(undefined);
 
-      await expect(clearHumanNeeded(2709)).resolves.toEqual({ ok: true });
-      expect(clearHumanNeededLabel).toHaveBeenCalledWith(2709);
+      await expect(clearHumanNeeded(DEFAULT_REPO, 2709)).resolves.toEqual({
+        ok: true,
+      });
+      expect(clearHumanNeededLabel).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
   });
@@ -306,7 +323,7 @@ describe('agent-lcars Server Actions', () => {
     });
 
     it('rejects (does not silently return a result)', async () => {
-      await expect(mergePr(42)).rejects.toThrow();
+      await expect(mergePr(DEFAULT_REPO, 42)).rejects.toThrow();
       expect(approveAndMergePr).not.toHaveBeenCalled();
     });
   });

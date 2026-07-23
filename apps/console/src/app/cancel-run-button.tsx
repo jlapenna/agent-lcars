@@ -5,13 +5,16 @@ import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useTransition } from 'react';
 
+import type { WatchedRepo } from '../lib/github-client';
 import { cancelRun } from './actions';
 
 export function CancelRunButton({
+  repo,
   runId,
   label,
   ...buttonProps
 }: {
+  repo: WatchedRepo;
   runId: number;
   /** Short description of the run, shown in the confirm dialog. */
   label: string;
@@ -20,7 +23,7 @@ export function CancelRunButton({
 
   const handleCancel = () => {
     startTransition(async () => {
-      const result = await cancelRun(runId);
+      const result = await cancelRun(repo, runId);
       if (!result.ok) {
         notifications.show({ message: result.message, color: 'red' });
         return;

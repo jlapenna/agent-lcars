@@ -38,6 +38,7 @@ vi.mock('./item-overflow-menu', () => ({
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     kind: 'issue',
+    repo: { owner: 'supersprinklesracing', name: 'members' },
     number: 1,
     title: 'Fix the thing',
     url: 'https://github.com/supersprinklesracing/members/issues/1',

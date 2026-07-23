@@ -16,6 +16,7 @@ import {
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover-artifacts';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
+import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
 import { isProcessAliveForCwd as defaultIsProcessAliveForCwd } from './process-check';
 import { SessionStore } from './store';
 import { WatchRootConfig } from './watch-roots';
@@ -60,6 +61,12 @@ export interface WatcherDaemonOptions {
   runId?: string;
   /** Runner-mode only, see `runId`. */
   issueNumber?: number;
+  /** Runner-mode only, see `runId`. Threaded into `buildSessionDoc`'s
+   * options for `issue-agent` docs, which can't derive repo from a git
+   * remote the way CLI sessions do (see `resolveGitRepo` below) — a CI
+   * container's checkout may not have a real `origin` remote, but the
+   * workflow already knows its own repo, so it's just told here. */
+  repo?: { owner: string; name: string };
   /** Optional Antigravity summary-DB source (#3123 phase 3), alongside the
    * file-based `watchRoots` above — see `config.ts`'s `loadConfig`
    * (default-enabled) and `antigravity-summary-source.ts`. `main.ts`'s host
@@ -73,6 +80,10 @@ export interface WatcherDaemonOptions {
   discover?: (rootPath: string, allowlist: string[]) => string[];
   isProcessAliveForCwd?: (cwd: string) => boolean;
   resolveGitBranch?: (cwd: string) => string | undefined;
+  /** CLI sessions only: per-tick `origin`-remote resolution stamped onto
+   * `summary.repo`, same seam shape as `resolveGitBranch`. Runner-mode
+   * sessions get `repo` from the static option above instead. */
+  resolveGitRepo?: (cwd: string) => { owner: string; name: string } | undefined;
   discoverArtifacts?: (shareDir: string, sessionId: string) => string[];
   /** Test-only injection point, mirrored from the seams above — production
    * callers (main.ts) never set this; the daemon uses the real
@@ -146,6 +157,7 @@ export class WatcherDaemon {
       this.options.isProcessAliveForCwd ?? defaultIsProcessAliveForCwd;
     const resolveGitBranch =
       this.options.resolveGitBranch ?? defaultResolveGitBranch;
+    const resolveGitRepo = this.options.resolveGitRepo ?? defaultResolveGitRepo;
     const discoverArtifacts =
       this.options.discoverArtifacts ?? defaultDiscoverArtifacts;
 
@@ -263,8 +275,13 @@ export class WatcherDaemon {
 
     for (const summary of summaries) {
       const branch = summary.cwd ? resolveGitBranch(summary.cwd) : undefined;
+      const repo = summary.cwd ? resolveGitRepo(summary.cwd) : undefined;
       this.sessions.set(summary.sessionId, {
-        summary: branch ? { ...summary, branch } : summary,
+        summary: {
+          ...summary,
+          ...(branch && { branch }),
+          ...(repo && { repo }),
+        },
         lastHeartbeatAt: now,
       });
     }
@@ -305,6 +322,7 @@ export class WatcherDaemon {
       const doc = buildSessionDoc(summary, liveness, {
         runId: this.options.runId,
         issueNumber: this.options.issueNumber,
+        repo: this.options.repo,
         observedAt,
       });
       const serializedDoc = JSON.stringify(doc);

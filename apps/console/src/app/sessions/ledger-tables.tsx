@@ -13,7 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 
-import { REPO_NAME, REPO_OWNER } from '../../lib/github-client';
+import { primaryWatchedRepo } from '../../lib/github-client';
 import type {
   IssueLedgerRow,
   SessionLedger,
@@ -39,9 +39,14 @@ function IssueCell({
       </Text>
     );
   }
+  // The ledger aggregates across the whole doc set with no per-row repo
+  // attribution (see session-ledger.ts), so this links against the primary
+  // watched repo - correct as long as exactly one repo is configured;
+  // revisit alongside #12's per-repo ledger work if that changes.
+  const repo = primaryWatchedRepo();
   return (
     <Anchor
-      href={`https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/${issueNumber}`}
+      href={`https://github.com/${repo.owner}/${repo.name}/issues/${issueNumber}`}
       target="_blank"
       rel="noreferrer"
       size="sm"

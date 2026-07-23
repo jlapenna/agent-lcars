@@ -71,6 +71,11 @@ export interface SessionSummary {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** Which GitHub repo this session belongs to. `cli` summaries get this
+   * from a per-tick `origin` remote resolution; `issue-agent` summaries
+   * never set it here (they're tagged via `BuildSessionDocOptions.repo`
+   * instead — see `buildSessionDoc`). */
+  repo?: { owner: string; name: string };
   model?: string;
   permissionMode?: string;
   startedAt: string;
@@ -123,6 +128,12 @@ interface BaseSessionDoc {
    * `buildSessionDoc`. Use the {@link sessionAgent} helper to resolve the
    * effective value rather than reading this field directly. */
   agent?: SessionAgent;
+  /** Which GitHub repo this session belongs to. Lives on the shared base
+   * (not `CliSessionDoc`/`IssueAgentSessionDoc` individually) because both
+   * sources populate it, just via different routes — see
+   * {@link SessionSummary.repo} (`cli`) and
+   * {@link BuildSessionDocOptions.repo} (`issue-agent`). */
+  repo?: { owner: string; name: string };
   startedAt: string;
   lastActivityAt: string;
   turns: number;
@@ -190,6 +201,9 @@ export interface BuildSessionDocOptions {
   runId?: string;
   /** `issue-agent` sessions only. */
   issueNumber?: number;
+  /** `issue-agent` sessions only — `cli` sessions get `repo` from
+   * `summary.repo` instead (see {@link SessionSummary.repo}). */
+  repo?: { owner: string; name: string };
   /** `issue-agent` sessions only. */
   transcriptGcsUri?: string;
 }

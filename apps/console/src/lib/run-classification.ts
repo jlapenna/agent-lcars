@@ -5,6 +5,7 @@ import {
 } from '@agent-lcars/telemetry';
 
 import { type AgentRun, RUN_TIMEOUT_MINUTES } from './agent-activity';
+import { repoItemKey } from './github-client';
 
 /**
  * Bridges the console's `AgentRun`/`IssueAgentSessionDoc` types to the pure
@@ -48,18 +49,25 @@ export function classifyAgentRun(
  * anything is wrong. A run whose `issueNumber` is unparseable, or with no
  * joined session doc at all, contributes nothing (graceful degradation -
  * PRD user story 16).
+ *
+ * Keyed by `repoItemKey(run.repo, run.issueNumber)`, not the bare issue
+ * number - issue numbers only disambiguate within one repo, and this must
+ * still distinguish, say, `owner-a/repo#42` from `owner-b/repo#42`.
  */
 export function deriveSilentErrorDiagnoses(
   recentRuns: AgentRun[],
   sessionsByRunId: Map<string, IssueAgentSessionDoc>,
-): Map<number, string> {
-  const diagnoses = new Map<number, string>();
+): Map<string, string> {
+  const diagnoses = new Map<string, string>();
   for (const run of recentRuns) {
     if (run.issueNumber === undefined) continue;
     const session = sessionsByRunId.get(String(run.id));
     const classification = classifyAgentRun(run, session);
     if (classification.status === 'silent-error' && classification.diagnosis) {
-      diagnoses.set(run.issueNumber, classification.diagnosis);
+      diagnoses.set(
+        repoItemKey(run.repo, run.issueNumber),
+        classification.diagnosis,
+      );
     }
   }
   return diagnoses;
