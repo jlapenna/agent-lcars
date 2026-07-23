@@ -385,6 +385,28 @@ describe('getAgentActivity', () => {
 
     expect(listSelfHostedRunnersForRepo).toHaveBeenCalledTimes(2);
     expect(activity.fleet).toEqual({ online: 1, busy: 1 });
+    // Per-repo breakdown is NOT deduped - each repo's own API view still
+    // reports the shared runner, since that's what that repo's endpoint
+    // actually returned.
+    expect(activity.fleetByRepo).toEqual({
+      'org-a/repo-a': { online: 1, busy: 1 },
+      'org-b/repo-b': { online: 1, busy: 1 },
+    });
+  });
+
+  it('omits fleetByRepo entirely when only one repo is watched', async () => {
+    const listWorkflowRuns = vi
+      .fn()
+      .mockResolvedValue({ data: { workflow_runs: [] } });
+    const listSelfHostedRunnersForRepo = vi.fn().mockResolvedValue({
+      data: { runners: [{ id: 1, status: 'online', busy: false, labels: [] }] },
+    });
+    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.fleet).toEqual({ online: 1, busy: 0 });
+    expect(activity.fleetByRepo).toBeUndefined();
   });
 
   it('degrades the fleet section and records a warning instead of throwing', async () => {

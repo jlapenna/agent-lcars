@@ -24,7 +24,7 @@ export function FleetSnapshotBar({
   activity: AgentActivity;
   activeCliSessionCount: number;
 }) {
-  const { liveRuns, fleet } = activity;
+  const { liveRuns, fleet, fleetByRepo } = activity;
   const liveCountByPipeline = (pipeline: AgentPipeline) =>
     liveRuns.filter((run) => run.pipeline === pipeline).length;
 
@@ -57,6 +57,17 @@ export function FleetSnapshotBar({
           </Group>
           <FleetChip fleet={fleet} />
         </Group>
+        {fleetByRepo && (
+          <Group gap="md" wrap="wrap" data-testid="fleet-by-repo">
+            {Object.entries(fleetByRepo).map(([repo, repoFleet]) => (
+              <Text key={repo} size="xs" c="dimmed">
+                {repo}: {repoFleet.online} runner
+                {repoFleet.online === 1 ? '' : 's'}
+                {repoFleet.busy > 0 ? ` (${repoFleet.busy} busy)` : ''}
+              </Text>
+            ))}
+          </Group>
+        )}
         <QueueHealthAlert liveRuns={liveRuns} />
       </Stack>
     </Card>

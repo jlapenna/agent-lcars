@@ -1,6 +1,7 @@
 import { Anchor, Badge, Group, Text } from '@mantine/core';
 
 import type { ActionItem } from '../lib/action-items';
+import { RepoBadge } from './agent-activity-panel';
 
 /**
  * A one-line row for items that need no decision from the maintainer right
@@ -28,6 +29,7 @@ export function CompactItemRow({
       <Badge variant="outline" color="gray" size="xs" style={{ flexShrink: 0 }}>
         {item.kind === 'pr' ? 'PR' : 'Issue'}
       </Badge>
+      <RepoBadge repo={item.repo} />
       <Anchor
         href={item.url}
         target="_blank"

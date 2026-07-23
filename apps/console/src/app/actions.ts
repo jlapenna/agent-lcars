@@ -155,10 +155,15 @@ export async function evictNxCache(capture: boolean): Promise<ActionResult> {
 export async function createQuickTask(
   description: string,
   title?: string,
+  repo?: WatchedRepo,
 ): Promise<QuickTaskResult> {
   await requireAdmin();
   try {
-    const { url, number } = await createQuickTaskLib(description, title);
+    const { url, number } = await createQuickTaskLib(
+      description,
+      title,
+      repo && resolveWatchedRepo(repo),
+    );
     revalidatePath('/');
     return { ok: true, url, number };
   } catch (error) {

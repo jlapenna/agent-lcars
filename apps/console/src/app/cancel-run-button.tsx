@@ -5,7 +5,7 @@ import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useTransition } from 'react';
 
-import type { WatchedRepo } from '../lib/github-client';
+import type { WatchedRepo } from '../lib/watched-repo';
 import { cancelRun } from './actions';
 
 export function CancelRunButton({

@@ -21,6 +21,7 @@ import type {
   MergeableState,
 } from '../lib/action-items';
 import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
+import { repoKey } from '../lib/watched-repo';
 import { mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
@@ -155,10 +156,15 @@ export function ActionItemCard({
   item,
   updatedAtLabel,
   primaryAction,
+  multiRepo = false,
 }: {
   item: ActionItem;
   updatedAtLabel: string;
   primaryAction?: PrimaryAction;
+  /** Whether more than one repo is watched - passed down from a server
+   * component (ActionItemsBoard) rather than resolved here, since this is a
+   * client component and getWatchedRepos() needs server-only env access. */
+  multiRepo?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
@@ -258,6 +264,17 @@ export function ActionItemCard({
             #{item.number} {item.title}
           </Anchor>
           <Group gap={6} wrap="wrap" style={{ flexShrink: 0 }}>
+            {multiRepo && (
+              <Badge
+                variant="outline"
+                color="gray"
+                size="xs"
+                style={{ flexShrink: 0 }}
+                data-testid="repo-badge"
+              >
+                {repoKey(item.repo)}
+              </Badge>
+            )}
             {item.actionTypes.map((type) => (
               <Badge
                 key={type}
