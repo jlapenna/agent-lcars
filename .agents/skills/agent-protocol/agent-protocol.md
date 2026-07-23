@@ -10,15 +10,14 @@ its verify commands, its own hard limits) and points to both from its
 dispatch workflow's prompt — read that file too, and let it take precedence
 wherever the two disagree.
 
-This repo (`agent-lcars`) is both a consumer of this file (see
-`.github/workflows/claude.yml` / `opencode.yml` and
-`.agents/skills/lcars/lcars-protocol.md`) and, being the fleet's own
-operations console, a **reader** of the conventions below: `apps/console`
-parses the takeover command, the `human-needed` label, and the fleet-claim
-assignee straight out of GitHub state produced by agents following this
-protocol. Where this file states something as fixed vocabulary (not a
-per-repo parameter), it is fixed because the console — or another
-cross-repo consumer — depends on the exact string.
+Where this file states something as fixed vocabulary (not a per-repo
+parameter — e.g. the `human-needed` label name, or a resume-script
+filename convention), it is fixed because some cross-repo consumer of the
+GitHub state agents produce (an operations console, a dashboard, another
+automation) depends on the exact string. If you're consuming this file
+from a fleet console repo, see that repo's own delta skill for exactly
+which tool reads what — that detail belongs there, not here, since it
+isn't true for every repo that pulls this file in.
 
 ## 1. Takeover comment — your first action
 
@@ -41,8 +40,9 @@ It is tempting to name this script per agent (`opencode-agent-session.sh`,
 `codex-agent-session.sh`, …) so a repo running several pipelines can tell
 them apart, but the fleet console's takeover-command scanner hard-codes the
 literal substring `claude-agent-session.sh` (see `apps/console/src/lib/
-action-items.ts`'s `TAKEOVER_COMMAND_RE` in this repo) — it does not
-generalize per agent today. A resume command for any other filename will
+action-items.ts`'s `TAKEOVER_COMMAND_RE` in the `jlapenna/agent-lcars`
+repo — not necessarily the repo you're reading this file from) — it does
+not generalize per agent today. A resume command for any other filename will
 never surface in the console UI, regardless of which agent posted it. Until
 that regex is generalized, name the script `tools/claude-agent-session.sh`
 relative to your repo root if you want console pickup, even for a

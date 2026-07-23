@@ -294,26 +294,34 @@ jobs:
       #   - the human-needed label is present (the sanctioned blocked/
       #     clarifying-question ending - the prompt always pairs questions
       #     with the label), or
-      #   - on @claude-reply-to-a-PR runs only: a bot comment or any update
-      #     on that PR after start (replying to a review question IS the
-      #     deliverable there).
+      #   - on any @claude-reply run (PR thread or the tracking issue
+      #     itself): a bot comment on the anchor after start (the
+      #     issue-reply prompt explicitly sanctions "PR update or comment"
+      #     as a valid ending for either anchor type, not just PRs).
       - name: Verify a deliverable exists
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
           STARTED_AT: ${{ steps.start.outputs.ts }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-          IS_PR_THREAD: ${{ github.event.issue.pull_request != null }}
+          IS_COMMENT_REPLY: ${{ github.event_name == 'issue_comment' }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
           found=""
 
-          # (a) PR referencing #NUM created/updated since start.
-          prs=$(gh pr list --repo "$REPO" --state all --limit 50 \
+          # (a) PR referencing #NUM created/updated since start. The
+          # `test("#$NUM([^0-9]|\$)")` boundary (not a bare `contains`) is
+          # load-bearing: an unanchored substring match on "#4" also hits
+          # "#42"/"#400" in any PR title/body, defeating this whole check
+          # in any repo with enough PR volume for adjacent issue numbers to
+          # cross-reference each other. -S "sort:updated-desc" so a push to
+          # an OLDER existing PR isn't missed once >50 PRs exist (gh pr
+          # list's default sort is by creation date, not update date).
+          prs=$(gh pr list --repo "$REPO" --state all --limit 50 -S "sort:updated-desc" \
             --json number,title,body,updatedAt \
             --jq "[.[] | select(.updatedAt >= \"$STARTED_AT\")
-                       | select((.title + \" \" + (.body // \"\")) | contains(\"#$NUM\"))]
+                       | select((.title + \" \" + (.body // \"\")) | test(\"#$NUM([^0-9]|\$)\"))]
                   | length" 2>/dev/null || echo 0)
           if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM created/updated since $STARTED_AT"; fi
 
@@ -334,12 +342,13 @@ jobs:
             if [ "$labeled" = "true" ]; then found="human-needed label applied on #$NUM"; fi
           fi
 
-          # (d) PR-thread runs: a bot comment on the anchor after start
-          # counts, since replying IS the deliverable on that path.
-          if [ -z "$found" ] && [ "$IS_PR_THREAD" = "true" ]; then
+          # (d) @claude-reply runs (PR thread or tracking issue): a bot
+          # comment on the anchor after start counts, since replying IS a
+          # sanctioned deliverable on this path per the prompt.
+          if [ -z "$found" ] && [ "$IS_COMMENT_REPLY" = "true" ]; then
             botcomments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT" \
               --jq '[.[] | select(.user.type == "Bot")] | length' 2>/dev/null || echo 0)
-            if [ "${botcomments:-0}" -gt 0 ]; then found="bot reply posted on PR #$NUM"; fi
+            if [ "${botcomments:-0}" -gt 0 ]; then found="bot reply posted on #$NUM"; fi
           fi
 
           if [ -n "$found" ]; then

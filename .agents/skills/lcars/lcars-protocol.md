@@ -6,6 +6,15 @@ first; everything here just fills in the repo-specific parameters it leaves
 open, plus a few hard limits unique to this repo. Where the two disagree,
 this file wins for this repo.
 
+This repo is unusual among consumers of the shared file: it's both a
+consumer (see `.github/workflows/claude.yml` / `opencode.yml`) and, being
+the fleet's own operations console, a **reader** of the conventions it
+defines — `apps/console` parses the takeover command, the `human-needed`
+label, and the fleet-claim assignee straight out of GitHub state produced
+by agents following that protocol. That's why several of the "fixed
+vocabulary" strings the shared file calls out matter so much here
+specifically: this repo's own code is what depends on them.
+
 ## Identity
 
 - **Fleet-claim identity: `jclaw-bot`.** This is the owner's identity for
