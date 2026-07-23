@@ -170,6 +170,19 @@ resource "google_service_account_iam_member" "members_writer_impersonation" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/supersprinklesracing"
 }
 
+# This repo's own claude.yml now ships its issue-agent sessions' telemetry
+# too (mirroring supersprinklesracing/members's ride-along wiring) - the WIF
+# provider's attribute_condition above already trusts
+# ${var.github_owner}/${var.github_repository} (this repo) for OIDC token
+# issuance, but that alone doesn't grant impersonation of any specific SA;
+# this is the matching grant on telemetry_writer, parallel to
+# members_writer_impersonation above.
+resource "google_service_account_iam_member" "agent_lcars_writer_impersonation" {
+  service_account_id = google_service_account.telemetry_writer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
 resource "google_secret_manager_secret" "runtime" {
   for_each  = toset(["AUTH_SECRET", "AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET", "AGENT_LCARS_GITHUB_TOKEN"])
   secret_id = each.value
