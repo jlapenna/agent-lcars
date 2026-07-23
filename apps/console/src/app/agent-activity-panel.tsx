@@ -256,7 +256,11 @@ export function LiveRunRow({
           >
             View run ↗
           </Anchor>
-          <CancelRunButton runId={run.id} label={run.displayTitle} />
+          <CancelRunButton
+            repo={run.repo}
+            runId={run.id}
+            label={run.displayTitle}
+          />
         </Group>
       </Group>
       {run.status === 'running' && (

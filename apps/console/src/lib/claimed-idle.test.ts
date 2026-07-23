@@ -11,6 +11,7 @@ import type { CliSession } from './cli-sessions';
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     kind: 'issue',
+    repo: { owner: 'supersprinklesracing', name: 'members' },
     number: 42,
     title: 'Fix the thing',
     url: 'https://github.com/supersprinklesracing/members/issues/42',

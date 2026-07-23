@@ -25,24 +25,29 @@ export interface RunnerConfig extends Pick<
   /** Anchor issue/PR number — tags every doc this run ships as
    * `issueNumber`. */
   issueNumber?: number;
+  /** Watched repo — `--repo owner/name`, falling back to
+   * `GITHUB_REPOSITORY` (see `loadRunnerConfig`) when unset. Tags every doc
+   * this run ships as `repo`. */
+  repo?: { owner: string; name: string };
 }
 
 interface RunnerFlags {
   runId?: string;
   issueNumber?: string;
   projectsDir?: string;
+  repo?: string;
 }
 
 /**
- * Minimal `--flag value` parser for the ride-along CLI's own 3 flags
- * (`--run-id`, `--issue-number`, `--projects-dir` — see claude.yml's "Start
- * telemetry ride-along" step). Deliberately hand-rolled rather than a
- * dependency like yargs: pulling in a full CLI-parsing library would bloat
- * the single-file bundle (`bundle` target in project.json) for a command
- * with exactly 3 flags. Unknown flags are ignored, not rejected — fail-soft
- * applies to argument parsing too, matching this app's `runner` mode
- * requirement that a config problem never crashes the process (see
- * main.ts's outer try/catch).
+ * Minimal `--flag value` parser for the ride-along CLI's own 4 flags
+ * (`--run-id`, `--issue-number`, `--projects-dir`, `--repo` — see
+ * claude.yml's "Start telemetry ride-along" step). Deliberately hand-rolled
+ * rather than a dependency like yargs: pulling in a full CLI-parsing
+ * library would bloat the single-file bundle (`bundle` target in
+ * project.json) for a command with exactly 4 flags. Unknown flags are
+ * ignored, not rejected — fail-soft applies to argument parsing too,
+ * matching this app's `runner` mode requirement that a config problem
+ * never crashes the process (see main.ts's outer try/catch).
  */
 function parseRunnerFlags(argv: string[]): RunnerFlags {
   const flags: RunnerFlags = {};
@@ -61,9 +66,31 @@ function parseRunnerFlags(argv: string[]): RunnerFlags {
     } else if (arg === '--projects-dir') {
       flags.projectsDir = next;
       i++;
+    } else if (arg === '--repo') {
+      flags.repo = next;
+      i++;
     }
   }
   return flags;
+}
+
+/**
+ * Parses an `owner/name`-shaped value (a `--repo` flag or the
+ * `GITHUB_REPOSITORY` env var), requiring exactly one `/` with both halves
+ * non-empty. Malformed input is ignored (`undefined`) rather than thrown,
+ * consistent with this file's fail-soft parsing of `--issue-number` above.
+ */
+function parseOwnerRepo(
+  value: string | undefined,
+): { owner: string; name: string } | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parts = value.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return undefined;
+  }
+  return { owner: parts[0], name: parts[1] };
 }
 
 /**
@@ -80,6 +107,12 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   const flags = parseRunnerFlags(argv);
   const issueNumber =
     flags.issueNumber !== undefined ? Number(flags.issueNumber) : undefined;
+  // GITHUB_REPOSITORY (`owner/repo`) is injected by GitHub Actions into
+  // every job/step automatically, so this fallback needs no workflow YAML
+  // changes to start populating `repo` for issue-agent sessions.
+  const repo =
+    parseOwnerRepo(flags.repo) ??
+    parseOwnerRepo(process.env['GITHUB_REPOSITORY']);
 
   return {
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
@@ -92,5 +125,6 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
     ...(flags.runId !== undefined && { runId: flags.runId }),
     ...(issueNumber !== undefined &&
       !Number.isNaN(issueNumber) && { issueNumber }),
+    ...(repo && { repo }),
   };
 }

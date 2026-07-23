@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import { REPO_NAME, REPO_OWNER } from '../../../lib/github-client';
+import { primaryWatchedRepo } from '../../../lib/github-client';
 import { sessionDurationSeconds } from '../../../lib/session-archive';
 import {
   AgentBadge,
@@ -78,6 +78,9 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
   );
   const cliHost = doc.source === 'cli' ? doc.host : undefined;
   const cliArtifacts = doc.source === 'cli' ? (doc.artifacts ?? []) : [];
+  // Falls back to the primary watched repo for docs written before Phase
+  // 0's `repo` field existed.
+  const repo = doc.repo ?? primaryWatchedRepo();
   const hasDeliverables =
     doc.deliverables.prNumbers.length > 0 ||
     doc.deliverables.commitShas.length > 0 ||
@@ -137,7 +140,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         {doc.source === 'issue-agent' && doc.runId && (
           <Field label="Run">
             <Anchor
-              href={`https://github.com/${REPO_OWNER}/${REPO_NAME}/actions/runs/${doc.runId}`}
+              href={`https://github.com/${repo.owner}/${repo.name}/actions/runs/${doc.runId}`}
               target="_blank"
               rel="noreferrer"
               size="sm"
@@ -149,7 +152,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         {doc.source === 'issue-agent' && doc.issueNumber !== undefined && (
           <Field label="Issue">
             <Anchor
-              href={`https://github.com/${REPO_OWNER}/${REPO_NAME}/issues/${doc.issueNumber}`}
+              href={`https://github.com/${repo.owner}/${repo.name}/issues/${doc.issueNumber}`}
               target="_blank"
               rel="noreferrer"
               size="sm"
@@ -172,7 +175,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
             {doc.deliverables.prNumbers.map((number) => (
               <Anchor
                 key={number}
-                href={`https://github.com/${REPO_OWNER}/${REPO_NAME}/pull/${number}`}
+                href={`https://github.com/${repo.owner}/${repo.name}/pull/${number}`}
                 target="_blank"
                 rel="noreferrer"
                 size="sm"

@@ -87,6 +87,7 @@ function renderPanel(
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
+    repo: { owner: 'supersprinklesracing', name: 'members' },
     pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',

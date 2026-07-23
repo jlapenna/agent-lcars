@@ -6,13 +6,18 @@ import {
   isDeployWaitOnly,
   isHandedBack,
 } from './action-items';
-import { getGithubClient } from './github-client';
+import { getGithubClient, getWatchedRepos } from './github-client';
 
-vi.mock('./github-client', () => ({
-  getGithubClient: vi.fn(),
-  REPO_OWNER: 'supersprinklesracing',
-  REPO_NAME: 'members',
-}));
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+
+vi.mock('./github-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./github-client')>();
+  return {
+    ...actual,
+    getGithubClient: vi.fn(),
+    getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
+  };
+});
 
 interface FakeSearchItem {
   number: number;
@@ -57,6 +62,7 @@ describe('isDeployWaitOnly', () => {
     expect(
       isDeployWaitOnly({
         kind: 'issue',
+        repo: DEFAULT_REPO,
         number: 1,
         title: 't',
         url: 'u',
@@ -69,6 +75,7 @@ describe('isDeployWaitOnly', () => {
     expect(
       isDeployWaitOnly({
         kind: 'issue',
+        repo: DEFAULT_REPO,
         number: 1,
         title: 't',
         url: 'u',
@@ -81,6 +88,7 @@ describe('isDeployWaitOnly', () => {
     expect(
       isDeployWaitOnly({
         kind: 'issue',
+        repo: DEFAULT_REPO,
         number: 1,
         title: 't',
         url: 'u',
@@ -97,6 +105,7 @@ describe('isHandedBack', () => {
   function makeActionItem(overrides: Partial<ActionItem> = {}): ActionItem {
     return {
       kind: 'issue',
+      repo: DEFAULT_REPO,
       number: 1,
       title: 't',
       url: 'u',
@@ -400,7 +409,9 @@ describe('getActionItems', () => {
 
     expect(result.items.map((i) => i.number)).toEqual([10]);
     expect(
-      result.warnings.some((w) => w.includes('Failed to classify #20')),
+      result.warnings.some((w) =>
+        w.includes('Failed to classify supersprinklesracing/members#20'),
+      ),
     ).toBe(true);
   });
 
@@ -624,5 +635,53 @@ describe('getActionItems', () => {
 
     expect(result.items.map((i) => i.number)).toEqual([51]);
     expect(result.items[0].actionTypes).not.toContain('human-needed');
+  });
+
+  // Phase-1 exit criterion (see the multi-repo plan): composite-key
+  // correctness can't be proven by any test configured with a single repo -
+  // a bug that drops `repo` from a dedupe/join key silently cross-
+  // contaminates data once a second repo is real. Two watched repos both
+  // surfacing issue #42 must survive as two distinct items, not collapse
+  // into one.
+  it('does not conflate identical issue numbers across two different watched repos', async () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    (getWatchedRepos as Mock).mockReturnValueOnce([repoA, repoB]);
+
+    const ISSUE_Q = (q: string) =>
+      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
+    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
+      if (!ISSUE_Q(q)) return emptySearchPage();
+      if (q.includes('repo:org-a/repo-a')) {
+        return Promise.resolve({
+          data: {
+            total_count: 1,
+            items: [makeItem(42, { title: 'Repo A issue 42' })],
+          },
+        });
+      }
+      if (q.includes('repo:org-b/repo-b')) {
+        return Promise.resolve({
+          data: {
+            total_count: 1,
+            items: [makeItem(42, { title: 'Repo B issue 42' })],
+          },
+        });
+      }
+      return emptySearchPage();
+    });
+    setupOctokit({ issuesAndPullRequests });
+
+    const result = await getActionItems();
+
+    const numbered42 = result.items.filter((item) => item.number === 42);
+    expect(numbered42).toHaveLength(2);
+    expect(numbered42.map((item) => item.title).sort()).toEqual([
+      'Repo A issue 42',
+      'Repo B issue 42',
+    ]);
+    expect(numbered42.map((item) => item.repo)).toEqual(
+      expect.arrayContaining([repoA, repoB]),
+    );
   });
 });

@@ -241,103 +241,13 @@ importers:
         specifier: ^4.1.4
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(jsdom@26.1.0)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(less@4.5.1)(sass-embedded@1.99.0)(sass@1.99.0)(sugarss@5.0.1(postcss@8.5.20))(terser@5.48.0)(tsx@4.23.1)(yaml@2.9.0))
 
-  apps/cli: {}
-
   apps/console: {}
 
   apps/console-e2e: {}
 
-  libs/app: {}
-
-  libs/assistant: {}
-
-  libs/auth: {}
-
-  libs/authjs-paths: {}
-
-  libs/chores-members: {}
-
-  libs/chores-primes: {}
-
-  libs/chores-schema: {}
-
-  libs/chores-shared: {}
-
-  libs/cloudevents: {}
-
-  libs/comments: {}
-
-  libs/competitions: {}
-
   libs/env-vars: {}
 
-  libs/export-sheets: {}
-
-  libs/feed-events: {}
-
-  libs/firebase-server: {}
-
-  libs/firestore: {}
-
-  libs/firestore-rate-limit: {}
-
-  libs/follows: {}
-
-  libs/ghost: {}
-
-  libs/google: {}
-
-  libs/instagram: {}
-
-  libs/invites: {}
-
-  libs/jsx: {}
-
-  libs/kudos: {}
-
   libs/logging:
-    dependencies:
-      '@repo/env':
-        specifier: workspace:*
-        version: link:../env-vars
-
-  libs/moderation: {}
-
-  libs/onboarding: {}
-
-  libs/preems: {}
-
-  libs/provider-service: {}
-
-  libs/qbp: {}
-
-  libs/race-events: {}
-
-  libs/racer-claims: {}
-
-  libs/races: {}
-
-  libs/rag: {}
-
-  libs/results: {}
-
-  libs/rider-stats: {}
-
-  libs/riders: {}
-
-  libs/secrets: {}
-
-  libs/service-auth: {}
-
-  libs/slack: {}
-
-  libs/slack-types: {}
-
-  libs/squareup: {}
-
-  libs/strava: {}
-
-  libs/stripe:
     dependencies:
       '@repo/env':
         specifier: workspace:*
@@ -352,8 +262,6 @@ importers:
         specifier: workspace:*
         version: link:../util-server
 
-  libs/test-utils: {}
-
   libs/util: {}
 
   libs/util-server:
@@ -367,8 +275,6 @@ importers:
       '@repo/util':
         specifier: workspace:*
         version: link:../util
-
-  libs/youtube: {}
 
 packages:
 

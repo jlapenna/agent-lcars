@@ -22,7 +22,7 @@ export function ItemOverflowMenu({ item }: { item: ActionItem }) {
 
   const handleClose = () => {
     startTransition(async () => {
-      const result = await closeIssue(item.number);
+      const result = await closeIssue(item.repo, item.number);
       if (!result.ok) {
         notifications.show({ message: result.message, color: 'red' });
         return;
@@ -50,7 +50,7 @@ export function ItemOverflowMenu({ item }: { item: ActionItem }) {
 
   const handleClearHumanNeeded = () => {
     startTransition(async () => {
-      const result = await clearHumanNeeded(item.number);
+      const result = await clearHumanNeeded(item.repo, item.number);
       if (!result.ok) {
         notifications.show({ message: result.message, color: 'red' });
         return;

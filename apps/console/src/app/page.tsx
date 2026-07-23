@@ -10,6 +10,7 @@ import {
 } from '../lib/action-items';
 import { getAgentActivity } from '../lib/agent-activity';
 import { getCliSessions } from '../lib/cli-sessions';
+import { repoItemKey } from '../lib/github-client';
 import { derivePrimaryAction } from '../lib/primary-action';
 import {
   deriveSilentErrorDiagnoses,
@@ -79,7 +80,9 @@ export default async function Index() {
     runnerSessionsByRunId,
   );
   const items: ActionItem[] = rawItems.map((item) => {
-    const diagnosis = silentErrorByIssue.get(item.number);
+    const diagnosis = silentErrorByIssue.get(
+      repoItemKey(item.repo, item.number),
+    );
     if (!diagnosis) return item;
     return {
       ...item,
@@ -100,9 +103,10 @@ export default async function Index() {
   const liveRunByNumber = new Map(
     activity.liveRuns
       .filter((run) => run.issueNumber !== undefined)
-      .map((run) => [run.issueNumber as number, run]),
+      .map((run) => [repoItemKey(run.repo, run.issueNumber as number), run]),
   );
-  const liveRunFor = (item: ActionItem) => liveRunByNumber.get(item.number);
+  const liveRunFor = (item: ActionItem) =>
+    liveRunByNumber.get(repoItemKey(item.repo, item.number));
 
   // The reverse join: live runs annotated with the item they're working, so
   // the In Flight panel can link the issue instead of the raw run title.

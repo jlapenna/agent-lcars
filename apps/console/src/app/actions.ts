@@ -21,6 +21,7 @@ import {
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
+import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
 
 // LAN preview goes through the shared test-session adapter inside auth()
@@ -70,13 +71,14 @@ export async function getActionItems(): Promise<ActionItemsResult> {
 }
 
 export async function replyToItem(
+  repo: WatchedRepo,
   number: number,
   body: string,
   labels: string[] = [],
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await postComment(number, body, labels);
+    await postComment(resolveWatchedRepo(repo), number, body, labels);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -84,10 +86,13 @@ export async function replyToItem(
   }
 }
 
-export async function mergePr(number: number): Promise<ActionResult> {
+export async function mergePr(
+  repo: WatchedRepo,
+  number: number,
+): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await approveAndMergePr(number);
+    await approveAndMergePr(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -96,13 +101,14 @@ export async function mergePr(number: number): Promise<ActionResult> {
 }
 
 export async function retriggerIssue(
+  repo: WatchedRepo,
   number: number,
   note?: string,
   pipeline?: Pipeline,
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await retriggerIssueLib(number, note, pipeline);
+    await retriggerIssueLib(resolveWatchedRepo(repo), number, note, pipeline);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -110,10 +116,13 @@ export async function retriggerIssue(
   }
 }
 
-export async function cancelRun(runId: number): Promise<ActionResult> {
+export async function cancelRun(
+  repo: WatchedRepo,
+  runId: number,
+): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await cancelWorkflowRunLib(runId);
+    await cancelWorkflowRunLib(resolveWatchedRepo(repo), runId);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -157,10 +166,13 @@ export async function createQuickTask(
   }
 }
 
-export async function closeIssue(number: number): Promise<ActionResult> {
+export async function closeIssue(
+  repo: WatchedRepo,
+  number: number,
+): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await closeIssueLib(number);
+    await closeIssueLib(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {
@@ -168,10 +180,13 @@ export async function closeIssue(number: number): Promise<ActionResult> {
   }
 }
 
-export async function clearHumanNeeded(number: number): Promise<ActionResult> {
+export async function clearHumanNeeded(
+  repo: WatchedRepo,
+  number: number,
+): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await clearHumanNeededLabel(number);
+    await clearHumanNeededLabel(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {

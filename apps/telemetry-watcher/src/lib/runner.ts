@@ -27,6 +27,7 @@ export interface StartRideAlongOptions {
   statFile?: (filePath: string) => { mtimeMs: number; size: number };
   isProcessAliveForCwd?: (cwd: string) => boolean;
   resolveGitBranch?: (cwd: string) => string | undefined;
+  resolveGitRepo?: (cwd: string) => { owner: string; name: string } | undefined;
   now?: () => string;
   /** Test-only: skip the initial `daemon.start()` call so a test can drive
    * `daemon.tick()` explicitly instead of racing the fire-and-forget first
@@ -84,11 +85,13 @@ export function startRideAlong(options: StartRideAlongOptions): WatcherDaemon {
     shareDir: undefined,
     runId: config.runId,
     issueNumber: config.issueNumber,
+    repo: config.repo,
     discover: options.discover,
     readFile: options.readFile,
     statFile: options.statFile,
     isProcessAliveForCwd: options.isProcessAliveForCwd,
     resolveGitBranch: options.resolveGitBranch,
+    resolveGitRepo: options.resolveGitRepo,
     now: options.now,
   });
 

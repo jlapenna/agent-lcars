@@ -28,9 +28,12 @@ vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }));
 
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     kind: 'issue',
+    repo: DEFAULT_REPO,
     number: 42,
     title: 'Stale tracker',
     url: 'https://github.com/supersprinklesracing/members/issues/42',
@@ -88,7 +91,9 @@ describe('ItemOverflowMenu', () => {
 
     fireEvent.click(screen.getByText('Close issue'));
 
-    await waitFor(() => expect(closeIssue).toHaveBeenCalledWith(42));
+    await waitFor(() =>
+      expect(closeIssue).toHaveBeenCalledWith(DEFAULT_REPO, 42),
+    );
     expect(modals.openConfirmModal).toHaveBeenCalled();
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({ message: '#42 closed', color: 'green' }),
@@ -119,7 +124,9 @@ describe('ItemOverflowMenu', () => {
 
     fireEvent.click(screen.getByText('Clear needs-human'));
 
-    await waitFor(() => expect(clearHumanNeeded).toHaveBeenCalledWith(42));
+    await waitFor(() =>
+      expect(clearHumanNeeded).toHaveBeenCalledWith(DEFAULT_REPO, 42),
+    );
     expect(modals.openConfirmModal).not.toHaveBeenCalled();
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({

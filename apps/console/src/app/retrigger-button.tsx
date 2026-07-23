@@ -4,6 +4,7 @@ import { Button, Popover, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
+import type { WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
 import { retriggerIssue } from './actions';
 
@@ -15,6 +16,7 @@ import { retriggerIssue } from './actions';
  * to `claude` for existing call sites that haven't been made pipeline-aware.
  */
 export function RetriggerButton({
+  repo,
   issueNumber,
   pipeline = 'claude',
   disabled,
@@ -22,6 +24,7 @@ export function RetriggerButton({
   onError,
   size = 'compact-sm',
 }: {
+  repo: WatchedRepo;
   issueNumber: number;
   pipeline?: Pipeline;
   disabled?: boolean;
@@ -37,6 +40,7 @@ export function RetriggerButton({
     setOpened(false);
     startTransition(async () => {
       const result = await retriggerIssue(
+        repo,
         issueNumber,
         note.trim() || undefined,
         pipeline,

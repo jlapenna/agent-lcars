@@ -13,11 +13,16 @@ import {
 } from './backend-actions';
 import { getGithubClient } from './github-client';
 
-vi.mock('./github-client', () => ({
-  getGithubClient: vi.fn(),
-  REPO_OWNER: 'supersprinklesracing',
-  REPO_NAME: 'members',
-}));
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+
+vi.mock('./github-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./github-client')>();
+  return {
+    ...actual,
+    getGithubClient: vi.fn(),
+    getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
+  };
+});
 
 describe('closeIssue', () => {
   it('closes the given issue on the console repo', async () => {
@@ -26,7 +31,7 @@ describe('closeIssue', () => {
       rest: { issues: { update } },
     });
 
-    await closeIssue(2709);
+    await closeIssue(DEFAULT_REPO, 2709);
 
     expect(update).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
@@ -49,7 +54,7 @@ describe('closeIssue', () => {
       },
     });
 
-    await expect(closeIssue(2709)).rejects.toThrow('Not Found');
+    await expect(closeIssue(DEFAULT_REPO, 2709)).rejects.toThrow('Not Found');
   });
 });
 
@@ -60,7 +65,7 @@ describe('clearHumanNeededLabel', () => {
       rest: { issues: { removeLabel } },
     });
 
-    await clearHumanNeededLabel(2709);
+    await clearHumanNeededLabel(DEFAULT_REPO, 2709);
 
     expect(removeLabel).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
@@ -83,7 +88,9 @@ describe('clearHumanNeededLabel', () => {
       },
     });
 
-    await expect(clearHumanNeededLabel(2709)).resolves.toBeUndefined();
+    await expect(
+      clearHumanNeededLabel(DEFAULT_REPO, 2709),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -102,7 +109,7 @@ describe('postComment (mention routing)', () => {
   it('rejects a blank body without calling GitHub', async () => {
     const { createComment } = mockOctokit();
 
-    await expect(postComment(2709, '   ')).rejects.toThrow(
+    await expect(postComment(DEFAULT_REPO, 2709, '   ')).rejects.toThrow(
       'Comment body is required',
     );
     expect(createComment).not.toHaveBeenCalled();
@@ -111,7 +118,7 @@ describe('postComment (mention routing)', () => {
   it('appends @claude by default when no labels are given', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(2709, 'Use option 2');
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2');
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2\n\n@claude' }),
@@ -121,7 +128,7 @@ describe('postComment (mention routing)', () => {
   it('appends @claude for an item carrying only the claude label', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(2709, 'Use option 2', ['claude']);
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', ['claude']);
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2\n\n@claude' }),
@@ -131,7 +138,7 @@ describe('postComment (mention routing)', () => {
   it('appends /oc for an item carrying only the opencode label', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(2709, 'Use option 2', ['opencode']);
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', ['opencode']);
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2\n\n/oc' }),
@@ -141,7 +148,7 @@ describe('postComment (mention routing)', () => {
   it('appends /codex for an item carrying the codex label', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(2709, 'Use option 2', ['codex']);
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', ['codex']);
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2\n\n/codex' }),
@@ -151,7 +158,10 @@ describe('postComment (mention routing)', () => {
   it('appends @claude (not /oc) when both labels are present - never dispatch two pipelines from one reply', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(2709, 'Use option 2', ['claude', 'opencode']);
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', [
+      'claude',
+      'opencode',
+    ]);
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2\n\n@claude' }),
@@ -161,7 +171,7 @@ describe('postComment (mention routing)', () => {
   it('does not double-append @claude when the body already contains it', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(2709, 'Ping @claude please', ['claude']);
+    await postComment(DEFAULT_REPO, 2709, 'Ping @claude please', ['claude']);
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Ping @claude please' }),
@@ -171,7 +181,9 @@ describe('postComment (mention routing)', () => {
   it('does not double-append /oc when the body already contains /opencode', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(2709, 'Please /opencode this', ['opencode']);
+    await postComment(DEFAULT_REPO, 2709, 'Please /opencode this', [
+      'opencode',
+    ]);
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Please /opencode this' }),
@@ -181,7 +193,7 @@ describe('postComment (mention routing)', () => {
   it('clears the human-needed label after posting', async () => {
     const { removeLabel } = mockOctokit();
 
-    await postComment(2709, 'hi', ['claude']);
+    await postComment(DEFAULT_REPO, 2709, 'hi', ['claude']);
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'human-needed' }),
@@ -196,7 +208,7 @@ describe('cancelWorkflowRun', () => {
       rest: { actions: { cancelWorkflowRun: cancelWorkflowRun_ } },
     });
 
-    await cancelWorkflowRun(12345);
+    await cancelWorkflowRun(DEFAULT_REPO, 12345);
 
     expect(cancelWorkflowRun_).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
@@ -218,7 +230,9 @@ describe('cancelWorkflowRun', () => {
       },
     });
 
-    await expect(cancelWorkflowRun(12345)).rejects.toThrow('Conflict');
+    await expect(cancelWorkflowRun(DEFAULT_REPO, 12345)).rejects.toThrow(
+      'Conflict',
+    );
   });
 });
 
@@ -288,7 +302,7 @@ describe('retriggerIssue (pipeline routing)', () => {
   it('defaults to cycling the claude label', async () => {
     const { removeLabel, addLabels } = mockOctokit(['claude']);
 
-    await retriggerIssue(2709);
+    await retriggerIssue(DEFAULT_REPO, 2709);
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'claude' }),
@@ -301,7 +315,7 @@ describe('retriggerIssue (pipeline routing)', () => {
   it('cycles the opencode label for the opencode pipeline', async () => {
     const { removeLabel, addLabels } = mockOctokit(['opencode']);
 
-    await retriggerIssue(2709, undefined, 'opencode');
+    await retriggerIssue(DEFAULT_REPO, 2709, undefined, 'opencode');
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'opencode' }),
@@ -314,7 +328,9 @@ describe('retriggerIssue (pipeline routing)', () => {
   it('400s when the issue lacks the target pipeline label', async () => {
     mockOctokit(['claude']);
 
-    await expect(retriggerIssue(2709, undefined, 'opencode')).rejects.toThrow(
+    await expect(
+      retriggerIssue(DEFAULT_REPO, 2709, undefined, 'opencode'),
+    ).rejects.toThrow(
       'Issue does not carry the opencode label; nothing to retrigger',
     );
   });
@@ -322,7 +338,12 @@ describe('retriggerIssue (pipeline routing)', () => {
   it('posts the steering note and still cycles the label when the note carries no mention', async () => {
     const { createComment, removeLabel, addLabels } = mockOctokit(['opencode']);
 
-    await retriggerIssue(2709, 'try a different approach', 'opencode');
+    await retriggerIssue(
+      DEFAULT_REPO,
+      2709,
+      'try a different approach',
+      'opencode',
+    );
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'try a different approach' }),
@@ -334,7 +355,12 @@ describe('retriggerIssue (pipeline routing)', () => {
   it('skips the label cycle when the note already carries the pipeline mention (would double-dispatch)', async () => {
     const { createComment, removeLabel, addLabels } = mockOctokit(['opencode']);
 
-    await retriggerIssue(2709, 'please /oc retry this', 'opencode');
+    await retriggerIssue(
+      DEFAULT_REPO,
+      2709,
+      'please /oc retry this',
+      'opencode',
+    );
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'please /oc retry this' }),
@@ -351,7 +377,7 @@ describe('retriggerIssue (pipeline routing)', () => {
   it('a claude-pipeline note carrying /oc does not trigger the claude early-return', async () => {
     const { removeLabel, addLabels } = mockOctokit(['claude']);
 
-    await retriggerIssue(2709, 'please /oc retry this', 'claude');
+    await retriggerIssue(DEFAULT_REPO, 2709, 'please /oc retry this', 'claude');
 
     // /oc means nothing to claude.yml's trigger - the label still cycles.
     expect(removeLabel).toHaveBeenCalled();

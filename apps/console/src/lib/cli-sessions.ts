@@ -9,7 +9,12 @@ import {
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
-import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
+import {
+  getGithubClient,
+  primaryWatchedRepo,
+  repoKey,
+  type WatchedRepo,
+} from './github-client';
 
 /** Sessions with no activity in this window don't render at all - the
  * telemetry collection keeps one doc per session forever, and the dashboard
@@ -82,14 +87,17 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
 }
 
 /** The session's own transcript already names the PRs it touched - use that
- * before ever asking GitHub. The newest PR number wins. */
+ * before ever asking GitHub. The newest PR number wins. Falls back to the
+ * primary watched repo for docs written before Phase 0's `repo` field
+ * existed. */
 function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
   const prNumbers = doc.deliverables?.prNumbers;
   if (!prNumbers || prNumbers.length === 0) return undefined;
   const number = prNumbers[prNumbers.length - 1];
+  const repo = doc.repo ?? primaryWatchedRepo();
   return {
     number,
-    url: `https://github.com/${REPO_OWNER}/${REPO_NAME}/pull/${number}`,
+    url: `https://github.com/${repo.owner}/${repo.name}/pull/${number}`,
   };
 }
 
@@ -100,11 +108,12 @@ function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
  * PR after the session doc was last written.
  */
 export async function joinBranchToPr(
+  repo: WatchedRepo,
   branch: string,
 ): Promise<JoinedPr | undefined> {
   const octokit = getGithubClient();
   const { data } = await octokit.rest.search.issuesAndPullRequests({
-    q: `repo:${REPO_OWNER}/${REPO_NAME} is:pr is:open head:${branch}`,
+    q: `repo:${repoKey(repo)} is:pr is:open head:${branch}`,
     per_page: 1,
   });
   const pr = data.items[0];
@@ -177,22 +186,31 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   ].slice(0, MAX_SESSIONS);
 
   const warnings: string[] = [];
-  // Dedupe live searches by branch: resumed sessions share a worktree
+  // Dedupe live searches by repo+branch: resumed sessions share a worktree
   // branch, and one lookup (and, on failure, one warning) answers for all
-  // of them.
+  // of them. Keyed by repo too, not branch alone - two watched repos could
+  // legitimately share a branch-naming convention.
   const searchByBranch = new Map<string, Promise<JoinedPr | undefined>>();
-  const searchBranch = (branch: string): Promise<JoinedPr | undefined> => {
-    let search = searchByBranch.get(branch);
+  const searchBranch = (
+    repo: WatchedRepo,
+    branch: string,
+  ): Promise<JoinedPr | undefined> => {
+    const key = `${repoKey(repo)}#${branch}`;
+    let search = searchByBranch.get(key);
     if (!search) {
-      search = joinBranchToPr(branch).catch((error) => {
+      search = joinBranchToPr(repo, branch).catch((error) => {
         console.error(
-          `agent-lcars: failed to join branch "${branch}" to a PR:`,
+          'agent-lcars: failed to join branch "%s" (%s) to a PR:',
+          branch,
+          repoKey(repo),
           error,
         );
-        warnings.push(`PR lookup failed for branch "${branch}".`);
+        warnings.push(
+          `PR lookup failed for branch "${branch}" (${repoKey(repo)}).`,
+        );
         return undefined;
       });
-      searchByBranch.set(branch, search);
+      searchByBranch.set(key, search);
     }
     return search;
   };
@@ -200,7 +218,10 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     capped.map(async ([doc, session]) => {
       session.pr = prFromDeliverables(doc);
       if (!session.pr && doc.branch && isActive(session.liveness)) {
-        session.pr = await searchBranch(doc.branch);
+        session.pr = await searchBranch(
+          doc.repo ?? primaryWatchedRepo(),
+          doc.branch,
+        );
       }
       return session;
     }),

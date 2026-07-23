@@ -1,4 +1,10 @@
-import { getGithubClient, REPO_NAME, REPO_OWNER } from './github-client';
+import {
+  getGithubClient,
+  getWatchedRepos,
+  repoItemKey,
+  repoKey,
+  type WatchedRepo,
+} from './github-client';
 
 /** The human this console serves: review requests are matched against this
  * login, and a newest comment by it means the ball is back with the agent. */
@@ -41,6 +47,11 @@ export interface SubIssuesSummary {
 
 export interface ActionItem {
   kind: 'issue' | 'pr';
+  /** Which watched repo this item belongs to - issue/PR numbers only
+   * disambiguate within one repo, so any join keyed on `number` alone must
+   * key on `repoItemKey(item.repo, item.number)` instead once more than one
+   * repo is configured. */
+  repo: WatchedRepo;
   number: number;
   title: string;
   url: string;
@@ -159,14 +170,15 @@ const TAKEOVER_COMMAND_RE = /(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/;
 const COMMENTS_PER_PAGE = 100;
 
 async function scanComments(
+  repo: WatchedRepo,
   issueNumber: number,
   commentCount: number,
 ): Promise<CommentScan> {
   const octokit = getGithubClient();
   const lastPage = Math.max(1, Math.ceil(commentCount / COMMENTS_PER_PAGE));
   let { data: comments } = await octokit.rest.issues.listComments({
-    owner: REPO_OWNER,
-    repo: REPO_NAME,
+    owner: repo.owner,
+    repo: repo.name,
     issue_number: issueNumber,
     per_page: COMMENTS_PER_PAGE,
     page: lastPage,
@@ -175,8 +187,8 @@ async function scanComments(
   // is past the end, step back one page rather than reporting no comments.
   if (comments.length === 0 && lastPage > 1) {
     ({ data: comments } = await octokit.rest.issues.listComments({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
+      owner: repo.owner,
+      repo: repo.name,
       issue_number: issueNumber,
       per_page: COMMENTS_PER_PAGE,
       page: lastPage - 1,
@@ -258,6 +270,7 @@ const CHECKS_PER_PAGE = 100;
 const CHECKS_MAX_PAGES = 5;
 
 async function listAllCheckRuns(
+  repo: WatchedRepo,
   sha: string,
 ): Promise<{ checkRuns: CheckRunLike[]; truncated: boolean }> {
   const octokit = getGithubClient();
@@ -265,8 +278,8 @@ async function listAllCheckRuns(
   let totalCount = 0;
   for (let page = 1; page <= CHECKS_MAX_PAGES; page++) {
     const { data } = await octokit.rest.checks.listForRef({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
+      owner: repo.owner,
+      repo: repo.name,
       ref: sha,
       per_page: CHECKS_PER_PAGE,
       page,
@@ -288,7 +301,10 @@ interface ClassifyResult {
   warnings: string[];
 }
 
-async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
+async function classifyIssue(
+  repo: WatchedRepo,
+  issue: SearchIssue,
+): Promise<ClassifyResult> {
   const octokit = getGithubClient();
   const warnings: string[] = [];
   const isPr = Boolean(issue.pull_request);
@@ -327,7 +343,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
   // pr.md Step 0 and the SKILL.md claim guardrail.
   const wantsTakeover = assigneeLogins.includes(AGENT_FLEET_LOGIN);
   if (isHumanNeeded || isPostDeploy || wantsTakeover) {
-    const scan = await scanComments(issue.number, issue.comments ?? 0);
+    const scan = await scanComments(repo, issue.number, issue.comments ?? 0);
     if (isHumanNeeded || isPostDeploy) {
       lastCommentBody = scan.last?.body;
       lastCommentUrl = scan.last?.url;
@@ -344,8 +360,8 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
 
   if (isPr) {
     const { data: pr } = await octokit.rest.pulls.get({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
+      owner: repo.owner,
+      repo: repo.name,
       pull_number: issue.number,
     });
     draft = pr.draft;
@@ -369,7 +385,10 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
     // API hiccup for one PR (e.g. a token lacking the "Checks: read"
     // permission) must not crash the whole dashboard for every item.
     try {
-      const { checkRuns, truncated } = await listAllCheckRuns(pr.head.sha);
+      const { checkRuns, truncated } = await listAllCheckRuns(
+        repo,
+        pr.head.sha,
+      );
       if (truncated) {
         warnings.push(
           `Check runs truncated for #${issue.number} (over ${CHECKS_MAX_PAGES * CHECKS_PER_PAGE} runs) - some failures may not be shown.`,
@@ -390,8 +409,12 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
       }
       ciRunning = checkRuns.some((run) => run.status !== 'completed');
     } catch (error) {
+      // %s, not a template literal: issue.number ultimately traces back to
+      // a Server Action call, which isn't runtime-type-checked at the HTTP
+      // boundary (CodeQL js/tainted-format-string).
       console.error(
-        `agent-lcars: failed to list check runs for #${issue.number}:`,
+        'agent-lcars: failed to list check runs for #%s:',
+        issue.number,
         error,
       );
       warnings.push(`Check runs unavailable for #${issue.number}.`);
@@ -402,6 +425,7 @@ async function classifyIssue(issue: SearchIssue): Promise<ClassifyResult> {
 
   const item: ActionItem = {
     kind: isPr ? 'pr' : 'issue',
+    repo,
     number: issue.number,
     title: issue.title,
     url: issue.html_url,
@@ -485,7 +509,8 @@ const SEARCH_QUERIES = BASE_QUERIES.flatMap((query) => [
 const SEARCH_PER_PAGE = 100;
 const SEARCH_MAX_PAGES = 10;
 
-async function searchAll(
+async function searchAllRepo(
+  repo: WatchedRepo,
   query: string,
 ): Promise<{ items: SearchIssue[]; truncated: boolean }> {
   const octokit = getGithubClient();
@@ -493,7 +518,7 @@ async function searchAll(
   let totalCount = 0;
   for (let page = 1; page <= SEARCH_MAX_PAGES; page++) {
     const { data } = await octokit.rest.search.issuesAndPullRequests({
-      q: `repo:${REPO_OWNER}/${REPO_NAME} ${query}`,
+      q: `repo:${repoKey(repo)} ${query}`,
       per_page: SEARCH_PER_PAGE,
       page,
     });
@@ -506,48 +531,71 @@ async function searchAll(
   return { items, truncated: items.length < totalCount };
 }
 
+interface SearchTask {
+  repo: WatchedRepo;
+  query: string;
+}
+
 export async function getActionItems(): Promise<ActionItemsResult> {
   const warnings: string[] = [];
+
+  // GitHub's search API can't meaningfully OR multiple `repo:` qualifiers
+  // (see SEARCH_QUERIES's own doc comment on qualifier OR-ing), so multiple
+  // watched repos means fanning out one request per (repo, query) pair and
+  // merging - naive N-repo x M-query fan-out, deliberately unthrottled for
+  // now (see #13, filed alongside this change).
+  const tasks: SearchTask[] = getWatchedRepos().flatMap((repo) =>
+    SEARCH_QUERIES.map((query) => ({ repo, query })),
+  );
 
   // One malformed/rejected query (e.g. a future GitHub search-API contract
   // change, as already happened once - see the SEARCH_QUERIES comment)
   // shouldn't take down the whole dashboard. Log and skip it instead.
   const results = await Promise.allSettled(
-    SEARCH_QUERIES.map((query) => searchAll(query)),
+    tasks.map(({ repo, query }) => searchAllRepo(repo, query)),
   );
 
-  const byNumber = new Map<number, SearchIssue>();
+  // Deduped by repoItemKey, NOT bare issue.number - issue/PR numbers only
+  // disambiguate within one repo, so two different repos' #42 must survive
+  // as two distinct entries here.
+  const byKey = new Map<string, SearchIssue & { repo: WatchedRepo }>();
   for (const [i, result] of results.entries()) {
+    const { repo, query } = tasks[i];
     if (result.status === 'rejected') {
       console.error(
-        `agent-lcars: search query failed (${SEARCH_QUERIES[i]}):`,
+        'agent-lcars: search query failed (%s: "%s"):',
+        repoKey(repo),
+        query,
         result.reason,
       );
-      warnings.push(`Search query failed: "${SEARCH_QUERIES[i]}".`);
+      warnings.push(`Search query failed for ${repoKey(repo)}: "${query}".`);
       continue;
     }
     if (result.value.truncated) {
       warnings.push(
-        `Search results truncated (over ${SEARCH_MAX_PAGES * SEARCH_PER_PAGE} matches) for: "${SEARCH_QUERIES[i]}".`,
+        `Search results truncated for ${repoKey(repo)} (over ${SEARCH_MAX_PAGES * SEARCH_PER_PAGE} matches): "${query}".`,
       );
     }
     for (const issue of result.value.items) {
-      byNumber.set(issue.number, issue);
+      byKey.set(repoItemKey(repo, issue.number), { ...issue, repo });
     }
   }
 
   // Defense in depth: an unexpected error classifying one item (a GitHub API
   // hiccup, a malformed search result, etc.) should drop that one item, not
   // crash the whole dashboard for everyone.
-  const issuesToClassify = Array.from(byNumber.values());
+  const issuesToClassify = Array.from(byKey.values());
   const classified = await Promise.allSettled(
-    issuesToClassify.map((issue) => classifyIssue(issue)),
+    issuesToClassify.map((issue) => classifyIssue(issue.repo, issue)),
   );
   const items: ActionItem[] = [];
   for (const [i, result] of classified.entries()) {
+    const issue = issuesToClassify[i];
     if (result.status === 'rejected') {
       console.error('agent-lcars: failed to classify an item:', result.reason);
-      warnings.push(`Failed to classify #${issuesToClassify[i].number}.`);
+      warnings.push(
+        `Failed to classify ${repoItemKey(issue.repo, issue.number)}.`,
+      );
       continue;
     }
     items.push(result.value.item);

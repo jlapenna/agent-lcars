@@ -8,13 +8,18 @@ import {
   issueNumberFromDisplayTitle,
   issueUrlForRun,
 } from './agent-activity';
-import { getGithubClient } from './github-client';
+import { getGithubClient, getWatchedRepos } from './github-client';
 
-vi.mock('./github-client', () => ({
-  getGithubClient: vi.fn(),
-  REPO_OWNER: 'supersprinklesracing',
-  REPO_NAME: 'members',
-}));
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+
+vi.mock('./github-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./github-client')>();
+  return {
+    ...actual,
+    getGithubClient: vi.fn(),
+    getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
+  };
+});
 
 interface FakeWorkflowRun {
   id: number;
@@ -46,6 +51,7 @@ function makeRun(overrides: Partial<FakeWorkflowRun> = {}): FakeWorkflowRun {
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
+    repo: DEFAULT_REPO,
     pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',
@@ -322,9 +328,21 @@ describe('getAgentActivity', () => {
     const listSelfHostedRunnersForRepo = vi.fn().mockResolvedValue({
       data: {
         runners: [
-          { name: 'runner-a', status: 'online', busy: true, labels: [] },
-          { name: 'runner-b', status: 'online', busy: false, labels: [] },
-          { name: 'runner-c', status: 'offline', busy: false, labels: [] },
+          { id: 1, name: 'runner-a', status: 'online', busy: true, labels: [] },
+          {
+            id: 2,
+            name: 'runner-b',
+            status: 'online',
+            busy: false,
+            labels: [],
+          },
+          {
+            id: 3,
+            name: 'runner-c',
+            status: 'offline',
+            busy: false,
+            labels: [],
+          },
         ],
       },
     });
@@ -333,6 +351,40 @@ describe('getAgentActivity', () => {
     const activity = await getAgentActivity();
 
     expect(activity.fleet).toEqual({ online: 2, busy: 1 });
+  });
+
+  // Two watched repos sharing an org-level runner group both list the same
+  // runner (by id) - counting it once per repo would inflate the fleet
+  // gauge without a real capacity change.
+  it('dedupes a runner shared across two watched repos by runner id', async () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    (getWatchedRepos as Mock).mockReturnValueOnce([repoA, repoB]);
+
+    const listWorkflowRuns = vi
+      .fn()
+      .mockResolvedValue({ data: { workflow_runs: [] } });
+    const listSelfHostedRunnersForRepo = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        data: {
+          runners: [
+            {
+              id: 1,
+              name: 'shared-runner',
+              status: 'online',
+              busy: true,
+              labels: [],
+            },
+          ],
+        },
+      }),
+    );
+    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
+
+    const activity = await getAgentActivity();
+
+    expect(listSelfHostedRunnersForRepo).toHaveBeenCalledTimes(2);
+    expect(activity.fleet).toEqual({ online: 1, busy: 1 });
   });
 
   it('degrades the fleet section and records a warning instead of throwing', async () => {
