@@ -159,6 +159,70 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # Mirrors supersprinklesracing/members's claude.yml (source of this
+      # pattern) - authenticates via the same terraform-managed WIF pool
+      # this repo IS the source of (infra/terraform/main.tf's
+      # google_iam_workload_identity_pool.github), impersonating the
+      # write-only telemetry-writer SA so the ride-along below can report
+      # this run's live turns/tokens to this repo's own agent-lcars
+      # console. if: always() so this still runs after an early failure;
+      # continue-on-error: true so a broken/rotated WIF config here can
+      # never turn a healthy agent run red.
+      - name: Authenticate telemetry writer
+        id: telemetry-auth
+        if: always()
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
+          service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
+          token_format: access_token
+
+      # Best-effort mid-run telemetry: downloads the versioned ride-along
+      # bundle (published by this very repo) and backgrounds it for the
+      # duration of "Run Claude Code" below. No --repo flag needed:
+      # GITHUB_REPOSITORY is already set for every job/step by GitHub
+      # Actions, and the ride-along CLI falls back to it when --repo is
+      # absent (see apps/telemetry-watcher/src/lib/runner-config.ts). Every
+      # failure path below logs and exits 0; telemetry must never fail the
+      # agent job it instruments.
+      - name: Start telemetry ride-along
+        continue-on-error: true
+        env:
+          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+          RIDE_ALONG_URL: https://storage.googleapis.com/agent-lcars-tools/telemetry/telemetry-v1/ride-along.cjs
+          RUN_ID: ${{ github.run_id }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          set +e
+          mkdir -p /tmp/runner-telemetry
+
+          dl_code=$(curl -sS -o /tmp/runner-telemetry/ride-along.cjs -w '%{http_code}' \
+            "${RIDE_ALONG_URL}")
+          if [ "$dl_code" != "200" ] || [ ! -s /tmp/runner-telemetry/ride-along.cjs ]; then
+            echo "Downloading ${RIDE_ALONG_URL} failed (HTTP ${dl_code}); skipping telemetry ride-along."
+            exit 0
+          fi
+
+          if [ -z "${WRITER_CREDENTIALS_FILE}" ]; then
+            echo "No writer credentials file available (telemetry-auth step did not succeed); skipping telemetry ride-along."
+            exit 0
+          fi
+
+          ARGS=(runner ride-along --run-id "${RUN_ID}" --projects-dir "$HOME/.claude/projects")
+          if [ -n "${NUM}" ]; then
+            ARGS+=(--issue-number "${NUM}")
+          fi
+
+          GOOGLE_APPLICATION_CREDENTIALS="${WRITER_CREDENTIALS_FILE}" \
+            AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
+            nohup node /tmp/runner-telemetry/ride-along.cjs "${ARGS[@]}" \
+            > /tmp/runner-telemetry/ride-along.log 2>&1 < /dev/null &
+          echo $! > /tmp/runner-telemetry/ride-along.pid
+          disown
+          echo "Telemetry ride-along started (pid $(cat /tmp/runner-telemetry/ride-along.pid))."
+          exit 0
+
       # Wall-clock anchor for the no-deliverable check below: only artifacts
       # (PRs, issue closes, labels, comments) created/updated AFTER this
       # moment count as this run's output.
