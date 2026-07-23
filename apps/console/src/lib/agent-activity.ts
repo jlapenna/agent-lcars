@@ -319,7 +319,9 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       liveRuns = liveRuns.concat(result.value);
     } else {
       console.error(
-        `agent-lcars: failed to list live agent runs (${repoKey(pairs[i].repo)}/${pairs[i].pipeline}):`,
+        'agent-lcars: failed to list live agent runs (%s/%s):',
+        repoKey(pairs[i].repo),
+        pairs[i].pipeline,
         result.reason,
       );
       warnings.push(
@@ -334,7 +336,9 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       recentRuns = recentRuns.concat(result.value);
     } else {
       console.error(
-        `agent-lcars: failed to list recent agent runs (${repoKey(pairs[i].repo)}/${pairs[i].pipeline}):`,
+        'agent-lcars: failed to list recent agent runs (%s/%s):',
+        repoKey(pairs[i].repo),
+        pairs[i].pipeline,
         result.reason,
       );
       warnings.push(
@@ -360,7 +364,8 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       }
     } else {
       console.error(
-        `agent-lcars: failed to list self-hosted runners (${repoKey(repos[i])}):`,
+        'agent-lcars: failed to list self-hosted runners (%s):',
+        repoKey(repos[i]),
         result.reason,
       );
       warnings.push(

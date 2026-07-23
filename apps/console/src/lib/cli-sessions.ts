@@ -200,7 +200,9 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     if (!search) {
       search = joinBranchToPr(repo, branch).catch((error) => {
         console.error(
-          `agent-lcars: failed to join branch "${branch}" (${repoKey(repo)}) to a PR:`,
+          'agent-lcars: failed to join branch "%s" (%s) to a PR:',
+          branch,
+          repoKey(repo),
           error,
         );
         warnings.push(

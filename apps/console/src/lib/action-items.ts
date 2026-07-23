@@ -409,8 +409,12 @@ async function classifyIssue(
       }
       ciRunning = checkRuns.some((run) => run.status !== 'completed');
     } catch (error) {
+      // %s, not a template literal: issue.number ultimately traces back to
+      // a Server Action call, which isn't runtime-type-checked at the HTTP
+      // boundary (CodeQL js/tainted-format-string).
       console.error(
-        `agent-lcars: failed to list check runs for #${issue.number}:`,
+        'agent-lcars: failed to list check runs for #%s:',
+        issue.number,
         error,
       );
       warnings.push(`Check runs unavailable for #${issue.number}.`);
@@ -559,7 +563,9 @@ export async function getActionItems(): Promise<ActionItemsResult> {
     const { repo, query } = tasks[i];
     if (result.status === 'rejected') {
       console.error(
-        `agent-lcars: search query failed (${repoKey(repo)}: "${query}"):`,
+        'agent-lcars: search query failed (%s: "%s"):',
+        repoKey(repo),
+        query,
         result.reason,
       );
       warnings.push(`Search query failed for ${repoKey(repo)}: "${query}".`);

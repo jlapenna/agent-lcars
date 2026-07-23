@@ -84,8 +84,14 @@ export async function clearHumanNeededLabel(
     // 404 = the label wasn't set. Anything else: the primary action already
     // succeeded, so a failed label cleanup should not fail the request.
     if (!isNotFound(error)) {
+      // %s, not a template literal: issueNumber is declared `number`, but a
+      // Server Action's arguments aren't runtime-type-checked at the HTTP
+      // boundary, so treat it as untrusted input here (CodeQL
+      // js/tainted-format-string) rather than interpolating it into the
+      // format string itself.
       console.error(
-        `agent-lcars: failed to clear human-needed on #${issueNumber}:`,
+        'agent-lcars: failed to clear human-needed on #%s:',
+        issueNumber,
         error,
       );
     }
