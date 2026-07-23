@@ -1,0 +1,394 @@
+name: Claude Issue Agent
+
+# Adding the `claude` label to an issue runs Claude Code on a self-hosted
+# runner (this repo's agent runner) to work on that issue. Claude can ask
+# clarifying questions as issue comments; reply with `@claude ...` to
+# continue. See .agents/skills/agent-protocol/agent-protocol.md and
+# .agents/skills/lcars/lcars-protocol.md for the conventions the agent
+# follows.
+
+# `github.event.issue` is populated for both the `issues` and `issue_comment`
+# triggers below (issue_comment fires on PR comments too, and still sets
+# `.issue`); the `||` fallback covers the third trigger, workflow_dispatch,
+# whose issue number arrives as a plain input instead. The agent console
+# joins a live run to its action-item card by parsing the leading "#<number>:"
+# back out of the run's display_title.
+run-name: "#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title || format('manual dispatch #{0}', github.event.inputs.issue) }}"
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to run against (manual testing)'
+        required: true
+
+# Least privilege: enough for Claude to comment on the issue, push a feature
+# branch, open a pull request, and read CI results on the PRs it opens.
+# actions:write (on the workflow's own GITHUB_TOKEN, not the app token) lets
+# the agent re-run failed CI on its PRs; without it a transient CI failure
+# hard-blocks the agent on a human re-run.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+  actions: write
+
+# Collapse duplicate triggers on the same issue (e.g. a quick label cycle)
+# into one pending run instead of stacking full agent runs. Never cancel an
+# in-flight agent mid-implementation.
+#
+# Bot-authored comment events get their own per-run group instead of sharing
+# the issue's group. GitHub only keeps one PENDING run per concurrency
+# group; without this, the agent's own progress-update comment could fire a
+# fresh issue_comment event that evicts an already-queued human `@claude ...`
+# follow-up from the pending slot before it ever runs — even though that
+# bot-comment run's job condition below would evaluate to skip anyway.
+# Concurrency queueing happens before job-level `if:` is checked, so the
+# skip never gets a chance to save it. Giving bot comments a unique group
+# (keyed on run_id, so it never collides with anything) means they can no
+# longer evict a real pending trigger.
+concurrency:
+  group: ${{ format('claude-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') && format('-bot-noop-{0}', github.run_id) || '') }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    # Run only when:
+    #  - the `claude` label was just added to an issue, OR
+    #  - the repo OWNER (this repo is public — do not let any other
+    #    commenter steer the agent) posts a non-bot `@claude` reply on an
+    #    issue that already carries the `claude` label, OR posts one
+    #    directly on a pull request (`issue_comment` fires for PR comments
+    #    too, distinguished by a non-null `github.event.issue.pull_request`;
+    #    PRs aren't gated on the label since the agent's own PRs never carry
+    #    it), OR
+    #  - a manual workflow_dispatch names an issue.
+    # Claude's own github-actions[bot] comments cannot re-trigger the
+    # workflow, so there is no comment loop.
+    if: >
+      (github.event_name == 'issues' &&
+       github.event.action == 'labeled' &&
+       github.event.label.name == 'claude') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       github.event.comment.author_association == 'OWNER' &&
+       contains(github.event.comment.body, '@claude') &&
+       (contains(github.event.issue.labels.*.name, 'claude') ||
+        github.event.issue.pull_request != null)) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.issue != '')
+    # claude-agent-lcars has no runner registered behind it yet (tracked in
+    # jlapenna/homelab, see homelab#97) - jobs queue until that lands. Do
+    # NOT point this at homelab-autoscale-claude-agent; that label is a
+    # distinct registration reserved for the members repo's runner fleet.
+    runs-on: [claude-agent-lcars]
+    timeout-minutes: 90
+    env:
+      # Park the pnpm store on the disk-backed runner workdir mount so it
+      # survives container recreations.
+      npm_config_store_dir: /tmp/runner/pnpm-store
+      # Nx remote cache on the shared homelab host: the agent's own
+      # lint/test/build runs replay task outputs CI already computed and
+      # seed the cache for the CI runs on its PRs. Empty vars or an
+      # unreachable server soft-fail to local recompute, so this can never
+      # block the agent.
+      NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
+      NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
+    steps:
+      # Claim the anchor issue/PR for the agent fleet the moment the run
+      # starts, so ownership is visible at a glance (and filterable via
+      # `gh issue list --assignee jclaw-bot`). The assignee must be
+      # jclaw-bot: the agent itself acts as the claude[bot] GitHub App,
+      # which is NOT an assignable user - the assignees API silently drops
+      # it (see agent-protocol.md §10). The REST endpoint is used (not `gh
+      # issue edit`) because the anchor can also be a PR (issue_comment on a
+      # PR thread) and PRs share the issue number space. Additive and
+      # idempotent: this never removes a human assignee. Non-blocking: a
+      # failed claim must not cost the run. Runs before Checkout on purpose
+      # - the claim should land even if workspace setup fails.
+      - name: Claim the issue as jclaw-bot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
+            -f 'assignees[]=jclaw-bot' --silent \
+            || echo "::warning::Could not assign jclaw-bot to #$NUM"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Same-host cache sharing with the CI runner: presence-gated so the
+      # job still works on a runner container without the mount.
+      - name: Point Nx at the shared host cache when present
+        run: |
+          if [ -d /shared-cache ]; then
+            mkdir -p /shared-cache/nx
+            echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
+          fi
+
+      # Make the job self-sufficient rather than depending on the runner
+      # image shipping the right toolchain.
+      #
+      # Node MUST be set up before pnpm: pnpm/action-setup@v6's
+      # self-installer shells out to npm from PATH, and an older system
+      # Node/npm combination can crash it.
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      # apps/console-e2e's Firestore-emulator-backed e2e suite
+      # (firebase emulators:exec --only auth,firestore,eventarc) needs a
+      # JRE; the runner container ships none. Same self-sufficiency
+      # philosophy as the Node/pnpm steps above - without this, any
+      # emulator-backed verification the agent needs to run is impossible.
+      - name: Setup Java (Firestore emulator)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Wall-clock anchor for the no-deliverable check below: only artifacts
+      # (PRs, issue closes, labels, comments) created/updated AFTER this
+      # moment count as this run's output.
+      - name: Record run start time
+        id: start
+        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude Code
+        # Pinned (not floating @v1) deliberately - members' fleet hit a real
+        # breakage on a later version. Do not bump this without confirming
+        # the new version against a live test dispatch first.
+        uses: anthropics/claude-code-action@v1.0.174
+        env:
+          # The app token the action vends to the agent maxes out at
+          # actions:read (the token exchange supports nothing higher), so
+          # re-running workflows needs a second token: the workflow's own
+          # GITHUB_TOKEN, which carries actions:write from the permissions
+          # block above. The agent uses it as
+          # `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun ...` (GH_TOKEN
+          # outranks GITHUB_TOKEN in gh) - see agent-protocol.md §8.
+          ACTIONS_RERUN_TOKEN: ${{ github.token }}
+        with:
+          # A manually-issued long-lived token from `claude setup-token`
+          # (interactive browser OAuth flow) - no auto-refresh or rotation.
+          # If it expires, every dispatch crashes instantly
+          # (is_error:true, api_error_status:401, total_cost_usd:0) while
+          # the workflow's own conclusion still reports "success" - the
+          # "Verify Claude run status" step below is what actually catches
+          # this. Fix: run `claude setup-token` to completion in a terminal
+          # with real browser access, then `gh secret set
+          # CLAUDE_CODE_OAUTH_TOKEN --repo jlapenna/agent-lcars` with the
+          # printed token.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Grant the action's GitHub token read access to Actions so the
+          # agent can inspect CI results on the draft PRs it opens.
+          additional_permissions: |
+            actions: read
+          # Scoped to this repo's own bots, not `*` - this repo is public,
+          # so widening this would let an external App trigger agent-mode
+          # behavior via a labeled event it didn't legitimately cause.
+          # github-actions[bot] is the actor of workflow_dispatch runs.
+          allowed_bots: 'claude[bot],github-actions[bot]'
+          # Both trigger paths get an explicit prompt so every run uses
+          # agent mode consistently; an empty prompt would silently fall
+          # back to tag mode with different tool rules and no
+          # eyes-reaction/progress behavior.
+          prompt: >-
+            ${{ (github.event_name == 'workflow_dispatch') && format('You
+            are dispatched to work issue #{0} in this repo. Read AGENTS.md,
+            then .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly - they define the goal, the hard rails, and
+            the reporting format. The workflow has already assigned
+            jclaw-bot to this issue for you. This is a headless CI run: do
+            not end your turn until the issue has a PR open (ready for
+            review, jlapenna as reviewer, "Closes #{0}" in the body) - or a
+            clarifying comment is posted with the human-needed label
+            applied and jlapenna assigned.', github.event.inputs.issue) ||
+            (github.event_name == 'issues') && format('An issue was labeled
+            for you to work on. Read AGENTS.md, then
+            .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly - they define the goal, the hard rails, and
+            the reporting format. The anchor issue is #{0} ("{1}"); the
+            workflow has already assigned jclaw-bot to it for you (never
+            try to assign @me, your identity is not assignable - see
+            agent-protocol.md §10). This is a headless CI run: work
+            strictly synchronously, never launch background subagents or
+            schedule wakeups, and do not end your turn until the issue has
+            a PR open (ready for review, jlapenna as reviewer, "Closes #{0}"
+            in the body) - or a clarifying comment is posted with the
+            human-needed label applied and jlapenna assigned.',
+            github.event.issue.number, github.event.issue.title) ||
+            format('The repo owner posted an @claude reply on #{0} ("{1}")
+            - this may be the original tracking issue, or a pull request
+            you already opened (GitHub numbers both the same way; check
+            which one this is and, if it is a PR, also read the linked
+            tracking issue for full context). Read AGENTS.md, then
+            .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly - they define the goal, the hard rails, and
+            the reporting format. This is a headless CI run: work strictly
+            synchronously, never launch background subagents or schedule
+            wakeups, and do not end your turn until your deliverable (PR
+            update or comment) exists.', github.event.issue.number,
+            github.event.issue.title) }}
+          # Allow Bash wholesale. The action denies all Bash by default, and
+          # a granular allowlist is brittle (env-var prefixes and pipes
+          # don't match Bash(cmd:*) patterns cleanly). The authorization
+          # gate is the `if:` guard above (label add, or OWNER-only
+          # @claude reply); the runner is dedicated to this agent workload.
+          # ScheduleWakeup/SendMessage only work in interactive sessions; in
+          # a headless run they let the agent end its turn "waiting" on
+          # something that will never resume. Disallow them outright. Task
+          # (the subagent-launching tool) is disallowed for the same
+          # reason: it defaults to run_in_background, and a headless run can
+          # background a subagent and end ITS OWN turn cleanly while the
+          # backgrounded work never runs - a "success" conclusion is
+          # therefore not proof the task finished (see agent-protocol.md
+          # §5 and §9; the deliverable-evidence check below is the backstop).
+          claude_args: |
+            --max-turns 200
+            --allowedTools "Bash,Edit,Write,MultiEdit"
+            --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task"
+
+      - name: Verify Claude run status
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG="$(gh run view ${{ github.run_id }} --log 2>/dev/null || true)"
+          # Detect if the run crashed during initialization (is_error: true and cost is 0,
+          # or api_error_status is 401).
+          if (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
+             (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
+            echo "::error::Claude Code run failed silently during startup/authentication."
+            exit 1
+          fi
+
+      # Silent-stall detection: a run can end is_error:false / job success
+      # having produced NOTHING - no pushed branch, no PR, no issue comment
+      # beyond its own pickup/plan note. The step above only catches init
+      # crashes, so "success" alone is never proof of delivery (see
+      # agent-protocol.md §5). Fail the job unless there is dated evidence
+      # of a deliverable, so the failure reporter below surfaces it on the
+      # issue instead of the maintainer discovering it by absence.
+      # Deliverable evidence, deliberately excluding bare bot comments on
+      # the ISSUE path (a pickup/plan comment alone proves nothing):
+      #   - any PR whose title/body references #NUM, created or updated
+      #     after this run started (covers new PRs AND pushes to existing
+      #     ones, which bump updatedAt), or
+      #   - the issue was closed, or
+      #   - the human-needed label is present (the sanctioned blocked/
+      #     clarifying-question ending - the prompt always pairs questions
+      #     with the label), or
+      #   - on @claude-reply-to-a-PR runs only: a bot comment or any update
+      #     on that PR after start (replying to a review question IS the
+      #     deliverable there).
+      - name: Verify a deliverable exists
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STARTED_AT: ${{ steps.start.outputs.ts }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          IS_PR_THREAD: ${{ github.event.issue.pull_request != null }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          found=""
+
+          # (a) PR referencing #NUM created/updated since start.
+          prs=$(gh pr list --repo "$REPO" --state all --limit 50 \
+            --json number,title,body,updatedAt \
+            --jq "[.[] | select(.updatedAt >= \"$STARTED_AT\")
+                       | select((.title + \" \" + (.body // \"\")) | contains(\"#$NUM\"))]
+                  | length" 2>/dev/null || echo 0)
+          if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM created/updated since $STARTED_AT"; fi
+
+          # (b) issue closed since this run started. closedAt, not just
+          # current state==CLOSED: a pre-existing closure (e.g. another
+          # pipeline closed it moments before this run started) must not
+          # count as this run's deliverable.
+          if [ -z "$found" ]; then
+            closed_at=$(gh issue view "$NUM" --repo "$REPO" --json state,closedAt \
+              --jq 'if .state == "CLOSED" then .closedAt else "" end' 2>/dev/null || echo "")
+            if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then found="issue #$NUM closed at $closed_at (after $STARTED_AT)"; fi
+          fi
+
+          # (c) human-needed label (sanctioned blocked ending).
+          if [ -z "$found" ]; then
+            labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
+              --jq '[.labels[].name] | contains(["human-needed"])' 2>/dev/null || echo false)
+            if [ "$labeled" = "true" ]; then found="human-needed label applied on #$NUM"; fi
+          fi
+
+          # (d) PR-thread runs: a bot comment on the anchor after start
+          # counts, since replying IS the deliverable on that path.
+          if [ -z "$found" ] && [ "$IS_PR_THREAD" = "true" ]; then
+            botcomments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT" \
+              --jq '[.[] | select(.user.type == "Bot")] | length' 2>/dev/null || echo 0)
+            if [ "${botcomments:-0}" -gt 0 ]; then found="bot reply posted on PR #$NUM"; fi
+          fi
+
+          if [ -n "$found" ]; then
+            echo "Deliverable evidence: $found"
+          else
+            echo "NO_DELIVERABLE=1" >> "$GITHUB_ENV"
+            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no human-needed label). All of its local work is lost."
+            exit 1
+          fi
+
+      # Failed agent runs were previously silent - no comment, no PR,
+      # nothing on the issue. Surface them where the work was requested.
+      # MUST also cover cancelled(): a timeout-minutes kill sets conclusion
+      # `cancelled`, not `failure`, so `if: failure()` alone would miss it,
+      # leaving the issue looking permanently stuck with no explanation.
+      #
+      # Beyond just "it failed," name the actual reason when we can tell -
+      # a generic message gives the maintainer no way to distinguish a
+      # turn-budget exhaustion (real progress, not a crash) from any other
+      # failure without opening the run and reading logs. Grep this run's
+      # own just-completed "Run Claude Code" step log for known signatures
+      # and say so explicitly; fall back to the generic message otherwise.
+      - name: Report failure on the issue
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REASON=""
+          LOG="$(gh run view ${{ github.run_id }} --log 2>/dev/null || true)"
+          if [ "${NO_DELIVERABLE:-}" = "1" ]; then
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no human-needed label. All of its local work is lost. Re-dispatch by re-adding the `claude` label or replying with `@claude`, and remind it to push early.'
+          elif echo "$LOG" | grep -qi "Reached maximum number of turns"; then
+            REASON=$'\n\nRan out of its turn budget mid-task (`error_max_turns`) - not a crash, it may have made real progress. Check its last comment for a takeover/resume command, or just re-add the `claude` label to retry with a fresh run.'
+          elif (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
+               (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
+            REASON=$'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'
+          fi
+          if [ "${{ job.status }}" = "cancelled" ]; then
+            MSG="was cancelled (likely hit the 90-minute timeout)"
+          else
+            MSG="failed"
+          fi
+          gh issue comment ${{ github.event.issue.number || github.event.inputs.issue }} \
+            --repo ${{ github.repository }} \
+            --body "Claude agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}$REASON"
+          # A failed/cancelled run needs a human re-dispatch - put the ball
+          # in the maintainer's court on the assignee field too (additive:
+          # the jclaw-bot claim stays, reading as "fleet tried, human
+          # needed").
+          gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number || github.event.inputs.issue }}/assignees" \
+            -f 'assignees[]=jlapenna' --silent \
+            || echo "::warning::Could not assign jlapenna"

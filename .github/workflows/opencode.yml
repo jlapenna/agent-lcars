@@ -1,0 +1,279 @@
+name: OpenCode Issue Agent
+
+# EXPERIMENTAL second issue-agent pipeline, parallel to claude.yml. Adding
+# the `opencode` label to an issue runs the open-source anomalyco/opencode
+# agent on the same self-hosted runner fleet as the `claude` label, but
+# pointed at the homelab LiteLLM gateway (llm.lan.jlapenna.net) instead of
+# the Anthropic API - see opencode.json at repo root for the
+# provider/model config. Reply with `/opencode` or `/oc` to continue a
+# conversation on an issue that already carries the label.
+#
+# See .agents/skills/agent-protocol/agent-protocol.md and
+# .agents/skills/lcars/lcars-protocol.md for the conventions this agent
+# follows, and members/.github/workflows/opencode.yml (the sibling private
+# repo this was ported from) for the incident history behind the
+# deliverable-verification gate below: an agent can reason to a genuine
+# conclusion and just stop without ever posting it, so this workflow does
+# not trust a bare "success" conclusion and the prompt explicitly forbids
+# ending without a communicated `gh` action.
+
+run-name: 'opencode #${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}'
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to run against (manual testing)'
+        required: true
+
+# Least privilege: enough to comment, push a feature branch, and open a PR.
+# actions:write lets the agent re-run failed CI on its own PRs via
+# $ACTIONS_RERUN_TOKEN (gh run rerun 403s without it - same rationale as
+# claude.yml).
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+  actions: write
+
+concurrency:
+  group: opencode-issue-${{ github.event.issue.number || github.event.inputs.issue }}
+  cancel-in-progress: false
+
+jobs:
+  opencode:
+    # Dual-label containment: when the issue ALSO carries the `claude`
+    # label, this pipeline stands down - `claude` wins. Without this, a
+    # dual-labeled issue could dispatch both agents onto the same problem.
+    if: >
+      (github.event_name == 'issues' &&
+       github.event.action == 'labeled' &&
+       github.event.label.name == 'opencode' &&
+       !contains(github.event.issue.labels.*.name, 'claude')) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       github.event.comment.author_association == 'OWNER' &&
+       (contains(github.event.comment.body, '/opencode') ||
+        contains(github.event.comment.body, '/oc')) &&
+       contains(github.event.issue.labels.*.name, 'opencode') &&
+       !contains(github.event.issue.labels.*.name, 'claude')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.issue != '')
+    # claude-agent-lcars has no runner registered behind it yet (tracked in
+    # jlapenna/homelab, see homelab#97) - jobs queue until that lands. Do
+    # NOT point this at homelab-autoscale-claude-agent; that label is a
+    # distinct registration reserved for the members repo's runner fleet.
+    runs-on: [claude-agent-lcars]
+    timeout-minutes: 180
+    env:
+      npm_config_store_dir: /tmp/runner/pnpm-store
+    steps:
+      - name: Claim the issue as jclaw-bot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
+            -f 'assignees[]=jclaw-bot' --silent \
+            || echo "::warning::Could not assign jclaw-bot to #$NUM"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Point Nx at the shared host cache when present
+        run: |
+          if [ -d /shared-cache ]; then
+            mkdir -p /shared-cache/nx
+            echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      # apps/console-e2e's Firestore-emulator-backed e2e suite needs a JRE;
+      # the runner container ships none. See claude.yml's identical step
+      # for the full rationale.
+      - name: Setup Java (Firestore emulator)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Record run start time
+        id: start
+        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Run OpenCode
+        uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+          # use_github_token needs this passed explicitly - it does not
+          # fall back to the job's ambient token.
+          GITHUB_TOKEN: ${{ github.token }}
+          # Same CI-rerun affordance claude.yml grants its agent (see
+          # agent-protocol.md §8): the recipe silently no-ops when this is
+          # unset.
+          ACTIONS_RERUN_TOKEN: ${{ github.token }}
+        with:
+          model: homelab/default
+          use_github_token: true
+          prompt: >-
+            ${{ (github.event_name == 'issues' &&
+            format('An issue was labeled for you to work on: #{0} ("{1}").
+            Read AGENTS.md, then
+            .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly - they define the goal, the hard rails, and
+            the reporting format. The workflow has already assigned
+            jclaw-bot to this issue for you. THIS IS A FULLY HEADLESS,
+            NON-INTERACTIVE RUN: there is no live user watching this
+            session who can answer a question or pick from options in real
+            time. If you find yourself presenting choices and waiting for a
+            reply, or treating any part of your own reasoning as if a user
+            just responded, stop - that reply will never come. Any question
+            you have must instead be POSTED as an issue comment via gh,
+            with the human-needed label applied, and the session must then
+            end - never wait inline for a conversational answer. Work
+            strictly synchronously: never launch background subagents or
+            schedule wakeups. Do not end until the issue has a PR open
+            (ready for review, jlapenna as reviewer, "Closes #{0}" in the
+            body) - or a clarifying comment is posted with the human-needed
+            label applied and jlapenna assigned. CRITICAL: you MUST end
+            this session by actually invoking a tool call that mutates
+            GitHub (gh issue comment, gh pr create, gh issue edit
+            --add-label) - even if your conclusion is "no fix is needed",
+            you must still run gh issue comment to say so before ending. A
+            run that reasons to a conclusion and replies with plain text
+            only, without a matching gh action, is NOT a valid ending and
+            will be treated as a failed run.', github.event.issue.number,
+            github.event.issue.title)) || (github.event_name ==
+            'workflow_dispatch' && format('Work issue #{0} in this repo.
+            Read AGENTS.md, then
+            .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly. THIS IS A FULLY HEADLESS, NON-INTERACTIVE
+            RUN: there is no live user watching who can answer a question
+            or pick from options in real time. If you find yourself
+            presenting choices and waiting for a reply, or treating your
+            own reasoning as if a user just responded, stop - that reply
+            will never come. Any question you have must be POSTED as an
+            issue comment via gh, with the human-needed label applied, and
+            the session must then end - never wait inline for a
+            conversational answer. Do not end until the issue has a PR open
+            (ready for review, jlapenna as reviewer, "Closes #{0}" in the
+            body) - or a clarifying comment is posted with the human-needed
+            label applied and jlapenna assigned. CRITICAL: you MUST end
+            this session by actually invoking a tool call that mutates
+            GitHub (gh issue comment, gh pr create, gh issue edit
+            --add-label) - even if your conclusion is "no fix is needed",
+            you must still run gh issue comment to say so before ending. A
+            plain text reply with no matching gh action is NOT a valid
+            ending.', github.event.inputs.issue)) || format('The repo owner
+            posted a reply on #{0} ("{1}") tagging you. Read AGENTS.md,
+            then .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly. THIS IS A FULLY HEADLESS RUN: the repo
+            owner''s reply already happened and is in the thread above -
+            there is no further live back-and-forth available within this
+            session. Do not present options and wait for a reply; if you
+            need a decision, post your question as an issue comment with
+            the human-needed label applied and end the session - do not
+            wait inline. Do not end until your deliverable (PR update or
+            comment) exists.', github.event.issue.number,
+            github.event.issue.title) }}
+
+      # Adapted from claude.yml's deliverable gate (agent-protocol.md §5),
+      # tuned for opencode's lighter prompt contract. A bare comment counts
+      # as evidence here (unlike claude.yml, which excludes it on the issue
+      # path) because the specific failure mode this pipeline guards
+      # against is "said nothing at all" - any comment beyond the initial
+      # pickup message proves the loop actually closed. On the reply path
+      # there is no separate pickup comment, so a single new bot comment
+      # already counts.
+      - name: Verify a deliverable exists
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STARTED_AT: ${{ steps.start.outputs.ts }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          IS_REPLY: ${{ github.event_name == 'issue_comment' }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          found=""
+
+          # Excludes app/claude explicitly so this check can't credit
+          # opencode with a DIFFERENT pipeline's pre-existing PR just
+          # because its updatedAt happened to fall after this run's start.
+          # Only matters when both pipelines are dispatched against
+          # overlapping issues (a testing artifact, not normal usage), but
+          # cheap to guard against.
+          prs=$(gh pr list --repo "$REPO" --state all --limit 50 \
+            --json number,title,body,updatedAt,author \
+            --jq "[.[] | select(.updatedAt >= \"$STARTED_AT\")
+                       | select(.author.login != \"app/claude\")
+                       | select((.title + \" \" + (.body // \"\")) | contains(\"#$NUM\"))]
+                  | length" 2>/dev/null || echo 0)
+          if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM created/updated since $STARTED_AT"; fi
+
+          # closedAt, not just current state==CLOSED: a pre-existing
+          # closure (e.g. from the other pipeline moments earlier) must not
+          # count as THIS run's deliverable.
+          if [ -z "$found" ]; then
+            closed_at=$(gh issue view "$NUM" --repo "$REPO" --json state,closedAt \
+              --jq 'if .state == "CLOSED" then .closedAt else "" end' 2>/dev/null || echo "")
+            if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then found="issue #$NUM closed at $closed_at (after $STARTED_AT)"; fi
+          fi
+
+          if [ -z "$found" ]; then
+            labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
+              --jq '[.labels[].name] | contains(["human-needed"])' 2>/dev/null || echo false)
+            if [ "$labeled" = "true" ]; then found="human-needed label applied on #$NUM"; fi
+          fi
+
+          if [ -z "$found" ]; then
+            botcomments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT" \
+              --jq '[.[] | select(.user.type == "Bot")] | length' 2>/dev/null || echo 0)
+            threshold=1
+            if [ "$IS_REPLY" != "true" ]; then threshold=2; fi
+            if [ "${botcomments:-0}" -ge "$threshold" ]; then found="bot posted a follow-up comment on #$NUM"; fi
+          fi
+
+          if [ -n "$found" ]; then
+            echo "Deliverable evidence: $found"
+          else
+            echo "NO_DELIVERABLE=1" >> "$GITHUB_ENV"
+            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no human-needed label, no follow-up comment beyond the pickup message). Its conclusion, if any, was never communicated."
+            exit 1
+          fi
+
+      - name: Report failure on the issue
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MSG="failed"
+          REASON=""
+          if [ "${NO_DELIVERABLE:-}" = "1" ]; then
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `/opencode`, and consider whether the prompt needs to be even more explicit for this issue.'
+          fi
+          if [ "${{ job.status }}" = "cancelled" ]; then MSG="was cancelled (likely hit the 180-minute timeout)"; fi
+          gh issue comment ${{ github.event.issue.number || github.event.inputs.issue }} \
+            --repo ${{ github.repository }} \
+            --body "OpenCode agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}$REASON"
+          gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number || github.event.inputs.issue }}/assignees" \
+            -f 'assignees[]=jlapenna' --silent \
+            || echo "::warning::Could not assign jlapenna"
