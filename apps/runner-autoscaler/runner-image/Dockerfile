@@ -98,15 +98,26 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # agent-lcars#30: baked-in telemetry sidecar/finalize tool (built above).
-# Consumed as `node /usr/local/lib/agent-lcars/sidecar.cjs runner
-# <sidecar|finalize> ...` by claude.yml's telemetry steps — see that
-# repo's runner-config.ts for the CLI's own flags. Renamed from
-# ride-along to sidecar (agent-lcars#49); claude.yml keeps a temporary
-# legacy fallback to the old filename for any runner still running an
-# image built before this rename.
+# Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+# start|finalize — a thin process-management wrapper (background+PID-file
+# for start, kill+bounded-wait+synchronous run for finalize) baked in
+# alongside the binary itself, so every consuming claude.yml's telemetry
+# step is one line instead of duplicating that ~30-60 lines of bash
+# inline. That duplication is exactly how members drifted out of sync
+# with agent-lcars for an unknown stretch of time (it was missing the
+# finalize half entirely) — see apps/telemetry-watcher's own
+# runner-config.ts for the underlying CLI's flags, and
+# apps/telemetry-watcher/bin/sidecar-lifecycle.sh for the wrapper's own
+# source. No legacy ride-along.cjs fallback here (retired — the
+# agent-lcars#49 rename is old enough that every live image has been
+# rebuilt with the new name since).
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher/sidecar.cjs \
     /usr/local/lib/agent-lcars/sidecar.cjs
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/apps/telemetry-watcher/bin/sidecar-lifecycle.sh \
+    /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+RUN chmod +x /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
 USER runner
 
