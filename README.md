@@ -8,7 +8,7 @@ or write the racing application's databases.
 ## Workspace
 
 - `apps/console` — Next.js operations console, deployed with Firebase App Hosting
-- `apps/telemetry-watcher` — host watcher and versioned runner ride-along bundle
+- `apps/telemetry-watcher` — host watcher and versioned runner sidecar bundle
 - `libs/telemetry` — session model, reducers, Firestore and transcript stores
 - `infra/terraform` — GCP services, storage, IAM, WIF, secrets and budget
 
@@ -21,6 +21,6 @@ Production remains at <https://agent-console.supersprinkles.racing>.
 
 The migration starts with an empty default Firestore database and transcript
 bucket. Provision Terraform, populate secret versions, create the App Hosting
-backend, publish the ride-along bundle, and deploy the watcher before moving the
+backend, publish the sidecar bundle, and deploy the watcher before moving the
 custom domain. Verify login, GitHub actions, session ingestion, and transcript
 viewing. Only then remove the old `supersprinklesracing` resources.

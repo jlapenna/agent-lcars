@@ -171,7 +171,7 @@ resource "google_service_account_iam_member" "members_writer_impersonation" {
 }
 
 # This repo's own claude.yml now ships its issue-agent sessions' telemetry
-# too (mirroring supersprinklesracing/members's ride-along wiring) - the WIF
+# too (mirroring supersprinklesracing/members's sidecar wiring) - the WIF
 # provider's attribute_condition above already trusts
 # ${var.github_owner}/${var.github_repository} (this repo) for OIDC token
 # issuance, but that alone doesn't grant impersonation of any specific SA;

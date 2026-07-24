@@ -16,7 +16,7 @@ import { SessionStore } from './store';
  */
 const RUNNER_ALLOWLIST = ['*'];
 
-export interface StartRideAlongOptions {
+export interface StartSidecarOptions {
   config: RunnerConfig;
   store: SessionStore;
   /** Test-only injection points, mirrored 1:1 from `WatcherDaemonOptions` —
@@ -37,7 +37,7 @@ export interface StartRideAlongOptions {
 }
 
 /**
- * Starts the long-lived ride-along loop for the duration of the agent's
+ * Starts the long-lived sidecar loop for the duration of the agent's
  * turn (issue #3107 follow-up 5): on a fixed interval
  * (`config.heartbeatIntervalMs`, ~10s by default), discovers every
  * transcript under the runner's `$HOME/.claude/projects`, reduces it, and
@@ -59,7 +59,7 @@ export interface StartRideAlongOptions {
  * docs anyway, but skipping the scan avoids the pointless filesystem work.
  *
  * The final, authoritative upsert for this run comes from claude.yml's
- * "Finalize telemetry ride-along" step (after "Run Claude Code" ends, issue
+ * "Finalize telemetry sidecar" step (after "Run Claude Code" ends, issue
  * #24) — that step kills this daemon by PID, then invokes `runner finalize`
  * (see `finalize.ts`), which marks the session `ended` and attaches
  * `transcriptGcsUri`; this function only ever produces intermediate
@@ -69,7 +69,7 @@ export interface StartRideAlongOptions {
  *
  * Returns the daemon so the caller can `stop()` it on shutdown.
  */
-export function startRideAlong(options: StartRideAlongOptions): WatcherDaemon {
+export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
   const { config, store } = options;
 
   const daemon = new WatcherDaemon({
@@ -98,7 +98,7 @@ export function startRideAlong(options: StartRideAlongOptions): WatcherDaemon {
   });
 
   logger.info(
-    `agent-lcars-telemetry-watcher: runner ride-along starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir} every ${config.heartbeatIntervalMs}ms`,
+    `agent-lcars-telemetry-watcher: runner sidecar starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir} every ${config.heartbeatIntervalMs}ms`,
   );
 
   if (options.autoStart ?? true) {

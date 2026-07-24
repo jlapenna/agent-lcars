@@ -163,7 +163,7 @@ jobs:
       # pattern) - authenticates via the same terraform-managed WIF pool
       # this repo IS the source of (infra/terraform/main.tf's
       # google_iam_workload_identity_pool.github), impersonating the
-      # write-only telemetry-writer SA so the ride-along below can report
+      # write-only telemetry-writer SA so the sidecar below can report
       # this run's live turns/tokens to this repo's own agent-lcars
       # console. if: always() so this still runs after an early failure;
       # continue-on-error: true so a broken/rotated WIF config here can
@@ -178,10 +178,10 @@ jobs:
           service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
           token_format: access_token
 
-      # Best-effort mid-run telemetry: backgrounds the ride-along tool for
+      # Best-effort mid-run telemetry: backgrounds the sidecar tool for
       # the duration of "Run Claude Code" below. No --repo flag needed:
       # GITHUB_REPOSITORY is already set for every job/step by GitHub
-      # Actions, and the ride-along CLI falls back to it when --repo is
+      # Actions, and the sidecar CLI falls back to it when --repo is
       # absent (see apps/telemetry-watcher/src/lib/runner-config.ts). Every
       # failure path below logs and exits 0; telemetry must never fail the
       # agent job it instruments.
@@ -193,39 +193,48 @@ jobs:
       # see agent-lcars#30. That replaced a publish-then-pin scheme whose
       # pin silently went stale for months (#29); the image build is now the
       # only "release" step, and there's nothing here to fall out of sync.
-      - name: Start telemetry ride-along
+      - name: Start telemetry sidecar
         continue-on-error: true
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-          RIDE_ALONG_BIN: /usr/local/lib/agent-lcars/ride-along.cjs
+          SIDECAR_BIN: /usr/local/lib/agent-lcars/sidecar.cjs
           RUN_ID: ${{ github.run_id }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
           set +e
           mkdir -p /tmp/runner-telemetry
 
-          if [ ! -s "${RIDE_ALONG_BIN}" ]; then
-            echo "Ride-along tool not found at ${RIDE_ALONG_BIN} (runner image predates agent-lcars#30, or this isn't the claude-agent-lcars fleet); skipping telemetry ride-along."
-            exit 0
+          if [ ! -s "${SIDECAR_BIN}" ]; then
+            LEGACY_SIDECAR_BIN=/usr/local/lib/agent-lcars/ride-along.cjs
+            if [ -s "${LEGACY_SIDECAR_BIN}" ]; then
+              SIDECAR_BIN="${LEGACY_SIDECAR_BIN}"
+              SIDECAR_SUBCOMMAND=ride-along
+              echo "Using the legacy telemetry bundle until this runner image is rebuilt."
+            else
+              echo "Sidecar tool not found at ${SIDECAR_BIN} (runner image predates agent-lcars#30, or this isn't the claude-agent-lcars fleet); skipping telemetry sidecar."
+              exit 0
+            fi
+          else
+            SIDECAR_SUBCOMMAND=sidecar
           fi
 
           if [ -z "${WRITER_CREDENTIALS_FILE}" ]; then
-            echo "No writer credentials file available (telemetry-auth step did not succeed); skipping telemetry ride-along."
+            echo "No writer credentials file available (telemetry-auth step did not succeed); skipping telemetry sidecar."
             exit 0
           fi
 
-          ARGS=(runner ride-along --run-id "${RUN_ID}" --projects-dir "$HOME/.claude/projects")
+          ARGS=(runner "${SIDECAR_SUBCOMMAND}" --run-id "${RUN_ID}" --projects-dir "$HOME/.claude/projects")
           if [ -n "${NUM}" ]; then
             ARGS+=(--issue-number "${NUM}")
           fi
 
           GOOGLE_APPLICATION_CREDENTIALS="${WRITER_CREDENTIALS_FILE}" \
             AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
-            nohup node "${RIDE_ALONG_BIN}" "${ARGS[@]}" \
-            > /tmp/runner-telemetry/ride-along.log 2>&1 < /dev/null &
-          echo $! > /tmp/runner-telemetry/ride-along.pid
+            nohup node "${SIDECAR_BIN}" "${ARGS[@]}" \
+            > /tmp/runner-telemetry/sidecar.log 2>&1 < /dev/null &
+          echo $! > /tmp/runner-telemetry/sidecar.pid
           disown
-          echo "Telemetry ride-along started (pid $(cat /tmp/runner-telemetry/ride-along.pid))."
+          echo "Telemetry sidecar started (pid $(cat /tmp/runner-telemetry/sidecar.pid))."
           exit 0
 
       # Wall-clock anchor for the no-deliverable check below: only artifacts
@@ -335,31 +344,31 @@ jobs:
 
       # Runner container teardown loses everything not already durably
       # shipped (issue #24) - this is that last chance: stop the
-      # long-running ride-along above (it must not race a doc write against
+      # long-running sidecar above (it must not race a doc write against
       # this step's own authoritative one) and ship a final `ended` doc with
       # the transcript archived to GCS, since the container disappears the
-      # moment this job ends. Reuses the same baked-in binary ride-along
-      # already ran (see "Start telemetry ride-along" above, agent-lcars#30)
+      # moment this job ends. Reuses the same baked-in binary sidecar
+      # already ran (see "Start telemetry sidecar" above, agent-lcars#30)
       # and the same telemetry-writer credentials (also grants
       # roles/storage.objectAdmin on the transcripts bucket - see
       # infra/terraform/main.tf's writer_transcripts binding). if: always()
       # so a failed/errored Claude Code run still gets finalized;
       # continue-on-error: true so a broken finalize can never turn a
       # healthy agent run red.
-      - name: Finalize telemetry ride-along
+      - name: Finalize telemetry sidecar
         if: always()
         continue-on-error: true
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-          RIDE_ALONG_BIN: /usr/local/lib/agent-lcars/ride-along.cjs
+          SIDECAR_BIN: /usr/local/lib/agent-lcars/sidecar.cjs
           RUN_ID: ${{ github.run_id }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
           set +e
 
-          if [ -f /tmp/runner-telemetry/ride-along.pid ]; then
-            RIDE_ALONG_DAEMON_PID="$(cat /tmp/runner-telemetry/ride-along.pid)"
-            kill "${RIDE_ALONG_DAEMON_PID}" 2>/dev/null
+          if [ -f /tmp/runner-telemetry/sidecar.pid ]; then
+            SIDECAR_DAEMON_PID="$(cat /tmp/runner-telemetry/sidecar.pid)"
+            kill "${SIDECAR_DAEMON_PID}" 2>/dev/null
             # Wait (bounded, fail-soft) for it to actually exit before this
             # step's own authoritative write below: SIGTERM only requests a
             # stop, and the daemon could still be mid-flight on an
@@ -367,14 +376,20 @@ jobs:
             # lands after ours, it would silently overwrite the `ended`
             # doc's liveness back to a stale live/idle snapshot.
             for _ in $(seq 1 25); do
-              kill -0 "${RIDE_ALONG_DAEMON_PID}" 2>/dev/null || break
+              kill -0 "${SIDECAR_DAEMON_PID}" 2>/dev/null || break
               sleep 0.2
             done
           fi
 
-          if [ ! -s "${RIDE_ALONG_BIN}" ]; then
-            echo "Ride-along tool not found at ${RIDE_ALONG_BIN}; skipping telemetry finalize."
-            exit 0
+          if [ ! -s "${SIDECAR_BIN}" ]; then
+            LEGACY_SIDECAR_BIN=/usr/local/lib/agent-lcars/ride-along.cjs
+            if [ -s "${LEGACY_SIDECAR_BIN}" ]; then
+              SIDECAR_BIN="${LEGACY_SIDECAR_BIN}"
+              echo "Using the legacy telemetry bundle until this runner image is rebuilt."
+            else
+              echo "Sidecar tool not found at ${SIDECAR_BIN}; skipping telemetry finalize."
+              exit 0
+            fi
           fi
 
           if [ -z "${WRITER_CREDENTIALS_FILE}" ]; then
@@ -389,7 +404,7 @@ jobs:
 
           GOOGLE_APPLICATION_CREDENTIALS="${WRITER_CREDENTIALS_FILE}" \
             AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
-            node "${RIDE_ALONG_BIN}" "${ARGS[@]}"
+            node "${SIDECAR_BIN}" "${ARGS[@]}"
           echo "Telemetry finalize complete."
           exit 0
 
