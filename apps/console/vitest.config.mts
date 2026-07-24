@@ -19,11 +19,9 @@ export default createVitestConfig({
     oxc: { jsx: { runtime: 'automatic' } },
     resolve: {
       alias: {
-        // `nxViteTsPaths()` resolves each project's tsConfig target (here:
-        // tsconfig.app.json) and a workspace-root fallback
-        // (tsconfig.base.json) — neither carries this app-local
-        // `"@/*": ["./src/*"]` mapping, which only lives in tsconfig.json
-        // itself.
+        // The shared tsconfigPaths() plugin resolves workspace mappings, but
+        // this app-local `"@/*": ["./src/*"]` alias is kept explicit so the
+        // test config does not depend on tsconfig discovery order.
         '@': path.join(__dirname, 'src'),
         // jest.preset.js globally maps `server-only` to a no-op via
         // `moduleNameMapper`; Vitest has no config-level equivalent of a
