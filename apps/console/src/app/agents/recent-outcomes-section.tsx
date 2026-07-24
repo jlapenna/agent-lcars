@@ -3,6 +3,8 @@ import { Card, Stack, Text, Title } from '@mantine/core';
 
 import type { AgentPipeline, AgentRun } from '../../lib/agent-activity';
 import { FinishedRunRow } from '../agent-activity-panel';
+import { Eyebrow } from '../eyebrow';
+import { lcarsPanelStyle } from '../lcars';
 
 const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
@@ -28,7 +30,14 @@ export function RecentOutcomesSection({
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
 }) {
   return (
-    <Card withBorder radius="md" padding="md" data-testid="recent-outcomes">
+    <Card
+      withBorder
+      radius="md"
+      padding="md"
+      data-testid="recent-outcomes"
+      className="lcars-panel"
+      style={lcarsPanelStyle('periwinkle')}
+    >
       <Stack gap="sm">
         <Title order={2} size="h4">
           Recent Outcomes
@@ -43,9 +52,9 @@ export function RecentOutcomesSection({
           if (runs.length === 0) return null;
           return (
             <Stack key={pipeline} gap={6}>
-              <Text size="xs" c="dimmed" fw={600} tt="uppercase">
+              <Eyebrow>
                 {PIPELINE_TITLES[pipeline]} ({runs.length})
-              </Text>
+              </Eyebrow>
               <Stack gap={6}>
                 {runs.map((run) => (
                   <FinishedRunRow

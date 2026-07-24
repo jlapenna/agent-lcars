@@ -33,12 +33,14 @@ import { getWatchedRepos, repoKey } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
+import { Eyebrow } from './eyebrow';
 import {
   formatCost,
   formatDuration,
   formatRelativeTime,
   shareArtifactUrl,
 } from './format';
+import { lcarsPanelStyle } from './lcars';
 import { TakeoverCommand } from './takeover-command';
 
 // Labels/colors are keyed by the run-status classifier's own output
@@ -541,7 +543,14 @@ export function AgentActivityPanel({
   );
 
   return (
-    <Card withBorder radius="md" padding="md" mb="xl">
+    <Card
+      withBorder
+      radius="md"
+      padding="md"
+      mb="xl"
+      className="lcars-panel"
+      style={lcarsPanelStyle('amber')}
+    >
       <Stack gap="sm">
         <Group justify="space-between" wrap="nowrap">
           <Title order={2} size="h4">
@@ -575,9 +584,7 @@ export function AgentActivityPanel({
 
         {activeSessions.length > 0 && (
           <>
-            <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-              CLI sessions
-            </Text>
+            <Eyebrow>CLI sessions</Eyebrow>
             <Stack gap="xs">
               {activeSessions.map((session) => (
                 <CliSessionRow key={session.sessionId} session={session} />
@@ -589,15 +596,9 @@ export function AgentActivityPanel({
         {recentRuns.length > 0 && (
           <details data-testid="recent-runs">
             <summary style={{ cursor: 'pointer' }}>
-              <Text
-                size="xs"
-                c="dimmed"
-                fw={600}
-                tt="uppercase"
-                component="span"
-              >
+              <Eyebrow component="span">
                 Recently finished ({recentRuns.length})
-              </Text>
+              </Eyebrow>
             </summary>
             <Stack gap={6} mt="xs">
               {recentRuns.map((run) => (
@@ -614,15 +615,9 @@ export function AgentActivityPanel({
         {finishedSessions.length > 0 && (
           <details data-testid="recent-sessions">
             <summary style={{ cursor: 'pointer' }}>
-              <Text
-                size="xs"
-                c="dimmed"
-                fw={600}
-                tt="uppercase"
-                component="span"
-              >
+              <Eyebrow component="span">
                 Recent CLI sessions ({finishedSessions.length})
-              </Text>
+              </Eyebrow>
             </summary>
             <Stack gap="xs" mt="xs">
               {finishedSessions.map((session) => (

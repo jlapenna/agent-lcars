@@ -20,6 +20,7 @@ import type {
   WeekLedgerRow,
 } from '../../lib/session-ledger';
 import { RepoBadge } from '../agent-activity-panel';
+import { Eyebrow } from '../eyebrow';
 import { formatCost } from '../format';
 
 /** Each ledger is already fully sorted (cost desc, then tokens desc) by
@@ -227,16 +228,12 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
       </Title>
       <Group align="flex-start" gap="xl" wrap="wrap">
         <Stack gap={4} style={{ flex: '1 1 320px' }}>
-          <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-            By issue
-          </Text>
+          <Eyebrow>By issue</Eyebrow>
           <IssueLedgerTable rows={byIssue} />
           <IssueLedgerTableCompact rows={byIssue} />
         </Stack>
         <Stack gap={4} style={{ flex: '1 1 320px' }}>
-          <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-            By week
-          </Text>
+          <Eyebrow>By week</Eyebrow>
           <WeekLedgerTable rows={byWeek} />
           <WeekLedgerTableCompact rows={byWeek} />
         </Stack>

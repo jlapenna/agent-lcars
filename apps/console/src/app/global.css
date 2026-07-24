@@ -1,1 +1,141 @@
-/* Mantine's own stylesheet (imported in layout.tsx) handles reset/typography. */
+/* Mantine's own stylesheet (imported in layout.tsx) handles reset/typography.
+   What follows layers the LCARS-derived structural accents on top: the
+   signature pill nav rail, the quieter "elbow" panel accent, eyebrow-label
+   type, and the shared focus/motion baseline. */
+
+/* ---- Focus & motion baseline ---- */
+
+:focus-visible {
+  outline: 2px solid var(--mantine-color-orange-5);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- Eyebrow label (condensed display face, used for section micro-headers
+   and field labels) ---- */
+
+.lcars-eyebrow {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ---- Signature: LCARS pill nav rail ----
+   A row of fully-rounded, adjoining color-blocked segments — the one
+   unmistakably-LCARS structural device on the page. The active page's
+   segment is solid-filled; the others sit as quiet outlines in the same
+   accent, so the row reads as one console control rather than a list of
+   links. */
+
+.lcars-nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lcars-nav-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 20px;
+  border-radius: 999px;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border: 2px solid var(--pill-outline);
+  color: var(--pill-outline);
+  background: transparent;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease,
+    transform 100ms ease;
+}
+
+.lcars-nav-pill:hover {
+  background: color-mix(in srgb, var(--pill-outline) 16%, transparent);
+}
+
+.lcars-nav-pill:active {
+  transform: scale(0.96);
+}
+
+.lcars-nav-pill[data-active] {
+  background: var(--pill-fill);
+  border-color: var(--pill-fill);
+  color: var(--pill-ink);
+}
+
+.lcars-nav-pill[data-accent='amber'] {
+  --pill-fill: var(--mantine-color-orange-6);
+  --pill-ink: var(--mantine-color-black);
+  --pill-outline: light-dark(
+    var(--mantine-color-orange-8),
+    var(--mantine-color-orange-5)
+  );
+}
+
+.lcars-nav-pill[data-accent='periwinkle'] {
+  --pill-fill: var(--mantine-color-violet-5);
+  --pill-ink: var(--mantine-color-white);
+  --pill-outline: light-dark(
+    var(--mantine-color-violet-5),
+    var(--mantine-color-violet-3)
+  );
+}
+
+.lcars-nav-pill[data-accent='teal'] {
+  --pill-fill: var(--mantine-color-teal-6);
+  --pill-ink: var(--mantine-color-black);
+  --pill-outline: light-dark(
+    var(--mantine-color-teal-8),
+    var(--mantine-color-teal-6)
+  );
+}
+
+/* ---- Elbow panel accent ----
+   A quieter structural echo of the same LCARS corner-into-rail shape,
+   applied to top-level panel shells only (never per-row/per-item, so it
+   doesn't compete with the status badges those rows already carry).
+   `--lcars-accent` is set per panel via inline style; `overflow: hidden`
+   on the panel clips both pseudo-elements to the card's own radius, which
+   is what tucks the corner cap into the rounded corner for free. */
+
+.lcars-panel {
+  --lcars-accent: var(--mantine-color-orange-6);
+  position: relative;
+  overflow: hidden;
+}
+
+.lcars-panel::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 5px;
+  background: var(--lcars-accent);
+}
+
+.lcars-panel::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2.5rem;
+  height: 0.75rem;
+  background: var(--lcars-accent);
+  border-bottom-right-radius: 0.75rem;
+}

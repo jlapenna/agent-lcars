@@ -4,6 +4,7 @@ import type { ActionItem } from '../../lib/action-items';
 import { repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
 import { formatRelativeTime } from '../format';
+import { lcarsPanelStyle } from '../lcars';
 import { TakeoverCommand } from '../takeover-command';
 
 /**
@@ -23,6 +24,8 @@ export function ClaimedIdleSection({ items }: { items: ActionItem[] }) {
       padding="md"
       mb="xl"
       data-testid="claimed-idle-section"
+      className="lcars-panel"
+      style={lcarsPanelStyle('periwinkle')}
     >
       <Stack gap="sm">
         <Title order={2} size="h4">

@@ -6,6 +6,7 @@ import {
   PipelineBadge,
   QueueHealthAlert,
 } from '../agent-activity-panel';
+import { lcarsPanelStyle } from '../lcars';
 
 const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
@@ -35,6 +36,8 @@ export function FleetSnapshotBar({
       padding="md"
       mb="xl"
       data-testid="fleet-snapshot-bar"
+      className="lcars-panel"
+      style={lcarsPanelStyle('periwinkle')}
     >
       <Stack gap="sm">
         <Group gap="lg" wrap="wrap">

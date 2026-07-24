@@ -1,4 +1,4 @@
-import { Anchor, Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Container } from '@mantine/core';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -7,9 +7,8 @@ import {
   getSessionArchive,
   parseSessionArchiveQuery,
 } from '../../lib/session-archive';
+import { ConsoleHeader } from '../console-header';
 import { formatRelativeTime } from '../format';
-import { RefreshButton } from '../refresh-button';
-import { ThemeToggle } from '../theme-toggle';
 import { LedgerTables } from './ledger-tables';
 import { SessionTable } from './session-table';
 
@@ -56,47 +55,19 @@ export default async function SessionsPage({ searchParams }: PageProps) {
 
   return (
     <Container size="xl" py="xl">
-      <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
-        <div>
-          <Title order={1}>Session Archive</Title>
-          <Text c="dimmed" mt={4}>
+      <ConsoleHeader
+        current="sessions"
+        title="Session Archive"
+        subtitle={
+          <>
             {describeWindow(query)} · {rows.length} session
             {rows.length === 1 ? '' : 's'}
-          </Text>
-        </div>
-        <Group gap="sm">
-          <Anchor href="/" size="sm">
-            ← Task queue
-          </Anchor>
-          <Anchor href="/agents" size="sm">
-            Agent status →
-          </Anchor>
-          <RefreshButton
-            generatedAt={generatedAt}
-            initialLabel={formatRelativeTime(generatedAt)}
-          />
-          <ThemeToggle size="lg" />
-        </Group>
-      </Group>
-
-      {warnings.length > 0 && (
-        <details data-testid="data-warnings" style={{ marginBottom: 16 }}>
-          <summary style={{ cursor: 'pointer' }}>
-            <Text size="sm" c="yellow" component="span">
-              ⚠ {warnings.length} data warning
-              {warnings.length === 1 ? '' : 's'} — some sections may be
-              incomplete
-            </Text>
-          </summary>
-          <Stack gap={4} mt="xs">
-            {warnings.map((warning) => (
-              <Text key={warning} size="xs" c="dimmed">
-                {warning}
-              </Text>
-            ))}
-          </Stack>
-        </details>
-      )}
+          </>
+        }
+        generatedAt={generatedAt}
+        refreshLabel={formatRelativeTime(generatedAt)}
+        warnings={warnings}
+      />
 
       <LedgerTables ledger={ledger} />
 
