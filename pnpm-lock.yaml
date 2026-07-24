@@ -99,6 +99,9 @@ importers:
       '@eslint/markdown':
         specifier: ^8.0.1
         version: 8.0.3
+      '@naxodev/gonx':
+        specifier: 4.1.1
+        version: 4.1.1(@nx/devkit@23.1.0(nx@23.1.0(@swc-node/register@1.12.1(@swc/core@1.15.46(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.46(@swc/helpers@0.5.23))))(nx@23.1.0(@swc-node/register@1.12.1(@swc/core@1.15.46(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.46(@swc/helpers@0.5.23)))
       '@next/eslint-plugin-next':
         specifier: ^16.2.4
         version: 16.2.11
@@ -2259,6 +2262,47 @@ packages:
     peerDependencies:
       react: ^19.2.0
 
+  '@melkeydev/go-blueprint-darwin-arm64@0.10.11':
+    resolution: {integrity: sha512-5flr8v70HxBXruDojsCy9VRh8aWDtGhLTu4pPmuTPs/a4BPrSEq4a3TufcN0N5o9z0DX4cVtfnTsB8mlxssGMA==}
+    cpu: [arm64]
+    os: [darwin]
+    hasBin: true
+
+  '@melkeydev/go-blueprint-darwin-x64@0.10.11':
+    resolution: {integrity: sha512-eDAUUTF/6dAgBLShXUG8QrdOp6vO8z6XeWe9Ydi1TrmBPvIGHO6c86bwTCYCGZD+tM58IzRRX0h0FXgCdmQImg==}
+    cpu: [x64]
+    os: [darwin]
+    hasBin: true
+
+  '@melkeydev/go-blueprint-linux-arm64@0.10.11':
+    resolution: {integrity: sha512-LTsX5FDYnnfbck27Hj28Tez0R/43+xGxaD0OWZUNrY2BphSQP8SzD7JeBtBuSlzs3ddUwmMIaXxm4Rx5368bvA==}
+    cpu: [arm64]
+    os: [linux]
+    hasBin: true
+
+  '@melkeydev/go-blueprint-linux-x64@0.10.11':
+    resolution: {integrity: sha512-ruDGU+KxokxlWe+DmRGCqhsxy3GByXKGMBZIRkB2JI+DbA679nFCBPRhPFfTA093tyH4Ohgm/Guil/XSFJByNQ==}
+    cpu: [x64]
+    os: [linux]
+    hasBin: true
+
+  '@melkeydev/go-blueprint-win32-arm64@0.10.11':
+    resolution: {integrity: sha512-65vTWl3+rOCbq0Ig39/I8VF7GdrCesjgXwWMgEDBsTJu2BZYWvAwZFkt++5Mrk8zmMczpDzL4cZ7DuEaJjDRHA==}
+    cpu: [arm64]
+    os: [win32]
+    hasBin: true
+
+  '@melkeydev/go-blueprint-win32-x64@0.10.11':
+    resolution: {integrity: sha512-d+8R4hqOTRodmvrfUV2s7E68R3I2/swVkX4XVWRaEyG+q9cDAERKSGMBuhSHygc9f6MkCMIfa6iM2aA5zm7C1A==}
+    cpu: [x64]
+    os: [win32]
+    hasBin: true
+
+  '@melkeydev/go-blueprint@0.10.11':
+    resolution: {integrity: sha512-N8OuTmgcF+4udNWsUIVOhOKOqobUttVbdDctq6uDLgKWpdbCPXvx54dFFshxFwabj2vj2R9dTBZLWhftmrtfqA==}
+    engines: {node: '>=14.0.0'}
+    hasBin: true
+
   '@modelcontextprotocol/sdk@1.29.0':
     resolution: {integrity: sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==}
     engines: {node: '>=18'}
@@ -2503,6 +2547,12 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
+
+  '@naxodev/gonx@4.1.1':
+    resolution: {integrity: sha512-qZJeNDTheB2SPe418yKYX3KuPDHFvy89sArRn9tSWt/kzEtmIDdnZK1W4aojMnhMXWE8eXH5lwOTV1StwJ+PRQ==}
+    peerDependencies:
+      '@nx/devkit': ^23.0.0
+      nx: ^23.0.0
 
   '@next/env@16.2.11':
     resolution: {integrity: sha512-0do5A3BJ2gxWr0ZCMcD6BhW+e595jyxdTl3rXTS6lOtD8ektMiW6CO+EPwt1Eca1DBnm90r/7GdiKWBKxH++DA==}
@@ -8190,6 +8240,10 @@ packages:
   node-addon-api@7.1.1:
     resolution: {integrity: sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==}
 
+  node-addon-api@8.9.0:
+    resolution: {integrity: sha512-ekZMeaaIzSQTSpr7X2X3iJM7lTzgnx8ahAG9pJfT/7+14mlEM8ZYQ9cgCDvSSRbReFK0oHli3WrZdCiRsgAT9Q==}
+    engines: {node: ^18 || ^20 || >= 21}
+
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
@@ -8211,6 +8265,10 @@ packages:
   node-fetch@3.3.2:
     resolution: {integrity: sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
+  node-gyp-build@4.8.4:
+    resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
+    hasBin: true
 
   node-gyp@13.0.1:
     resolution: {integrity: sha512-piOr0S10qy5THB+q5BdqkoOx65XL/tjTMUAit3vciPNp+snTOBnGunWH1Rz7XZUxf2T9uFrfT/Ty4+aC3yPeyg==}
@@ -8392,6 +8450,10 @@ packages:
   p-limit@4.0.0:
     resolution: {integrity: sha512-5b0R4txpzjPWVw/cXXUResoD4hb6U/x9BH08L7nw+GN1sezDzPdxeRvpc9c433fZhBan/wusjbCsqwqm4EIBIQ==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
+  p-limit@6.2.0:
+    resolution: {integrity: sha512-kuUqqHNUqoIWp/c467RI4X6mmyuojY5jGutNU0wVTmEOOfcuwLqyMVoAi9MKi2Ak+5i9+nhmrK4ufZE8069kHA==}
+    engines: {node: '>=18'}
 
   p-locate@4.1.0:
     resolution: {integrity: sha512-R79ZZ/0wAxKGu3oYMlz8jy/kbhsNrS7SKZ7PxEHBgJ5+F2mtFW2fK2cOtBh1cHYkQsbzFV7I+EoRKe6Yt0oK7A==}
@@ -10147,6 +10209,14 @@ packages:
     peerDependencies:
       tslib: '2'
 
+  tree-sitter-go@0.25.0:
+    resolution: {integrity: sha512-APBc/Dq3xz/e35Xpkhb1blu5UgW+2E3RyGWawZSCNcbGwa7jhSQPS8KsUupuzBla8PCo8+lz9W/JDJjmfRa2tw==}
+    peerDependencies:
+      tree-sitter: ^0.25.0
+    peerDependenciesMeta:
+      tree-sitter:
+        optional: true
+
   trim-lines@3.0.1:
     resolution: {integrity: sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==}
 
@@ -10609,6 +10679,9 @@ packages:
   web-streams-polyfill@3.3.3:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
     engines: {node: '>= 8'}
+
+  web-tree-sitter@0.26.3:
+    resolution: {integrity: sha512-JIVgIKFS1w6lejxSntCtsS/QsE/ecTS00en809cMxMPxaor6MvUnQ+ovG8uTTTvQCFosSh4MeDdI5bSGw5SoBw==}
 
   web-vitals@4.2.4:
     resolution: {integrity: sha512-r4DIlprAGwJ7YM11VZp4R884m0Vmgr6EAKe3P+kO0PPj3Unqyvv59rczf6UiGcb9Z8QxZVcqKNwv/g0WNdWwsw==}
@@ -13450,6 +13523,33 @@ snapshots:
     dependencies:
       react: 19.2.8
 
+  '@melkeydev/go-blueprint-darwin-arm64@0.10.11':
+    optional: true
+
+  '@melkeydev/go-blueprint-darwin-x64@0.10.11':
+    optional: true
+
+  '@melkeydev/go-blueprint-linux-arm64@0.10.11':
+    optional: true
+
+  '@melkeydev/go-blueprint-linux-x64@0.10.11':
+    optional: true
+
+  '@melkeydev/go-blueprint-win32-arm64@0.10.11':
+    optional: true
+
+  '@melkeydev/go-blueprint-win32-x64@0.10.11':
+    optional: true
+
+  '@melkeydev/go-blueprint@0.10.11':
+    optionalDependencies:
+      '@melkeydev/go-blueprint-darwin-arm64': 0.10.11
+      '@melkeydev/go-blueprint-darwin-x64': 0.10.11
+      '@melkeydev/go-blueprint-linux-arm64': 0.10.11
+      '@melkeydev/go-blueprint-linux-x64': 0.10.11
+      '@melkeydev/go-blueprint-win32-arm64': 0.10.11
+      '@melkeydev/go-blueprint-win32-x64': 0.10.11
+
   '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.31)
@@ -13796,6 +13896,20 @@ snapshots:
       '@emnapi/runtime': 1.11.2
       '@tybys/wasm-util': 0.10.3
     optional: true
+
+  '@naxodev/gonx@4.1.1(@nx/devkit@23.1.0(nx@23.1.0(@swc-node/register@1.12.1(@swc/core@1.15.46(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.46(@swc/helpers@0.5.23))))(nx@23.1.0(@swc-node/register@1.12.1(@swc/core@1.15.46(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.46(@swc/helpers@0.5.23)))':
+    dependencies:
+      '@melkeydev/go-blueprint': 0.10.11
+      '@nx/devkit': 23.1.0(nx@23.1.0(@swc-node/register@1.12.1(@swc/core@1.15.46(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.46(@swc/helpers@0.5.23)))
+      chalk: 4.1.2
+      npm-run-path: 4.0.1
+      nx: 23.1.0(@swc-node/register@1.12.1(@swc/core@1.15.46(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@6.0.3))(@swc/core@1.15.46(@swc/helpers@0.5.23))
+      p-limit: 6.2.0
+      tree-sitter-go: 0.25.0
+      tslib: 2.8.1
+      web-tree-sitter: 0.26.3
+    transitivePeerDependencies:
+      - tree-sitter
 
   '@next/env@16.2.11': {}
 
@@ -20768,6 +20882,8 @@ snapshots:
   node-addon-api@7.1.1:
     optional: true
 
+  node-addon-api@8.9.0: {}
+
   node-domexception@1.0.0: {}
 
   node-emoji@2.2.0:
@@ -20788,6 +20904,8 @@ snapshots:
       data-uri-to-buffer: 4.0.1
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
+
+  node-gyp-build@4.8.4: {}
 
   node-gyp@13.0.1:
     dependencies:
@@ -21121,6 +21239,10 @@ snapshots:
       yocto-queue: 0.1.0
 
   p-limit@4.0.0:
+    dependencies:
+      yocto-queue: 1.2.2
+
+  p-limit@6.2.0:
     dependencies:
       yocto-queue: 1.2.2
 
@@ -23106,6 +23228,11 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
+  tree-sitter-go@0.25.0:
+    dependencies:
+      node-addon-api: 8.9.0
+      node-gyp-build: 4.8.4
+
   trim-lines@3.0.1: {}
 
   triple-beam@1.4.1: {}
@@ -23574,6 +23701,8 @@ snapshots:
       defaults: 1.0.4
 
   web-streams-polyfill@3.3.3: {}
+
+  web-tree-sitter@0.26.3: {}
 
   web-vitals@4.2.4: {}
 

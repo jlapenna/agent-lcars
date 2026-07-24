@@ -28,6 +28,12 @@
   },
   "plugins": [
     {
+      "plugin": "@naxodev/gonx",
+      "options": {
+        "addGoDotWork": false
+      }
+    },
+    {
       "plugin": "@nx/js/typescript",
       "options": {
         "typecheck": {
