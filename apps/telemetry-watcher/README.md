@@ -9,13 +9,19 @@ reads from.
 
 Interactive (`source: 'cli'`) telemetry is this daemon's normal host-watcher
 mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry is
-provided by the standalone runner bundle:
+provided by the standalone runner bundle (this app's `bundle` Nx target,
+esbuild-bundled with every dependency inlined including
+`@google-cloud/firestore`), baked into the self-hosted `claude-agent-lcars`
+runner image at `/usr/local/lib/agent-lcars/ride-along.cjs`
+(`jlapenna/homelab`'s `github-runner-autoscaler/runner-image/Dockerfile`
+builds it from this repo's own `main` at image-build time — see issue #30).
+No download, no version pin to keep in sync: the image build is the only
+"release" step, replacing a publish-then-pin scheme whose pin silently went
+stale for months (#29).
 
 1. **Mid-run, live (`runner ride-along` — issue #3107 follow-up 5):**
-   claude.yml's "Start telemetry ride-along" step downloads a **prebuilt**
-   single-file bundle (this app's `bundle` Nx target, esbuild-bundled with
-   every dependency inlined including `@google-cloud/firestore`) and
-   backgrounds it — `node ride-along.cjs runner ride-along --run-id <id>
+   claude.yml's "Start telemetry ride-along" step backgrounds it —
+   `node ride-along.cjs runner ride-along --run-id <id>
 --issue-number <n> --projects-dir "$HOME/.claude/projects"` — for the
    duration of "Run Claude Code". It reuses `WatcherDaemon` wholesale (see
    `src/lib/runner.ts`'s `startRideAlong`) on a ~10s tick with **no
@@ -27,13 +33,16 @@ provided by the standalone runner bundle:
    This lights up Agent LCARS's In-Flight UI (#3092) with live turns and
    tokens while the job is running.
 
-   The bundle is published by `.github/workflows/deploy.yml`'s
-   `publish-ride-along` job on every main push that touches this app or
-   `libs/telemetry`, as a **sha-named** object
-   (`gs://supersprinklesracing-agent-session-transcripts/tools/ride-along/<sha>.cjs`)
-   — the writer SA can only create objects, never overwrite a mutable
-   `latest` pointer. Consumers use the versioned public bundle URL, so no
-   source checkout or per-run install is required.
+2. **Finalize, authoritative (`runner finalize` — issue #24):**
+   claude.yml's "Finalize telemetry ride-along" step runs once "Run Claude
+   Code" exits: kills the ride-along process above (waiting, bounded, for it
+   to actually stop first — see that step's comments), then does one last
+   reduce pass with liveness hardcoded to `'ended'`, uploads the raw
+   transcript to `AGENT_TELEMETRY_TRANSCRIPTS_BUCKET`, and upserts the
+   authoritative final doc with `transcriptGcsUri` attached — see
+   `src/lib/finalize.ts`. Without this, a session doc just freezes at
+   whichever `live`/`idle` snapshot the ride-along above last wrote, and
+   never gets a browsable archived transcript.
 
 ## What it does
 
@@ -104,12 +113,12 @@ key JSON blob — see `src/lib/create-store.ts`.
 
 ## Bundle (runner ride-along)
 
-The `bundle` Nx target produces the single self-contained file claude.yml's
-"Start telemetry ride-along" step downloads and runs — esbuild with
-`thirdParty: true` and no `external` list, so every dependency (including
-`@google-cloud/firestore`, which is pure JS — no native bindings in its
-transitive tree) is inlined into one `.cjs` file with zero runtime
-`node_modules` dependency:
+The `bundle` Nx target produces the single self-contained file the
+`claude-agent-lcars` runner image bakes in and claude.yml's telemetry steps
+run — esbuild with `thirdParty: true` and no `external` list, so every
+dependency (including `@google-cloud/firestore`, which is pure JS — no
+native bindings in its transitive tree) is inlined into one `.cjs` file with
+zero runtime `node_modules` dependency:
 
 ```bash
 ./tools/nx run @agent-lcars/telemetry-watcher:bundle
@@ -124,13 +133,15 @@ node ride-along.cjs runner ride-along --run-id test --projects-dir /tmp/some/fix
 ```
 
 Deliberately **not** in the default `build` target's dependency chain (a
-separate `bundle` target, not depended on by anything) — it's only ever
-invoked by `deploy.yml`'s `publish-ride-along` job, on a main push that
-touches this app or `libs/telemetry`, which uploads the result as a
-sha-named object to
-`gs://supersprinklesracing-agent-session-transcripts/tools/ride-along/`
-(see the "Two shipping paths" section above for why sha-named, not
-`latest`).
+separate `bundle` target, not depended on by anything) — it's invoked by
+`jlapenna/homelab`'s runner-image build (see "CI issue-agent telemetry
+paths" above), not by anything in this repo's own CI. A separate,
+now-unused `publish-telemetry-tool.yml` workflow still exists here,
+publishing immutable semver-tagged releases to
+`gs://agent-lcars-tools/telemetry/` — that was this bundle's _previous_
+shipping path (curl-downloaded per job), superseded by the runner-image
+bake-in for `agent-lcars`'s own claude.yml, but potentially still relevant
+until `supersprinklesracing/members`'s equivalent workflow migrates too.
 
 ## Deployment
 

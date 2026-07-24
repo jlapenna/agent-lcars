@@ -178,38 +178,34 @@ jobs:
           service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
           token_format: access_token
 
-      # Best-effort mid-run telemetry: downloads the versioned ride-along
-      # bundle (published by this very repo, publish-telemetry-tool.yml) and
-      # backgrounds it for the duration of "Run Claude Code" below. No
-      # --repo flag needed: GITHUB_REPOSITORY is already set for every
-      # job/step by GitHub Actions, and the ride-along CLI falls back to it
-      # when --repo is absent (see
-      # apps/telemetry-watcher/src/lib/runner-config.ts). Every failure path
-      # below logs and exits 0; telemetry must never fail the agent job it
-      # instruments.
+      # Best-effort mid-run telemetry: backgrounds the ride-along tool for
+      # the duration of "Run Claude Code" below. No --repo flag needed:
+      # GITHUB_REPOSITORY is already set for every job/step by GitHub
+      # Actions, and the ride-along CLI falls back to it when --repo is
+      # absent (see apps/telemetry-watcher/src/lib/runner-config.ts). Every
+      # failure path below logs and exits 0; telemetry must never fail the
+      # agent job it instruments.
       #
-      # Pinned to the immutable telemetry-v1.0.0 release (the first real
-      # semver-tagged publish - see issue #24) rather than the old
-      # `telemetry-v1/` path, which was never a real tag and had gone stale:
-      # nothing had been able to republish through this pipeline's strict
-      # semver validation since it predated it, so it never picked up the
-      # `runner finalize` subcommand the step below depends on. Bump this
-      # (and nothing else) to adopt a newer release.
+      # The tool itself is baked into the self-hosted runner image
+      # (jlapenna/homelab#30-side, runner-image/Dockerfile builds
+      # apps/telemetry-watcher's `bundle` target from this repo's own
+      # `main`) rather than published to GCS and curl-downloaded per job -
+      # see agent-lcars#30. That replaced a publish-then-pin scheme whose
+      # pin silently went stale for months (#29); the image build is now the
+      # only "release" step, and there's nothing here to fall out of sync.
       - name: Start telemetry ride-along
         continue-on-error: true
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-          RIDE_ALONG_URL: https://storage.googleapis.com/agent-lcars-tools/telemetry/telemetry-v1.0.0/ride-along.cjs
+          RIDE_ALONG_BIN: /usr/local/lib/agent-lcars/ride-along.cjs
           RUN_ID: ${{ github.run_id }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
           set +e
           mkdir -p /tmp/runner-telemetry
 
-          dl_code=$(curl -sS -o /tmp/runner-telemetry/ride-along.cjs -w '%{http_code}' \
-            "${RIDE_ALONG_URL}")
-          if [ "$dl_code" != "200" ] || [ ! -s /tmp/runner-telemetry/ride-along.cjs ]; then
-            echo "Downloading ${RIDE_ALONG_URL} failed (HTTP ${dl_code}); skipping telemetry ride-along."
+          if [ ! -s "${RIDE_ALONG_BIN}" ]; then
+            echo "Ride-along tool not found at ${RIDE_ALONG_BIN} (runner image predates agent-lcars#30, or this isn't the claude-agent-lcars fleet); skipping telemetry ride-along."
             exit 0
           fi
 
@@ -225,7 +221,7 @@ jobs:
 
           GOOGLE_APPLICATION_CREDENTIALS="${WRITER_CREDENTIALS_FILE}" \
             AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
-            nohup node /tmp/runner-telemetry/ride-along.cjs "${ARGS[@]}" \
+            nohup node "${RIDE_ALONG_BIN}" "${ARGS[@]}" \
             > /tmp/runner-telemetry/ride-along.log 2>&1 < /dev/null &
           echo $! > /tmp/runner-telemetry/ride-along.pid
           disown
@@ -342,18 +338,20 @@ jobs:
       # long-running ride-along above (it must not race a doc write against
       # this step's own authoritative one) and ship a final `ended` doc with
       # the transcript archived to GCS, since the container disappears the
-      # moment this job ends. Reuses the same bundle ride-along already
-      # downloaded (no second fetch needed) and the same telemetry-writer
-      # credentials (also grants roles/storage.objectAdmin on the transcripts
-      # bucket - see infra/terraform/main.tf's writer_transcripts binding).
-      # if: always() so a failed/errored Claude Code run still gets
-      # finalized; continue-on-error: true so a broken finalize can never
-      # turn a healthy agent run red.
+      # moment this job ends. Reuses the same baked-in binary ride-along
+      # already ran (see "Start telemetry ride-along" above, agent-lcars#30)
+      # and the same telemetry-writer credentials (also grants
+      # roles/storage.objectAdmin on the transcripts bucket - see
+      # infra/terraform/main.tf's writer_transcripts binding). if: always()
+      # so a failed/errored Claude Code run still gets finalized;
+      # continue-on-error: true so a broken finalize can never turn a
+      # healthy agent run red.
       - name: Finalize telemetry ride-along
         if: always()
         continue-on-error: true
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+          RIDE_ALONG_BIN: /usr/local/lib/agent-lcars/ride-along.cjs
           RUN_ID: ${{ github.run_id }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
@@ -374,8 +372,8 @@ jobs:
             done
           fi
 
-          if [ ! -s /tmp/runner-telemetry/ride-along.cjs ]; then
-            echo "No ride-along bundle on disk (download must have failed earlier); skipping telemetry finalize."
+          if [ ! -s "${RIDE_ALONG_BIN}" ]; then
+            echo "Ride-along tool not found at ${RIDE_ALONG_BIN}; skipping telemetry finalize."
             exit 0
           fi
 
@@ -391,7 +389,7 @@ jobs:
 
           GOOGLE_APPLICATION_CREDENTIALS="${WRITER_CREDENTIALS_FILE}" \
             AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
-            node /tmp/runner-telemetry/ride-along.cjs "${ARGS[@]}"
+            node "${RIDE_ALONG_BIN}" "${ARGS[@]}"
           echo "Telemetry finalize complete."
           exit 0
 
