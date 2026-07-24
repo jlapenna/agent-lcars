@@ -358,8 +358,8 @@ jobs:
           set +e
 
           if [ -f /tmp/runner-telemetry/ride-along.pid ]; then
-            RIDE_ALONG_PID="$(cat /tmp/runner-telemetry/ride-along.pid)"
-            kill "${RIDE_ALONG_PID}" 2>/dev/null
+            RIDE_ALONG_DAEMON_PID="$(cat /tmp/runner-telemetry/ride-along.pid)"
+            kill "${RIDE_ALONG_DAEMON_PID}" 2>/dev/null
             # Wait (bounded, fail-soft) for it to actually exit before this
             # step's own authoritative write below: SIGTERM only requests a
             # stop, and the daemon could still be mid-flight on an
@@ -367,7 +367,7 @@ jobs:
             # lands after ours, it would silently overwrite the `ended`
             # doc's liveness back to a stale live/idle snapshot.
             for _ in $(seq 1 25); do
-              kill -0 "${RIDE_ALONG_PID}" 2>/dev/null || break
+              kill -0 "${RIDE_ALONG_DAEMON_PID}" 2>/dev/null || break
               sleep 0.2
             done
           fi
