@@ -134,30 +134,13 @@ jobs:
             echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
           fi
 
-      # Make the job self-sufficient rather than depending on the runner
-      # image shipping the right toolchain.
-      #
-      # Node MUST be set up before pnpm: pnpm/action-setup@v6's
-      # self-installer shells out to npm from PATH, and an older system
-      # Node/npm combination can crash it.
-      - name: Setup Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      # apps/console-e2e's Firestore-emulator-backed e2e suite
-      # (firebase emulators:exec --only auth,firestore,eventarc) needs a
-      # JRE; the runner container ships none. Same self-sufficiency
-      # philosophy as the Node/pnpm steps above - without this, any
-      # emulator-backed verification the agent needs to run is impossible.
-      - name: Setup Java (Firestore emulator)
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
+      # Node 24, a JRE, and an activated corepack shim are all baked into the
+      # shared runner image now (homelab#132) -- this step used to reinstall
+      # all three fresh on every single dispatch. Verified live via docker
+      # exec into the actual deployed image before removing this: node/java
+      # present, corepack activated. `pnpm ...` commands (including
+      # apps/console-e2e's Firestore-emulator-backed suite) resolve the
+      # version this repo's own package.json pins lazily on first use.
 
       # Mirrors supersprinklesracing/members's claude.yml (source of this
       # pattern) - authenticates via the same terraform-managed WIF pool

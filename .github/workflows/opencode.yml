@@ -102,22 +102,9 @@ jobs:
             echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
           fi
 
-      - name: Setup Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      # apps/console-e2e's Firestore-emulator-backed e2e suite needs a JRE;
-      # the runner container ships none. See claude.yml's identical step
-      # for the full rationale.
-      - name: Setup Java (Firestore emulator)
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
+      # Node 24, a JRE, and an activated corepack shim are all baked into the
+      # shared runner image now (homelab#132) -- see claude.yml's identical
+      # comment for the full rationale and verification.
 
       - name: Record run start time
         id: start
