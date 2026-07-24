@@ -1,4 +1,4 @@
-import { Container } from '@mantine/core';
+import { Card, Container } from '@mantine/core';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -9,6 +9,7 @@ import {
 } from '../../lib/session-archive';
 import { ConsoleHeader } from '../console-header';
 import { formatRelativeTime } from '../format';
+import { lcarsPanelStyle } from '../lcars';
 import { LedgerTables } from './ledger-tables';
 import { SessionTable } from './session-table';
 
@@ -69,9 +70,17 @@ export default async function SessionsPage({ searchParams }: PageProps) {
         warnings={warnings}
       />
 
-      <LedgerTables ledger={ledger} />
+      <Card
+        withBorder
+        radius="md"
+        padding="md"
+        className="lcars-panel"
+        style={lcarsPanelStyle('teal')}
+      >
+        <LedgerTables ledger={ledger} />
 
-      <SessionTable rows={rows} />
+        <SessionTable rows={rows} />
+      </Card>
     </Container>
   );
 }
