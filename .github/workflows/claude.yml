@@ -239,7 +239,7 @@ jobs:
         # Pinned (not floating @v1) deliberately - members' fleet hit a real
         # breakage on a later version. Do not bump this without confirming
         # the new version against a live test dispatch first.
-        uses: anthropics/claude-code-action@v1.0.174
+        uses: anthropics/claude-code-action@v1.0.181
         env:
           # The app token the action vends to the agent maxes out at
           # actions:read (the token exchange supports nothing higher), so
