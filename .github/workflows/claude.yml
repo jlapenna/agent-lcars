@@ -205,8 +205,17 @@ jobs:
           mkdir -p /tmp/runner-telemetry
 
           if [ ! -s "${SIDECAR_BIN}" ]; then
-            echo "Sidecar tool not found at ${SIDECAR_BIN} (runner image predates agent-lcars#30, or this isn't the claude-agent-lcars fleet); skipping telemetry sidecar."
-            exit 0
+            LEGACY_SIDECAR_BIN=/usr/local/lib/agent-lcars/ride-along.cjs
+            if [ -s "${LEGACY_SIDECAR_BIN}" ]; then
+              SIDECAR_BIN="${LEGACY_SIDECAR_BIN}"
+              SIDECAR_SUBCOMMAND=ride-along
+              echo "Using the legacy telemetry bundle until this runner image is rebuilt."
+            else
+              echo "Sidecar tool not found at ${SIDECAR_BIN} (runner image predates agent-lcars#30, or this isn't the claude-agent-lcars fleet); skipping telemetry sidecar."
+              exit 0
+            fi
+          else
+            SIDECAR_SUBCOMMAND=sidecar
           fi
 
           if [ -z "${WRITER_CREDENTIALS_FILE}" ]; then
@@ -214,7 +223,7 @@ jobs:
             exit 0
           fi
 
-          ARGS=(runner sidecar --run-id "${RUN_ID}" --projects-dir "$HOME/.claude/projects")
+          ARGS=(runner "${SIDECAR_SUBCOMMAND}" --run-id "${RUN_ID}" --projects-dir "$HOME/.claude/projects")
           if [ -n "${NUM}" ]; then
             ARGS+=(--issue-number "${NUM}")
           fi
@@ -373,8 +382,14 @@ jobs:
           fi
 
           if [ ! -s "${SIDECAR_BIN}" ]; then
-            echo "Sidecar tool not found at ${SIDECAR_BIN}; skipping telemetry finalize."
-            exit 0
+            LEGACY_SIDECAR_BIN=/usr/local/lib/agent-lcars/ride-along.cjs
+            if [ -s "${LEGACY_SIDECAR_BIN}" ]; then
+              SIDECAR_BIN="${LEGACY_SIDECAR_BIN}"
+              echo "Using the legacy telemetry bundle until this runner image is rebuilt."
+            else
+              echo "Sidecar tool not found at ${SIDECAR_BIN}; skipping telemetry finalize."
+              exit 0
+            fi
           fi
 
           if [ -z "${WRITER_CREDENTIALS_FILE}" ]; then
