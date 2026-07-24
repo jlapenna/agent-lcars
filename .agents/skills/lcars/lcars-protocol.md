@@ -86,12 +86,11 @@ These are additive to agent-protocol.md §11, not a relaxation of it:
 
 Per agent-protocol.md §1, the console's takeover-command scanner expects a
 resume command containing the literal substring `claude-agent-session.sh`.
-**This repo does not have that script yet** — `.github/workflows/claude.yml`
-and `opencode.yml` reference `runs-on: [claude-agent-lcars]`, a runner label
-with no runner behind it yet (tracked in `jlapenna/homelab`, see the
-workflow files' comments), so there is nowhere to resume a session _to_
-until that lands. Add `tools/claude-agent-session.sh` (mirroring the
-private `members` repo's script of the same name, adapted to this repo's
-runner-container layout) once the runner exists; until then, a takeover
-comment posted by this repo's agents can state that resume tooling is not
-yet available rather than inventing a path that does not exist.
+**This repo does not have that script yet.** The `claude-agent-lcars`
+runner registration itself is confirmed live as of issue #39 (a dispatched
+`claude` label run executed on it end to end) — the remaining gap is only
+the script, not the runner. Add `tools/claude-agent-session.sh` (mirroring
+the private `members` repo's script of the same name, adapted to this
+repo's runner-container layout); until it lands, a takeover comment posted
+by this repo's agents can state that resume tooling is not yet available
+rather than inventing a path that does not exist.
