@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
@@ -250,6 +250,35 @@ describe('ActionItemCard', () => {
       renderCard(makeItem({ labels: [] }), { kind: 'reply' });
 
       expect(screen.getByPlaceholderText('Reply with @claude…')).toBeTruthy();
+    });
+  });
+
+  describe('mute (#59)', () => {
+    it('offers Mute in the overflow menu when onToggleMute is passed, and calls it on click', async () => {
+      const onToggleMute = vi.fn();
+      render(
+        <MantineProvider>
+          <ActionItemCard
+            item={makeItem()}
+            updatedAtLabel="now"
+            onToggleMute={onToggleMute}
+          />
+        </MantineProvider>,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
+      fireEvent.click(await screen.findByText('Mute'));
+
+      expect(onToggleMute).toHaveBeenCalledTimes(1);
+    });
+
+    it('omits Mute from the overflow menu when no onToggleMute is passed', async () => {
+      renderCard(makeItem());
+
+      fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
+      await screen.findByText('Close issue');
+
+      expect(screen.queryByText('Mute')).toBeNull();
     });
   });
 

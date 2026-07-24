@@ -11,14 +11,26 @@ import { clearHumanNeeded, closeIssue } from './actions';
 /**
  * The console's "Done" affordance: an overflow menu, shared by queue cards
  * and compact rows, for closing an item's loop without a trip to GitHub.
- * Renders nothing if neither action applies to this item.
+ * Renders nothing if no action applies to this item.
  */
-export function ItemOverflowMenu({ item }: { item: ActionItem }) {
+export function ItemOverflowMenu({
+  item,
+  muted,
+  onToggleMute,
+}: {
+  item: ActionItem;
+  /** Current per-browser mute state (#59) - see use-muted-items.ts. Omit
+   * `onToggleMute` entirely on rows that don't offer muting (only "Your
+   * Queue" does today). */
+  muted?: boolean;
+  onToggleMute?: () => void;
+}) {
   const [isPending, startTransition] = useTransition();
 
   const canClose = item.kind === 'issue';
   const canClearHumanNeeded = item.actionTypes.includes('human-needed');
-  if (!canClose && !canClearHumanNeeded) return null;
+  const canMute = Boolean(onToggleMute);
+  if (!canClose && !canClearHumanNeeded && !canMute) return null;
 
   const handleClose = () => {
     startTransition(async () => {
@@ -79,6 +91,11 @@ export function ItemOverflowMenu({ item }: { item: ActionItem }) {
         {canClearHumanNeeded && (
           <Menu.Item onClick={handleClearHumanNeeded}>
             Clear needs-human
+          </Menu.Item>
+        )}
+        {canMute && (
+          <Menu.Item onClick={onToggleMute}>
+            {muted ? 'Unmute' : 'Mute'}
           </Menu.Item>
         )}
         {canClose && (

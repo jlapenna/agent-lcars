@@ -157,6 +157,8 @@ export function ActionItemCard({
   updatedAtLabel,
   primaryAction,
   multiRepo = false,
+  muted,
+  onToggleMute,
 }: {
   item: ActionItem;
   updatedAtLabel: string;
@@ -165,6 +167,11 @@ export function ActionItemCard({
    * component (ActionItemsBoard) rather than resolved here, since this is a
    * client component and getWatchedRepos() needs server-only env access. */
   multiRepo?: boolean;
+  /** Per-browser mute state (#59), owned by the caller (your-queue-section.tsx)
+   * so every card in the list shares one localStorage-backed source of
+   * truth instead of each card syncing its own copy. */
+  muted?: boolean;
+  onToggleMute?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
@@ -285,7 +292,11 @@ export function ActionItemCard({
                 {ACTION_LABELS[type]}
               </Badge>
             ))}
-            <ItemOverflowMenu item={item} />
+            <ItemOverflowMenu
+              item={item}
+              muted={muted}
+              onToggleMute={onToggleMute}
+            />
           </Group>
         </Group>
 
