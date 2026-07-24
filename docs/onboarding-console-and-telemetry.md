@@ -80,7 +80,7 @@ Add three steps to each dispatch workflow, modeled on **this repo's own**
 `claude.yml` (search it for "telemetry" to see the real thing in full —
 the summary below is the shape). Use this repo, not
 `supersprinklesracing/members`, as the reference: as of this writing,
-members' `claude.yml` is still on the *older* pattern this replaced — a
+members' `claude.yml` is still on the _older_ pattern this replaced — a
 "Start telemetry ride-along" step that downloads
 `ride-along.cjs` from a GCS bucket
 (`gs://agent-lcars-tools/telemetry/telemetry-v1/`) instead of using the
@@ -90,10 +90,12 @@ still-pending follow-up, not something to copy.
 
 1. **`Authenticate telemetry writer`** (`if: always()`,
    `continue-on-error: true`) — `google-github-actions/auth@v3` against:
+
    ```yaml
    workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
    service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
    ```
+
    `continue-on-error: true` matters: a broken/rotated WIF config here
    must never turn a healthy agent run red.
 
@@ -108,7 +110,7 @@ still-pending follow-up, not something to copy.
    `continue-on-error: true`) — runs once the agent's own step exits:
    kills the sidecar (waiting, bounded, for it to actually stop — a
    trailing async Firestore write from its last tick could otherwise land
-   *after* this step's own authoritative write and silently overwrite the
+   _after_ this step's own authoritative write and silently overwrite the
    `ended` doc back to a stale `live`/`idle` snapshot), does one last
    reduce pass with liveness hardcoded to `'ended'`, uploads the raw
    transcript, and upserts the final doc with `transcriptGcsUri` attached.

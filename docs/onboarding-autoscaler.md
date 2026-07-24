@@ -127,7 +127,7 @@ system, learned the hard way: **`docker compose run --rm
 deploy-runner-autoscaler` (or `ansible-playbook deploy_runner_autoscaler.yml`
 directly) is only meaningful when run ON the `homelab` host, as the
 `homelab` service-account user, from that host's own checkout.** It is
-*not* meant to be triggered remotely from an operator workstation, even
+_not_ meant to be triggered remotely from an operator workstation, even
 though the playbook's `hosts: homelab` target technically resolves over
 SSH from anywhere with the right key. A workstation's own local checkout
 of `jlapenna/homelab` has no deploy relevance at all — don't chase SSH-key
