@@ -46,7 +46,18 @@ dispatch-workflow work, following a file this repo publishes.
 
 ## 2. Telemetry
 
-This is the part that actually requires per-repo setup in **both**
+**Claude Code dispatches only, for now.** `startSidecar()`
+(`apps/telemetry-watcher/src/lib/runner.ts`) hard-codes both the watched
+directory (`$HOME/.claude/projects`) and the transcript adapter
+(`'claude-code'`) — there is no OpenCode adapter in
+`TRANSCRIPT_ADAPTERS` at all yet. Wiring the steps below into an OpenCode
+or Codex dispatch workflow will not fail loudly: every telemetry step is
+deliberately fail-soft, so the workflow stays green while silently
+producing no live or final session data. Either skip this section for a
+non-Claude pipeline, or treat adding the missing transcript root/adapter
+as a prerequisite, not an assumption.
+
+This is also the part that actually requires per-repo setup in **both**
 directions: the new repo's runner environment, and a GCP IAM grant here.
 
 ### 2a. The sidecar tool needs to be on the runner
@@ -55,7 +66,7 @@ Telemetry is shipped by baking `apps/telemetry-watcher`'s `bundle` Nx
 target — a single self-contained `.cjs` file with every dependency
 inlined, including `@google-cloud/firestore` — into the runner image at
 `/usr/local/lib/agent-lcars/sidecar.cjs`. See this repo's own
-`runner-autoscaler/runner-image/Dockerfile` (or
+`apps/runner-autoscaler/runner-image/Dockerfile` (or
 `jlapenna/homelab`'s copy — they're intentionally duplicated, see the
 comment at the top of either) for the exact build stage: it clones this
 repo's `main` at image-build time and runs
@@ -76,46 +87,74 @@ stale, never-republished pin was exactly the failure mode this replaced
 
 ### 2b. Dispatch workflow steps
 
-Add three steps to each dispatch workflow, modeled on **this repo's own**
-`claude.yml` (search it for "telemetry" to see the real thing in full —
-the summary below is the shape). Use this repo, not
-`supersprinklesracing/members`, as the reference: as of this writing,
-members' `claude.yml` is still on the _older_ pattern this replaced — a
-"Start telemetry ride-along" step that downloads
-`ride-along.cjs` from a GCS bucket
-(`gs://agent-lcars-tools/telemetry/telemetry-v1/`) instead of using the
-runner-image-baked sidecar. That's exactly the stale-pin failure mode
-issue #29 named; migrating members onto the pattern below is a known,
-still-pending follow-up, not something to copy.
+Both `supersprinklesracing/members` and this repo's own `claude.yml` run
+the identical three steps below (`members` migrated off the old GCS
+`ride-along` pattern in
+[members#3414](https://github.com/supersprinklesracing/members/pull/3414)
+— use either as a real, current reference, not just this doc). The
+process-management logic (existence/credential guards, backgrounding,
+PID tracking, kill-and-wait) is consolidated into
+`/usr/local/lib/agent-lcars/sidecar-lifecycle.sh`, baked into the runner
+image alongside `sidecar.cjs` — each workflow step is a thin,
+copy-pasteable wrapper around calling it, not a place to re-duplicate
+that logic (see that script's own header comment if you need to change
+the underlying behavior; a fix there reaches every consumer on the next
+image pull).
 
-1. **`Authenticate telemetry writer`** (`if: always()`,
-   `continue-on-error: true`) — `google-github-actions/auth@v3` against:
+```yaml
+- name: Authenticate telemetry writer
+  id: telemetry-auth
+  if: always()
+  continue-on-error: true
+  uses: google-github-actions/auth@v3
+  with:
+    workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
+    service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
+    token_format: access_token
 
-   ```yaml
-   workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
-   service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
-   ```
+# ... your own agent-specific auth step, if any, must run AFTER this one
+# if it also sets GOOGLE_APPLICATION_CREDENTIALS job-wide -- see either
+# real claude.yml's "ORDER MATTERS" comment for why.
 
-   `continue-on-error: true` matters: a broken/rotated WIF config here
-   must never turn a healthy agent run red.
+- name: Start telemetry sidecar
+  continue-on-error: true
+  env:
+    WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+    RUN_ID: ${{ github.run_id }}
+    NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+  run: |
+    SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+    if [ -x "$SCRIPT" ]; then
+      "$SCRIPT" start
+    else
+      echo "Sidecar tooling not found at $SCRIPT (runner image predates this bake-in); skipping telemetry sidecar."
+    fi
 
-2. **`Start telemetry sidecar`** — backgrounds
-   `node sidecar.cjs runner sidecar --run-id "$RUN_ID" --projects-dir "$HOME/.claude/projects"`
-   for the duration of the agent's own run step. No `--repo` flag needed —
-   `GITHUB_REPOSITORY` is already set by GitHub Actions and the CLI falls
-   back to it. `continue-on-error: true` again; every failure path inside
-   the step's own script should log and `exit 0` rather than fail the job.
+# ... your own "Run <agent>" step goes here ...
 
-3. **`Finalize telemetry sidecar`** (`if: always()`,
-   `continue-on-error: true`) — runs once the agent's own step exits:
-   kills the sidecar (waiting, bounded, for it to actually stop — a
-   trailing async Firestore write from its last tick could otherwise land
-   _after_ this step's own authoritative write and silently overwrite the
-   `ended` doc back to a stale `live`/`idle` snapshot), does one last
-   reduce pass with liveness hardcoded to `'ended'`, uploads the raw
-   transcript, and upserts the final doc with `transcriptGcsUri` attached.
-   Skipping this step leaves a session doc frozen at whatever the sidecar
-   last wrote, with no browsable archived transcript.
+- name: Finalize telemetry sidecar
+  if: always()
+  continue-on-error: true
+  env:
+    WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+    RUN_ID: ${{ github.run_id }}
+    NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+  run: |
+    SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+    if [ -x "$SCRIPT" ]; then
+      "$SCRIPT" finalize
+    else
+      echo "Sidecar tooling not found at $SCRIPT; skipping telemetry finalize."
+    fi
+```
+
+`continue-on-error: true` on every step matters — a broken/rotated WIF
+config, or a runner image that predates the bake-in, must never turn a
+healthy agent run red. Skipping the finalize step (or a runner image
+missing it) leaves a session doc frozen at whatever the sidecar last
+wrote, with no browsable archived transcript — this is exactly the gap
+`members` had before #3414: it ran the old `start`-equivalent but never
+had a finalize step of any kind.
 
 ### 2c. IAM grant (needs a human — Terraform lives here, not touched casually)
 

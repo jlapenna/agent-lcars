@@ -4,12 +4,12 @@ How to add a new GitHub account/repo — a **registration** — to the shared
 fleet, so it gets its own on-demand, ephemeral self-hosted runners without
 a new standalone control plane. Written from the `agent-lcars` (homelab#97)
 onboarding done in practice, and from migrating this component's own
-source out of `jlapenna/homelab` and into `runner-autoscaler/` in this
+source out of `jlapenna/homelab` and into `apps/runner-autoscaler/` in this
 repo (agent-lcars#52/#53).
 
 ## The model, briefly
 
-One orchestrator process (`runner-autoscaler/`, published as
+One orchestrator process (`apps/runner-autoscaler/`, published as
 `docker-registry.lan.jlapenna.net/agent-lcars/runner-autoscaler:latest`,
 deployed by `jlapenna/homelab`) supervises independent GitHub scale-set
 listeners across every registration, scheduling all of them against one
@@ -87,10 +87,12 @@ homelab#135) — mirror that shape rather than reusing one pool for both
 purposes.
 
 If any scale set in the whole file sets `mount_docker_socket: true`,
-**every** host in `fleet.hosts` needs `docker_socket_gid` set (the
-orchestrator refuses to start otherwise) — check the existing `fleet:`
-block; this is very likely already satisfied fleet-wide, but verify rather
-than assume.
+**every** host in `fleet.hosts` needs **both** `docker_socket_gid` **and**
+`workdir_size_cap` set (`resolveScaleSets()` checks both, independently,
+for every host — missing either one refuses to start with "socket-enabled
+scale set ... requires docker_socket_gid/workdir_size_cap for host ...")
+— check the existing `fleet:` block; this is very likely already
+satisfied fleet-wide, but verify rather than assume.
 
 `runner_image` is normally the existing shared JIT image
 (`docker-registry.lan.jlapenna.net/homelab-runner:jit-node24`) — reuse it
@@ -117,8 +119,8 @@ docker compose run --rm --no-deps runner-autoscaler --check-config
 ```
 
 Catches YAML/schema errors, duplicate labels across registrations, and the
-`docker_socket_gid` invariant above — all without touching any live
-listener or Docker mutation.
+`docker_socket_gid`/`workdir_size_cap` invariants above — all without
+touching any live listener or Docker mutation.
 
 ## 5. Deploy — **this must run on the `homelab` host itself**
 

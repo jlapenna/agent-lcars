@@ -11,8 +11,8 @@ or write the racing application's databases.
 - `apps/telemetry-watcher` — host watcher and versioned runner sidecar bundle
 - `libs/telemetry` — session model, reducers, Firestore and transcript stores
 - `infra/terraform` — GCP services, storage, IAM, WIF, secrets and budget
-- `runner-autoscaler/` — Go source for the shared GitHub Actions runner-fleet
-  control plane and JIT worker image (a plain, non-Nx module — see
+- `apps/runner-autoscaler` — Go source for the shared GitHub Actions
+  runner-fleet control plane and JIT worker image (see
   [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md)); deployed
   by `jlapenna/homelab`, which pulls the images this repo's own CI publishes
 
