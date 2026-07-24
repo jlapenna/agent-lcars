@@ -1,7 +1,6 @@
 import path from 'node:path';
 
-import { nxCopyAssetsPlugin } from '@nx/vite/plugins/nx-copy-assets.plugin';
-import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin';
+import tsconfigPaths from 'vite-tsconfig-paths';
 import { defineConfig, mergeConfig, type UserConfig } from 'vitest/config';
 
 // Shared factory for every migrated project's vitest.config.mts, mirroring
@@ -73,7 +72,10 @@ export function createVitestConfig(options: {
     defineConfig({
       root: dirname,
       cacheDir: path.join(__dirname, 'node_modules/.vite', projectRelative),
-      plugins: [nxViteTsPaths(), nxCopyAssetsPlugin(['*.md'])],
+      // Test runs do not emit distributable assets. Production assets remain
+      // owned by each project's Nx build target.
+      publicDir: false,
+      plugins: [tsconfigPaths()],
       resolve: {
         // Mirrors jest.preset.js's workspace-wide `server-only` ->
         // server-only-mock.js moduleNameMapper entry. Without this, any
