@@ -39,6 +39,10 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/runner-autoscaler/go.mod
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -59,28 +63,3 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
           NX_MAX_PARALLEL: 2
         run: pnpm exec nx run-many -t test typecheck build --all --parallel=2
-
-  runner-autoscaler:
-    name: runner-autoscaler
-    # Plain Go module, not wired into the Nx graph above (revisit later) --
-    # go build/vet/test need no network beyond the module proxy, so this
-    # runs on ubuntu-latest same as verify. Building/publishing the actual
-    # container images is a separate, self-hosted workflow (needs the
-    # internal registry's LAN).
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: runner-autoscaler
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: runner-autoscaler/go.mod
-
-      - run: go build ./...
-      - run: go vet ./...
-      - run: go test ./...

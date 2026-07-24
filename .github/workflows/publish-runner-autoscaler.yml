@@ -1,8 +1,8 @@
 name: Publish runner-autoscaler images
 
 # Builds and publishes both images this repo's runner fleet depends on:
-# the control-plane (runner-autoscaler/Dockerfile) and the JIT worker image
-# (runner-autoscaler/runner-image/Dockerfile) every other CI job in this
+# the control-plane (apps/runner-autoscaler/Dockerfile) and the JIT worker image
+# (apps/runner-autoscaler/runner-image/Dockerfile) every other CI job in this
 # fleet actually executes inside. jlapenna/homelab pulls both rather than
 # building from source (agent-lcars#52) -- this workflow is the one place
 # that source gets compiled into a real, published artifact.
@@ -16,7 +16,7 @@ on:
   push:
     branches: [main]
     paths:
-      - runner-autoscaler/**
+      - apps/runner-autoscaler/**
       - .github/workflows/publish-runner-autoscaler.yml
       # The JIT worker image's Dockerfile clones this repo's own `main` at
       # build time and bakes in `nx bundle @agent-lcars/telemetry-watcher`
@@ -47,13 +47,23 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: runner-autoscaler/go.mod
+          go-version-file: apps/runner-autoscaler/go.mod
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Build and test before publishing
-        working-directory: runner-autoscaler
         run: |
-          go build ./...
-          go test ./...
+          ./tools/nx build @agent-lcars/runner-autoscaler
+          ./tools/nx test @agent-lcars/runner-autoscaler
+          ./tools/nx typecheck @agent-lcars/runner-autoscaler
 
       # This pool spans hosts of two architectures (fleet-wide, see
       # homelab's github-runner-autoscaler/orchestrator.yml) -- without
@@ -71,8 +81,8 @@ jobs:
       - name: Build and push control-plane image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: runner-autoscaler
-          file: runner-autoscaler/Dockerfile
+          context: apps/runner-autoscaler
+          file: apps/runner-autoscaler/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: docker-registry.lan.jlapenna.net/agent-lcars/runner-autoscaler:latest
@@ -86,8 +96,8 @@ jobs:
       - name: Build and push JIT worker runner image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: runner-autoscaler/runner-image
-          file: runner-autoscaler/runner-image/Dockerfile
+          context: apps/runner-autoscaler/runner-image
+          file: apps/runner-autoscaler/runner-image/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24

@@ -1,0 +1,31 @@
+{
+  "name": "@agent-lcars/runner-autoscaler",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/runner-autoscaler",
+  "projectType": "application",
+  "tags": ["platform:server", "scope:console"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "go vet ./...",
+        "cwd": "apps/runner-autoscaler"
+      }
+    },
+    "docker-build": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": {
+        "command": "docker build -t agent-lcars-runner-autoscaler:local .",
+        "cwd": "apps/runner-autoscaler"
+      }
+    },
+    "runner-image-build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker build -t agent-lcars-runner:local .",
+        "cwd": "apps/runner-autoscaler/runner-image"
+      }
+    }
+  }
+}
