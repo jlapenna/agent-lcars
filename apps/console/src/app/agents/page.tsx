@@ -1,4 +1,4 @@
-import { Anchor, Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Container } from '@mantine/core';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -18,9 +18,8 @@ import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { getActionItems } from '../actions';
 import type { RunItemRef } from '../agent-activity-panel';
+import { ConsoleHeader } from '../console-header';
 import { formatRelativeTime } from '../format';
-import { RefreshButton } from '../refresh-button';
-import { ThemeToggle } from '../theme-toggle';
 import { ActiveAgentsSection } from './active-agents-section';
 import { ClaimedIdleSection } from './claimed-idle-section';
 import { FleetSnapshotBar } from './fleet-snapshot-bar';
@@ -147,10 +146,11 @@ export default async function AgentsPage({ searchParams }: PageProps) {
 
   return (
     <Container size="md" py="xl">
-      <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
-        <div>
-          <Title order={1}>Agent Status</Title>
-          <Text c="dimmed" mt={4}>
+      <ConsoleHeader
+        current="agents"
+        title="Agent Status"
+        subtitle={
+          <>
             {subtitlePrefix && `${subtitlePrefix} — `}
             Fleet-wide view of every claude/opencode run and CLI session, agent
             by agent.
@@ -162,41 +162,12 @@ export default async function AgentsPage({ searchParams }: PageProps) {
                 </Anchor>
               </>
             )}
-          </Text>
-        </div>
-        <Group gap="sm">
-          <Anchor href="/" size="sm">
-            ← Task queue
-          </Anchor>
-          <Anchor href="/sessions" size="sm">
-            Session archive →
-          </Anchor>
-          <RefreshButton
-            generatedAt={generatedAt}
-            initialLabel={formatRelativeTime(generatedAt)}
-          />
-          <ThemeToggle size="lg" />
-        </Group>
-      </Group>
-
-      {warnings.length > 0 && (
-        <details data-testid="data-warnings" style={{ marginBottom: 16 }}>
-          <summary style={{ cursor: 'pointer' }}>
-            <Text size="sm" c="yellow" component="span">
-              ⚠ {warnings.length} data warning
-              {warnings.length === 1 ? '' : 's'} — some sections may be
-              incomplete
-            </Text>
-          </summary>
-          <Stack gap={4} mt="xs">
-            {warnings.map((warning) => (
-              <Text key={warning} size="xs" c="dimmed">
-                {warning}
-              </Text>
-            ))}
-          </Stack>
-        </details>
-      )}
+          </>
+        }
+        generatedAt={generatedAt}
+        refreshLabel={formatRelativeTime(generatedAt)}
+        warnings={warnings}
+      />
 
       <FleetSnapshotBar
         activity={filteredActivity}

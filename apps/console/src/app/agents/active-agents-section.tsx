@@ -10,6 +10,7 @@ import {
   LiveRunRow,
   type RunItemRef,
 } from '../agent-activity-panel';
+import { lcarsPanelStyle } from '../lcars';
 
 /**
  * One row per actor currently working something, agent by agent - the
@@ -38,7 +39,14 @@ export function ActiveAgentsSection({
   const hasActivity = liveRuns.length > 0 || activeSessions.length > 0;
 
   return (
-    <Card withBorder radius="md" padding="md" mb="xl">
+    <Card
+      withBorder
+      radius="md"
+      padding="md"
+      mb="xl"
+      className="lcars-panel"
+      style={lcarsPanelStyle('periwinkle')}
+    >
       <Stack gap="sm">
         <Title order={2} size="h4">
           Active Agents

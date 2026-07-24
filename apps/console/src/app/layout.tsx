@@ -11,6 +11,7 @@ import { BrowserErrorReporter } from '@repo/app-providers';
 import type { Viewport } from 'next';
 import { cookies, headers } from 'next/headers';
 
+import { bodyFont, displayFont, monoFont } from './fonts';
 import { Providers } from './providers';
 
 export const viewport: Viewport = {
@@ -48,7 +49,11 @@ export default async function RootLayout({
       : 'dark';
 
   return (
-    <html lang="en" {...mantineHtmlProps}>
+    <html
+      lang="en"
+      {...mantineHtmlProps}
+      className={`${displayFont.variable} ${bodyFont.variable} ${monoFont.variable}`}
+    >
       <head>
         <ColorSchemeScript defaultColorScheme={colorScheme} />
       </head>

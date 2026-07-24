@@ -115,7 +115,7 @@ function CommentPreview({
               right: 0,
               height: 40,
               background:
-                'linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.55))',
+                'linear-gradient(to bottom, transparent, var(--mantine-color-body))',
               pointerEvents: 'none',
             }}
           />

@@ -5,6 +5,8 @@ import type {
 import { isElisionDivider } from '@agent-lcars/telemetry';
 import { Alert, Box, Stack, Text } from '@mantine/core';
 
+import { Eyebrow } from '../../eyebrow';
+
 const ROLE_BORDER_COLOR: Record<'user' | 'assistant', string> = {
   user: 'var(--mantine-color-blue-5)',
   assistant: 'var(--mantine-color-gray-5)',
@@ -21,9 +23,7 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
             background: 'var(--mantine-color-default-hover)',
           }}
         >
-          <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-            {event.role}
-          </Text>
+          <Eyebrow>{event.role}</Eyebrow>
           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
             {event.text}
           </Text>

@@ -19,6 +19,7 @@ import {
   LIVENESS_LABELS,
 } from '../../agent-activity-panel';
 import { ArtifactPreviewToggle } from '../../artifact-viewer';
+import { Eyebrow } from '../../eyebrow';
 import {
   formatCost,
   formatDuration,
@@ -30,9 +31,7 @@ import { TakeoverCommand } from '../../takeover-command';
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Stack gap={0}>
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
-        {label}
-      </Text>
+      <Eyebrow>{label}</Eyebrow>
       <Text size="sm">{children}</Text>
     </Stack>
   );
@@ -165,9 +164,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
 
       {hasDeliverables && (
         <Stack gap={4}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
-            Deliverables
-          </Text>
+          <Eyebrow>Deliverables</Eyebrow>
           <Group gap="sm" wrap="wrap">
             {doc.deliverables.branch && (
               <Text size="sm">branch: {doc.deliverables.branch}</Text>
@@ -194,9 +191,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
 
       {cliHost && cliArtifacts.length > 0 && (
         <Stack gap={4}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
-            Artifacts
-          </Text>
+          <Eyebrow>Artifacts</Eyebrow>
           <Group gap={6} wrap="wrap">
             {cliArtifacts.map((filename) => {
               const url = shareArtifactUrl(cliHost, doc.sessionId, filename);
@@ -215,9 +210,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
 
       {doc.source === 'issue-agent' && doc.transcriptGcsUri && (
         <Stack gap={4}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
-            Resume from archive
-          </Text>
+          <Eyebrow>Resume from archive</Eyebrow>
           <Text size="xs" c="dimmed">
             This runner&apos;s container is gone, but its transcript is archived
             — run this on a workstation checkout to resume it there.
