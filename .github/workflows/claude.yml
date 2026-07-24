@@ -179,18 +179,27 @@ jobs:
           token_format: access_token
 
       # Best-effort mid-run telemetry: downloads the versioned ride-along
-      # bundle (published by this very repo) and backgrounds it for the
-      # duration of "Run Claude Code" below. No --repo flag needed:
-      # GITHUB_REPOSITORY is already set for every job/step by GitHub
-      # Actions, and the ride-along CLI falls back to it when --repo is
-      # absent (see apps/telemetry-watcher/src/lib/runner-config.ts). Every
-      # failure path below logs and exits 0; telemetry must never fail the
-      # agent job it instruments.
+      # bundle (published by this very repo, publish-telemetry-tool.yml) and
+      # backgrounds it for the duration of "Run Claude Code" below. No
+      # --repo flag needed: GITHUB_REPOSITORY is already set for every
+      # job/step by GitHub Actions, and the ride-along CLI falls back to it
+      # when --repo is absent (see
+      # apps/telemetry-watcher/src/lib/runner-config.ts). Every failure path
+      # below logs and exits 0; telemetry must never fail the agent job it
+      # instruments.
+      #
+      # Pinned to the immutable telemetry-v1.0.0 release (the first real
+      # semver-tagged publish - see issue #24) rather than the old
+      # `telemetry-v1/` path, which was never a real tag and had gone stale:
+      # nothing had been able to republish through this pipeline's strict
+      # semver validation since it predated it, so it never picked up the
+      # `runner finalize` subcommand the step below depends on. Bump this
+      # (and nothing else) to adopt a newer release.
       - name: Start telemetry ride-along
         continue-on-error: true
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-          RIDE_ALONG_URL: https://storage.googleapis.com/agent-lcars-tools/telemetry/telemetry-v1/ride-along.cjs
+          RIDE_ALONG_URL: https://storage.googleapis.com/agent-lcars-tools/telemetry/telemetry-v1.0.0/ride-along.cjs
           RUN_ID: ${{ github.run_id }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
