@@ -11,11 +11,23 @@ or write the racing application's databases.
 - `apps/telemetry-watcher` — host watcher and versioned runner sidecar bundle
 - `libs/telemetry` — session model, reducers, Firestore and transcript stores
 - `infra/terraform` — GCP services, storage, IAM, WIF, secrets and budget
+- `runner-autoscaler/` — Go source for the shared GitHub Actions runner-fleet
+  control plane and JIT worker image (a plain, non-Nx module — see
+  [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md)); deployed
+  by `jlapenna/homelab`, which pulls the images this repo's own CI publishes
 
 Use Node 24 and pnpm 10. Run `pnpm install`, then `pnpm nx run-many -t test
 typecheck build`.
 
 Production remains at <https://agent-console.supersprinkles.racing>.
+
+## Documentation
+
+- [docs/onboarding-console-and-telemetry.md](docs/onboarding-console-and-telemetry.md)
+  — wiring a new repo's dispatched agents into this console (dashboard,
+  Sessions, live transcripts).
+- [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md) — adding a
+  new GitHub account/repo as a registration on the shared runner fleet.
 
 ## Cutover
 
