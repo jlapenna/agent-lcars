@@ -134,9 +134,12 @@ node sidecar.cjs runner sidecar --run-id test --projects-dir /tmp/some/fixture/d
 ```
 
 Deliberately **not** in the default `build` target's dependency chain (a
-separate `bundle` target, not depended on by anything) — it's invoked by
-the runner-image build (see "CI issue-agent telemetry paths" above), not
-by anything in this repo's own CI. The old `publish-telemetry-tool.yml`
+separate `bundle` target, not depended on by anything on its own) — it's
+invoked indirectly, by `.github/workflows/publish-runner-autoscaler.yml`
+building the runner image (see "CI issue-agent telemetry paths" above)
+whenever a push to `main` touches `apps/telemetry-watcher/**` or
+`libs/telemetry/**`, not by anything in this repo's own `ci.yml`. The old
+`publish-telemetry-tool.yml`
 workflow (publishing immutable semver-tagged releases to
 `gs://agent-lcars-tools/telemetry/`, curl-downloaded per job) is gone —
 both `agent-lcars`'s and `supersprinklesracing/members`'s `claude.yml` now
