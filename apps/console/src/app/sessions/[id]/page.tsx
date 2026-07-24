@@ -115,8 +115,13 @@ export default async function SessionDetailPage({ params }: PageProps) {
   return (
     <Container size="md" py="xl">
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
-        <Anchor href="/sessions" size="sm">
-          ← Session archive
+        <Anchor
+          href="/sessions"
+          underline="never"
+          className="lcars-nav-pill"
+          data-accent="teal"
+        >
+          ← Sessions
         </Anchor>
         <Group gap="sm">
           <RefreshButton

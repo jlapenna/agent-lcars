@@ -1,4 +1,4 @@
-import { Group, Stack, Text, Title } from '@mantine/core';
+import { Card, Group, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../lib/action-items';
 import { getWatchedRepos } from '../lib/github-client';
@@ -7,6 +7,7 @@ import { repoKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import { CompactItemRow } from './compact-item-row';
 import { ItemOverflowMenu } from './item-overflow-menu';
+import { lcarsPanelStyle } from './lcars';
 import { RetriggerButton } from './retrigger-button';
 
 export interface BoardCard {
@@ -63,7 +64,13 @@ export function ActionItemsBoard({
 
   return (
     <Stack gap="xl">
-      <div>
+      <Card
+        withBorder
+        radius="md"
+        padding="md"
+        className="lcars-panel"
+        style={lcarsPanelStyle('amber')}
+      >
         <SectionHeading
           title="Your Queue"
           count={yourQueue.length}
@@ -87,7 +94,7 @@ export function ActionItemsBoard({
             ))}
           </Stack>
         )}
-      </div>
+      </Card>
 
       {handedBack.length > 0 && (
         <div>
