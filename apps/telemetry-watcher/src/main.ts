@@ -4,6 +4,7 @@ import chokidar from 'chokidar';
 import { loadConfig } from './lib/config';
 import { createStoreFromConfig } from './lib/create-store';
 import { WatcherDaemon } from './lib/daemon';
+import { finalizeRideAlong } from './lib/finalize';
 import { startRideAlong } from './lib/runner';
 import { loadRunnerConfig } from './lib/runner-config';
 
@@ -93,12 +94,45 @@ function runRunnerRideAlong(argv: string[]): void {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
     // Intentionally does not exit — the daemon's own interval keeps the
-    // process alive until claude.yml's "Ship session telemetry" step kills
-    // it by PID (see that step's ride-along.pid handling) and runs its own
-    // authoritative finalize upsert.
+    // process alive until claude.yml's "Finalize telemetry ride-along" step
+    // kills it by PID (see that step's ride-along.pid handling) and runs
+    // `runner finalize` (below) for the authoritative last write.
   } catch (error) {
     logger.error(
       'agent-lcars-telemetry-watcher: runner ride-along crashed on startup; exiting 0 anyway (telemetry must never fail the agent job)',
+      error,
+    );
+    process.exit(0);
+  }
+}
+
+/**
+ * `node ride-along.cjs runner finalize --run-id <id> --issue-number <n>
+ * --projects-dir <dir>` — claude.yml's "Finalize telemetry ride-along" step
+ * (issue #24), run once "Run Claude Code" has already exited. Reuses the
+ * same bundle/entrypoint as ride-along (no second download needed), but
+ * does a single reduce/upload/upsert pass instead of starting a long-lived
+ * daemon — see `finalize.ts` for why liveness is hardcoded to `'ended'`
+ * here rather than recomputed. Fail-soft is a hard requirement, same as
+ * ride-along: this always exits 0.
+ */
+function runRunnerFinalize(argv: string[]): void {
+  try {
+    const config = loadRunnerConfig(argv);
+    const store = createStoreFromConfig(config);
+    finalizeRideAlong({ config, store })
+      .catch((error) => {
+        logger.error(
+          'agent-lcars-telemetry-watcher: runner finalize failed (ignored; telemetry must never fail the agent job)',
+          error,
+        );
+      })
+      .finally(() => {
+        process.exit(0);
+      });
+  } catch (error) {
+    logger.error(
+      'agent-lcars-telemetry-watcher: runner finalize crashed on startup; exiting 0 anyway (telemetry must never fail the agent job)',
       error,
     );
     process.exit(0);
@@ -127,6 +161,24 @@ function main(): void {
       );
     });
     runRunnerRideAlong(rest);
+    return;
+  }
+
+  if (mode === 'runner' && subcommand === 'finalize') {
+    // Same defense-in-depth net as ride-along above, for the same reason.
+    process.on('uncaughtException', (error) => {
+      logger.error(
+        'agent-lcars-telemetry-watcher: uncaught exception in runner finalize (ignored)',
+        error,
+      );
+    });
+    process.on('unhandledRejection', (reason) => {
+      logger.error(
+        'agent-lcars-telemetry-watcher: unhandled rejection in runner finalize (ignored)',
+        reason,
+      );
+    });
+    runRunnerFinalize(rest);
     return;
   }
 

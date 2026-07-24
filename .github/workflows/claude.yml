@@ -328,6 +328,53 @@ jobs:
             --allowedTools "Bash,Edit,Write,MultiEdit"
             --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task"
 
+      # Runner container teardown loses everything not already durably
+      # shipped (issue #24) - this is that last chance: stop the
+      # long-running ride-along above (it must not race a doc write against
+      # this step's own authoritative one) and ship a final `ended` doc with
+      # the transcript archived to GCS, since the container disappears the
+      # moment this job ends. Reuses the same bundle ride-along already
+      # downloaded (no second fetch needed) and the same telemetry-writer
+      # credentials (also grants roles/storage.objectAdmin on the transcripts
+      # bucket - see infra/terraform/main.tf's writer_transcripts binding).
+      # if: always() so a failed/errored Claude Code run still gets
+      # finalized; continue-on-error: true so a broken finalize can never
+      # turn a healthy agent run red.
+      - name: Finalize telemetry ride-along
+        if: always()
+        continue-on-error: true
+        env:
+          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+          RUN_ID: ${{ github.run_id }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          set +e
+
+          if [ -f /tmp/runner-telemetry/ride-along.pid ]; then
+            kill "$(cat /tmp/runner-telemetry/ride-along.pid)" 2>/dev/null
+          fi
+
+          if [ ! -s /tmp/runner-telemetry/ride-along.cjs ]; then
+            echo "No ride-along bundle on disk (download must have failed earlier); skipping telemetry finalize."
+            exit 0
+          fi
+
+          if [ -z "${WRITER_CREDENTIALS_FILE}" ]; then
+            echo "No writer credentials file available (telemetry-auth step did not succeed); skipping telemetry finalize."
+            exit 0
+          fi
+
+          ARGS=(runner finalize --run-id "${RUN_ID}" --projects-dir "$HOME/.claude/projects")
+          if [ -n "${NUM}" ]; then
+            ARGS+=(--issue-number "${NUM}")
+          fi
+
+          GOOGLE_APPLICATION_CREDENTIALS="${WRITER_CREDENTIALS_FILE}" \
+            AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
+            node /tmp/runner-telemetry/ride-along.cjs "${ARGS[@]}"
+          echo "Telemetry finalize complete."
+          exit 0
+
       - name: Verify Claude run status
         if: success()
         env:

@@ -276,6 +276,10 @@ export interface EnvVars {
   AGENT_TELEMETRY_HOST?: string;
   /** GCP project the dedicated `agent-telemetry` Firestore database lives in. */
   AGENT_TELEMETRY_PROJECT_ID?: string;
+  /** GCS bucket `runner finalize` (issue #24) archives session transcripts
+   * to; defaults to `${AGENT_TELEMETRY_PROJECT_ID}-session-transcripts`. See
+   * `apps/telemetry-watcher/src/lib/finalize.ts`. */
+  AGENT_TELEMETRY_TRANSCRIPTS_BUCKET?: string;
   /** Raw JSON contents of the `AGENT_TELEMETRY_WRITER_KEY_JSON` GCP secret. */
   AGENT_TELEMETRY_WRITER_KEY_JSON?: string;
   /** Tick interval in milliseconds; defaults to 10s. */

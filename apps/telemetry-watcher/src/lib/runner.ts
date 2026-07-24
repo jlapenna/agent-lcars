@@ -58,12 +58,14 @@ export interface StartRideAlongOptions {
  * left unset — `buildSessionDoc` would drop artifacts for `issue-agent`
  * docs anyway, but skipping the scan avoids the pointless filesystem work.
  *
- * The final, authoritative upsert for this run still comes from claude.yml's
- * existing "Ship session telemetry" step (after "Run Claude Code" ends) —
- * that step marks the session `ended` and attaches `transcriptGcsUri`; this
- * function only ever produces intermediate `live`/`idle` snapshots. Callers
- * must kill the returned daemon (`stop()`) before that finalize step runs so
- * its authoritative write always lands last.
+ * The final, authoritative upsert for this run comes from claude.yml's
+ * "Finalize telemetry ride-along" step (after "Run Claude Code" ends, issue
+ * #24) — that step kills this daemon by PID, then invokes `runner finalize`
+ * (see `finalize.ts`), which marks the session `ended` and attaches
+ * `transcriptGcsUri`; this function only ever produces intermediate
+ * `live`/`idle` snapshots. Callers must kill the returned daemon (`stop()`)
+ * before that finalize step runs so its authoritative write always lands
+ * last.
  *
  * Returns the daemon so the caller can `stop()` it on shutdown.
  */

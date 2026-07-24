@@ -6,18 +6,20 @@ assertNotBrowser();
 
 /**
  * Naming convention documented (not just used) here: see
- * infra-inventory/agent-telemetry.yaml's
- * `storage.transcriptsBucket.name` — provisioned as
- * `<projectId>-agent-session-transcripts`, currently
- * `supersprinklesracing-agent-session-transcripts`. Exported so callers
- * never need a bucket name literal of their own; {@link fetchSessionTranscript}
- * itself trusts the bucket embedded in each doc's own `transcriptGcsUri`
- * (the one piece of data actually written by the shipper), not this
- * derivation — this function exists for documentation/verification, not as
- * the operative source of the bucket used per-fetch.
+ * infra/terraform/main.tf's `google_storage_bucket.transcripts` — provisioned
+ * as `<projectId>-session-transcripts` (currently
+ * `agent-lcars-session-transcripts`; both watched repos' runners write into
+ * this one shared project — see issue #24 and
+ * apps/telemetry-watcher/src/lib/config.ts's `transcriptsBucket`). Exported
+ * so callers never need a bucket name literal of their own;
+ * {@link fetchSessionTranscript} itself trusts the bucket embedded in each
+ * doc's own `transcriptGcsUri` (the one piece of data actually written by
+ * the shipper), not this derivation — this function exists for
+ * documentation/verification, not as the operative source of the bucket
+ * used per-fetch.
  */
 export function getAgentSessionTranscriptsBucketName(): string {
-  return `${getProjectId()}-agent-session-transcripts`;
+  return `${getProjectId()}-session-transcripts`;
 }
 
 let cachedStorage: Storage | undefined;
