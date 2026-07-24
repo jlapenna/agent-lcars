@@ -15,7 +15,7 @@ export interface RunnerConfig extends Pick<
    * overridden by `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`) - deliberately NOT
    * `loadConfig().watchRoots[0].path`, since `AGENT_TELEMETRY_WATCH_ROOTS`
    * (the host watcher's multi-root override) has no bearing on runner mode;
-   * claude.yml's "Start telemetry ride-along" step also passes
+   * claude.yml's "Start telemetry sidecar" step also passes
    * `--projects-dir "$HOME/.claude/projects"` explicitly and defensively.
    * Runner mode has no allowlist concept (see `runner.ts`'s
    * `RUNNER_ALLOWLIST`), so this is the only discovery knob that matters
@@ -40,9 +40,9 @@ interface RunnerFlags {
 }
 
 /**
- * Minimal `--flag value` parser for the ride-along CLI's own 4 flags
+ * Minimal `--flag value` parser for the sidecar CLI's own 4 flags
  * (`--run-id`, `--issue-number`, `--projects-dir`, `--repo` — see
- * claude.yml's "Start telemetry ride-along" step). Deliberately hand-rolled
+ * claude.yml's "Start telemetry sidecar" step). Deliberately hand-rolled
  * rather than a dependency like yargs: pulling in a full CLI-parsing
  * library would bloat the single-file bundle (`bundle` target in
  * project.json) for a command with exactly 4 flags. Unknown flags are
@@ -95,8 +95,8 @@ function parseOwnerRepo(
 }
 
 /**
- * Parses the runner-mode ride-along's configuration: its own CLI flags
- * (`argv`, everything after `runner ride-along` on the command line) for
+ * Parses the runner-mode sidecar's configuration: its own CLI flags
+ * (`argv`, everything after `runner sidecar` on the command line) for
  * `runId`/`issueNumber`/`claudeProjectsDir`, layered on top of
  * `loadConfig()`'s environment-driven knobs (heartbeat interval, Firestore
  * target, etc.) — the same env vars a host watcher reads, so local-testing

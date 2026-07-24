@@ -47,9 +47,9 @@ export function createStoreFromConfig(config: StoreConfig): SessionStore {
 
   if (config.firestoreProjectId) {
     // Runner mode (issue #3107 follow-up 5): claude.yml's "Start telemetry
-    // ride-along" step mints a short-lived credentials file for the
+    // sidecar" step mints a short-lived credentials file for the
     // agent-telemetry-writer SA via WIF (google-github-actions/auth) and
-    // points GOOGLE_APPLICATION_CREDENTIALS at it for the ride-along
+    // points GOOGLE_APPLICATION_CREDENTIALS at it for the sidecar
     // process's own env only — never job-wide (see claude.yml's
     // "Authenticate telemetry writer" step comment for why the ordering of
     // that step relative to the readonly "Authenticate to GCP" step

@@ -13,7 +13,7 @@ export type { TranscriptAdapter } from './transcript-adapter-types';
  * mine?" detection and the actual parse. `reduceTranscript`/`reduceTranscripts`
  * (reducer.ts) remain the standalone, unchanged entry point for every
  * existing Claude-Code-only caller (the CLI's `agent-telemetry reduce`
- * command, the watcher's runner ride-along mode, and the console's
+ * command, the watcher's runner sidecar mode, and the console's
  * transcript-timeline detail view) — this interface wraps that reducer for
  * `claudeCodeAdapter` rather than replacing it, and exists purely so the
  * watcher's multi-root config (apps/telemetry-watcher) can resolve

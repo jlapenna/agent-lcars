@@ -1,7 +1,7 @@
 import { SessionDoc } from '@agent-lcars/telemetry';
 import { describe, expect, it, vi } from 'vitest';
 
-import { finalizeRideAlong } from './finalize';
+import { finalizeSidecar } from './finalize';
 import { RunnerConfig } from './runner-config';
 import { SessionStore } from './store';
 import { UploadTranscriptOptions } from './transcript-upload';
@@ -70,7 +70,7 @@ function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   };
 }
 
-describe('finalizeRideAlong', () => {
+describe('finalizeSidecar', () => {
   it('ships a doc with liveness ended, regardless of process/heartbeat state', async () => {
     const { store, upserts } = createFakeStore();
     const { uploadTranscript } = createFakeUploader();
@@ -79,7 +79,7 @@ describe('finalizeRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-a', '2026-07-19T10:00:00.000Z'),
     };
 
-    await finalizeRideAlong({
+    await finalizeSidecar({
       config: baseConfig({ runId: '999888777', issueNumber: 3107 }),
       store,
       discover: () => Object.keys(files),
@@ -109,7 +109,7 @@ describe('finalizeRideAlong', () => {
       '/home/runner/.claude/projects/proj/session-b.jsonl': content,
     };
 
-    await finalizeRideAlong({
+    await finalizeSidecar({
       config: baseConfig({
         runId: '42',
         transcriptsBucket: 'agent-lcars-session-transcripts',
@@ -144,7 +144,7 @@ describe('finalizeRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-c', '2026-07-19T10:00:00.000Z'),
     };
 
-    await finalizeRideAlong({
+    await finalizeSidecar({
       config: baseConfig(),
       store,
       discover: () => Object.keys(files),
@@ -169,7 +169,7 @@ describe('finalizeRideAlong', () => {
     };
 
     await expect(
-      finalizeRideAlong({
+      finalizeSidecar({
         config: baseConfig({
           transcriptsBucket: 'agent-lcars-session-transcripts',
         }),
@@ -198,7 +198,7 @@ describe('finalizeRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-e', '2026-07-19T10:00:00.000Z'),
     };
 
-    await finalizeRideAlong({
+    await finalizeSidecar({
       config: baseConfig(),
       store,
       discover: () => Object.keys(files),
@@ -236,7 +236,7 @@ describe('finalizeRideAlong', () => {
     };
 
     await expect(
-      finalizeRideAlong({
+      finalizeSidecar({
         config: baseConfig(),
         store,
         discover: () => Object.keys(files),
@@ -258,7 +258,7 @@ describe('finalizeRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-repo', '2026-07-19T10:00:00.000Z'),
     };
 
-    await finalizeRideAlong({
+    await finalizeSidecar({
       config: baseConfig({
         repo: { owner: 'jlapenna', name: 'agent-lcars' },
       }),
@@ -284,7 +284,7 @@ describe('finalizeRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-f', '2026-07-19T10:00:00.000Z'),
     };
 
-    await finalizeRideAlong({
+    await finalizeSidecar({
       config: baseConfig(),
       store,
       discover: (_dir: string, allowlist: string[]) => {
@@ -305,7 +305,7 @@ describe('finalizeRideAlong', () => {
     const { store, upserts } = createFakeStore();
 
     await expect(
-      finalizeRideAlong({
+      finalizeSidecar({
         config: baseConfig(),
         store,
         discover: () => [],

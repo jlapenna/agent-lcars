@@ -63,7 +63,7 @@
       "options": {
         "platform": "node",
         "outputPath": "dist/apps/telemetry-watcher",
-        "outputFileName": "ride-along.cjs",
+        "outputFileName": "sidecar.cjs",
         "format": ["cjs"],
         "bundle": true,
         "thirdParty": true,
