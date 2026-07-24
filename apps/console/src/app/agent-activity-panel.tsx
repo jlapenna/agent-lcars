@@ -264,6 +264,8 @@ export function LiveRunRow({
         >
           {item ? `#${item.number} ${item.title}` : displayRunTitle(run)}
         </Anchor>
+      </Group>
+      <Group gap={6} wrap="nowrap">
         <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
           {run.status === 'running'
             ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m`
@@ -368,30 +370,37 @@ export function FinishedRunRow({
         >
           {displayRunTitle(run)}
         </Anchor>
+      </Group>
+      <Group gap="xs" wrap="nowrap">
         <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
           {formatDuration(run.elapsedSeconds)} · finished{' '}
           {formatRelativeTime(run.updatedAt)}
         </Text>
-        <Anchor
-          href={run.url}
-          target="_blank"
-          rel="noreferrer"
-          size="xs"
-          c="dimmed"
+        <Group
+          gap={6}
+          wrap="nowrap"
           style={{ marginLeft: 'auto', flexShrink: 0 }}
         >
-          View run ↗
-        </Anchor>
-        {session && (
           <Anchor
-            href={`/sessions/${session.sessionId}`}
+            href={run.url}
+            target="_blank"
+            rel="noreferrer"
             size="xs"
             c="dimmed"
-            data-testid="finished-run-session-link"
           >
-            session
+            View run ↗
           </Anchor>
-        )}
+          {session && (
+            <Anchor
+              href={`/sessions/${session.sessionId}`}
+              size="xs"
+              c="dimmed"
+              data-testid="finished-run-session-link"
+            >
+              session
+            </Anchor>
+          )}
+        </Group>
       </Group>
       {classification.diagnosis && (
         <Text size="xs" c="orange" data-testid="finished-run-diagnosis">
