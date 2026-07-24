@@ -109,11 +109,11 @@ describe('SessionHeader', () => {
     expect(screen.queryByTestId('cli-summary-note')).toBeNull();
   });
 
-  it('renders a full token breakdown including cache tokens when present', () => {
+  it('renders a full token breakdown including cache tokens when present, with the total summing all four', () => {
     renderHeader(cliDoc());
     expect(
       screen.getByText(
-        /150 total \(in 100, out 50, cache-create 5, cache-read 10\)/,
+        /165 total \(in 100, out 50, cache-create 5, cache-read 10\)/,
       ),
     ).toBeTruthy();
   });

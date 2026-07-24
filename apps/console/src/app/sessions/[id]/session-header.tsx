@@ -1,5 +1,9 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { displayLiveness, sessionAgent } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  sessionAgent,
+  totalTokens,
+} from '@agent-lcars/telemetry';
 import {
   Anchor,
   Badge,
@@ -38,7 +42,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function formatTokens(doc: SessionDoc): string {
-  const total = doc.tokens.inputTokens + doc.tokens.outputTokens;
+  const total = totalTokens(doc.tokens);
   const parts = [
     `in ${doc.tokens.inputTokens.toLocaleString('en-US')}`,
     `out ${doc.tokens.outputTokens.toLocaleString('en-US')}`,

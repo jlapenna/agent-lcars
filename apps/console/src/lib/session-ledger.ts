@@ -1,4 +1,5 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
+import { totalTokens } from '@agent-lcars/telemetry';
 
 import {
   primaryWatchedRepo,
@@ -174,7 +175,7 @@ export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
   const byWeekMap = new Map<string, LedgerTotals>();
 
   for (const doc of docs) {
-    const tokens = doc.tokens.inputTokens + doc.tokens.outputTokens;
+    const tokens = totalTokens(doc.tokens);
     if (doc.source === 'issue-agent' && doc.issueNumber !== undefined) {
       const repo = doc.repo ?? primaryWatchedRepo();
       const key = repoItemKey(repo, doc.issueNumber);

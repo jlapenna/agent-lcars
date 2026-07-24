@@ -4,7 +4,11 @@ import type {
   SessionLiveness,
   SessionSource,
 } from '@agent-lcars/telemetry';
-import { displayLiveness, sessionAgent } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  sessionAgent,
+  totalTokens,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -121,7 +125,7 @@ function runUrl(repo: WatchedRepo, runId: string): string {
  * injected (not read from the clock in here) so liveness recomputation
  * stays deterministic under test - see displayLiveness. */
 export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
-  const totalTokens = doc.tokens.inputTokens + doc.tokens.outputTokens;
+  const tokens = totalTokens(doc.tokens);
   const title =
     doc.title ??
     (doc.source === 'issue-agent' && doc.issueNumber !== undefined
@@ -151,7 +155,7 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
       doc.runId && { runId: doc.runId, runUrl: runUrl(repo, doc.runId) }),
     ...(doc.model && { model: doc.model }),
     turns: doc.turns,
-    totalTokens,
+    totalTokens: tokens,
     ...(doc.totalCostUsd !== undefined && { totalCostUsd: doc.totalCostUsd }),
     startedAt: doc.startedAt,
     lastActivityAt: doc.lastActivityAt,
