@@ -1,3 +1,11 @@
+# Intentionally also duplicated at jlapenna/homelab's
+# github-runner-autoscaler/runner-image/Dockerfile. This copy here is the
+# primary, CI-published one (publish-runner-autoscaler.yml); homelab keeps
+# its own copy only as a fallback-build source for when a registry pull
+# fails on a fleet worker host, so that fallback doesn't also need those
+# hosts to reach GitHub. Keep both copies in sync by hand until/unless that
+# changes.
+#
 # Declared before any FROM so it stays usable in the second stage's FROM
 # below (a build ARG used in a FROM line must be declared "globally", i.e.
 # ahead of the first FROM in the whole file - a stage-scoped declaration
