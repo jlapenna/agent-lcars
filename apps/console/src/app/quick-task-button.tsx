@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Anchor,
   Button,
   Modal,
   Select,
@@ -60,7 +61,16 @@ export function QuickTaskButton({
       setTitle('');
       setDescription('');
       notifications.show({
-        message: `Quick task filed as #${result.number}`,
+        message: (
+          <Anchor
+            href={result.url}
+            target="_blank"
+            rel="noreferrer"
+            c="inherit"
+          >
+            Quick task filed as #{result.number}
+          </Anchor>
+        ),
         color: 'green',
       });
     });

@@ -1,4 +1,4 @@
-module github.com/jlapenna/agent-lcars/runner-autoscaler
+module github.com/jlapenna/agent-lcars/apps/runner-autoscaler
 
 go 1.26.3
 

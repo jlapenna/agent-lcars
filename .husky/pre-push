@@ -17,4 +17,4 @@ fi
 
 ./tools/check-dependencies.sh
 ./tools/nx format:check --base=origin/main
-./tools/nx affected -t typecheck --base=origin/main
+./tools/nx affected -t test typecheck build --base=origin/main

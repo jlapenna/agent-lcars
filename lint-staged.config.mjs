@@ -4,5 +4,6 @@ export default {
     'prettier --write',
   ],
   '*.{css,json,jsonc,md,yaml,yml}': 'prettier --write',
+  '*.go': 'gofmt -w',
   '**/package.json': './tools/check-dependencies.sh',
 };
