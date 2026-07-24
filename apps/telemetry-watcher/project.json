@@ -72,6 +72,9 @@
         "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
         "skipTypeCheck": true,
         "esbuildOptions": {
+          "alias": {
+            "abort-controller": "apps/telemetry-watcher/src/lib/native-abort-controller-shim.cjs"
+          },
           "sourcemap": false
         }
       }

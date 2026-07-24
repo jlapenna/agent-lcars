@@ -33,7 +33,7 @@ import {
 describe('getAgentSessionTranscriptsBucketName', () => {
   it('derives the bucket name from the project id convention', () => {
     expect(getAgentSessionTranscriptsBucketName()).toBe(
-      'test-project-agent-session-transcripts',
+      'test-project-session-transcripts',
     );
   });
 });

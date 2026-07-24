@@ -7,6 +7,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST',
   'AGENT_TELEMETRY_HOST',
   'AGENT_TELEMETRY_PROJECT_ID',
+  'AGENT_TELEMETRY_TRANSCRIPTS_BUCKET',
   'AGENT_TELEMETRY_WRITER_KEY_JSON',
   'AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS',
   'AGENT_TELEMETRY_STALENESS_WINDOW_MS',
@@ -151,5 +152,19 @@ describe('loadRunnerConfig', () => {
     const config = loadRunnerConfig([]);
 
     expect(config.repo).toBeUndefined();
+  });
+
+  it('threads the derived transcriptsBucket through from loadConfig (issue #24)', () => {
+    process.env['AGENT_TELEMETRY_PROJECT_ID'] = 'agent-lcars';
+
+    const config = loadRunnerConfig([]);
+
+    expect(config.transcriptsBucket).toBe('agent-lcars-session-transcripts');
+  });
+
+  it('omits transcriptsBucket entirely when no project id is configured', () => {
+    const config = loadRunnerConfig([]);
+
+    expect(config.transcriptsBucket).toBeUndefined();
   });
 });

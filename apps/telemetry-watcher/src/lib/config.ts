@@ -22,6 +22,15 @@ export interface WatcherConfig {
   firestoreProjectId?: string;
   firestoreWriterKeyJson?: string;
   firestoreEmulatorHost?: string;
+  /** `gs://` bucket (name only, no scheme) that `runner finalize` (issue #24)
+   * archives a session's raw transcript to before shipping its final `ended`
+   * doc — see `finalize.ts`. Defaults to `${firestoreProjectId}-session-transcripts`,
+   * matching the bucket name literal in infra/terraform/main.tf's
+   * `google_storage_bucket.transcripts` (`AGENT_TELEMETRY_TRANSCRIPTS_BUCKET`
+   * overrides it, e.g. for local testing against a different bucket).
+   * `undefined` when `firestoreProjectId` is also unset, since there is no
+   * project to derive a bucket name from. */
+  transcriptsBucket?: string;
   /** Optional Antigravity summary-DB poller config (#3123 phase 3) —
    * default-enabled (see `defaultAntigravitySummaryDbPath` below), so this is
    * only ever `undefined` when `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` is
@@ -231,6 +240,13 @@ export function loadConfig(): WatcherConfig {
           workspacePrefixes: DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
         };
 
+  const firestoreProjectId = optional('AGENT_TELEMETRY_PROJECT_ID');
+  const transcriptsBucket =
+    optional('AGENT_TELEMETRY_TRANSCRIPTS_BUCKET') ??
+    (firestoreProjectId
+      ? `${firestoreProjectId}-session-transcripts`
+      : undefined);
+
   return {
     watchRoots,
     host: optional('AGENT_TELEMETRY_HOST') ?? os.hostname(),
@@ -238,9 +254,10 @@ export function loadConfig(): WatcherConfig {
     stalenessWindowMs,
     shareDir:
       optional('AGENT_TELEMETRY_SHARE_DIR') ?? path.join(os.homedir(), 'share'),
-    firestoreProjectId: optional('AGENT_TELEMETRY_PROJECT_ID'),
+    firestoreProjectId,
     firestoreWriterKeyJson: optional('AGENT_TELEMETRY_WRITER_KEY_JSON'),
     firestoreEmulatorHost: optional('FIRESTORE_EMULATOR_HOST'),
+    ...(transcriptsBucket && { transcriptsBucket }),
     ...(antigravitySummaryDb && { antigravitySummaryDb }),
   };
 }

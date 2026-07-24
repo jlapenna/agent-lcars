@@ -14,6 +14,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_WATCH_ROOTS',
   'AGENT_TELEMETRY_HOST',
   'AGENT_TELEMETRY_PROJECT_ID',
+  'AGENT_TELEMETRY_TRANSCRIPTS_BUCKET',
   'AGENT_TELEMETRY_WRITER_KEY_JSON',
   'AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS',
   'AGENT_TELEMETRY_STALENESS_WINDOW_MS',
@@ -190,6 +191,31 @@ describe('loadConfig', () => {
       ]);
 
       expect(() => loadConfig()).toThrow(/projectDirAllowlist/);
+    });
+  });
+
+  describe('transcriptsBucket (issue #24)', () => {
+    it('is undefined when no project id is configured', () => {
+      const config = loadConfig();
+
+      expect(config.transcriptsBucket).toBeUndefined();
+    });
+
+    it('derives the bucket name from the configured project id', () => {
+      process.env['AGENT_TELEMETRY_PROJECT_ID'] = 'agent-lcars';
+
+      const config = loadConfig();
+
+      expect(config.transcriptsBucket).toBe('agent-lcars-session-transcripts');
+    });
+
+    it('respects an explicit bucket override', () => {
+      process.env['AGENT_TELEMETRY_PROJECT_ID'] = 'agent-lcars';
+      process.env['AGENT_TELEMETRY_TRANSCRIPTS_BUCKET'] = 'custom-bucket';
+
+      const config = loadConfig();
+
+      expect(config.transcriptsBucket).toBe('custom-bucket');
     });
   });
 

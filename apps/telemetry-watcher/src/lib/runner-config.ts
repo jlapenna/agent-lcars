@@ -8,6 +8,7 @@ export interface RunnerConfig extends Pick<
   | 'firestoreProjectId'
   | 'firestoreWriterKeyJson'
   | 'firestoreEmulatorHost'
+  | 'transcriptsBucket'
 > {
   /** Root to discover transcripts under. Defaults to
    * `defaultClaudeProjectsDir()` (`~/.claude/projects`, optionally
@@ -122,6 +123,9 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
     firestoreProjectId: base.firestoreProjectId,
     firestoreWriterKeyJson: base.firestoreWriterKeyJson,
     firestoreEmulatorHost: base.firestoreEmulatorHost,
+    ...(base.transcriptsBucket && {
+      transcriptsBucket: base.transcriptsBucket,
+    }),
     ...(flags.runId !== undefined && { runId: flags.runId }),
     ...(issueNumber !== undefined &&
       !Number.isNaN(issueNumber) && { issueNumber }),
