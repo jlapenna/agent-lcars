@@ -177,7 +177,7 @@ export interface IssueAgentSessionDoc extends BaseSessionDoc {
   runId?: string;
   issueNumber?: number;
   /** `gs://` URI of this run's archived session data (Slice 2's runner-mode
-   * shipper — see claude.yml's "Finalize telemetry ride-along" step,
+   * shipper — see claude.yml's "Finalize telemetry sidecar" step,
    * apps/telemetry-watcher/src/lib/finalize.ts, and issue #24).
    * Issue-agent sessions
    * only: `cli` docs are built from a transcript already on local disk, so

@@ -20,10 +20,10 @@ import {
  * comment for why a runner container's single checkout needs no scoping. */
 const RUNNER_ALLOWLIST = ['*'];
 
-export interface FinalizeRideAlongOptions {
+export interface FinalizeSidecarOptions {
   config: RunnerConfig;
   store: SessionStore;
-  /** Test-only injection points, mirrored from `StartRideAlongOptions`. */
+  /** Test-only injection points, mirrored from `StartSidecarOptions`. */
   discover?: (rootPath: string, allowlist: string[]) => string[];
   readFile?: (filePath: string) => string;
   resolveGitBranch?: (cwd: string) => string | undefined;
@@ -33,7 +33,7 @@ export interface FinalizeRideAlongOptions {
 
 /**
  * One-shot finalize pass for a runner (issue-agent) session (issue #24),
- * run once "Run Claude Code" has already exited: unlike `startRideAlong`'s
+ * run once "Run Claude Code" has already exited: unlike `startSidecar`'s
  * long-lived tick loop, this reduces each discovered transcript exactly
  * once, archives its raw content to `config.transcriptsBucket` (the runner
  * container is destroyed on job exit, so this is the session's only chance
@@ -42,7 +42,7 @@ export interface FinalizeRideAlongOptions {
  *
  * Liveness is hardcoded to `'ended'` rather than recomputed via
  * `computeLiveness` — by the time claude.yml's "Finalize telemetry
- * ride-along" step runs, "Run Claude Code" has already completed, so the
+ * sidecar" step runs, "Run Claude Code" has already completed, so the
  * process this session's transcript belonged to is unconditionally gone;
  * there is no `/proc` check left to make.
  *
@@ -50,8 +50,8 @@ export interface FinalizeRideAlongOptions {
  * reduce, upload, or upsert must never stop the others from shipping, and
  * this function itself never throws.
  */
-export async function finalizeRideAlong(
-  options: FinalizeRideAlongOptions,
+export async function finalizeSidecar(
+  options: FinalizeSidecarOptions,
 ): Promise<void> {
   const { config, store } = options;
   const discover = options.discover ?? discoverTranscriptFiles;

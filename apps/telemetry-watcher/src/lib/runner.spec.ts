@@ -1,7 +1,7 @@
 import { SessionDoc } from '@agent-lcars/telemetry';
 import { describe, expect, it } from 'vitest';
 
-import { startRideAlong } from './runner';
+import { startSidecar } from './runner';
 import { RunnerConfig } from './runner-config';
 import { SessionStore } from './store';
 
@@ -65,7 +65,7 @@ function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   };
 }
 
-describe('startRideAlong', () => {
+describe('startSidecar', () => {
   it('tags upserted docs with the configured runId and issueNumber', async () => {
     const { store, upserts } = createFakeStore();
     const files = {
@@ -73,7 +73,7 @@ describe('startRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-a', '2026-07-19T10:00:00.000Z'),
     };
 
-    const daemon = startRideAlong({
+    const daemon = startSidecar({
       config: baseConfig({ runId: '999888777', issueNumber: 3107 }),
       store,
       autoStart: false,
@@ -102,7 +102,7 @@ describe('startRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-repo', '2026-07-19T10:00:00.000Z'),
     };
 
-    const daemon = startRideAlong({
+    const daemon = startSidecar({
       config: baseConfig({
         repo: { owner: 'supersprinklesracing', name: 'members' },
       }),
@@ -133,7 +133,7 @@ describe('startRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-b', '2026-07-19T10:00:00.000Z'),
     };
 
-    const daemon = startRideAlong({
+    const daemon = startSidecar({
       config: baseConfig(),
       store,
       autoStart: false,
@@ -159,7 +159,7 @@ describe('startRideAlong', () => {
         ISSUE_AGENT_TRANSCRIPT('session-c', '2026-07-19T10:00:00.000Z'),
     };
 
-    const daemon = startRideAlong({
+    const daemon = startSidecar({
       config: baseConfig({ runId: '1' }),
       store,
       autoStart: false,
@@ -183,7 +183,7 @@ describe('startRideAlong', () => {
   it('does not start the daemon interval when autoStart is false', async () => {
     const { store } = createFakeStore();
 
-    const daemon = startRideAlong({
+    const daemon = startSidecar({
       config: baseConfig(),
       store,
       autoStart: false,

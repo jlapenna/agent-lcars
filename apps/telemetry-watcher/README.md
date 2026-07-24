@@ -12,19 +12,19 @@ mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry is
 provided by the standalone runner bundle (this app's `bundle` Nx target,
 esbuild-bundled with every dependency inlined including
 `@google-cloud/firestore`), baked into the self-hosted `claude-agent-lcars`
-runner image at `/usr/local/lib/agent-lcars/ride-along.cjs`
+runner image at `/usr/local/lib/agent-lcars/sidecar.cjs`
 (`jlapenna/homelab`'s `github-runner-autoscaler/runner-image/Dockerfile`
 builds it from this repo's own `main` at image-build time — see issue #30).
 No download, no version pin to keep in sync: the image build is the only
 "release" step, replacing a publish-then-pin scheme whose pin silently went
 stale for months (#29).
 
-1. **Mid-run, live (`runner ride-along` — issue #3107 follow-up 5):**
-   claude.yml's "Start telemetry ride-along" step backgrounds it —
-   `node ride-along.cjs runner ride-along --run-id <id>
+1. **Mid-run, live (`runner sidecar` — issue #3107 follow-up 5):**
+   claude.yml's "Start telemetry sidecar" step backgrounds it —
+   `node sidecar.cjs runner sidecar --run-id <id>
 --issue-number <n> --projects-dir "$HOME/.claude/projects"` — for the
    duration of "Run Claude Code". It reuses `WatcherDaemon` wholesale (see
-   `src/lib/runner.ts`'s `startRideAlong`) on a ~10s tick with **no
+   `src/lib/runner.ts`'s `startSidecar`) on a ~10s tick with **no
    allowlist restriction** (`RUNNER_ALLOWLIST = ['*']`) — a runner container
    is single-purpose and destroyed after one job, unlike a workstation with
    many unrelated Claude Code projects under the same
@@ -34,14 +34,14 @@ stale for months (#29).
    tokens while the job is running.
 
 2. **Finalize, authoritative (`runner finalize` — issue #24):**
-   claude.yml's "Finalize telemetry ride-along" step runs once "Run Claude
-   Code" exits: kills the ride-along process above (waiting, bounded, for it
+   claude.yml's "Finalize telemetry sidecar" step runs once "Run Claude
+   Code" exits: kills the sidecar process above (waiting, bounded, for it
    to actually stop first — see that step's comments), then does one last
    reduce pass with liveness hardcoded to `'ended'`, uploads the raw
    transcript to `AGENT_TELEMETRY_TRANSCRIPTS_BUCKET`, and upserts the
    authoritative final doc with `transcriptGcsUri` attached — see
    `src/lib/finalize.ts`. Without this, a session doc just freezes at
-   whichever `live`/`idle` snapshot the ride-along above last wrote, and
+   whichever `live`/`idle` snapshot the sidecar above last wrote, and
    never gets a browsable archived transcript.
 
 ## What it does
@@ -97,11 +97,11 @@ If neither the emulator host nor both of `AGENT_TELEMETRY_PROJECT_ID` /
 `AGENT_TELEMETRY_WRITER_KEY_JSON` are set, the daemon falls back to a
 log-only store — this is what lets `docker run` demonstrate the daemon
 end-to-end without live GCP access (issue #2540's CI-only verification
-scope). `runner ride-along` mode (above) adds a third path,
+scope). `runner sidecar` mode (above) adds a third path,
 **tried after the writer-key-JSON path**: if `AGENT_TELEMETRY_PROJECT_ID`
 is set but `AGENT_TELEMETRY_WRITER_KEY_JSON` is not, the store falls back to
 ambient Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`,
-set by claude.yml's "Start telemetry ride-along" step to the
+set by claude.yml's "Start telemetry sidecar" step to the
 agent-telemetry-writer SA's short-lived WIF credentials file) instead of a
 key JSON blob — see `src/lib/create-store.ts`.
 
@@ -111,7 +111,7 @@ key JSON blob — see `src/lib/create-store.ts`.
 ./tools/nx run @agent-lcars/telemetry-watcher:serve
 ```
 
-## Bundle (runner ride-along)
+## Bundle (runner sidecar)
 
 The `bundle` Nx target produces the single self-contained file the
 `claude-agent-lcars` runner image bakes in and claude.yml's telemetry steps
@@ -122,14 +122,14 @@ zero runtime `node_modules` dependency:
 
 ```bash
 ./tools/nx run @agent-lcars/telemetry-watcher:bundle
-# -> dist/apps/telemetry-watcher/ride-along.cjs
+# -> dist/apps/telemetry-watcher/sidecar.cjs
 
 # Verify it actually runs standalone (copy it out of the checkout first —
 # running it in place can accidentally succeed via an ambient node_modules
 # resolution that won't exist wherever claude.yml downloads it to):
-cp dist/apps/telemetry-watcher/ride-along.cjs /tmp/some-empty-dir/
+cp dist/apps/telemetry-watcher/sidecar.cjs /tmp/some-empty-dir/
 cd /tmp/some-empty-dir
-node ride-along.cjs runner ride-along --run-id test --projects-dir /tmp/some/fixture/dir
+node sidecar.cjs runner sidecar --run-id test --projects-dir /tmp/some/fixture/dir
 ```
 
 Deliberately **not** in the default `build` target's dependency chain (a

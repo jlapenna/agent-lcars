@@ -4,8 +4,8 @@ import chokidar from 'chokidar';
 import { loadConfig } from './lib/config';
 import { createStoreFromConfig } from './lib/create-store';
 import { WatcherDaemon } from './lib/daemon';
-import { finalizeRideAlong } from './lib/finalize';
-import { startRideAlong } from './lib/runner';
+import { finalizeSidecar } from './lib/finalize';
+import { startSidecar } from './lib/runner';
 import { loadRunnerConfig } from './lib/runner-config';
 
 /** Long-lived per-host daemon mode (issue #2540): watches a fixed dir for
@@ -69,8 +69,8 @@ function runHostWatcher(): void {
 }
 
 /**
- * `node ride-along.cjs runner ride-along --run-id <id> --issue-number <n>
- * --projects-dir <dir>` — claude.yml's mid-run telemetry ride-along (issue
+ * `node sidecar.cjs runner sidecar --run-id <id> --issue-number <n>
+ * --projects-dir <dir>` — claude.yml's mid-run telemetry sidecar (issue
  * #3107 follow-up 5, `bundle` target in project.json). Fail-soft is a hard
  * requirement here, same as the finalize shipping step this complements: a
  * telemetry bug must never fail the agent job it's instrumenting. Every
@@ -78,15 +78,15 @@ function runHostWatcher(): void {
  * outer try/catch guarantees that even a config-load crash still exits
  * clean.
  */
-function runRunnerRideAlong(argv: string[]): void {
+function runRunnerSidecar(argv: string[]): void {
   try {
     const config = loadRunnerConfig(argv);
     const store = createStoreFromConfig(config);
-    const daemon = startRideAlong({ config, store });
+    const daemon = startSidecar({ config, store });
 
     const shutdown = (signal: string) => {
       logger.info(
-        `agent-lcars-telemetry-watcher: runner ride-along received ${signal}, shutting down`,
+        `agent-lcars-telemetry-watcher: runner sidecar received ${signal}, shutting down`,
       );
       daemon.stop();
       process.exit(0);
@@ -94,12 +94,12 @@ function runRunnerRideAlong(argv: string[]): void {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
     // Intentionally does not exit — the daemon's own interval keeps the
-    // process alive until claude.yml's "Finalize telemetry ride-along" step
-    // kills it by PID (see that step's ride-along.pid handling) and runs
+    // process alive until claude.yml's "Finalize telemetry sidecar" step
+    // kills it by PID (see that step's sidecar.pid handling) and runs
     // `runner finalize` (below) for the authoritative last write.
   } catch (error) {
     logger.error(
-      'agent-lcars-telemetry-watcher: runner ride-along crashed on startup; exiting 0 anyway (telemetry must never fail the agent job)',
+      'agent-lcars-telemetry-watcher: runner sidecar crashed on startup; exiting 0 anyway (telemetry must never fail the agent job)',
       error,
     );
     process.exit(0);
@@ -107,20 +107,20 @@ function runRunnerRideAlong(argv: string[]): void {
 }
 
 /**
- * `node ride-along.cjs runner finalize --run-id <id> --issue-number <n>
- * --projects-dir <dir>` — claude.yml's "Finalize telemetry ride-along" step
+ * `node sidecar.cjs runner finalize --run-id <id> --issue-number <n>
+ * --projects-dir <dir>` — claude.yml's "Finalize telemetry sidecar" step
  * (issue #24), run once "Run Claude Code" has already exited. Reuses the
- * same bundle/entrypoint as ride-along (no second download needed), but
+ * same bundle/entrypoint as sidecar (no second download needed), but
  * does a single reduce/upload/upsert pass instead of starting a long-lived
  * daemon — see `finalize.ts` for why liveness is hardcoded to `'ended'`
  * here rather than recomputed. Fail-soft is a hard requirement, same as
- * ride-along: this always exits 0.
+ * sidecar: this always exits 0.
  */
 function runRunnerFinalize(argv: string[]): void {
   try {
     const config = loadRunnerConfig(argv);
     const store = createStoreFromConfig(config);
-    finalizeRideAlong({ config, store })
+    finalizeSidecar({ config, store })
       .catch((error) => {
         logger.error(
           'agent-lcars-telemetry-watcher: runner finalize failed (ignored; telemetry must never fail the agent job)',
@@ -142,30 +142,30 @@ function runRunnerFinalize(argv: string[]): void {
 function main(): void {
   const [, , mode, subcommand, ...rest] = process.argv;
 
-  if (mode === 'runner' && subcommand === 'ride-along') {
-    // Last-resort net for anything async that escapes runRunnerRideAlong's
+  if (mode === 'runner' && subcommand === 'sidecar') {
+    // Last-resort net for anything async that escapes runRunnerSidecar's
     // own try/catch (e.g. inside the daemon's interval callbacks, which
     // already fail soft per-tick — this is defense in depth so an
     // unhandled rejection anywhere in runner mode can never propagate to a
     // nonzero exit and fail the agent job).
     process.on('uncaughtException', (error) => {
       logger.error(
-        'agent-lcars-telemetry-watcher: uncaught exception in runner ride-along (ignored)',
+        'agent-lcars-telemetry-watcher: uncaught exception in runner sidecar (ignored)',
         error,
       );
     });
     process.on('unhandledRejection', (reason) => {
       logger.error(
-        'agent-lcars-telemetry-watcher: unhandled rejection in runner ride-along (ignored)',
+        'agent-lcars-telemetry-watcher: unhandled rejection in runner sidecar (ignored)',
         reason,
       );
     });
-    runRunnerRideAlong(rest);
+    runRunnerSidecar(rest);
     return;
   }
 
   if (mode === 'runner' && subcommand === 'finalize') {
-    // Same defense-in-depth net as ride-along above, for the same reason.
+    // Same defense-in-depth net as sidecar above, for the same reason.
     process.on('uncaughtException', (error) => {
       logger.error(
         'agent-lcars-telemetry-watcher: uncaught exception in runner finalize (ignored)',

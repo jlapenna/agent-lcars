@@ -126,10 +126,10 @@ serviceAccounts:
       #   - claude.yml: the runner-mode shipper (this writer SA, "Ship
       #     session telemetry") plus the claude-agent-readonly SA's
       #     read-only observability auth ("Authenticate to GCP" above).
-      #   - deploy.yml: the `publish-ride-along` job impersonates this same
-      #     writer SA to upload the agent-lcars-telemetry-watcher ride-along
+      #   - deploy.yml: the `publish-sidecar` job impersonates this same
+      #     writer SA to upload the agent-lcars-telemetry-watcher sidecar
       #     bundle (#3111). Originally trusted claude.yml job refs only,
-      #     which made deploy.yml's first ride-along publish fail with
+      #     which made deploy.yml's first sidecar publish fail with
       #     "credential rejected by the attribute condition" (run
       #     29713808422, fixed by rerunning after the live widening).
       #   - opencode.yml: archive-first session shipping (#3123 phase 2) —
@@ -143,7 +143,7 @@ serviceAccounts:
       #     access for the independent Codex issue worker.
       - principal: 'principalSet://iam.googleapis.com/projects/972941236852/locations/global/workloadIdentityPools/claude-agent-pool/attribute.repository/supersprinklesracing/members'
         role: 'roles/iam.workloadIdentityUser'
-        reason: 'claude.yml and codex.yml mint access tokens for their session shippers; deploy.yml publishes the ride-along bundle; opencode.yml archives raw session storage'
+        reason: 'claude.yml and codex.yml mint access tokens for their session shippers; deploy.yml publishes the sidecar bundle; opencode.yml archives raw session storage'
       - principal: 'user:jlapenna@gmail.com'
         role: 'roles/iam.serviceAccountTokenCreator'
         reason: 'manual ops / verification'

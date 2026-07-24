@@ -29,8 +29,8 @@ FROM node:24-slim AS runtime
 WORKDIR /app
 
 RUN adduser --disabled-password --gecos "" watcher
-COPY --from=build /repo/dist/apps/telemetry-watcher/ride-along.cjs ./ride-along.cjs
+COPY --from=build /repo/dist/apps/telemetry-watcher/sidecar.cjs ./sidecar.cjs
 USER watcher
 
 ENV NODE_ENV=production
-ENTRYPOINT ["node", "ride-along.cjs"]
+ENTRYPOINT ["node", "sidecar.cjs"]
