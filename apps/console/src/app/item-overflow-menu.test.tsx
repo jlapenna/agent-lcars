@@ -45,10 +45,17 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   };
 }
 
-function renderMenu(item: ActionItem) {
+function renderMenu(
+  item: ActionItem,
+  opts: { muted?: boolean; onToggleMute?: () => void } = {},
+) {
   render(
     <MantineProvider>
-      <ItemOverflowMenu item={item} />
+      <ItemOverflowMenu
+        item={item}
+        muted={opts.muted}
+        onToggleMute={opts.onToggleMute}
+      />
     </MantineProvider>,
   );
 }
@@ -115,6 +122,36 @@ describe('ItemOverflowMenu', () => {
         expect.objectContaining({ message: 'Issue not found', color: 'red' }),
       ),
     );
+  });
+
+  it('offers Mute when onToggleMute is passed, even with no other action', async () => {
+    renderMenu(makeItem({ kind: 'pr' }), { onToggleMute: vi.fn() });
+    await openMenu();
+
+    expect(screen.getByText('Mute')).toBeTruthy();
+    expect(screen.queryByText('Unmute')).toBeNull();
+  });
+
+  it('offers Unmute instead of Mute once muted is true', async () => {
+    renderMenu(makeItem({ kind: 'pr' }), {
+      muted: true,
+      onToggleMute: vi.fn(),
+    });
+    await openMenu();
+
+    expect(screen.getByText('Unmute')).toBeTruthy();
+    expect(screen.queryByText('Mute')).toBeNull();
+  });
+
+  it('calls onToggleMute, with no confirm modal, when Mute is clicked', async () => {
+    const onToggleMute = vi.fn();
+    renderMenu(makeItem(), { onToggleMute });
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Mute'));
+
+    expect(onToggleMute).toHaveBeenCalledTimes(1);
+    expect(modals.openConfirmModal).not.toHaveBeenCalled();
   });
 
   it('clears needs-human without a confirm modal', async () => {

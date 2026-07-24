@@ -1,43 +1,17 @@
 import { Card, Group, Stack, Text, Title } from '@mantine/core';
 
-import type { ActionItem } from '../lib/action-items';
 import { getWatchedRepos } from '../lib/github-client';
-import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
+import { pipelineForLabels } from '../lib/primary-action';
 import { repoKey } from '../lib/watched-repo';
-import { ActionItemCard } from './action-item-card';
+import type { BoardCard } from './board-card';
 import { CompactItemRow } from './compact-item-row';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { lcarsPanelStyle } from './lcars';
 import { RetriggerButton } from './retrigger-button';
+import { SectionHeading } from './section-heading';
+import { YourQueueSection } from './your-queue-section';
 
-export interface BoardCard {
-  item: ActionItem;
-  updatedAtLabel: string;
-  primaryAction?: PrimaryAction;
-}
-
-function SectionHeading({
-  title,
-  count,
-  description,
-  primary = false,
-}: {
-  title: string;
-  count: number;
-  description: string;
-  primary?: boolean;
-}) {
-  return (
-    <>
-      <Title order={primary ? 2 : 3} size={primary ? undefined : 'h4'} mb={2}>
-        {title}
-      </Title>
-      <Text c="dimmed" size="sm" mb="sm">
-        {count} {count === 1 ? 'item' : 'items'} · {description}
-      </Text>
-    </>
-  );
-}
+export type { BoardCard } from './board-card';
 
 /**
  * The task board, tiered by whose move it is. Only "Your Queue" gets
@@ -71,29 +45,7 @@ export function ActionItemsBoard({
         className="lcars-panel"
         style={lcarsPanelStyle('amber')}
       >
-        <SectionHeading
-          title="Your Queue"
-          count={yourQueue.length}
-          description="Needs your decision or response."
-          primary
-        />
-        {yourQueue.length === 0 ? (
-          <Text c="dimmed" size="sm">
-            Nothing needs you right now.
-          </Text>
-        ) : (
-          <Stack gap="sm">
-            {yourQueue.map(({ item, updatedAtLabel, primaryAction }) => (
-              <ActionItemCard
-                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
-                item={item}
-                updatedAtLabel={updatedAtLabel}
-                primaryAction={primaryAction}
-                multiRepo={multiRepo}
-              />
-            ))}
-          </Stack>
-        )}
+        <YourQueueSection cards={yourQueue} multiRepo={multiRepo} />
       </Card>
 
       {handedBack.length > 0 && (
