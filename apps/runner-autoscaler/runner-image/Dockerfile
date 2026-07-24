@@ -29,8 +29,22 @@ WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
+# CACHE_BUST (build-arg, set to the publishing commit's SHA by the CI
+# workflow) forces this RUN's cache key to change on every real publish.
+# Without it, `docker/build-push-action`'s cache-from/to: type=registry
+# (mode=max) can restore a cached layer for this instruction from a PRIOR
+# build even though the instruction text (a clone of the moving `main`
+# branch) never changes -- silently pinning /repo to whatever agent-lcars
+# commit happened to be current the last time this exact layer was built,
+# defeating the entire "always build from fresh main, no version pin"
+# point of this stage (agent-lcars#29) via the cache mechanism itself. A
+# CI-triggered build always sets a real, unique CACHE_BUST; a bare local
+# `docker build` with no --build-arg is the one case this still risks a
+# stale cache hit, matching the accepted risk on that manual path already.
 ARG AGENT_LCARS_REF=main
-RUN git clone --depth 1 --single-branch --branch "${AGENT_LCARS_REF}" \
+ARG CACHE_BUST=unset
+RUN echo "cache-bust: ${CACHE_BUST}" && \
+    git clone --depth 1 --single-branch --branch "${AGENT_LCARS_REF}" \
     https://github.com/jlapenna/agent-lcars.git .
 # pnpm's version comes from the cloned repo's own package.json
 # ("packageManager" field) via corepack, not hardcoded here, so this stays

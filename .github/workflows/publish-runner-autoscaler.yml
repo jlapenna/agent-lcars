@@ -101,5 +101,10 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24
+          # Busts the Dockerfile's internal `git clone` layer on every real
+          # publish -- see that Dockerfile's own comment. Without this, the
+          # registry-backed cache below could restore a stale clone of
+          # agent-lcars main from a prior build.
+          build-args: CACHE_BUST=${{ github.sha }}
           cache-from: type=registry,ref=docker-registry.lan.jlapenna.net/homelab-runner:buildcache
           cache-to: type=registry,ref=docker-registry.lan.jlapenna.net/homelab-runner:buildcache,mode=max
