@@ -97,7 +97,7 @@
     "esbuild": "^0.28.0",
     "eslint": "^10.2.1",
     "eslint-plugin-playwright": "^2.10.1",
-    "eslint-plugin-simple-import-sort": "^13.0.0",
+    "eslint-plugin-simple-import-sort": "^14.0.0",
     "eslint-plugin-unused-imports": "^4.4.1",
     "firebase-tools": "^15.15.0",
     "firestore-jest-mock": "^0.26.0",
