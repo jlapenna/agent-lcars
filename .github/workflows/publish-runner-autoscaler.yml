@@ -18,6 +18,15 @@ on:
     paths:
       - runner-autoscaler/**
       - .github/workflows/publish-runner-autoscaler.yml
+      # The JIT worker image's Dockerfile clones this repo's own `main` at
+      # build time and bakes in `nx bundle @agent-lcars/telemetry-watcher`
+      # (see runner-image/Dockerfile) -- a telemetry-only change must
+      # rebuild the image too, or every self-hosted runner keeps the old
+      # sidecar until an unrelated autoscaler change or manual dispatch
+      # happens to trigger one (the same silent-staleness failure mode
+      # #52 exists to eliminate).
+      - apps/telemetry-watcher/**
+      - libs/telemetry/**
   workflow_dispatch:
 
 permissions:
