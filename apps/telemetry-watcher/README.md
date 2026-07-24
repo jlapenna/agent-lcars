@@ -13,11 +13,12 @@ provided by the standalone runner bundle (this app's `bundle` Nx target,
 esbuild-bundled with every dependency inlined including
 `@google-cloud/firestore`), baked into the self-hosted `claude-agent-lcars`
 runner image at `/usr/local/lib/agent-lcars/sidecar.cjs`
-(`jlapenna/homelab`'s `github-runner-autoscaler/runner-image/Dockerfile`
-builds it from this repo's own `main` at image-build time — see issue #30).
-No download, no version pin to keep in sync: the image build is the only
-"release" step, replacing a publish-then-pin scheme whose pin silently went
-stale for months (#29).
+(this repo's own `apps/runner-autoscaler/runner-image/Dockerfile` builds
+it from this repo's own `main` at image-build time — see issue #30;
+`jlapenna/homelab` keeps a fallback-build-only duplicate of that
+Dockerfile, kept in sync by hand). No download, no version pin to keep in
+sync: the image build is the only "release" step, replacing a
+publish-then-pin scheme whose pin silently went stale for months (#29).
 
 1. **Mid-run, live (`runner sidecar` — issue #3107 follow-up 5):**
    claude.yml's "Start telemetry sidecar" step backgrounds it —
@@ -134,14 +135,13 @@ node sidecar.cjs runner sidecar --run-id test --projects-dir /tmp/some/fixture/d
 
 Deliberately **not** in the default `build` target's dependency chain (a
 separate `bundle` target, not depended on by anything) — it's invoked by
-`jlapenna/homelab`'s runner-image build (see "CI issue-agent telemetry
-paths" above), not by anything in this repo's own CI. A separate,
-now-unused `publish-telemetry-tool.yml` workflow still exists here,
-publishing immutable semver-tagged releases to
-`gs://agent-lcars-tools/telemetry/` — that was this bundle's _previous_
-shipping path (curl-downloaded per job), superseded by the runner-image
-bake-in for `agent-lcars`'s own claude.yml, but potentially still relevant
-until `supersprinklesracing/members`'s equivalent workflow migrates too.
+the runner-image build (see "CI issue-agent telemetry paths" above), not
+by anything in this repo's own CI. The old `publish-telemetry-tool.yml`
+workflow (publishing immutable semver-tagged releases to
+`gs://agent-lcars-tools/telemetry/`, curl-downloaded per job) is gone —
+both `agent-lcars`'s and `supersprinklesracing/members`'s `claude.yml` now
+use the runner-image bake-in exclusively (members migrated in
+[members#3414](https://github.com/supersprinklesracing/members/pull/3414)).
 
 ## Deployment
 
