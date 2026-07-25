@@ -6,12 +6,12 @@ import { notifications } from '@mantine/notifications';
 import { useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
-import { clearHumanNeeded, closeIssue } from './actions';
+import { clearHumanNeeded, closeIssue, rebasePr } from './actions';
 
 /**
- * The console's "Done" affordance: an overflow menu, shared by queue cards
- * and compact rows, for closing an item's loop without a trip to GitHub.
- * Renders nothing if no action applies to this item.
+ * An overflow menu, shared by queue cards and compact rows, for secondary
+ * actions (closing an item's loop, clearing a label, rebasing a PR) without
+ * a trip to GitHub. Renders nothing if no action applies to this item.
  */
 export function ItemOverflowMenu({
   item,
@@ -30,7 +30,11 @@ export function ItemOverflowMenu({
   const canClose = item.kind === 'issue';
   const canClearHumanNeeded = item.actionTypes.includes('human-needed');
   const canMute = Boolean(onToggleMute);
-  if (!canClose && !canClearHumanNeeded && !canMute) return null;
+  // 'behind' is the MERGEABLE_WARNINGS/action-item-card.tsx state for
+  // "Base branch has moved" - the one mergeable_state a maintainer can
+  // resolve with a single click rather than a trip to GitHub.
+  const canRebase = item.kind === 'pr' && item.mergeableState === 'behind';
+  if (!canClose && !canClearHumanNeeded && !canMute && !canRebase) return null;
 
   const handleClose = () => {
     startTransition(async () => {
@@ -74,6 +78,20 @@ export function ItemOverflowMenu({
     });
   };
 
+  const handleRebase = () => {
+    startTransition(async () => {
+      const result = await rebasePr(item.repo, item.number);
+      if (!result.ok) {
+        notifications.show({ message: result.message, color: 'red' });
+        return;
+      }
+      notifications.show({
+        message: `#${item.number} updated with the base branch`,
+        color: 'green',
+      });
+    });
+  };
+
   return (
     <Menu withinPortal position="bottom-end" shadow="md">
       <Menu.Target>
@@ -88,6 +106,9 @@ export function ItemOverflowMenu({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
+        {canRebase && (
+          <Menu.Item onClick={handleRebase}>Rebase onto base branch</Menu.Item>
+        )}
         {canClearHumanNeeded && (
           <Menu.Item onClick={handleClearHumanNeeded}>
             Clear needs-human
