@@ -151,7 +151,7 @@ describe('SessionTable', () => {
     renderTable([makeRow({ totalTokens: 12345 })]);
     expect(screen.getByText('12,345')).toBeTruthy();
     expect(screen.getByTestId('session-card-meta').textContent).toContain(
-      '12,345 tok',
+      '12,345 cw tok',
     );
   });
 

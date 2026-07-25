@@ -58,7 +58,7 @@ function formatTokens(doc: SessionDoc): string {
       `cache-read ${doc.tokens.cacheReadTokens.toLocaleString('en-US')}`,
     );
   }
-  return `${total.toLocaleString('en-US')} total (${parts.join(', ')})`;
+  return `${total.toLocaleString('en-US')} cost-weighted total (${parts.join(', ')})`;
 }
 
 /**
@@ -113,7 +113,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           <Field label="Permission mode">{doc.permissionMode}</Field>
         )}
         <Field label="Turns">{doc.turns}</Field>
-        <Field label="Tokens">{formatTokens(doc)}</Field>
+        <Field label="Cost-weighted tokens">{formatTokens(doc)}</Field>
         <Field label="Cost">
           {doc.totalCostUsd !== undefined ? formatCost(doc.totalCostUsd) : '—'}
         </Field>

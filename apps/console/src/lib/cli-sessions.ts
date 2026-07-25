@@ -48,10 +48,7 @@ export interface CliSession {
   worktree?: string;
   model?: string;
   turns: number;
-  /** Total tokens (see {@link totalTokens}: input + output + both cache
-   * categories). No dollar-cost ledger exists yet (Agent Console v2 PRD
-   * #2112 defers a cost ledger to a later slice) - token volume is the best
-   * available proxy today. */
+  /** Cost-weighted token equivalent; see {@link totalTokens}. */
   totalTokens: number;
   title?: string;
   startedAt: string;

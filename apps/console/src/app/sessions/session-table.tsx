@@ -43,7 +43,7 @@ import { formatCost, formatDuration, formatRelativeTime } from '../format';
  */
 
 /** Secondary fields that matter less than identity/status/links on a phone
- * - model, token volume, cost, and (CLI-only) host - folded into one muted
+ * - model, cost-weighted tokens, cost, and (CLI-only) host - folded into one muted
  * meta line rather than each getting card real estate. Host/Run's run link
  * is dropped entirely on the card: the card already links to the session
  * detail page, a more useful mobile-sized jump target than a bare Actions
@@ -51,7 +51,7 @@ import { formatCost, formatDuration, formatRelativeTime } from '../format';
 function sessionCardMeta(row: SessionRow): string {
   return [
     row.model,
-    `${row.totalTokens.toLocaleString('en-US')} tok`,
+    `${row.totalTokens.toLocaleString('en-US')} cw tok`,
     row.totalCostUsd !== undefined ? formatCost(row.totalCostUsd) : undefined,
     row.source === 'cli' ? row.host : undefined,
   ]
@@ -185,7 +185,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
               <TableTh>Host / Run</TableTh>
               <TableTh>Model</TableTh>
               <TableTh>Turns</TableTh>
-              <TableTh>Tokens</TableTh>
+              <TableTh>Cost-weighted tokens</TableTh>
               <TableTh>Cost</TableTh>
               <TableTh>Started</TableTh>
               <TableTh>Duration</TableTh>

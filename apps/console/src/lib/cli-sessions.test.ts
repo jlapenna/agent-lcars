@@ -300,7 +300,7 @@ describe('getCliSessions', () => {
     expect(sessions[0].artifacts).toEqual(['report.md', 'chart.png']);
   });
 
-  it('includes cache-creation and cache-read tokens in totalTokens', async () => {
+  it('cost-weights cache-creation and cache-read tokens in totalTokens', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         tokens: {
@@ -314,7 +314,7 @@ describe('getCliSessions', () => {
     mockSearch();
 
     const { sessions } = await getCliSessions();
-    expect(sessions[0].totalTokens).toBe(51_500);
+    expect(sessions[0].totalTokens).toBe(6_575);
   });
 
   it('filters out non-CLI session docs', async () => {
