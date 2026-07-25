@@ -106,6 +106,36 @@
   );
 }
 
+/* ---- Operational controls ----
+   Header actions are deliberately shaped like the nav rail rather than
+   generic rounded rectangles: these are high-value console controls, not
+   ordinary form submits. */
+
+.lcars-action-button {
+  border-radius: 999px;
+  border: 2px solid var(--lcars-action-accent);
+  background: color-mix(in srgb, var(--lcars-action-accent) 18%, transparent);
+  color: var(--lcars-action-accent);
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.lcars-action-button:hover:not(:disabled) {
+  background: var(--lcars-action-accent);
+  border-color: var(--lcars-action-accent);
+  color: var(--mantine-color-black);
+}
+
+.lcars-action-button[data-accent='amber'] {
+  --lcars-action-accent: var(--mantine-color-orange-6);
+}
+
+.lcars-action-button[data-accent='violet'] {
+  --lcars-action-accent: var(--mantine-color-violet-5);
+}
+
 /* ---- Elbow panel accent ----
    A quieter structural echo of the same LCARS corner-into-rail shape,
    applied to top-level panel shells only (never per-row/per-item, so it

@@ -87,7 +87,13 @@ export function QuickTaskButton({
 
   return (
     <>
-      <Button size={size} disabled={isPending} onClick={() => setOpened(true)}>
+      <Button
+        className="lcars-action-button"
+        data-accent="amber"
+        size={size}
+        disabled={isPending}
+        onClick={() => setOpened(true)}
+      >
         Quick task
       </Button>
       <Modal

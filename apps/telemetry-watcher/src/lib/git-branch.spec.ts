@@ -1,53 +1,39 @@
 import { execFileSync } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveGitBranch } from './git-branch';
 
+vi.mock('child_process', () => ({ execFileSync: vi.fn() }));
+
+const mockedExecFileSync = vi.mocked(execFileSync);
+
 describe('resolveGitBranch', () => {
-  let repoDir: string;
-
   beforeEach(() => {
-    repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-branch-test-'));
-    execFileSync('git', ['init', '--initial-branch=main', repoDir]);
-    execFileSync('git', [
-      '-C',
-      repoDir,
-      'config',
-      'user.email',
-      'test@test.com',
-    ]);
-    execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test']);
-    fs.writeFileSync(path.join(repoDir, 'file.txt'), 'hello');
-    execFileSync('git', ['-C', repoDir, 'add', 'file.txt']);
-    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'init']);
+    vi.resetAllMocks();
   });
 
-  afterEach(() => {
-    fs.rmSync(repoDir, { recursive: true, force: true });
+  it('returns the branch reported by git', () => {
+    mockedExecFileSync.mockReturnValue('feature/foo\n' as never);
+
+    expect(resolveGitBranch('/workspace/project')).toBe('feature/foo');
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      'git',
+      ['-C', '/workspace/project', 'rev-parse', '--abbrev-ref', 'HEAD'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
   });
 
-  it('resolves the current branch of a git dir', () => {
-    expect(resolveGitBranch(repoDir)).toBe('main');
+  it('returns undefined for a detached HEAD', () => {
+    mockedExecFileSync.mockReturnValue('HEAD\n' as never);
+
+    expect(resolveGitBranch('/workspace/project')).toBeUndefined();
   });
 
-  it('resolves a branch after checking out a new one', () => {
-    execFileSync('git', ['-C', repoDir, 'checkout', '-b', 'feature/foo']);
-    expect(resolveGitBranch(repoDir)).toBe('feature/foo');
-  });
+  it('fails soft when git fails', () => {
+    mockedExecFileSync.mockImplementation(() => {
+      throw new Error('not a git repository');
+    });
 
-  it('fails soft for a non-git directory', () => {
-    const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'not-git-'));
-    try {
-      expect(resolveGitBranch(nonGitDir)).toBeUndefined();
-    } finally {
-      fs.rmSync(nonGitDir, { recursive: true, force: true });
-    }
-  });
-
-  it('fails soft for a nonexistent directory', () => {
-    expect(resolveGitBranch('/no/such/dir')).toBeUndefined();
+    expect(resolveGitBranch('/workspace/project')).toBeUndefined();
   });
 });

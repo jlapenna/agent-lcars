@@ -213,8 +213,6 @@ export default async function Index({ searchParams }: PageProps) {
             <UnstickPrsButton />
           </>
         }
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
         warnings={warnings}
       />
 
@@ -240,7 +238,10 @@ export default async function Index({ searchParams }: PageProps) {
         sessionsByRunId={sessionsByRunId}
       />
 
-      <ConsoleFooter />
+      <ConsoleFooter
+        generatedAt={generatedAt}
+        refreshLabel={formatRelativeTime(generatedAt)}
+      />
     </Container>
   );
 }

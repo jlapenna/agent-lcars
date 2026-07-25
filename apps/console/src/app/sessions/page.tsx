@@ -66,8 +66,6 @@ export default async function SessionsPage({ searchParams }: PageProps) {
             {rows.length === 1 ? '' : 's'}
           </>
         }
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
         warnings={warnings}
       />
 
@@ -83,7 +81,10 @@ export default async function SessionsPage({ searchParams }: PageProps) {
         <SessionTable rows={rows} />
       </Card>
 
-      <ConsoleFooter />
+      <ConsoleFooter
+        generatedAt={generatedAt}
+        refreshLabel={formatRelativeTime(generatedAt)}
+      />
     </Container>
   );
 }
