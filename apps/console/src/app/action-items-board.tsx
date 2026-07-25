@@ -37,7 +37,7 @@ export function ActionItemsBoard({
   const multiRepo = getWatchedRepos().length > 1;
 
   return (
-    <Stack gap="xl">
+    <Stack gap="xl" mb="xl">
       <Card
         withBorder
         radius="md"
