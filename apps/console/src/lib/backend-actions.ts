@@ -302,11 +302,14 @@ async function ensureQuickTaskLabelExists(repo: WatchedRepo): Promise<void> {
 }
 
 // Defaults to the primary watched repo; quick-task-button.tsx overrides
-// this via its own repo picker once more than one repo is watched (#11).
+// this via its own repo picker once more than one repo is watched (#11), and
+// to the `claude` pipeline; quick-task-button.tsx overrides this via its own
+// agent picker (#78).
 export async function createQuickTask(
   description: string,
   title?: string,
   repo: WatchedRepo = primaryWatchedRepo(),
+  pipeline: Pipeline = 'claude',
 ): Promise<{ url: string; number: number }> {
   const trimmed = description.trim();
   if (!trimmed) {
@@ -326,17 +329,16 @@ export async function createQuickTask(
   });
 
   // Added as a follow-up call rather than in the labels above: GitHub only
-  // fires the `issues: labeled` webhook event that claude.yml listens for
-  // when a label is attached after creation, not for one included in the
-  // create() call itself. Same reasoning as retriggerIssue's remove-then-
-  // readd above. Always the `claude` pipeline, intentionally: quick tasks
-  // are fire-and-forget maintainer asks, and opencode is an experimental
-  // pipeline you opt into per-issue by labeling it yourself (#3023).
+  // fires the `issues: labeled` webhook event each pipeline's workflow
+  // listens for when a label is attached after creation, not for one
+  // included in the create() call itself. Same reasoning as
+  // retriggerIssue's remove-then-readd above. The label IS the pipeline
+  // name (see retriggerIssue's identical `label: string = pipeline` above).
   await octokit.rest.issues.addLabels({
     owner: repo.owner,
     repo: repo.name,
     issue_number: issue.number,
-    labels: ['claude'],
+    labels: [pipeline],
   });
 
   return { url: issue.html_url, number: issue.number };

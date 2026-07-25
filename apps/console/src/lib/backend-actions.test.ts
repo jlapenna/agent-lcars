@@ -489,6 +489,24 @@ describe('createQuickTask', () => {
     });
   });
 
+  it('adds the selected pipeline label instead of claude when one is given', async () => {
+    const { addLabels } = mockOctokit({});
+
+    await createQuickTask(
+      'Fix the flaky test',
+      undefined,
+      DEFAULT_REPO,
+      'opencode',
+    );
+
+    expect(addLabels).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      issue_number: 99,
+      labels: ['opencode'],
+    });
+  });
+
   it('uses the explicit title instead of deriving one when provided', async () => {
     const { createIssue } = mockOctokit({});
 

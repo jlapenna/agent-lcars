@@ -291,6 +291,28 @@ describe('agent-lcars Server Actions', () => {
         'Fix the flaky test',
         'Custom title',
         undefined,
+        undefined,
+      );
+    });
+
+    it('createQuickTask forwards an explicit pipeline', async () => {
+      (createQuickTaskLib as Mock).mockResolvedValue({
+        url: 'https://github.com/x/y/issues/99',
+        number: 99,
+      });
+
+      await createQuickTask(
+        'Fix the flaky test',
+        'Custom title',
+        undefined,
+        'opencode',
+      );
+
+      expect(createQuickTaskLib).toHaveBeenCalledWith(
+        'Fix the flaky test',
+        'Custom title',
+        undefined,
+        'opencode',
       );
     });
 
