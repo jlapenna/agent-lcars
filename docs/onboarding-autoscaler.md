@@ -22,6 +22,69 @@ directory (`orchestrator.yml`, `docker-compose.yml`, `ansible/`) — that
 repo owns deployment config; this repo (`agent-lcars`) owns the Go source
 and publishes the images homelab pulls.
 
+### `orchestrator.yml`'s full shape
+
+One file holds everything: the primary registration's own top-level
+`github:`/`scale_sets:` keys, the shared `fleet:`/`server:` config every
+registration schedules against, and every other registration under
+`registrations:`. Onboarding a new registration only ever touches that
+last array — never the top-level keys, which belong to the primary
+registration.
+
+```yaml
+version: 1
+
+# The primary registration's own config lives at the top level (no
+# `registrations:` entry for it) -- this is the one exception to "every
+# registration is a registrations: entry".
+github:
+  url: https://github.com/<primary-owner>/<primary-repo>
+  runner_group: Default
+
+server:
+  metrics_addr: :8080
+  log_level: info
+  log_format: text
+
+fleet:
+  # Hard cap across EVERY scale set in the whole file, primary registration
+  # and every entry under registrations: combined -- config validation
+  # rejects a cap lower than the sum of every scale set's own max_runners
+  # ("fleet.max_runners N exceeds aggregate scale-set maximum M"). Raise
+  # this whenever a new registration's scale sets push the real sum past
+  # it; 10 below only covers the two scale sets this skeleton shows.
+  max_runners: 10
+  hosts:
+    - name: <host-name>
+      docker: local # or ssh://<user>@<host>.<domain> for a remote host
+      workdir_size_cap: 30g
+      docker_socket_gid: '983' # only required if any scale set on this
+      # host sets mount_docker_socket: true (see §2 below)
+    # ... more hosts -- see the live file for the fleet's current,
+    # actively-changing host list; don't treat this as authoritative.
+  placement:
+    host_metrics_url_template: http://%s.<domain>:9100/metrics
+    load_soft: 0.75
+    load_busy: 1.0
+    load_hard: 1.5
+    cpu_soft: 0.85
+    cpu_hard: 0.95
+    # ... more placement-pressure tuning knobs -- see the live file.
+
+scale_sets: # the PRIMARY registration's own scale sets
+  - name: <primary>-autoscale-default
+    labels: [default, <primary>-autoscale-default]
+    runner_image: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24
+    min_runners: 0
+    max_runners: 8
+    weight: 1
+  # ... more scale sets for the primary registration.
+
+registrations: # every OTHER registration -- see §2 below
+  - name: my-new-registration
+    # ...
+```
+
 ## 1. Provision a GitHub App (manual, one-time, human)
 
 Distinct accounts need distinct Apps — installations don't span accounts.
