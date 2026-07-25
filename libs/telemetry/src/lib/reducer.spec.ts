@@ -207,6 +207,32 @@ describe('reduceTranscript', () => {
     expect(ids).toEqual(['session-a', 'session-b']);
   });
 
+  it('drops lines whose sessionId is not a safe Firestore-doc-ID/GCS-key segment', () => {
+    const content = [
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        uuid: 'x1',
+        timestamp: '2026-07-01T00:00:00.000Z',
+        sessionId: '../other-run/hijacked',
+        message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        uuid: 'x2',
+        timestamp: '2026-07-01T00:00:00.000Z',
+        sessionId: 'session-legit',
+        message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      }),
+    ].join('\n');
+
+    const summaries = reduceTranscript(content);
+    const ids = summaries.map((s) => s.sessionId);
+
+    expect(ids).toEqual(['session-legit']);
+  });
+
   it('deduplicates lines with the same uuid across overlapping files', () => {
     const shared = readFixture('resumed-session-part1.jsonl');
     const summaries = reduceTranscripts([shared, shared]);

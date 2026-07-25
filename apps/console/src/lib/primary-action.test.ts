@@ -31,6 +31,19 @@ describe('derivePrimaryAction', () => {
     ).toEqual({ kind: 'approve-merge' });
   });
 
+  it('leads with approve-rebase instead of approve-merge when the PR is behind base', () => {
+    expect(
+      derivePrimaryAction(
+        makeItem({
+          kind: 'pr',
+          actionTypes: ['review-requested'],
+          draft: false,
+          mergeableState: 'behind',
+        }),
+      ),
+    ).toEqual({ kind: 'approve-rebase' });
+  });
+
   it('never offers approve-merge on a draft', () => {
     expect(
       derivePrimaryAction(

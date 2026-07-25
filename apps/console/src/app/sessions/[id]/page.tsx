@@ -113,7 +113,7 @@ export default async function SessionDetailPage({ params }: PageProps) {
   const generatedAt = new Date().toISOString();
 
   return (
-    <Container size="md" py="xl">
+    <Container size="xl" py="xl">
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
         <Anchor
           href="/sessions"

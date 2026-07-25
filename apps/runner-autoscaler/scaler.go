@@ -1279,6 +1279,7 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 	if _, err := client.ImageInspect(ctx, a.runnerImage); err != nil {
 		return fmt.Errorf("runner image %q is still unavailable on host %q after pull: %w", a.runnerImage, host, err)
 	}
+	logDigests(ctx, a.logger, DockerHost{Name: host, Client: client}, a.runnerImage)
 	return nil
 }
 

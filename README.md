@@ -1,25 +1,121 @@
 # Agent LCARS
 
-Agent LCARS is the standalone operations console and telemetry pipeline for the
-automation running in [`jlapenna/supersprinklesracing`](https://github.com/jlapenna/supersprinklesracing).
-It is intentionally isolated in the `agent-lcars` GCP project and does not read
-or write the racing application's databases.
+Agent LCARS is the operations console, telemetry pipeline, and self-hosted
+runner fleet for headless coding agents (Claude Code, and experimentally
+OpenCode) dispatched against GitHub issues in
+[`supersprinklesracing/members`](https://github.com/supersprinklesracing/members).
+It is intentionally isolated in its own `agent-lcars` GCP project and does
+not read or write the racing application's databases — see
+[AGENTS.md](AGENTS.md).
+
+Production console: <https://agent-console.supersprinkles.racing>.
+
+![Agent LCARS console — Queue tab showing the action-item board and in-flight CLI sessions](docs/images/console-dashboard.png)
+
+## What it does
+
+Adding the `claude` (or `opencode`) label to an issue in a watched repo
+dispatches a coding agent on this fleet's own ephemeral, self-hosted GitHub
+Actions runners. That agent works the issue headlessly — commenting,
+opening a PR, asking a clarifying question — following the shared
+conventions in [`.agents/skills/agent-protocol`](.agents/skills/agent-protocol/agent-protocol.md)
+and this repo's own [`.agents/skills/lcars`](.agents/skills/lcars/lcars-protocol.md)
+delta. Agent LCARS is the console that makes that fleet observable and
+operable: what needs a human right now, what's actively running, and a full
+searchable history of every session, live or finished.
+
+## Console features
+
+The console (`apps/console`, Next.js on Firebase App Hosting, gated behind a
+single-admin GitHub OAuth login) has three sections:
+
+- **Queue** (`/`) — the maintainer's action-item board: issues/PRs tagged
+  `human-needed`, a failed run, a review request, a post-deploy check, or a
+  run that reported success but whose own telemetry shows a silent-error
+  signature (an error result or essentially zero recorded work). Each card
+  carries the right one-click action. **Quick task** files a new
+  `quick-task`-labeled issue from free text and hands it straight to the
+  agent; **Run unstick-prs** dispatches a maintenance playbook that finds
+  and un-sticks stalled PRs.
+- **Agents** (`/agents`) — a fleet-wide, agent-by-agent view: a snapshot bar
+  of live/active counts per pipeline (Claude, OpenCode, Codex, interactive
+  CLI), the runs and CLI sessions currently active, anything claimed by the
+  fleet identity with no live run or session behind it (a safety net for
+  orphaned claims), and recently finished outcomes.
+- **Sessions** (`/sessions`) — the full session archive, not just the last
+  24h the other two pages show: every CLI and issue-agent session, filterable
+  by day window, source, or issue number, with a live/archived transcript
+  viewer.
+
+Every data fetch (GitHub API, Firestore) degrades to a visible warning
+banner on failure rather than a blank or broken page — a rate limit or a
+transient Firestore hiccup never takes the whole console down.
+
+## How it's wired together
+
+1. **Agent protocol** — every dispatch workflow (`claude.yml`, experimentally
+   `opencode.yml`) follows the shared, cross-repo conventions in
+   `.agents/skills/agent-protocol`: a takeover comment with a resume command,
+   👀 reactions as the agent reads a thread, one continuously edited status
+   comment, and — when blocked on a human — the fixed `human-needed` label
+   plus a maintainer assignee so the console's queue can find it.
+2. **Telemetry** (`apps/telemetry-watcher`, reduced by `libs/telemetry`) —
+   reports session data to a dedicated `agent-telemetry` Firestore database,
+   isolated from the console's own app data. Two paths feed it: a per-host
+   daemon watches interactive Claude Code/Codex sessions on a workstation;
+   in CI, a self-contained bundle of the same tool is baked into the shared
+   runner image at build time and runs as a sidecar for the lifetime of the
+   dispatched job, reporting live turns and finalizing an archived transcript
+   when the job ends.
+3. **Runner fleet** (`apps/runner-autoscaler`) — a Go control plane
+   (published as a container image, deployed by `jlapenna/homelab`) that
+   supervises independent GitHub Actions scale-set listeners across every
+   onboarded repo/account ("registration") and schedules ephemeral JIT
+   runner containers across one shared Docker host pool. Agent-dispatch
+   pools never hold the Docker socket; trusted, workflow-defined-only CI
+   that genuinely needs `docker build`/`docker run` gets its own separate,
+   socket-enabled scale set.
+4. **Infrastructure** (`infra/terraform`) — the GCP project services, the
+   dedicated Firestore database and transcript/tool storage buckets, runtime
+   secret containers (values are never stored in Terraform state), service
+   accounts, GitHub Workload Identity Federation, and a billing budget.
+
+See [docs/onboarding-console-and-telemetry.md](docs/onboarding-console-and-telemetry.md)
+and [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md) for the
+full wiring instructions to bring a new repo onto this fleet.
 
 ## Workspace
 
-- `apps/console` — Next.js operations console, deployed with Firebase App Hosting
-- `apps/telemetry-watcher` — host watcher and versioned runner sidecar bundle
-- `libs/telemetry` — session model, reducers, Firestore and transcript stores
-- `infra/terraform` — GCP services, storage, IAM, WIF, secrets and budget
-- `apps/runner-autoscaler` — Go source for the shared GitHub Actions
-  runner-fleet control plane and JIT worker image (see
-  [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md)); deployed
-  by `jlapenna/homelab`, which pulls the images this repo's own CI publishes
+| Path                             | What it is                                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `apps/console`                   | The operations console — Next.js, deployed with Firebase App Hosting                                                |
+| `apps/console-e2e`               | Playwright end-to-end specs for the console                                                                         |
+| `apps/telemetry-watcher`         | Host watcher daemon and versioned CI runner-sidecar bundle                                                          |
+| `apps/runner-autoscaler`         | Go control plane for the shared GitHub Actions runner fleet, plus the JIT worker image                              |
+| `libs/telemetry`                 | Pure, source-agnostic reducer: a Claude Code transcript → a structured session summary; Firestore/transcript stores |
+| `libs/app-providers`             | Shared client-side React providers (Firebase client, browser error reporting)                                       |
+| `libs/env-vars`                  | Typed environment-variable accessors                                                                                |
+| `libs/logging`                   | Structured logging shared by the console and the telemetry watcher                                                  |
+| `libs/util` / `libs/util-server` | Shared browser-safe and server-only utilities (dates, retries, rate limiting, secrets)                              |
+| `libs/test-utils`                | Shared test helpers                                                                                                 |
+| `infra/terraform`                | GCP services, Firestore, storage, IAM, WIF, secrets and budget                                                      |
+| `.agents/skills`                 | The agent-protocol and repo-specific conventions dispatched agents follow                                           |
 
-Use Node 24 and pnpm 10. Run `pnpm install`, then `pnpm nx run-many -t test
-typecheck build`.
+## Getting started
 
-Production remains at <https://agent-console.supersprinkles.racing>.
+Use Node 24 and pnpm 10 (`packageManager` in `package.json` pins the exact
+version). Then:
+
+```sh
+pnpm install
+pnpm nx run-many -t test typecheck build --all
+```
+
+Before opening a PR, match what CI runs:
+
+```sh
+pnpm verify   # format:check, lint, lint:circular, then test/typecheck/build --all
+```
 
 ## Documentation
 
@@ -28,11 +124,18 @@ Production remains at <https://agent-console.supersprinkles.racing>.
   Sessions, live transcripts).
 - [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md) — adding a
   new GitHub account/repo as a registration on the shared runner fleet.
+- [.agents/skills/agent-protocol/agent-protocol.md](.agents/skills/agent-protocol/agent-protocol.md)
+  and [.agents/skills/lcars/lcars-protocol.md](.agents/skills/lcars/lcars-protocol.md)
+  — the conventions this repo's own dispatched agents follow.
 
-## Cutover
+## Cutover from the old `supersprinklesracing`-hosted console
 
-The migration starts with an empty default Firestore database and transcript
-bucket. Provision Terraform, populate secret versions, create the App Hosting
-backend, publish the sidecar bundle, and deploy the watcher before moving the
-custom domain. Verify login, GitHub actions, session ingestion, and transcript
-viewing. Only then remove the old `supersprinklesracing` resources.
+This console used to live inside the `supersprinklesracing` GCP project; it's
+being migrated to its own isolated `agent-lcars` project (see
+[infra/terraform](infra/terraform)). The migration starts from an empty
+default Firestore database and transcript bucket: provision Terraform,
+populate secret versions, create the App Hosting backend, publish the
+telemetry-watcher sidecar bundle, and deploy the host watcher — all before
+moving the custom domain. Verify login, GitHub Actions, session ingestion,
+and transcript viewing on the new project before cutting over. Only then
+remove the old `supersprinklesracing`-project resources.

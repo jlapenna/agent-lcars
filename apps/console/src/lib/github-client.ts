@@ -3,6 +3,7 @@ import { optional, required } from '@repo/util-server';
 
 import {
   type AgentPipeline,
+  repoDisplayName,
   repoItemKey,
   repoKey,
   type WatchedRepo,
@@ -13,7 +14,13 @@ import {
 // with no @repo/util-server dependency) so client components can import
 // them without accidentally pulling this file's server-only deps
 // (firebase-admin, google-auth-library, ...) into a browser bundle.
-export { type AgentPipeline, repoItemKey, repoKey, type WatchedRepo };
+export {
+  type AgentPipeline,
+  repoDisplayName,
+  repoItemKey,
+  repoKey,
+  type WatchedRepo,
+};
 
 let client: Octokit | undefined;
 
@@ -59,6 +66,16 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
       `AGENT_LCARS_WATCHED_REPOS[${index}].name must be a non-empty string`,
     );
   }
+  const alias = record['alias'];
+  if (
+    alias !== undefined &&
+    (typeof alias !== 'string' || alias.length === 0)
+  ) {
+    throw new Error(
+      `AGENT_LCARS_WATCHED_REPOS[${index}].alias must be a non-empty string when present`,
+    );
+  }
+
   const workflowFiles = record['workflowFiles'];
   if (workflowFiles !== undefined) {
     if (
@@ -82,6 +99,7 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
   return {
     owner,
     name,
+    ...(alias !== undefined && { alias: alias as string }),
     ...(workflowFiles && {
       workflowFiles: workflowFiles as Partial<
         Record<AgentPipeline, string | null>
@@ -92,9 +110,9 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
 
 /**
  * Parses `AGENT_LCARS_WATCHED_REPOS`: a JSON array of
- * `{ "owner": string, "name": string, "workflowFiles"?: Partial<Record<AgentPipeline, string>> }`
+ * `{ "owner": string, "name": string, "alias"?: string, "workflowFiles"?: Partial<Record<AgentPipeline, string>> }`
  * objects, e.g.
- * `[{"owner":"supersprinklesracing","name":"members"},{"owner":"supersprinklesracing","name":"website"}]`.
+ * `[{"owner":"supersprinklesracing","name":"members"},{"owner":"supersprinklesracing","name":"website","alias":"Website"}]`.
  * Throws with a specific reason on malformed input rather than falling back
  * silently, mirroring apps/telemetry-watcher/src/lib/config.ts's
  * parseWatchRootsJson - a broken config should fail loudly at startup, not
@@ -112,7 +130,7 @@ function parseWatchedReposJson(raw: string): WatchedRepo[] {
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error(
-      'AGENT_LCARS_WATCHED_REPOS must be a non-empty JSON array of {owner, name, workflowFiles?} objects',
+      'AGENT_LCARS_WATCHED_REPOS must be a non-empty JSON array of {owner, name, alias?, workflowFiles?} objects',
     );
   }
   return parsed.map((entry, index) => validateWatchedRepo(entry, index));

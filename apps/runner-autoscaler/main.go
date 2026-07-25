@@ -85,6 +85,22 @@ func equalLabelSets(a, b map[string]bool) bool {
 	return true
 }
 
+// logDigests records the content-addressable digest(s) actually resolved
+// for runnerImage on host after a pull, for audit purposes. Image pulls are
+// tag-only trust (see agent-lcars#96/#101) -- this doesn't prevent a
+// registry from silently serving different content under the same tag, but
+// it leaves a trail that lets a compromise be detected/investigated after
+// the fact by diffing digests across pulls, which today's logs don't
+// capture at all.
+func logDigests(ctx context.Context, logger *slog.Logger, host DockerHost, runnerImage string) {
+	inspect, err := host.Client.ImageInspect(ctx, runnerImage)
+	if err != nil {
+		logger.Warn("Pulled runner image but could not inspect it for a digest", slog.String("host", host.Name), slog.String("image", runnerImage), slog.String("error", err.Error()))
+		return
+	}
+	logger.Info("Pulled runner image", slog.String("host", host.Name), slog.String("image", runnerImage), slog.Any("digests", inspect.RepoDigests))
+}
+
 // pullRunnerImages refreshes each distinct runner image on all fleet hosts in
 // parallel. A slow or unavailable host never blocks healthy hosts.
 func pullRunnerImages(ctx context.Context, hosts []DockerHost, runnerImage string, logger *slog.Logger) {
@@ -108,7 +124,9 @@ func pullRunnerImages(ctx context.Context, hosts []DockerHost, runnerImage strin
 			defer func() { _ = pull.Close() }()
 			if _, err := io.Copy(io.Discard, pull); err != nil {
 				logger.Warn("Failed while reading image pull response", slog.String("host", host.Name), slog.String("error", err.Error()))
+				return
 			}
+			logDigests(ctx, logger, host, runnerImage)
 		}(host)
 	}
 	wg.Wait()
