@@ -43,15 +43,12 @@ dispatch-workflow work, following a file this repo publishes.
 
 ## 2. Telemetry
 
-**Claude Code dispatches only, for now.** `startSidecar()`
-(`apps/telemetry-watcher/src/lib/runner.ts`) hard-codes both the watched
-directory (`$HOME/.claude/projects`) and the transcript adapter
-(`'claude-code'`) — there is no OpenCode adapter in `TRANSCRIPT_ADAPTERS`
-yet. Wiring the steps below into an OpenCode or Codex dispatch workflow
-will not fail loudly: every telemetry step is deliberately fail-soft, so
-the workflow stays green while silently producing no live or final session
-data. Either skip this section for a non-Claude pipeline, or treat adding
-the missing transcript root/adapter as a prerequisite, not an assumption.
+**Claude Code dispatches only, for now** — there's no OpenCode or Codex
+transcript adapter yet. Wiring the steps below into a non-Claude dispatch
+workflow will not fail loudly: every telemetry step is deliberately
+fail-soft, so the workflow stays green while silently producing no live or
+final session data. Skip this section for a non-Claude pipeline until that
+adapter exists.
 
 This is also the part that requires per-repo setup in **both** directions:
 the new repo's runner environment, and a GCP IAM grant here.
@@ -67,17 +64,15 @@ copy — they're intentionally duplicated, see the comment at the top of
 either) for the build stage: it clones this repo's `main` at image-build
 time and runs `./tools/nx bundle @agent-lcars/telemetry-watcher`. No
 download, no version pin to keep in sync — the image build is the release
-step (see issue #29 for the failure mode a pinned, separately-published
-bundle has instead).
+step.
 
 - **If the new repo's runner fleet already uses
   `docker-registry.lan.jlapenna.net/homelab-runner:jit-node24`** (the
   shared JIT image), this is already done — nothing to do here.
 - **If it's a different runner image entirely**, that image's own
   Dockerfile needs an equivalent build stage, or the sidecar bundle needs
-  shipping some other way. Don't reintroduce a publish-and-pin scheme
-  (issue #29) — build-time bake-in from this repo's own `main` is the
-  supported pattern.
+  shipping some other way. Don't reintroduce a publish-and-pin scheme —
+  build-time bake-in from this repo's own `main` is the supported pattern.
 
 ### 2b. Dispatch workflow steps
 

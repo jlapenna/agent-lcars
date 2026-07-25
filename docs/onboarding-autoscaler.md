@@ -11,11 +11,11 @@ One orchestrator process (`apps/runner-autoscaler/`, published as
 deployed by `jlapenna/homelab`) supervises independent GitHub scale-set
 listeners across every registration, scheduling all of them against one
 shared Docker host pool. A **registration** is a distinct GitHub
-account/repo with its own GitHub App and `scaleset.Client` — the
-`actions/scaleset` library binds one Client to one registration at
-construction, so this can't be shared across accounts. Every
-registration's scale sets share the same `FleetCoordinator` and
-`DockerHost` pool as every other registration already onboarded.
+account/repo with its own GitHub App — a GitHub App installation can't
+span accounts, so each new account/repo needs its own registration block,
+its own App, and its own entry under `registrations:` below. Every
+registration's scale sets share the same fleet of Docker hosts as every
+other registration already onboarded.
 
 Everything below is `jlapenna/homelab`'s `github-runner-autoscaler/`
 directory (`orchestrator.yml`, `docker-compose.yml`, `ansible/`) — that
@@ -144,36 +144,29 @@ docker compose run --rm deploy-runner-autoscaler
 ```
 
 This runs both plays in `deploy_runner_autoscaler.yml`: redeploying the
-control plane (pulling the published image — see §6 below — falling back
-to a fresh clone-and-build only if the pull fails) and refreshing the JIT
-worker image on every fleet host (same registry-first, build-as-fallback
-shape, homelab#45). A bad config is caught by `--check-config` (§4, and
-also run automatically as part of `deploy.sh`) before any live listener is
-drained, so a mistake here fails loudly rather than taking down existing
-registrations.
+control plane (pulling the published image, falling back to a fresh
+clone-and-build only if the pull fails) and refreshing the JIT worker
+image on every fleet host. A bad config is caught by `--check-config` (§4,
+and also run automatically as part of `deploy.sh`) before any live
+listener is drained, so a mistake here fails loudly rather than taking
+down existing registrations.
 
-## 6. If this registration needs its own CI to publish anything
+## 6. If this registration needs a custom runner image
 
-Everything the fleet's own control plane and worker image consist of is
-itself built and published by CI, not by hand. If new infrastructure
-similarly needs to build+push its own image(s) to
-`docker-registry.lan.jlapenna.net` (anonymous push works from this network
-position — no `docker/login-action` needed), that publish job needs to run
-on a **docker-socket-enabled, non-agent-dispatch** scale set (§2's split
-above) — never the AI-agent pool. See this repo's own
-`.github/workflows/publish-runner-autoscaler.yml` for the concrete
-pattern: `docker/setup-qemu-action` + `docker/setup-buildx-action` +
-`docker/build-push-action` with `platforms: linux/amd64,linux/arm64` (the
-fleet spans both architectures — one host is arm64, the rest amd64), and
-`cache-from`/`cache-to: type=registry` since the pool has no shared local
-cache between hosts.
-
-If the image's own Dockerfile clones a live branch from a repo (rather
-than building purely from its own build context) as part of the build,
-pass a build-arg tied to a real, unique value (e.g. the publishing
-commit's SHA) into that stage — otherwise a registry-backed layer cache
-can silently restore a stale clone from a prior build, defeating the
-point of building from a moving branch in the first place.
+Most registrations reuse the existing shared JIT image (§2). If yours
+genuinely needs different baked-in tooling, that image needs its own
+build+publish job, pushing to `docker-registry.lan.jlapenna.net`
+(anonymous push works from this network position — no `docker/login-action`
+needed) from a **docker-socket-enabled, non-agent-dispatch** scale set
+(§2's split above) — never the AI-agent pool. See this repo's own
+`.github/workflows/publish-runner-autoscaler.yml` for a working reference:
+multi-arch build+push (`docker/setup-qemu-action` +
+`docker/setup-buildx-action` + `docker/build-push-action`, since the fleet
+spans both amd64 and arm64 hosts) with a registry-backed layer cache
+(`cache-from`/`cache-to: type=registry`). If the Dockerfile clones a live
+branch as part of the build, pass a build-arg tied to a unique value (e.g.
+the publishing commit's SHA) into that stage — otherwise the registry
+cache can silently reuse a stale clone from a prior build.
 
 ## Verifying it actually worked
 
