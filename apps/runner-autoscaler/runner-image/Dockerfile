@@ -29,8 +29,22 @@ WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
+# CACHE_BUST (build-arg, set to the publishing commit's SHA by the CI
+# workflow) forces this RUN's cache key to change on every real publish.
+# Without it, `docker/build-push-action`'s cache-from/to: type=registry
+# (mode=max) can restore a cached layer for this instruction from a PRIOR
+# build even though the instruction text (a clone of the moving `main`
+# branch) never changes -- silently pinning /repo to whatever agent-lcars
+# commit happened to be current the last time this exact layer was built,
+# defeating the entire "always build from fresh main, no version pin"
+# point of this stage (agent-lcars#29) via the cache mechanism itself. A
+# CI-triggered build always sets a real, unique CACHE_BUST; a bare local
+# `docker build` with no --build-arg is the one case this still risks a
+# stale cache hit, matching the accepted risk on that manual path already.
 ARG AGENT_LCARS_REF=main
-RUN git clone --depth 1 --single-branch --branch "${AGENT_LCARS_REF}" \
+ARG CACHE_BUST=unset
+RUN echo "cache-bust: ${CACHE_BUST}" && \
+    git clone --depth 1 --single-branch --branch "${AGENT_LCARS_REF}" \
     https://github.com/jlapenna/agent-lcars.git .
 # pnpm's version comes from the cloned repo's own package.json
 # ("packageManager" field) via corepack, not hardcoded here, so this stays
@@ -98,15 +112,26 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # agent-lcars#30: baked-in telemetry sidecar/finalize tool (built above).
-# Consumed as `node /usr/local/lib/agent-lcars/sidecar.cjs runner
-# <sidecar|finalize> ...` by claude.yml's telemetry steps — see that
-# repo's runner-config.ts for the CLI's own flags. Renamed from
-# ride-along to sidecar (agent-lcars#49); claude.yml keeps a temporary
-# legacy fallback to the old filename for any runner still running an
-# image built before this rename.
+# Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+# start|finalize — a thin process-management wrapper (background+PID-file
+# for start, kill+bounded-wait+synchronous run for finalize) baked in
+# alongside the binary itself, so every consuming claude.yml's telemetry
+# step is one line instead of duplicating that ~30-60 lines of bash
+# inline. That duplication is exactly how members drifted out of sync
+# with agent-lcars for an unknown stretch of time (it was missing the
+# finalize half entirely) — see apps/telemetry-watcher's own
+# runner-config.ts for the underlying CLI's flags, and
+# apps/telemetry-watcher/bin/sidecar-lifecycle.sh for the wrapper's own
+# source. No legacy ride-along.cjs fallback here (retired — the
+# agent-lcars#49 rename is old enough that every live image has been
+# rebuilt with the new name since).
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher/sidecar.cjs \
     /usr/local/lib/agent-lcars/sidecar.cjs
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/apps/telemetry-watcher/bin/sidecar-lifecycle.sh \
+    /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+RUN chmod +x /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
 USER runner
 
