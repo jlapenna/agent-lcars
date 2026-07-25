@@ -5,6 +5,7 @@ export * from './lib/reducer';
 export * from './lib/run-status-classifier';
 export * from './lib/session-doc';
 export * from './lib/stub-summary';
+export * from './lib/tokens';
 export * from './lib/transcript-adapter';
 export * from './lib/transcript-timeline';
 export * from './lib/types';
