@@ -139,6 +139,23 @@ export async function approveAndMergePr(
   });
 }
 
+// Resolves the `behind` mergeable_state ("Base branch has moved" in
+// action-item-card.tsx's MERGEABLE_WARNINGS) the same way GitHub's own
+// "Update branch" button does: merges the base branch into the PR branch,
+// rather than a true rebase, since that's all the update-branch REST
+// endpoint offers.
+export async function updatePrBranch(
+  repo: WatchedRepo,
+  prNumber: number,
+): Promise<void> {
+  const octokit = getGithubClient();
+  await octokit.rest.pulls.updateBranch({
+    owner: repo.owner,
+    repo: repo.name,
+    pull_number: prNumber,
+  });
+}
+
 // The console's "Done" affordance for a loop that's simply finished (stale
 // tracker, question answered elsewhere, agent PR abandoned) - closes without
 // requiring a trip to GitHub.
