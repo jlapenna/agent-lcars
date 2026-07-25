@@ -133,9 +133,9 @@ registration inert in the meantime.
 
 ## 4. Validate before deploying
 
-From `github-runner-autoscaler/` (where this `docker-compose.yml` and its
-`runner-autoscaler` service are defined — not `ansible/`, which has its
-own separate compose file):
+From the repo root, `cd` into `github-runner-autoscaler/` first — that's
+where this `docker-compose.yml` and its `runner-autoscaler` service are
+defined, not `ansible/`, which has its own separate compose file:
 
 ```bash
 cd github-runner-autoscaler
