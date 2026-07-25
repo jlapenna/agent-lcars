@@ -1,6 +1,7 @@
 import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
+  approveAndRebasePr,
   cancelWorkflowRun,
   clearHumanNeededLabel,
   closeIssue,
@@ -233,6 +234,59 @@ describe('postComment (mention routing)', () => {
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'human-needed' }),
     );
+  });
+});
+
+describe('approveAndRebasePr', () => {
+  function mockOctokit() {
+    const createReview = vi.fn().mockResolvedValue({});
+    const updateBranch = vi.fn().mockResolvedValue({});
+    const get = vi.fn().mockResolvedValue({ data: { node_id: 'PR_kwAB' } });
+    const graphql = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { pulls: { createReview, updateBranch, get } },
+      graphql,
+    });
+    return { createReview, updateBranch, get, graphql };
+  }
+
+  it('approves, updates the branch, then enables squash auto-merge', async () => {
+    const { createReview, updateBranch, get, graphql } = mockOctokit();
+
+    await approveAndRebasePr(DEFAULT_REPO, 42);
+
+    expect(createReview).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      pull_number: 42,
+      event: 'APPROVE',
+    });
+    expect(updateBranch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      pull_number: 42,
+    });
+    expect(get).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      pull_number: 42,
+    });
+    expect(graphql).toHaveBeenCalledWith(
+      expect.stringContaining('enablePullRequestAutoMerge'),
+      { pullRequestId: 'PR_kwAB', mergeMethod: 'SQUASH' },
+    );
+  });
+
+  it('propagates a GitHub API error from the approval step', async () => {
+    const { createReview, updateBranch } = mockOctokit();
+    createReview.mockRejectedValue(
+      Object.assign(new Error('Review already submitted'), { status: 422 }),
+    );
+
+    await expect(approveAndRebasePr(DEFAULT_REPO, 42)).rejects.toThrow(
+      'Review already submitted',
+    );
+    expect(updateBranch).not.toHaveBeenCalled();
   });
 });
 
