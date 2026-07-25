@@ -12,15 +12,22 @@ import {
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
-import type { WatchedRepo } from '../lib/watched-repo';
+import type { Pipeline } from '../lib/primary-action';
+import { repoDisplayName, type WatchedRepo } from '../lib/watched-repo';
 import { createQuickTask } from './actions';
+
+const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
+  { value: 'claude', label: 'claude' },
+  { value: 'codex', label: 'codex' },
+  { value: 'opencode', label: 'opencode' },
+];
 
 /**
  * Files a new `quick-task`-labeled issue from a free-text description and
- * hands it straight to the Claude issue agent (the `claude` label is added
- * as a follow-up call so the `issues: labeled` trigger actually fires - see
- * createQuickTask in backend-actions.ts). No polling here: the new issue
- * shows up in the board / In Flight panel on the next refresh.
+ * hands it to the selected agent pipeline (that pipeline's own label is
+ * added as a follow-up call so the `issues: labeled` trigger actually fires
+ * - see createQuickTask in backend-actions.ts). No polling here: the new
+ * issue shows up in the board / In Flight panel on the next refresh.
  *
  * Full screen rather than a Popover: an autosizing Popover grows and shifts
  * position as its content grows, so pasting a long description made the
@@ -40,6 +47,7 @@ export function QuickTaskButton({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [repoIndex, setRepoIndex] = useState('0');
+  const [pipeline, setPipeline] = useState<Pipeline>('claude');
   const [isPending, startTransition] = useTransition();
 
   const close = () => setOpened(false);
@@ -53,6 +61,7 @@ export function QuickTaskButton({
         trimmed,
         title.trim(),
         watchedRepos.length > 1 ? watchedRepos[Number(repoIndex)] : undefined,
+        pipeline,
       );
       if (!result.ok) {
         notifications.show({ message: result.message, color: 'red' });
@@ -93,13 +102,21 @@ export function QuickTaskButton({
               label="Repo"
               data={watchedRepos.map((repo, i) => ({
                 value: String(i),
-                label: `${repo.owner}/${repo.name}`,
+                label: repoDisplayName(repo),
               }))}
               value={repoIndex}
               onChange={(value) => setRepoIndex(value ?? '0')}
               allowDeselect={false}
             />
           )}
+          <Select
+            label="Agent"
+            description="Which pipeline picks up the task"
+            data={PIPELINE_OPTIONS}
+            value={pipeline}
+            onChange={(value) => setPipeline((value as Pipeline) ?? 'claude')}
+            allowDeselect={false}
+          />
           <TextInput
             label="Title"
             description="Optional — defaults to the first line of the description"

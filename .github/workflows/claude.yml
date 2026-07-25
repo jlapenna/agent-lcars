@@ -59,10 +59,16 @@ concurrency:
 jobs:
   claude:
     # Run only when:
-    #  - the `claude` label was just added to an issue, OR
-    #  - the repo OWNER (this repo is public — do not let any other
-    #    commenter steer the agent) posts a non-bot `@claude` reply on an
-    #    issue that already carries the `claude` label, OR posts one
+    #  - the maintainer (this repo is public — do not let any other Triage+
+    #    collaborator steer the agent by labeling an attacker-authored
+    #    issue; `github.event.sender`/the issues webhook payload has no
+    #    author_association-equivalent field to check here, unlike a
+    #    comment, so this compares github.actor directly against the
+    #    maintainer login, matching how this same login is already
+    #    hardcoded elsewhere in this workflow, e.g. the parking assignee)
+    #    just added the `claude` label to an issue, OR
+    #  - the repo OWNER (same reasoning) posts a non-bot `@claude` reply on
+    #    an issue that already carries the `claude` label, OR posts one
     #    directly on a pull request (`issue_comment` fires for PR comments
     #    too, distinguished by a non-null `github.event.issue.pull_request`;
     #    PRs aren't gated on the label since the agent's own PRs never carry
@@ -73,7 +79,8 @@ jobs:
     if: >
       (github.event_name == 'issues' &&
        github.event.action == 'labeled' &&
-       github.event.label.name == 'claude') ||
+       github.event.label.name == 'claude' &&
+       github.actor == 'jlapenna') ||
       (github.event_name == 'issue_comment' &&
        github.event.comment.user.type != 'Bot' &&
        github.event.comment.author_association == 'OWNER' &&
@@ -160,6 +167,16 @@ jobs:
           workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
           service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
           token_format: access_token
+          # By default this action also exports GOOGLE_APPLICATION_CREDENTIALS
+          # (and friends) into GITHUB_ENV, making them ambient to every later
+          # step in this job -- including "Run Claude Code", where a
+          # prompt-injected agent's Bash tool could read/misuse the
+          # storage.objectAdmin-scoped telemetry-writer credential. Unneeded:
+          # the one consumer that actually needs this (the sidecar step
+          # below) already receives it explicitly via
+          # steps.telemetry-auth.outputs.credentials_file_path, not the
+          # ambient env var.
+          export_environment_variables: false
 
       # Best-effort mid-run telemetry: backgrounds the sidecar tool for
       # the duration of "Run Claude Code" below via the baked-in wrapper
@@ -191,10 +208,16 @@ jobs:
         run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
-        # Pinned (not floating @v1) deliberately - members' fleet hit a real
-        # breakage on a later version. Do not bump this without confirming
-        # the new version against a live test dispatch first.
-        uses: anthropics/claude-code-action@v1.0.181
+        # SHA-pinned (not the v1.0.181 tag, and not floating @v1) deliberately:
+        # this step holds the CLAUDE_CODE_OAUTH_TOKEN, the job's full write
+        # permissions, and unrestricted Bash on a self-hosted runner - the
+        # single most privileged step in this repo, matching the SHA-pinning
+        # already applied to every docker/* action in
+        # publish-runner-autoscaler.yml. Resolved from the v1.0.181 tag
+        # (members' fleet hit a real breakage on a later version - do not
+        # bump without confirming the new version against a live test
+        # dispatch first).
+        uses: anthropics/claude-code-action@44423bdec74b97d67543eb16c110546762c110b2 # v1.0.181
         env:
           # The app token the action vends to the agent maxes out at
           # actions:read (the token exchange supports nothing higher), so
@@ -426,9 +449,14 @@ jobs:
         if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          ISSUE_NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           REASON=""
-          LOG="$(gh run view ${{ github.run_id }} --log 2>/dev/null || true)"
+          LOG="$(gh run view "$RUN_ID" --log 2>/dev/null || true)"
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
             REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no human-needed label. All of its local work is lost. Re-dispatch by re-adding the `claude` label or replying with `@claude`, and remind it to push early.'
           elif echo "$LOG" | grep -qi "Reached maximum number of turns"; then
@@ -437,18 +465,18 @@ jobs:
                (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
             REASON=$'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'
           fi
-          if [ "${{ job.status }}" = "cancelled" ]; then
+          if [ "$JOB_STATUS" = "cancelled" ]; then
             MSG="was cancelled (likely hit the 90-minute timeout)"
           else
             MSG="failed"
           fi
-          gh issue comment ${{ github.event.issue.number || github.event.inputs.issue }} \
-            --repo ${{ github.repository }} \
-            --body "Claude agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}$REASON"
+          gh issue comment "$ISSUE_NUM" \
+            --repo "$REPO" \
+            --body "Claude agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
           # A failed/cancelled run needs a human re-dispatch - put the ball
           # in the maintainer's court on the assignee field too (additive:
           # the jclaw-bot claim stays, reading as "fleet tried, human
           # needed").
-          gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number || github.event.inputs.issue }}/assignees" \
+          gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
             -f 'assignees[]=jlapenna' --silent \
             || echo "::warning::Could not assign jlapenna"
