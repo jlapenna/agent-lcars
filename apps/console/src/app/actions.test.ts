@@ -10,7 +10,6 @@ import {
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
-  evictNxCache as evictNxCacheLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
@@ -20,7 +19,6 @@ import {
   closeIssue,
   createQuickTask,
   dispatchUnstickPrs,
-  evictNxCache,
   mergePr,
   replyToItem,
   retriggerIssue,
@@ -55,7 +53,6 @@ vi.mock('../lib/backend-actions', () => {
     closeIssue: vi.fn(),
     createQuickTask: vi.fn(),
     dispatchUnstickPrs: vi.fn(),
-    evictNxCache: vi.fn(),
     postComment: vi.fn(),
     retriggerIssue: vi.fn(),
   };
@@ -167,20 +164,6 @@ describe('agent-lcars Server Actions', () => {
       });
     });
 
-    it('evictNxCache returns { ok: false, message } instead of throwing', async () => {
-      (evictNxCacheLib as Mock).mockRejectedValue(
-        Object.assign(new Error('Forbidden'), {
-          status: 403,
-          response: { data: { message: 'Resource not accessible' } },
-        }),
-      );
-
-      await expect(evictNxCache(false)).resolves.toEqual({
-        ok: false,
-        message: 'Resource not accessible',
-      });
-    });
-
     it('createQuickTask returns { ok: false, message } instead of throwing', async () => {
       (createQuickTaskLib as Mock).mockRejectedValue(
         new ActionError('Task description is required', 400),
@@ -266,13 +249,6 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
       });
       expect(dispatchUnstickPrsLib).toHaveBeenCalledWith('PR #123 stuck');
-    });
-
-    it('evictNxCache returns { ok: true } and forwards the capture flag', async () => {
-      (evictNxCacheLib as Mock).mockResolvedValue(undefined);
-
-      await expect(evictNxCache(true)).resolves.toEqual({ ok: true });
-      expect(evictNxCacheLib).toHaveBeenCalledWith(true);
     });
 
     it('createQuickTask returns { ok: true, url, number } and revalidates', async () => {

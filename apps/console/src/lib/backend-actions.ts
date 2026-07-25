@@ -167,15 +167,14 @@ export async function cancelWorkflowRun(
   });
 }
 
-// Both playbook dispatches below POST the same workflow_dispatch event a
-// human triggers from the Actions tab or `gh workflow run` — see
-// playbook-unstick-prs.yml / playbook-evict-nx-cache.yml.
+// Dispatches the same workflow_dispatch event a human triggers from the
+// Actions tab or `gh workflow run` — see playbook-unstick-prs.yml.
 const DEFAULT_BRANCH = 'main';
 
-// dispatchUnstickPrs/evictNxCache are global console-level ops actions, not
-// scoped to any one action item. Unlike createQuickTask below, neither has
-// a repo picker (#11 only added one to quick-task-button.tsx) or a tracked
-// follow-up to add one - both simply target the primary watched repo.
+// dispatchUnstickPrs is a global console-level ops action, not scoped to any
+// one action item. Unlike createQuickTask below, it has neither a repo
+// picker (#11 only added one to quick-task-button.tsx) nor a tracked
+// follow-up to add one - it simply targets the primary watched repo.
 export async function dispatchUnstickPrs(
   context?: string,
   repo: WatchedRepo = primaryWatchedRepo(),
@@ -188,20 +187,6 @@ export async function dispatchUnstickPrs(
     workflow_id: 'playbook-unstick-prs.yml',
     ref: DEFAULT_BRANCH,
     inputs: trimmedContext ? { context: trimmedContext } : {},
-  });
-}
-
-export async function evictNxCache(
-  capture: boolean,
-  repo: WatchedRepo = primaryWatchedRepo(),
-): Promise<void> {
-  const octokit = getGithubClient();
-  await octokit.rest.actions.createWorkflowDispatch({
-    owner: repo.owner,
-    repo: repo.name,
-    workflow_id: 'playbook-evict-nx-cache.yml',
-    ref: DEFAULT_BRANCH,
-    inputs: { capture: String(capture) },
   });
 }
 
