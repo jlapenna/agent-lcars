@@ -13,7 +13,7 @@ import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import type { Pipeline } from '../lib/primary-action';
-import type { WatchedRepo } from '../lib/watched-repo';
+import { repoDisplayName, type WatchedRepo } from '../lib/watched-repo';
 import { createQuickTask } from './actions';
 
 const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
@@ -102,7 +102,7 @@ export function QuickTaskButton({
               label="Repo"
               data={watchedRepos.map((repo, i) => ({
                 value: String(i),
-                label: `${repo.owner}/${repo.name}`,
+                label: repoDisplayName(repo),
               }))}
               value={repoIndex}
               onChange={(value) => setRepoIndex(value ?? '0')}

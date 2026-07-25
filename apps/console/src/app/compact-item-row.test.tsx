@@ -56,4 +56,21 @@ describe('CompactItemRow repo badge', () => {
     const badge = screen.getByTestId('repo-badge');
     expect(badge.textContent).toBe('org-b/repo-b');
   });
+
+  it('shows the configured alias instead of owner/name', () => {
+    (getWatchedRepos as Mock).mockReturnValueOnce([
+      { owner: 'org-a', name: 'repo-a' },
+      { owner: 'org-b', name: 'repo-b', alias: 'Repo B' },
+    ]);
+    render(
+      <MantineProvider>
+        <CompactItemRow
+          item={makeItem({ repo: { owner: 'org-b', name: 'repo-b' } })}
+          hint="updated now"
+        />
+      </MantineProvider>,
+    );
+    const badge = screen.getByTestId('repo-badge');
+    expect(badge.textContent).toBe('Repo B');
+  });
 });
