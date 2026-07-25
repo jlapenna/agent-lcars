@@ -7,9 +7,9 @@ import {
   createQuickTask,
   deriveQuickTaskTitle,
   dispatchUnstickPrs,
-  evictNxCache,
   postComment,
   retriggerIssue,
+  updatePrBranch,
 } from './backend-actions';
 import { getGithubClient } from './github-client';
 
@@ -55,6 +55,41 @@ describe('closeIssue', () => {
     });
 
     await expect(closeIssue(DEFAULT_REPO, 2709)).rejects.toThrow('Not Found');
+  });
+});
+
+describe('updatePrBranch', () => {
+  it('updates the PR branch with the latest base branch changes', async () => {
+    const updateBranch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { pulls: { updateBranch } },
+    });
+
+    await updatePrBranch(DEFAULT_REPO, 2709);
+
+    expect(updateBranch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      pull_number: 2709,
+    });
+  });
+
+  it('propagates a GitHub API error', async () => {
+    (getGithubClient as Mock).mockReturnValue({
+      rest: {
+        pulls: {
+          updateBranch: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error('Merge conflict'), { status: 422 }),
+            ),
+        },
+      },
+    });
+
+    await expect(updatePrBranch(DEFAULT_REPO, 2709)).rejects.toThrow(
+      'Merge conflict',
+    );
   });
 });
 
@@ -265,25 +300,6 @@ describe('dispatchUnstickPrs', () => {
     expect(createWorkflowDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ inputs: {} }),
     );
-  });
-});
-
-describe('evictNxCache', () => {
-  it('dispatches playbook-evict-nx-cache.yml with the capture flag stringified', async () => {
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { actions: { createWorkflowDispatch } },
-    });
-
-    await evictNxCache(true);
-
-    expect(createWorkflowDispatch).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'members',
-      workflow_id: 'playbook-evict-nx-cache.yml',
-      ref: 'main',
-      inputs: { capture: 'true' },
-    });
   });
 });
 

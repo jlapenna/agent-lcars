@@ -17,9 +17,9 @@ import {
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
-  evictNxCache as evictNxCacheLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  updatePrBranch,
 } from '../lib/backend-actions';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
@@ -100,6 +100,20 @@ export async function mergePr(
   }
 }
 
+export async function rebasePr(
+  repo: WatchedRepo,
+  number: number,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await updatePrBranch(resolveWatchedRepo(repo), number);
+    revalidatePath('/');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
 export async function retriggerIssue(
   repo: WatchedRepo,
   number: number,
@@ -136,16 +150,6 @@ export async function dispatchUnstickPrs(
   await requireAdmin();
   try {
     await dispatchUnstickPrsLib(context);
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
-  }
-}
-
-export async function evictNxCache(capture: boolean): Promise<ActionResult> {
-  await requireAdmin();
-  try {
-    await evictNxCacheLib(capture);
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };

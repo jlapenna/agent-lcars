@@ -10,9 +10,9 @@ import {
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
-  evictNxCache as evictNxCacheLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  updatePrBranch,
 } from '../lib/backend-actions';
 import {
   cancelRun,
@@ -20,8 +20,8 @@ import {
   closeIssue,
   createQuickTask,
   dispatchUnstickPrs,
-  evictNxCache,
   mergePr,
+  rebasePr,
   replyToItem,
   retriggerIssue,
 } from './actions';
@@ -55,9 +55,9 @@ vi.mock('../lib/backend-actions', () => {
     closeIssue: vi.fn(),
     createQuickTask: vi.fn(),
     dispatchUnstickPrs: vi.fn(),
-    evictNxCache: vi.fn(),
     postComment: vi.fn(),
     retriggerIssue: vi.fn(),
+    updatePrBranch: vi.fn(),
   };
 });
 
@@ -144,6 +144,18 @@ describe('agent-lcars Server Actions', () => {
       });
     });
 
+    it('rebasePr returns { ok: false, message } instead of throwing', async () => {
+      (updatePrBranch as Mock).mockRejectedValue(
+        new ActionError('Merge conflict', 422),
+      );
+
+      await expect(rebasePr(DEFAULT_REPO, 42)).resolves.toEqual({
+        ok: false,
+        message: 'Merge conflict',
+      });
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
+
     it('falls back to a generic message for a non-Error, non-GitHub rejection', async () => {
       (approveAndMergePr as Mock).mockRejectedValue('boom');
 
@@ -162,20 +174,6 @@ describe('agent-lcars Server Actions', () => {
       );
 
       await expect(dispatchUnstickPrs()).resolves.toEqual({
-        ok: false,
-        message: 'Resource not accessible',
-      });
-    });
-
-    it('evictNxCache returns { ok: false, message } instead of throwing', async () => {
-      (evictNxCacheLib as Mock).mockRejectedValue(
-        Object.assign(new Error('Forbidden'), {
-          status: 403,
-          response: { data: { message: 'Resource not accessible' } },
-        }),
-      );
-
-      await expect(evictNxCache(false)).resolves.toEqual({
         ok: false,
         message: 'Resource not accessible',
       });
@@ -224,6 +222,14 @@ describe('agent-lcars Server Actions', () => {
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
+    it('rebasePr returns { ok: true } and revalidates', async () => {
+      (updatePrBranch as Mock).mockResolvedValue(undefined);
+
+      await expect(rebasePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
+      expect(updatePrBranch).toHaveBeenCalledWith(DEFAULT_REPO, 42);
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
     it('replyToItem returns { ok: true } and revalidates', async () => {
       (postComment as Mock).mockResolvedValue({ url: 'https://x' });
 
@@ -266,13 +272,6 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
       });
       expect(dispatchUnstickPrsLib).toHaveBeenCalledWith('PR #123 stuck');
-    });
-
-    it('evictNxCache returns { ok: true } and forwards the capture flag', async () => {
-      (evictNxCacheLib as Mock).mockResolvedValue(undefined);
-
-      await expect(evictNxCache(true)).resolves.toEqual({ ok: true });
-      expect(evictNxCacheLib).toHaveBeenCalledWith(true);
     });
 
     it('createQuickTask returns { ok: true, url, number } and revalidates', async () => {
@@ -331,6 +330,15 @@ describe('agent-lcars Server Actions', () => {
         message: 'someone-elses/private-repo is not a watched repo',
       });
       expect(approveAndMergePr).not.toHaveBeenCalled();
+    });
+
+    it('rebasePr rejects without calling updatePrBranch', async () => {
+      const result = await rebasePr(UNWATCHED_REPO, 42);
+      expect(result).toEqual({
+        ok: false,
+        message: 'someone-elses/private-repo is not a watched repo',
+      });
+      expect(updatePrBranch).not.toHaveBeenCalled();
     });
 
     it('replyToItem rejects without calling postComment', async () => {

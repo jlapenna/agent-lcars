@@ -27,7 +27,6 @@ import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleHeader } from './console-header';
-import { EvictNxCacheButton } from './evict-nx-cache-button';
 import { formatCompactRelativeTime, formatRelativeTime } from './format';
 import { QuickTaskButton } from './quick-task-button';
 import { UnstickPrsButton } from './unstick-prs-button';
@@ -210,7 +209,6 @@ export default async function Index({ searchParams }: PageProps) {
           <>
             <QuickTaskButton watchedRepos={watchedRepos} />
             <UnstickPrsButton />
-            <EvictNxCacheButton />
           </>
         }
         generatedAt={generatedAt}
