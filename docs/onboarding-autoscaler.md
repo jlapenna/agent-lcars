@@ -2,10 +2,7 @@
 
 How to add a new GitHub account/repo — a **registration** — to the shared
 fleet, so it gets its own on-demand, ephemeral self-hosted runners without
-a new standalone control plane. Written from the `agent-lcars` (homelab#97)
-onboarding done in practice, and from migrating this component's own
-source out of `jlapenna/homelab` and into `apps/runner-autoscaler/` in this
-repo (agent-lcars#52/#53).
+a new standalone control plane.
 
 ## The model, briefly
 
@@ -14,11 +11,11 @@ One orchestrator process (`apps/runner-autoscaler/`, published as
 deployed by `jlapenna/homelab`) supervises independent GitHub scale-set
 listeners across every registration, scheduling all of them against one
 shared Docker host pool. A **registration** is a distinct GitHub
-account/repo with its own GitHub App and `scaleset.Client` — the
-`actions/scaleset` library binds one Client to one registration at
-construction, so this can't be shared across accounts. Every
-registration's scale sets share the same `FleetCoordinator` and
-`DockerHost` pool as every other registration already onboarded.
+account/repo with its own GitHub App — a GitHub App installation can't
+span accounts, so each new account/repo needs its own registration block,
+its own App, and its own entry under `registrations:` below. Every
+registration's scale sets share the same fleet of Docker hosts as every
+other registration already onboarded.
 
 Everything below is `jlapenna/homelab`'s `github-runner-autoscaler/`
 directory (`orchestrator.yml`, `docker-compose.yml`, `ansible/`) — that
@@ -79,12 +76,12 @@ same registration also needs trusted, workflow-defined-only CI (build/test
 image publishing, e2e-docker-style jobs) that genuinely needs
 `docker build`/`docker run`, give it a **separate** scale set with
 `mount_docker_socket: true` — never flip the agent-dispatch pool's flag to
-get it. This is exactly the split `members` already has
-(`homelab-autoscale-e2e-docker` vs. `homelab-autoscale-claude-agent`) and
-what `agent-lcars` added for its own CI
-(`homelab-autoscale-lcars-docker` vs. `homelab-autoscale-claude-agent-lcars`,
-homelab#135) — mirror that shape rather than reusing one pool for both
-purposes.
+get it. For example: `homelab-autoscale-e2e-docker` (docker-enabled) is
+kept separate from `homelab-autoscale-claude-agent` (agent-dispatch,
+no socket) under one registration; `homelab-autoscale-lcars-docker`
+(docker-enabled) is likewise separate from
+`homelab-autoscale-claude-agent-lcars` (agent-dispatch) under another.
+Mirror that shape rather than reusing one pool for both purposes.
 
 If any scale set in the whole file sets `mount_docker_socket: true`,
 **every** host in `fleet.hosts` needs **both** `docker_socket_gid` **and**
@@ -108,9 +105,9 @@ github_autoscaler_<registration>_app_private_key: <the .pem contents>
 
 `ansible/deploy_secrets.yml` materializes it to the `private_key_file`
 path from step 2 (mode `0600`). Until the vault entry exists, that deploy
-task is a no-op (`when: ... is defined`) rather than a hard failure — you
-can commit the `orchestrator.yml` shape before the App/key exist and
-nothing else breaks in the meantime.
+task is a no-op (`when: ... is defined`) rather than a hard failure — the
+`orchestrator.yml` shape can be committed before the App/key exist without
+breaking anything else in the meantime.
 
 ## 4. Validate before deploying
 
@@ -124,18 +121,16 @@ touching any live listener or Docker mutation.
 
 ## 5. Deploy — **this must run on the `homelab` host itself**
 
-This is the single most important, least obvious thing about this whole
-system, learned the hard way: **`docker compose run --rm
-deploy-runner-autoscaler` (or `ansible-playbook deploy_runner_autoscaler.yml`
-directly) is only meaningful when run ON the `homelab` host, as the
-`homelab` service-account user, from that host's own checkout.** It is
-_not_ meant to be triggered remotely from an operator workstation, even
-though the playbook's `hosts: homelab` target technically resolves over
-SSH from anywhere with the right key. A workstation's own local checkout
-of `jlapenna/homelab` has no deploy relevance at all — don't chase SSH-key
-or file-ownership issues there; if something's wrong on the workstation
-side, that's a sign you're deploying from the wrong place, not a problem
-to fix in place.
+**`docker compose run --rm deploy-runner-autoscaler`** (or
+`ansible-playbook deploy_runner_autoscaler.yml` directly) **is only
+meaningful when run ON the `homelab` host, as the `homelab` service-account
+user, from that host's own checkout.** It is _not_ meant to be triggered
+remotely from an operator workstation, even though the playbook's
+`hosts: homelab` target technically resolves over SSH from anywhere with
+the right key. A workstation's own local checkout of `jlapenna/homelab`
+has no deploy relevance at all — an SSH-key or file-ownership error there
+is a sign of deploying from the wrong place, not a problem to fix in
+place.
 
 **Never authenticate to `homelab` (or any fleet host) as the personal
 `jlapenna` identity for any of this.** Always the dedicated `homelab`
@@ -149,31 +144,31 @@ docker compose run --rm deploy-runner-autoscaler
 ```
 
 This runs both plays in `deploy_runner_autoscaler.yml`: redeploying the
-control plane (pulling the published image — see §6 below — falling back
-to a fresh clone-and-build only if the pull fails) and refreshing the JIT
-worker image on every fleet host (same registry-first, build-as-fallback
-shape, homelab#45). A bad config is caught by `--check-config` (§4, and
-also run automatically as part of `deploy.sh`) before any live listener is
-drained, so a mistake here fails loudly rather than taking down existing
-registrations.
+control plane (pulling the published image, falling back to a fresh
+clone-and-build only if the pull fails) and refreshing the JIT worker
+image on every fleet host. A bad config is caught by `--check-config` (§4,
+and also run automatically as part of `deploy.sh`) before any live
+listener is drained, so a mistake here fails loudly rather than taking
+down existing registrations.
 
-## 6. If this registration needs its own CI to publish anything
+## 6. If this registration needs a custom runner image
 
-Everything the fleet's own control plane and worker image consist of is
-itself built and published by CI, not by hand — that's the whole point of
-this repo's own migration (agent-lcars#52). If your new infrastructure
-similarly needs to build+push its own image(s) to
+Most registrations reuse the existing shared JIT image (§2). If yours
+genuinely needs different baked-in tooling, build it from a
+**self-contained build context** — this repo's own `AGENTS.md` reserves
+cloning another repo's live branch mid-build for the one sanctioned
+telemetry-watcher stage in `apps/runner-autoscaler/runner-image/Dockerfile`;
+that's not a pattern to repeat for a new image.
+
+Publish it from a **docker-socket-enabled, non-agent-dispatch** scale set
+(§2's split above) — never the AI-agent pool — pushing to
 `docker-registry.lan.jlapenna.net` (anonymous push works from this network
-position — no `docker/login-action` needed, confirmed in
-`supersprinklesracing/members`#2373), that publish job needs to run on a
-**docker-socket-enabled, non-agent-dispatch** scale set (§2's split
-above) — never the AI-agent pool. See this repo's own
-`.github/workflows/publish-runner-autoscaler.yml` for the concrete
-pattern: `docker/setup-qemu-action` + `docker/setup-buildx-action` +
-`docker/build-push-action` with `platforms: linux/amd64,linux/arm64` (the
-fleet spans both architectures — `spark` is the one arm64 host, everything
-else is amd64), and `cache-from`/`cache-to: type=registry` since the pool
-has no shared local cache between hosts.
+position — no `docker/login-action` needed). See this repo's own
+`.github/workflows/publish-runner-autoscaler.yml` for a working reference:
+multi-arch build+push (`docker/setup-qemu-action` +
+`docker/setup-buildx-action` + `docker/build-push-action`, since the fleet
+spans both amd64 and arm64 hosts) with a registry-backed layer cache
+(`cache-from`/`cache-to: type=registry`).
 
 ## Verifying it actually worked
 
@@ -199,5 +194,4 @@ assumed.
    re-verify **they** still work too after your deploy — a shared control
    plane means every registration's runners restart together on any
    redeploy. A quick real dispatch against an existing registration (not
-   just the new one) is the honest way to confirm you didn't regress
-   something that was already working.
+   just the new one) is the honest way to confirm nothing regressed.
