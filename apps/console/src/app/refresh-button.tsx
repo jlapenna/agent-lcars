@@ -1,6 +1,7 @@
 'use client';
 
-import { Button, Group, Text } from '@mantine/core';
+import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
+import { IconRefresh } from '@tabler/icons-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useTransition } from 'react';
 
@@ -34,14 +35,17 @@ export function RefreshButton({
       <Text size="xs" c="dimmed">
         Updated {label}
       </Text>
-      <Button
-        variant="subtle"
-        size="compact-xs"
-        loading={isPending}
-        onClick={() => startTransition(() => router.refresh())}
-      >
-        Refresh
-      </Button>
+      <Tooltip label="Refresh">
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          loading={isPending}
+          aria-label="Refresh"
+          onClick={() => startTransition(() => router.refresh())}
+        >
+          <IconRefresh aria-hidden="true" size={16} stroke={1.5} />
+        </ActionIcon>
+      </Tooltip>
     </Group>
   );
 }

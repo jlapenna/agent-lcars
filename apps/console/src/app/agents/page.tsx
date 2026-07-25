@@ -18,6 +18,7 @@ import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { getActionItems } from '../actions';
 import type { RunItemRef } from '../agent-activity-panel';
+import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { ActiveAgentsSection } from './active-agents-section';
@@ -188,6 +189,8 @@ export default async function AgentsPage({ searchParams }: PageProps) {
         recentRuns={filteredActivity.recentRuns}
         sessionsByRunId={sessionsByRunId}
       />
+
+      <ConsoleFooter />
     </Container>
   );
 }

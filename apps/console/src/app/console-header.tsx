@@ -2,7 +2,6 @@ import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import { RefreshButton } from './refresh-button';
-import { ThemeToggle } from './theme-toggle';
 
 type NavKey = 'queue' | 'agents' | 'sessions';
 type Accent = 'amber' | 'periwinkle' | 'teal';
@@ -59,7 +58,6 @@ export function ConsoleHeader({
             generatedAt={generatedAt}
             initialLabel={refreshLabel}
           />
-          <ThemeToggle size="lg" />
         </Group>
       </Group>
 

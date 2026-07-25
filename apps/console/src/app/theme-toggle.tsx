@@ -1,16 +1,14 @@
 'use client';
 
 import {
-  ActionIcon,
-  ActionIconProps,
-  Tooltip,
+  UnstyledButton,
   useComputedColorScheme,
   useMantineColorScheme,
 } from '@mantine/core';
-import { IconMoon, IconSun } from '@tabler/icons-react';
 
-// Mirrors apps/members/frontend/src/components/ThemeToggle.tsx.
-export function ThemeToggle(props: ActionIconProps) {
+// A text control (not an icon) so it reads well parked at the bottom of the
+// page, away from the header's primary actions - see console-footer.tsx.
+export function ThemeToggle() {
   const { setColorScheme } = useMantineColorScheme();
   const computedColorScheme = useComputedColorScheme('light', {
     getInitialValueInEffect: true,
@@ -24,29 +22,15 @@ export function ThemeToggle(props: ActionIconProps) {
   };
 
   return (
-    <Tooltip label="Toggle color scheme">
-      <ActionIcon
-        onClick={toggleColorScheme}
-        variant="default"
-        size="xl"
-        radius="md"
-        aria-label="Toggle color scheme"
-        {...props}
-      >
-        {computedColorScheme === 'dark' ? (
-          <IconSun
-            aria-hidden="true"
-            style={{ width: '70%', height: '70%' }}
-            stroke={1.5}
-          />
-        ) : (
-          <IconMoon
-            aria-hidden="true"
-            style={{ width: '70%', height: '70%' }}
-            stroke={1.5}
-          />
-        )}
-      </ActionIcon>
-    </Tooltip>
+    <UnstyledButton
+      onClick={toggleColorScheme}
+      aria-label="Toggle color scheme"
+      fz="xs"
+      c="dimmed"
+    >
+      {computedColorScheme === 'dark'
+        ? 'Switch to light mode'
+        : 'Switch to dark mode'}
+    </UnstyledButton>
   );
 }
