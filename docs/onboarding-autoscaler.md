@@ -47,7 +47,13 @@ server:
   log_format: text
 
 fleet:
-  max_runners: 24 # hard cap across every registration combined
+  # Hard cap across EVERY scale set in the whole file, primary registration
+  # and every entry under registrations: combined -- config validation
+  # rejects a cap lower than the sum of every scale set's own max_runners
+  # ("fleet.max_runners N exceeds aggregate scale-set maximum M"). Raise
+  # this whenever a new registration's scale sets push the real sum past
+  # it; 10 below only covers the two scale sets this skeleton shows.
+  max_runners: 10
   hosts:
     - name: <host-name>
       docker: local # or ssh://<user>@<host>.<domain> for a remote host
