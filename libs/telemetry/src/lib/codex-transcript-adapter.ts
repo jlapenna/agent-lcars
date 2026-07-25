@@ -1,7 +1,12 @@
 import { findDeliverables } from './deliverables';
 import type { TranscriptAdapter } from './transcript-adapter-types';
 import { SessionSummary, TokenUsage } from './types';
-import { asNumber, asRecord, asString } from './unknown-value';
+import {
+  asNumber,
+  asRecord,
+  asString,
+  isSafeIdentifier,
+} from './unknown-value';
 
 const TITLE_MAX_LENGTH = 80;
 
@@ -129,7 +134,7 @@ export const codexAdapter: TranscriptAdapter = {
       for (const sha of deliverables.commitShas) commitShas.add(sha);
     }
 
-    if (!sessionId) return [];
+    if (!sessionId || !isSafeIdentifier(sessionId)) return [];
     return [
       {
         sessionId,

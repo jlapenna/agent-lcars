@@ -57,10 +57,19 @@ jobs:
     # Dual-label containment: when the issue ALSO carries the `claude`
     # label, this pipeline stands down - `claude` wins. Without this, a
     # dual-labeled issue could dispatch both agents onto the same problem.
+    #
+    # github.actor == 'jlapenna' on the label-add path: this repo is public,
+    # and Triage-level (or higher) collaborators can add a label without
+    # being the maintainer — the issues webhook payload has no
+    # author_association-equivalent field for "who labeled this" the way a
+    # comment does, so this compares github.actor directly against the
+    # maintainer login (matching claude.yml's identical fix and this same
+    # hardcoded login used elsewhere in this workflow).
     if: >
       (github.event_name == 'issues' &&
        github.event.action == 'labeled' &&
        github.event.label.name == 'opencode' &&
+       github.actor == 'jlapenna' &&
        !contains(github.event.issue.labels.*.name, 'claude')) ||
       (github.event_name == 'issue_comment' &&
        github.event.comment.user.type != 'Bot' &&
@@ -111,7 +120,17 @@ jobs:
         run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Run OpenCode
-        uses: anomalyco/opencode/github@latest
+        # SHA-pinned, not the floating `latest` tag: this step is handed the
+        # job's full write GITHUB_TOKEN (contents/issues/pull-requests/
+        # actions:write) plus OPENCODE_LLM_API_KEY on a self-hosted runner.
+        # anomalyco/opencode has no versioned release tags for this
+        # subdirectory action (only vscode-v* extension tags), so `latest`
+        # was the only ref available when this was written - resolved here
+        # to the commit it pointed at on 2026-07-25. Re-resolve periodically
+        # (`gh api repos/anomalyco/opencode/git/refs/tags/latest`, then
+        # dereference the returned tag object's `.object.sha`) rather than
+        # reverting to the floating tag.
+        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # latest as of 2026-07-25
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # use_github_token needs this passed explicitly - it does not
@@ -262,16 +281,21 @@ jobs:
         if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          ISSUE_NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           MSG="failed"
           REASON=""
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
             REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `/opencode`, and consider whether the prompt needs to be even more explicit for this issue.'
           fi
-          if [ "${{ job.status }}" = "cancelled" ]; then MSG="was cancelled (likely hit the 180-minute timeout)"; fi
-          gh issue comment ${{ github.event.issue.number || github.event.inputs.issue }} \
-            --repo ${{ github.repository }} \
-            --body "OpenCode agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}$REASON"
-          gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number || github.event.inputs.issue }}/assignees" \
+          if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 180-minute timeout)"; fi
+          gh issue comment "$ISSUE_NUM" \
+            --repo "$REPO" \
+            --body "OpenCode agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
+          gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
             -f 'assignees[]=jlapenna' --silent \
             || echo "::warning::Could not assign jlapenna"

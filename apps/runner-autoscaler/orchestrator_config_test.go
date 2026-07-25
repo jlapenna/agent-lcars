@@ -83,6 +83,31 @@ func TestOrchestratorConfigRequiresSocketHostPolicy(t *testing.T) {
 	}
 }
 
+func TestOrchestratorConfigDefaultsMetricsAddrToLocalhost(t *testing.T) {
+	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Raw.Server.MetricsAddr; got != "127.0.0.1:8080" {
+		t.Fatalf("metrics addr = %q, want 127.0.0.1:8080 (localhost-only default)", got)
+	}
+}
+
+func TestOrchestratorConfigDockerSocketAllowlistRejectsUnlisted(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n", "  placement: {}\n  docker_socket_allowlist: [default]\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "not in fleet.docker_socket_allowlist") {
+		t.Fatalf("expected docker_socket_allowlist rejection, got %v", err)
+	}
+}
+
+func TestOrchestratorConfigDockerSocketAllowlistAllowsListed(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n", "  placement: {}\n  docker_socket_allowlist: [e2e]\n", 1)
+	if _, err := loadOrchestratorConfig(writeConfig(t, body)); err != nil {
+		t.Fatalf("expected e2e to pass the allowlist, got %v", err)
+	}
+}
+
 func TestLoadCredentials(t *testing.T) {
 	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
 	if err != nil {
