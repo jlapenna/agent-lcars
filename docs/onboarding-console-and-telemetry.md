@@ -20,9 +20,20 @@ Pull in the shared skill and follow it. Every dispatch workflow (however
 many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
 
 - Check out `.agents/skills/agent-protocol/agent-protocol.md` from this
-  repo (sparse checkout — see any dispatch workflow in this repo, or a
-  cross-repo consumer's `codex.yml`, for the concrete step) and have the
-  agent read it first, before its own repo-specific delta skill.
+  repo and have the agent read it first, before its own repo-specific
+  delta skill:
+
+  ```yaml
+  - name: Checkout shared agent-protocol skill
+    uses: actions/checkout@v7
+    with:
+      repository: jlapenna/agent-lcars
+      path: .agent-protocol
+      sparse-checkout: |
+        .agents/skills/agent-protocol
+      sparse-checkout-cone-mode: false
+  ```
+
 - Write that delta skill (mirror `.agents/skills/lcars/lcars-protocol.md`
   in this repo): name the fleet-claim identity, the PR reviewer/park
   assignee, the reply triggers, the repo's own verify commands, and any
