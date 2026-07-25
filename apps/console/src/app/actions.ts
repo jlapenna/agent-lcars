@@ -19,6 +19,7 @@ import {
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  updatePrBranch,
 } from '../lib/backend-actions';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
@@ -92,6 +93,20 @@ export async function mergePr(
   await requireAdmin();
   try {
     await approveAndMergePr(resolveWatchedRepo(repo), number);
+    revalidatePath('/');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function rebasePr(
+  repo: WatchedRepo,
+  number: number,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await updatePrBranch(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {

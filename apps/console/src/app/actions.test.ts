@@ -12,6 +12,7 @@ import {
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  updatePrBranch,
 } from '../lib/backend-actions';
 import {
   cancelRun,
@@ -20,6 +21,7 @@ import {
   createQuickTask,
   dispatchUnstickPrs,
   mergePr,
+  rebasePr,
   replyToItem,
   retriggerIssue,
 } from './actions';
@@ -55,6 +57,7 @@ vi.mock('../lib/backend-actions', () => {
     dispatchUnstickPrs: vi.fn(),
     postComment: vi.fn(),
     retriggerIssue: vi.fn(),
+    updatePrBranch: vi.fn(),
   };
 });
 
@@ -141,6 +144,18 @@ describe('agent-lcars Server Actions', () => {
       });
     });
 
+    it('rebasePr returns { ok: false, message } instead of throwing', async () => {
+      (updatePrBranch as Mock).mockRejectedValue(
+        new ActionError('Merge conflict', 422),
+      );
+
+      await expect(rebasePr(DEFAULT_REPO, 42)).resolves.toEqual({
+        ok: false,
+        message: 'Merge conflict',
+      });
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
+
     it('falls back to a generic message for a non-Error, non-GitHub rejection', async () => {
       (approveAndMergePr as Mock).mockRejectedValue('boom');
 
@@ -204,6 +219,14 @@ describe('agent-lcars Server Actions', () => {
       (approveAndMergePr as Mock).mockResolvedValue(undefined);
 
       await expect(mergePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
+    it('rebasePr returns { ok: true } and revalidates', async () => {
+      (updatePrBranch as Mock).mockResolvedValue(undefined);
+
+      await expect(rebasePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
+      expect(updatePrBranch).toHaveBeenCalledWith(DEFAULT_REPO, 42);
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
@@ -329,6 +352,15 @@ describe('agent-lcars Server Actions', () => {
         message: 'someone-elses/private-repo is not a watched repo',
       });
       expect(approveAndMergePr).not.toHaveBeenCalled();
+    });
+
+    it('rebasePr rejects without calling updatePrBranch', async () => {
+      const result = await rebasePr(UNWATCHED_REPO, 42);
+      expect(result).toEqual({
+        ok: false,
+        message: 'someone-elses/private-repo is not a watched repo',
+      });
+      expect(updatePrBranch).not.toHaveBeenCalled();
     });
 
     it('replyToItem rejects without calling postComment', async () => {
