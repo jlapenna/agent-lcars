@@ -167,7 +167,11 @@ resolve_archive_uri() {
   fi
   prefix="gs://$TRANSCRIPTS_BUCKET/runs/$arg/"
   local matches=()
-  mapfile -t matches < <(gcloud storage ls "${prefix}*.jsonl" 2>/dev/null || true)
+  # `**` (not `*`) to recurse into the adapter subdirectory the archive
+  # writer actually uses (e.g. .../claude-code/<session-id>.jsonl -- see
+  # apps/telemetry-watcher/src/lib/finalize.ts) -- gcloud storage's `*`
+  # stays within one path segment, `**` crosses directory boundaries.
+  mapfile -t matches < <(gcloud storage ls "${prefix}**/*.jsonl" 2>/dev/null || true)
   if [ ${#matches[@]} -eq 0 ]; then
     echo "No transcripts found under $prefix" >&2
     exit 1
@@ -224,12 +228,15 @@ case "$cmd" in
     id="$(basename "$path" .jsonl)"
     # Best-effort liveness check: claude-code-action's engine runs as a
     # `bun` process (see script header). If this is wrong (image changes,
-    # different action version), the resume below is still harmless --
+    # different action version), forcing past it is still harmless --
     # worst case, a second CLI process reads/writes the same session file
-    # concurrently with the original.
-    if ssh_host "$host" docker exec "$container" pgrep -x bun >/dev/null 2>&1; then
+    # concurrently with the original. CLAUDE_AGENT_RESUME_FORCE=1 bypasses
+    # it outright -- re-running this same command with no way to skip the
+    # check can never "proceed anyway" while the run is still live, since
+    # the check just fails the same way again.
+    if [ -z "${CLAUDE_AGENT_RESUME_FORCE:-}" ] && ssh_host "$host" docker exec "$container" pgrep -x bun >/dev/null 2>&1; then
       echo "A claude-code-action run (bun) is still active in $container on $host." >&2
-      echo "Wait for the run to finish, or re-run this command to proceed anyway." >&2
+      echo "Wait for the run to finish, or force it: CLAUDE_AGENT_RESUME_FORCE=1 $(basename "$0") resume ${1:-}" >&2
       exit 1
     fi
     token="${CLAUDE_CODE_OAUTH_TOKEN:-}"
@@ -245,9 +252,18 @@ case "$cmd" in
         docker exec -it -w "$CLAUDE_AGENT_WORKDIR" "$container" \
         npx -y @anthropic-ai/claude-code@latest --resume "$id"
     fi
-    exec ssh -t "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" \
-      docker exec -it -e CLAUDE_CODE_OAUTH_TOKEN="$token" -w "$CLAUDE_AGENT_WORKDIR" "$container" \
-      npx -y @anthropic-ai/claude-code@latest --resume "$id"
+    # Never pass the OAuth token as a docker/ssh argv value -- `-e
+    # KEY=value` on a docker exec command line sits in `ps` output on the
+    # fleet host for as long as the container lives, visible to anyone
+    # with shell access there. Pipe it into a 0600 file INSIDE the
+    # container over stdin instead (never touching the fleet host's own
+    # disk or argv), then have the resumed shell read-and-delete it
+    # before exporting the env var -- the token's VALUE never appears in
+    # any process listing, only the command that reads it does.
+    write_token_cmd="docker exec -i '$container' sh -c 'umask 077; cat > /tmp/.claude-agent-token'"
+    printf '%s' "$token" | ssh "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" "$write_token_cmd"
+    resume_cmd="docker exec -it -w '$CLAUDE_AGENT_WORKDIR' '$container' sh -c 'CLAUDE_CODE_OAUTH_TOKEN=\$(cat /tmp/.claude-agent-token 2>/dev/null); rm -f /tmp/.claude-agent-token; export CLAUDE_CODE_OAUTH_TOKEN; exec npx -y @anthropic-ai/claude-code@latest --resume $id'"
+    exec ssh -t "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" "$resume_cmd"
     ;;
   resume-archive)
     [ $# -ge 1 ] || usage
