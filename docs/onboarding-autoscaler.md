@@ -154,19 +154,21 @@ down existing registrations.
 ## 6. If this registration needs a custom runner image
 
 Most registrations reuse the existing shared JIT image (§2). If yours
-genuinely needs different baked-in tooling, that image needs its own
-build+publish job, pushing to `docker-registry.lan.jlapenna.net`
-(anonymous push works from this network position — no `docker/login-action`
-needed) from a **docker-socket-enabled, non-agent-dispatch** scale set
-(§2's split above) — never the AI-agent pool. See this repo's own
+genuinely needs different baked-in tooling, build it from a
+**self-contained build context** — this repo's own `AGENTS.md` reserves
+cloning another repo's live branch mid-build for the one sanctioned
+telemetry-watcher stage in `apps/runner-autoscaler/runner-image/Dockerfile`;
+that's not a pattern to repeat for a new image.
+
+Publish it from a **docker-socket-enabled, non-agent-dispatch** scale set
+(§2's split above) — never the AI-agent pool — pushing to
+`docker-registry.lan.jlapenna.net` (anonymous push works from this network
+position — no `docker/login-action` needed). See this repo's own
 `.github/workflows/publish-runner-autoscaler.yml` for a working reference:
 multi-arch build+push (`docker/setup-qemu-action` +
 `docker/setup-buildx-action` + `docker/build-push-action`, since the fleet
 spans both amd64 and arm64 hosts) with a registry-backed layer cache
-(`cache-from`/`cache-to: type=registry`). If the Dockerfile clones a live
-branch as part of the build, pass a build-arg tied to a unique value (e.g.
-the publishing commit's SHA) into that stage — otherwise the registry
-cache can silently reuse a stale clone from a prior build.
+(`cache-from`/`cache-to: type=registry`).
 
 ## Verifying it actually worked
 
