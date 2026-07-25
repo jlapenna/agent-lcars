@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 concurrency:
   group: deploy-console
@@ -40,9 +41,95 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - uses: google-github-actions/auth@v3
+        id: gcp-auth
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          token_format: access_token
 
       - name: Deploy App Hosting backend
-        run: pnpm exec firebase deploy --only apphosting:agent-lcars --project agent-lcars --non-interactive
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec firebase deploy \
+            --only apphosting:agent-lcars \
+            --project agent-lcars \
+            --non-interactive 2>&1 | tee firebase-deploy.log
+
+          # The CLI deploys an archive rather than a Git source reference.
+          # Preserve its exact upload URI so the annotation step can resolve
+          # the build this invocation created without guessing "latest".
+          SOURCE_URI=$(grep -oE 'gs://[A-Za-z0-9._/-]+' firebase-deploy.log | tail -1)
+          if [ -z "$SOURCE_URI" ]; then
+            echo "::error::Firebase deploy succeeded but did not report its uploaded source URI."
+            exit 1
+          fi
+          echo "source_uri=$SOURCE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Annotate the deployed PR with its App Hosting version
+        # A release annotation is useful metadata, but an API or permission
+        # hiccup after a successful production rollout must not mark that
+        # rollout as failed.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          DEPLOYED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SOURCE_URI: ${{ steps.deploy.outputs.source_uri }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BACKEND=$(pnpm exec firebase apphosting:backends:get agent-lcars \
+            --project agent-lcars --json --non-interactive \
+            | jq -r '.result.name')
+          if [ -z "$BACKEND" ] || [ "$BACKEND" = null ]; then
+            echo "::error::Could not resolve the App Hosting backend resource."
+            exit 1
+          fi
+
+          BUILDS=$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            "https://firebaseapphosting.googleapis.com/v1/$BACKEND/builds?pageSize=100")
+          BUILD=$(jq -r '
+            first(
+              .builds[]
+              | select(.source.archive.userStorageUri == env.SOURCE_URI)
+              | select(.state == "READY")
+              | .name
+            ) // empty
+          ' <<< "$BUILDS")
+          if [ -z "$BUILD" ]; then
+            echo "::error::Could not find a READY App Hosting build for $SOURCE_URI."
+            exit 1
+          fi
+
+          VERSION=${BUILD##*/}
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          APP_URL="https://agent-console.supersprinkles.racing"
+          BODY=$(printf \
+            ":rocket: Deployed to production as App Hosting version \`%s\`.\n\n- App: %s\n- Deploy run: %s" \
+            "$VERSION" "$APP_URL" "$RUN_URL")
+
+          PRS=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/commits/$DEPLOYED_SHA/pulls" \
+            --jq '.[].number' | sort -un)
+          if [ -z "$PRS" ]; then
+            echo "No pull request is associated with deployed commit $DEPLOYED_SHA."
+            exit 0
+          fi
+
+          while read -r PR; do
+            gh pr comment "$PR" --body "$BODY"
+            echo "Annotated PR #$PR with App Hosting version $VERSION."
+          done <<< "$PRS"
+
+          {
+            echo "### Production release"
+            echo
+            echo "- Version: \`$VERSION\`"
+            echo "- Pull requests: $(echo "$PRS" | sed 's/^/#/' | paste -sd, -)"
+            echo "- App: $APP_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
