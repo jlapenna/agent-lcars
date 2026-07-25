@@ -9,6 +9,7 @@ import {
   dispatchUnstickPrs,
   postComment,
   retriggerIssue,
+  updatePrBranch,
 } from './backend-actions';
 import { getGithubClient } from './github-client';
 
@@ -54,6 +55,41 @@ describe('closeIssue', () => {
     });
 
     await expect(closeIssue(DEFAULT_REPO, 2709)).rejects.toThrow('Not Found');
+  });
+});
+
+describe('updatePrBranch', () => {
+  it('updates the PR branch with the latest base branch changes', async () => {
+    const updateBranch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { pulls: { updateBranch } },
+    });
+
+    await updatePrBranch(DEFAULT_REPO, 2709);
+
+    expect(updateBranch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      pull_number: 2709,
+    });
+  });
+
+  it('propagates a GitHub API error', async () => {
+    (getGithubClient as Mock).mockReturnValue({
+      rest: {
+        pulls: {
+          updateBranch: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error('Merge conflict'), { status: 422 }),
+            ),
+        },
+      },
+    });
+
+    await expect(updatePrBranch(DEFAULT_REPO, 2709)).rejects.toThrow(
+      'Merge conflict',
+    );
   });
 });
 
@@ -450,6 +486,24 @@ describe('createQuickTask', () => {
     expect(result).toEqual({
       url: 'https://github.com/x/y/issues/99',
       number: 99,
+    });
+  });
+
+  it('adds the selected pipeline label instead of claude when one is given', async () => {
+    const { addLabels } = mockOctokit({});
+
+    await createQuickTask(
+      'Fix the flaky test',
+      undefined,
+      DEFAULT_REPO,
+      'opencode',
+    );
+
+    expect(addLabels).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'members',
+      issue_number: 99,
+      labels: ['opencode'],
     });
   });
 

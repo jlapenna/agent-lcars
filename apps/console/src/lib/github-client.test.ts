@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_WATCHED_REPOS,
   getWatchedRepos,
+  repoDisplayName,
   repoItemKey,
   repoKey,
   resolveWatchedRepo,
@@ -53,6 +54,30 @@ describe('getWatchedRepos', () => {
     ]);
     expect(() => getWatchedRepos()).toThrow(/must be a string or null/);
   });
+
+  it('parses an alias', () => {
+    process.env[ENV_KEY] = JSON.stringify([
+      { owner: 'org-a', name: 'repo-a', alias: 'Repo A' },
+    ]);
+
+    expect(getWatchedRepos()).toEqual([
+      { owner: 'org-a', name: 'repo-a', alias: 'Repo A' },
+    ]);
+  });
+
+  it('throws when alias is an empty string', () => {
+    process.env[ENV_KEY] = JSON.stringify([
+      { owner: 'org-a', name: 'repo-a', alias: '' },
+    ]);
+    expect(() => getWatchedRepos()).toThrow(/alias must be a non-empty string/);
+  });
+
+  it('throws when alias is not a string', () => {
+    process.env[ENV_KEY] = JSON.stringify([
+      { owner: 'org-a', name: 'repo-a', alias: 42 },
+    ]);
+    expect(() => getWatchedRepos()).toThrow(/alias must be a non-empty string/);
+  });
 });
 
 describe('resolveWatchedRepo', () => {
@@ -101,5 +126,21 @@ describe('repoKey / repoItemKey', () => {
 
   it('formats owner/name#number', () => {
     expect(repoItemKey({ owner: 'a', name: 'b' }, 42)).toBe('a/b#42');
+  });
+});
+
+describe('repoDisplayName', () => {
+  it('falls back to repoKey when no alias is set', () => {
+    expect(repoDisplayName({ owner: 'a', name: 'b' })).toBe('a/b');
+  });
+
+  it('prefers the alias when present', () => {
+    expect(repoDisplayName({ owner: 'a', name: 'b', alias: 'Repo B' })).toBe(
+      'Repo B',
+    );
+  });
+
+  it('falls back to repoKey when the alias is an empty string', () => {
+    expect(repoDisplayName({ owner: 'a', name: 'b', alias: '' })).toBe('a/b');
   });
 });

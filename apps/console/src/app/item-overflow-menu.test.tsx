@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
-import { clearHumanNeeded, closeIssue } from './actions';
+import { clearHumanNeeded, closeIssue, rebasePr } from './actions';
 import { ItemOverflowMenu } from './item-overflow-menu';
 
 // 'use server' actions - out of scope here, matching the pattern in
@@ -13,6 +13,7 @@ import { ItemOverflowMenu } from './item-overflow-menu';
 vi.mock('./actions', () => ({
   closeIssue: vi.fn(),
   clearHumanNeeded: vi.fn(),
+  rebasePr: vi.fn(),
 }));
 
 // No ModalsProvider is mounted in these tests (only MantineProvider, matching
@@ -170,6 +171,61 @@ describe('ItemOverflowMenu', () => {
         message: 'Cleared needs-human on #42',
         color: 'green',
       }),
+    );
+  });
+
+  it('offers Rebase onto base branch only for a PR with mergeableState behind', async () => {
+    renderMenu(makeItem({ kind: 'pr', mergeableState: 'behind' }));
+    await openMenu();
+
+    expect(screen.getByText('Rebase onto base branch')).toBeTruthy();
+  });
+
+  it('does not offer Rebase for a PR with a different mergeableState', () => {
+    renderMenu(makeItem({ kind: 'pr', mergeableState: 'dirty' }));
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('does not offer Rebase for a behind issue (not a PR)', async () => {
+    renderMenu(makeItem({ mergeableState: 'behind' }));
+    await openMenu();
+
+    expect(screen.queryByText('Rebase onto base branch')).toBeNull();
+  });
+
+  it('rebases the branch without a confirm modal, then notifies', async () => {
+    (rebasePr as Mock).mockResolvedValue({ ok: true });
+    renderMenu(makeItem({ kind: 'pr', mergeableState: 'behind' }));
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Rebase onto base branch'));
+
+    await waitFor(() =>
+      expect(rebasePr).toHaveBeenCalledWith(DEFAULT_REPO, 42),
+    );
+    expect(modals.openConfirmModal).not.toHaveBeenCalled();
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '#42 updated with the base branch',
+        color: 'green',
+      }),
+    );
+  });
+
+  it('surfaces a failed rebase as a red notification', async () => {
+    (rebasePr as Mock).mockResolvedValue({
+      ok: false,
+      message: 'Merge conflict',
+    });
+    renderMenu(makeItem({ kind: 'pr', mergeableState: 'behind' }));
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Rebase onto base branch'));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Merge conflict', color: 'red' }),
+      ),
     );
   });
 });

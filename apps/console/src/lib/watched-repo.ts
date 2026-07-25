@@ -20,10 +20,27 @@ export interface WatchedRepo {
    * filename; an explicit `null` marks a pipeline this repo doesn't run at
    * all, so it's simply not fetched for this repo. */
   workflowFiles?: Partial<Record<AgentPipeline, string | null>>;
+  /** Display name shown in the UI instead of `owner/name` (repoKey's
+   * format) wherever a repo badge/title is rendered - e.g. a shorter label
+   * for a long or noisy repo name. Purely cosmetic: never affects GitHub
+   * API calls, URLs, or the identity keys `repoKey`/`repoItemKey` produce. */
+  alias?: string;
 }
 
 export function repoKey(repo: { owner: string; name: string }): string {
   return `${repo.owner}/${repo.name}`;
+}
+
+/** The name to render in the UI for a repo: its configured `alias` when
+ * set, otherwise `repoKey`'s `owner/name`. Use this instead of `repoKey`
+ * anywhere a repo name is *displayed*; keep using `repoKey` for identity
+ * (keys, URLs, filter matching). */
+export function repoDisplayName(repo: {
+  owner: string;
+  name: string;
+  alias?: string;
+}): string {
+  return repo.alias && repo.alias.length > 0 ? repo.alias : repoKey(repo);
 }
 
 /** Cross-repo-safe join/dedupe key for issue and PR numbers, which only
