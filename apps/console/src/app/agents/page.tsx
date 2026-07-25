@@ -145,7 +145,7 @@ export default async function AgentsPage({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <Container size="md" py="xl">
+    <Container size="xl" py="xl">
       <ConsoleHeader
         current="agents"
         title="Agent Status"
