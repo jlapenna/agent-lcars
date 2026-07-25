@@ -3,7 +3,11 @@ import type {
   SessionAgent,
   SessionLiveness,
 } from '@agent-lcars/telemetry';
-import { displayLiveness, sessionAgent } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  sessionAgent,
+  totalTokens,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -44,9 +48,10 @@ export interface CliSession {
   worktree?: string;
   model?: string;
   turns: number;
-  /** Total tokens (input + output). No dollar-cost ledger exists yet (Agent
-   * Console v2 PRD #2112 defers a cost ledger to a later slice) - token
-   * volume is the best available proxy today. */
+  /** Total tokens (see {@link totalTokens}: input + output + both cache
+   * categories). No dollar-cost ledger exists yet (Agent Console v2 PRD
+   * #2112 defers a cost ledger to a later slice) - token volume is the best
+   * available proxy today. */
   totalTokens: number;
   title?: string;
   startedAt: string;
@@ -80,7 +85,7 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
     worktree: doc.worktree,
     model: doc.model,
     turns: doc.turns,
-    totalTokens: doc.tokens.inputTokens + doc.tokens.outputTokens,
+    totalTokens: totalTokens(doc.tokens),
     title: doc.title,
     startedAt: doc.startedAt,
     lastActivityAt: doc.lastActivityAt,

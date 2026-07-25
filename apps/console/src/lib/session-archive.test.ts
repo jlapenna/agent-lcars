@@ -192,6 +192,18 @@ describe('toSessionRow', () => {
   it('sums input+output tokens', () => {
     expect(toSessionRow(cliDoc(), now).totalTokens).toBe(150);
   });
+
+  it('includes cache-creation and cache-read tokens in the total', () => {
+    const doc = cliDoc({
+      tokens: {
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheCreationTokens: 20,
+        cacheReadTokens: 300,
+      },
+    });
+    expect(toSessionRow(doc, now).totalTokens).toBe(470);
+  });
 });
 
 describe('getSessionArchive', () => {
