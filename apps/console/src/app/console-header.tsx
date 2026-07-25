@@ -1,8 +1,6 @@
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import { RefreshButton } from './refresh-button';
-
 type NavKey = 'queue' | 'agents' | 'sessions';
 type Accent = 'amber' | 'periwinkle' | 'teal';
 
@@ -22,8 +20,6 @@ export interface ConsoleHeaderProps {
   title: string;
   subtitle: ReactNode;
   actions?: ReactNode;
-  generatedAt: string;
-  refreshLabel: string;
   warnings?: string[];
 }
 
@@ -39,8 +35,6 @@ export function ConsoleHeader({
   title,
   subtitle,
   actions,
-  generatedAt,
-  refreshLabel,
   warnings,
 }: ConsoleHeaderProps) {
   return (
@@ -52,13 +46,11 @@ export function ConsoleHeader({
             {subtitle}
           </Text>
         </div>
-        <Group gap="sm" wrap="wrap">
-          {actions}
-          <RefreshButton
-            generatedAt={generatedAt}
-            initialLabel={refreshLabel}
-          />
-        </Group>
+        {actions && (
+          <Group gap="sm" wrap="wrap">
+            {actions}
+          </Group>
+        )}
       </Group>
 
       <nav className="lcars-nav" aria-label="Console sections">

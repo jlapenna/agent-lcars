@@ -55,7 +55,8 @@ export function UnstickPrsButton({
     >
       <Popover.Target>
         <Button
-          variant="default"
+          className="lcars-action-button"
+          data-accent="violet"
           size={size}
           disabled={isPending}
           onClick={() => setOpened((prev) => !prev)}

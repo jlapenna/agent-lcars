@@ -44,8 +44,10 @@ RUN corepack enable
 ARG AGENT_LCARS_REF=main
 ARG CACHE_BUST=unset
 RUN echo "cache-bust: ${CACHE_BUST}" && \
-    git clone --depth 1 --single-branch --branch "${AGENT_LCARS_REF}" \
-    https://github.com/jlapenna/agent-lcars.git .
+    git init . && \
+    git remote add origin https://github.com/jlapenna/agent-lcars.git && \
+    git fetch --depth 1 origin "${AGENT_LCARS_REF}" && \
+    git checkout --detach FETCH_HEAD
 # pnpm's version comes from the cloned repo's own package.json
 # ("packageManager" field) via corepack, not hardcoded here, so this stays
 # correct as agent-lcars bumps it.

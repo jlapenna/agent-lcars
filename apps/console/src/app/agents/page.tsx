@@ -166,8 +166,6 @@ export default async function AgentsPage({ searchParams }: PageProps) {
             )}
           </>
         }
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
         warnings={warnings}
       />
 
@@ -191,7 +189,10 @@ export default async function AgentsPage({ searchParams }: PageProps) {
         sessionsByRunId={sessionsByRunId}
       />
 
-      <ConsoleFooter />
+      <ConsoleFooter
+        generatedAt={generatedAt}
+        refreshLabel={formatRelativeTime(generatedAt)}
+      />
     </Container>
   );
 }
