@@ -189,7 +189,7 @@ export default async function Index({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos — Claude + OpenCode agent activity`;
 
   return (
-    <Container size="md" py="xl">
+    <Container size="xl" py="xl">
       <ConsoleHeader
         current="queue"
         title="Agent LCARS"
