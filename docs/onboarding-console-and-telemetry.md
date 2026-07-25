@@ -2,9 +2,7 @@
 
 How to wire a new repo into this console: its dispatched agent runs show up
 in the dashboard/queue, live turns and transcripts show up in Sessions, and
-takeover/parking all work the way `supersprinklesracing/members` already
-does. Written from the members + agent-lcars onboarding done in practice —
-every piece named below is real, not aspirational.
+takeover/parking work the same way they do for any already-onboarded repo.
 
 There are three independent layers. A repo can adopt them incrementally,
 but the console only becomes useful once all three are in place:
@@ -22,9 +20,8 @@ Pull in the shared skill and follow it. Every dispatch workflow (however
 many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
 
 - Check out `.agents/skills/agent-protocol/agent-protocol.md` from this
-  repo (sparse checkout is the established pattern — see any of this
-  repo's own dispatch workflows, or `supersprinklesracing/members`'
-  `codex.yml`'s "Checkout shared agent-protocol skill" step) and have the
+  repo (sparse checkout — see any dispatch workflow in this repo, or a
+  cross-repo consumer's `codex.yml`, for the concrete step) and have the
   agent read it first, before its own repo-specific delta skill.
 - Write that delta skill (mirror `.agents/skills/lcars/lcars-protocol.md`
   in this repo): name the fleet-claim identity, the PR reviewer/park
@@ -49,16 +46,15 @@ dispatch-workflow work, following a file this repo publishes.
 **Claude Code dispatches only, for now.** `startSidecar()`
 (`apps/telemetry-watcher/src/lib/runner.ts`) hard-codes both the watched
 directory (`$HOME/.claude/projects`) and the transcript adapter
-(`'claude-code'`) — there is no OpenCode adapter in
-`TRANSCRIPT_ADAPTERS` at all yet. Wiring the steps below into an OpenCode
-or Codex dispatch workflow will not fail loudly: every telemetry step is
-deliberately fail-soft, so the workflow stays green while silently
-producing no live or final session data. Either skip this section for a
-non-Claude pipeline, or treat adding the missing transcript root/adapter
-as a prerequisite, not an assumption.
+(`'claude-code'`) — there is no OpenCode adapter in `TRANSCRIPT_ADAPTERS`
+yet. Wiring the steps below into an OpenCode or Codex dispatch workflow
+will not fail loudly: every telemetry step is deliberately fail-soft, so
+the workflow stays green while silently producing no live or final session
+data. Either skip this section for a non-Claude pipeline, or treat adding
+the missing transcript root/adapter as a prerequisite, not an assumption.
 
-This is also the part that actually requires per-repo setup in **both**
-directions: the new repo's runner environment, and a GCP IAM grant here.
+This is also the part that requires per-repo setup in **both** directions:
+the new repo's runner environment, and a GCP IAM grant here.
 
 ### 2a. The sidecar tool needs to be on the runner
 
@@ -66,40 +62,34 @@ Telemetry is shipped by baking `apps/telemetry-watcher`'s `bundle` Nx
 target — a single self-contained `.cjs` file with every dependency
 inlined, including `@google-cloud/firestore` — into the runner image at
 `/usr/local/lib/agent-lcars/sidecar.cjs`. See this repo's own
-`apps/runner-autoscaler/runner-image/Dockerfile` (or
-`jlapenna/homelab`'s copy — they're intentionally duplicated, see the
-comment at the top of either) for the exact build stage: it clones this
-repo's `main` at image-build time and runs
-`./tools/nx bundle @agent-lcars/telemetry-watcher`. No download, no
-version pin to keep in sync — the image build is the release step. A
-stale, never-republished pin was exactly the failure mode this replaced
-(issue #29).
+`apps/runner-autoscaler/runner-image/Dockerfile` (or `jlapenna/homelab`'s
+copy — they're intentionally duplicated, see the comment at the top of
+either) for the build stage: it clones this repo's `main` at image-build
+time and runs `./tools/nx bundle @agent-lcars/telemetry-watcher`. No
+download, no version pin to keep in sync — the image build is the release
+step (see issue #29 for the failure mode a pinned, separately-published
+bundle has instead).
 
 - **If the new repo's runner fleet already uses
   `docker-registry.lan.jlapenna.net/homelab-runner:jit-node24`** (the
-  shared JIT image both `members` and `agent-lcars` run on), this is
-  already done — nothing to do here.
+  shared JIT image), this is already done — nothing to do here.
 - **If it's a different runner image entirely**, that image's own
   Dockerfile needs an equivalent build stage, or the sidecar bundle needs
-  shipping some other way. Don't reintroduce the GCS-publish-and-pin
-  scheme (issue #29) — build-time bake-in from this repo's own `main` is
-  the supported pattern.
+  shipping some other way. Don't reintroduce a publish-and-pin scheme
+  (issue #29) — build-time bake-in from this repo's own `main` is the
+  supported pattern.
 
 ### 2b. Dispatch workflow steps
 
-Both `supersprinklesracing/members` and this repo's own `claude.yml` run
-the identical three steps below (`members` migrated off the old GCS
-`ride-along` pattern in
-[members#3414](https://github.com/supersprinklesracing/members/pull/3414)
-— use either as a real, current reference, not just this doc). The
-process-management logic (existence/credential guards, backgrounding,
-PID tracking, kill-and-wait) is consolidated into
+Add these three steps to the dispatch workflow. The process-management
+logic (existence/credential guards, backgrounding, PID tracking,
+kill-and-wait) is consolidated into
 `/usr/local/lib/agent-lcars/sidecar-lifecycle.sh`, baked into the runner
 image alongside `sidecar.cjs` — each workflow step is a thin,
-copy-pasteable wrapper around calling it, not a place to re-duplicate
-that logic (see that script's own header comment if you need to change
-the underlying behavior; a fix there reaches every consumer on the next
-image pull).
+copy-pasteable wrapper around calling it, not a place to re-duplicate that
+logic (see that script's own header comment if the underlying behavior
+needs to change; a fix there reaches every consumer on the next image
+pull).
 
 ```yaml
 - name: Authenticate telemetry writer
@@ -113,8 +103,8 @@ image pull).
     token_format: access_token
 
 # ... your own agent-specific auth step, if any, must run AFTER this one
-# if it also sets GOOGLE_APPLICATION_CREDENTIALS job-wide -- see either
-# real claude.yml's "ORDER MATTERS" comment for why.
+# if it also sets GOOGLE_APPLICATION_CREDENTIALS job-wide, so its
+# credentials (not this step's) are what later steps inherit ambiently.
 
 - name: Start telemetry sidecar
   continue-on-error: true
@@ -150,11 +140,9 @@ image pull).
 
 `continue-on-error: true` on every step matters — a broken/rotated WIF
 config, or a runner image that predates the bake-in, must never turn a
-healthy agent run red. Skipping the finalize step (or a runner image
-missing it) leaves a session doc frozen at whatever the sidecar last
-wrote, with no browsable archived transcript — this is exactly the gap
-`members` had before #3414: it ran the old `start`-equivalent but never
-had a finalize step of any kind.
+healthy agent run red. The finalize step is not optional: skip it and a
+session doc freezes at whatever `live`/`idle` snapshot the sidecar last
+wrote, with no browsable archived transcript.
 
 ### 2c. IAM grant (needs a human — Terraform lives here, not touched casually)
 
@@ -162,9 +150,8 @@ The `telemetry-writer` service account's WIF principal set needs the new
 repo added so its Actions runs can mint a token for that SA. This repo's
 own `AGENTS.md`/`lcars-protocol.md` rule — **never touch
 `infra/terraform` from an agent run** — applies here: this step is a
-maintainer action (`infra/terraform`), not something to script around.
-Flag it and wait rather than trying to work around it with a hand-rolled
-`gcloud` grant.
+maintainer action, not something to script around. Flag it and wait
+rather than trying to work around it with a hand-rolled `gcloud` grant.
 
 ## 3. Console config
 
@@ -181,9 +168,8 @@ set in this repo's `apphosting.yaml`): a JSON array of
 ```
 
 - Leaving `AGENT_LCARS_WATCHED_REPOS` unset reproduces today's
-  single-repo behavior exactly (`DEFAULT_WATCHED_REPOS` — just
-  `supersprinklesracing/members`) — it must be set explicitly to add a
-  second repo, not just left to "pick up" the new one.
+  single-repo behavior exactly (`DEFAULT_WATCHED_REPOS`) — it must be set
+  explicitly to add a second repo, not just left to "pick up" the new one.
 - `workflowFiles` is an **override**, not a requirement: each of
   `claude` / `codex` / `opencode` falls back to its default filename
   (`agent-activity.ts`'s `WORKFLOW_FILES`) unless overridden here. Only
@@ -192,8 +178,8 @@ set in this repo's `apphosting.yaml`): a JSON array of
   the console doesn't bother fetching it).
 - `AGENT_LCARS_GITHUB_TOKEN` (the token `getGithubClient()` uses) needs
   read access to the new repo too — check its scope/installation covers
-  it, since a token that only reached `members` before won't automatically
-  reach a repo in a different org or a personal account.
+  it, since a token that only reached an existing repo won't automatically
+  reach one in a different org or a personal account.
 - `primaryWatchedRepo()` — the repo global ops-style actions (quick task,
   unstick-prs, Nx cache eviction) target when the UI has no per-action
   repo picker — is always `getWatchedRepos()[0]`. If the new repo should
@@ -214,7 +200,4 @@ Don't take any of the above on faith — confirm each layer:
 3. After it finishes, check the Sessions page for the archived transcript
    — proves the finalize step's authoritative write landed.
 
-This is exactly the sequence used to prove out both Claude
-(`agent-lcars` issue #41 → PR #48) and the runner-fleet plumbing itself
-during this repo's own onboarding — there's no shortcut that skips a real
-end-to-end dispatch.
+There's no shortcut that skips a real end-to-end dispatch.

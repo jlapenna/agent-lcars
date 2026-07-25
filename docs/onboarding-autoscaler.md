@@ -2,10 +2,7 @@
 
 How to add a new GitHub account/repo — a **registration** — to the shared
 fleet, so it gets its own on-demand, ephemeral self-hosted runners without
-a new standalone control plane. Written from the `agent-lcars` (homelab#97)
-onboarding done in practice, and from migrating this component's own
-source out of `jlapenna/homelab` and into `apps/runner-autoscaler/` in this
-repo (agent-lcars#52/#53).
+a new standalone control plane.
 
 ## The model, briefly
 
@@ -79,12 +76,12 @@ same registration also needs trusted, workflow-defined-only CI (build/test
 image publishing, e2e-docker-style jobs) that genuinely needs
 `docker build`/`docker run`, give it a **separate** scale set with
 `mount_docker_socket: true` — never flip the agent-dispatch pool's flag to
-get it. This is exactly the split `members` already has
-(`homelab-autoscale-e2e-docker` vs. `homelab-autoscale-claude-agent`) and
-what `agent-lcars` added for its own CI
-(`homelab-autoscale-lcars-docker` vs. `homelab-autoscale-claude-agent-lcars`,
-homelab#135) — mirror that shape rather than reusing one pool for both
-purposes.
+get it. For example: `homelab-autoscale-e2e-docker` (docker-enabled) is
+kept separate from `homelab-autoscale-claude-agent` (agent-dispatch,
+no socket) under one registration; `homelab-autoscale-lcars-docker`
+(docker-enabled) is likewise separate from
+`homelab-autoscale-claude-agent-lcars` (agent-dispatch) under another.
+Mirror that shape rather than reusing one pool for both purposes.
 
 If any scale set in the whole file sets `mount_docker_socket: true`,
 **every** host in `fleet.hosts` needs **both** `docker_socket_gid` **and**
@@ -108,9 +105,9 @@ github_autoscaler_<registration>_app_private_key: <the .pem contents>
 
 `ansible/deploy_secrets.yml` materializes it to the `private_key_file`
 path from step 2 (mode `0600`). Until the vault entry exists, that deploy
-task is a no-op (`when: ... is defined`) rather than a hard failure — you
-can commit the `orchestrator.yml` shape before the App/key exist and
-nothing else breaks in the meantime.
+task is a no-op (`when: ... is defined`) rather than a hard failure — the
+`orchestrator.yml` shape can be committed before the App/key exist without
+breaking anything else in the meantime.
 
 ## 4. Validate before deploying
 
@@ -124,18 +121,16 @@ touching any live listener or Docker mutation.
 
 ## 5. Deploy — **this must run on the `homelab` host itself**
 
-This is the single most important, least obvious thing about this whole
-system, learned the hard way: **`docker compose run --rm
-deploy-runner-autoscaler` (or `ansible-playbook deploy_runner_autoscaler.yml`
-directly) is only meaningful when run ON the `homelab` host, as the
-`homelab` service-account user, from that host's own checkout.** It is
-_not_ meant to be triggered remotely from an operator workstation, even
-though the playbook's `hosts: homelab` target technically resolves over
-SSH from anywhere with the right key. A workstation's own local checkout
-of `jlapenna/homelab` has no deploy relevance at all — don't chase SSH-key
-or file-ownership issues there; if something's wrong on the workstation
-side, that's a sign you're deploying from the wrong place, not a problem
-to fix in place.
+**`docker compose run --rm deploy-runner-autoscaler`** (or
+`ansible-playbook deploy_runner_autoscaler.yml` directly) **is only
+meaningful when run ON the `homelab` host, as the `homelab` service-account
+user, from that host's own checkout.** It is _not_ meant to be triggered
+remotely from an operator workstation, even though the playbook's
+`hosts: homelab` target technically resolves over SSH from anywhere with
+the right key. A workstation's own local checkout of `jlapenna/homelab`
+has no deploy relevance at all — an SSH-key or file-ownership error there
+is a sign of deploying from the wrong place, not a problem to fix in
+place.
 
 **Never authenticate to `homelab` (or any fleet host) as the personal
 `jlapenna` identity for any of this.** Always the dedicated `homelab`
@@ -160,20 +155,25 @@ registrations.
 ## 6. If this registration needs its own CI to publish anything
 
 Everything the fleet's own control plane and worker image consist of is
-itself built and published by CI, not by hand — that's the whole point of
-this repo's own migration (agent-lcars#52). If your new infrastructure
+itself built and published by CI, not by hand. If new infrastructure
 similarly needs to build+push its own image(s) to
 `docker-registry.lan.jlapenna.net` (anonymous push works from this network
-position — no `docker/login-action` needed, confirmed in
-`supersprinklesracing/members`#2373), that publish job needs to run on a
-**docker-socket-enabled, non-agent-dispatch** scale set (§2's split
+position — no `docker/login-action` needed), that publish job needs to run
+on a **docker-socket-enabled, non-agent-dispatch** scale set (§2's split
 above) — never the AI-agent pool. See this repo's own
 `.github/workflows/publish-runner-autoscaler.yml` for the concrete
 pattern: `docker/setup-qemu-action` + `docker/setup-buildx-action` +
 `docker/build-push-action` with `platforms: linux/amd64,linux/arm64` (the
-fleet spans both architectures — `spark` is the one arm64 host, everything
-else is amd64), and `cache-from`/`cache-to: type=registry` since the pool
-has no shared local cache between hosts.
+fleet spans both architectures — one host is arm64, the rest amd64), and
+`cache-from`/`cache-to: type=registry` since the pool has no shared local
+cache between hosts.
+
+If the image's own Dockerfile clones a live branch from a repo (rather
+than building purely from its own build context) as part of the build,
+pass a build-arg tied to a real, unique value (e.g. the publishing
+commit's SHA) into that stage — otherwise a registry-backed layer cache
+can silently restore a stale clone from a prior build, defeating the
+point of building from a moving branch in the first place.
 
 ## Verifying it actually worked
 
@@ -199,5 +199,4 @@ assumed.
    re-verify **they** still work too after your deploy — a shared control
    plane means every registration's runners restart together on any
    redeploy. A quick real dispatch against an existing registration (not
-   just the new one) is the honest way to confirm you didn't regress
-   something that was already working.
+   just the new one) is the honest way to confirm nothing regressed.
