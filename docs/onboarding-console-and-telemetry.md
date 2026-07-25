@@ -187,9 +187,9 @@ set in this repo's `apphosting.yaml`): a JSON array of
   it, since a token that only reached an existing repo won't automatically
   reach one in a different org or a personal account.
 - `primaryWatchedRepo()` — the repo global ops-style actions (quick task,
-  unstick-prs, Nx cache eviction) target when the UI has no per-action
-  repo picker — is always `getWatchedRepos()[0]`. If the new repo should
-  be the default target for those, put it first in the array.
+  unstick-prs) target when the UI has no per-action repo picker — is
+  always `getWatchedRepos()[0]`. If the new repo should be the default
+  target for those, put it first in the array.
 
 ## Verifying it actually worked
 

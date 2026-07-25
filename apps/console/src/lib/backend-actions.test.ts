@@ -7,7 +7,6 @@ import {
   createQuickTask,
   deriveQuickTaskTitle,
   dispatchUnstickPrs,
-  evictNxCache,
   postComment,
   retriggerIssue,
 } from './backend-actions';
@@ -265,25 +264,6 @@ describe('dispatchUnstickPrs', () => {
     expect(createWorkflowDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ inputs: {} }),
     );
-  });
-});
-
-describe('evictNxCache', () => {
-  it('dispatches playbook-evict-nx-cache.yml with the capture flag stringified', async () => {
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { actions: { createWorkflowDispatch } },
-    });
-
-    await evictNxCache(true);
-
-    expect(createWorkflowDispatch).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'members',
-      workflow_id: 'playbook-evict-nx-cache.yml',
-      ref: 'main',
-      inputs: { capture: 'true' },
-    });
   });
 });
 

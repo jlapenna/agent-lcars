@@ -17,7 +17,6 @@ import {
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
-  evictNxCache as evictNxCacheLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
 } from '../lib/backend-actions';
@@ -136,16 +135,6 @@ export async function dispatchUnstickPrs(
   await requireAdmin();
   try {
     await dispatchUnstickPrsLib(context);
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
-  }
-}
-
-export async function evictNxCache(capture: boolean): Promise<ActionResult> {
-  await requireAdmin();
-  try {
-    await evictNxCacheLib(capture);
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
