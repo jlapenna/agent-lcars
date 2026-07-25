@@ -2,13 +2,7 @@
 
 Agent LCARS is the operations console, telemetry pipeline, and self-hosted
 runner fleet for headless coding agents (Claude Code, and experimentally
-OpenCode) dispatched against GitHub issues in
-[`supersprinklesracing/members`](https://github.com/supersprinklesracing/members).
-It is intentionally isolated in its own `agent-lcars` GCP project and does
-not read or write the racing application's databases — see
-[AGENTS.md](AGENTS.md).
-
-Production console: <https://agent-console.supersprinkles.racing>.
+OpenCode) dispatched against GitHub issues.
 
 ![Agent LCARS console — Queue tab showing the action-item board and in-flight CLI sessions](docs/images/console-dashboard.png)
 
