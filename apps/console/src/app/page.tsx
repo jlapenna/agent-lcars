@@ -27,6 +27,7 @@ import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
+import { ConsoleFooter } from './console-footer';
 import { ConsoleHeader } from './console-header';
 import { formatCompactRelativeTime, formatRelativeTime } from './format';
 import { QuickTaskButton } from './quick-task-button';
@@ -238,6 +239,8 @@ export default async function Index({ searchParams }: PageProps) {
         itemsByRunId={itemsByRunId}
         sessionsByRunId={sessionsByRunId}
       />
+
+      <ConsoleFooter />
     </Container>
   );
 }

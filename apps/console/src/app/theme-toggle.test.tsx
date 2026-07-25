@@ -35,7 +35,7 @@ describe('ThemeToggle', () => {
     vi.clearAllMocks();
   });
 
-  it('renders correctly', () => {
+  it('renders as a text control', () => {
     (mantineCore.useComputedColorScheme as Mock).mockReturnValue('light');
     render(
       <MantineProvider>
@@ -43,6 +43,7 @@ describe('ThemeToggle', () => {
       </MantineProvider>,
     );
 
+    expect(screen.getByText('Switch to dark mode')).toBeTruthy();
     expect(
       screen.getByRole('button', { name: /toggle color scheme/i }),
     ).toBeTruthy();

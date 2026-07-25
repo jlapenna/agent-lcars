@@ -16,9 +16,9 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../../auth';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
+import { ConsoleFooter } from '../../console-footer';
 import { formatRelativeTime } from '../../format';
 import { RefreshButton } from '../../refresh-button';
-import { ThemeToggle } from '../../theme-toggle';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
 
@@ -128,7 +128,6 @@ export default async function SessionDetailPage({ params }: PageProps) {
             generatedAt={generatedAt}
             initialLabel={formatRelativeTime(generatedAt)}
           />
-          <ThemeToggle size="lg" />
         </Group>
       </Group>
 
@@ -150,6 +149,8 @@ export default async function SessionDetailPage({ params }: PageProps) {
           )}
         </>
       )}
+
+      <ConsoleFooter />
     </Container>
   );
 }

@@ -7,6 +7,7 @@ import {
   getSessionArchive,
   parseSessionArchiveQuery,
 } from '../../lib/session-archive';
+import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
@@ -81,6 +82,8 @@ export default async function SessionsPage({ searchParams }: PageProps) {
 
         <SessionTable rows={rows} />
       </Card>
+
+      <ConsoleFooter />
     </Container>
   );
 }
