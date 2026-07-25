@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,16 @@ type OrchestratorFleet struct {
 	MaxRunners int                `yaml:"max_runners"`
 	Hosts      []FleetHostConfig  `yaml:"hosts"`
 	Placement  FleetPlacementFile `yaml:"placement,omitempty"`
+	// DockerSocketAllowlist names the only scale sets, across every
+	// registration, permitted to set mount_docker_socket: true (root-
+	// equivalent access on their placement host). Left empty (the default,
+	// and today's only shipped shape), no allowlist is enforced -- this
+	// stays backward compatible with existing deployments. Once populated,
+	// any scale set with mount_docker_socket: true whose name is not on
+	// this list fails config validation outright, so the privilege
+	// boundary documented on Config.MountDockerSocket is enforced in code
+	// rather than by comment-and-convention alone.
+	DockerSocketAllowlist []string `yaml:"docker_socket_allowlist,omitempty"`
 }
 
 type FleetHostConfig struct {
@@ -161,7 +172,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 		return fmt.Errorf("version must be 1")
 	}
 	if c.Server.MetricsAddr == "" {
-		c.Server.MetricsAddr = ":8080"
+		// Localhost-only by default: /metrics, /healthz, /readyz carry no
+		// secrets but do disclose full fleet topology (host names,
+		// per-scale-set runner counts, placement/drain state) with no
+		// auth. A deployment that wants external scraping must opt in
+		// explicitly via server.metrics_addr (e.g. "0.0.0.0:8080").
+		c.Server.MetricsAddr = "127.0.0.1:8080"
 	}
 	if c.Server.LogLevel == "" {
 		c.Server.LogLevel = "info"
@@ -395,6 +411,9 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			s.Labels[j] = label
 		}
 		if s.MountDockerSocket {
+			if allowlist := r.Raw.Fleet.DockerSocketAllowlist; len(allowlist) > 0 && !slices.Contains(allowlist, s.Name) {
+				return nil, 0, fmt.Errorf("scale set %q sets mount_docker_socket but is not in fleet.docker_socket_allowlist", s.Name)
+			}
 			for _, h := range r.Raw.Fleet.Hosts {
 				if r.DockerSocketGID[h.Name] == "" {
 					return nil, 0, fmt.Errorf("socket-enabled scale set %q requires docker_socket_gid for host %q", s.Name, h.Name)
