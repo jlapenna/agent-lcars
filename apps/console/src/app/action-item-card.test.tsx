@@ -10,6 +10,7 @@ import { ActionItemCard } from './action-item-card';
 // out of scope here, matching the pattern in action-items-board.test.tsx.
 vi.mock('./actions', () => ({
   mergePr: vi.fn(),
+  approveAndRebase: vi.fn(),
   replyToItem: vi.fn(),
   dispatchUnstickPrs: vi.fn(),
 }));
@@ -65,6 +66,18 @@ describe('ActionItemCard', () => {
     );
     const badge = screen.getByTestId('repo-badge');
     expect(badge.textContent).toBe('org-a/repo-a');
+  });
+
+  it('shows the configured alias instead of owner/name', () => {
+    renderCard(
+      makeItem({
+        repo: { owner: 'org-a', name: 'repo-a', alias: 'Repo A' },
+      }),
+      undefined,
+      true,
+    );
+    const badge = screen.getByTestId('repo-badge');
+    expect(badge.textContent).toBe('Repo A');
   });
 
   it('keeps the header row wrapping instead of squeezing the title next to badges', () => {
@@ -151,6 +164,43 @@ describe('ActionItemCard', () => {
 
     const button = screen.getByRole('button', {
       name: 'Approve & Merge',
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
+  it('offers Approve & Rebase (not Approve & Merge) when the PR is behind base', () => {
+    renderCard(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        draft: false,
+        mergeableState: 'behind',
+      }),
+      { kind: 'approve-rebase' },
+    );
+
+    const button = screen.getByRole('button', {
+      name: 'Approve & Rebase',
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(
+      screen.queryByRole('button', { name: 'Approve & Merge' }),
+    ).toBeNull();
+  });
+
+  it('disables Approve & Rebase on a draft', () => {
+    renderCard(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        draft: true,
+        mergeableState: 'behind',
+      }),
+      { kind: 'approve-rebase' },
+    );
+
+    const button = screen.getByRole('button', {
+      name: 'Approve & Rebase',
     }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
   });

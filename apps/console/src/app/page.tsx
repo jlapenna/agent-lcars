@@ -14,6 +14,7 @@ import {
   getWatchedRepos,
   parseRepoFilterParam,
   primaryWatchedRepo,
+  repoDisplayName,
   repoItemKey,
   repoKey,
 } from '../lib/github-client';
@@ -182,13 +183,13 @@ export default async function Index({ searchParams }: PageProps) {
 
   const subtitle =
     watchedRepos.length <= 1
-      ? `${repoKey(watchedRepos[0])} — Claude + OpenCode agent activity`
+      ? `${repoDisplayName(watchedRepos[0])} — Claude + OpenCode agent activity`
       : repoFilter
-        ? `${repoKey(repoFilter)} — Claude + OpenCode agent activity`
+        ? `${repoDisplayName(repoFilter)} — Claude + OpenCode agent activity`
         : `${watchedRepos.length} repos — Claude + OpenCode agent activity`;
 
   return (
-    <Container size="md" py="xl">
+    <Container size="xl" py="xl">
       <ConsoleHeader
         current="queue"
         title="Agent LCARS"

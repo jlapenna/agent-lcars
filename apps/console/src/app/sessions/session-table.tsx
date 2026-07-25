@@ -176,7 +176,13 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
       </Stack>
 
       <TableScrollContainer minWidth={960} visibleFrom="sm">
-        <Table striped highlightOnHover verticalSpacing="xs" fz="sm">
+        <Table
+          striped
+          highlightOnHover
+          verticalSpacing="xs"
+          fz="sm"
+          style={{ width: 'max-content' }}
+        >
           <TableThead>
             <TableTr>
               <TableTh>Source</TableTh>
