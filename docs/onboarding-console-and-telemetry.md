@@ -164,18 +164,27 @@ rather than trying to work around it with a hand-rolled `gcloud` grant.
 Tell this console the new repo exists via `AGENT_LCARS_WATCHED_REPOS`
 (read by `apps/console/src/lib/github-client.ts`'s `getWatchedRepos()`,
 set in this repo's `apphosting.yaml`): a JSON array of
-`{owner, name, workflowFiles?}` objects.
+`{owner, name, alias?, workflowFiles?}` objects.
 
 ```json
 [
   { "owner": "supersprinklesracing", "name": "members" },
-  { "owner": "supersprinklesracing", "name": "new-repo" }
+  {
+    "owner": "supersprinklesracing",
+    "name": "new-repo",
+    "alias": "New Repo"
+  }
 ]
 ```
 
 - Leaving `AGENT_LCARS_WATCHED_REPOS` unset reproduces today's
   single-repo behavior exactly (`DEFAULT_WATCHED_REPOS`) — it must be set
   explicitly to add a second repo, not just left to "pick up" the new one.
+- `alias` is purely cosmetic: when set, the UI's repo badges/titles
+  (`repoDisplayName()`) show it instead of the `owner/name` form
+  `repoKey()` produces. It never affects GitHub API calls, URLs, or the
+  identity keys used to join items/runs/sessions to a repo — those always
+  use the real `owner`/`name`.
 - `workflowFiles` is an **override**, not a requirement: each of
   `claude` / `codex` / `opencode` falls back to its default filename
   (`agent-activity.ts`'s `WORKFLOW_FILES`) unless overridden here. Only

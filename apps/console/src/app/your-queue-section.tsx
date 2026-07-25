@@ -2,7 +2,7 @@
 
 import { Anchor, Badge, Button, Group, Stack, Text } from '@mantine/core';
 
-import { repoItemKey, repoKey } from '../lib/watched-repo';
+import { repoDisplayName, repoItemKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import type { BoardCard } from './board-card';
 import { SectionHeading } from './section-heading';
@@ -41,7 +41,7 @@ function MutedItemRow({
           style={{ flexShrink: 0 }}
           data-testid="repo-badge"
         >
-          {repoKey(item.repo)}
+          {repoDisplayName(item.repo)}
         </Badge>
       )}
       <Anchor

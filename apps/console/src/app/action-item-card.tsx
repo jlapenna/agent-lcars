@@ -21,7 +21,7 @@ import type {
   MergeableState,
 } from '../lib/action-items';
 import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
-import { repoKey } from '../lib/watched-repo';
+import { repoDisplayName } from '../lib/watched-repo';
 import { mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
@@ -279,7 +279,7 @@ export function ActionItemCard({
                 style={{ flexShrink: 0 }}
                 data-testid="repo-badge"
               >
-                {repoKey(item.repo)}
+                {repoDisplayName(item.repo)}
               </Badge>
             )}
             {item.actionTypes.map((type) => (

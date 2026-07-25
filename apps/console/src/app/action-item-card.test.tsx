@@ -67,6 +67,18 @@ describe('ActionItemCard', () => {
     expect(badge.textContent).toBe('org-a/repo-a');
   });
 
+  it('shows the configured alias instead of owner/name', () => {
+    renderCard(
+      makeItem({
+        repo: { owner: 'org-a', name: 'repo-a', alias: 'Repo A' },
+      }),
+      undefined,
+      true,
+    );
+    const badge = screen.getByTestId('repo-badge');
+    expect(badge.textContent).toBe('Repo A');
+  });
+
   it('keeps the header row wrapping instead of squeezing the title next to badges', () => {
     renderCard(
       makeItem({

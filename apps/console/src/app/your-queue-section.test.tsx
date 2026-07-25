@@ -138,4 +138,24 @@ describe('YourQueueSection (#59)', () => {
 
     expect(screen.getByText('Nothing needs you right now.')).toBeTruthy();
   });
+
+  it('shows the configured alias on a muted item row in multi-repo mode', async () => {
+    renderSection(
+      [
+        card(
+          makeItem({
+            number: 1,
+            title: 'First',
+            repo: { owner: 'org-a', name: 'repo-a', alias: 'Repo A' },
+          }),
+        ),
+      ],
+      true,
+    );
+
+    await muteItem(1);
+
+    const muted = screen.getByTestId('muted-queue-items');
+    expect(within(muted).getByTestId('repo-badge').textContent).toBe('Repo A');
+  });
 });
