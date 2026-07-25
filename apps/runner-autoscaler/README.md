@@ -7,14 +7,17 @@ schedules ephemeral runner containers across a shared Docker host pool. Also
 includes `runner-image/`, the Dockerfile for the JIT worker image those
 runners actually execute jobs in.
 
-This is a plain Go module — not wired into this repo's Nx graph (a decision
-to revisit later, not a constraint of the code itself).
+This Go module is an Nx application managed by
+[`@naxodev/gonx`](https://gonx.naxo.dev/). GoNx infers the standard Go
+targets and dependencies from `go.mod`, so local validation, CI, caching,
+and affected-project detection all run through the workspace task graph.
 
 ## Build & test
 
 ```sh
-go build ./...
-go test ./...
+./tools/nx build @agent-lcars/runner-autoscaler
+./tools/nx test @agent-lcars/runner-autoscaler
+./tools/nx typecheck @agent-lcars/runner-autoscaler
 ```
 
 ## Deployment

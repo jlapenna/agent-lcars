@@ -79,11 +79,14 @@ describe('QuickTaskButton', () => {
       ),
     );
     expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'Quick task filed as #99',
-        color: 'green',
-      }),
+      expect.objectContaining({ color: 'green' }),
     );
+    const { message } = (notifications.show as Mock).mock.calls[0][0];
+    render(<MantineProvider>{message}</MantineProvider>);
+    const link = screen.getByRole('link', {
+      name: 'Quick task filed as #99',
+    }) as HTMLAnchorElement;
+    expect(link.href).toBe('https://github.com/x/y/issues/99');
   });
 
   it('forwards an explicit title when one is entered', async () => {
