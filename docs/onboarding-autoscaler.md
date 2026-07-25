@@ -95,23 +95,50 @@ satisfied fleet-wide, but verify rather than assume.
 (`docker-registry.lan.jlapenna.net/homelab-runner:jit-node24`) — reuse it
 unless this registration genuinely needs different baked-in tooling.
 
-## 3. Vault the private key
+## 3. Vault the private key and wire its deployment
 
-Mirrors every other homelab secret, in `ansible/secrets.yml`:
+There's no generic, registration-name-driven mechanism for this — each
+registration needs its own hand-added vault entry, deploy task, and
+compose bind-mount, mirroring the existing entries (search
+`ansible/deploy_secrets.yml` and `github-runner-autoscaler/docker-compose.yml`
+for `lcars` to see the full pattern for the `agent-lcars` registration).
+Three places need a new, registration-specific entry:
 
-```
-github_autoscaler_<registration>_app_private_key: <the .pem contents>
-```
+1. **`ansible/secrets.yml`** (`ansible-vault edit`): add a new key, e.g.
+   `github_autoscaler_<short-name>_app_private_key: <the .pem contents>`
+   — the short name doesn't have to match the registration's full name in
+   `orchestrator.yml` (the real `agent-lcars` registration's key is
+   `github_autoscaler_lcars_app_private_key`, not
+   `..._agent-lcars_app_private_key`).
+2. **`ansible/deploy_secrets.yml`**: add a task that writes that vault
+   value to a new path (`../github-runner-autoscaler/<short-name>-app-private-key.pem`,
+   mode `0600`), guarded by `when: github_autoscaler_<short-name>_app_private_key is defined`
+   — **plus** a placeholder-file task (`state: touch`, guarded by the
+   negated `is not defined`) so the bind-mount source below is always a
+   real file, never missing. If Docker has to auto-create the bind-mount
+   source itself, it creates a directory there instead of a file, which
+   then blocks ever placing the real PEM at that path. Also add a
+   `..._APP_PRIVATE_KEY_PATH=...` line to the `.env` content block further
+   down in the same file.
+3. **`github-runner-autoscaler/docker-compose.yml`**: add a volume line —
+   `${<SHORT_NAME>_APP_PRIVATE_KEY_PATH}:/secrets/<short-name>-app-private-key.pem:ro`
+   — using the same env var name from step 2, and point `orchestrator.yml`'s
+   `private_key_file` (step 2 above) at that same `/secrets/...` path.
 
-`ansible/deploy_secrets.yml` materializes it to the `private_key_file`
-path from step 2 (mode `0600`). Until the vault entry exists, that deploy
-task is a no-op (`when: ... is defined`) rather than a hard failure — the
-`orchestrator.yml` shape can be committed before the App/key exist without
-breaking anything else in the meantime.
+Until the vault entry exists, the real-deploy task in step 2 is a no-op
+(`when: ... is defined`, with the placeholder task filling the gap) rather
+than a hard failure — the `orchestrator.yml` shape and this wiring can all
+be committed before the App/key exist, and `disabled: true` keeps the
+registration inert in the meantime.
 
 ## 4. Validate before deploying
 
+From `github-runner-autoscaler/` (where this `docker-compose.yml` and its
+`runner-autoscaler` service are defined — not `ansible/`, which has its
+own separate compose file):
+
 ```bash
+cd github-runner-autoscaler
 docker compose run --rm --no-deps runner-autoscaler --check-config
 ```
 
@@ -143,13 +170,18 @@ git pull --ff-only
 docker compose run --rm deploy-runner-autoscaler
 ```
 
-This runs both plays in `deploy_runner_autoscaler.yml`: redeploying the
-control plane (pulling the published image, falling back to a fresh
-clone-and-build only if the pull fails) and refreshing the JIT worker
-image on every fleet host. A bad config is caught by `--check-config` (§4,
-and also run automatically as part of `deploy.sh`) before any live
-listener is drained, so a mistake here fails loudly rather than taking
-down existing registrations.
+This runs both plays in `deploy_runner_autoscaler.yml` — and the first
+play's blast radius is bigger than just the autoscaler: before it ever
+touches the control plane, it first runs `docker compose up -d --build
+--remove-orphans` against homelab's entire core-services stack and
+reloads Caddy, **then** redeploys the autoscaler control plane (pulling
+the published image, falling back to a fresh clone-and-build only if the
+pull fails). The second play refreshes the JIT worker image on every
+fleet host. A bad config is caught by `--check-config` (§4, and also run
+automatically as part of `deploy.sh`) before any live listener is
+drained, so a mistake in the autoscaler's own config fails loudly rather
+than taking down existing registrations — but this is not a
+narrowly-scoped "just restart the autoscaler" command.
 
 ## 6. If this registration needs a custom runner image
 
