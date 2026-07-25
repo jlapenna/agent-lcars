@@ -30,6 +30,7 @@ export function pipelineForLabels(labels: string[]): Pipeline {
  */
 export type PrimaryAction =
   | { kind: 'approve-merge' }
+  | { kind: 'approve-rebase' }
   | { kind: 'reply' }
   | { kind: 'fix-ci'; checkName: string; checkUrl: string };
 
@@ -46,7 +47,13 @@ export function derivePrimaryAction(
     item.actionTypes.includes('review-requested') &&
     !item.draft
   ) {
-    return { kind: 'approve-merge' };
+    // 'behind' means the base branch has moved past the PR's fork point -
+    // squash-merging right away would either 405 or skip re-running checks
+    // against the latest base, so this button instead catches the branch up
+    // and lets auto-merge land it once checks pass (see approveAndRebasePr).
+    return item.mergeableState === 'behind'
+      ? { kind: 'approve-rebase' }
+      : { kind: 'approve-merge' };
   }
   if (item.actionTypes.includes('human-needed')) {
     return { kind: 'reply' };

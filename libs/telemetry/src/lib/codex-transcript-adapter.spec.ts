@@ -51,6 +51,17 @@ describe('codexAdapter', () => {
     );
   });
 
+  it('drops an unsafe sessionId rather than passing it through', () => {
+    expect(
+      codexAdapter.reduce([
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { id: '../other-run/hijacked', cwd: '/tmp' },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
   it('clamps uncached input at zero for inconsistent upstream totals', () => {
     const lines = fixture.map((line) =>
       line.replace(

@@ -11,6 +11,7 @@ import {
   getWatchedRepos,
   parseRepoFilterParam,
   primaryWatchedRepo,
+  repoDisplayName,
   repoItemKey,
   repoKey,
 } from '../../lib/github-client';
@@ -141,7 +142,7 @@ export default async function AgentsPage({ searchParams }: PageProps) {
     watchedRepos.length <= 1
       ? undefined
       : repoFilter
-        ? repoKey(repoFilter)
+        ? repoDisplayName(repoFilter)
         : `${watchedRepos.length} repos`;
 
   return (

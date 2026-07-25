@@ -1,4 +1,4 @@
-import { required } from '@repo/util-server';
+import { isE2eTesting, isOnGoogleCloud, required } from '@repo/util-server';
 import { headers } from 'next/headers';
 import type { Session } from 'next-auth';
 import NextAuth from 'next-auth';
@@ -46,7 +46,17 @@ const nextAuth = NextAuth({
 });
 
 async function testSession(): Promise<Session | null | undefined> {
-  if (process.env['E2E_TESTING'] !== 'true') return undefined;
+  // isOnGoogleCloud() (not NODE_ENV: the E2E suite itself runs the
+  // standalone `next build` server, so NODE_ENV is already 'production'
+  // there) checks the Cloud Run container contract's reserved K_SERVICE/
+  // K_REVISION/CLOUD_RUN_JOB vars -- present only on a real deployed
+  // instance, never in a local/CI E2E run. This is a hard backstop, not
+  // just a redundant check: this bypass grants a full-admin session with
+  // zero GitHub auth to anyone who sends the right header, and it must
+  // stay dead even if E2E_TESTING were ever set on the live service
+  // outside of apphosting.yaml (e.g. a manual `gcloud run services
+  // update --set-env-vars` during debugging).
+  if (!isE2eTesting() || isOnGoogleCloud()) return undefined;
   const user = (await headers()).get('x-e2e-auth-user');
   if (!user) return undefined;
   return user === 'unauthed' ? null : getMockSession(user);

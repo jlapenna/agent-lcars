@@ -156,6 +156,61 @@ export async function updatePrBranch(
   });
 }
 
+// GitHub's REST API has no "enable auto-merge" endpoint - only the GraphQL
+// schema exposes enablePullRequestAutoMerge, and it's keyed by the PR's
+// GraphQL node ID rather than its REST pull number.
+const ENABLE_AUTO_MERGE_MUTATION = `
+  mutation EnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+    enablePullRequestAutoMerge(
+      input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }
+    ) {
+      clientMutationId
+    }
+  }
+`;
+
+// The "Approve & Rebase" counterpart to approveAndMergePr, used instead of
+// it once the PR's branch has fallen behind its base (mergeableState
+// 'behind' - see derivePrimaryAction): approves, then brings the branch up
+// to date and turns on auto-merge so the PR lands on its own once checks
+// pass, rather than merging immediately against a stale base. GitHub's
+// update-branch endpoint actually merges the base into head (a merge
+// commit), not a literal git rebase - but it's the same maintainer intent
+// this button's name promises: catch the PR up, then let it land.
+export async function approveAndRebasePr(
+  repo: WatchedRepo,
+  prNumber: number,
+): Promise<void> {
+  const octokit = getGithubClient();
+
+  await octokit.rest.pulls.createReview({
+    owner: repo.owner,
+    repo: repo.name,
+    pull_number: prNumber,
+    event: 'APPROVE',
+  });
+
+  await octokit.rest.pulls.updateBranch({
+    owner: repo.owner,
+    repo: repo.name,
+    pull_number: prNumber,
+  });
+
+  const { data: pr } = await octokit.rest.pulls.get({
+    owner: repo.owner,
+    repo: repo.name,
+    pull_number: prNumber,
+  });
+
+  // Squash, matching approveAndMergePr's own merge_method - the two buttons
+  // should produce the same merge shape, differing only in whether the
+  // branch needed catching up first.
+  await octokit.graphql(ENABLE_AUTO_MERGE_MUTATION, {
+    pullRequestId: pr.node_id,
+    mergeMethod: 'SQUASH',
+  });
+}
+
 // The console's "Done" affordance for a loop that's simply finished (stale
 // tracker, question answered elsewhere, agent PR abandoned) - closes without
 // requiring a trip to GitHub.
@@ -302,11 +357,14 @@ async function ensureQuickTaskLabelExists(repo: WatchedRepo): Promise<void> {
 }
 
 // Defaults to the primary watched repo; quick-task-button.tsx overrides
-// this via its own repo picker once more than one repo is watched (#11).
+// this via its own repo picker once more than one repo is watched (#11), and
+// to the `claude` pipeline; quick-task-button.tsx overrides this via its own
+// agent picker (#78).
 export async function createQuickTask(
   description: string,
   title?: string,
   repo: WatchedRepo = primaryWatchedRepo(),
+  pipeline: Pipeline = 'claude',
 ): Promise<{ url: string; number: number }> {
   const trimmed = description.trim();
   if (!trimmed) {
@@ -326,17 +384,16 @@ export async function createQuickTask(
   });
 
   // Added as a follow-up call rather than in the labels above: GitHub only
-  // fires the `issues: labeled` webhook event that claude.yml listens for
-  // when a label is attached after creation, not for one included in the
-  // create() call itself. Same reasoning as retriggerIssue's remove-then-
-  // readd above. Always the `claude` pipeline, intentionally: quick tasks
-  // are fire-and-forget maintainer asks, and opencode is an experimental
-  // pipeline you opt into per-issue by labeling it yourself (#3023).
+  // fires the `issues: labeled` webhook event each pipeline's workflow
+  // listens for when a label is attached after creation, not for one
+  // included in the create() call itself. Same reasoning as
+  // retriggerIssue's remove-then-readd above. The label IS the pipeline
+  // name (see retriggerIssue's identical `label: string = pipeline` above).
   await octokit.rest.issues.addLabels({
     owner: repo.owner,
     repo: repo.name,
     issue_number: issue.number,
-    labels: ['claude'],
+    labels: [pipeline],
   });
 
   return { url: issue.html_url, number: issue.number };

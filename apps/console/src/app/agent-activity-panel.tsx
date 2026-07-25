@@ -29,7 +29,7 @@ import {
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
-import { getWatchedRepos, repoKey } from '../lib/github-client';
+import { getWatchedRepos, repoDisplayName } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
@@ -169,9 +169,18 @@ export function AgentBadge({ agent }: { agent: SessionAgent }) {
  * existed, matching AgentBadge's "quiet unless it's informative" precedent.
  */
 export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
-  if (getWatchedRepos().length <= 1) {
+  const watchedRepos = getWatchedRepos();
+  if (watchedRepos.length <= 1) {
     return null;
   }
+  // Re-resolve against the current config rather than trusting `repo`'s own
+  // `alias` field: `repo` may be a run/session record that predates the
+  // repo's alias being set (or that was fetched straight from stored
+  // telemetry, never touching getWatchedRepos() at all), so the config is
+  // the only reliably up to date source of truth for display purposes.
+  const configured = watchedRepos.find(
+    (watched) => watched.owner === repo.owner && watched.name === repo.name,
+  );
   return (
     <Badge
       variant="outline"
@@ -180,7 +189,7 @@ export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
       style={{ flexShrink: 0 }}
       data-testid="repo-badge"
     >
-      {repoKey(repo)}
+      {repoDisplayName(configured ?? repo)}
     </Badge>
   );
 }

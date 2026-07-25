@@ -11,6 +11,7 @@ import {
   asNumber,
   asRecord,
   asString,
+  isSafeIdentifier,
 } from './unknown-value';
 
 const ISSUE_AGENT_ENTRYPOINT = 'claude-code-github-action';
@@ -303,7 +304,7 @@ function reduceLines(
     }
 
     const sessionId = asString(raw['sessionId']);
-    if (!sessionId) {
+    if (!sessionId || !isSafeIdentifier(sessionId)) {
       continue;
     }
 

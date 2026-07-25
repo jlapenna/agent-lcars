@@ -39,6 +39,13 @@ concurrency:
 jobs:
   publish:
     name: Build and publish
+    # The push trigger is already branch-scoped to main above; workflow_dispatch
+    # is not (it lets any write-access collaborator pick an arbitrary ref in
+    # the UI/API) and this workflow publishes the exact images the whole
+    # self-hosted fleet, including the one docker-socket-mounted pool, pulls
+    # and trusts on every job. Restrict manual dispatch to main too, so an
+    # unreviewed branch can never reach the registry this way.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["homelab-autoscale-lcars-docker"]') }}
     timeout-minutes: 20
 
