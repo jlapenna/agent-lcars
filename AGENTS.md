@@ -16,3 +16,10 @@ host writer credential belongs in the encrypted homelab secret store. Terraform
 owns secret containers but not secret values.
 
 Before publishing, run the affected Nx test, typecheck, and build targets.
+
+After merging and safely removing the feature worktree, sync the primary
+checkout to the latest remote base with a fast-forward-only pull. First confirm
+that the primary checkout is clean, on the base branch, and not being used by
+another session. If it is unsafe to update, fetch the remote and explicitly
+report that the checkout remains behind and why; never stash, reset, switch
+branches, or force the update.
