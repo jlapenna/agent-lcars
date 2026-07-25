@@ -12,6 +12,7 @@ import {
 import {
   ActionError,
   approveAndMergePr,
+  approveAndRebasePr,
   cancelWorkflowRun as cancelWorkflowRunLib,
   clearHumanNeededLabel,
   closeIssue as closeIssueLib,
@@ -107,6 +108,20 @@ export async function rebasePr(
   await requireAdmin();
   try {
     await updatePrBranch(resolveWatchedRepo(repo), number);
+    revalidatePath('/');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function approveAndRebase(
+  repo: WatchedRepo,
+  number: number,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await approveAndRebasePr(resolveWatchedRepo(repo), number);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {

@@ -22,7 +22,7 @@ import type {
 } from '../lib/action-items';
 import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
 import { repoDisplayName } from '../lib/watched-repo';
-import { mergePr, replyToItem } from './actions';
+import { approveAndRebase, mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { RetriggerButton } from './retrigger-button';
@@ -256,6 +256,42 @@ export function ActionItemCard({
     (item.mergeableState !== undefined &&
       NOT_MERGEABLE_STATES.includes(item.mergeableState));
 
+  const handleRebase = () => {
+    setError(undefined);
+    startTransition(async () => {
+      const result = await approveAndRebase(item.repo, item.number);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      notifications.show({
+        message: `#${item.number} approved, branch updated, auto-merge enabled`,
+        color: 'green',
+      });
+    });
+  };
+
+  const confirmRebase = () =>
+    modals.openConfirmModal({
+      title: `Rebase #${item.number}?`,
+      children: (
+        <Text size="sm">
+          This approves &ldquo;{item.title}&rdquo;, updates its branch from
+          main, and turns on auto-merge so it squash-merges on its own once
+          checks pass.
+        </Text>
+      ),
+      labels: { confirm: 'Approve & Rebase', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: handleRebase,
+    });
+
+  // item.draft is belt-and-suspenders here too, same reasoning as
+  // mergeDisabled - 'behind' itself is exactly what this button is FOR, so
+  // it's deliberately not in the disabled check the way NOT_MERGEABLE_STATES
+  // guards the merge button above.
+  const rebaseDisabled = isPending || item.draft;
+
   return (
     <Card withBorder radius="md" padding="md">
       <Stack gap={6}>
@@ -421,6 +457,16 @@ export function ActionItemCard({
               onClick={confirmMerge}
             >
               Approve &amp; Merge
+            </Button>
+          )}
+          {primaryAction?.kind === 'approve-rebase' && (
+            <Button
+              color="dark"
+              disabled={rebaseDisabled}
+              title={item.draft ? MERGEABLE_WARNINGS.draft : undefined}
+              onClick={confirmRebase}
+            >
+              Approve &amp; Rebase
             </Button>
           )}
           {primaryAction?.kind === 'fix-ci' && (

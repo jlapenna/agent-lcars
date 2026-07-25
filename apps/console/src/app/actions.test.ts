@@ -5,6 +5,7 @@ import { auth } from '../auth';
 import {
   ActionError,
   approveAndMergePr,
+  approveAndRebasePr,
   cancelWorkflowRun,
   clearHumanNeededLabel,
   closeIssue as closeIssueLib,
@@ -15,6 +16,7 @@ import {
   updatePrBranch,
 } from '../lib/backend-actions';
 import {
+  approveAndRebase,
   cancelRun,
   clearHumanNeeded,
   closeIssue,
@@ -50,6 +52,7 @@ vi.mock('../lib/backend-actions', () => {
   return {
     ActionError,
     approveAndMergePr: vi.fn(),
+    approveAndRebasePr: vi.fn(),
     cancelWorkflowRun: vi.fn(),
     clearHumanNeededLabel: vi.fn(),
     closeIssue: vi.fn(),
@@ -101,6 +104,18 @@ describe('agent-lcars Server Actions', () => {
       await expect(mergePr(DEFAULT_REPO, 42)).resolves.toEqual({
         ok: false,
         message: 'Pull Request has merge conflicts',
+      });
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it('approveAndRebase returns { ok: false, message } instead of throwing', async () => {
+      (approveAndRebasePr as Mock).mockRejectedValue(
+        new ActionError('Update is not permitted', 403),
+      );
+
+      await expect(approveAndRebase(DEFAULT_REPO, 42)).resolves.toEqual({
+        ok: false,
+        message: 'Update is not permitted',
       });
       expect(revalidatePath).not.toHaveBeenCalled();
     });
@@ -227,6 +242,15 @@ describe('agent-lcars Server Actions', () => {
 
       await expect(rebasePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
       expect(updatePrBranch).toHaveBeenCalledWith(DEFAULT_REPO, 42);
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
+    it('approveAndRebase returns { ok: true } and revalidates', async () => {
+      (approveAndRebasePr as Mock).mockResolvedValue(undefined);
+
+      await expect(approveAndRebase(DEFAULT_REPO, 42)).resolves.toEqual({
+        ok: true,
+      });
       expect(revalidatePath).toHaveBeenCalledWith('/');
     });
 
@@ -363,6 +387,15 @@ describe('agent-lcars Server Actions', () => {
       expect(updatePrBranch).not.toHaveBeenCalled();
     });
 
+    it('approveAndRebase rejects without calling approveAndRebasePr', async () => {
+      const result = await approveAndRebase(UNWATCHED_REPO, 42);
+      expect(result).toEqual({
+        ok: false,
+        message: 'someone-elses/private-repo is not a watched repo',
+      });
+      expect(approveAndRebasePr).not.toHaveBeenCalled();
+    });
+
     it('replyToItem rejects without calling postComment', async () => {
       const result = await replyToItem(UNWATCHED_REPO, 42, 'hi');
       expect(result.ok).toBe(false);
@@ -414,6 +447,11 @@ describe('agent-lcars Server Actions', () => {
     it('rejects (does not silently return a result)', async () => {
       await expect(mergePr(DEFAULT_REPO, 42)).rejects.toThrow();
       expect(approveAndMergePr).not.toHaveBeenCalled();
+    });
+
+    it('rejects approveAndRebase too (does not silently return a result)', async () => {
+      await expect(approveAndRebase(DEFAULT_REPO, 42)).rejects.toThrow();
+      expect(approveAndRebasePr).not.toHaveBeenCalled();
     });
   });
 });
