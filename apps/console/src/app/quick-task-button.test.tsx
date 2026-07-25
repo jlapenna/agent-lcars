@@ -76,6 +76,7 @@ describe('QuickTaskButton', () => {
         'Fix the flaky test',
         '',
         undefined,
+        'claude',
       ),
     );
     expect(notifications.show).toHaveBeenCalledWith(
@@ -111,6 +112,44 @@ describe('QuickTaskButton', () => {
         'Fix the flaky test',
         'Custom title',
         undefined,
+        'claude',
+      ),
+    );
+  });
+
+  it('defaults the agent picker to claude', async () => {
+    renderButton();
+    await openDialog();
+
+    expect(
+      (screen.getByRole('combobox', { name: 'Agent' }) as HTMLInputElement)
+        .value,
+    ).toBe('claude');
+  });
+
+  it('forwards the selected agent pipeline', async () => {
+    (createQuickTask as Mock).mockResolvedValue({
+      ok: true,
+      url: 'https://github.com/x/y/issues/99',
+      number: 99,
+    });
+    renderButton();
+    await openDialog();
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
+    fireEvent.click(await screen.findByText('opencode'));
+
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Fix the flaky test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+
+    await waitFor(() =>
+      expect(createQuickTask).toHaveBeenCalledWith(
+        'Fix the flaky test',
+        '',
+        undefined,
+        'opencode',
       ),
     );
   });
@@ -156,6 +195,7 @@ describe('QuickTaskButton', () => {
         'Fix the flaky test',
         '',
         repoB,
+        'claude',
       ),
     );
   });

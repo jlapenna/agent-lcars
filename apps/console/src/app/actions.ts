@@ -145,6 +145,7 @@ export async function createQuickTask(
   description: string,
   title?: string,
   repo?: WatchedRepo,
+  pipeline?: Pipeline,
 ): Promise<QuickTaskResult> {
   await requireAdmin();
   try {
@@ -152,6 +153,7 @@ export async function createQuickTask(
       description,
       title,
       repo && resolveWatchedRepo(repo),
+      pipeline,
     );
     revalidatePath('/');
     return { ok: true, url, number };
