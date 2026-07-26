@@ -7,10 +7,16 @@ name: Publish runner-autoscaler images
 # building from source (agent-lcars#52) -- this workflow is the one place
 # that source gets compiled into a real, published artifact.
 #
-# Runs on homelab-autoscale-lcars-docker, NOT the AI-agent-dispatch pool
-# (homelab-autoscale-claude-agent-lcars) -- that pool deliberately has no
-# docker socket (see homelab#135), so this needed its own, trusted,
-# workflow-defined-only pool.
+# Runs on lcars-build-client: a socketless pool that holds no Docker socket
+# and needs no local Docker daemon (agent-lcars#101). Images are built by a
+# dedicated rootless BuildKit service on oldbook, reached over mutually
+# authenticated TLS via Buildx's remote driver, so a compromised job here
+# cannot administer the host it landed on.
+#
+# The client certificate arrives as a read-only bind-mount from the
+# encrypted homelab secret store -- NOT from GitHub Actions secrets. The
+# control plane runs locally, so the whole BuildKit PKI shares one storage
+# and rotation path (homelab's ansible/deploy_buildkit.yml).
 
 on:
   push:
@@ -42,12 +48,22 @@ jobs:
     # The push trigger is already branch-scoped to main above; workflow_dispatch
     # is not (it lets any write-access collaborator pick an arbitrary ref in
     # the UI/API) and this workflow publishes the exact images the whole
-    # self-hosted fleet, including the one docker-socket-mounted pool, pulls
-    # and trusts on every job. Restrict manual dispatch to main too, so an
-    # unreviewed branch can never reach the registry this way.
+    # self-hosted fleet pulls and trusts on every job. Restrict manual
+    # dispatch to main too, so an unreviewed branch can never reach the
+    # registry this way.
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["homelab-autoscale-lcars-docker"]') }}
-    timeout-minutes: 20
+    # Pinned literally, deliberately: this previously read
+    # `fromJSON(vars.CI_RUNS_ON || ...)`, which let a mutable repository
+    # variable redirect the one workflow that publishes fleet-trusted
+    # images to an arbitrary pool -- including a socket-mounted one. That
+    # is inconsistent with the dispatch-ref restriction directly above,
+    # which exists for exactly the same trust reason.
+    runs-on: lcars-build-client
+    # Raised from 20: arm64 is emulated on the builder (no native aarch64
+    # host is available -- see agent-lcars#101), and the first publish runs
+    # against a cold BuildKit cache on a 4-core box. Steady-state runs are
+    # far quicker once the cache is warm.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v7
@@ -72,14 +88,41 @@ jobs:
           ./tools/nx test @agent-lcars/runner-autoscaler
           ./tools/nx typecheck @agent-lcars/runner-autoscaler
 
-      # This pool spans hosts of two architectures (fleet-wide, see
-      # homelab's github-runner-autoscaler/orchestrator.yml) -- without
-      # QEMU + explicit platforms, whichever single host a run happens to
-      # land on is the only architecture the published manifest supports
-      # (members#3411 hit exactly this for the sandbox image).
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      # Fail loudly rather than silently falling back to a local daemon if
+      # this ever lands on a socket-mounted pool by mistake. The absence of
+      # this socket is the entire point of agent-lcars#101.
+      - name: Assert the runner holds no Docker socket
+        run: |
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::/var/run/docker.sock is present; this job must run on a socketless pool"
+            exit 1
+          fi
+          echo "no docker socket present"
 
+      # No docker/setup-qemu-action: nothing is built locally any more.
+      # Emulation for linux/arm64 lives on the builder (qemu-user-static,
+      # installed by homelab's ansible/deploy_buildkit.yml), which is where
+      # the RUN steps actually execute under the remote driver.
+      #
+      # driver-opts take ABSOLUTE FILE PATHS. Do not switch these to the
+      # BUILDER_NODE_<n>_AUTH_TLS_* environment variables shown in Docker's
+      # GitHub Actions docs -- those carry PEM *contents*, which is the
+      # shape that only makes sense when the material comes from GitHub
+      # secrets. Here it is a read-only bind-mount from the local secret
+      # store, so paths are correct and the PEM never transits GitHub.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver: remote
+          endpoint: tcp://oldbook.lan.jlapenna.net:1234
+          driver-opts: |
+            cacert=/secrets/buildkit-ca.pem
+            cert=/secrets/buildkit-client-cert.pem
+            key=/secrets/buildkit-client-key.pem
+
+      # Records which builder and platforms actually served the build --
+      # the first thing worth seeing when a publish misbehaves.
+      - name: Show builder
+        run: docker buildx inspect --bootstrap
 
       # No docker/login-action: docker-registry.lan.jlapenna.net accepts
       # anonymous push from this network position (confirmed in

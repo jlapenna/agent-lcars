@@ -7,3 +7,11 @@
 self-hosted-runner:
   labels:
     - claude-agent-lcars
+    # Socketless BuildKit publish lane (agent-lcars#101), registered in
+    # homelab's github-runner-autoscaler/orchestrator.yml as
+    # homelab-autoscale-lcars-build-client. Needed here because
+    # publish-runner-autoscaler.yml now pins its `runs-on` literally
+    # instead of routing it through `fromJSON(vars.CI_RUNS_ON || ...)`,
+    # which actionlint could not analyse -- so the label is checkable now,
+    # which is the point.
+    - lcars-build-client
