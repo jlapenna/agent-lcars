@@ -130,21 +130,74 @@ registrations:
         mount_docker_socket: false # see the split below before setting true
 ```
 
-### One scale set is rarely enough — split by trust level
+### Building images: use the BuildKit builder, not a Docker socket
+
+**If you only need to build and publish container images, you do not need
+a Docker socket at all** — and you should not ask for one. Point the job at
+the shared rootless BuildKit builder over mutually authenticated TLS
+instead:
+
+```yaml
+      - name: <registration>-autoscale-<name>-build-client
+        labels: [<name>-build-client, <registration>-autoscale-<name>-build-client]
+        runner_image: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24
+        min_runners: 0
+        max_runners: 1
+        mount_docker_socket: false
+        file_mounts:
+          - /etc/buildkit-client/ca.pem:/secrets/buildkit-ca.pem
+          - /etc/buildkit-client/client-cert.pem:/secrets/buildkit-client-cert.pem
+          - /etc/buildkit-client/client-key.pem:/secrets/buildkit-client-key.pem
+```
+
+and in the workflow:
+
+```yaml
+    runs-on: <name>-build-client
+    steps:
+      - uses: docker/setup-buildx-action@<pinned-sha>
+        with:
+          driver: remote
+          endpoint: tcp://oldbook.lan.jlapenna.net:1234
+          driver-opts: |
+            cacert=/secrets/buildkit-ca.pem
+            cert=/secrets/buildkit-client-cert.pem
+            key=/secrets/buildkit-client-key.pem
+```
+
+`driver-opts` take **absolute file paths**. Do not use the
+`BUILDER_NODE_<n>_AUTH_TLS_*` environment variables from Docker's GitHub
+Actions docs — those carry PEM *contents*, the shape that only makes sense
+when the material comes from GitHub secrets. Here it is a local
+bind-mount and the PEM never transits GitHub.
+
+`file_mounts` sources must sit under a `fleet.file_mount_allowlist` prefix,
+are always mounted read-only, and can never be a Docker socket (rejected in
+config validation, so this cannot be used to route around
+`fleet.docker_socket_allowlist`). See jlapenna/homelab's
+`docs/buildkit-builder.md` for the builder runbook, certificate rotation,
+and how to add a new builder host.
+
+### If you still think you need the socket — split by trust level
 
 **Never let arbitrary agent-authored code hold the Docker socket.** A
 scale set that AI-agent-dispatched jobs run on (a `claude`/`opencode`/
-`codex` label pipeline) should have `mount_docker_socket: false`. If the
-same registration also needs trusted, workflow-defined-only CI (build/test
-image publishing, e2e-docker-style jobs) that genuinely needs
-`docker build`/`docker run`, give it a **separate** scale set with
-`mount_docker_socket: true` — never flip the agent-dispatch pool's flag to
-get it. For example: `homelab-autoscale-e2e-docker` (docker-enabled) is
-kept separate from `homelab-autoscale-claude-agent` (agent-dispatch,
-no socket) under one registration; `homelab-autoscale-lcars-docker`
-(docker-enabled) is likewise separate from
-`homelab-autoscale-claude-agent-lcars` (agent-dispatch) under another.
-Mirror that shape rather than reusing one pool for both purposes.
+`codex` label pipeline) must have `mount_docker_socket: false`.
+
+The socket is root-equivalent on the placement host: anything that can call
+it can ask the host daemon to start a privileged container with arbitrary
+host mounts. Reach for it only when a job genuinely needs `docker run` —
+starting containers, e2e-docker-style tests — not merely `docker build`,
+which the builder above covers. When you do need it, give it a **separate**
+scale set with `mount_docker_socket: true`; never flip the agent-dispatch
+pool's flag to get it. `homelab-autoscale-e2e-docker` (docker-enabled) is
+kept separate from `homelab-autoscale-claude-agent` (agent-dispatch, no
+socket) for exactly this reason. Mirror that shape rather than reusing one
+pool for both purposes.
+
+Note that a socket-enabled lane constrains where the BuildKit builder can
+live: it must not run on a host that a socket-enabled scale set can be
+placed on, or a job in that lane could read the builder's TLS key.
 
 If any scale set in the whole file sets `mount_docker_socket: true`,
 **every** host in `fleet.hosts` needs **both** `docker_socket_gid` **and**
@@ -255,15 +308,23 @@ cloning another repo's live branch mid-build for the one sanctioned
 telemetry-watcher stage in `apps/runner-autoscaler/runner-image/Dockerfile`;
 that's not a pattern to repeat for a new image.
 
-Publish it from a **docker-socket-enabled, non-agent-dispatch** scale set
-(§2's split above) — never the AI-agent pool — pushing to
-`docker-registry.lan.jlapenna.net` (anonymous push works from this network
-position — no `docker/login-action` needed). See this repo's own
-`.github/workflows/publish-runner-autoscaler.yml` for a working reference:
-multi-arch build+push (`docker/setup-qemu-action` +
-`docker/setup-buildx-action` + `docker/build-push-action`, since the fleet
-spans both amd64 and arm64 hosts) with a registry-backed layer cache
-(`cache-from`/`cache-to: type=registry`).
+Publish it from a **socketless build-client** scale set (§2 above) — never
+the AI-agent pool, and no longer from a docker-socket-enabled pool either.
+See this repo's own `.github/workflows/publish-runner-autoscaler.yml` for a
+working reference: multi-arch build+push through the remote BuildKit
+builder, with a registry-backed layer cache (`cache-from`/`cache-to:
+type=registry`).
+
+No `docker/setup-qemu-action` is needed — nothing is built on the runner,
+and arm64 emulation lives on the builder, which is where `RUN` steps
+actually execute under the remote driver.
+
+Pushes currently go to `docker-registry.lan.jlapenna.net` anonymously, with
+no `docker/login-action`. Treat that as a known gap rather than a feature:
+the registry accepts anonymous push **and** delete from any LAN position,
+so any runner can overwrite or remove the images the whole fleet executes
+(agent-lcars#112). When that is fixed, publishing jobs will need a
+credential here.
 
 ## Verifying it actually worked
 
