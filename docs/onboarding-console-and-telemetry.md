@@ -168,7 +168,7 @@ set in this repo's `apphosting.yaml`): a JSON array of
 
 ```json
 [
-  { "owner": "supersprinklesracing", "name": "members" },
+  { "owner": "supersprinklesracing", "name": "sprinkles" },
   {
     "owner": "supersprinklesracing",
     "name": "new-repo",

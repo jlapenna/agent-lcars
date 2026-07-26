@@ -36,7 +36,7 @@ describe('closeIssue', () => {
 
     expect(update).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       issue_number: 2709,
       state: 'closed',
     });
@@ -70,7 +70,7 @@ describe('updatePrBranch', () => {
 
     expect(updateBranch).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       pull_number: 2709,
     });
   });
@@ -105,7 +105,7 @@ describe('clearHumanNeededLabel', () => {
 
     expect(removeLabel).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       issue_number: 2709,
       name: 'human-needed',
     });
@@ -257,18 +257,18 @@ describe('approveAndRebasePr', () => {
 
     expect(createReview).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       pull_number: 42,
       event: 'APPROVE',
     });
     expect(updateBranch).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       pull_number: 42,
     });
     expect(get).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       pull_number: 42,
     });
     expect(graphql).toHaveBeenCalledWith(
@@ -301,7 +301,7 @@ describe('cancelWorkflowRun', () => {
 
     expect(cancelWorkflowRun_).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       run_id: 12345,
     });
   });
@@ -336,7 +336,7 @@ describe('dispatchUnstickPrs', () => {
 
     expect(createWorkflowDispatch).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       workflow_id: 'playbook-unstick-prs.yml',
       ref: 'main',
       inputs: { context: 'PR #123 stuck' },
@@ -514,20 +514,20 @@ describe('createQuickTask', () => {
     expect(createLabel).toHaveBeenCalledWith(
       expect.objectContaining({
         owner: 'supersprinklesracing',
-        repo: 'members',
+        repo: 'sprinkles',
         name: 'quick-task',
       }),
     );
     expect(createIssue).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       title: 'Fix the flaky test',
       body: 'Fix the flaky test\nmore context',
       labels: ['quick-task'],
     });
     expect(addLabels).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       issue_number: 99,
       labels: ['claude'],
     });
@@ -555,7 +555,7 @@ describe('createQuickTask', () => {
 
     expect(addLabels).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
-      repo: 'members',
+      repo: 'sprinkles',
       issue_number: 99,
       labels: ['opencode'],
     });
