@@ -1,0 +1,206 @@
+name: Agent PR Auto-Merge
+
+# This is a private repo with a single maintainer, and the "Protect main"
+# ruleset's required_approving_review_count is already 0 - a human-review
+# click before merge is pure friction for agent-authored PRs, not a security
+# boundary. Any PR whose author is one of this repo's known coding-agent bot
+# identities (vars.AGENT_BOT_LOGINS - a JSON array, currently claude[bot]
+# from claude.yml and github-actions[bot] from opencode.yml) gets squash
+# auto-merge enabled the moment it's opened/marked ready, gated only on the
+# ruleset's required "Verify" check. Adding a new agent pipeline later (a
+# future codex.yml, gemini.yml, ...) that follows the existing
+# agent-protocol.md/lcars-protocol.md conventions only needs its bot login
+# appended to that one repo variable - never a change to this workflow.
+#
+# Ported from supersprinklesracing/sprinkles's claude-automerge.yml, trimmed
+# for this repo's shape: one CI workflow (ci.yml, "Verify" + "E2E" jobs, only
+# "Verify" required) instead of two. Runs on the self-hosted lcars-default
+# pool (jlapenna/homelab's github-runner-autoscaler/orchestrator.yml) rather
+# than a GitHub-hosted runner - deliberately NOT the claude-agent-lcars pool
+# claude.yml/opencode.yml use, since that backs long agent sessions this
+# glue job must never queue behind.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  # GITHUB_TOKEN-authored auto-merges do not emit downstream push workflows:
+  # a push to main that results from this job's own GITHUB_TOKEN squash-merge
+  # does not trigger ci.yml's `push: branches: [main]` trigger, so
+  # deploy-console.yml's `workflow_run: [CI]` listener never fires either.
+  # Once CI finishes (naturally, or restored below), verify the required
+  # check and explicitly restore the missing main-branch CI/deploy runs.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: >
+      contains(fromJSON(vars.AGENT_BOT_LOGINS || '[]'), github.event.pull_request.user.login) &&
+      (github.event_name != 'pull_request_review' ||
+       github.event.review.state == 'approved')
+    # Self-hosted, the general-purpose lcars-default pool - NOT
+    # claude-agent-lcars, which backs 90-180 minute agent sessions. Sharing
+    # that pool would queue this job behind an in-flight agent run, the same
+    # antipattern sprinkles' own claude-automerge.yml was moved off of.
+    runs-on: [lcars-default]
+    timeout-minutes: 5
+    steps:
+      # Ownership spine, matching claude.yml/opencode.yml's own "Claim the
+      # issue as jclaw-bot" step: agent-authored PRs carry the fleet's
+      # assignee just like the anchor issues they came from. Additive and
+      # idempotent; non-blocking so a hiccup can't cost the auto-merge arm
+      # below.
+      - name: Claim the PR as jclaw-bot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/issues/$PR/assignees" \
+            -f 'assignees[]=jclaw-bot' --silent \
+            || echo "::warning::Could not assign jclaw-bot to #$PR"
+
+      - name: Mark ready and enable squash auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            gh pr ready "$PR" --repo "$REPO"
+          fi
+          gh pr merge "$PR" --repo "$REPO" --auto --squash
+
+  restore-main-checks:
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request' &&
+       contains(fromJSON(vars.AGENT_BOT_LOGINS || '[]'), github.event.pull_request.user.login))
+    runs-on: [lcars-default]
+    timeout-minutes: 45
+    concurrency:
+      group: agent-postmerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Dispatch missing post-merge CI/deploy runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS || '[]' }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = pull_request ]; then
+            # A GITHUB_TOKEN-created PR can run CI, but that run does not emit
+            # a workflow_run event. Keep this original PR-triggered job alive
+            # so it can observe the check and restore the merge chain.
+            PR="$EVENT_PR"
+            WAIT_FOR_CHECKS=true
+          else
+            PR=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+              --jq 'map(select(.state == "open" or .merged_at != null))[0].number // empty')
+            WAIT_FOR_CHECKS=false
+          fi
+          if [ -z "$PR" ]; then
+            echo "No pull request is associated with $HEAD_SHA; nothing to restore."
+            exit 0
+          fi
+
+          AUTHOR=$(gh pr view "$PR" --repo "$REPO" --json author --jq '.author.login')
+          if ! jq -e --arg a "$AUTHOR" 'index($a) != null' <<<"$AGENT_BOT_LOGINS" >/dev/null; then
+            echo "PR #$PR is not agent-authored ($AUTHOR); nothing to restore."
+            exit 0
+          fi
+
+          # workflow_run invocations exit unless the check is already green.
+          # The pull_request invocation is the primary path for
+          # GITHUB_TOKEN-created agent PRs, whose CI completions cannot emit
+          # workflow_run; it waits up to 20 minutes for the same gate.
+          CHECKS_GREEN=false
+          for _ in $(seq 1 240); do
+            COUNT=$(gh pr view "$PR" --repo "$REPO" --json statusCheckRollup \
+              --jq '[.statusCheckRollup[] | select(.name == "Verify" and .conclusion == "SUCCESS")] | length')
+            if [ "${COUNT:-0}" -gt 0 ]; then
+              CHECKS_GREEN=true
+              break
+            fi
+            [ "$WAIT_FOR_CHECKS" = true ] || break
+            sleep 5
+          done
+          if [ "$CHECKS_GREEN" != true ]; then
+            if [ "$WAIT_FOR_CHECKS" = true ]; then
+              echo "::error::PR #$PR did not produce a green Verify check within 20 minutes."
+              exit 1
+            fi
+            echo "PR #$PR does not have a green Verify check yet."
+            exit 0
+          fi
+
+          # Auto-merge normally fires immediately after the required check.
+          # Give GitHub up to two minutes to publish the merge commit.
+          MERGE_SHA=""
+          for _ in $(seq 1 24); do
+            MERGE_SHA=$(gh pr view "$PR" --repo "$REPO" --json state,mergeCommit \
+              --jq 'if .state == "MERGED" then .mergeCommit.oid // "" else "" end')
+            [ -n "$MERGE_SHA" ] && break
+            sleep 5
+          done
+          if [ -z "$MERGE_SHA" ]; then
+            echo "::warning::PR #$PR is green but did not merge within two minutes; auto-merge remains responsible."
+            exit 0
+          fi
+
+          # Natural human/App merges already emit push runs. GITHUB_TOKEN
+          # merges do not, so dispatch CI only when it's actually missing.
+          sleep 10
+          CI_COUNT=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&per_page=20" \
+            --jq "[.workflow_runs[] | select(.head_sha == \"$MERGE_SHA\")] | length")
+          if [ "$CI_COUNT" -gt 0 ]; then
+            echo "CI already has a main run for $MERGE_SHA; nothing else to restore."
+            exit 0
+          fi
+
+          echo "Dispatching missing CI run for merged PR #$PR ($MERGE_SHA)."
+          gh workflow run ci.yml --repo "$REPO" --ref main
+
+          CI_RUN=""
+          for _ in $(seq 1 24); do
+            CI_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=workflow_dispatch&per_page=20" \
+              --jq "[.workflow_runs[] | select(.head_sha == \"$MERGE_SHA\")][0].id // empty")
+            [ -n "$CI_RUN" ] && break
+            sleep 5
+          done
+          if [ -z "$CI_RUN" ]; then
+            echo "::error::The restored main CI run for $MERGE_SHA did not appear."
+            exit 1
+          fi
+
+          for _ in $(seq 1 180); do
+            read -r CI_STATUS CI_CONCLUSION < <(gh run view "$CI_RUN" --repo "$REPO" \
+              --json status,conclusion --jq '[.status, (.conclusion // "")] | @tsv')
+            [ "$CI_STATUS" = completed ] && break
+            sleep 5
+          done
+          if [ "$CI_STATUS" != completed ] || [ "$CI_CONCLUSION" != success ]; then
+            echo "::error::Restored main CI run $CI_RUN ended status=$CI_STATUS conclusion=$CI_CONCLUSION; deploy remains gated."
+            exit 1
+          fi
+
+          # A workflow dispatched with GITHUB_TOKEN may run other workflows,
+          # but its completion does not emit another workflow_run event, and
+          # its own event type (workflow_dispatch, not push) would fail
+          # deploy-console.yml's `workflow_run.event == 'push'` gate anyway -
+          # dispatch it explicitly instead of relying on the chain.
+          gh workflow run deploy-console.yml --repo "$REPO" --ref main
