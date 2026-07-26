@@ -40,19 +40,24 @@ export default defineConfig({
       executablePath,
     },
   },
-  // No @visual specs in this suite yet, but keep the same knobs as the other
-  // three apps' configs so tools/e2e-docker.sh's SKIP_VISUAL/E2E_GREP/
-  // VISUAL_ONLY forwarding behaves identically here.
+  // No @visual specs in this suite yet, but keep these knobs wired up so
+  // tools/e2e-docker.sh's SKIP_VISUAL/E2E_GREP/VISUAL_ONLY forwarding works
+  // the moment one is added.
   ...(process.env.SKIP_VISUAL === '1'
     ? { grepInvert: /@visual/, ignoreSnapshots: true }
     : {}),
   ...(process.env.VISUAL_ONLY === '1' ? { grep: /@visual/ } : {}),
   ...(process.env.E2E_GREP ? { grep: new RegExp(process.env.E2E_GREP) } : {}),
+  // tools/e2e-docker.sh's `--update` mode: re-renders inside the pinned
+  // Docker environment (see that script) and writes the new baselines back
+  // to the host checkout via its bind mount.
+  ...(process.env.UPDATE_SNAPSHOTS === '1'
+    ? { updateSnapshots: 'all' as const }
+    : {}),
   // Serve the prebuilt standalone bundle directly rather than via `nx run
   // serve-e2e` — invoking nx here re-enters the running task graph
-  // ("Recursive task invocation detected"), same gotcha documented in the
-  // other three apps' configs. The `e2e` target's `dependsOn` builds and
-  // bundles the standalone server up-front.
+  // ("Recursive task invocation detected"). The `e2e` target's `dependsOn`
+  // builds and bundles the standalone server up-front.
   webServer: {
     command:
       'pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional -- node dist/apps/console/.next/standalone/apps/console/server.js',

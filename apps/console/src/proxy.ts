@@ -18,7 +18,6 @@ export default createAuthProxy({
   // Both routes are guarded by isE2eTesting() themselves (403 outside e2e);
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page
-  // that carries the X-e2e-auth-user header (mirrors members' `/api/e2e/seed`
-  // publicRoutes entry).
+  // that carries the X-e2e-auth-user header.
   publicPrefixes: ['/api/e2e/'],
 });

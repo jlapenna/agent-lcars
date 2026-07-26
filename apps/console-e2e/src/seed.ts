@@ -1,16 +1,17 @@
+import { test } from '@playwright/test';
+
 /**
  * Seeds/clears fixture CLI session docs via the app's own `/api/e2e/seed`
- * route (`apps/console/src/app/api/e2e/seed/route.ts`) rather
- * than writing to Firestore directly from the test process — direct writes
- * from here don't reach the store the running app server reads (see
- * `apps/members/e2e/frontend/src/seed.ts`'s note on the same gotcha).
+ * route (`apps/console/src/app/api/e2e/seed/route.ts`) rather than writing
+ * to Firestore directly from the test process — direct writes from here
+ * don't reach the store the running app server reads.
  *
  * The identifiers below mirror the frontend app's fixture data exactly
  * (`apps/console/src/app/api/e2e/seed/route.ts` and
- * `apps/console/src/lib/e2e-fixtures.ts`). They're duplicated
- * rather than imported: this e2e project (`platform:web`) cannot import
- * directly from the `platform:nextjs` frontend app (same module-boundary
- * constraint documented on `apps/primes/frontend/src/app/api/e2e/seed-comments/route.ts`).
+ * `apps/console/src/lib/e2e-fixtures.ts`). They're duplicated rather than
+ * imported: this e2e project (`platform:web`) cannot import directly from
+ * the `platform:nextjs` frontend app (a module-boundary constraint, not
+ * merely a convenience choice).
  */
 export const E2E_CLI_SESSION_IDS = {
   live: 'e2e-cli-session-live',
@@ -41,4 +42,17 @@ export async function seedCliSessions() {
 
 export async function resetCliSessions() {
   await callSeedApi('reset');
+}
+
+/** Seeds the fixture CLI sessions above before every test in the spec and
+ * clears them once after the whole suite finishes. */
+export function useCliSessionFixtures() {
+  test.beforeEach(async () => {
+    await resetCliSessions();
+    await seedCliSessions();
+  });
+
+  test.afterAll(async () => {
+    await resetCliSessions();
+  });
 }

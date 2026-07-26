@@ -3,21 +3,12 @@ import { expect, test } from '@playwright/test';
 import {
   E2E_CLI_SESSION_IDS,
   E2E_FIXTURE_PR_NUMBER,
-  resetCliSessions,
-  seedCliSessions,
+  useCliSessionFixtures,
 } from './seed';
-import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import { cliSessionRow, useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
-
-test.beforeEach(async () => {
-  await resetCliSessions();
-  await seedCliSessions();
-});
-
-test.afterAll(async () => {
-  await resetCliSessions();
-});
+useCliSessionFixtures();
 
 // @smoke: this is the only spec in the suite so far — it must run in the
 // default per-PR smoke lane (E2E_GREP is @smoke|@visual, #2599/#2860), not
@@ -30,7 +21,7 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
 
     await expect(page.getByText('CLI sessions', { exact: true })).toBeVisible();
 
-    const liveRow = page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.live}`);
+    const liveRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.live);
     await expect(liveRow.getByTestId('cli-session-liveness')).toHaveText(
       'live',
     );
@@ -47,7 +38,7 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
       liveRow.getByRole('link', { name: `PR #${E2E_FIXTURE_PR_NUMBER} ↗` }),
     ).toBeVisible();
 
-    const idleRow = page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.idle}`);
+    const idleRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.idle);
     await expect(idleRow.getByTestId('cli-session-liveness')).toHaveText(
       'idle',
     );
@@ -61,12 +52,8 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
 
     // Finished sessions are history, not activity: they render inside the
     // "Recent CLI sessions" disclosure, collapsed by default...
-    const endedRow = page.getByTestId(
-      `cli-session-${E2E_CLI_SESSION_IDS.ended}`,
-    );
-    const staleRow = page.getByTestId(
-      `cli-session-${E2E_CLI_SESSION_IDS.stale}`,
-    );
+    const endedRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.ended);
+    const staleRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.stale);
     await expect(endedRow).toBeHidden();
     await expect(staleRow).toBeHidden();
 
