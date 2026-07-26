@@ -124,29 +124,24 @@ jobs:
       - name: Show builder
         run: docker buildx inspect --bootstrap
 
-      # The registry now requires credentials for WRITE methods (#112);
-      # reads stay anonymous so every fleet host can still pull. Without
-      # this, any LAN-positioned process -- including every ephemeral
-      # runner -- could overwrite or DELETE homelab-runner:jit-node24, the
-      # image every runner in the fleet then executes.
+      # No registry login: writes are currently UNAUTHENTICATED (#112).
       #
-      # The password is a read-only bind-mount from the encrypted homelab
-      # vault, delivered by the autoscaler to this lane only. It is never a
-      # GitHub Actions secret, matching how the BuildKit client
-      # certificate is handled.
+      # Basic auth was deployed and reverted. Observed with the remote
+      # driver: `docker login` succeeded, the credential was present in
+      # ~/.docker/config.json, and the push still returned 401 -- both in CI
+      # and reproduced by hand from a placement host.
       #
-      # Under the remote driver BuildKit performs the push, but registry
-      # auth is forwarded from the CLIENT's docker config through the build
-      # session -- so logging in here is what authorizes the builder's push.
-      - name: Log in to the registry
-        run: |
-          test -r /secrets/registry-password || {
-            echo "::error::registry credential not mounted; check the lane's file_mounts"
-            exit 1
-          }
-          docker login docker-registry.lan.jlapenna.net \
-            --username publisher --password-stdin < /secrets/registry-password
-
+      # NOT established that the remote driver cannot do Basic at all.
+      # Buildx does attach the client's auth provider to the build session
+      # and containerd's authorizer does handle Basic challenges. The
+      # untested hypothesis is that this registry's MIXED configuration is
+      # the problem: `GET /v2/` answered 200 anonymously while only writes
+      # challenged, so the resolver may conclude no auth is needed from the
+      # successful ping and never register a Basic handler for the host.
+      #
+      # If so, uniform auth (challenging reads too) might work -- at the
+      # cost of anonymous pull, which the whole fleet depends on. See
+      # jlapenna/homelab docs/registry.md before retrying.
       - name: Build and push control-plane image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -182,11 +177,3 @@ jobs:
             AGENT_LCARS_REF=${{ github.sha }}
           cache-from: type=registry,ref=docker-registry.lan.jlapenna.net/homelab-runner:buildcache
           cache-to: type=registry,ref=docker-registry.lan.jlapenna.net/homelab-runner:buildcache,mode=max
-
-      # Runners are ephemeral, so this is belt-and-braces -- but the
-      # credential is written to the runner's docker config by the login
-      # above, and a job that fails mid-build should not leave it sitting
-      # in a workspace that outlives the step.
-      - name: Log out of the registry
-        if: always()
-        run: docker logout docker-registry.lan.jlapenna.net || true
