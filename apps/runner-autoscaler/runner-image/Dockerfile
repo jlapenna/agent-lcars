@@ -10,7 +10,29 @@
 # below (a build ARG used in a FROM line must be declared "globally", i.e.
 # ahead of the first FROM in the whole file - a stage-scoped declaration
 # only reaches instructions inside that same stage).
-ARG RUNNER_BASE=ghcr.io/actions/actions-runner:latest
+# Mirrored into our own registry and pinned by DIGEST, not a floating tag.
+#
+# This is the base of the image every runner in the fleet executes, so an
+# unpinned `:latest` meant its contents could change with no source change
+# and no review -- and it made every build depend on ghcr.io being up and
+# not rate-limiting us (anonymous ghcr pulls were already failing locally
+# during this work).
+#
+# The digest is the multi-arch INDEX digest, so both linux/amd64 and
+# linux/arm64 resolve from it. Mirror is a manifest copy, so these are the
+# same bytes upstream published:
+#
+#   docker buildx imagetools create \
+#     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:vX.Y.Z \
+#     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:latest \
+#     ghcr.io/actions/actions-runner@sha256:<upstream-index-digest>
+#
+# To update: re-run that against the new upstream digest, then bump the
+# digest below. Deliberately two steps -- mirroring does not silently
+# change what gets built.
+#
+# Currently: upstream v2.336.0, mirrored 2026-07-26.
+ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
 
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool
 # (apps/telemetry-watcher's `bundle` target) from source, baked into the
