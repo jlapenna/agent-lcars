@@ -63,3 +63,69 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
           NX_MAX_PARALLEL: 2
         run: pnpm exec nx run-many -t test typecheck build --all --parallel=2
+
+  e2e:
+    name: E2E
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      # No @visual specs exist yet, so this runs directly on the runner
+      # rather than through tools/e2e-docker.sh's pinned rendering
+      # environment -- revisit (run via that Dockerfile instead, matching
+      # local dev) once one is added and screenshot-rendering consistency
+      # actually matters.
+      - name: Prepare E2E environment
+        run: |
+          cp tools/e2e/ci.env .env.e2e
+
+          # NEXT_PUBLIC_FIREBASE_*/AUTH_SECRET must also land as real
+          # process env here, not just in .env.e2e: Next.js inlines
+          # NEXT_PUBLIC_* at `next build` time (part of the `e2e` target's
+          # own dependsOn chain), and Auth.js reads AUTH_SECRET just as
+          # early during the production server's init -- both run before
+          # the dotenv-wrapped `firebase emulators:exec "..."` command that
+          # actually loads .env.e2e ever starts. Same values as ci.env
+          # (non-secret, emulator-only placeholders), just made available
+          # sooner. See tools/e2e-docker.sh's matching comment/ci_env_value.
+          {
+            echo "AUTH_SECRET=dummy-secret"
+            echo "NEXT_PUBLIC_FIREBASE_API_KEY=demo-api-key"
+            echo "NEXT_PUBLIC_FIREBASE_APP_ID=demo-app-id"
+            echo "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-no-project.firebaseapp.com"
+            echo "NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://127.0.0.1:4003"
+            echo "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=000000000000"
+            echo "NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-no-project"
+            echo "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-no-project.appspot.com"
+          } >> "$GITHUB_ENV"
+
+      - name: Run console e2e suite
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: pnpm exec nx run @agent-lcars/console-e2e:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/console-e2e/test-output/playwright-report
+          retention-days: 7
