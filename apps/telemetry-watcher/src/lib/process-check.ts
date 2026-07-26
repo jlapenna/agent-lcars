@@ -12,23 +12,52 @@ import * as path from 'path';
 const PROCESS_START_TOLERANCE_MS = 2 * 60 * 1000;
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 
+export interface ProcCwdEntry {
+  pid: string;
+  cwd: string;
+}
+
+/**
+ * Scans `/proc` exactly once, returning every process's `{pid, cwd}`. A
+ * daemon tick tracks many sessions at once, and each one used to trigger its
+ * own full `readdirSync('/proc')` + per-pid `readlinkSync` — O(sessions ×
+ * host processes) system calls every heartbeat. Callers checking liveness
+ * for a whole batch of sessions should scan once via this function and pass
+ * the result to every `isProcessAliveForCwd` call instead.
+ */
+export function scanProcCwds(procRoot = '/proc'): ProcCwdEntry[] {
+  let pids: string[];
+  try {
+    pids = fs.readdirSync(procRoot).filter((entry) => /^\d+$/.test(entry));
+  } catch {
+    return [];
+  }
+
+  const entries: ProcCwdEntry[] = [];
+  for (const pid of pids) {
+    try {
+      entries.push({
+        pid,
+        cwd: fs.readlinkSync(path.join(procRoot, pid, 'cwd')),
+      });
+    } catch {
+      // Process exited mid-scan, or we lack permission to read it — skip.
+      continue;
+    }
+  }
+  return entries;
+}
+
 export function isProcessAliveForCwd(
   cwd: string,
   procRoot = '/proc',
   sessionId?: string,
   sessionStartedAt?: string,
   agent?: string,
+  processes: ProcCwdEntry[] = scanProcCwds(procRoot),
 ): boolean {
-  let pids: string[];
-  try {
-    pids = fs.readdirSync(procRoot).filter((entry) => /^\d+$/.test(entry));
-  } catch {
-    return false;
-  }
-
-  for (const pid of pids) {
+  for (const { pid, cwd: procCwd } of processes) {
     try {
-      const procCwd = fs.readlinkSync(path.join(procRoot, pid, 'cwd'));
       // Claude can record a nested tool cwd while its long-lived parent CLI
       // process remains at the repository root. Treat that ancestor process
       // as owning the session too, but never let filesystem root match every

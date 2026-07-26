@@ -33,11 +33,11 @@ function getOrCreateApp(): App {
  * by `upsertSession` (the CLI `agent-telemetry upsert` command / host
  * watchers). Relies on ambient Application Default Credentials — a
  * WIF-impersonated token for runner sessions, or the
- * `agent-telemetry-writer` key file for host watchers (see
- * infra-inventory/agent-telemetry.yaml) — never a credential
- * hardcoded in this module. Distinct from `getAgentTelemetryReaderFirestore`
- * in firestore-client.ts, which the console impersonates read-only and
- * cannot use to write.
+ * `AGENT_TELEMETRY_WRITER_KEY_JSON` key file for host watchers (see
+ * infra/terraform/main.tf's `telemetry_writer` resources) — never a
+ * credential hardcoded in this module. Distinct from
+ * `getAgentTelemetryReaderFirestore` in firestore-client.ts, which runs as
+ * the console's own runtime identity read-only and cannot use to write.
  */
 export function getAgentTelemetryWriterFirestore(): AdminFirestore {
   if (cachedWriterFirestore) {
@@ -59,8 +59,8 @@ export function getAgentTelemetryWriterFirestore(): AdminFirestore {
  * Upserts a session doc at `sessions/{sessionId}` in the telemetry database.
  * `expireAt` is written as a Firestore `Timestamp` (not the ISO string
  * `SessionDoc` carries it as) because the collection's TTL policy — see
- * `tools/provision-agent-telemetry-gcp.sh` and issue #2708 — only recognizes
- * a native Timestamp field. Built via `AdminTimestamp` (the `firebase-admin`
+ * issue #2708 — only recognizes a native Timestamp field. Built via
+ * `AdminTimestamp` (the `firebase-admin`
  * re-export), not the plain `@google-cloud/firestore` `Timestamp` used
  * below for `listSessionDocs`: `getAgentTelemetryWriterFirestore` is a
  * `firebase-admin` client, and Next's bundler otherwise emits the two
@@ -101,9 +101,8 @@ export interface ListSessionDocsOptions {
    * rollout) - so every recurring reader should pass a cutoff. */
   activeSince?: string;
   /** Narrows to one source. Combined with `activeSince` this is a
-   * range+equality compound query - see the composite indexes provisioned
-   * for `sessions` in infra-inventory/agent-telemetry.yaml's
-   * firestore.indexes section (source+lastActivityAt). */
+   * range+equality compound query, requiring a source+lastActivityAt
+   * composite index on `sessions`. */
   source?: SessionSource;
   /** Narrows to one issue-agent session's issue. Combined with
    * `activeSince` this is also a compound query - see the

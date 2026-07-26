@@ -6,9 +6,8 @@ import {
   asRecord,
   asString,
   isSafeIdentifier,
+  truncateTitle,
 } from './unknown-value';
-
-const TITLE_MAX_LENGTH = 80;
 
 function emptyTokens(): TokenUsage {
   return {
@@ -17,13 +16,6 @@ function emptyTokens(): TokenUsage {
     cacheCreationTokens: 0,
     cacheReadTokens: 0,
   };
-}
-
-function truncateTitle(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length > TITLE_MAX_LENGTH
-    ? `${collapsed.slice(0, TITLE_MAX_LENGTH - 1)}…`
-    : collapsed;
 }
 
 function looksLikeCodexLine(line: string): boolean {

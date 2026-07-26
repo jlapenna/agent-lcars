@@ -38,9 +38,7 @@ import { formatCost, formatDuration, formatRelativeTime } from '../format';
  * horizontal swiping, so it's replaced entirely by one card per session
  * (`SessionCard` below) - same underlying rows, just re-laid-out for a
  * phone rather than truncated. Both branches render unconditionally (CSS
- * media queries via Mantine's visibleFrom/hiddenFrom, not JS), matching the
- * table/card-list split already used elsewhere in this repo (see e.g.
- * apps/primes/frontend's InvitesTable.tsx).
+ * media queries via Mantine's visibleFrom/hiddenFrom, not JS).
  */
 
 /** Secondary fields that matter less than identity/status/links on a phone

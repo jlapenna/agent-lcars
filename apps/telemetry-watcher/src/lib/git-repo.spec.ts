@@ -1,12 +1,35 @@
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveGitRepo } from './git-repo';
 
-vi.mock('child_process', () => ({ execFileSync: vi.fn() }));
+vi.mock('child_process', () => ({ execFile: vi.fn() }));
 
-const mockedExecFileSync = vi.mocked(execFileSync);
+const mockedExecFile = vi.mocked(execFile);
 const cwd = '/workspace/project';
+
+/** Drives `util.promisify(execFile)`'s error-first callback contract. */
+function mockExecFileResult(stdout: string) {
+  mockedExecFile.mockImplementation(((...args: unknown[]) => {
+    const callback = args[args.length - 1] as (
+      error: Error | null,
+      stdout: string,
+      stderr: string,
+    ) => void;
+    callback(null, stdout, '');
+  }) as unknown as typeof execFile);
+}
+
+function mockExecFileError(error: Error) {
+  mockedExecFile.mockImplementation(((...args: unknown[]) => {
+    const callback = args[args.length - 1] as (
+      error: Error | null,
+      stdout: string,
+      stderr: string,
+    ) => void;
+    callback(error, '', '');
+  }) as unknown as typeof execFile);
+}
 
 describe('resolveGitRepo', () => {
   beforeEach(() => {
@@ -21,33 +44,30 @@ describe('resolveGitRepo', () => {
     'https://github.com/supersprinklesracing/members.git',
     'https://github.com/supersprinklesracing/members',
     'https://x-access-token@github.com/supersprinklesracing/members.git',
-  ])('parses the GitHub origin URL %s', (remoteUrl) => {
-    mockedExecFileSync.mockReturnValue(`${remoteUrl}\n` as never);
+  ])('parses the GitHub origin URL %s', async (remoteUrl) => {
+    mockExecFileResult(`${remoteUrl}\n`);
 
-    expect(resolveGitRepo(cwd)).toEqual({
+    await expect(resolveGitRepo(cwd)).resolves.toEqual({
       owner: 'supersprinklesracing',
       name: 'members',
     });
-    expect(mockedExecFileSync).toHaveBeenCalledWith(
+    expect(mockedExecFile).toHaveBeenCalledWith(
       'git',
       ['-C', cwd, 'remote', 'get-url', 'origin'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      { encoding: 'utf8' },
+      expect.any(Function),
     );
   });
 
-  it('returns undefined for a non-GitHub remote', () => {
-    mockedExecFileSync.mockReturnValue(
-      'git@gitlab.com:supersprinklesracing/members.git\n' as never,
-    );
+  it('returns undefined for a non-GitHub remote', async () => {
+    mockExecFileResult('git@gitlab.com:supersprinklesracing/members.git\n');
 
-    expect(resolveGitRepo(cwd)).toBeUndefined();
+    await expect(resolveGitRepo(cwd)).resolves.toBeUndefined();
   });
 
-  it('fails soft when git cannot read origin', () => {
-    mockedExecFileSync.mockImplementation(() => {
-      throw new Error('No such remote');
-    });
+  it('fails soft when git cannot read origin', async () => {
+    mockExecFileError(new Error('No such remote'));
 
-    expect(resolveGitRepo(cwd)).toBeUndefined();
+    await expect(resolveGitRepo(cwd)).resolves.toBeUndefined();
   });
 });

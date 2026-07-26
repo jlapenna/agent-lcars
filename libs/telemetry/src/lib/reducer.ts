@@ -12,10 +12,10 @@ import {
   asRecord,
   asString,
   isSafeIdentifier,
+  truncateTitle,
 } from './unknown-value';
 
 const ISSUE_AGENT_ENTRYPOINT = 'claude-code-github-action';
-const TITLE_MAX_LENGTH = 80;
 
 interface SessionState {
   sessionId: string;
@@ -70,13 +70,6 @@ function applyTimestamp(state: SessionState, timestamp: string | undefined) {
   if (!state.lastActivityAt || timestamp > state.lastActivityAt) {
     state.lastActivityAt = timestamp;
   }
-}
-
-function truncateTitle(text: string, maxLength = TITLE_MAX_LENGTH): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length > maxLength
-    ? `${collapsed.slice(0, maxLength - 1)}…`
-    : collapsed;
 }
 
 function applyMessage(

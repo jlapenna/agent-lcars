@@ -1,5 +1,0 @@
-apps:
-  agent-console-frontend:
-    project: 'supersprinklesracing'
-    region: 'us-central1'
-    domain: 'agent-console.supersprinkles.racing'

@@ -39,9 +39,9 @@ export default async function RootLayout({
     .replace(/[^a-f0-9]/gi, '')
     .substring(0, 32);
 
-  // Mirrors apps/members/frontend/src/app/layout.tsx: read the toggle's
-  // cookie so the SSR-rendered page and ColorSchemeScript already agree with
-  // the user's last choice instead of flashing the default on every reload.
+  // Read the toggle's cookie so the SSR-rendered page and ColorSchemeScript
+  // already agree with the user's last choice instead of flashing the
+  // default on every reload.
   const cookieValue = (await cookies()).get('mantine-color-scheme')?.value;
   const colorScheme: MantineColorScheme =
     cookieValue === 'light' || cookieValue === 'dark' || cookieValue === 'auto'

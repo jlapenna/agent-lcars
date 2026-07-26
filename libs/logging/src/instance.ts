@@ -1,7 +1,6 @@
 import { forceStructuredLogging, isOnGoogleCloud } from '@repo/env';
 
 import { Logger } from './console-logger';
-import { SlackLogger } from './slack-logger';
 
 // Use the static resolver, which falls back to DEBUG when LOG_LEVEL is unset.
 // Reading the raw env directly yields `undefined`, and shouldLog(undefined, …)
@@ -11,16 +10,3 @@ export const logger = new Logger(Logger.getLogLevel(), {
   isOnGoogleCloud,
   forceStructuredLogging,
 });
-export const slackLogger = new SlackLogger(
-  'slack:bolt',
-  SlackLogger.getSlackLogLevel(),
-);
-export const slackClientLogger = new SlackLogger(
-  'slack:client',
-  SlackLogger.getSlackLogLevel(),
-);
-
-export const slackBotClientLogger = new SlackLogger(
-  'slack:bot-client',
-  SlackLogger.getSlackLogLevel(),
-);

@@ -8,6 +8,7 @@ import {
   AntigravitySummaryDbConfig,
   DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
 } from './antigravity-summary-source';
+import { DEFAULT_CHECKOUT_ROOT } from './default-checkout';
 import { WatchRootConfig } from './watch-roots';
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -110,7 +111,7 @@ function defaultCodexWatchRoot(): WatchRootConfig {
     recursive: true,
     cwdAllowlist: cwdAllowlistRaw
       ? parseAllowlistCsv(cwdAllowlistRaw)
-      : ['/home/jlapenna/p/members*'],
+      : [`${DEFAULT_CHECKOUT_ROOT}*`],
   };
 }
 

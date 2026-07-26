@@ -244,25 +244,6 @@ func TestPickHostSparkLoadPenalty(t *testing.T) {
 	}
 }
 
-func TestLoadPenalty(t *testing.T) {
-	cases := []struct {
-		normalized float64
-		penalty    int
-		overloaded bool
-	}{
-		{0.50, 0, false},
-		{0.75, 2, false},
-		{1.00, 10, false},
-		{1.50, 100, true},
-	}
-	for _, tc := range cases {
-		gotPenalty, gotOverloaded := loadPenalty(tc.normalized)
-		if gotPenalty != tc.penalty || gotOverloaded != tc.overloaded {
-			t.Errorf("loadPenalty(%v) = (%d, %v), want (%d, %v)", tc.normalized, gotPenalty, gotOverloaded, tc.penalty, tc.overloaded)
-		}
-	}
-}
-
 func TestScoreHostLoadPressureSignals(t *testing.T) {
 	scaler := &Scaler{hostMemoryExempt: map[string]bool{"spark": true}}
 	cases := []struct {

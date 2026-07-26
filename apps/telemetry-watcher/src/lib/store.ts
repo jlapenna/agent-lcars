@@ -20,8 +20,8 @@ export interface FirestoreStoreOptions {
 
 /**
  * Writer-scoped Firestore client for the dedicated `agent-telemetry`
- * database (see infra-inventory/agent-telemetry.yaml) — never the
- * app's default database.
+ * database (see infra/terraform/main.tf) — never the app's default
+ * database.
  */
 export function createFirestoreStore(
   options: FirestoreStoreOptions,

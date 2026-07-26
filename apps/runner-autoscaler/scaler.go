@@ -50,8 +50,10 @@ type Scaler struct {
 	// source path is resolved by THAT daemon, so this is correct for every
 	// host in the pool, not just "local".
 	mountDockerSocket bool
-	dockerSocketGIDs  []string
-	// workDirSizeCapBytes: see Config.WorkDirSizeCap. Only enforced by
+	// workDirSizeCapBytes: size ceiling for the shared /home/runner/_work
+	// directory bind-mounted into every runner when MountDockerSocket is
+	// set -- that shared dir has no per-container lifecycle to clean it up,
+	// unlike a normal container's writable layer. Only enforced by
 	// RunWorkDirSweeper, which is only started when mountDockerSocket is true.
 	workDirSizeCapBytes int64
 	workDirSizeCaps     map[string]int64
@@ -79,6 +81,16 @@ type Scaler struct {
 	localFleet     *FleetCoordinator
 }
 
+// scaleSetLabel returns the Prometheus label value identifying this scaler:
+// scaleSetName, or "default" for the zero-value Scaler private tests build
+// without one.
+func (a *Scaler) scaleSetLabel() string {
+	if a.scaleSetName == "" {
+		return "default"
+	}
+	return a.scaleSetName
+}
+
 func (a *Scaler) coordinator() *FleetCoordinator {
 	if a.fleet != nil {
 		return a.fleet
@@ -92,6 +104,10 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 const (
 	hostMetricsTimeout = time.Second
 	hostSampleInterval = 15 * time.Second
+	// defaultWorkDirSizeCapBytes is the shared /home/runner/_work size
+	// ceiling when a fleet host has no per-host override (see
+	// resolvedOrchestratorConfig.WorkDirSizeCaps / FleetCoordinator.workDirSizeCaps).
+	defaultWorkDirSizeCapBytes = 50 * 1024 * 1024 * 1024
 )
 
 type hostLoad struct {
@@ -140,24 +156,6 @@ func (a *Scaler) policy() hostLoadPolicy {
 		return defaultHostLoadPolicy()
 	}
 	return a.hostLoadPolicy
-}
-
-// loadPenalty converts normalized one-minute load (runnable/uninterruptible
-// tasks per logical CPU) into the same integer domain as runner counts. The
-// high band deliberately dominates the fleet max of eight runners so a
-// saturated host is only used when every candidate is saturated.
-func loadPenalty(normalized float64) (int, bool) {
-	p := defaultHostLoadPolicy()
-	switch {
-	case normalized >= p.loadHard:
-		return 100, true
-	case normalized >= p.loadBusy:
-		return 10, false
-	case normalized >= p.loadSoft:
-		return 2, false
-	default:
-		return 0, false
-	}
 }
 
 func maxPenalty(current, next int) int {
@@ -382,10 +380,7 @@ func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time
 }
 
 func (a *Scaler) updateRunnerMetrics() {
-	scaleSet := a.scaleSetName
-	if scaleSet == "" {
-		scaleSet = "default"
-	}
+	scaleSet := a.scaleSetLabel()
 
 	a.runners.mu.Lock()
 	idleCount := len(a.runners.idle)
@@ -421,10 +416,7 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	}
 	targetRunnerCount := min(a.maxRunners, a.minRunners+count)
 
-	scaleSet := a.scaleSetName
-	if scaleSet == "" {
-		scaleSet = "default"
-	}
+	scaleSet := a.scaleSetLabel()
 	desiredRunnersGauge.WithLabelValues(scaleSet).Set(float64(targetRunnerCount))
 	minRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.minRunners))
 	maxRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.maxRunners))
@@ -463,6 +455,14 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 				// level-triggered, so a shortfall here is picked up again
 				// on the next HandleDesiredRunnerCount call regardless.
 				a.logger.Error("Failed to start runner during scale-up; continuing with remaining slots", slog.String("error", err.Error()))
+				if errors.Is(err, errFleetAtCapacity) {
+					// Unlike a transient single-host failure, this means no
+					// host in the fleet had room for the LAST attempt either
+					// -- every remaining slot this loop would try is racing
+					// against the same wall and would just repeat the same
+					// concurrent host-probe round trip for nothing.
+					break
+				}
 				continue
 			}
 		}
@@ -550,10 +550,7 @@ func (a *Scaler) pruneDeadIdleRunners(ctx context.Context) {
 }
 
 func (a *Scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStarted) error {
-	scaleSet := a.scaleSetName
-	if scaleSet == "" {
-		scaleSet = "default"
-	}
+	scaleSet := a.scaleSetLabel()
 	jobsStartedCounter.WithLabelValues(scaleSet).Inc()
 	a.logger.Info(
 		"Job started",
@@ -575,10 +572,7 @@ func (a *Scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStar
 }
 
 func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCompleted) error {
-	scaleSet := a.scaleSetName
-	if scaleSet == "" {
-		scaleSet = "default"
-	}
+	scaleSet := a.scaleSetLabel()
 	jobsCompletedCounter.WithLabelValues(scaleSet).Inc()
 	a.logger.Info("Job completed", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
 
@@ -632,7 +626,7 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 // ghost forever. Confirmed live 2026-07-18: a host-specific permission bug
 // crash-looped every e2e-docker runner placed on one fleet host, and
 // pruneDeadIdleRunners' local-only cleanup left 32 such ghosts behind in a
-// few hours (docs/incidents.md).
+// few hours (see jlapenna/homelab's docs/incidents.md for the postmortem).
 func (a *Scaler) deregisterRunner(ctx context.Context, name string) {
 	runner, err := a.scalesetClient.GetRunnerByName(ctx, name)
 	if err != nil {
@@ -747,6 +741,13 @@ func (a *Scaler) pickHost(ctx context.Context) (string, error) {
 	return a.pickHostLocked(ctx, fleet)
 }
 
+// errFleetAtCapacity marks a pickHostLocked failure as capacity-shaped
+// (every host unreachable, or the fleet/host/socket limit is exhausted) so
+// HandleDesiredRunnerCount's scale-up loop can stop retrying immediately
+// instead of repeating the same doomed probe-and-decide round trip against a
+// wall that a fixed number of retries within this call cannot resolve.
+var errFleetAtCapacity = errors.New("no docker host has placement capacity right now")
+
 // pickHostLocked selects against a Docker recount plus in-flight reservations.
 // The caller must hold fleet.mu through the subsequent reservation update.
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (string, error) {
@@ -814,10 +815,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	hostLoads := make(map[string]hostLoad, len(a.dockerHosts))
 	fleetCounts := make(map[string]int, len(a.dockerHosts))
 	sharedWorkDirCounts := make(map[string]int, len(a.dockerHosts))
-	scaleSet := a.scaleSetName
-	if scaleSet == "" {
-		scaleSet = "default"
-	}
+	scaleSet := a.scaleSetLabel()
 	for res := range ch {
 		results = append(results, res)
 		if res.ok {
@@ -833,19 +831,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			} else {
 				res.load = a.applyOverloadCooldown(res.host.Name, res.load, time.Now())
 				hostLoads[res.host.Name] = res.load
-				hostTelemetryGauge.WithLabelValues(res.host.Name).Set(1)
-				hostNormalizedLoadGauge.WithLabelValues(res.host.Name).Set(res.load.normalizedLoad)
-				hostCPUUtilizationGauge.WithLabelValues(res.host.Name).Set(res.load.cpuUtilization)
-				hostPressureGauge.WithLabelValues(res.host.Name, "cpu").Set(res.load.cpuPressure)
-				hostPressureGauge.WithLabelValues(res.host.Name, "memory").Set(res.load.memoryPressure)
-				hostMemoryAvailableGauge.WithLabelValues(res.host.Name).Set(res.load.memoryAvailable)
-				hostSwapRateGauge.WithLabelValues(res.host.Name).Set(res.load.swapPagesPerSec)
-				if res.load.overloaded {
-					hostCooldownGauge.WithLabelValues(res.host.Name).Set(1)
-				} else {
-					hostCooldownGauge.WithLabelValues(res.host.Name).Set(0)
-				}
-				hostLoadPenaltyGauge.WithLabelValues(res.host.Name).Set(float64(res.load.penalty))
+				a.recordHostLoadMetrics(res.host.Name, res.load, true)
 				log := a.logger.Debug
 				if res.load.penalty > 0 {
 					log = a.logger.Info
@@ -871,7 +857,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	}
 
 	if len(reachableHosts) == 0 {
-		return "", fmt.Errorf("all %d configured docker hosts are unreachable", len(a.dockerHosts))
+		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(a.dockerHosts), errFleetAtCapacity)
 	}
 	actualTotal := 0
 	for _, h := range a.dockerHosts {
@@ -886,7 +872,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	}
 	if fleet.maxRunners > 0 && actualTotal+reservedTotal >= fleet.maxRunners {
 		placementBlocked.WithLabelValues(scaleSet, "fleet_limit").Inc()
-		return "", fmt.Errorf("fleet reached configured runner limit %d", fleet.maxRunners)
+		return "", fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
 	}
 	var withinHostLimits []DockerHost
 	for _, h := range reachableHosts {
@@ -903,7 +889,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	}
 	if len(withinHostLimits) == 0 {
 		placementBlocked.WithLabelValues(scaleSet, "host_limits").Inc()
-		return "", fmt.Errorf("every reachable docker host is at its configured runner limit")
+		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
 
 	candidates := withinHostLimits
@@ -919,7 +905,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			}
 		}
 		if len(withCapacity) == 0 {
-			return "", fmt.Errorf("mount-docker-socket scale set %q: every reachable docker host already has a runner placed", scaleSet)
+			return "", fmt.Errorf("mount-docker-socket scale set %q: every reachable docker host already has a runner placed: %w", scaleSet, errFleetAtCapacity)
 		}
 		candidates = withCapacity
 	}
@@ -1102,10 +1088,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("scale set %q is draining", a.scaleSetName)
 	}
 	start := time.Now()
-	scaleSet := a.scaleSetName
-	if scaleSet == "" {
-		scaleSet = "default"
-	}
+	scaleSet := a.scaleSetLabel()
 	// Prefixed with the scale set name (homelab#97): once multiple scale
 	// sets -- and, with multiple registrations, multiple GitHub
 	// accounts/repos -- share one process's `docker ps` output, a bare
@@ -1174,16 +1157,11 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			"/home/runner/externals:/home/runner/externals",
 			"/var/run/docker.sock:/var/run/docker.sock",
 		}
-		if gid, gidErr := a.coordinator().socketGID(host); gidErr == nil {
-			groupAdd = []string{gid}
-		} else if len(a.dockerSocketGIDs) > 0 {
-			// Private single-scaler instances used by focused tests retain the
-			// legacy aggregate-GID behavior. Orchestrator config validation
-			// requires a precise per-host GID, so production never uses this.
-			groupAdd = a.dockerSocketGIDs
-		} else {
+		gid, gidErr := a.coordinator().socketGID(host)
+		if gidErr != nil {
 			return "", gidErr
 		}
+		groupAdd = []string{gid}
 		if err := a.ensureWorkDirOwnership(ctx, client, host); err != nil {
 			a.logger.Warn("Failed to normalize shared workdir ownership before runner start", slog.String("host", host), slog.String("error", err.Error()))
 		}
@@ -1311,7 +1289,8 @@ func (a *Scaler) checkHostRunnerLimit(ctx context.Context, client *dockerclient.
 // deregisterRunner's doc comment for the GitHub-ghost fallout this causes).
 // Confirmed live 2026-07-18: this used to chown only _work, leaving
 // externals root-owned on a newly onboarded host -- 100% of e2e-docker
-// placements on it failed (docs/incidents.md).
+// placements on it failed (see jlapenna/homelab's docs/incidents.md for the
+// postmortem).
 //
 // The recursive chown only RUNS when the top-level directory's ownership
 // doesn't already match runner:runner -- i.e. only on a host's first-ever
@@ -1458,9 +1437,9 @@ const sweepStaleMinutes = 60
 // finished job's leftover checkout eventually becomes a candidate.
 // Deleting a checkout costs a fresh clone next time it's needed -- the same
 // class of thing a non-shared runner container's writable layer would have
-// discarded on its own when removed. See docs/incidents.md 2026-07-18: this
-// shared dir has no per-container lifecycle, so without this nothing else
-// ever reclaims it.
+// discarded on its own when removed. See jlapenna/homelab's docs/incidents.md
+// 2026-07-18: this shared dir has no per-container lifecycle, so without this
+// nothing else ever reclaims it.
 func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
 	capBytes := a.workDirSizeCapBytes
 	if override, ok := a.workDirSizeCaps[host]; ok {
@@ -1603,10 +1582,7 @@ func (a *Scaler) BeginDrain(ctx context.Context) {
 	if !a.draining.CompareAndSwap(false, true) {
 		return
 	}
-	scaleSet := a.scaleSetName
-	if scaleSet == "" {
-		scaleSet = "default"
-	}
+	scaleSet := a.scaleSetLabel()
 	drainingGauge.WithLabelValues(scaleSet).Set(1)
 	a.logger.Info("Drain started; refusing new runner placements")
 	a.removeIdleRunners(ctx)

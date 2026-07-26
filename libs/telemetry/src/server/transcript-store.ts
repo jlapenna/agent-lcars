@@ -31,9 +31,8 @@ let cachedStorage: Storage | undefined;
  * (firebase-app-hosting-compute) is granted `roles/storage.objectViewer`
  * directly on the transcripts bucket (see agent-telemetry.yaml's storage
  * section), since transcripts are read with the console's own identity, not
- * a scoped reader SA. Mirrors the direct-SDK-client pattern already used by
- * `libs/instagram/src/sync.ts` for GCS rather than pulling in
- * `firebase-admin/storage` (which would require initializing a
+ * a scoped reader SA. Uses the direct SDK client for GCS rather than pulling
+ * in `firebase-admin/storage` (which would require initializing a
  * firebase-admin App this app has never needed for anything else).
  */
 function getTranscriptStorageClient(): Storage {

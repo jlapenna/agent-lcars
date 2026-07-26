@@ -16,8 +16,12 @@ import {
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover-artifacts';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
+import { applyGitContext } from './git-context';
 import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
-import { isProcessAliveForCwd as defaultIsProcessAliveForCwd } from './process-check';
+import {
+  isProcessAliveForCwd as defaultIsProcessAliveForCwd,
+  scanProcCwds,
+} from './process-check';
 import { SessionStore } from './store';
 import { WatchRootConfig } from './watch-roots';
 
@@ -79,11 +83,13 @@ export interface WatcherDaemonOptions {
   statFile?: (filePath: string) => FileStat;
   discover?: (rootPath: string, allowlist: string[]) => string[];
   isProcessAliveForCwd?: (cwd: string) => boolean;
-  resolveGitBranch?: (cwd: string) => string | undefined;
+  resolveGitBranch?: (cwd: string) => Promise<string | undefined>;
   /** CLI sessions only: per-tick `origin`-remote resolution stamped onto
    * `summary.repo`, same seam shape as `resolveGitBranch`. Runner-mode
    * sessions get `repo` from the static option above instead. */
-  resolveGitRepo?: (cwd: string) => { owner: string; name: string } | undefined;
+  resolveGitRepo?: (
+    cwd: string,
+  ) => Promise<{ owner: string; name: string } | undefined>;
   discoverArtifacts?: (shareDir: string, sessionId: string) => string[];
   /** Test-only injection point, mirrored from the seams above — production
    * callers (main.ts) never set this; the daemon uses the real
@@ -155,6 +161,14 @@ export class WatcherDaemon {
       });
     const isProcessAliveForCwd =
       this.options.isProcessAliveForCwd ?? defaultIsProcessAliveForCwd;
+    // Scanned once per tick and reused for every tracked session's liveness
+    // check below, instead of each session independently re-scanning all of
+    // /proc — see scanProcCwds's doc comment. Skipped entirely when a test
+    // has replaced isProcessAliveForCwd wholesale, since the scan would then
+    // go unused.
+    const procCwds = this.options.isProcessAliveForCwd
+      ? undefined
+      : scanProcCwds('/proc');
     const resolveGitBranch =
       this.options.resolveGitBranch ?? defaultResolveGitBranch;
     const resolveGitRepo = this.options.resolveGitRepo ?? defaultResolveGitRepo;
@@ -273,15 +287,17 @@ export class WatcherDaemon {
       }
     }
 
-    for (const summary of summaries) {
-      const branch = summary.cwd ? resolveGitBranch(summary.cwd) : undefined;
-      const repo = summary.cwd ? resolveGitRepo(summary.cwd) : undefined;
+    // Every changed session's branch/repo resolution runs concurrently
+    // (each is a `git` subprocess spawn) rather than serially awaiting one
+    // at a time.
+    const enrichedSummaries = await Promise.all(
+      summaries.map((summary) =>
+        applyGitContext(summary, resolveGitBranch, resolveGitRepo),
+      ),
+    );
+    for (const summary of enrichedSummaries) {
       this.sessions.set(summary.sessionId, {
-        summary: {
-          ...summary,
-          ...(branch && { branch }),
-          ...(repo && { repo }),
-        },
+        summary,
         lastHeartbeatAt: now,
       });
     }
@@ -297,6 +313,7 @@ export class WatcherDaemon {
             tracked.summary.sessionId,
             tracked.summary.startedAt,
             tracked.summary.agent,
+            procCwds,
           )
         : false;
 
@@ -388,11 +405,10 @@ export class WatcherDaemon {
       // rediscovered transcript file is - Antigravity conversations have no
       // `cwd`-to-PID mapping this daemon can verify via `/proc` (the
       // conversation may be driven by a different process, IDE window, or
-      // even a different machine profile entirely). This mirrors
-      // `apps/cli/src/commands/agent-telemetry/upsert.ts`'s exact
-      // `processAlive`/`heartbeatReceived` pair for the same reason it uses
-      // them: a one-off snapshot of already-recorded activity, never a
-      // fabricated `live`/`idle` distinction this poller can't back up.
+      // even a different machine profile entirely), so `processAlive` is
+      // hardcoded false and `heartbeatReceived` true: a one-off snapshot of
+      // already-recorded activity, never a fabricated `live`/`idle`
+      // distinction this poller can't back up.
       const liveness = computeLiveness({
         now,
         lastActivityAt: summary.lastActivityAt,

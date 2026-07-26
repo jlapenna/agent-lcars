@@ -84,8 +84,8 @@ describe('finalizeSidecar', () => {
       store,
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
       uploadTranscript,
     });
 
@@ -117,8 +117,8 @@ describe('finalizeSidecar', () => {
       store,
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
       uploadTranscript,
     });
 
@@ -149,8 +149,8 @@ describe('finalizeSidecar', () => {
       store,
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
       uploadTranscript,
     });
 
@@ -176,8 +176,8 @@ describe('finalizeSidecar', () => {
         store,
         discover: () => Object.keys(files),
         readFile: (p: string) => files[p as keyof typeof files],
-        resolveGitBranch: () => undefined,
-        resolveGitRepo: () => undefined,
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
         uploadTranscript,
       }),
     ).resolves.toBeUndefined();
@@ -208,8 +208,8 @@ describe('finalizeSidecar', () => {
         }
         return files[p as keyof typeof files];
       },
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
       uploadTranscript,
     });
 
@@ -241,8 +241,8 @@ describe('finalizeSidecar', () => {
         store,
         discover: () => Object.keys(files),
         readFile: (p: string) => files[p as keyof typeof files],
-        resolveGitBranch: () => undefined,
-        resolveGitRepo: () => undefined,
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
         uploadTranscript,
       }),
     ).resolves.toBeUndefined();
@@ -265,8 +265,8 @@ describe('finalizeSidecar', () => {
       store,
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
       uploadTranscript,
     });
 
@@ -292,8 +292,8 @@ describe('finalizeSidecar', () => {
         return Object.keys(files);
       },
       readFile: (p: string) => files[p as keyof typeof files],
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
       uploadTranscript,
     });
 

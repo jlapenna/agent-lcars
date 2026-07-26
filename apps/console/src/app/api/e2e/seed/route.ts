@@ -135,9 +135,8 @@ interface SeedRequest {
  * Seeds/clears fixture `source: 'cli'` session docs directly into the
  * `agent-telemetry` Firestore database, guarded by `isE2eTesting()` like
  * every other `/api/e2e/*` fixture route in this repo. Only the app server
- * itself writes here (never the Playwright test process — see
- * `apps/members/e2e/frontend/src/seed.ts`'s note on why direct-from-test
- * writes don't reach the store the app server reads).
+ * itself writes here (never the Playwright test process, whose writes
+ * wouldn't reach the store the running app server reads).
  */
 export async function POST(req: NextRequest) {
   if (!isE2eTesting()) {

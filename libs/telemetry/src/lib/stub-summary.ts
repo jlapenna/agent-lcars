@@ -37,9 +37,9 @@ export interface BuildStubSummaryOptions {
  *
  * `source` is always `'issue-agent'`: a stub only ever stands in for a
  * runner-mode session whose real archive lives in GCS (see
- * `infra-inventory/agent-telemetry.yaml`'s object layout) — there
- * is no local-CLI use case for a summary this empty, since a CLI session
- * always has a real transcript on disk to reduce instead.
+ * `apps/telemetry-watcher/src/lib/finalize.ts`'s upload path for the object
+ * layout) — there is no local-CLI use case for a summary this empty, since a
+ * CLI session always has a real transcript on disk to reduce instead.
  */
 export function buildStubSummary(
   options: BuildStubSummaryOptions,

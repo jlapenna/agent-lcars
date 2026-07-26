@@ -1,4 +1,18 @@
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
+
+function runGit(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      ['-C', cwd, ...args],
+      { encoding: 'utf8' },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout);
+      },
+    );
+  });
+}
 
 /**
  * Parses `owner/name` out of a GitHub `origin` remote URL, in any form
@@ -40,18 +54,14 @@ function parseGitHubRemote(
  * for a non-git dir, a missing `origin` remote, a non-GitHub remote, or any
  * other `git` failure — same shape as `resolveGitBranch`'s error handling,
  * so a resolution hiccup degrades to an unrepoed doc rather than crashing a
- * tick.
+ * tick. Async for the same reason as `resolveGitBranch`.
  */
-export function resolveGitRepo(
+export async function resolveGitRepo(
   cwd: string,
-): { owner: string; name: string } | undefined {
+): Promise<{ owner: string; name: string } | undefined> {
   try {
-    const remoteUrl = execFileSync(
-      'git',
-      ['-C', cwd, 'remote', 'get-url', 'origin'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-    ).trim();
-    return parseGitHubRemote(remoteUrl);
+    const stdout = await runGit(cwd, ['remote', 'get-url', 'origin']);
+    return parseGitHubRemote(stdout.trim());
   } catch {
     return undefined;
   }

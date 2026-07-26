@@ -32,10 +32,9 @@ type FleetCoordinator struct {
 	hostWorkDirLocks sync.Map
 }
 
-// time is imported separately by gofmt's grouping; keeping the shared state
-// in this file makes it impossible for listeners to accidentally use private
-// cooldown/cache maps.
-
+// hostReservation tracks one in-flight placement decision so its release
+// (on success or failure) always decrements the matching reservation/socket
+// counters exactly once, even if release is called from multiple defers.
 type hostReservation struct {
 	fleet  *FleetCoordinator
 	host   string

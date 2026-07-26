@@ -92,7 +92,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();
@@ -121,7 +121,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p],
       statFile: (p: string) => fakeStat(files[p]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();
@@ -163,7 +163,7 @@ describe('WatcherDaemon', () => {
       readFile,
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => processAlive,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();
@@ -207,7 +207,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p],
       statFile: (p: string) => fakeStat(files[p]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();
@@ -248,7 +248,7 @@ describe('WatcherDaemon', () => {
       },
       statFile: (p: string) => fakeStat(files[p]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await expect(daemon.tick()).resolves.toBeUndefined();
@@ -283,7 +283,7 @@ describe('WatcherDaemon', () => {
         return fakeStat(files[p]);
       },
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await expect(daemon.tick()).resolves.toBeUndefined();
@@ -317,7 +317,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await expect(daemon.tick()).resolves.toBeUndefined();
@@ -346,7 +346,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => 'feature/fresh-branch',
+      resolveGitBranch: async () => 'feature/fresh-branch',
     });
 
     await daemon.tick();
@@ -376,8 +376,8 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => ({
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => ({
         owner: 'supersprinklesracing',
         name: 'members',
       }),
@@ -412,8 +412,8 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
     });
 
     await daemon.tick();
@@ -461,7 +461,7 @@ describe('WatcherDaemon', () => {
         '2026-07-12T10:00:00.000Z',
       ),
     };
-    const resolveGitRepo = vi.fn(() => ({
+    const resolveGitRepo = vi.fn(async () => ({
       owner: 'from-git-remote',
       name: 'should-not-be-used',
     }));
@@ -479,7 +479,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
       resolveGitRepo,
       repo: { owner: 'supersprinklesracing', name: 'members' },
     });
@@ -515,7 +515,7 @@ describe('WatcherDaemon', () => {
       readFile,
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();
@@ -561,7 +561,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
       shareDir: '/root/share',
       discoverArtifacts: (shareDir: string, sessionId: string) =>
         shareDir === '/root/share' && sessionId === 'session-h'
@@ -597,7 +597,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
       shareDir: '/root/share',
       discoverArtifacts: () => artifacts,
     });
@@ -634,7 +634,7 @@ describe('WatcherDaemon', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
       discoverArtifacts,
     });
 
@@ -690,7 +690,7 @@ describe('WatcherDaemon', () => {
               (codexFiles as Record<string, string>)[p],
           ),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
       });
 
       await daemon.tick();
@@ -728,7 +728,7 @@ describe('WatcherDaemon', () => {
         readFile: () => '',
         statFile: () => fakeStat(''),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
       });
 
       await daemon.tick();
@@ -772,7 +772,7 @@ describe('WatcherDaemon', () => {
         statFile: (p: string) =>
           fakeStat(codexFiles[p as keyof typeof codexFiles]),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
       });
 
       await daemon.tick();
@@ -815,7 +815,7 @@ describe('WatcherDaemon', () => {
         readFile: () => '',
         statFile: () => fakeStat(''),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
           workspacePrefixes: ['/home/jlapenna/p/members'],
@@ -849,7 +849,7 @@ describe('WatcherDaemon', () => {
         readFile: () => '',
         statFile: () => fakeStat(''),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
         pollAntigravitySummaries: poll,
       });
 
@@ -874,7 +874,7 @@ describe('WatcherDaemon', () => {
         readFile: () => '',
         statFile: () => fakeStat(''),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
           workspacePrefixes: ['/home/jlapenna/p/members'],
@@ -905,7 +905,7 @@ describe('WatcherDaemon', () => {
         readFile: () => '',
         statFile: () => fakeStat(''),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
           workspacePrefixes: ['/home/jlapenna/p/members'],
@@ -947,7 +947,7 @@ describe('WatcherDaemon', () => {
         readFile: () => '',
         statFile: () => fakeStat(''),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
           workspacePrefixes: ['/home/jlapenna/p/members'],
@@ -993,7 +993,7 @@ describe('WatcherDaemon', () => {
         readFile: () => '',
         statFile: () => fakeStat(''),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
           workspacePrefixes: ['/home/jlapenna/p/members'],
@@ -1036,7 +1036,7 @@ describe('WatcherDaemon', () => {
         readFile: (p: string) => files[p as keyof typeof files],
         statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
         isProcessAliveForCwd: () => true,
-        resolveGitBranch: () => undefined,
+        resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
           workspacePrefixes: ['/home/jlapenna/p/members'],

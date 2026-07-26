@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/actions/scaleset"
 )
@@ -40,51 +39,19 @@ type Config struct {
 	// interleaved logs, Docker container names/labels, and credential
 	// resolution attributable to the right registration.
 	RegistrationName string
-	// PrivateKeyFile is a homelab addition: path to the GitHub App private
-	// key PEM, read into GitHubApp.PrivateKey so the key never appears in
-	// argv or the environment. See loadPrivateKeyFile.
-	PrivateKeyFile string
 	// DockerHosts is a homelab addition: fleet-wide placement. Each entry is
 	// "name=target" (target "local" or "ssh://user@host"). Empty means the
 	// single local socket (original single-host behavior). See hosts.go.
 	DockerHosts []string
-	// HostPolicyFile contains per-host placement and storage policy in YAML.
-	// CLI host overrides remain supported and take precedence.
-	HostPolicyFile string
-	// HostRunnerLimits caps total autoscaled runner containers across all
-	// scale sets on named hosts (for example janeway=1).
-	HostRunnerLimits []string
 	// MountDockerSocket is a homelab addition: bind-mount the PLACEMENT
 	// host's own docker.sock into every spawned runner (root-equivalent —
 	// only for a scale set standing in for the e2e-docker label; default and
 	// claude-agent must stay false, mirroring the static runners' privilege
 	// boundary, members#1976).
 	MountDockerSocket bool
-	// DockerSocketGIDs is a homelab addition: supplementary GIDs added to
-	// every spawned runner when MountDockerSocket is set. The official
-	// actions/actions-runner image runs as non-root `runner` with no group
-	// fixed up for the mounted socket (unlike the old myoung34-style images,
-	// which ran a root entrypoint that did this) — a bind mount alone 404s
-	// with "permission denied" without matching group membership. The
-	// docker group's GID differs PER HOST (homelab 983, pike 979, laforge
-	// 1002, spark 988 — confirmed via `id`), so all fleet GIDs are added to
-	// every container; the ones that don't match the placement host are
-	// simply inert.
-	DockerSocketGIDs []string
 	// RunnerMemory is a homelab addition: optional memory limit for spawned
 	// runner containers (e.g. 16g, 4g, 512m). Empty means no limit.
 	RunnerMemory string
-	// WorkDirSizeCap is a homelab addition: size ceiling (e.g. 10g) for the
-	// shared /home/runner/_work directory bind-mounted into every runner when
-	// MountDockerSocket is set (see docs/incidents.md 2026-07-18 — that shared
-	// dir has no per-container lifecycle to clean it up, unlike a normal
-	// container's writable layer). Only enforced when MountDockerSocket is
-	// true; ignored otherwise since nothing shared is mounted.
-	WorkDirSizeCap string
-	// WorkDirSizeCaps overrides WorkDirSizeCap for named fleet hosts, using
-	// name=size entries (for example janeway=20g). Small runner nodes need a
-	// lower ceiling than Spark's multi-terabyte cache tier.
-	WorkDirSizeCaps []string
 	// SparkMetricsURL is a homelab addition: URL to probe for Spark inference
 	// metrics (vllm:num_requests_running / waiting). When active inference
 	// requests are present, placement on spark is penalized to preserve GPU
@@ -95,22 +62,11 @@ type Config struct {
 	// The single %s is replaced with the Docker host name. Empty disables
 	// load-aware placement.
 	HostMetricsURLTemplate string
-	HostLoadSoft           float64
-	HostLoadBusy           float64
-	HostLoadHard           float64
-	HostCPUSoft            float64
-	HostCPUHard            float64
-	HostPSISoft            float64
-	HostPSIHard            float64
-	HostMemorySoft         float64
-	HostMemoryHard         float64
-	HostSwapSoft           float64
-	HostSwapHard           float64
-	HostOverloadCooldown   time.Duration
-	HostTelemetryPenalty   int
-	HostMemoryExempt       []string
-	// MetricsAddr is a homelab addition: listen address for HTTP metrics/healthz server.
-	MetricsAddr string
+	// HostLoadPolicy holds the resolved fleet.placement thresholds (see
+	// resolvedOrchestratorConfig.Placement, which this is copied from
+	// verbatim in runOrchestrator).
+	HostLoadPolicy   hostLoadPolicy
+	HostMemoryExempt []string
 }
 
 func stringSet(values []string) map[string]bool {
@@ -133,40 +89,14 @@ func (c *Config) defaults() {
 	if c.RunnerImage == "" {
 		c.RunnerImage = "ghcr.io/actions/actions-runner:latest"
 	}
-	// SparkMetricsURL and MetricsAddr are deliberately NOT defaulted here:
-	// empty is a meaningful, documented value for both (disables spark-aware
-	// placement / disables the metrics server respectively), and the cobra
-	// flags in main.go already supply the non-empty default for the unset
-	// case. Re-filling them here would make "pass an empty flag to disable"
-	// impossible.
-	if c.WorkDirSizeCap == "" {
-		c.WorkDirSizeCap = "50g"
+	// SparkMetricsURL is deliberately NOT defaulted here: empty is a
+	// meaningful, documented value (disables spark-aware placement), and the
+	// cobra flags in main.go already supply the non-empty default for the
+	// unset case. Re-filling it here would make "pass an empty flag to
+	// disable" impossible.
+	if c.HostLoadPolicy.loadHard == 0 {
+		c.HostLoadPolicy = defaultHostLoadPolicy()
 	}
-	if c.HostLoadHard == 0 {
-		p := defaultHostLoadPolicy()
-		c.HostLoadSoft, c.HostLoadBusy, c.HostLoadHard = p.loadSoft, p.loadBusy, p.loadHard
-		c.HostCPUSoft, c.HostCPUHard = p.cpuSoft, p.cpuHard
-		c.HostPSISoft, c.HostPSIHard = p.psiSoft, p.psiHard
-		c.HostMemorySoft, c.HostMemoryHard = p.memorySoft, p.memoryHard
-		c.HostSwapSoft, c.HostSwapHard = p.swapSoft, p.swapHard
-		c.HostOverloadCooldown, c.HostTelemetryPenalty = p.cooldown, p.telemetryPenalty
-	}
-}
-
-// loadPrivateKeyFile reads the App private key from PrivateKeyFile into
-// GitHubApp.PrivateKey when a path was given and no inline key was set.
-// Homelab addition: keeps the PEM out of argv/env (the upstream example only
-// accepts the key contents via the --app-private-key flag).
-func (c *Config) loadPrivateKeyFile() error {
-	if c.PrivateKeyFile == "" || c.GitHubApp.PrivateKey != "" {
-		return nil
-	}
-	b, err := os.ReadFile(c.PrivateKeyFile)
-	if err != nil {
-		return fmt.Errorf("reading --app-private-key-file: %w", err)
-	}
-	c.GitHubApp.PrivateKey = string(b)
-	return nil
 }
 
 func (c *Config) Validate() error {
@@ -204,10 +134,11 @@ func (c *Config) Validate() error {
 	if c.HostMetricsURLTemplate != "" && strings.Count(c.HostMetricsURLTemplate, "%s") != 1 {
 		return fmt.Errorf("--host-metrics-url-template must contain exactly one %%s placeholder")
 	}
-	if !(c.HostLoadSoft < c.HostLoadBusy && c.HostLoadBusy < c.HostLoadHard) {
+	p := c.HostLoadPolicy
+	if !(p.loadSoft < p.loadBusy && p.loadBusy < p.loadHard) {
 		return fmt.Errorf("host load thresholds must satisfy soft < busy < hard")
 	}
-	if !(c.HostCPUSoft < c.HostCPUHard && c.HostPSISoft < c.HostPSIHard && c.HostMemoryHard < c.HostMemorySoft && c.HostSwapSoft < c.HostSwapHard) {
+	if !(p.cpuSoft < p.cpuHard && p.psiSoft < p.psiHard && p.memoryHard < p.memorySoft && p.swapSoft < p.swapHard) {
 		return fmt.Errorf("host pressure thresholds are not ordered correctly")
 	}
 	return nil

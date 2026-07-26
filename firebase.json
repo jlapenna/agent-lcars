@@ -12,5 +12,20 @@
         "firebase-debug.*.log"
       ]
     }
-  ]
+  ],
+  "emulators": {
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "auth": {
+      "port": 4003
+    },
+    "eventarc": {
+      "port": 4004
+    },
+    "firestore": {
+      "port": 4002
+    }
+  }
 }

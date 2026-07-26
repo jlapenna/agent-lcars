@@ -1,18 +1,10 @@
 import { expect, test } from '@playwright/test';
 
-import { E2E_CLI_SESSION_IDS, resetCliSessions, seedCliSessions } from './seed';
-import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import { E2E_CLI_SESSION_IDS, useCliSessionFixtures } from './seed';
+import { cliSessionRow, useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
-
-test.beforeEach(async () => {
-  await resetCliSessions();
-  await seedCliSessions();
-});
-
-test.afterAll(async () => {
-  await resetCliSessions();
-});
+useCliSessionFixtures();
 
 // @smoke: a minimal render check for the new agent-focused /agents route
 // (#3024) - every section is present and the seeded CLI sessions (shared
@@ -50,23 +42,19 @@ test.describe('/agents page @smoke', () => {
 
     // The seeded live/idle CLI sessions (same fixtures the home page's
     // panel renders) show up here too, via the shared CliSessionRow.
-    const liveRow = page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.live}`);
+    const liveRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.live);
     await expect(liveRow.getByTestId('cli-session-liveness')).toHaveText(
       'live',
     );
-    const idleRow = page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.idle}`);
+    const idleRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.idle);
     await expect(idleRow.getByTestId('cli-session-liveness')).toHaveText(
       'idle',
     );
     // Ended/stale sessions are history, not active work - they must not
     // appear in the Active Agents section at all (no collapsed disclosure
     // here, unlike the home page's panel).
-    await expect(
-      page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.ended}`),
-    ).toHaveCount(0);
-    await expect(
-      page.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.stale}`),
-    ).toHaveCount(0);
+    await expect(cliSessionRow(page, E2E_CLI_SESSION_IDS.ended)).toHaveCount(0);
+    await expect(cliSessionRow(page, E2E_CLI_SESSION_IDS.stale)).toHaveCount(0);
 
     // No action items are seeded in this environment (see the module doc
     // above), so the claim list is genuinely empty - assert the zero state
