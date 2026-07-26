@@ -45,7 +45,7 @@ export function getGithubClient(): Octokit {
  * unset `AGENT_LCARS_WATCHED_REPOS` reproduces today's single-repo behavior
  * exactly. */
 export const DEFAULT_WATCHED_REPOS: WatchedRepo[] = [
-  { owner: 'supersprinklesracing', name: 'sprinkles' },
+  { owner: 'supersprinklesracing', name: 'sprinkles', alias: 'sprinkles' },
 ];
 
 function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
