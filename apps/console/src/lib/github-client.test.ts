@@ -113,7 +113,7 @@ describe('resolveWatchedRepo', () => {
     expect(() =>
       resolveWatchedRepo({
         owner: 'not-supersprinklesracing',
-        name: 'members',
+        name: 'sprinkles',
       }),
     ).toThrow(UnwatchedRepoError);
   });

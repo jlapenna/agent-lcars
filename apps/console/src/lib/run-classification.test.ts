@@ -11,7 +11,7 @@ import {
 function makeRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
-    repo: { owner: 'supersprinklesracing', name: 'members' },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',
@@ -103,7 +103,7 @@ describe('deriveSilentErrorDiagnoses', () => {
 
     const diagnoses = deriveSilentErrorDiagnoses([run], sessionsByRunId);
 
-    expect(diagnoses.get('supersprinklesracing/members#42')).toContain(
+    expect(diagnoses.get('supersprinklesracing/sprinkles#42')).toContain(
       'failure signature',
     );
   });

@@ -29,7 +29,7 @@ vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }));
 
-const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -37,7 +37,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
     repo: DEFAULT_REPO,
     number: 42,
     title: 'Stale tracker',
-    url: 'https://github.com/supersprinklesracing/members/issues/42',
+    url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
     updatedAt: '2026-07-07T00:00:00Z',
     actionTypes: [],
     labels: [],

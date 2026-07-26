@@ -134,7 +134,7 @@ describe('getCliSessions', () => {
 
     expect(sessions[0].pr).toEqual({
       number: 2662,
-      url: 'https://github.com/supersprinklesracing/members/pull/2662',
+      url: 'https://github.com/supersprinklesracing/sprinkles/pull/2662',
     });
     expect(searchMock).not.toHaveBeenCalled();
   });
@@ -154,7 +154,7 @@ describe('getCliSessions', () => {
     expect(sessions[0].liveness).toBe('idle');
     expect(sessions[0].pr).toEqual({
       number: 2843,
-      url: 'https://github.com/supersprinklesracing/members/pull/2843',
+      url: 'https://github.com/supersprinklesracing/sprinkles/pull/2843',
     });
     expect(getMock).not.toHaveBeenCalled();
   });
@@ -174,7 +174,7 @@ describe('getCliSessions', () => {
     expect(sessions[0].liveness).toBe('live');
     expect(sessions[0].pr).toEqual({
       number: 2843,
-      url: 'https://github.com/supersprinklesracing/members/pull/2843',
+      url: 'https://github.com/supersprinklesracing/sprinkles/pull/2843',
     });
     expect(getMock).not.toHaveBeenCalled();
   });
@@ -238,7 +238,7 @@ describe('getCliSessions', () => {
     expect(sessions).toHaveLength(2);
     expect(searchMock).toHaveBeenCalledTimes(1);
     expect(warnings).toEqual([
-      'PR lookup failed for branch "feat/agent-lcars-cli-sessions" (supersprinklesracing/members).',
+      'PR lookup failed for branch "feat/agent-lcars-cli-sessions" (supersprinklesracing/sprinkles).',
     ]);
   });
 

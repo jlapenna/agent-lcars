@@ -11,10 +11,10 @@ import type { CliSession } from './cli-sessions';
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     kind: 'issue',
-    repo: { owner: 'supersprinklesracing', name: 'members' },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     number: 42,
     title: 'Fix the thing',
-    url: 'https://github.com/supersprinklesracing/members/issues/42',
+    url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
     updatedAt: '2026-07-18T00:00:00Z',
     actionTypes: [],
     labels: [],

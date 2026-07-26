@@ -82,7 +82,7 @@ vi.mock('@/lib/auth-guards', () => ({
 
 vi.mock('../auth', () => ({ auth: vi.fn() }));
 
-const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
 describe('agent-lcars Server Actions', () => {
   beforeEach(() => {

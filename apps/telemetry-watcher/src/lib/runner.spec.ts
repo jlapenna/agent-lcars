@@ -104,7 +104,7 @@ describe('startSidecar', () => {
 
     const daemon = startSidecar({
       config: baseConfig({
-        repo: { owner: 'supersprinklesracing', name: 'members' },
+        repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
       }),
       store,
       autoStart: false,
@@ -122,7 +122,7 @@ describe('startSidecar', () => {
     expect(upserts).toHaveLength(1);
     expect(upserts[0]).toMatchObject({
       source: 'issue-agent',
-      repo: { owner: 'supersprinklesracing', name: 'members' },
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
   });
 

@@ -100,11 +100,11 @@ describe('SessionHeader', () => {
 
     const runLink = screen.getByRole('link', { name: /#999/ });
     expect(runLink.getAttribute('href')).toBe(
-      'https://github.com/supersprinklesracing/members/actions/runs/999',
+      'https://github.com/supersprinklesracing/sprinkles/actions/runs/999',
     );
     const issueLink = screen.getByRole('link', { name: '#42' });
     expect(issueLink.getAttribute('href')).toBe(
-      'https://github.com/supersprinklesracing/members/issues/42',
+      'https://github.com/supersprinklesracing/sprinkles/issues/42',
     );
     expect(screen.queryByTestId('cli-summary-note')).toBeNull();
   });
@@ -149,7 +149,7 @@ describe('SessionHeader', () => {
     );
     const prLink = screen.getByRole('link', { name: /PR #99/ });
     expect(prLink.getAttribute('href')).toBe(
-      'https://github.com/supersprinklesracing/members/pull/99',
+      'https://github.com/supersprinklesracing/sprinkles/pull/99',
     );
     expect(screen.getByText(/abc1234/)).toBeTruthy();
   });

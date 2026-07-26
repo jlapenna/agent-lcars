@@ -28,7 +28,7 @@ vi.mock('../agent-activity-panel', () => ({
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
-    repo: { owner: 'supersprinklesracing', name: 'members' },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     pipeline: 'claude',
     status: 'running',
     event: 'issues',

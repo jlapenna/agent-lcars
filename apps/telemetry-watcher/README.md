@@ -142,9 +142,9 @@ whenever a push to `main` touches `apps/telemetry-watcher/**` or
 `publish-telemetry-tool.yml`
 workflow (publishing immutable semver-tagged releases to
 `gs://agent-lcars-tools/telemetry/`, curl-downloaded per job) is gone —
-both `agent-lcars`'s and `supersprinklesracing/members`'s `claude.yml` now
+both `agent-lcars`'s and `supersprinklesracing/sprinkles`'s `claude.yml` now
 use the runner-image bake-in exclusively (members migrated in
-[members#3414](https://github.com/supersprinklesracing/members/pull/3414)).
+[members#3414](https://github.com/supersprinklesracing/sprinkles/pull/3414)).
 
 ## Deployment
 

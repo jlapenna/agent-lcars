@@ -158,7 +158,7 @@ describe('QuickTaskButton', () => {
     render(
       <MantineProvider>
         <QuickTaskButton
-          watchedRepos={[{ owner: 'supersprinklesracing', name: 'members' }]}
+          watchedRepos={[{ owner: 'supersprinklesracing', name: 'sprinkles' }]}
         />
       </MantineProvider>,
     );

@@ -94,11 +94,14 @@ describe('loadRunnerConfig', () => {
   });
 
   it('parses --repo owner/name', () => {
-    const config = loadRunnerConfig(['--repo', 'supersprinklesracing/members']);
+    const config = loadRunnerConfig([
+      '--repo',
+      'supersprinklesracing/sprinkles',
+    ]);
 
     expect(config.repo).toEqual({
       owner: 'supersprinklesracing',
-      name: 'members',
+      name: 'sprinkles',
     });
   });
 
@@ -122,13 +125,13 @@ describe('loadRunnerConfig', () => {
   });
 
   it('falls back to GITHUB_REPOSITORY when --repo is not passed', () => {
-    process.env['GITHUB_REPOSITORY'] = 'supersprinklesracing/members';
+    process.env['GITHUB_REPOSITORY'] = 'supersprinklesracing/sprinkles';
 
     const config = loadRunnerConfig([]);
 
     expect(config.repo).toEqual({
       owner: 'supersprinklesracing',
-      name: 'members',
+      name: 'sprinkles',
     });
   });
 

@@ -144,10 +144,10 @@ describe('toSessionRow', () => {
 
     expect(row.issueNumber).toBe(42);
     expect(row.issueUrl).toBe(
-      'https://github.com/supersprinklesracing/members/issues/42',
+      'https://github.com/supersprinklesracing/sprinkles/issues/42',
     );
     expect(row.runUrl).toBe(
-      'https://github.com/supersprinklesracing/members/actions/runs/999888777',
+      'https://github.com/supersprinklesracing/sprinkles/actions/runs/999888777',
     );
   });
 
@@ -170,11 +170,11 @@ describe('toSessionRow', () => {
     expect(row.prUrls).toEqual([
       {
         number: 10,
-        url: 'https://github.com/supersprinklesracing/members/pull/10',
+        url: 'https://github.com/supersprinklesracing/sprinkles/pull/10',
       },
       {
         number: 20,
-        url: 'https://github.com/supersprinklesracing/members/pull/20',
+        url: 'https://github.com/supersprinklesracing/sprinkles/pull/20',
       },
     ]);
   });

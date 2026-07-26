@@ -8,7 +8,7 @@ import {
 } from './action-items';
 import { getGithubClient, getWatchedRepos } from './github-client';
 
-const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
@@ -39,7 +39,7 @@ function makeItem(
   return {
     number,
     title: `Issue ${number}`,
-    html_url: `https://github.com/supersprinklesracing/members/issues/${number}`,
+    html_url: `https://github.com/supersprinklesracing/sprinkles/issues/${number}`,
     body: null,
     updated_at: '2026-07-07T00:00:00Z',
     user: { login: 'someone' },
@@ -410,7 +410,7 @@ describe('getActionItems', () => {
     expect(result.items.map((i) => i.number)).toEqual([10]);
     expect(
       result.warnings.some((w) =>
-        w.includes('Failed to classify supersprinklesracing/members#20'),
+        w.includes('Failed to classify supersprinklesracing/sprinkles#20'),
       ),
     ).toBe(true);
   });
