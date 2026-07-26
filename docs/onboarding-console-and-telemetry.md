@@ -70,9 +70,10 @@ Telemetry is shipped by baking `apps/telemetry-watcher`'s `bundle` Nx
 target — a single self-contained `.cjs` file with every dependency
 inlined, including `@google-cloud/firestore` — into the runner image at
 `/usr/local/lib/agent-lcars/sidecar.cjs`. See this repo's own
-`apps/runner-autoscaler/runner-image/Dockerfile` (or `jlapenna/homelab`'s
-copy — they're intentionally duplicated, see the comment at the top of
-either) for the build stage: it clones this repo's `main` at image-build
+`apps/runner-autoscaler/runner-image/Dockerfile` — the single source for
+this image; the former duplicate in `jlapenna/homelab` was removed along
+with the local-build fallback it served — for the build stage: it clones
+this repo's `main` at image-build
 time and runs `./tools/nx bundle @agent-lcars/telemetry-watcher`. No
 download, no version pin to keep in sync — the image build is the release
 step.

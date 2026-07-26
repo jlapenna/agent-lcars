@@ -294,8 +294,9 @@ play's blast radius is bigger than just the autoscaler: before it ever
 touches the control plane, it first runs `docker compose up -d --build
 --remove-orphans` against homelab's entire core-services stack and
 reloads Caddy, **then** redeploys the autoscaler control plane (pulling
-the published image, falling back to a fresh clone-and-build only if the
-pull fails). The second play refreshes the JIT worker image on every
+the published image; a failed pull is a hard failure — there is no
+local-build fallback, because rebuilding on a failed pull masks the outage
+and diverges hosts onto their own unreviewed builds). The second play refreshes the JIT worker image on every
 fleet host. A bad config is caught by `--check-config` (§4, and also run
 automatically as part of `deploy.sh`) before any live listener is
 drained, so a mistake in the autoscaler's own config fails loudly rather
