@@ -82,6 +82,16 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      # firebase-tools' Firestore emulator requires Java 21+; ubuntu-latest's
+      # default `java` on PATH is only 17 (confirmed the hard way: this job
+      # failed with "firebase-tools no longer supports Java version before
+      # 21" before this step was added). Matches members' own setup-ci
+      # action's java-version pin.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
