@@ -63,16 +63,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	for _, base := range resolved.ScaleSets {
 		c := base
 		c.DockerHosts = append([]string(nil), resolved.DockerHosts...)
-		c.HostRunnerLimits = mapIntEntries(resolved.RunnerLimits)
-		c.WorkDirSizeCaps = mapSizeEntries(resolved.WorkDirSizeCaps)
 		c.SparkMetricsURL = resolved.Raw.Fleet.Placement.SparkMetricsURL
 		c.HostMetricsURLTemplate = resolved.Raw.Fleet.Placement.HostMetricsURLTemplate
-		c.HostLoadSoft, c.HostLoadBusy, c.HostLoadHard = resolved.Placement.loadSoft, resolved.Placement.loadBusy, resolved.Placement.loadHard
-		c.HostCPUSoft, c.HostCPUHard = resolved.Placement.cpuSoft, resolved.Placement.cpuHard
-		c.HostPSISoft, c.HostPSIHard = resolved.Placement.psiSoft, resolved.Placement.psiHard
-		c.HostMemorySoft, c.HostMemoryHard = resolved.Placement.memorySoft, resolved.Placement.memoryHard
-		c.HostSwapSoft, c.HostSwapHard = resolved.Placement.swapSoft, resolved.Placement.swapHard
-		c.HostOverloadCooldown, c.HostTelemetryPenalty = resolved.Cooldown, resolved.Placement.telemetryPenalty
+		c.HostLoadPolicy = resolved.Placement
 		c.HostMemoryExempt = append([]string(nil), resolved.Raw.Fleet.Placement.HostMemoryExempt...)
 
 		runtime, initErr := buildScaleSetRuntime(c, dockerHosts, fleet)
@@ -144,16 +137,9 @@ func buildScaleSetRuntime(c Config, dockerHosts []DockerHost, fleet *FleetCoordi
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, mountDockerSocket: c.MountDockerSocket,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
-		hostLoadPolicy: hostLoadPolicy{
-			loadSoft: c.HostLoadSoft, loadBusy: c.HostLoadBusy, loadHard: c.HostLoadHard,
-			cpuSoft: c.HostCPUSoft, cpuHard: c.HostCPUHard,
-			psiSoft: c.HostPSISoft, psiHard: c.HostPSIHard,
-			memorySoft: c.HostMemorySoft, memoryHard: c.HostMemoryHard,
-			swapSoft: c.HostSwapSoft, swapHard: c.HostSwapHard,
-			cooldown: c.HostOverloadCooldown, telemetryPenalty: c.HostTelemetryPenalty,
-		},
+		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMemoryExempt:    stringSet(c.HostMemoryExempt),
-		workDirSizeCapBytes: 50 * 1024 * 1024 * 1024,
+		workDirSizeCapBytes: defaultWorkDirSizeCapBytes,
 		workDirSizeCaps:     fleet.workDirSizeCaps, hostRunnerLimits: fleet.hostRunnerLimits,
 		fleet: fleet,
 	}
@@ -281,20 +267,4 @@ func runFleetOrphanSweeper(ctx context.Context, runtimes []*scaleSetRuntime) {
 			}
 		}
 	}
-}
-
-func mapIntEntries(values map[string]int) []string {
-	out := make([]string, 0, len(values))
-	for name, value := range values {
-		out = append(out, fmt.Sprintf("%s=%d", name, value))
-	}
-	return out
-}
-
-func mapSizeEntries(values map[string]int64) []string {
-	out := make([]string, 0, len(values))
-	for name, value := range values {
-		out = append(out, fmt.Sprintf("%s=%db", name, value))
-	}
-	return out
 }

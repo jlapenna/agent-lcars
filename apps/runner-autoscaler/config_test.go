@@ -70,27 +70,22 @@ func TestConfigValidation(t *testing.T) {
 }
 
 // TestConfigEmptyDisablesFeatures verifies that an explicitly empty
-// SparkMetricsURL or MetricsAddr survives Validate() as empty: empty is a
-// meaningful, documented "feature disabled" value for both, and defaults()
-// deliberately does not fill them in (the cobra flags in main.go supply the
-// non-empty default for the unset case instead -- see Config.defaults's
-// comment).
+// SparkMetricsURL survives Validate() as empty: empty is a meaningful,
+// documented "feature disabled" value, and defaults() deliberately does not
+// fill it in (the cobra flags in main.go supply the non-empty default for
+// the unset case instead -- see Config.defaults's comment).
 func TestConfigEmptyDisablesFeatures(t *testing.T) {
 	cfg := Config{
 		RegistrationURL: "https://github.com/org/repo",
 		ScaleSetName:    "x",
 		Token:           "t",
 		SparkMetricsURL: "",
-		MetricsAddr:     "",
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Config.Validate() returned unexpected error: %v", err)
 	}
 	if cfg.SparkMetricsURL != "" {
 		t.Errorf("expected SparkMetricsURL to remain empty after Validate(), got %q", cfg.SparkMetricsURL)
-	}
-	if cfg.MetricsAddr != "" {
-		t.Errorf("expected MetricsAddr to remain empty after Validate(), got %q", cfg.MetricsAddr)
 	}
 }
 
