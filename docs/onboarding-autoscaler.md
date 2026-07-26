@@ -322,12 +322,36 @@ No `docker/setup-qemu-action` is needed — nothing is built on the runner,
 and arm64 emulation lives on the builder, which is where `RUN` steps
 actually execute under the remote driver.
 
-Pushes currently go to `docker-registry.lan.jlapenna.net` anonymously, with
-no `docker/login-action`. Treat that as a known gap rather than a feature:
-the registry accepts anonymous push **and** delete from any LAN position,
-so any runner can overwrite or remove the images the whole fleet executes
-(agent-lcars#112). When that is fixed, publishing jobs will need a
-credential here.
+`docker-registry.lan.jlapenna.net` requires a credential for **writes**
+(agent-lcars#112). Reads stay anonymous, so pulling needs nothing. A
+publishing job must log in first, or its push is rejected with
+`authorization failed: no basic auth credentials`:
+
+```yaml
+# in your workflow, before any build/push step
+- name: Log in to the registry
+  run: |
+    docker login docker-registry.lan.jlapenna.net \
+      --username publisher --password-stdin < /secrets/registry-password
+```
+
+The password is a read-only bind-mount, delivered by the autoscaler to
+publishing lanes only — add it to the lane's `file_mounts` alongside the
+BuildKit client certificate:
+
+```yaml
+file_mounts:
+  - /etc/buildkit-client/registry-password:/secrets/registry-password
+```
+
+It is never a GitHub Actions secret: the control plane runs locally, so the
+whole publish credential set shares one storage and rotation path. Under the
+remote driver the _builder_ performs the push, but registry auth is
+forwarded from the client's Docker config through the build session — so
+logging in on the runner is what authorizes the builder's push.
+
+Rotation and the full access model live in jlapenna/homelab's
+`docs/registry.md`.
 
 ## Verifying it actually worked
 
