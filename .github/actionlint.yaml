@@ -15,3 +15,9 @@ self-hosted-runner:
     # which actionlint could not analyse -- so the label is checkable now,
     # which is the point.
     - lcars-build-client
+    # General-purpose pool for small, fast glue jobs (agent-automerge.yml)
+    # that must not share runs-on with claude-agent-lcars above - see that
+    # workflow's own comment. Registered in homelab's
+    # github-runner-autoscaler/orchestrator.yml as
+    # homelab-autoscale-lcars-default.
+    - lcars-default

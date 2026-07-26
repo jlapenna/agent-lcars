@@ -44,6 +44,21 @@ jlapenna`), and use as the assignee in the parking recipe
   with neither trigger is silently ignored — always end a parking comment
   with the correct one for whichever pipeline dispatched you.
 
+## Auto-merge
+
+`.github/workflows/agent-automerge.yml` squash-auto-merges any PR whose
+author is listed in the `AGENT_BOT_LOGINS` repo variable (a JSON array —
+currently `claude[bot]` and `github-actions[bot]`, covering claude.yml and
+opencode.yml respectively), gated only on the ruleset's required `Verify`
+check. A new agent pipeline that follows this protocol (and therefore opens
+its PRs under its own distinct bot identity) needs its login appended to
+that variable to get auto-merge — never a change to the workflow itself:
+
+```bash
+gh variable set AGENT_BOT_LOGINS --repo jlapenna/agent-lcars \
+  --body '["claude[bot]","github-actions[bot]","<new-agent-login>"]'
+```
+
 ## Verify before opening (or updating) a PR
 
 This is an Nx/pnpm monorepo (Node 24, pnpm 10). Before ending your turn with
