@@ -20,10 +20,8 @@ test.describe('/agents page @smoke', () => {
     page,
   }) => {
     await page.goto('/');
-    await expect(
-      page.getByRole('link', { name: 'Agent status →' }),
-    ).toBeVisible();
-    await page.getByRole('link', { name: 'Agent status →' }).click();
+    await expect(page.getByRole('link', { name: 'Agents' })).toBeVisible();
+    await page.getByRole('link', { name: 'Agents' }).click();
     await page.waitForURL('/agents');
 
     await expect(
@@ -61,8 +59,9 @@ test.describe('/agents page @smoke', () => {
     // rather than asserting nothing.
     await expect(page.getByText('Claimed but Idle (0)')).toBeVisible();
 
-    // Cross-link back to the maintainer task queue.
-    await page.getByRole('link', { name: '← Task queue' }).click();
+    // Cross-link back to the maintainer task queue (the shared
+    // ConsoleHeader nav rail's "Queue" pill, see console-header.tsx).
+    await page.getByRole('link', { name: 'Queue' }).click();
     await page.waitForURL('/');
     await expect(
       page.getByRole('heading', { name: 'Agent LCARS' }),
