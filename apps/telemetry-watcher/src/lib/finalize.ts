@@ -8,6 +8,7 @@ import * as fs from 'fs';
 
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
+import { applyGitContext } from './git-context';
 import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
 import { RunnerConfig } from './runner-config';
 import { SessionStore } from './store';
@@ -26,8 +27,10 @@ export interface FinalizeSidecarOptions {
   /** Test-only injection points, mirrored from `StartSidecarOptions`. */
   discover?: (rootPath: string, allowlist: string[]) => string[];
   readFile?: (filePath: string) => string;
-  resolveGitBranch?: (cwd: string) => string | undefined;
-  resolveGitRepo?: (cwd: string) => { owner: string; name: string } | undefined;
+  resolveGitBranch?: (cwd: string) => Promise<string | undefined>;
+  resolveGitRepo?: (
+    cwd: string,
+  ) => Promise<{ owner: string; name: string } | undefined>;
   uploadTranscript?: (options: UploadTranscriptOptions) => Promise<void>;
 }
 
@@ -118,21 +121,19 @@ async function finalizeSummary(
   deps: {
     config: RunnerConfig;
     store: SessionStore;
-    resolveGitBranch: (cwd: string) => string | undefined;
+    resolveGitBranch: (cwd: string) => Promise<string | undefined>;
     resolveGitRepo: (
       cwd: string,
-    ) => { owner: string; name: string } | undefined;
+    ) => Promise<{ owner: string; name: string } | undefined>;
     uploadTranscript: (options: UploadTranscriptOptions) => Promise<void>;
   },
 ): Promise<void> {
   const { config, store } = deps;
-  const branch = summary.cwd ? deps.resolveGitBranch(summary.cwd) : undefined;
-  const repo = summary.cwd ? deps.resolveGitRepo(summary.cwd) : undefined;
-  const finalSummary: SessionSummary = {
-    ...summary,
-    ...(branch && { branch }),
-    ...(repo && { repo }),
-  };
+  const finalSummary = await applyGitContext(
+    summary,
+    deps.resolveGitBranch,
+    deps.resolveGitRepo,
+  );
 
   let transcriptGcsUri: string | undefined;
   if (config.transcriptsBucket) {

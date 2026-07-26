@@ -151,9 +151,9 @@ interface BaseSessionDoc {
    * (`issue-agent` docs) — see `session-doc.ts` for why the two sources get
    * different retention (#3107 follow-up 2). Written as a Firestore
    * `Timestamp` (see `upsertSession`) so the `sessions` collection's TTL
-   * policy (`tools/provision-agent-telemetry-gcp.sh`) can garbage-collect
-   * it — see issue #2708. Omitted when `lastActivityAt` has no parseable
-   * timestamp (e.g. a transcript with no timestamped lines yet). */
+   * policy can garbage-collect it — see issue #2708. Omitted when
+   * `lastActivityAt` has no parseable timestamp (e.g. a transcript with no
+   * timestamped lines yet). */
   expireAt?: string;
   /** See {@link SessionSummary.totalCostUsd}. */
   totalCostUsd?: number;

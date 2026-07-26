@@ -17,7 +17,7 @@
 FROM node:24-slim AS build
 WORKDIR /repo
 
-RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
+RUN corepack enable
 
 COPY . .
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \

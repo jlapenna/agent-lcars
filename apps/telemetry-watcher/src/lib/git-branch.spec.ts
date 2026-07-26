@@ -1,39 +1,67 @@
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveGitBranch } from './git-branch';
 
-vi.mock('child_process', () => ({ execFileSync: vi.fn() }));
+vi.mock('child_process', () => ({ execFile: vi.fn() }));
 
-const mockedExecFileSync = vi.mocked(execFileSync);
+const mockedExecFile = vi.mocked(execFile);
+
+/** Drives `util.promisify(execFile)`'s error-first callback contract. */
+function mockExecFileResult(stdout: string) {
+  mockedExecFile.mockImplementation(((...args: unknown[]) => {
+    const callback = args[args.length - 1] as (
+      error: Error | null,
+      stdout: string,
+      stderr: string,
+    ) => void;
+    callback(null, stdout, '');
+  }) as unknown as typeof execFile);
+}
+
+function mockExecFileError(error: Error) {
+  mockedExecFile.mockImplementation(((...args: unknown[]) => {
+    const callback = args[args.length - 1] as (
+      error: Error | null,
+      stdout: string,
+      stderr: string,
+    ) => void;
+    callback(error, '', '');
+  }) as unknown as typeof execFile);
+}
 
 describe('resolveGitBranch', () => {
   beforeEach(() => {
     vi.resetAllMocks();
   });
 
-  it('returns the branch reported by git', () => {
-    mockedExecFileSync.mockReturnValue('feature/foo\n' as never);
+  it('returns the branch reported by git', async () => {
+    mockExecFileResult('feature/foo\n');
 
-    expect(resolveGitBranch('/workspace/project')).toBe('feature/foo');
-    expect(mockedExecFileSync).toHaveBeenCalledWith(
+    await expect(resolveGitBranch('/workspace/project')).resolves.toBe(
+      'feature/foo',
+    );
+    expect(mockedExecFile).toHaveBeenCalledWith(
       'git',
       ['-C', '/workspace/project', 'rev-parse', '--abbrev-ref', 'HEAD'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      { encoding: 'utf8' },
+      expect.any(Function),
     );
   });
 
-  it('returns undefined for a detached HEAD', () => {
-    mockedExecFileSync.mockReturnValue('HEAD\n' as never);
+  it('returns undefined for a detached HEAD', async () => {
+    mockExecFileResult('HEAD\n');
 
-    expect(resolveGitBranch('/workspace/project')).toBeUndefined();
+    await expect(
+      resolveGitBranch('/workspace/project'),
+    ).resolves.toBeUndefined();
   });
 
-  it('fails soft when git fails', () => {
-    mockedExecFileSync.mockImplementation(() => {
-      throw new Error('not a git repository');
-    });
+  it('fails soft when git fails', async () => {
+    mockExecFileError(new Error('not a git repository'));
 
-    expect(resolveGitBranch('/workspace/project')).toBeUndefined();
+    await expect(
+      resolveGitBranch('/workspace/project'),
+    ).resolves.toBeUndefined();
   });
 });

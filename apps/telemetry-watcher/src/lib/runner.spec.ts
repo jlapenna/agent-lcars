@@ -82,7 +82,7 @@ describe('startSidecar', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();
@@ -113,8 +113,8 @@ describe('startSidecar', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
-      resolveGitRepo: () => undefined,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
     });
 
     await daemon.tick();
@@ -142,7 +142,7 @@ describe('startSidecar', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();
@@ -171,7 +171,7 @@ describe('startSidecar', () => {
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
       isProcessAliveForCwd: () => true,
-      resolveGitBranch: () => undefined,
+      resolveGitBranch: async () => undefined,
     });
 
     await daemon.tick();

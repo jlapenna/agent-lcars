@@ -26,8 +26,10 @@ export interface StartSidecarOptions {
   readFile?: (filePath: string) => string;
   statFile?: (filePath: string) => { mtimeMs: number; size: number };
   isProcessAliveForCwd?: (cwd: string) => boolean;
-  resolveGitBranch?: (cwd: string) => string | undefined;
-  resolveGitRepo?: (cwd: string) => { owner: string; name: string } | undefined;
+  resolveGitBranch?: (cwd: string) => Promise<string | undefined>;
+  resolveGitRepo?: (
+    cwd: string,
+  ) => Promise<{ owner: string; name: string } | undefined>;
   now?: () => string;
   /** Test-only: skip the initial `daemon.start()` call so a test can drive
    * `daemon.tick()` explicitly instead of racing the fire-and-forget first

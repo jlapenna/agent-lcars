@@ -34,6 +34,18 @@ export function isSafeIdentifier(value: string): boolean {
   return SAFE_IDENTIFIER_RE.test(value);
 }
 
+export const TITLE_MAX_LENGTH = 80;
+
+/** Collapses whitespace and truncates to `TITLE_MAX_LENGTH`, ellipsizing
+ * anything longer — shared by every transcript adapter that derives a
+ * session title from freeform user/agent text. */
+export function truncateTitle(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  return collapsed.length > TITLE_MAX_LENGTH
+    ? `${collapsed.slice(0, TITLE_MAX_LENGTH - 1)}…`
+    : collapsed;
+}
+
 /** Recursively collects every string leaf out of an arbitrarily-shaped value. */
 export function collectStrings(value: unknown, out: string[]): void {
   if (typeof value === 'string') {

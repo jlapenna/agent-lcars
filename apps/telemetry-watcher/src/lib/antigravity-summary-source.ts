@@ -2,6 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { SessionSummary } from '@agent-lcars/telemetry';
 
+import { DEFAULT_CHECKOUT_ROOT } from './default-checkout';
+
 /**
  * Antigravity CLI's global summary-tier SQLite DB
  * (`~/.gemini/antigravity-cli/conversation_summaries.db`) — one row per
@@ -234,12 +236,23 @@ function toSessionSummary(
   };
 }
 
-/** Default privacy allowlist — this deployment (pike) is single-tenant for
- * one checkout, mirroring `allowlist.ts`'s `DEFAULT_PROJECT_DIR_ALLOWLIST`
- * hardcoding the same repo path for the same reason. */
-export const DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES = [
-  '/home/jlapenna/p/members',
-];
+/** Default privacy allowlist — see `default-checkout.ts`'s doc comment. */
+export const DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES = [DEFAULT_CHECKOUT_ROOT];
+
+/** One open connection per distinct `dbPath`, reused across polls for the
+ * life of the process instead of reopening the DB every tick — see
+ * `pollAntigravitySummaries`'s doc comment. */
+const openDatabases = new Map<string, DatabaseSync>();
+
+function evictDatabase(dbPath: string, db: DatabaseSync): void {
+  openDatabases.delete(dbPath);
+  try {
+    db.close();
+  } catch {
+    // Already unusable (e.g. the query below proved it isn't a real
+    // database) - nothing more to clean up.
+  }
+}
 
 /**
  * Polls Antigravity's summary-tier SQLite DB and returns every row
@@ -247,21 +260,27 @@ export const DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES = [
  * Opens read-only (the live CLI writes to this file) and fails soft on any
  * whole-DB problem — missing file, lock contention, or unexpected schema —
  * returning `[]` and invoking `options.onUnavailable` rather than throwing.
- * Stateless: callers that need change-detection (skip re-upserting an
- * unchanged row) or once-per-process warning throttling do that themselves
- * around this function — see `daemon.ts`.
+ * Keeps one connection open per `dbPath` across calls (see `openDatabases`)
+ * rather than reopening the file on every poll; a connection that turns out
+ * to be broken is evicted so the next call retries with a fresh one.
+ * Otherwise stateless: callers that need change-detection (skip
+ * re-upserting an unchanged row) or once-per-process warning throttling do
+ * that themselves around this function — see `daemon.ts`.
  */
 export function pollAntigravitySummaries(
   dbPath: string,
   allowlistPrefixes: string[] = DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
   options: PollAntigravitySummariesOptions = {},
 ): SessionSummary[] {
-  let db: DatabaseSync;
-  try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
-  } catch (error) {
-    options.onUnavailable?.(error);
-    return [];
+  let db = openDatabases.get(dbPath);
+  if (!db) {
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+      openDatabases.set(dbPath, db);
+    } catch (error) {
+      options.onUnavailable?.(error);
+      return [];
+    }
   }
 
   try {
@@ -280,14 +299,8 @@ export function pollAntigravitySummaries(
     }
     return summaries;
   } catch (error) {
+    evictDatabase(dbPath, db);
     options.onUnavailable?.(error);
     return [];
-  } finally {
-    try {
-      db.close();
-    } catch {
-      // Already unusable (e.g. the query above proved it isn't a real
-      // database) - nothing more to clean up.
-    }
   }
 }

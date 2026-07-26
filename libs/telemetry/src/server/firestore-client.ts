@@ -9,11 +9,8 @@ import { GoogleAuth } from 'google-auth-library';
 
 assertNotBrowser();
 
-// Source-of-truth inventory: infra-inventory/agent-telemetry.yaml.
-// Not secrets - a database id and a service account email are identifiers,
-// not credentials. The console's runtime SA (firebase-app-hosting-compute)
-// is already granted roles/iam.serviceAccountTokenCreator on this reader SA
-// (see the yaml), so no key file or secret is needed to impersonate it.
+// See infra/terraform/main.tf for provisioning (the `agent-telemetry`
+// Firestore database and the `apphosting_firestore` grant below).
 export const AGENT_TELEMETRY_DATABASE_ID =
   process.env['AGENT_TELEMETRY_DATABASE_ID'] ?? '(default)';
 
@@ -29,11 +26,12 @@ function buildFirestore(projectId: string): Firestore {
 
 /**
  * Read-only Firestore client scoped to the dedicated `agent-telemetry`
- * database, isolated from the app's default database. In prod this
- * impersonates the read-only `agent-telemetry-reader` SA (never the broad
- * runtime identity); against the emulator it connects directly, same as
- * `@repo/firebase-server`. Distinct from `getAgentTelemetryWriterFirestore`
- * in store.ts, which `upsertSession` uses and this client cannot do.
+ * database, isolated from the app's default database. In prod this runs as
+ * the console's own runtime identity (firebase-app-hosting-compute), granted
+ * `roles/datastore.viewer` directly (see infra/terraform/main.tf's
+ * `apphosting_firestore`) — no impersonation or key file involved. Distinct
+ * from `getAgentTelemetryWriterFirestore` in store.ts, which `upsertSession`
+ * uses and this client cannot do.
  */
 export function getAgentTelemetryReaderFirestore():
   Firestore | Promise<Firestore> {

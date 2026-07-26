@@ -1,10 +1,12 @@
+import { DEFAULT_CHECKOUT_SLUG_GLOB } from './default-checkout';
+
 /**
  * The watcher only ever ships CLI telemetry for project dirs matching this
  * allowlist — interactive transcripts can contain other projects' data, so
  * scope creep here is a privacy incident, not just a bug. See PRD #2112
  * amendment 2026-07-10, decision 3.
  */
-export const DEFAULT_PROJECT_DIR_ALLOWLIST = ['-home-jlapenna-p-members*'];
+export const DEFAULT_PROJECT_DIR_ALLOWLIST = [DEFAULT_CHECKOUT_SLUG_GLOB];
 
 const GLOB_SPECIAL_CHARS = /[.+^${}()|[\]\\]/g;
 
