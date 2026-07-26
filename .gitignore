@@ -16,6 +16,10 @@ __pycache__/
 
 # dependencies
 node_modules
+# pnpm falls back to a project-local store here when run inside
+# tools/e2e-docker.sh's container (isolated HOME, no pre-existing pnpm
+# config) instead of using the usual global store.
+.pnpm-store
 **/.terraform/*
 *.tfstate
 *.tfstate.*
