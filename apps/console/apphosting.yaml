@@ -75,7 +75,7 @@ env:
   # codex pipeline is marked null rather than left to 404 against a
   # nonexistent workflow file on every dashboard load.
   - variable: AGENT_LCARS_WATCHED_REPOS
-    value: '[{"owner":"supersprinklesracing","name":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","workflowFiles":{"codex":null}}]'
+    value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"lcars","workflowFiles":{"codex":null}}]'
     availability:
       - RUNTIME
 
