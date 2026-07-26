@@ -730,3 +730,33 @@ func TestEnsureRunnerImagePullsAfterHostPrune(t *testing.T) {
 		t.Fatalf("image pulls = %d, want exactly 1", got)
 	}
 }
+
+// TestRunnerBinds pins the privilege boundary the socketless build-client
+// lane depends on: file mounts are read-only, and they never drag the
+// docker socket or the shared workdir along with them.
+func TestRunnerBinds(t *testing.T) {
+	mounts := []FileMount{{HostPath: "/etc/buildkit/client.pem", ContainerPath: "/secrets/client.pem"}}
+
+	socketless := runnerBinds(false, mounts)
+	if len(socketless) != 1 || socketless[0] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
+		t.Fatalf("socketless binds = %#v", socketless)
+	}
+	for _, b := range socketless {
+		if strings.Contains(b, "docker.sock") || strings.Contains(b, "/home/runner/_work") {
+			t.Fatalf("socketless lane leaked a privileged bind: %q", b)
+		}
+	}
+
+	if got := runnerBinds(false, nil); got != nil {
+		t.Fatalf("no socket and no mounts should yield no binds, got %#v", got)
+	}
+
+	// The socket lane keeps its three existing binds and appends mounts.
+	withSocket := runnerBinds(true, mounts)
+	if len(withSocket) != 4 {
+		t.Fatalf("socket lane binds = %#v", withSocket)
+	}
+	if withSocket[3] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
+		t.Fatalf("file mount not appended read-only: %q", withSocket[3])
+	}
+}

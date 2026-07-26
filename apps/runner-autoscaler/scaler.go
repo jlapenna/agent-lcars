@@ -50,6 +50,10 @@ type Scaler struct {
 	// source path is resolved by THAT daemon, so this is correct for every
 	// host in the pool, not just "local".
 	mountDockerSocket bool
+	// fileMounts: see Config.FileMounts. Appended to the container's binds
+	// with an explicit :ro, independently of mountDockerSocket -- the
+	// socketless build-client lane uses these and nothing else.
+	fileMounts []FileMount
 	// workDirSizeCapBytes: size ceiling for the shared /home/runner/_work
 	// directory bind-mounted into every runner when MountDockerSocket is
 	// set -- that shared dir has no per-container lifecycle to clean it up,
@@ -1083,6 +1087,29 @@ func dockerSafeNamePart(s string) string {
 	}, s)
 }
 
+// runnerBinds builds the bind list for a spawned runner. Split out of
+// startRunner so the privilege-sensitive part -- root-equivalent socket
+// access versus scoped read-only files -- is unit testable without a
+// docker daemon.
+//
+// File mounts are ALWAYS :ro. Config validation already bounds their
+// sources to fleet.file_mount_allowlist and rejects the docker socket
+// outright; read-only is the last of those three guards and the cheapest.
+func runnerBinds(mountDockerSocket bool, fileMounts []FileMount) []string {
+	var binds []string
+	if mountDockerSocket {
+		binds = []string{
+			"/home/runner/_work:/home/runner/_work",
+			"/home/runner/externals:/home/runner/externals",
+			dockerSocketPath + ":" + dockerSocketPath,
+		}
+	}
+	for _, m := range fileMounts {
+		binds = append(binds, fmt.Sprintf("%s:%s:ro", m.HostPath, m.ContainerPath))
+	}
+	return binds
+}
+
 func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	if a.draining.Load() {
 		return "", fmt.Errorf("scale set %q is draining", a.scaleSetName)
@@ -1149,14 +1176,9 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to generate JIT config: %w", err)
 	}
 
-	var binds []string
+	binds := runnerBinds(a.mountDockerSocket, a.fileMounts)
 	var groupAdd []string
 	if a.mountDockerSocket {
-		binds = []string{
-			"/home/runner/_work:/home/runner/_work",
-			"/home/runner/externals:/home/runner/externals",
-			"/var/run/docker.sock:/var/run/docker.sock",
-		}
 		gid, gidErr := a.coordinator().socketGID(host)
 		if gidErr != nil {
 			return "", gidErr

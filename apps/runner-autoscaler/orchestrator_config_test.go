@@ -334,3 +334,150 @@ registrations:
 		t.Fatalf("expected 'at least one enabled scale set' error, got %v", err)
 	}
 }
+
+func TestParseFileMounts(t *testing.T) {
+	allow := []string{"/etc/buildkit"}
+	for _, tc := range []struct {
+		name    string
+		raw     []string
+		allow   []string
+		wantErr string
+	}{
+		{name: "valid", raw: []string{"/etc/buildkit/client.pem:/secrets/client.pem"}, allow: allow},
+		// file_mounts is new, so it fails closed rather than fail-open the
+		// way docker_socket_allowlist does for backward compatibility.
+		{name: "no allowlist", raw: []string{"/etc/buildkit/client.pem:/secrets/client.pem"}, allow: nil,
+			wantErr: "fleet.file_mount_allowlist is empty"},
+		{name: "outside allowlist", raw: []string{"/etc/other/client.pem:/secrets/client.pem"}, allow: allow,
+			wantErr: "not under any fleet.file_mount_allowlist prefix"},
+		// The whole point of the allowlist: a sibling directory whose name
+		// merely starts with an allowed prefix must not match.
+		{name: "prefix is not a path boundary", raw: []string{"/etc/buildkit-evil/x.pem:/secrets/x.pem"}, allow: allow,
+			wantErr: "not under any fleet.file_mount_allowlist prefix"},
+		// Without this, file_mounts would be a way around
+		// fleet.docker_socket_allowlist -- see dockerSocketPath.
+		{name: "docker socket rejected", raw: []string{"/var/run/docker.sock:/var/run/docker.sock"},
+			allow: []string{"/var/run"}, wantErr: "is or contains the Docker socket"},
+		{name: "traversal in source", raw: []string{"/etc/buildkit/../../root/.ssh/id_rsa:/secrets/k"}, allow: allow,
+			wantErr: "must be absolute and already clean"},
+		{name: "relative container path", raw: []string{"/etc/buildkit/client.pem:secrets/client.pem"}, allow: allow,
+			wantErr: "must be absolute and already clean"},
+		{name: "missing separator", raw: []string{"/etc/buildkit/client.pem"}, allow: allow,
+			wantErr: `must be "hostPath:containerPath"`},
+		{name: "duplicate target", allow: allow,
+			raw:     []string{"/etc/buildkit/a.pem:/secrets/c.pem", "/etc/buildkit/b.pem:/secrets/c.pem"},
+			wantErr: "more than once"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseFileMounts("lane", tc.raw, tc.allow)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tc.raw) {
+				t.Fatalf("got %d mounts, want %d", len(got), len(tc.raw))
+			}
+		})
+	}
+}
+
+func TestOrchestratorConfigResolvesFileMounts(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n",
+		"  placement: {}\n  file_mount_allowlist: [/etc/buildkit]\n", 1)
+	body = strings.Replace(body, "    max_runners: 1\n    mount_docker_socket: true\n",
+		"    max_runners: 1\n    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range resolved.ScaleSets {
+		if s.ScaleSetName != "e2e" {
+			continue
+		}
+		if len(s.FileMounts) != 1 || s.FileMounts[0].ContainerPath != "/secrets/client.pem" {
+			t.Fatalf("unexpected file mounts: %#v", s.FileMounts)
+		}
+		if s.MountDockerSocket {
+			t.Fatal("file_mounts must not imply mount_docker_socket")
+		}
+		return
+	}
+	t.Fatal("scale set e2e not found")
+}
+
+func TestOrchestratorConfigFileMountsFailClosedWithoutAllowlist(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "    mount_docker_socket: true\n",
+		"    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "fleet.file_mount_allowlist is empty") {
+		t.Fatalf("expected fail-closed rejection, got %v", err)
+	}
+}
+
+// TestParseFileMountsRejectsIndirectDockerSocket covers the ways a literal
+// equality check against /var/run/docker.sock can be walked around: the
+// containing directory (read-only does not stop a connect(2) to a socket
+// inside it) and the /run spelling, since /var/run is a symlink to /run on
+// systemd hosts.
+func TestParseFileMountsRejectsIndirectDockerSocket(t *testing.T) {
+	for _, src := range []string{
+		"/var/run/docker.sock",
+		"/run/docker.sock",
+		"/var/run",
+		"/run",
+		"/var",
+		"/",
+	} {
+		t.Run(src, func(t *testing.T) {
+			// Allowlist the source itself, so only the socket guard can reject it.
+			_, err := parseFileMounts("lane", []string{src + ":/host-run"}, []string{src})
+			if err == nil || !strings.Contains(err.Error(), "Docker socket") {
+				t.Fatalf("source %q: err = %v, want Docker socket rejection", src, err)
+			}
+		})
+	}
+}
+
+func TestValidateFileMountAllowlist(t *testing.T) {
+	for _, tc := range []struct{ name, entry, wantErr string }{
+		{name: "valid", entry: "/etc/buildkit-client"},
+		// Cleaning this instead of rejecting it would silently widen the
+		// privilege boundary from one directory to all of /etc.
+		{name: "unclean widens scope", entry: "/etc/buildkit-client/..", wantErr: "absolute and already clean"},
+		{name: "relative", entry: "etc/buildkit-client", wantErr: "absolute and already clean"},
+		{name: "trailing slash", entry: "/etc/buildkit-client/", wantErr: "absolute and already clean"},
+		{name: "socket dir", entry: "/var/run", wantErr: "contains the Docker socket"},
+		{name: "run dir", entry: "/run", wantErr: "contains the Docker socket"},
+		{name: "root", entry: "/", wantErr: "contains the Docker socket"},
+		{name: "socket itself", entry: "/var/run/docker.sock", wantErr: "contains the Docker socket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateFileMountAllowlist([]string{tc.entry})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// The allowlist is the privilege boundary, so a bad entry must fail the
+// config even when nothing references it yet.
+func TestOrchestratorConfigRejectsBadAllowlistWithoutAnyFileMounts(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n",
+		"  placement: {}\n  file_mount_allowlist: [/var/run]\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "contains the Docker socket") {
+		t.Fatalf("expected allowlist rejection, got %v", err)
+	}
+}
