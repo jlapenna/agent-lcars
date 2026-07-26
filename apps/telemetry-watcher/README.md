@@ -14,9 +14,10 @@ esbuild-bundled with every dependency inlined including
 `@google-cloud/firestore`), baked into the self-hosted `claude-agent-lcars`
 runner image at `/usr/local/lib/agent-lcars/sidecar.cjs`
 (this repo's own `apps/runner-autoscaler/runner-image/Dockerfile` builds
-it from this repo's own `main` at image-build time — see issue #30;
-`jlapenna/homelab` keeps a fallback-build-only duplicate of that
-Dockerfile, kept in sync by hand). No download, no version pin to keep in
+it from this repo's own `main` at image-build time — see issue #30; that
+Dockerfile is the single source, and the former hand-synced duplicate in
+`jlapenna/homelab` was removed along with the local-build fallback it
+served). No download, no version pin to keep in
 sync: the image build is the only "release" step, replacing a
 publish-then-pin scheme whose pin silently went stale for months (#29).
 
