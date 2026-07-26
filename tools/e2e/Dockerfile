@@ -17,8 +17,13 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends default-jre-headless \
   && rm -rf /var/lib/apt/lists/*
 
-# Provide pnpm at the version pinned by the repo's packageManager field.
-RUN corepack enable && corepack prepare pnpm@10.34.1 --activate
+# This image has no repo checkout at build time (tools/e2e-docker.sh bind-
+# mounts one at run time instead), so there's no packageManager field to pre-
+# fetch a pinned pnpm version from here. `corepack enable` alone is enough:
+# corepack resolves and fetches the right version on first `pnpm` invocation
+# against whichever repo ends up mounted, so this never goes stale the way a
+# hardcoded `corepack prepare pnpm@X --activate` here would.
+RUN corepack enable
 
 # Trigger multi-platform rebuild to support arm64 runners natively
 ENV CI=1
