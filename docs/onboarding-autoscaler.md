@@ -322,36 +322,17 @@ No `docker/setup-qemu-action` is needed — nothing is built on the runner,
 and arm64 emulation lives on the builder, which is where `RUN` steps
 actually execute under the remote driver.
 
-`docker-registry.lan.jlapenna.net` requires a credential for **writes**
-(agent-lcars#112). Reads stay anonymous, so pulling needs nothing. A
-publishing job must log in first, or its push is rejected with
-`authorization failed: no basic auth credentials`:
+Pushes to `docker-registry.lan.jlapenna.net` are currently
+**unauthenticated**. Treat that as a known gap rather than a feature: any
+LAN-positioned host — including every ephemeral runner — can overwrite or
+delete the images the whole fleet executes (agent-lcars#112).
 
-```yaml
-# in your workflow, before any build/push step
-- name: Log in to the registry
-  run: |
-    docker login docker-registry.lan.jlapenna.net \
-      --username publisher --password-stdin < /secrets/registry-password
-```
-
-The password is a read-only bind-mount, delivered by the autoscaler to
-publishing lanes only — add it to the lane's `file_mounts` alongside the
-BuildKit client certificate:
-
-```yaml
-file_mounts:
-  - /etc/buildkit-client/registry-password:/secrets/registry-password
-```
-
-It is never a GitHub Actions secret: the control plane runs locally, so the
-whole publish credential set shares one storage and rotation path. Under the
-remote driver the _builder_ performs the push, but registry auth is
-forwarded from the client's Docker config through the build session — so
-logging in on the runner is what authorizes the builder's push.
-
-Rotation and the full access model live in jlapenna/homelab's
-`docs/registry.md`.
+Write auth was deployed and reverted on 2026-07-26. Basic auth works for
+`docker push` but **not** for Buildx's remote driver, which is what
+publishing uses: BuildKit takes registry credentials only from the client
+session and does not complete a Basic challenge through it, so `docker
+login` succeeds and the push still returns 401. Whatever replaces it must
+work with the remote driver — see jlapenna/homelab `docs/registry.md`.
 
 ## Verifying it actually worked
 
