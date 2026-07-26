@@ -153,12 +153,59 @@ type ScaleSetConfigFile struct {
 	FileMounts []string `yaml:"file_mounts,omitempty"`
 }
 
-// dockerSocketPath is rejected as a file_mounts source. Permitting it would
-// let any scale set obtain the placement host's docker socket -- and the
-// root-equivalent access that implies -- while bypassing
-// fleet.docker_socket_allowlist entirely, which is the specific gate
-// agent-lcars#101 relies on.
+// dockerSocketPath is the canonical socket location, also used to build the
+// docker-socket bind itself. See dockerSocketPaths for why one literal is
+// not enough when validating untrusted config.
 const dockerSocketPath = "/var/run/docker.sock"
+
+// dockerSocketPaths are every spelling of the Docker socket that config
+// validation must refuse to expose. Two are needed because /var/run is a
+// symlink to /run on systemd hosts, so the same socket has two absolute
+// paths and a literal comparison against one of them silently permits the
+// other.
+//
+// Sources are rejected if they ARE one of these or CONTAIN one: mounting
+// /var/run read-only still lets a process inside the container connect to
+// the socket sitting in it -- read-only restricts writes to the directory,
+// not connections to a socket within. Either form would hand back the
+// root-equivalent host access that fleet.docker_socket_allowlist exists to
+// gate, which is the whole point of agent-lcars#101.
+var dockerSocketPaths = []string{"/var/run/docker.sock", "/run/docker.sock"}
+
+// containsPath reports whether ancestor is, or is a parent directory of,
+// target. Compares whole path segments, so /etc/buildkit does not contain
+// /etc/buildkit-evil. Both arguments must already be absolute and clean.
+func containsPath(ancestor, target string) bool {
+	if ancestor == target {
+		return true
+	}
+	if ancestor == "/" {
+		return strings.HasPrefix(target, "/")
+	}
+	return strings.HasPrefix(target, ancestor+string(filepath.Separator))
+}
+
+// validateFileMountAllowlist checks the fleet allowlist itself. This list is
+// the privilege boundary for host-file access, so it is validated even when
+// no scale set currently uses it -- a latent over-broad entry should fail
+// the config, not wait for someone to exploit it.
+func validateFileMountAllowlist(allowlist []string) error {
+	for _, entry := range allowlist {
+		prefix := strings.TrimSpace(entry)
+		// Do NOT clean-and-accept: cleaning "/etc/buildkit-client/.."
+		// would silently widen the boundary to /etc, granting a far
+		// broader subtree than the configured text suggests.
+		if !filepath.IsAbs(prefix) || filepath.Clean(prefix) != prefix {
+			return fmt.Errorf("fleet.file_mount_allowlist entry %q must be absolute and already clean", entry)
+		}
+		for _, sock := range dockerSocketPaths {
+			if containsPath(prefix, sock) {
+				return fmt.Errorf("fleet.file_mount_allowlist entry %q is or contains the Docker socket %s; allowlisting it would bypass fleet.docker_socket_allowlist", entry, sock)
+			}
+		}
+	}
+	return nil
+}
 
 // parseFileMounts validates a scale set's file_mounts against the fleet
 // allowlist and returns the resolved, read-only mounts.
@@ -182,8 +229,10 @@ func parseFileMounts(scaleSetName string, raw []string, allowlist []string) ([]F
 				return nil, fmt.Errorf("scale set %q file_mounts %s path %q must be absolute and already clean", scaleSetName, label, p)
 			}
 		}
-		if hostPath == dockerSocketPath {
-			return nil, fmt.Errorf("scale set %q may not mount %s via file_mounts; use mount_docker_socket, which is gated by fleet.docker_socket_allowlist", scaleSetName, dockerSocketPath)
+		for _, sock := range dockerSocketPaths {
+			if containsPath(hostPath, sock) {
+				return nil, fmt.Errorf("scale set %q may not mount %q via file_mounts: it is or contains the Docker socket %s; use mount_docker_socket, which is gated by fleet.docker_socket_allowlist", scaleSetName, hostPath, sock)
+			}
 		}
 		if !underAllowlist(hostPath, allowlist) {
 			return nil, fmt.Errorf("scale set %q file_mounts source %q is not under any fleet.file_mount_allowlist prefix", scaleSetName, hostPath)
@@ -197,13 +246,13 @@ func parseFileMounts(scaleSetName string, raw []string, allowlist []string) ([]F
 	return out, nil
 }
 
-// underAllowlist reports whether path sits at or beneath an allowlist entry,
-// comparing whole path segments so that "/etc/buildkit-evil" does not match
-// an allowlist entry of "/etc/buildkit".
+// underAllowlist reports whether path sits at or beneath an allowlist entry.
+// Entries are NOT cleaned here -- validateFileMountAllowlist has already
+// rejected unclean ones, so normalizing at comparison time could only
+// broaden the boundary silently.
 func underAllowlist(path string, allowlist []string) bool {
 	for _, prefix := range allowlist {
-		prefix = filepath.Clean(strings.TrimSpace(prefix))
-		if path == prefix || strings.HasPrefix(path, prefix+string(filepath.Separator)) {
+		if containsPath(strings.TrimSpace(prefix), path) {
 			return true
 		}
 	}
@@ -297,6 +346,10 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			}
 			r.DockerSocketGID[h.Name] = h.DockerSocketGID
 		}
+	}
+
+	if err := validateFileMountAllowlist(c.Fleet.FileMountAllowlist); err != nil {
+		return err
 	}
 
 	p := &c.Fleet.Placement

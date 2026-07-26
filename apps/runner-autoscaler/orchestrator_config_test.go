@@ -357,7 +357,7 @@ func TestParseFileMounts(t *testing.T) {
 		// Without this, file_mounts would be a way around
 		// fleet.docker_socket_allowlist -- see dockerSocketPath.
 		{name: "docker socket rejected", raw: []string{"/var/run/docker.sock:/var/run/docker.sock"},
-			allow: []string{"/var/run"}, wantErr: "may not mount /var/run/docker.sock"},
+			allow: []string{"/var/run"}, wantErr: "is or contains the Docker socket"},
 		{name: "traversal in source", raw: []string{"/etc/buildkit/../../root/.ssh/id_rsa:/secrets/k"}, allow: allow,
 			wantErr: "must be absolute and already clean"},
 		{name: "relative container path", raw: []string{"/etc/buildkit/client.pem:secrets/client.pem"}, allow: allow,
@@ -416,5 +416,68 @@ func TestOrchestratorConfigFileMountsFailClosedWithoutAllowlist(t *testing.T) {
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "fleet.file_mount_allowlist is empty") {
 		t.Fatalf("expected fail-closed rejection, got %v", err)
+	}
+}
+
+// TestParseFileMountsRejectsIndirectDockerSocket covers the ways a literal
+// equality check against /var/run/docker.sock can be walked around: the
+// containing directory (read-only does not stop a connect(2) to a socket
+// inside it) and the /run spelling, since /var/run is a symlink to /run on
+// systemd hosts.
+func TestParseFileMountsRejectsIndirectDockerSocket(t *testing.T) {
+	for _, src := range []string{
+		"/var/run/docker.sock",
+		"/run/docker.sock",
+		"/var/run",
+		"/run",
+		"/var",
+		"/",
+	} {
+		t.Run(src, func(t *testing.T) {
+			// Allowlist the source itself, so only the socket guard can reject it.
+			_, err := parseFileMounts("lane", []string{src + ":/host-run"}, []string{src})
+			if err == nil || !strings.Contains(err.Error(), "Docker socket") {
+				t.Fatalf("source %q: err = %v, want Docker socket rejection", src, err)
+			}
+		})
+	}
+}
+
+func TestValidateFileMountAllowlist(t *testing.T) {
+	for _, tc := range []struct{ name, entry, wantErr string }{
+		{name: "valid", entry: "/etc/buildkit-client"},
+		// Cleaning this instead of rejecting it would silently widen the
+		// privilege boundary from one directory to all of /etc.
+		{name: "unclean widens scope", entry: "/etc/buildkit-client/..", wantErr: "absolute and already clean"},
+		{name: "relative", entry: "etc/buildkit-client", wantErr: "absolute and already clean"},
+		{name: "trailing slash", entry: "/etc/buildkit-client/", wantErr: "absolute and already clean"},
+		{name: "socket dir", entry: "/var/run", wantErr: "contains the Docker socket"},
+		{name: "run dir", entry: "/run", wantErr: "contains the Docker socket"},
+		{name: "root", entry: "/", wantErr: "contains the Docker socket"},
+		{name: "socket itself", entry: "/var/run/docker.sock", wantErr: "contains the Docker socket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateFileMountAllowlist([]string{tc.entry})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// The allowlist is the privilege boundary, so a bad entry must fail the
+// config even when nothing references it yet.
+func TestOrchestratorConfigRejectsBadAllowlistWithoutAnyFileMounts(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n",
+		"  placement: {}\n  file_mount_allowlist: [/var/run]\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "contains the Docker socket") {
+		t.Fatalf("expected allowlist rejection, got %v", err)
 	}
 }
