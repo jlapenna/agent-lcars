@@ -61,11 +61,14 @@ func TestDockerSafeNamePart(t *testing.T) {
 }
 
 func TestPickHostReachability(t *testing.T) {
-	// Create a client that will succeed (the local socket client)
-	localClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
-	if err != nil {
-		t.Fatalf("failed to create local client: %v", err)
-	}
+	// A fake daemon, NOT dockerclient.FromEnv. FromEnv defaults to
+	// /var/run/docker.sock, and these tests then assert the client is
+	// REACHABLE -- so they silently depended on the machine running them
+	// having a live Docker daemon. That held while CI published from a
+	// socket-mounted runner and broke the moment publishing moved to a
+	// socketless lane (#101). The fake answers /_ping, which is all the
+	// reachability probe needs.
+	localClient := newFakeDockerServer(t).client(t)
 
 	// Create a client that will fail to ping (unreachable TCP port)
 	failingClient, err := dockerclient.NewClientWithOpts(
@@ -216,10 +219,10 @@ func TestPickHostSparkLoadPenalty(t *testing.T) {
 	}))
 	defer server.Close()
 
-	localClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
-	if err != nil {
-		t.Fatalf("failed to create local client: %v", err)
-	}
+	// Fake daemon rather than dockerclient.FromEnv -- see
+	// TestPickHostReachability for why FromEnv made these tests depend on
+	// the host having a live Docker socket.
+	localClient := newFakeDockerServer(t).client(t)
 
 	scaler := &Scaler{
 		sparkMetricsURL: server.URL,
@@ -303,10 +306,10 @@ func TestPickHostAvoidsOverloadedHost(t *testing.T) {
 	}))
 	defer metrics.Close()
 
-	localClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Fake daemon rather than dockerclient.FromEnv -- see
+	// TestPickHostReachability for why FromEnv made these tests depend on
+	// the host having a live Docker socket.
+	localClient := newFakeDockerServer(t).client(t)
 	scaler := &Scaler{
 		hostMetricsURLTemplate: metrics.URL + "/%s/metrics",
 		dockerHosts:            []DockerHost{{Name: "pike", Client: localClient}, {Name: "laforge", Client: localClient}},
@@ -323,10 +326,10 @@ func TestPickHostAvoidsOverloadedHost(t *testing.T) {
 }
 
 func TestHostLoadMetricsFailureFailsOpen(t *testing.T) {
-	localClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Fake daemon rather than dockerclient.FromEnv -- see
+	// TestPickHostReachability for why FromEnv made these tests depend on
+	// the host having a live Docker socket.
+	localClient := newFakeDockerServer(t).client(t)
 	scaler := &Scaler{
 		hostMetricsURLTemplate: "http://127.0.0.1:1/%s",
 		dockerHosts:            []DockerHost{{Name: "pike", Client: localClient}},
