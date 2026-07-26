@@ -49,6 +49,29 @@ function parseGitHubRemote(
 }
 
 /**
+ * Repo renames this fleet has been through, keyed by the pre-rename
+ * `owner/name` a stale local `origin` remote can still report (GitHub
+ * renaming a repo does not rewrite anyone's local remote config). Applied
+ * after parsing so every `resolveGitRepo` caller gets the current
+ * canonical identity even from a checkout nobody's re-pointed yet, rather
+ * than every repo-identity comparison site needing its own alias
+ * awareness (see e.g. console's `sessionReferencesItemNumber`).
+ */
+const LEGACY_REPO_ALIASES: Record<string, { owner: string; name: string }> = {
+  'supersprinklesracing/members': {
+    owner: 'supersprinklesracing',
+    name: 'sprinkles',
+  },
+};
+
+function normalizeRepoAlias(repo: { owner: string; name: string }): {
+  owner: string;
+  name: string;
+} {
+  return LEGACY_REPO_ALIASES[`${repo.owner}/${repo.name}`] ?? repo;
+}
+
+/**
  * Resolves the `owner/name` of `cwd`'s GitHub `origin` remote, via
  * `git -C <cwd> remote get-url origin`. Fails soft (returns `undefined`)
  * for a non-git dir, a missing `origin` remote, a non-GitHub remote, or any
@@ -61,7 +84,8 @@ export async function resolveGitRepo(
 ): Promise<{ owner: string; name: string } | undefined> {
   try {
     const stdout = await runGit(cwd, ['remote', 'get-url', 'origin']);
-    return parseGitHubRemote(stdout.trim());
+    const repo = parseGitHubRemote(stdout.trim());
+    return repo && normalizeRepoAlias(repo);
   } catch {
     return undefined;
   }

@@ -59,6 +59,15 @@ describe('resolveGitRepo', () => {
     );
   });
 
+  it('normalizes a stale pre-rename origin (supersprinklesracing/members) to the current name', async () => {
+    mockExecFileResult('git@github.com:supersprinklesracing/members.git\n');
+
+    await expect(resolveGitRepo(cwd)).resolves.toEqual({
+      owner: 'supersprinklesracing',
+      name: 'sprinkles',
+    });
+  });
+
   it('returns undefined for a non-GitHub remote', async () => {
     mockExecFileResult('git@gitlab.com:supersprinklesracing/sprinkles.git\n');
 
