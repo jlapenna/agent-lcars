@@ -24,7 +24,21 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner:latest
 # image build fails and the fleet keeps running the last successfully
 # published image (see deploy_runner_autoscaler.yml's pull-first,
 # build-as-fallback logic) rather than shipping a broken tool.
-FROM node:24-slim AS telemetry-watcher-build
+# --platform=$BUILDPLATFORM pins this stage to the machine doing the
+# building instead of letting it be rebuilt once per *target* platform.
+# Everything it produces -- sidecar.cjs (a JavaScript bundle) and
+# sidecar-lifecycle.sh (a shell script) -- is architecture-independent, so
+# the arm64 rebuild recomputed a byte-identical artifact while running the
+# whole `pnpm install` + nx dependency chain under QEMU emulation.
+#
+# That emulated pass was the dominant cost of this image: publish runs were
+# landing at 16-24 minutes against a 20-minute job timeout and had started
+# failing outright (2026-07-26), leaving the fleet's runner image stale.
+# Building it once natively removes the emulated pass entirely.
+#
+# If this stage ever starts emitting a native binary, this pin becomes
+# wrong -- it would bake an amd64 artifact into the arm64 image.
+FROM --platform=$BUILDPLATFORM node:24-slim AS telemetry-watcher-build
 WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
