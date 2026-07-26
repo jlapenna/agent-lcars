@@ -50,8 +50,8 @@
 #   E2E_DOCKER_MEMORY=12g  E2E_DOCKER_MEMORY_SWAP=14g  E2E_DOCKER_PIDS=8192
 #   NX_MAX_PARALLEL=2      NODE_OPTIONS=--max-old-space-size=8192
 #
-# App/Firebase-emulator config (AUTH_SECRET, NEXT_PUBLIC_FIREBASE_*, etc.)
-# comes from .env.e2e, which the `e2e` target's own command already loads via
+# Most app config (AUTH_ENABLED, DEBUG, LOCAL, etc.) comes from .env.e2e,
+# which the `e2e` target's own command already loads via
 # `pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional`. This script
 # materializes .env.e2e from tools/e2e/ci.env's dummy values the first time
 # (never overwriting one you've customized locally, same as a fresh
@@ -59,6 +59,16 @@
 # `--env-file` flags: ci.env's KEY="value" quoting is dotenv syntax, and
 # `docker --env-file` does NOT strip those quotes the way dotenv does, so the
 # values would arrive with literal quote characters baked in.
+#
+# NEXT_PUBLIC_FIREBASE_*/AUTH_SECRET are the one exception: they're passed as
+# real `docker run -e` flags below (sourced from ci.env via ci_env_value, not
+# hardcoded) rather than left to the .env.e2e file above. Next.js inlines
+# NEXT_PUBLIC_* at `next build` time -- which runs as part of `nx run
+# <project>:e2e`'s dependsOn chain, BEFORE the dotenv-wrapped
+# `firebase emulators:exec "..."` command that actually loads .env.e2e ever
+# starts -- and Auth.js reads AUTH_SECRET just as early, during the
+# production server's own initialization. Left to only .env.e2e, both would
+# silently bake in as empty/undefined.
 #
 # Because the host glibc differs from the container's, the container gets its
 # own node_modules and pnpm store (shared across worktrees under
@@ -92,6 +102,20 @@ if [ "${UPDATE_SNAPSHOTS:-}" = "1" ]; then
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
+
+# Reads one KEY="value" line out of tools/e2e/ci.env, stripping its dotenv-
+# style surrounding quotes. Used below to get a handful of values in front
+# of the container early (see the NEXT_PUBLIC_FIREBASE_*/AUTH_SECRET -e
+# flags), without hardcoding a second copy of them that could drift from
+# ci.env.
+ci_env_value() {
+  local line
+  line="$(grep -m1 "^${1}=" "$ROOT/tools/e2e/ci.env" || true)"
+  line="${line#*=}"
+  line="${line%\"}"
+  line="${line#\"}"
+  printf '%s' "$line"
+}
 
 # Fail loudly instead of silently dropping '-- <playwright args>': with
 # forwardAllArgs:false, nx:run-commands ignores trailing CLI args entirely,
@@ -280,6 +304,14 @@ exec docker run --rm -t \
   -e VISUAL_ONLY="${VISUAL_ONLY:-}" \
   -e SKIP_VISUAL="${SKIP_VISUAL:-}" \
   -e E2E_GREP="${E2E_GREP:-}" \
+  -e AUTH_SECRET="$(ci_env_value AUTH_SECRET)" \
+  -e NEXT_PUBLIC_FIREBASE_API_KEY="$(ci_env_value NEXT_PUBLIC_FIREBASE_API_KEY)" \
+  -e NEXT_PUBLIC_FIREBASE_APP_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_APP_ID)" \
+  -e NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="$(ci_env_value NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN)" \
+  -e NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST="$(ci_env_value NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST)" \
+  -e NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)" \
+  -e NEXT_PUBLIC_FIREBASE_PROJECT_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_PROJECT_ID)" \
+  -e NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$(ci_env_value NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)" \
   "${UPDATE_ENV[@]}" \
   -w /work \
   "$IMAGE_TAG" \
