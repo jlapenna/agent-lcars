@@ -2,7 +2,7 @@
 
 Go source for the GitHub Actions runner-fleet control plane — one
 orchestrator process that supervises independent GitHub scale-set listeners
-(across `supersprinklesracing/members` and `jlapenna/agent-lcars`) and
+(across `supersprinklesracing/sprinkles` and `jlapenna/agent-lcars`) and
 schedules ephemeral runner containers across a shared Docker host pool. Also
 includes `runner-image/`, the Dockerfile for the JIT worker image those
 runners actually execute jobs in.

@@ -14,10 +14,10 @@ vi.mock('../lib/github-client', async (importOriginal) => {
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     kind: 'issue',
-    repo: { owner: 'supersprinklesracing', name: 'members' },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     number: 1,
     title: 'Fix the thing',
-    url: 'https://github.com/supersprinklesracing/members/issues/1',
+    url: 'https://github.com/supersprinklesracing/sprinkles/issues/1',
     updatedAt: '2026-07-07T00:00:00Z',
     actionTypes: [],
     labels: [],

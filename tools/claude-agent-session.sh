@@ -16,7 +16,7 @@
 # access, not the control plane's own dedicated fleet automation key
 # (which only that container can read).
 #
-# This is vendored, near-verbatim, from supersprinklesracing/members'
+# This is vendored, near-verbatim, from supersprinklesracing/sprinkles'
 # copy of the same script (members#3407 / this repo's own #46) -- both
 # repos share the identical fleet, so this was designed once and kept in
 # sync rather than solved twice independently. The only real differences
@@ -59,7 +59,7 @@ SSH_OPTS=(-o ConnectTimeout=8 -o BatchMode=yes)
 # Which scale set(s) to search. Every Claude run in this repo's claude.yml
 # runs on exactly this one (see its runs-on:). Override
 # (CLAUDE_SCALE_SETS, space-separated) for a different registration
-# sharing this same fleet -- e.g. supersprinklesracing/members' own
+# sharing this same fleet -- e.g. supersprinklesracing/sprinkles' own
 # homelab-autoscale-claude-agent.
 read -r -a SCALE_SETS <<<"${CLAUDE_SCALE_SETS:-homelab-autoscale-claude-agent-lcars}"
 

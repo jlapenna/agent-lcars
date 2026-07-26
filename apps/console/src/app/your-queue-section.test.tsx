@@ -16,7 +16,7 @@ vi.mock('./actions', () => ({
   clearHumanNeeded: vi.fn(),
 }));
 
-const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -24,7 +24,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
     repo: DEFAULT_REPO,
     number: 1,
     title: 'Fix the thing',
-    url: 'https://github.com/supersprinklesracing/members/issues/1',
+    url: 'https://github.com/supersprinklesracing/sprinkles/issues/1',
     updatedAt: '2026-07-07T00:00:00Z',
     actionTypes: ['human-needed'],
     labels: [],

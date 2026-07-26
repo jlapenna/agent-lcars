@@ -25,7 +25,7 @@ export const viewport: Viewport = {
 
 export const metadata = {
   title: 'Agent LCARS',
-  description: 'supersprinklesracing/members — Claude issue agent activity',
+  description: 'supersprinklesracing/sprinkles — Claude issue agent activity',
 };
 
 export default async function RootLayout({

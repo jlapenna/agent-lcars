@@ -315,12 +315,12 @@ describe('buildSessionDoc', () => {
   it('threads repo through from summary.repo on a cli doc', () => {
     const doc = buildSessionDoc(
       baseSummary({
-        repo: { owner: 'supersprinklesracing', name: 'members' },
+        repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
       }),
       'live',
     );
     expect(doc).toMatchObject({
-      repo: { owner: 'supersprinklesracing', name: 'members' },
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
   });
 
@@ -340,11 +340,11 @@ describe('buildSessionDoc', () => {
       'ended',
       {
         runId: 'run-123',
-        repo: { owner: 'supersprinklesracing', name: 'members' },
+        repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
       },
     );
     expect(doc).toMatchObject({
-      repo: { owner: 'supersprinklesracing', name: 'members' },
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
   });
 
@@ -362,7 +362,7 @@ describe('buildSessionDoc', () => {
     // could pass repo alongside a cli summary — the builder itself must
     // still gate it to the issue-agent branch.
     const doc = buildSessionDoc(baseSummary({ source: 'cli' }), 'live', {
-      repo: { owner: 'supersprinklesracing', name: 'members' },
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
     expect(doc).not.toHaveProperty('repo');
   });

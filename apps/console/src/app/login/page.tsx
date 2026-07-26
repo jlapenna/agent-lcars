@@ -16,7 +16,7 @@ export default async function LoginPage() {
       <Stack align="center" gap="xs" style={{ maxWidth: 360 }}>
         <Title order={1}>Agent LCARS</Title>
         <Text c="dimmed" ta="center" mb="md">
-          supersprinklesracing/members &mdash; Claude issue agent activity
+          supersprinklesracing/sprinkles &mdash; Claude issue agent activity
         </Text>
         <form
           action={async () => {

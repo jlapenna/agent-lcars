@@ -9,7 +9,7 @@ function makeRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
     sessionId: 'session-1',
     source: 'cli',
-    repo: { owner: 'supersprinklesracing', name: 'members' },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     agent: 'claude-code',
     title: 'Fix flaky login test',
     prUrls: [],

@@ -35,7 +35,7 @@ vi.mock('../lib/agent-activity', () => ({
   issueUrlForRun: (run: AgentRun) =>
     run.issueNumber === undefined
       ? undefined
-      : `https://github.com/supersprinklesracing/members/issues/${run.issueNumber}`,
+      : `https://github.com/supersprinklesracing/sprinkles/issues/${run.issueNumber}`,
 }));
 
 // react-markdown/remark-gfm (pulled in via artifact-viewer.tsx) are ESM-only
@@ -87,7 +87,7 @@ function renderPanel(
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: 1,
-    repo: { owner: 'supersprinklesracing', name: 'members' },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',
@@ -278,7 +278,7 @@ describe('AgentActivityPanel recent runs', () => {
     });
     const link = screen.getByTestId('recent-run-issue-link');
     expect(link.getAttribute('href')).toBe(
-      'https://github.com/supersprinklesracing/members/issues/42',
+      'https://github.com/supersprinklesracing/sprinkles/issues/42',
     );
   });
 

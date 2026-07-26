@@ -8,10 +8,10 @@ import { ClaimedIdleSection } from './claimed-idle-section';
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     kind: 'issue',
-    repo: { owner: 'supersprinklesracing', name: 'members' },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     number: 1,
     title: 'Stale claim',
-    url: 'https://github.com/supersprinklesracing/members/issues/1',
+    url: 'https://github.com/supersprinklesracing/sprinkles/issues/1',
     updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     actionTypes: [],
     labels: [],

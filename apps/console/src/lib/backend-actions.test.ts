@@ -14,7 +14,7 @@ import {
 } from './backend-actions';
 import { getGithubClient } from './github-client';
 
-const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();

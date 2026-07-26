@@ -379,14 +379,14 @@ describe('WatcherDaemon', () => {
       resolveGitBranch: async () => undefined,
       resolveGitRepo: async () => ({
         owner: 'supersprinklesracing',
-        name: 'members',
+        name: 'sprinkles',
       }),
     });
 
     await daemon.tick();
 
     expect(upserts[0]).toMatchObject({
-      repo: { owner: 'supersprinklesracing', name: 'members' },
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
   });
 
@@ -481,14 +481,14 @@ describe('WatcherDaemon', () => {
       isProcessAliveForCwd: () => true,
       resolveGitBranch: async () => undefined,
       resolveGitRepo,
-      repo: { owner: 'supersprinklesracing', name: 'members' },
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
 
     await daemon.tick();
 
     expect(upserts[0]).toMatchObject({
       source: 'issue-agent',
-      repo: { owner: 'supersprinklesracing', name: 'members' },
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
   });
 

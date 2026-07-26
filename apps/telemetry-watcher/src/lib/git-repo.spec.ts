@@ -37,19 +37,19 @@ describe('resolveGitRepo', () => {
   });
 
   it.each([
-    'git@github.com:supersprinklesracing/members.git',
-    'git@github.com:supersprinklesracing/members',
-    'ssh://git@github.com/supersprinklesracing/members.git',
-    'ssh://git@github.com/supersprinklesracing/members',
-    'https://github.com/supersprinklesracing/members.git',
-    'https://github.com/supersprinklesracing/members',
-    'https://x-access-token@github.com/supersprinklesracing/members.git',
+    'git@github.com:supersprinklesracing/sprinkles.git',
+    'git@github.com:supersprinklesracing/sprinkles',
+    'ssh://git@github.com/supersprinklesracing/sprinkles.git',
+    'ssh://git@github.com/supersprinklesracing/sprinkles',
+    'https://github.com/supersprinklesracing/sprinkles.git',
+    'https://github.com/supersprinklesracing/sprinkles',
+    'https://x-access-token@github.com/supersprinklesracing/sprinkles.git',
   ])('parses the GitHub origin URL %s', async (remoteUrl) => {
     mockExecFileResult(`${remoteUrl}\n`);
 
     await expect(resolveGitRepo(cwd)).resolves.toEqual({
       owner: 'supersprinklesracing',
-      name: 'members',
+      name: 'sprinkles',
     });
     expect(mockedExecFile).toHaveBeenCalledWith(
       'git',
@@ -60,7 +60,7 @@ describe('resolveGitRepo', () => {
   });
 
   it('returns undefined for a non-GitHub remote', async () => {
-    mockExecFileResult('git@gitlab.com:supersprinklesracing/members.git\n');
+    mockExecFileResult('git@gitlab.com:supersprinklesracing/sprinkles.git\n');
 
     await expect(resolveGitRepo(cwd)).resolves.toBeUndefined();
   });

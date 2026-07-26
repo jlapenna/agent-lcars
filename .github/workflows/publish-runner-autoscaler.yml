@@ -83,7 +83,7 @@ jobs:
 
       # No docker/login-action: docker-registry.lan.jlapenna.net accepts
       # anonymous push from this network position (confirmed in
-      # supersprinklesracing/members#2373).
+      # supersprinklesracing/sprinkles#2373).
 
       - name: Build and push control-plane image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0

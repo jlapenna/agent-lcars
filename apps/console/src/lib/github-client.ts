@@ -45,7 +45,7 @@ export function getGithubClient(): Octokit {
  * unset `AGENT_LCARS_WATCHED_REPOS` reproduces today's single-repo behavior
  * exactly. */
 export const DEFAULT_WATCHED_REPOS: WatchedRepo[] = [
-  { owner: 'supersprinklesracing', name: 'members' },
+  { owner: 'supersprinklesracing', name: 'sprinkles' },
 ];
 
 function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
@@ -112,7 +112,7 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
  * Parses `AGENT_LCARS_WATCHED_REPOS`: a JSON array of
  * `{ "owner": string, "name": string, "alias"?: string, "workflowFiles"?: Partial<Record<AgentPipeline, string>> }`
  * objects, e.g.
- * `[{"owner":"supersprinklesracing","name":"members"},{"owner":"supersprinklesracing","name":"website","alias":"Website"}]`.
+ * `[{"owner":"supersprinklesracing","name":"sprinkles"},{"owner":"supersprinklesracing","name":"website","alias":"Website"}]`.
  * Throws with a specific reason on malformed input rather than falling back
  * silently, mirroring apps/telemetry-watcher/src/lib/config.ts's
  * parseWatchRootsJson - a broken config should fail loudly at startup, not

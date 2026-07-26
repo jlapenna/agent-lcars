@@ -149,7 +149,7 @@ jobs:
       # apps/console-e2e's Firestore-emulator-backed suite) resolve the
       # version this repo's own package.json pins lazily on first use.
 
-      # Mirrors supersprinklesracing/members's claude.yml (source of this
+      # Mirrors supersprinklesracing/sprinkles's claude.yml (source of this
       # pattern) - authenticates via the same terraform-managed WIF pool
       # this repo IS the source of (infra/terraform/main.tf's
       # google_iam_workload_identity_pool.github), impersonating the

@@ -10,7 +10,7 @@ import {
 } from './agent-activity';
 import { getGithubClient, getWatchedRepos } from './github-client';
 
-const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'members' };
+const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
@@ -39,7 +39,7 @@ function makeRun(overrides: Partial<FakeWorkflowRun> = {}): FakeWorkflowRun {
     status: 'in_progress',
     conclusion: null,
     event: 'issues',
-    html_url: 'https://github.com/supersprinklesracing/members/actions/runs/1',
+    html_url: 'https://github.com/supersprinklesracing/sprinkles/actions/runs/1',
     display_title: '#42: Fix the thing',
     created_at: '2026-07-07T00:00:00Z',
     updated_at: '2026-07-07T00:00:00Z',
@@ -56,7 +56,7 @@ function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
     status: 'completed',
     conclusion: 'success',
     event: 'issues',
-    url: 'https://github.com/supersprinklesracing/members/actions/runs/1',
+    url: 'https://github.com/supersprinklesracing/sprinkles/actions/runs/1',
     displayTitle: '#42: Fix the thing',
     issueNumber: 42,
     createdAt: '2026-07-07T00:00:00Z',
@@ -104,7 +104,7 @@ describe('issueUrlForRun', () => {
   it('links to /issues/<N> using the parsed issue number', () => {
     const run = makeAgentRun({ issueNumber: 42 });
     expect(issueUrlForRun(run)).toBe(
-      'https://github.com/supersprinklesracing/members/issues/42',
+      'https://github.com/supersprinklesracing/sprinkles/issues/42',
     );
   });
 
