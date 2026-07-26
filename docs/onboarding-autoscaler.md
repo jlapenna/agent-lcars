@@ -327,12 +327,13 @@ Pushes to `docker-registry.lan.jlapenna.net` are currently
 LAN-positioned host — including every ephemeral runner — can overwrite or
 delete the images the whole fleet executes (agent-lcars#112).
 
-Write auth was deployed and reverted on 2026-07-26. Basic auth works for
-`docker push` but **not** for Buildx's remote driver, which is what
-publishing uses: BuildKit takes registry credentials only from the client
-session and does not complete a Basic challenge through it, so `docker
-login` succeeds and the push still returns 401. Whatever replaces it must
-work with the remote driver — see jlapenna/homelab `docs/registry.md`.
+Write auth was deployed and reverted on 2026-07-26. With Basic auth,
+`docker login` succeeded but the remote-driver push still returned 401 —
+observed in CI and reproduced by hand. The likely cause is that reads were
+anonymous while only writes challenged, so the client may never register a
+Basic handler for the host; that was not isolated. Whatever replaces it
+must be verified against the **remote driver** specifically — see
+jlapenna/homelab `docs/registry.md`.
 
 ## Verifying it actually worked
 
