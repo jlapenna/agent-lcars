@@ -16,13 +16,6 @@ const sanitize = (value: string | undefined): string | undefined => {
   return value;
 };
 
-const isTrue = (value: string | undefined): boolean => {
-  return typeof value === 'string' && value.toLowerCase() === 'true';
-};
-
-export const getNextPublicOidcProvider = () =>
-  sanitize(process.env.NEXT_PUBLIC_OIDC_PROVIDER) || '';
-
 export const getNextPublicProjectId = () =>
   sanitize(process.env.NEXT_PUBLIC_PROJECT_ID) || '';
 
@@ -39,34 +32,8 @@ export const getNextPublicFirebaseProjectId = () =>
 export const getNextPublicFirebaseStorageBucket = () =>
   sanitize(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET);
 
-export const getNextPublicUseHttps = () =>
-  isTrue(process.env.NEXT_PUBLIC_USE_HTTPS);
-export const getNextPublicDebugAuth = () =>
-  isTrue(process.env.NEXT_PUBLIC_DEBUG_AUTH);
-
-export const getNextPublicSlackClientId = () =>
-  sanitize(process.env.NEXT_PUBLIC_SLACK_CLIENT_ID) || '';
-
-export const getNextPublicSlackTeamId = () =>
-  sanitize(process.env.NEXT_PUBLIC_SLACK_TEAM_ID) || '';
-
-export const getAnalyticsId = () =>
-  sanitize(process.env.NEXT_PUBLIC_ANALYTICS_ID);
-
 export const getNextPublicFirebaseAuthEmulatorHost = () =>
   sanitize(process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST);
 
-export const getNextPublicStripePublishableKey = () =>
-  sanitize(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) || '';
-
-export const getNextPublicStripeEnabled = () =>
-  isTrue(process.env.NEXT_PUBLIC_STRIPE_ENABLED);
-
-export const getNextPublicDebugLinks = () =>
-  isTrue(process.env.NEXT_PUBLIC_DEBUG_LINKS);
-
 export const getNextPublicFirestoreEmulatorHost = () =>
   sanitize(process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST);
-
-export const getNextPublicUrlPrefix = () =>
-  sanitize(process.env.NEXT_PUBLIC_URL_PREFIX) || 'http://localhost:4200';

@@ -11,9 +11,6 @@ importers:
       '@google-cloud/firestore':
         specifier: 8.7.0
         version: 8.7.0
-      '@google-cloud/secret-manager':
-        specifier: 6.3.0
-        version: 6.3.0
       '@google-cloud/storage':
         specifier: ^7.19.0
         version: 7.21.0(encoding@0.1.13)
@@ -29,30 +26,12 @@ importers:
       '@octokit/rest':
         specifier: ^22.0.1
         version: 22.0.1
-      '@slack/bolt':
-        specifier: ^5.0.0
-        version: 5.0.0(@types/express@5.0.6)(undici@8.8.0)
       '@tabler/icons-react':
         specifier: ^3.41.1
         version: 3.45.0(react@19.2.8)
-      bottleneck:
-        specifier: ^2.19.5
-        version: 2.19.5
       chokidar:
         specifier: ^5.0.0
         version: 5.0.0
-      cls-rtracer:
-        specifier: ^2.6.3
-        version: 2.6.4
-      date-fns:
-        specifier: ^4.1.0
-        version: 4.4.0
-      date-fns-tz:
-        specifier: ^3.2.0
-        version: 3.2.0(date-fns@4.4.0)
-      express:
-        specifier: ^5.2.1
-        version: 5.2.1
       firebase:
         specifier: ^12.12.0
         version: 12.16.0
@@ -153,12 +132,6 @@ importers:
       '@testing-library/react':
         specifier: 16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@types/express':
-        specifier: ^5.0.6
-        version: 5.0.6
-      '@types/express-serve-static-core':
-        specifier: ^5.1.1
-        version: 5.1.2
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1628,10 +1601,6 @@ packages:
 
   '@google-cloud/pubsub@5.3.1':
     resolution: {integrity: sha512-xXAQBVVrFviWz8L8yDKEqv1ziVw/gMSpYHt3IxSYRSY0fTyjis+xOrKJILj8dd8PAUHGnGiAIYuTprflkE9jsQ==}
-    engines: {node: '>=18'}
-
-  '@google-cloud/secret-manager@6.3.0':
-    resolution: {integrity: sha512-TUuzu8CchbCd2cXd0pYJSXvDBsEVX3wpZu4iOpdLrXLbYbvCDKhdjDyOyC7vo14qQRE9J6Z0AL2hfX08H+fh3A==}
     engines: {node: '>=18'}
 
   '@google-cloud/storage@7.21.0':
@@ -3775,34 +3744,6 @@ packages:
   '@sinonjs/fake-timers@15.4.0':
     resolution: {integrity: sha512-DsG+8/LscQIQg68J6Ef3dv10u6nVyetYn923s3/sus5eaGfTo1of5WMZSLf0UJc9KDuKPilPH0UDJCjvNbDNCA==}
 
-  '@slack/bolt@5.0.0':
-    resolution: {integrity: sha512-L0FTzidrDKTu4Ph8sdv0bB3acafBTAC02TBcD+hojPTTNSMX3hSK+rkpkUKkqbbc0vGpSjd6A/g71Rjy7EbBhw==}
-    engines: {node: '>=20', npm: '>=9.6.4'}
-    peerDependencies:
-      '@types/express': ^5.0.0
-
-  '@slack/logger@5.0.0':
-    resolution: {integrity: sha512-VGXhmmgsAo9shdQYh4tFDndd+7nsgp0Y5h0UPDaUp8K359pBasI6YdkMqFW3mCOxLQkq09qj7o7cq6f3DuXcJQ==}
-    engines: {node: '>= 20', npm: '>=9.6.4'}
-
-  '@slack/oauth@4.0.0':
-    resolution: {integrity: sha512-Aqs5bGghT+VtNcdwVOQy7CcyCfDNd9YYnZsCRukIF9p1Mxuq4uL+BjqlWQB0SeS4wzrLzePPgvj8JDuQil+ezA==}
-    engines: {node: '>=20', npm: '>=9.6.4'}
-
-  '@slack/socket-mode@3.0.0':
-    resolution: {integrity: sha512-QShO60SB0E+HH+TbcKj3CBEQbodToRyiXnxuSB4t1kvUlqEmuGA1nOOjrRDkDJbOECAZ13PLe4ek9SrntpfoYg==}
-    engines: {node: '>=20', npm: '>=9.6.4'}
-    peerDependencies:
-      undici: ^7.0.0
-
-  '@slack/types@3.0.0':
-    resolution: {integrity: sha512-KNOqpnNAlsFt5Jk9XBclslQ0lobRIg/0tnhpmvZJAglHJx9E8oceN8hC3gaBzkR6UzQ9Wzq4rLsJ98wUcxWPfw==}
-    engines: {node: '>= 20', npm: '>=9.6.4'}
-
-  '@slack/web-api@8.0.0':
-    resolution: {integrity: sha512-ORx3XQryQPq2Jnxv5giSKXVoQRUeylrrymIR2S9fPzLjPcCts8RayMeBSZMcpfpAqp6fnBRuPW2UB6dUPUTEZA==}
-    engines: {node: '>= 20', npm: '>=9.6.4'}
-
   '@so-ric/colorspace@1.1.6':
     resolution: {integrity: sha512-/KiKkpHNOBgkFJwu9sh48LkHSMYGyuTcSFK/qMBdnOAlrRJzRSXAOFB5qwzaVQuDl8wAvHVMkaASQDReTahxuw==}
 
@@ -4233,9 +4174,6 @@ packages:
 
   '@types/resolve@1.20.2':
     resolution: {integrity: sha512-60BCwRFOZCQhDncwQdxxeOEEkbc5dIMccYLwbxsS4TUNeVECQ/pBJ0j09mrHOl/JJvpRPGwO9SvE4nR2Nb/a4Q==}
-
-  '@types/retry@0.12.0':
-    resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
 
   '@types/retry@0.12.2':
     resolution: {integrity: sha512-XISRgDJ2Tc5q4TRqvgJtzsRkFYNJzZrhTdtMoGVBttwzzQJkPnS3WWTFc7kuDRoPtPakl+T+OfdEUjYJj7Jbow==}
@@ -5084,9 +5022,6 @@ packages:
   boolbase@1.0.0:
     resolution: {integrity: sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==}
 
-  bottleneck@2.19.5:
-    resolution: {integrity: sha512-VHiNCbI1lKdl44tGrhNfU3lup0Tj/ZBMJB5/2ZbNXRCPuRCO7ed2mgcK4r17y+KB2EfuYuRaVlwNbAeaWGSpbw==}
-
   boxen@5.1.2:
     resolution: {integrity: sha512-9gYgQKXx+1nP8mP7CzFyaUARhg7D3n1dF/FnErWmu9l6JvGpNUN278h0aSb+QjoiKSWG+iZ3uHrcqk0qrY9RQQ==}
     engines: {node: '>=10'}
@@ -5321,10 +5256,6 @@ packages:
   clone@1.0.4:
     resolution: {integrity: sha512-JQHZ2QMW6l3aH/j6xCqQThY/9OH4D/9ls34cgkUBiEeocRTU04tHfKPBsUK1PqZCUQM7GiA0IIXJSuXHI64Kbg==}
     engines: {node: '>=0.8'}
-
-  cls-rtracer@2.6.4:
-    resolution: {integrity: sha512-ZvMGg96OWmujBjYdH56TCr3PvimGDmVDTt8jJJsyLbvuvk/0dRlaJT2ibotn/mIYD0lZT5/xMrweeroUNvAhnQ==}
-    engines: {node: '>=12.17.0 <13.0.0 || >=13.14.0 <14.0.0 || >=14.0.0'}
 
   clsx@2.1.1:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
@@ -5678,14 +5609,6 @@ packages:
   data-urls@5.0.0:
     resolution: {integrity: sha512-ZYP5VBHshaDAiVZxjbRVcFJpc+4xGgT0bK3vzy1HLN8jTO975HEbuYzZJcHoQEY5K1a0z8YayJkyVETa08eNTg==}
     engines: {node: '>=18'}
-
-  date-fns-tz@3.2.0:
-    resolution: {integrity: sha512-sg8HqoTEulcbbbVXeg84u5UnlsQa8GS5QXMqjjYIhS4abEVVKIUwe0/l/UhrZdKaL/W5eWZNlbTeEIiOXTcsBQ==}
-    peerDependencies:
-      date-fns: ^3.0.0 || ^4.0.0
-
-  date-fns@4.4.0:
-    resolution: {integrity: sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==}
 
   debug@2.6.9:
     resolution: {integrity: sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==}
@@ -6188,9 +6111,6 @@ packages:
 
   eventemitter3@4.0.7:
     resolution: {integrity: sha512-8guHBZCwKnFhYdHr2ysuRWErTwhoN2X8XELRlrRwpmfeY2jjuUN4taQMsULKUVo1K4DvZl+0pgfyoysHxvmvEw==}
-
-  eventemitter3@5.0.4:
-    resolution: {integrity: sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==}
 
   events-listener@1.1.0:
     resolution: {integrity: sha512-Kd3EgYfODHueq6GzVfs/VUolh2EgJsS8hkO3KpnDrxVjU3eq63eXM2ujXkhPP+OkeUOhL8CxdfZbQXzryb5C4g==}
@@ -8435,10 +8355,6 @@ packages:
     resolution: {integrity: sha512-Q6Bekk5wpzW5qIyUP4gdMEujObYstZl6DMMOSenwBvV0BlE5LkDwkjs5yHbZmdCEq2o4RJx4tE1vwxFVf2FG1w==}
     engines: {node: '>=16.17'}
 
-  p-finally@1.0.0:
-    resolution: {integrity: sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow==}
-    engines: {node: '>=4'}
-
   p-limit@2.3.0:
     resolution: {integrity: sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w==}
     engines: {node: '>=6'}
@@ -8467,14 +8383,6 @@ packages:
     resolution: {integrity: sha512-wPrq66Llhl7/4AGC6I+cqxT07LhXvWL08LNXz1fENOw0Ap4sRZZ/gZpTTJ5jpurzzzfS2W/Ge9BY3LgLjCShcw==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
-  p-queue@6.6.2:
-    resolution: {integrity: sha512-RwFpb72c/BhQLEXIZ5K2e+AhgNVmIejGlTgiB9MzZ0e93GRvqZ7uSi0dvRF7/XIXDeNkra2fNHBxTyPDGySpjQ==}
-    engines: {node: '>=8'}
-
-  p-retry@4.6.2:
-    resolution: {integrity: sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ==}
-    engines: {node: '>=8'}
-
   p-retry@6.2.1:
     resolution: {integrity: sha512-hEt02O4hUct5wtwg4H4KcWgDdm+l1bOaEy/hWzd8xtXB9BqxTWBBhb+2ImAtH4Cv4rPjV76xN3Zumqk3k3AhhQ==}
     engines: {node: '>=16.17'}
@@ -8482,10 +8390,6 @@ packages:
   p-throttle@7.0.0:
     resolution: {integrity: sha512-aio0v+S0QVkH1O+9x4dHtD4dgCExACcL+3EtNaGqC01GBudS9ijMuUsmN8OVScyV4OOp0jqdLShZFuSlbL/AsA==}
     engines: {node: '>=18'}
-
-  p-timeout@3.2.0:
-    resolution: {integrity: sha512-rhIwUycgwwKcP9yTOOFK/AKsAopjjCakVqLHePO3CC6Mir1Z99xT+R63jZxAT5lFZLa2inS5h+ZS2GvR99/FBg==}
-    engines: {node: '>=8'}
 
   p-timeout@6.1.4:
     resolution: {integrity: sha512-MyIV3ZA/PmyBN/ud8vV9XzwTrNtR4jFrObymZYnZqMmW0zA8Z17vnT0rBgFE/TlohB+YCHqXMgZzb3Csp49vqg==}
@@ -12780,12 +12684,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@google-cloud/secret-manager@6.3.0':
-    dependencies:
-      google-gax: 5.0.8
-    transitivePeerDependencies:
-      - supports-color
-
   '@google-cloud/storage@7.21.0(encoding@0.1.13)':
     dependencies:
       '@google-cloud/paginator': 5.0.2
@@ -15254,55 +15152,6 @@ snapshots:
       '@sinonjs/commons': 3.0.1
     optional: true
 
-  '@slack/bolt@5.0.0(@types/express@5.0.6)(undici@8.8.0)':
-    dependencies:
-      '@slack/logger': 5.0.0
-      '@slack/oauth': 4.0.0
-      '@slack/socket-mode': 3.0.0(undici@8.8.0)
-      '@slack/types': 3.0.0
-      '@slack/web-api': 8.0.0
-      '@types/express': 5.0.6
-      express: 5.2.1
-      path-to-regexp: 8.4.2
-      raw-body: 3.0.2
-      tsscmp: 1.0.6
-    transitivePeerDependencies:
-      - supports-color
-      - undici
-
-  '@slack/logger@5.0.0':
-    dependencies:
-      '@types/node': 24.13.3
-
-  '@slack/oauth@4.0.0':
-    dependencies:
-      '@slack/logger': 5.0.0
-      '@slack/web-api': 8.0.0
-      '@types/jsonwebtoken': 9.0.10
-      '@types/node': 24.13.3
-      jsonwebtoken: 9.0.3
-
-  '@slack/socket-mode@3.0.0(undici@8.8.0)':
-    dependencies:
-      '@slack/logger': 5.0.0
-      '@slack/web-api': 8.0.0
-      '@types/node': 24.13.3
-      eventemitter3: 5.0.4
-      undici: 8.8.0
-
-  '@slack/types@3.0.0': {}
-
-  '@slack/web-api@8.0.0':
-    dependencies:
-      '@slack/logger': 5.0.0
-      '@slack/types': 3.0.0
-      '@types/node': 24.13.3
-      '@types/retry': 0.12.0
-      eventemitter3: 5.0.4
-      p-queue: 6.6.2
-      p-retry: 4.6.2
-      retry: 0.13.1
-
   '@so-ric/colorspace@1.1.6':
     dependencies:
       color: 5.0.3
@@ -15642,6 +15491,7 @@ snapshots:
     dependencies:
       '@types/connect': 3.4.38
       '@types/node': 24.13.3
+    optional: true
 
   '@types/bonjour@3.5.13':
     dependencies:
@@ -15664,6 +15514,7 @@ snapshots:
   '@types/connect@3.4.38':
     dependencies:
       '@types/node': 24.13.3
+    optional: true
 
   '@types/debug@4.1.13':
     dependencies:
@@ -15707,6 +15558,7 @@ snapshots:
       '@types/qs': 6.15.1
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
+    optional: true
 
   '@types/express@4.17.25':
     dependencies:
@@ -15721,6 +15573,7 @@ snapshots:
       '@types/body-parser': 1.19.6
       '@types/express-serve-static-core': 5.1.2
       '@types/serve-static': 2.2.0
+    optional: true
 
   '@types/gensync@1.0.5': {}
 
@@ -15731,7 +15584,8 @@ snapshots:
   '@types/http-cache-semantics@4.2.0':
     optional: true
 
-  '@types/http-errors@2.0.5': {}
+  '@types/http-errors@2.0.5':
+    optional: true
 
   '@types/http-proxy@1.17.17':
     dependencies:
@@ -15773,9 +15627,11 @@ snapshots:
 
   '@types/parse-json@4.0.2': {}
 
-  '@types/qs@6.15.1': {}
+  '@types/qs@6.15.1':
+    optional: true
 
-  '@types/range-parser@1.2.7': {}
+  '@types/range-parser@1.2.7':
+    optional: true
 
   '@types/react-dom@19.2.3(@types/react@19.2.17)':
     dependencies:
@@ -15794,8 +15650,6 @@ snapshots:
 
   '@types/resolve@1.20.2': {}
 
-  '@types/retry@0.12.0': {}
-
   '@types/retry@0.12.2':
     optional: true
 
@@ -15811,6 +15665,7 @@ snapshots:
   '@types/send@1.2.1':
     dependencies:
       '@types/node': 24.13.3
+    optional: true
 
   '@types/serve-index@1.9.4':
     dependencies:
@@ -15828,6 +15683,7 @@ snapshots:
     dependencies:
       '@types/http-errors': 2.0.5
       '@types/node': 24.13.3
+    optional: true
 
   '@types/sockjs@0.3.36':
     dependencies:
@@ -16894,8 +16750,6 @@ snapshots:
 
   boolbase@1.0.0: {}
 
-  bottleneck@2.19.5: {}
-
   boxen@5.1.2:
     dependencies:
       ansi-align: 3.0.1
@@ -17146,10 +17000,6 @@ snapshots:
       shallow-clone: 3.0.1
 
   clone@1.0.4: {}
-
-  cls-rtracer@2.6.4:
-    dependencies:
-      uuid: 9.0.1
 
   clsx@2.1.1: {}
 
@@ -17509,12 +17359,6 @@ snapshots:
       whatwg-mimetype: 4.0.0
       whatwg-url: 14.2.0
     optional: true
-
-  date-fns-tz@3.2.0(date-fns@4.4.0):
-    dependencies:
-      date-fns: 4.4.0
-
-  date-fns@4.4.0: {}
 
   debug@2.6.9:
     dependencies:
@@ -18014,8 +17858,6 @@ snapshots:
   event-target-shim@5.0.1: {}
 
   eventemitter3@4.0.7: {}
-
-  eventemitter3@5.0.4: {}
 
   events-listener@1.1.0: {}
 
@@ -21227,8 +21069,6 @@ snapshots:
       p-timeout: 6.1.4
     optional: true
 
-  p-finally@1.0.0: {}
-
   p-limit@2.3.0:
     dependencies:
       p-try: 2.2.0
@@ -21259,16 +21099,6 @@ snapshots:
     dependencies:
       p-limit: 4.0.0
 
-  p-queue@6.6.2:
-    dependencies:
-      eventemitter3: 4.0.7
-      p-timeout: 3.2.0
-
-  p-retry@4.6.2:
-    dependencies:
-      '@types/retry': 0.12.0
-      retry: 0.13.1
-
   p-retry@6.2.1:
     dependencies:
       '@types/retry': 0.12.2
@@ -21277,10 +21107,6 @@ snapshots:
     optional: true
 
   p-throttle@7.0.0: {}
-
-  p-timeout@3.2.0:
-    dependencies:
-      p-finally: 1.0.0
 
   p-timeout@6.1.4:
     optional: true
@@ -23412,7 +23238,8 @@ snapshots:
   undici@7.24.7:
     optional: true
 
-  undici@8.8.0: {}
+  undici@8.8.0:
+    optional: true
 
   unicode-canonical-property-names-ecmascript@2.0.1: {}
 
