@@ -671,12 +671,52 @@ func parseMetricValue(line string) (float64, bool) {
 	return val, true
 }
 
+// sparkIdleGPUWatts is the power-draw ceiling, in watts, below which spark's
+// GB10 is considered idle rather than serving inference.
+//
+// llama-swap's GB10 readings are mostly unusable: gpu_util_percent,
+// gpu_memory_used_bytes and gpu_memory_total_bytes all report 0 on this
+// hardware (the Grace-Blackwell unified-memory design has no discrete VRAM
+// pool to report), so the usual "is the GPU busy" signals are dead ends.
+// Power draw is the one that actually tracks work: an idle module sits at
+// ~10W (measured 9.94W on 2026-07-26 with a model resident but no requests
+// in flight), against a ~140W module TDP under load. 30W leaves generous
+// headroom over the idle floor while still tripping well before the GPU is
+// saturated.
+const sparkIdleGPUWatts = 30.0
+
 // isSparkLoaded probes spark's metrics URL for signals that it's a bad
-// placement target right now: active vLLM inference requests. Absolute free
-// memory and allocated swap are deliberately ignored because resident model
-// weights and K/V cache make those normal on Spark. The fleet sampler handles
-// actual CPU, PSI, load, and active swap-I/O pressure independently.
+// placement target right now: active inference. Absolute free memory and
+// allocated swap are deliberately ignored because resident model weights and
+// K/V cache make those normal on Spark. The fleet sampler handles actual CPU,
+// PSI, load, and active swap-I/O pressure independently.
+//
+// Two exposition formats are accepted, because the inference server behind
+// this endpoint has changed once already and silently broke this probe:
+//
+//   - vLLM (`vllm:num_requests_running` / `_waiting`) — the original shape.
+//   - llama-swap (`llamaswap_gpu_power_draw_watts`) — what spark:8000 serves
+//     today. It publishes no request-count metric at all, so power draw
+//     stands in for one; see sparkIdleGPUWatts.
+//
+// Matching both matters: the vLLM-only version of this function returned
+// false on every call for as long as llama-swap has been the server, which
+// silently disabled spark's inference protection entirely. The unit tests
+// did not catch it because they feed synthetic `vllm:` lines rather than a
+// real payload.
 func (a *Scaler) isSparkLoaded(ctx context.Context) bool {
+	return a.isSparkLoadedAbove(ctx, sparkIdleGPUWatts)
+}
+
+// isSparkLoadedAbove is isSparkLoaded with the idle ceiling injected. The
+// seam exists so the probe can be re-verified against the LIVE spark
+// endpoint by forcing the ceiling under the current idle draw: a probe that
+// fires then is demonstrably parsing the real payload, not just synthetic
+// fixtures. That distinction is not academic here -- the registry write-auth
+// change (homelab#160/#163) was reverted precisely because it was validated
+// against a path production does not use. The committed tests stay hermetic
+// per agent-lcars#121; the live check is run by hand.
+func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 	if a.sparkMetricsURL == "" {
 		return false
 	}
@@ -709,6 +749,15 @@ func (a *Scaler) isSparkLoaded(ctx context.Context) bool {
 				a.logger.Info("Spark has active inference load, deprioritizing placement",
 					slog.String("metric", strings.Fields(line)[0]),
 					slog.Float64("value", val),
+				)
+				return true
+			}
+		case strings.HasPrefix(line, "llamaswap_gpu_power_draw_watts"):
+			if val, ok := parseMetricValue(line); ok && val > ceiling {
+				a.logger.Info("Spark has active inference load, deprioritizing placement",
+					slog.String("metric", strings.Fields(line)[0]),
+					slog.Float64("value", val),
+					slog.Float64("idle_ceiling_watts", ceiling),
 				)
 				return true
 			}

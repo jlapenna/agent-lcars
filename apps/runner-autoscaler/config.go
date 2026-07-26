@@ -66,9 +66,11 @@ type Config struct {
 	// runner containers (e.g. 16g, 4g, 512m). Empty means no limit.
 	RunnerMemory string
 	// SparkMetricsURL is a homelab addition: URL to probe for Spark inference
-	// metrics (vllm:num_requests_running / waiting). When active inference
-	// requests are present, placement on spark is penalized to preserve GPU
-	// throughput for interactive/batch AI workloads.
+	// metrics. Both exposition shapes are understood — vLLM
+	// (vllm:num_requests_running / waiting) and llama-swap
+	// (llamaswap_gpu_power_draw_watts, what spark serves today); see
+	// isSparkLoaded. When active inference is detected, placement on spark is
+	// penalized to preserve GPU throughput for interactive/batch AI workloads.
 	SparkMetricsURL string
 	// HostMetricsURLTemplate is a homelab addition: fmt.Sprintf-style URL
 	// template used to fetch node-exporter metrics for every placement host.

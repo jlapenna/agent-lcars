@@ -199,6 +199,46 @@ func TestIsSparkLoaded(t *testing.T) {
 	}
 }
 
+// TestIsSparkLoadedLlamaSwapPowerDraw pins the llama-swap arm of the probe
+// against a payload shaped like the real spark:8000 response, including the
+// GB10 readings that are structurally zero on this hardware
+// (gpu_util_percent / gpu_memory_*). A vLLM-only isSparkLoaded returns false
+// for both cases below, which is exactly the regression this covers: the
+// probe was inert in production while TestIsSparkLoaded stayed green against
+// synthetic `vllm:` lines.
+func TestIsSparkLoadedLlamaSwapPowerDraw(t *testing.T) {
+	const idleWatts = "9.94"
+	const busyWatts = "87.5"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		watts := idleWatts
+		if r.URL.Query().Get("busy") == "true" {
+			watts = busyWatts
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(
+			"llamaswap_gpu_util_percent{id=\"0\",name=\"NVIDIA GB10\"} 0\n" +
+				"llamaswap_gpu_memory_used_bytes{id=\"0\",name=\"NVIDIA GB10\"} 0\n" +
+				"llamaswap_gpu_memory_total_bytes{id=\"0\",name=\"NVIDIA GB10\"} 0\n" +
+				"llamaswap_gpu_power_draw_watts{id=\"0\",name=\"NVIDIA GB10\"} " + watts + "\n",
+		))
+	}))
+	defer server.Close()
+
+	scaler := &Scaler{
+		sparkMetricsURL: server.URL + "?busy=true",
+		logger:          slog.New(slog.NewTextHandler(os.Stdout, nil)),
+	}
+	if !scaler.isSparkLoaded(context.Background()) {
+		t.Errorf("expected isSparkLoaded to return true when GPU power draw (%sW) exceeds the %.0fW idle ceiling", busyWatts, sparkIdleGPUWatts)
+	}
+
+	scaler.sparkMetricsURL = server.URL + "?busy=false"
+	if scaler.isSparkLoaded(context.Background()) {
+		t.Errorf("expected isSparkLoaded to return false at the measured %sW idle floor", idleWatts)
+	}
+}
+
 func TestIsSparkLoadedIgnoresResidentModelMemory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
