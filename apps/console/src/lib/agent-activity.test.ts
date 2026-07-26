@@ -39,7 +39,8 @@ function makeRun(overrides: Partial<FakeWorkflowRun> = {}): FakeWorkflowRun {
     status: 'in_progress',
     conclusion: null,
     event: 'issues',
-    html_url: 'https://github.com/supersprinklesracing/sprinkles/actions/runs/1',
+    html_url:
+      'https://github.com/supersprinklesracing/sprinkles/actions/runs/1',
     display_title: '#42: Fix the thing',
     created_at: '2026-07-07T00:00:00Z',
     updated_at: '2026-07-07T00:00:00Z',

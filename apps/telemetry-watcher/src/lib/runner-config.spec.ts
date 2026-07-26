@@ -94,7 +94,10 @@ describe('loadRunnerConfig', () => {
   });
 
   it('parses --repo owner/name', () => {
-    const config = loadRunnerConfig(['--repo', 'supersprinklesracing/sprinkles']);
+    const config = loadRunnerConfig([
+      '--repo',
+      'supersprinklesracing/sprinkles',
+    ]);
 
     expect(config.repo).toEqual({
       owner: 'supersprinklesracing',
