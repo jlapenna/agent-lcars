@@ -21,6 +21,7 @@ import {
   AgentBadge,
   LIVENESS_COLORS,
   LIVENESS_LABELS,
+  SourceBadge,
 } from '../../agent-activity-panel';
 import { ArtifactPreviewToggle } from '../../artifact-viewer';
 import { Eyebrow } from '../../eyebrow';
@@ -92,12 +93,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
   return (
     <Stack gap="md" mb="xl" data-testid="session-header">
       <Group gap="sm" wrap="wrap" align="center">
-        <Badge
-          variant="outline"
-          color={doc.source === 'cli' ? 'blue' : 'violet'}
-        >
-          {doc.source === 'cli' ? 'cli' : 'agent'}
-        </Badge>
+        <SourceBadge source={doc.source} />
         <Badge
           variant="light"
           color={LIVENESS_COLORS[liveness]}

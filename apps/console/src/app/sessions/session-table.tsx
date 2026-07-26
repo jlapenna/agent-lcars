@@ -23,6 +23,7 @@ import {
   LIVENESS_COLORS,
   LIVENESS_LABELS,
   RepoBadge,
+  SourceBadge,
 } from '../agent-activity-panel';
 import { formatCost, formatDuration, formatRelativeTime } from '../format';
 
@@ -70,13 +71,7 @@ function SessionCard({ row }: { row: SessionRow }) {
       <Stack gap={6}>
         <Group justify="space-between" align="center" wrap="wrap" gap={6}>
           <Group gap={6} wrap="wrap">
-            <Badge
-              variant="outline"
-              size="xs"
-              color={row.source === 'cli' ? 'blue' : 'violet'}
-            >
-              {row.source === 'cli' ? 'cli' : 'agent'}
-            </Badge>
+            <SourceBadge source={row.source} size="xs" />
             <AgentBadge agent={row.agent} />
             <RepoBadge repo={row.repo} />
           </Group>
@@ -204,13 +199,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                 data-testid={`session-row-${row.sessionId}`}
               >
                 <TableTd>
-                  <Badge
-                    variant="outline"
-                    size="xs"
-                    color={row.source === 'cli' ? 'blue' : 'violet'}
-                  >
-                    {row.source === 'cli' ? 'cli' : 'agent'}
-                  </Badge>
+                  <SourceBadge source={row.source} size="xs" />
                 </TableTd>
                 <TableTd>
                   <Group gap={6} wrap="nowrap">
