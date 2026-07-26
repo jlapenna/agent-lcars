@@ -1,10 +1,12 @@
-# Intentionally also duplicated at jlapenna/homelab's
-# github-runner-autoscaler/runner-image/Dockerfile. This copy here is the
-# primary, CI-published one (publish-runner-autoscaler.yml); homelab keeps
-# its own copy only as a fallback-build source for when a registry pull
-# fails on a fleet worker host, so that fallback doesn't also need those
-# hosts to reach GitHub. Keep both copies in sync by hand until/unless that
-# changes.
+# The single source for this image. It is built and published only by
+# publish-runner-autoscaler.yml; jlapenna/homelab pulls the result.
+#
+# There is no longer a duplicate copy in jlapenna/homelab. That copy existed
+# solely as a local-build fallback for when a registry pull failed on a
+# fleet worker host, and both the fallback and the copy were removed
+# (jlapenna/homelab#164): rebuilding locally on a failed pull masks the
+# outage and silently diverges hosts onto their own unreviewed builds. A
+# failed pull is now a hard failure.
 #
 # Declared before any FROM so it stays usable in the second stage's FROM
 # below (a build ARG used in a FROM line must be declared "globally", i.e.
@@ -44,8 +46,8 @@ ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0c
 # replaces (agent-lcars#29 — claude.yml silently pointed at a frozen,
 # never-republished GCS bundle for months). If this stage fails, the whole
 # image build fails and the fleet keeps running the last successfully
-# published image (see deploy_runner_autoscaler.yml's pull-first,
-# build-as-fallback logic) rather than shipping a broken tool.
+# published image -- deploy_runner_autoscaler.yml pulls and fails loudly if
+# it cannot, rather than shipping a broken tool or rebuilding locally.
 # --platform=$BUILDPLATFORM pins this stage to the machine doing the
 # building instead of letting it be rebuilt once per *target* platform.
 # Everything it produces -- sidecar.cjs (a JavaScript bundle) and
