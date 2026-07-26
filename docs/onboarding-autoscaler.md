@@ -138,36 +138,39 @@ the shared rootless BuildKit builder over mutually authenticated TLS
 instead:
 
 ```yaml
-      - name: <registration>-autoscale-<name>-build-client
-        labels: [<name>-build-client, <registration>-autoscale-<name>-build-client]
-        runner_image: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24
-        min_runners: 0
-        max_runners: 1
-        mount_docker_socket: false
-        file_mounts:
-          - /etc/buildkit-client/ca.pem:/secrets/buildkit-ca.pem
-          - /etc/buildkit-client/client-cert.pem:/secrets/buildkit-client-cert.pem
-          - /etc/buildkit-client/client-key.pem:/secrets/buildkit-client-key.pem
+# under registrations[].scale_sets: (or top-level scale_sets: for the
+# primary registration)
+- name: <registration>-autoscale-<name>-build-client
+  labels: [<name>-build-client, <registration>-autoscale-<name>-build-client]
+  runner_image: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24
+  min_runners: 0
+  max_runners: 1
+  mount_docker_socket: false
+  file_mounts:
+    - /etc/buildkit-client/ca.pem:/secrets/buildkit-ca.pem
+    - /etc/buildkit-client/client-cert.pem:/secrets/buildkit-client-cert.pem
+    - /etc/buildkit-client/client-key.pem:/secrets/buildkit-client-key.pem
 ```
 
 and in the workflow:
 
 ```yaml
-    runs-on: <name>-build-client
-    steps:
-      - uses: docker/setup-buildx-action@<pinned-sha>
-        with:
-          driver: remote
-          endpoint: tcp://oldbook.lan.jlapenna.net:1234
-          driver-opts: |
-            cacert=/secrets/buildkit-ca.pem
-            cert=/secrets/buildkit-client-cert.pem
-            key=/secrets/buildkit-client-key.pem
+# in your workflow, under jobs.<job-id>:
+runs-on: <name>-build-client
+steps:
+  - uses: docker/setup-buildx-action@<pinned-sha>
+    with:
+      driver: remote
+      endpoint: tcp://oldbook.lan.jlapenna.net:1234
+      driver-opts: |
+        cacert=/secrets/buildkit-ca.pem
+        cert=/secrets/buildkit-client-cert.pem
+        key=/secrets/buildkit-client-key.pem
 ```
 
 `driver-opts` take **absolute file paths**. Do not use the
 `BUILDER_NODE_<n>_AUTH_TLS_*` environment variables from Docker's GitHub
-Actions docs — those carry PEM *contents*, the shape that only makes sense
+Actions docs — those carry PEM _contents_, the shape that only makes sense
 when the material comes from GitHub secrets. Here it is a local
 bind-mount and the PEM never transits GitHub.
 
