@@ -135,7 +135,7 @@ func buildScaleSetRuntime(c Config, dockerHosts []DockerHost, fleet *FleetCoordi
 		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage: c.RunnerImage, runnerMemory: memory,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
-		dockerHosts: dockerHosts, mountDockerSocket: c.MountDockerSocket,
+		dockerHosts: dockerHosts, mountDockerSocket: c.MountDockerSocket, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMemoryExempt:    stringSet(c.HostMemoryExempt),

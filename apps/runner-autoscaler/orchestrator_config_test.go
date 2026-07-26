@@ -334,3 +334,87 @@ registrations:
 		t.Fatalf("expected 'at least one enabled scale set' error, got %v", err)
 	}
 }
+
+func TestParseFileMounts(t *testing.T) {
+	allow := []string{"/etc/buildkit"}
+	for _, tc := range []struct {
+		name    string
+		raw     []string
+		allow   []string
+		wantErr string
+	}{
+		{name: "valid", raw: []string{"/etc/buildkit/client.pem:/secrets/client.pem"}, allow: allow},
+		// file_mounts is new, so it fails closed rather than fail-open the
+		// way docker_socket_allowlist does for backward compatibility.
+		{name: "no allowlist", raw: []string{"/etc/buildkit/client.pem:/secrets/client.pem"}, allow: nil,
+			wantErr: "fleet.file_mount_allowlist is empty"},
+		{name: "outside allowlist", raw: []string{"/etc/other/client.pem:/secrets/client.pem"}, allow: allow,
+			wantErr: "not under any fleet.file_mount_allowlist prefix"},
+		// The whole point of the allowlist: a sibling directory whose name
+		// merely starts with an allowed prefix must not match.
+		{name: "prefix is not a path boundary", raw: []string{"/etc/buildkit-evil/x.pem:/secrets/x.pem"}, allow: allow,
+			wantErr: "not under any fleet.file_mount_allowlist prefix"},
+		// Without this, file_mounts would be a way around
+		// fleet.docker_socket_allowlist -- see dockerSocketPath.
+		{name: "docker socket rejected", raw: []string{"/var/run/docker.sock:/var/run/docker.sock"},
+			allow: []string{"/var/run"}, wantErr: "may not mount /var/run/docker.sock"},
+		{name: "traversal in source", raw: []string{"/etc/buildkit/../../root/.ssh/id_rsa:/secrets/k"}, allow: allow,
+			wantErr: "must be absolute and already clean"},
+		{name: "relative container path", raw: []string{"/etc/buildkit/client.pem:secrets/client.pem"}, allow: allow,
+			wantErr: "must be absolute and already clean"},
+		{name: "missing separator", raw: []string{"/etc/buildkit/client.pem"}, allow: allow,
+			wantErr: `must be "hostPath:containerPath"`},
+		{name: "duplicate target", allow: allow,
+			raw:     []string{"/etc/buildkit/a.pem:/secrets/c.pem", "/etc/buildkit/b.pem:/secrets/c.pem"},
+			wantErr: "more than once"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseFileMounts("lane", tc.raw, tc.allow)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tc.raw) {
+				t.Fatalf("got %d mounts, want %d", len(got), len(tc.raw))
+			}
+		})
+	}
+}
+
+func TestOrchestratorConfigResolvesFileMounts(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n",
+		"  placement: {}\n  file_mount_allowlist: [/etc/buildkit]\n", 1)
+	body = strings.Replace(body, "    max_runners: 1\n    mount_docker_socket: true\n",
+		"    max_runners: 1\n    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range resolved.ScaleSets {
+		if s.ScaleSetName != "e2e" {
+			continue
+		}
+		if len(s.FileMounts) != 1 || s.FileMounts[0].ContainerPath != "/secrets/client.pem" {
+			t.Fatalf("unexpected file mounts: %#v", s.FileMounts)
+		}
+		if s.MountDockerSocket {
+			t.Fatal("file_mounts must not imply mount_docker_socket")
+		}
+		return
+	}
+	t.Fatal("scale set e2e not found")
+}
+
+func TestOrchestratorConfigFileMountsFailClosedWithoutAllowlist(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "    mount_docker_socket: true\n",
+		"    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "fleet.file_mount_allowlist is empty") {
+		t.Fatalf("expected fail-closed rejection, got %v", err)
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -99,6 +100,16 @@ type OrchestratorFleet struct {
 	// boundary documented on Config.MountDockerSocket is enforced in code
 	// rather than by comment-and-convention alone.
 	DockerSocketAllowlist []string `yaml:"docker_socket_allowlist,omitempty"`
+	// FileMountAllowlist bounds which host paths a scale set's file_mounts
+	// may read from. Every source must sit at or beneath one of these
+	// prefixes.
+	//
+	// Unlike DockerSocketAllowlist -- which is fail-OPEN when empty, purely
+	// to stay backward compatible with deployments that predate it -- this
+	// is fail-CLOSED. file_mounts is a new option with no existing users,
+	// so there is no compatibility to preserve, and an unset allowlist
+	// means no scale set may mount anything at all.
+	FileMountAllowlist []string `yaml:"file_mount_allowlist,omitempty"`
 }
 
 type FleetHostConfig struct {
@@ -137,6 +148,66 @@ type ScaleSetConfigFile struct {
 	MaxRunners        int      `yaml:"max_runners"`
 	Weight            int      `yaml:"weight,omitempty"`
 	MountDockerSocket bool     `yaml:"mount_docker_socket,omitempty"`
+	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
+	// See Config.FileMounts and fleet.file_mount_allowlist.
+	FileMounts []string `yaml:"file_mounts,omitempty"`
+}
+
+// dockerSocketPath is rejected as a file_mounts source. Permitting it would
+// let any scale set obtain the placement host's docker socket -- and the
+// root-equivalent access that implies -- while bypassing
+// fleet.docker_socket_allowlist entirely, which is the specific gate
+// agent-lcars#101 relies on.
+const dockerSocketPath = "/var/run/docker.sock"
+
+// parseFileMounts validates a scale set's file_mounts against the fleet
+// allowlist and returns the resolved, read-only mounts.
+func parseFileMounts(scaleSetName string, raw []string, allowlist []string) ([]FileMount, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(allowlist) == 0 {
+		return nil, fmt.Errorf("scale set %q sets file_mounts but fleet.file_mount_allowlist is empty", scaleSetName)
+	}
+	out := make([]FileMount, 0, len(raw))
+	seenTargets := map[string]bool{}
+	for _, entry := range raw {
+		hostPath, containerPath, ok := strings.Cut(strings.TrimSpace(entry), ":")
+		hostPath, containerPath = strings.TrimSpace(hostPath), strings.TrimSpace(containerPath)
+		if !ok || hostPath == "" || containerPath == "" {
+			return nil, fmt.Errorf("scale set %q file_mounts entry %q must be \"hostPath:containerPath\"", scaleSetName, entry)
+		}
+		for label, p := range map[string]string{"host": hostPath, "container": containerPath} {
+			if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+				return nil, fmt.Errorf("scale set %q file_mounts %s path %q must be absolute and already clean", scaleSetName, label, p)
+			}
+		}
+		if hostPath == dockerSocketPath {
+			return nil, fmt.Errorf("scale set %q may not mount %s via file_mounts; use mount_docker_socket, which is gated by fleet.docker_socket_allowlist", scaleSetName, dockerSocketPath)
+		}
+		if !underAllowlist(hostPath, allowlist) {
+			return nil, fmt.Errorf("scale set %q file_mounts source %q is not under any fleet.file_mount_allowlist prefix", scaleSetName, hostPath)
+		}
+		if seenTargets[containerPath] {
+			return nil, fmt.Errorf("scale set %q mounts %q more than once", scaleSetName, containerPath)
+		}
+		seenTargets[containerPath] = true
+		out = append(out, FileMount{HostPath: hostPath, ContainerPath: containerPath})
+	}
+	return out, nil
+}
+
+// underAllowlist reports whether path sits at or beneath an allowlist entry,
+// comparing whole path segments so that "/etc/buildkit-evil" does not match
+// an allowlist entry of "/etc/buildkit".
+func underAllowlist(path string, allowlist []string) bool {
+	for _, prefix := range allowlist {
+		prefix = filepath.Clean(strings.TrimSpace(prefix))
+		if path == prefix || strings.HasPrefix(path, prefix+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 type resolvedOrchestratorConfig struct {
@@ -428,14 +499,18 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 				return nil, 0, fmt.Errorf("scale set %q has invalid runner_memory %q", s.Name, s.RunnerMemory)
 			}
 		}
+		fileMounts, err := parseFileMounts(s.Name, s.FileMounts, r.Raw.Fleet.FileMountAllowlist)
+		if err != nil {
+			return nil, 0, err
+		}
 		maxSum += s.MaxRunners
 		r.Weights[s.Name] = s.Weight
 		out = append(out, Config{
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
 			RunnerMemory: s.RunnerMemory, MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
-			MountDockerSocket: s.MountDockerSocket,
-			LogLevel:          r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
+			MountDockerSocket: s.MountDockerSocket, FileMounts: fileMounts,
+			LogLevel: r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
 		})
 	}
 	return out, maxSum, nil

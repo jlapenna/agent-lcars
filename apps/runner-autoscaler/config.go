@@ -49,6 +49,19 @@ type Config struct {
 	// claude-agent must stay false, mirroring the static runners' privilege
 	// boundary, members#1976).
 	MountDockerSocket bool
+	// FileMounts is a homelab addition: specific host files exposed
+	// read-only inside every runner this scale set spawns (agent-lcars#101).
+	// It exists so the socketless BuildKit publish lane can receive its
+	// client certificate from the encrypted homelab secret store instead of
+	// GitHub Actions secrets.
+	//
+	// Deliberately far narrower than MountDockerSocket: every source must
+	// sit under a fleet.file_mount_allowlist prefix, mounts are always
+	// read-only, and the docker socket is rejected as a source outright --
+	// otherwise this would be a trivial way around
+	// fleet.docker_socket_allowlist, reintroducing the exact
+	// root-equivalent access agent-lcars#101 removes.
+	FileMounts []FileMount
 	// RunnerMemory is a homelab addition: optional memory limit for spawned
 	// runner containers (e.g. 16g, 4g, 512m). Empty means no limit.
 	RunnerMemory string
@@ -97,6 +110,18 @@ func (c *Config) defaults() {
 	if c.HostLoadPolicy.loadHard == 0 {
 		c.HostLoadPolicy = defaultHostLoadPolicy()
 	}
+}
+
+// FileMount is a homelab addition: one host file exposed read-only inside
+// spawned runners. See Config.FileMounts.
+type FileMount struct {
+	// HostPath is the absolute path on the PLACEMENT host. Like the docker
+	// socket bind, it is resolved by whichever host's daemon actually
+	// places the runner, so the file must exist on every fleet host that
+	// can host this scale set.
+	HostPath string
+	// ContainerPath is the absolute path inside the runner container.
+	ContainerPath string
 }
 
 func (c *Config) Validate() error {
