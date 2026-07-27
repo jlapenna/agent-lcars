@@ -62,7 +62,8 @@ export function buildSessionDoc(
   liveness: SessionLiveness,
   options: BuildSessionDocOptions = {},
 ): SessionDoc {
-  const expireAt = computeExpireAt(summary.lastActivityAt, summary.source);
+  const source = options.forceSource ?? summary.source;
+  const expireAt = computeExpireAt(summary.lastActivityAt, source);
   const base = {
     sessionId: summary.sessionId,
     liveness,
@@ -84,7 +85,7 @@ export function buildSessionDoc(
     deliverables: summary.deliverables,
   };
 
-  if (summary.source === 'issue-agent') {
+  if (source === 'issue-agent') {
     return {
       ...base,
       source: 'issue-agent',

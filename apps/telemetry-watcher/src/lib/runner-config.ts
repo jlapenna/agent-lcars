@@ -1,4 +1,9 @@
-import { defaultClaudeProjectsDir, loadConfig, WatcherConfig } from './config';
+import {
+  defaultClaudeProjectsDir,
+  defaultCodexSessionsDir,
+  loadConfig,
+  WatcherConfig,
+} from './config';
 
 export interface RunnerConfig extends Pick<
   WatcherConfig,
@@ -21,6 +26,12 @@ export interface RunnerConfig extends Pick<
    * `RUNNER_ALLOWLIST`), so this is the only discovery knob that matters
    * here. */
   claudeProjectsDir: string;
+  /** Root to discover Codex transcripts under, defaulting to
+   * `defaultCodexSessionsDir()` (`~/.codex/sessions`, optionally overridden
+   * by `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`). Watched alongside
+   * `claudeProjectsDir` rather than instead of it — see `runner.ts`'s
+   * `startSidecar`, which declares both roots unconditionally. */
+  codexSessionsDir: string;
   /** GitHub Actions run id — tags every doc this run ships as `runId`. */
   runId?: string;
   /** Anchor issue/PR number — tags every doc this run ships as
@@ -36,16 +47,18 @@ interface RunnerFlags {
   runId?: string;
   issueNumber?: string;
   projectsDir?: string;
+  codexSessionsDir?: string;
   repo?: string;
 }
 
 /**
  * Minimal `--flag value` parser for the sidecar CLI's own 4 flags
- * (`--run-id`, `--issue-number`, `--projects-dir`, `--repo` — see
- * claude.yml's "Start telemetry sidecar" step). Deliberately hand-rolled
+ * (`--run-id`, `--issue-number`, `--projects-dir`, `--codex-sessions-dir`,
+ * `--repo` — see claude.yml's/codex.yml's "Start telemetry sidecar" step).
+ * Deliberately hand-rolled
  * rather than a dependency like yargs: pulling in a full CLI-parsing
  * library would bloat the single-file bundle (`bundle` target in
- * project.json) for a command with exactly 4 flags. Unknown flags are
+ * project.json) for a command with a handful of flags. Unknown flags are
  * ignored, not rejected — fail-soft applies to argument parsing too,
  * matching this app's `runner` mode requirement that a config problem
  * never crashes the process (see main.ts's outer try/catch).
@@ -66,6 +79,9 @@ function parseRunnerFlags(argv: string[]): RunnerFlags {
       i++;
     } else if (arg === '--projects-dir') {
       flags.projectsDir = next;
+      i++;
+    } else if (arg === '--codex-sessions-dir') {
+      flags.codexSessionsDir = next;
       i++;
     } else if (arg === '--repo') {
       flags.repo = next;
@@ -117,6 +133,7 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
 
   return {
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
+    codexSessionsDir: flags.codexSessionsDir ?? defaultCodexSessionsDir(),
     host: base.host,
     heartbeatIntervalMs: base.heartbeatIntervalMs,
     stalenessWindowMs: base.stalenessWindowMs,
