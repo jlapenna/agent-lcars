@@ -1,4 +1,4 @@
-import { DEFAULT_CHECKOUT_SLUG_GLOB } from './default-checkout';
+import { checkoutSlugGlob } from './default-checkout';
 
 /**
  * The watcher only ever ships CLI telemetry for project dirs matching this
@@ -6,7 +6,9 @@ import { DEFAULT_CHECKOUT_SLUG_GLOB } from './default-checkout';
  * scope creep here is a privacy incident, not just a bug. See PRD #2112
  * amendment 2026-07-10, decision 3.
  */
-export const DEFAULT_PROJECT_DIR_ALLOWLIST = [DEFAULT_CHECKOUT_SLUG_GLOB];
+export function defaultProjectDirAllowlist(): string[] {
+  return [checkoutSlugGlob()];
+}
 
 const GLOB_SPECIAL_CHARS = /[.+^${}()|[\]\\]/g;
 
@@ -23,7 +25,7 @@ function compileGlob(pattern: string): RegExp {
  */
 export function isAllowedProjectDir(
   dirName: string,
-  patterns: string[] = DEFAULT_PROJECT_DIR_ALLOWLIST,
+  patterns: string[] = defaultProjectDirAllowlist(),
 ): boolean {
   return patterns.some((pattern) => compileGlob(pattern).test(dirName));
 }

@@ -3,12 +3,12 @@ import { optional } from '@repo/env';
 import * as os from 'os';
 import * as path from 'path';
 
-import { DEFAULT_PROJECT_DIR_ALLOWLIST } from './allowlist';
+import { defaultProjectDirAllowlist } from './allowlist';
 import {
   AntigravitySummaryDbConfig,
-  DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+  defaultAntigravityWorkspacePrefixes,
 } from './antigravity-summary-source';
-import { DEFAULT_CHECKOUT_ROOT } from './default-checkout';
+import { checkoutRoot } from './default-checkout';
 import { WatchRootConfig } from './watch-roots';
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -88,7 +88,7 @@ function parseAllowlistCsv(raw: string): string[] {
 
 /** Builds the single default watch root — today's only behavior, preserved
  * byte-for-byte: `~/.claude/projects`, the `claude-code` adapter, and the
- * existing `DEFAULT_PROJECT_DIR_ALLOWLIST` — honoring the two legacy
+ * existing `defaultProjectDirAllowlist()` — honoring the two legacy
  * single-root env vars (`AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`,
  * `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`) as back-compat aliases that keep
  * working as long as `AGENT_TELEMETRY_WATCH_ROOTS` isn't set. */
@@ -99,7 +99,7 @@ function defaultWatchRoot(): WatchRootConfig {
     adapter: 'claude-code',
     projectDirAllowlist: allowlistRaw
       ? parseAllowlistCsv(allowlistRaw)
-      : DEFAULT_PROJECT_DIR_ALLOWLIST,
+      : defaultProjectDirAllowlist(),
   };
 }
 
@@ -111,7 +111,7 @@ function defaultCodexWatchRoot(): WatchRootConfig {
     recursive: true,
     cwdAllowlist: cwdAllowlistRaw
       ? parseAllowlistCsv(cwdAllowlistRaw)
-      : [`${DEFAULT_CHECKOUT_ROOT}*`],
+      : [`${checkoutRoot()}*`],
   };
 }
 
@@ -238,7 +238,7 @@ export function loadConfig(): WatcherConfig {
       ? undefined
       : {
           path: antigravityDbRaw ?? defaultAntigravitySummaryDbPath(),
-          workspacePrefixes: DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+          workspacePrefixes: defaultAntigravityWorkspacePrefixes(),
         };
 
   const firestoreProjectId = optional('AGENT_TELEMETRY_PROJECT_ID');

@@ -43,13 +43,28 @@ is imported by client components.
 
 ### 2. `apps/telemetry-watcher/src/lib/default-checkout.ts`
 
-`DEFAULT_CHECKOUT_ROOT` (`/home/jlapenna/p/members`) scopes the host
-watcher's privacy allowlists. Overridable per source via
-`AGENT_TELEMETRY_*` env vars (see `config.ts`); the constant is the fallback
-all three encodings derive from.
+`checkoutRoot()` is the checkout the host watcher is scoped to. All three
+sources' default privacy allowlists derive from it — Claude project-dir
+slugs (`allowlist.ts`), the Codex cwd allowlist (`config.ts`), and
+Antigravity workspace prefixes — so their different encodings cannot drift
+apart.
 
-Note runner mode deliberately ignores it — see `runner.ts`'s
-`RUNNER_ALLOWLIST` / `RUNNER_CODEX_CWD_ALLOWLIST`.
+| Value         | Env var                         | This deployment              |
+| ------------- | ------------------------------- | ---------------------------- |
+| checkout root | `AGENT_TELEMETRY_CHECKOUT_ROOT` | `/home/jlapenna/p/sprinkles` |
+
+Runner mode deliberately ignores it — see `runner.ts`'s `RUNNER_ALLOWLIST` /
+`RUNNER_CODEX_CWD_ALLOWLIST`, where a wildcard is correct because the
+container is single-purpose.
+
+**This is why it matters that it's config and not a buried constant.** The
+value said `/home/jlapenna/p/members` long after the repo was renamed to
+`sprinkles`. The allowlist is an exact-prefix glob, so
+`-home-jlapenna-p-sprinkles` never matched `-home-jlapenna-p-members*` — a
+watcher on the default silently recorded _nothing_ from the repo it exists
+to watch, with no error to notice. The rename had already been handled for
+repo identity (`git-repo.ts`'s `LEGACY_REPO_ALIASES`); this path-shaped
+copy of the same fact was missed.
 
 ### 3. Workflows — repo variables
 
@@ -123,7 +138,7 @@ _this_ repo, not a reusable library.
 ## If you fork this
 
 1. `apps/console/src/lib/deployment.ts` — or just set the env vars.
-2. `apps/telemetry-watcher/src/lib/default-checkout.ts`.
+2. `AGENT_TELEMETRY_CHECKOUT_ROOT` — or `default-checkout.ts`'s fallback.
 3. `infra/terraform/variables.tf` — project id, owner, repo.
 4. The repo variables in §3 (`gh variable set …`) — no workflow edits needed.
 5. `apps/console/apphosting.yaml` — backend id and the env block.

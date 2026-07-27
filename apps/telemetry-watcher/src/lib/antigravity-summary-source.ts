@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { SessionSummary } from '@agent-lcars/telemetry';
 
-import { DEFAULT_CHECKOUT_ROOT } from './default-checkout';
+import { checkoutRoot } from './default-checkout';
 
 /**
  * Antigravity CLI's global summary-tier SQLite DB
@@ -237,7 +237,9 @@ function toSessionSummary(
 }
 
 /** Default privacy allowlist — see `default-checkout.ts`'s doc comment. */
-export const DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES = [DEFAULT_CHECKOUT_ROOT];
+export function defaultAntigravityWorkspacePrefixes(): string[] {
+  return [checkoutRoot()];
+}
 
 /** One open connection per distinct `dbPath`, reused across polls for the
  * life of the process instead of reopening the DB every tick — see
@@ -269,7 +271,7 @@ function evictDatabase(dbPath: string, db: DatabaseSync): void {
  */
 export function pollAntigravitySummaries(
   dbPath: string,
-  allowlistPrefixes: string[] = DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+  allowlistPrefixes: string[] = defaultAntigravityWorkspacePrefixes(),
   options: PollAntigravitySummariesOptions = {},
 ): SessionSummary[] {
   let db = openDatabases.get(dbPath);
