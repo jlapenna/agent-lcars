@@ -176,34 +176,6 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 RUN chmod +x /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
-# Strip the container RUNTIME the upstream actions-runner base bakes in.
-#
-# #138 removed the redundant docker-ce-cli apt install and its source, but
-# the binaries never came from there -- the base ships them in the
-# filesystem (/usr/bin/docker is 42MB and not dpkg-owned). So that change
-# cleaned up the install path while leaving a full runtime in the image
-# that runs agent-authored code: docker, dockerd, containerd, runc, ctr.
-#
-# Kept deliberately: the `docker` CLI and the docker-buildx plugin. Both
-# publish lanes drive buildx against the REMOTE builder on this image --
-# agent-lcars publish-runner-autoscaler.yml and sprinkles e2e.yml both run
-# `docker buildx inspect --bootstrap` -- so removing them breaks image
-# publishing entirely. The client is not the risk; the daemon side is.
-#
-# Removed: dockerd/containerd/runc/ctr have no caller anywhere in CI. With
-# no socket mounted on any scale set (agent-lcars#101,
-# jlapenna/homelab#168) and unprivileged runners they cannot function
-# today, which is precisely why they should not be sitting in the image
-# waiting for that to change.
-RUN set -eux; \
-    rm -f /usr/bin/dockerd /usr/bin/containerd /usr/bin/containerd-shim* \
-          /usr/bin/runc /usr/bin/ctr /usr/bin/docker-init /usr/bin/docker-proxy; \
-    command -v docker >/dev/null || { echo "docker CLI must remain for the buildx publish lanes" >&2; exit 1; }; \
-    docker buildx version >/dev/null || { echo "buildx plugin must remain for the publish lanes" >&2; exit 1; }; \
-    for gone in dockerd containerd runc ctr; do \
-      if command -v "$gone" >/dev/null; then echo "$gone still present" >&2; exit 1; fi; \
-    done
-
 USER runner
 
 ENTRYPOINT ["/entrypoint.sh"]
