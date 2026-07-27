@@ -148,6 +148,7 @@ type ScaleSetConfigFile struct {
 	MaxRunners        int      `yaml:"max_runners"`
 	Weight            int      `yaml:"weight,omitempty"`
 	MountDockerSocket bool     `yaml:"mount_docker_socket,omitempty"`
+	ShareWorkDir      bool     `yaml:"share_workdir,omitempty"`
 	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
 	// See Config.FileMounts and fleet.file_mount_allowlist.
 	FileMounts []string `yaml:"file_mounts,omitempty"`
@@ -562,7 +563,7 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
 			RunnerMemory: s.RunnerMemory, MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
-			MountDockerSocket: s.MountDockerSocket, FileMounts: fileMounts,
+			MountDockerSocket: s.MountDockerSocket, ShareWorkDir: s.ShareWorkDir, FileMounts: fileMounts,
 			LogLevel: r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
 		})
 	}

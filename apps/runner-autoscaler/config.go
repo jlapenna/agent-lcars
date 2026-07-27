@@ -49,6 +49,24 @@ type Config struct {
 	// claude-agent must stay false, mirroring the static runners' privilege
 	// boundary, members#1976).
 	MountDockerSocket bool
+	// ShareWorkDir is a homelab addition: bind-mount the PLACEMENT host's
+	// /home/runner/{_work,externals} into every runner this scale set
+	// spawns, so checkouts, node_modules and caches persist across jobs.
+	//
+	// Split out of MountDockerSocket (agent-lcars#101). Those were one flag
+	// because the only pool that wanted a persistent workdir also happened
+	// to want the socket, so removing the socket silently took the workdir
+	// bind with it -- and with it every cross-job cache. They are unrelated
+	// concerns: this one is about persistence, MountDockerSocket is about
+	// privilege. A pool can now have a warm workdir without being handed
+	// root on the placement host.
+	//
+	// Everything that exists BECAUSE the workdir is shared keys off this,
+	// not the socket: the per-host placement exclusion (two runners of one
+	// scale set on a host resolve the same repo to the same checkout
+	// directory and corrupt each other), the workdir lock, the size-cap
+	// sweeper, and the shared-workdir container label.
+	ShareWorkDir bool
 	// FileMounts is a homelab addition: specific host files exposed
 	// read-only inside every runner this scale set spawns (agent-lcars#101).
 	// It exists so the socketless BuildKit publish lane can receive its

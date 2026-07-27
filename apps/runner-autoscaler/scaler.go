@@ -50,6 +50,9 @@ type Scaler struct {
 	// source path is resolved by THAT daemon, so this is correct for every
 	// host in the pool, not just "local".
 	mountDockerSocket bool
+	// shareWorkDir: see Config.ShareWorkDir. Gates everything that exists
+	// because the host workdir is SHARED, independently of the socket.
+	shareWorkDir bool
 	// fileMounts: see Config.FileMounts. Appended to the container's binds
 	// with an explicit :ro, independently of mountDockerSocket -- the
 	// socketless build-client lane uses these and nothing else.
@@ -606,7 +609,7 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 		a.logger.Error("Failed to remove completed runner container; will be swept by the next cleanupOrphans pass", slog.String("host", runner.host), slog.String("containerID", runner.containerID), slog.String("error", err.Error()))
 		return nil
 	}
-	if a.mountDockerSocket {
+	if a.shareWorkDir {
 		// Completion is the natural maintenance boundary. Run asynchronously so
 		// a large du/rm cannot stall GitHub's listener; the per-host lock blocks
 		// new placement only while an idle-host sweep is actually in progress.
@@ -946,19 +949,19 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	}
 
 	candidates := withinHostLimits
-	if a.mountDockerSocket {
+	if a.shareWorkDir {
 		var withCapacity []DockerHost
 		// Preserve the fleet-wide policy filter above. Iterating reachableHosts
 		// here used to reintroduce hosts already removed by runner_limit, which
 		// let E2E placements bypass Janeway's limit while other scale sets
 		// enforced it correctly.
 		for _, h := range withinHostLimits {
-			if counts[h.Name] == 0 && sharedWorkDirCounts[h.Name] == 0 && fleet.socketReservations[h.Name] == 0 {
+			if counts[h.Name] == 0 && sharedWorkDirCounts[h.Name] == 0 && fleet.sharedWorkDirReservations[h.Name] == 0 {
 				withCapacity = append(withCapacity, h)
 			}
 		}
 		if len(withCapacity) == 0 {
-			return "", fmt.Errorf("mount-docker-socket scale set %q: every reachable docker host already has a runner placed: %w", scaleSet, errFleetAtCapacity)
+			return "", fmt.Errorf("shared-workdir scale set %q: every reachable docker host already has a runner placed: %w", scaleSet, errFleetAtCapacity)
 		}
 		candidates = withCapacity
 	}
@@ -1144,14 +1147,20 @@ func dockerSafeNamePart(s string) string {
 // File mounts are ALWAYS :ro. Config validation already bounds their
 // sources to fleet.file_mount_allowlist and rejects the docker socket
 // outright; read-only is the last of those three guards and the cheapest.
-func runnerBinds(mountDockerSocket bool, fileMounts []FileMount) []string {
+func runnerBinds(mountDockerSocket, shareWorkDir bool, fileMounts []FileMount) []string {
 	var binds []string
-	if mountDockerSocket {
-		binds = []string{
+	// Persistence and privilege are independent: a pool can keep a warm
+	// checkout without being handed the host's Docker socket. These were one
+	// flag until agent-lcars#101, which is how removing the socket from the
+	// e2e pool silently discarded its cross-job caches too.
+	if shareWorkDir {
+		binds = append(binds,
 			"/home/runner/_work:/home/runner/_work",
 			"/home/runner/externals:/home/runner/externals",
-			dockerSocketPath + ":" + dockerSocketPath,
-		}
+		)
+	}
+	if mountDockerSocket {
+		binds = append(binds, dockerSocketPath+":"+dockerSocketPath)
 	}
 	for _, m := range fileMounts {
 		binds = append(binds, fmt.Sprintf("%s:%s:ro", m.HostPath, m.ContainerPath))
@@ -1186,7 +1195,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	}
 	host := reservation.host
 	defer reservation.release(scaleSet)
-	if a.mountDockerSocket {
+	if a.shareWorkDir {
 		workDirLock := a.hostWorkDirLock(host)
 		workDirLock.Lock()
 		defer workDirLock.Unlock()
@@ -1225,7 +1234,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to generate JIT config: %w", err)
 	}
 
-	binds := runnerBinds(a.mountDockerSocket, a.fileMounts)
+	binds := runnerBinds(a.mountDockerSocket, a.shareWorkDir, a.fileMounts)
 	var groupAdd []string
 	if a.mountDockerSocket {
 		gid, gidErr := a.coordinator().socketGID(host)
@@ -1254,7 +1263,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			Labels: map[string]string{
 				runnerScaleSetLabelKey:      a.scaleSetName,
 				runnerRegistrationLabelKey:  a.registrationName,
-				runnerSharedWorkDirLabelKey: strconv.FormatBool(a.mountDockerSocket),
+				runnerSharedWorkDirLabelKey: strconv.FormatBool(a.shareWorkDir),
 			},
 			Env: []string{
 				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", jit.EncodedJITConfig),
@@ -1461,7 +1470,7 @@ func (a *Scaler) sweepHostIfIdle(ctx context.Context, client *dockerclient.Clien
 	defer workDirLock.Unlock()
 	fleet := a.coordinator()
 	fleet.mu.Lock()
-	pending := fleet.socketReservations[host]
+	pending := fleet.sharedWorkDirReservations[host]
 	fleet.mu.Unlock()
 	if a.runners.hasHost(host) {
 		a.logger.Debug("Skipping workdir sweep while tracked shared-workdir runner is active", slog.String("host", host))

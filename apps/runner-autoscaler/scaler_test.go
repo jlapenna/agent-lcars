@@ -643,7 +643,7 @@ func TestPickHostE2EPreservesFleetWideHostRunnerLimit(t *testing.T) {
 		hostMetricsURLTemplate: metrics.URL + "/%s",
 		dockerHosts:            []DockerHost{{Name: "janeway", Client: limited.client(t)}, {Name: "laforge", Client: empty.client(t)}},
 		hostRunnerLimits:       map[string]int{"janeway": 1},
-		mountDockerSocket:      true,
+		shareWorkDir:           true,
 		runners:                runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
 		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -723,12 +723,17 @@ func TestPickHostAllUnreachable(t *testing.T) {
 // TestPickHostSocketMountedNoColocation verifies that when mountDockerSocket
 // is set, pickHost refuses to place a second same-scale-set runner on a host
 // that already has one, and errors once every reachable host is occupied.
-func TestPickHostSocketMountedNoColocation(t *testing.T) {
+//
+// Keys off shareWorkDir, not the socket: the exclusion exists because two
+// runners of one scale set on a host resolve the same repo to the same
+// checkout directory and corrupt each other, which is a property of the
+// SHARED WORKDIR, not of holding docker.sock (agent-lcars#101).
+func TestPickHostSharedWorkDirNoColocation(t *testing.T) {
 	fa := newFakeDockerServer(t)
 	fb := newFakeDockerServer(t)
 
 	scaler := &Scaler{
-		mountDockerSocket: true,
+		shareWorkDir: true,
 		dockerHosts: []DockerHost{
 			{Name: "a", Client: fa.client(t)},
 			{Name: "b", Client: fb.client(t)},
@@ -775,12 +780,15 @@ func TestEnsureRunnerImagePullsAfterHostPrune(t *testing.T) {
 }
 
 // TestRunnerBinds pins the privilege boundary the socketless build-client
-// lane depends on: file mounts are read-only, and they never drag the
-// docker socket or the shared workdir along with them.
+// lane depends on, and that persistence is now independent of privilege:
+// a pool can share the host workdir WITHOUT being handed the docker
+// socket, which is the whole point of splitting the two flags
+// (agent-lcars#101). File mounts stay read-only and never drag either
+// along with them.
 func TestRunnerBinds(t *testing.T) {
 	mounts := []FileMount{{HostPath: "/etc/buildkit/client.pem", ContainerPath: "/secrets/client.pem"}}
 
-	socketless := runnerBinds(false, mounts)
+	socketless := runnerBinds(false, false, mounts)
 	if len(socketless) != 1 || socketless[0] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
 		t.Fatalf("socketless binds = %#v", socketless)
 	}
@@ -790,16 +798,33 @@ func TestRunnerBinds(t *testing.T) {
 		}
 	}
 
-	if got := runnerBinds(false, nil); got != nil {
-		t.Fatalf("no socket and no mounts should yield no binds, got %#v", got)
+	if got := runnerBinds(false, false, nil); got != nil {
+		t.Fatalf("no socket, no workdir and no mounts should yield no binds, got %#v", got)
 	}
 
-	// The socket lane keeps its three existing binds and appends mounts.
-	withSocket := runnerBinds(true, mounts)
-	if len(withSocket) != 4 {
-		t.Fatalf("socket lane binds = %#v", withSocket)
+	// The case the split exists for: a warm workdir with NO socket.
+	warm := runnerBinds(false, true, nil)
+	if len(warm) != 2 {
+		t.Fatalf("shared-workdir binds = %#v", warm)
 	}
-	if withSocket[3] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
-		t.Fatalf("file mount not appended read-only: %q", withSocket[3])
+	for _, b := range warm {
+		if strings.Contains(b, "docker.sock") {
+			t.Fatalf("sharing the workdir must not imply the socket: %q", b)
+		}
+	}
+
+	// And the inverse: a socket with no shared workdir.
+	sockOnly := runnerBinds(true, false, nil)
+	if len(sockOnly) != 1 || !strings.Contains(sockOnly[0], "docker.sock") {
+		t.Fatalf("socket-only binds = %#v", sockOnly)
+	}
+
+	// Both, plus mounts appended read-only last.
+	both := runnerBinds(true, true, mounts)
+	if len(both) != 4 {
+		t.Fatalf("socket+workdir binds = %#v", both)
+	}
+	if both[3] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
+		t.Fatalf("file mount not appended read-only: %q", both[3])
 	}
 }
