@@ -9,7 +9,7 @@
 # pnpm-lock.yaml, or the bundled browser build won't match. The image tag used
 # by tools/e2e-docker.sh and CI is derived from this file's content hash, so
 # editing this file automatically invalidates stale images everywhere.
-FROM mcr.microsoft.com/playwright:v1.61.1-noble
+FROM mcr.microsoft.com/playwright:v1.62.0-noble
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target
 # require a JRE, which the base Playwright image does not include.
