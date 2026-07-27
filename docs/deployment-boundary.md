@@ -75,19 +75,28 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | `AGENT_BOT_LOGINS`        | `["claude[bot]","github-actions[bot]"]`    | agent-automerge (pre-existing)            |
 | `NX_CACHE_URL`            | homelab Nx cache                           | all agent lanes (pre-existing)            |
 
-Two deliberate exceptions:
+One deliberate exception:
 
-- **`deploy-console.yml` still reads `secrets.GCP_WORKLOAD_IDENTITY_PROVIDER`
-  and `secrets.GCP_DEPLOYER_SERVICE_ACCOUNT`.** Neither is genuinely secret,
-  but that lane ships production and its secrets hold working values that
-  cannot be read back to diff against a variable. Unifying it with
-  `GCP_WIF_PROVIDER` is worth doing deliberately, not as a refactor side
-  effect. **The two must hold the same provider path.**
 - **Prose still names the logins** — step names ("Claim the issue as
   jclaw-bot"), `::warning::` text, and the agent prompt bodies. These are
   human-readable strings, not config; interpolating them would make the
   already-long prompts harder to read for no functional gain. A fork should
   update the prompt text by hand.
+
+`deploy-console.yml` previously read the provider and deployer SA from
+repository _secrets_, duplicating what the agent workflows hardcoded.
+Neither value is confidential, and both are fully determined by
+`infra/terraform/main.tf`: it declares exactly one workload identity pool
+(`github`) and one provider (`github`) in project `agent-lcars`
+(number `611425338852`), so the provider path has no other possible value,
+and the deployer SA is `google_service_account.github_deployer`'s
+`account_id`. Both now read the same variables as everything else.
+
+The old `GCP_WORKLOAD_IDENTITY_PROVIDER` / `GCP_DEPLOYER_SERVICE_ACCOUNT`
+secrets are now unreferenced. They were left in place rather than deleted —
+secret values cannot be read back, so deleting them is irreversible and
+buys nothing. Remove them by hand once a deploy has run green on the
+variables.
 
 ### 4. Terraform
 

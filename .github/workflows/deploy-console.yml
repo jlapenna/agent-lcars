@@ -43,15 +43,17 @@ jobs:
       - uses: google-github-actions/auth@v3
         id: gcp-auth
         with:
-          # Deliberately still secrets, not the vars.GCP_WIF_PROVIDER the
-          # agent workflows now use: neither value is actually secret (a
-          # resource path and an SA email), but this deploy lane is the one
-          # that ships production and its secrets already hold working
-          # values I cannot read to diff against a variable. Unifying the
-          # two is a follow-up worth doing deliberately, not as a side
-          # effect of a refactor. They must hold the same provider.
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          # Variables, not secrets: neither value is confidential, and both
+          # are fully determined by infra/terraform/main.tf -- it defines
+          # exactly one workload identity pool ("github") and one provider
+          # ("github") in project agent-lcars (number 611425338852), so the
+          # provider path has no other possible value, and the deployer SA
+          # is google_service_account.github_deployer's account_id. The
+          # agent workflows read the same GCP_WIF_PROVIDER variable, so
+          # there is now one place to change it instead of a secret and a
+          # variable that had to be kept in sync by hand.
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
           token_format: access_token
 
       - name: Deploy App Hosting backend
