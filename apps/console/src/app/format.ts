@@ -66,17 +66,7 @@ export function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-/**
- * The share-media skill's convention: files land at
- * `/home/jlapenna/share/<conversation-id>/<filename>` on `host`, served at
- * this URL (LAN/Tailscale-only, behind Authelia). For CLI sessions, the
- * "conversation-id" is the session's own id - see the watcher's
- * `discoverSessionArtifacts`.
- */
-export function shareArtifactUrl(
-  host: string,
-  sessionId: string,
-  filename: string,
-): string {
-  return `https://share.lan.jlapenna.net/${host}/${sessionId}/${filename}`;
-}
+/* `shareArtifactUrl` moved to lib/deployment.ts: its base URL is
+ * deployment config, and reading server-only config from this module would
+ * drag @repo/util-server into the client bundles that import it
+ * (refresh-button.tsx, action-item-card.tsx). */

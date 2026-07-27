@@ -61,9 +61,24 @@ env:
     availability:
       - RUNTIME
 
-  # Not sensitive - just the allowlisted GitHub login
+  # Not sensitive - just the allowlisted GitHub login. Doubles as the
+  # maintainer identity the queue is curated for (see lib/deployment.ts):
+  # single-admin console, so they are the same person by construction.
   - variable: AGENT_LCARS_ADMIN_GITHUB_LOGIN
     value: 'jlapenna'
+    availability:
+      - RUNTIME
+
+  # The rest of this deployment's identity, mirroring lib/deployment.ts's
+  # fallbacks explicitly rather than relying on them - so what this instance
+  # is configured with is visible here, not only in app source.
+  - variable: AGENT_LCARS_FLEET_GITHUB_LOGIN
+    value: 'jclaw-bot'
+    availability:
+      - RUNTIME
+
+  - variable: AGENT_LCARS_ARTIFACT_SHARE_BASE_URL
+    value: 'https://share.lan.jlapenna.net'
     availability:
       - RUNTIME
 
