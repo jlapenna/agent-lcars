@@ -22,12 +22,13 @@ import (
 type fakeDockerServer struct {
 	srv *httptest.Server
 
-	mu           sync.Mutex
-	inspect      map[string]inspectStub // containerID -> canned ContainerInspect response
-	containers   []container.Summary    // ContainerList response
-	removed      []string               // IDs passed to ContainerRemove, in call order
-	imagePresent bool
-	imagePulls   int
+	mu              sync.Mutex
+	inspect         map[string]inspectStub // containerID -> canned ContainerInspect response
+	containers      []container.Summary    // ContainerList response
+	removed         []string               // IDs passed to ContainerRemove, in call order
+	imagePresent    bool
+	imagePulls      int
+	pullStreamError bool
 }
 
 // inspectStub is the canned response for one container ID's ContainerInspect
@@ -153,9 +154,19 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/images/create"):
 		f.mu.Lock()
 		f.imagePulls++
-		f.imagePresent = true
+		failStream := f.pullStreamError
+		if !failStream {
+			f.imagePresent = true
+		}
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if failStream {
+			// A real daemon reports registry/auth/manifest failures INSIDE the
+			// progress stream with HTTP 200, not as a transport error.
+			_, _ = w.Write([]byte("{\"status\":\"Pulling from library/x\"}\n"))
+			_, _ = w.Write([]byte("{\"errorDetail\":{\"message\":\"manifest unknown\"},\"error\":\"manifest unknown\"}\n"))
+			return
+		}
 		_, _ = w.Write([]byte("{\"status\":\"Pull complete\"}\n"))
 
 	default:
