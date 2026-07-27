@@ -58,7 +58,12 @@ jobs:
     # images to an arbitrary pool -- including a socket-mounted one. That
     # is inconsistent with the dispatch-ref restriction directly above,
     # which exists for exactly the same trust reason.
-    runs-on: ${{ vars.BUILD_RUNNER_LABEL }}
+    #
+    # The repo-variable refactor deliberately does NOT apply here. Here the
+    # label IS the security control, not configuration: anyone who can edit
+    # a repository variable could otherwise redirect fleet-image publishing.
+    # A fork edits this line.
+    runs-on: lcars-build-client
     # Raised from 20: arm64 is emulated on the builder (no native aarch64
     # host is available -- see agent-lcars#101), and the first publish runs
     # against a cold BuildKit cache on a 4-core box. Steady-state runs are
@@ -110,6 +115,12 @@ jobs:
       # shape that only makes sense when the material comes from GitHub
       # secrets. Here it is a read-only bind-mount from the local secret
       # store, so paths are correct and the PEM never transits GitHub.
+      # The builder endpoint stays literal for the same reason `runs-on`
+      # above does: this workflow publishes the images the whole fleet
+      # pulls and trusts, so where it builds is a trust decision, not
+      # configuration. A mutable repository variable here would let anyone
+      # who can edit variables point fleet-image builds at a builder they
+      # control. A fork edits this line.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
           driver: remote

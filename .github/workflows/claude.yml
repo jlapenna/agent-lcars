@@ -478,5 +478,5 @@ jobs:
           # the jclaw-bot claim stays, reading as "fleet tried, human
           # needed").
           gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-            -f 'assignees[]=jlapenna' --silent \
+            -f "assignees[]=${{ vars.MAINTAINER_LOGIN }}" --silent \
             || echo "::warning::Could not assign jlapenna"

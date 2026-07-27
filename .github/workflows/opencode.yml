@@ -322,5 +322,5 @@ jobs:
             --repo "$REPO" \
             --body "OpenCode agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
           gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-            -f 'assignees[]=jlapenna' --silent \
+            -f "assignees[]=${{ vars.MAINTAINER_LOGIN }}" --silent \
             || echo "::warning::Could not assign jlapenna"

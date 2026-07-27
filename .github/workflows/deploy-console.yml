@@ -63,7 +63,7 @@ jobs:
           set -euo pipefail
           pnpm exec firebase deploy \
             --only "apphosting:${{ vars.APPHOSTING_BACKEND_ID }}" \
-            --project agent-lcars \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
             --non-interactive 2>&1 | tee firebase-deploy.log
 
           # The CLI deploys an archive rather than a Git source reference.
@@ -91,7 +91,7 @@ jobs:
           set -euo pipefail
 
           BACKEND=$(pnpm exec firebase apphosting:backends:get "${{ vars.APPHOSTING_BACKEND_ID }}" \
-            --project agent-lcars --json --non-interactive \
+            --project "${{ vars.GCP_PROJECT_ID }}" --json --non-interactive \
             | jq -r '.result.name')
           if [ -z "$BACKEND" ] || [ "$BACKEND" = null ]; then
             echo "::error::Could not resolve the App Hosting backend resource."
