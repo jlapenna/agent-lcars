@@ -5,7 +5,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
-import { clearHumanNeeded, closeIssue, rebasePr } from './actions';
+import {
+  clearHumanNeeded,
+  closeIssue,
+  reassignPipeline,
+  rebasePr,
+} from './actions';
 import { ItemOverflowMenu } from './item-overflow-menu';
 
 // 'use server' actions - out of scope here, matching the pattern in
@@ -13,6 +18,7 @@ import { ItemOverflowMenu } from './item-overflow-menu';
 vi.mock('./actions', () => ({
   closeIssue: vi.fn(),
   clearHumanNeeded: vi.fn(),
+  reassignPipeline: vi.fn(),
   rebasePr: vi.fn(),
 }));
 
@@ -225,6 +231,69 @@ describe('ItemOverflowMenu', () => {
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'Merge conflict', color: 'red' }),
+      ),
+    );
+  });
+
+  it('offers the other two pipelines to reassign a codex-labeled issue to', async () => {
+    renderMenu(makeItem({ labels: ['codex'] }));
+    await openMenu();
+
+    expect(screen.getByText('Reassign to claude')).toBeTruthy();
+    expect(screen.getByText('Reassign to opencode')).toBeTruthy();
+    expect(screen.queryByText('Reassign to codex')).toBeNull();
+  });
+
+  it('does not offer reassign for an issue with no pipeline label', async () => {
+    renderMenu(makeItem());
+    await openMenu();
+
+    expect(screen.queryByText(/Reassign to/)).toBeNull();
+  });
+
+  it('does not offer reassign for a PR, even a pipeline-labeled one', async () => {
+    renderMenu(
+      makeItem({ kind: 'pr', labels: ['codex'], mergeableState: 'behind' }),
+    );
+    await openMenu();
+
+    expect(screen.queryByText(/Reassign to/)).toBeNull();
+  });
+
+  it('reassigns to the clicked pipeline, then notifies', async () => {
+    (reassignPipeline as Mock).mockResolvedValue({ ok: true });
+    renderMenu(makeItem({ labels: ['codex'] }));
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Reassign to claude'));
+
+    await waitFor(() =>
+      expect(reassignPipeline).toHaveBeenCalledWith(DEFAULT_REPO, 42, 'claude'),
+    );
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '#42 reassigned to claude',
+        color: 'green',
+      }),
+    );
+  });
+
+  it('surfaces a failed reassign as a red notification', async () => {
+    (reassignPipeline as Mock).mockResolvedValue({
+      ok: false,
+      message: 'Issue is already assigned to claude',
+    });
+    renderMenu(makeItem({ labels: ['codex'] }));
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Reassign to claude'));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Issue is already assigned to claude',
+          color: 'red',
+        }),
       ),
     );
   });

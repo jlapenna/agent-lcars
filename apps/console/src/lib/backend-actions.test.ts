@@ -9,6 +9,7 @@ import {
   deriveQuickTaskTitle,
   dispatchUnstickPrs,
   postComment,
+  reassignPipeline,
   retriggerIssue,
   updatePrBranch,
 } from './backend-actions';
@@ -452,6 +453,63 @@ describe('retriggerIssue (pipeline routing)', () => {
     // /oc means nothing to claude.yml's trigger - the label still cycles.
     expect(removeLabel).toHaveBeenCalled();
     expect(addLabels).toHaveBeenCalled();
+  });
+});
+
+describe('reassignPipeline', () => {
+  function mockOctokit(labels: string[]) {
+    const get = vi.fn().mockResolvedValue({ data: { labels } });
+    const removeLabel = vi.fn().mockResolvedValue({});
+    const addLabels = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { get, removeLabel, addLabels } },
+    });
+    return { get, removeLabel, addLabels };
+  }
+
+  it('drops the current pipeline label and adds the target', async () => {
+    const { removeLabel, addLabels } = mockOctokit(['codex']);
+
+    await reassignPipeline(DEFAULT_REPO, 2709, 'claude');
+
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'codex' }),
+    );
+    expect(addLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['claude'] }),
+    );
+  });
+
+  it('drops every pipeline label present, not just one', async () => {
+    const { removeLabel, addLabels } = mockOctokit(['claude', 'opencode']);
+
+    await reassignPipeline(DEFAULT_REPO, 2709, 'codex');
+
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'claude' }),
+    );
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'opencode' }),
+    );
+    expect(addLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['codex'] }),
+    );
+  });
+
+  it('400s when the issue already carries the target pipeline label', async () => {
+    mockOctokit(['claude']);
+
+    await expect(
+      reassignPipeline(DEFAULT_REPO, 2709, 'claude'),
+    ).rejects.toThrow('Issue is already assigned to claude');
+  });
+
+  it('400s when the issue carries no pipeline label at all', async () => {
+    mockOctokit(['quick-task']);
+
+    await expect(
+      reassignPipeline(DEFAULT_REPO, 2709, 'claude'),
+    ).rejects.toThrow('Issue does not carry a pipeline label');
   });
 });
 

@@ -19,6 +19,7 @@ import {
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
+  reassignPipeline as reassignPipelineLib,
   retriggerIssue as retriggerIssueLib,
   updatePrBranch,
 } from '../lib/backend-actions';
@@ -213,6 +214,21 @@ export async function clearHumanNeeded(
   await requireAdmin();
   try {
     await clearHumanNeededLabel(resolveWatchedRepo(repo), number);
+    revalidatePath('/');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function reassignPipeline(
+  repo: WatchedRepo,
+  number: number,
+  pipeline: Pipeline,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await reassignPipelineLib(resolveWatchedRepo(repo), number, pipeline);
     revalidatePath('/');
     return { ok: true };
   } catch (error) {

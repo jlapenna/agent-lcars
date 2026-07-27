@@ -6,12 +6,21 @@ import { notifications } from '@mantine/notifications';
 import { useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
-import { clearHumanNeeded, closeIssue, rebasePr } from './actions';
+import { type Pipeline, pipelineForLabels } from '../lib/primary-action';
+import {
+  clearHumanNeeded,
+  closeIssue,
+  reassignPipeline,
+  rebasePr,
+} from './actions';
+
+const PIPELINES: Pipeline[] = ['claude', 'codex', 'opencode'];
 
 /**
  * An overflow menu, shared by queue cards and compact rows, for secondary
- * actions (closing an item's loop, clearing a label, rebasing a PR) without
- * a trip to GitHub. Renders nothing if no action applies to this item.
+ * actions (closing an item's loop, clearing a label, rebasing a PR,
+ * reassigning to a different agent) without a trip to GitHub. Renders
+ * nothing if no action applies to this item.
  */
 export function ItemOverflowMenu({
   item,
@@ -34,7 +43,26 @@ export function ItemOverflowMenu({
   // "Base branch has moved" - the one mergeable_state a maintainer can
   // resolve with a single click rather than a trip to GitHub.
   const canRebase = item.kind === 'pr' && item.mergeableState === 'behind';
-  if (!canClose && !canClearHumanNeeded && !canMute && !canRebase) return null;
+  // Only issues carry a pipeline label (claude.yml/codex.yml/opencode.yml
+  // dispatch off `issues: labeled`, not PRs) - an issue with none of the
+  // three has never been handed to an agent, so there's nothing to
+  // reassign FROM.
+  const currentPipeline = PIPELINES.some((p) => item.labels.includes(p))
+    ? pipelineForLabels(item.labels)
+    : undefined;
+  const reassignTargets =
+    item.kind === 'issue' && currentPipeline
+      ? PIPELINES.filter((p) => p !== currentPipeline)
+      : [];
+  const canReassign = reassignTargets.length > 0;
+  if (
+    !canClose &&
+    !canClearHumanNeeded &&
+    !canMute &&
+    !canRebase &&
+    !canReassign
+  )
+    return null;
 
   const handleClose = () => {
     startTransition(async () => {
@@ -78,6 +106,20 @@ export function ItemOverflowMenu({
     });
   };
 
+  const handleReassign = (target: Pipeline) => {
+    startTransition(async () => {
+      const result = await reassignPipeline(item.repo, item.number, target);
+      if (!result.ok) {
+        notifications.show({ message: result.message, color: 'red' });
+        return;
+      }
+      notifications.show({
+        message: `#${item.number} reassigned to ${target}`,
+        color: 'green',
+      });
+    });
+  };
+
   const handleRebase = () => {
     startTransition(async () => {
       const result = await rebasePr(item.repo, item.number);
@@ -109,6 +151,11 @@ export function ItemOverflowMenu({
         {canRebase && (
           <Menu.Item onClick={handleRebase}>Rebase onto base branch</Menu.Item>
         )}
+        {reassignTargets.map((target) => (
+          <Menu.Item key={target} onClick={() => handleReassign(target)}>
+            Reassign to {target}
+          </Menu.Item>
+        ))}
         {canClearHumanNeeded && (
           <Menu.Item onClick={handleClearHumanNeeded}>
             Clear needs-human

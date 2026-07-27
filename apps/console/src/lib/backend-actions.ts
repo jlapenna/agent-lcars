@@ -328,6 +328,70 @@ export async function retriggerIssue(
   });
 }
 
+const PIPELINE_LABELS: Pipeline[] = ['claude', 'codex', 'opencode'];
+
+// The console's "hand this off to a different agent" action (#143) - e.g. a
+// codex run got stuck and the maintainer wants claude to pick it up instead.
+// Distinct from retriggerIssue's same-pipeline cycle: this swaps which
+// pipeline label the issue carries rather than re-firing the one it already
+// has.
+export async function reassignPipeline(
+  repo: WatchedRepo,
+  issueNumber: number,
+  targetPipeline: Pipeline,
+): Promise<void> {
+  const octokit = getGithubClient();
+
+  const { data: issue } = await octokit.rest.issues.get({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+  });
+  const currentLabels = issue.labels.map((label) =>
+    typeof label === 'string' ? label : (label.name ?? ''),
+  );
+  const currentPipelineLabels = PIPELINE_LABELS.filter((label) =>
+    currentLabels.includes(label),
+  );
+  if (currentPipelineLabels.includes(targetPipeline)) {
+    throw new ActionError(
+      `Issue is already assigned to ${targetPipeline}`,
+      400,
+    );
+  }
+  if (currentPipelineLabels.length === 0) {
+    throw new ActionError(
+      'Issue does not carry a pipeline label; nothing to reassign',
+      400,
+    );
+  }
+
+  await clearHumanNeededLabel(repo, issueNumber);
+
+  // Drop every other pipeline label first - pipelineForLabels' claude >
+  // codex > opencode precedence means a stray leftover label could route a
+  // future reply/retrigger back to the old pipeline even after this
+  // hand-off.
+  for (const label of currentPipelineLabels) {
+    await octokit.rest.issues.removeLabel({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
+      name: label,
+    });
+  }
+
+  // Adding a label the issue didn't already carry fires the target
+  // pipeline's own `issues: labeled` trigger by itself - no remove-then-readd
+  // cycle needed here, unlike retriggerIssue's same-label case.
+  await octokit.rest.issues.addLabels({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+    labels: [targetPipeline],
+  });
+}
+
 const QUICK_TASK_LABEL = 'quick-task';
 // Issue titles show up in list views and the run-name banner - a raw,
 // possibly multi-paragraph task description would blow both out, so this
