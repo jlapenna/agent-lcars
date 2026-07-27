@@ -141,6 +141,14 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip $EXTRA_APT_PACKAGES; \
     node --version; \
+    # docker + buildx come from the upstream base, not from apt. They are
+    # smoke-checked here because the PUBLISH job runs on this very image and
+    # drives `docker buildx inspect --bootstrap`: if a future RUNNER_BASE
+    # refresh drops either, the build would still succeed, roll out, and
+    # then no subsequent run could publish a corrected image through the
+    # normal path. Failing the build is recoverable; shipping that is not.
+    docker --version; \
+    docker buildx version; \
     git-lfs --version; \
     gh --version; \
     python3 -m pip --version; \
