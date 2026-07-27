@@ -58,7 +58,7 @@ jobs:
     # images to an arbitrary pool -- including a socket-mounted one. That
     # is inconsistent with the dispatch-ref restriction directly above,
     # which exists for exactly the same trust reason.
-    runs-on: lcars-build-client
+    runs-on: ${{ vars.BUILD_RUNNER_LABEL }}
     # Raised from 20: arm64 is emulated on the builder (no native aarch64
     # host is available -- see agent-lcars#101), and the first publish runs
     # against a cold BuildKit cache on a 4-core box. Steady-state runs are
@@ -149,13 +149,13 @@ jobs:
           file: apps/runner-autoscaler/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: docker-registry.lan.jlapenna.net/agent-lcars/runner-autoscaler:latest
-          cache-from: type=registry,ref=docker-registry.lan.jlapenna.net/agent-lcars/runner-autoscaler:buildcache
-          cache-to: type=registry,ref=docker-registry.lan.jlapenna.net/agent-lcars/runner-autoscaler:buildcache,mode=max
+          tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:latest
+          cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:buildcache
+          cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:buildcache,mode=max
 
       # Keeps the existing tag name: every consuming workflow across members
       # and agent-lcars already hardcodes
-      # docker-registry.lan.jlapenna.net/homelab-runner:jit-node24 --
+      # ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24 --
       # renaming it is out of scope for this migration.
       - name: Build and push JIT worker runner image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -164,7 +164,7 @@ jobs:
           file: apps/runner-autoscaler/runner-image/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24
+          tags: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24
           # Busts the Dockerfile's internal `git clone` layer on every real
           # publish -- see that Dockerfile's own comment. Without this, the
           # registry-backed cache below could restore a stale clone of
@@ -175,5 +175,5 @@ jobs:
             # `git fetch origin <sha>` in the Dockerfile supports a detached
             # commit as well as the local-build fallback of `main`.
             AGENT_LCARS_REF=${{ github.sha }}
-          cache-from: type=registry,ref=docker-registry.lan.jlapenna.net/homelab-runner:buildcache
-          cache-to: type=registry,ref=docker-registry.lan.jlapenna.net/homelab-runner:buildcache,mode=max
+          cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache
+          cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache,mode=max

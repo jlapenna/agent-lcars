@@ -51,18 +51,43 @@ all three encodings derive from.
 Note runner mode deliberately ignores it — see `runner.ts`'s
 `RUNNER_ALLOWLIST` / `RUNNER_CODEX_CWD_ALLOWLIST`.
 
-### 3. Workflows
+### 3. Workflows — repo variables
 
-Not extractable by relocation; use repo variables instead. Instance values
-currently inline in `.github/workflows/`:
+Not extractable by relocation (`.github/workflows/` is a fixed path), so
+these live as **repo variables** instead. Every one fails _closed_ if unset:
+an unset variable interpolates to an empty string, which makes a `runs-on`
+unschedulable, an auth step fail, and the `github.actor == vars.MAINTAINER_LOGIN`
+dispatch guard evaluate false. Nothing silently falls back to a default.
 
-- runner pool label — `claude-agent-lcars` (claude/codex/opencode)
-- WIF provider — `projects/611425338852/.../providers/github`
-- service accounts — `telemetry-writer@`, `codex-agent@agent-lcars`
-- registry host — `docker-registry.lan.jlapenna.net`
-  (`publish-runner-autoscaler.yml`)
-- maintainer login in dispatch guards (`github.actor == 'jlapenna'`)
-- `AGENT_BOT_LOGINS`, `NX_CACHE_URL` — already repo variables
+| Variable                  | This deployment                            | Used by                                   |
+| ------------------------- | ------------------------------------------ | ----------------------------------------- |
+| `AGENT_RUNNER_LABEL`      | `claude-agent-lcars`                       | claude / codex / opencode                 |
+| `DEFAULT_RUNNER_LABEL`    | `lcars-default`                            | agent-automerge                           |
+| `BUILD_RUNNER_LABEL`      | `lcars-build-client`                       | publish-runner-autoscaler                 |
+| `GCP_PROJECT_ID`          | `agent-lcars`                              | codex (secret access)                     |
+| `GCP_WIF_PROVIDER`        | `projects/611425338852/…/providers/github` | claude / codex / opencode                 |
+| `GCP_TELEMETRY_WRITER_SA` | `telemetry-writer@agent-lcars…`            | claude / codex                            |
+| `GCP_CODEX_AGENT_SA`      | `codex-agent@agent-lcars…`                 | codex                                     |
+| `HOMELAB_REGISTRY`        | `docker-registry.lan.jlapenna.net`         | publish-runner-autoscaler                 |
+| `MAINTAINER_LOGIN`        | `jlapenna`                                 | dispatch guards, failure assignment       |
+| `AGENT_FLEET_LOGIN`       | `jclaw-bot`                                | claim steps, git identity, queue hand-off |
+| `APPHOSTING_BACKEND_ID`   | `agent-lcars`                              | deploy-console                            |
+| `AGENT_BOT_LOGINS`        | `["claude[bot]","github-actions[bot]"]`    | agent-automerge (pre-existing)            |
+| `NX_CACHE_URL`            | homelab Nx cache                           | all agent lanes (pre-existing)            |
+
+Two deliberate exceptions:
+
+- **`deploy-console.yml` still reads `secrets.GCP_WORKLOAD_IDENTITY_PROVIDER`
+  and `secrets.GCP_DEPLOYER_SERVICE_ACCOUNT`.** Neither is genuinely secret,
+  but that lane ships production and its secrets hold working values that
+  cannot be read back to diff against a variable. Unifying it with
+  `GCP_WIF_PROVIDER` is worth doing deliberately, not as a refactor side
+  effect. **The two must hold the same provider path.**
+- **Prose still names the logins** — step names ("Claim the issue as
+  jclaw-bot"), `::warning::` text, and the agent prompt bodies. These are
+  human-readable strings, not config; interpolating them would make the
+  already-long prompts harder to read for no functional gain. A fork should
+  update the prompt text by hand.
 
 ### 4. Terraform
 
@@ -81,5 +106,5 @@ _this_ repo, not a reusable library.
 1. `apps/console/src/lib/deployment.ts` — or just set the env vars.
 2. `apps/telemetry-watcher/src/lib/default-checkout.ts`.
 3. `infra/terraform/variables.tf` — project id, owner, repo.
-4. `.github/workflows/*` — the values in §3.
+4. The repo variables in §3 (`gh variable set …`) — no workflow edits needed.
 5. `apps/console/apphosting.yaml` — backend id and the env block.

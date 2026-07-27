@@ -46,7 +46,7 @@ permissions:
 
 jobs:
   codex:
-    # github.actor == 'jlapenna' on the label-add path: this repo is public,
+    # github.actor == vars.MAINTAINER_LOGIN on the label-add path: this repo is public,
     # and a Triage-level collaborator can add a label without being the
     # maintainer. The issues webhook has no author_association-equivalent
     # for "who labeled this", so this compares github.actor directly —
@@ -55,7 +55,7 @@ jobs:
       (github.event_name == 'issues' &&
        github.event.action == 'labeled' &&
        github.event.label.name == 'codex' &&
-       github.actor == 'jlapenna' &&
+       github.actor == vars.MAINTAINER_LOGIN &&
        !contains(github.event.issue.labels.*.name, 'claude')) ||
       (github.event_name == 'issue_comment' &&
        github.event.comment.user.type != 'Bot' &&
@@ -74,7 +74,7 @@ jobs:
     concurrency:
       group: codex-subscription-auth
       cancel-in-progress: false
-    runs-on: [claude-agent-lcars]
+    runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
     # 90, matching claude.yml/opencode.yml and the console's
     # RUN_TIMEOUT_MINUTES. The real bound is the per-step timeout on `Run
     # Codex` below; this is the backstop (see #51/#129 for what an unbounded
@@ -98,7 +98,7 @@ jobs:
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
           if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-               -f 'assignees[]=jclaw-bot' --silent; then
+               -f "assignees[]=${{ vars.AGENT_FLEET_LOGIN }}" --silent; then
             echo "claimed=true" >> "$GITHUB_OUTPUT"
           else
             echo "claimed=false" >> "$GITHUB_OUTPUT"
@@ -112,8 +112,8 @@ jobs:
 
       - name: Configure git identity for Codex
         run: |
-          git config user.name 'jclaw-bot'
-          git config user.email 'jclaw-bot@users.noreply.github.com'
+          git config user.name "${{ vars.AGENT_FLEET_LOGIN }}"
+          git config user.email "${{ vars.AGENT_FLEET_LOGIN }}@users.noreply.github.com"
 
       - name: Point Nx at the shared host cache when present
         run: |
@@ -136,8 +136,8 @@ jobs:
       - name: Authenticate to GCP for the subscription credential
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
-          service_account: codex-agent@agent-lcars.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CODEX_AGENT_SA }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
@@ -153,8 +153,8 @@ jobs:
         continue-on-error: true
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
-          service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
           token_format: access_token
           export_environment_variables: false
 
@@ -195,7 +195,7 @@ jobs:
           mkdir -p "$HOME/.codex"
           chmod 700 "$HOME/.codex"
           gcloud secrets versions access latest \
-            --project=agent-lcars \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
             --secret=CODEX_AUTH_JSON > "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
           codex login status
@@ -315,7 +315,7 @@ jobs:
             exit 1
           fi
           gcloud secrets versions add CODEX_AUTH_JSON \
-            --project=agent-lcars \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
             --data-file="$HOME/.codex/auth.json"
 
       # Mirrors claude.yml's finalize: kills the sidecar daemon and writes
@@ -393,7 +393,7 @@ jobs:
           MSG="failed"
           if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 90-minute job timeout)"; fi
           gh issue comment "$NUM" --body "⚠️ Codex agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          gh issue edit "$NUM" --add-label human-needed --add-assignee jlapenna
+          gh issue edit "$NUM" --add-label human-needed --add-assignee "${{ vars.MAINTAINER_LOGIN }}"
 
       # Hand the concurrency group off to the next queued issue.
       #
@@ -423,6 +423,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           CURRENT: ${{ github.event.issue.number || github.event.inputs.issue }}
+          FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
           set -euo pipefail
 
@@ -431,10 +432,10 @@ jobs:
           # dispatched here.
           NEXT=$(gh issue list --repo "$REPO" --state open --label codex \
             --json number,labels,assignees --limit 100 \
-            | jq -r --argjson cur "${CURRENT:-0}" '
+            | jq -r --argjson cur "${CURRENT:-0}" --arg fleet "$FLEET_LOGIN" '
                 [ .[]
                   | select((.labels | map(.name) | index("claude")) == null)
-                  | select((.assignees | map(.login) | index("jclaw-bot")) == null)
+                  | select((.assignees | map(.login) | index($fleet)) == null)
                   | .number
                 ]
                 | map(select(. != $cur))

@@ -61,7 +61,7 @@ jobs:
     # dispatches two agents onto the same problem: they edit the same
     # branch and both report on the issue.
     #
-    # github.actor == 'jlapenna' on the label-add path: this repo is public,
+    # github.actor == vars.MAINTAINER_LOGIN on the label-add path: this repo is public,
     # and Triage-level (or higher) collaborators can add a label without
     # being the maintainer — the issues webhook payload has no
     # author_association-equivalent field for "who labeled this" the way a
@@ -72,7 +72,7 @@ jobs:
       (github.event_name == 'issues' &&
        github.event.action == 'labeled' &&
        github.event.label.name == 'opencode' &&
-       github.actor == 'jlapenna' &&
+       github.actor == vars.MAINTAINER_LOGIN &&
        !contains(github.event.issue.labels.*.name, 'claude') &&
        !contains(github.event.issue.labels.*.name, 'codex')) ||
       (github.event_name == 'issue_comment' &&
@@ -89,7 +89,7 @@ jobs:
     # jlapenna/homelab, see homelab#97) - jobs queue until that lands. Do
     # NOT point this at homelab-autoscale-claude-agent; that label is a
     # distinct registration reserved for the members repo's runner fleet.
-    runs-on: [claude-agent-lcars]
+    runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
     # Backstop only - the real bound is the per-step timeout on Run OpenCode
     # below (#51). Matched to claude.yml's job timeout, which is also what
     # the console's RUN_TIMEOUT_MINUTES classifies runs against: at the old
@@ -105,7 +105,7 @@ jobs:
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
           gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-            -f 'assignees[]=jclaw-bot' --silent \
+            -f "assignees[]=${{ vars.AGENT_FLEET_LOGIN }}" --silent \
             || echo "::warning::Could not assign jclaw-bot to #$NUM"
 
       - name: Checkout

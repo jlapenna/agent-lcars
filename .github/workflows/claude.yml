@@ -80,7 +80,7 @@ jobs:
       (github.event_name == 'issues' &&
        github.event.action == 'labeled' &&
        github.event.label.name == 'claude' &&
-       github.actor == 'jlapenna') ||
+       github.actor == vars.MAINTAINER_LOGIN) ||
       (github.event_name == 'issue_comment' &&
        github.event.comment.user.type != 'Bot' &&
        github.event.comment.author_association == 'OWNER' &&
@@ -93,7 +93,7 @@ jobs:
     # jlapenna/homelab, see homelab#97) - jobs queue until that lands. Do
     # NOT point this at homelab-autoscale-claude-agent; that label is a
     # distinct registration reserved for the members repo's runner fleet.
-    runs-on: [claude-agent-lcars]
+    runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
     timeout-minutes: 90
     env:
       # Park the pnpm store on the disk-backed runner workdir mount so it
@@ -124,7 +124,7 @@ jobs:
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
         run: |
           gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-            -f 'assignees[]=jclaw-bot' --silent \
+            -f "assignees[]=${{ vars.AGENT_FLEET_LOGIN }}" --silent \
             || echo "::warning::Could not assign jclaw-bot to #$NUM"
 
       - name: Checkout
@@ -164,8 +164,8 @@ jobs:
         continue-on-error: true
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
-          service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
           token_format: access_token
           # By default this action also exports GOOGLE_APPLICATION_CREDENTIALS
           # (and friends) into GITHUB_ENV, making them ambient to every later

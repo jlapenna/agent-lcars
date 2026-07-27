@@ -43,6 +43,13 @@ jobs:
       - uses: google-github-actions/auth@v3
         id: gcp-auth
         with:
+          # Deliberately still secrets, not the vars.GCP_WIF_PROVIDER the
+          # agent workflows now use: neither value is actually secret (a
+          # resource path and an SA email), but this deploy lane is the one
+          # that ships production and its secrets already hold working
+          # values I cannot read to diff against a variable. Unifying the
+          # two is a follow-up worth doing deliberately, not as a side
+          # effect of a refactor. They must hold the same provider.
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
           token_format: access_token
@@ -53,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm exec firebase deploy \
-            --only apphosting:agent-lcars \
+            --only "apphosting:${{ vars.APPHOSTING_BACKEND_ID }}" \
             --project agent-lcars \
             --non-interactive 2>&1 | tee firebase-deploy.log
 
@@ -81,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          BACKEND=$(pnpm exec firebase apphosting:backends:get agent-lcars \
+          BACKEND=$(pnpm exec firebase apphosting:backends:get "${{ vars.APPHOSTING_BACKEND_ID }}" \
             --project agent-lcars --json --non-interactive \
             | jq -r '.result.name')
           if [ -z "$BACKEND" ] || [ "$BACKEND" = null ]; then
