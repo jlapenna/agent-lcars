@@ -132,8 +132,13 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm exec nx run @agent-lcars/console-e2e:e2e
 
+      # always(), not failure(): the populated-page captures
+      # (populated-dashboard.spec.ts, #40) are attached to this report and
+      # exist to be looked at after a *passing* run. Uploading only on
+      # failure would mean the one artifact they live in is thrown away
+      # exactly when they're useful.
       - name: Upload Playwright report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report

@@ -146,14 +146,22 @@ test.describe('populated dashboard', () => {
 });
 
 // Screenshots, not assertions: #40 asks for the populated pages to be looked
-// at in both schemes. These write into the Playwright output dir on every
-// run so the pages can be reviewed without hand-seeding an environment.
-// Deliberately NOT `toHaveScreenshot` baselines — this suite has no
-// committed baselines and CI's rendering environment isn't pinned to a
-// developer's, so a baseline here would be a flake generator.
+// at in both schemes, so these capture them on every run and nothing here
+// fails on appearance. Deliberately NOT `toHaveScreenshot` baselines — this
+// suite has no committed baselines and CI's rendering environment isn't
+// pinned to a developer's, so a baseline here would be a flake generator.
+//
+// Written via `testInfo.outputPath()` and attached with `testInfo.attach()`
+// rather than to a cwd-relative path: an attachment is embedded in the
+// Playwright HTML report, which is the artifact CI actually uploads (see
+// ci.yml, which uploads it on success too precisely so these are
+// retrievable after a green run — a capture nobody can open isn't a
+// capture).
 test.describe('populated page captures', () => {
   for (const scheme of ['light', 'dark'] as const) {
-    test(`captures the console in ${scheme} mode`, async ({ page }) => {
+    test(`captures the console in ${scheme} mode`, async ({
+      page,
+    }, testInfo) => {
       await useColorScheme(page, scheme);
       // The session detail page is a drill-down, not a nav destination, so
       // it renders its own back-link header instead of the pill rail (see
@@ -171,9 +179,12 @@ test.describe('populated page captures', () => {
       ] as const) {
         await page.goto(path);
         await expect(page.locator(ready)).toBeVisible();
-        await page.screenshot({
-          path: `./test-output/captures/${name}-${scheme}.png`,
-          fullPage: true,
+        const file = `${name}-${scheme}.png`;
+        const capture = testInfo.outputPath(file);
+        await page.screenshot({ path: capture, fullPage: true });
+        await testInfo.attach(file, {
+          path: capture,
+          contentType: 'image/png',
         });
       }
     });
