@@ -1,5 +1,6 @@
-import { type ActionItem, AGENT_FLEET_LOGIN } from './action-items';
+import { type ActionItem } from './action-items';
 import type { CliSession } from './cli-sessions';
+import { agentFleetLogin } from './deployment';
 import { repoKey } from './watched-repo';
 
 /**
@@ -62,7 +63,7 @@ export function deriveClaimedIdle(
 ): ActionItem[] {
   return items.filter(
     (item) =>
-      item.assigneeLogins.includes(AGENT_FLEET_LOGIN) &&
+      item.assigneeLogins.includes(agentFleetLogin()) &&
       !hasLiveRun(item) &&
       !activeSessions.some((session) =>
         sessionReferencesItemNumber(session, item),

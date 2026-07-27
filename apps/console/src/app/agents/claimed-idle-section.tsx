@@ -1,6 +1,7 @@
 import { Card, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
+import { agentFleetLogin } from '../../lib/deployment';
 import { repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
 import { formatRelativeTime } from '../format';
@@ -33,7 +34,7 @@ export function ClaimedIdleSection({ items }: { items: ActionItem[] }) {
         </Title>
         {items.length === 0 ? (
           <Text size="sm" c="dimmed">
-            Every jclaw-bot claim has a live run or session behind it.
+            Every {agentFleetLogin()} claim has a live run or session behind it.
           </Text>
         ) : (
           <Stack gap="xs">

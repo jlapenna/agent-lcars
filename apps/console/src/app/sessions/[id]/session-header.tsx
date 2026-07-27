@@ -15,6 +15,7 @@ import {
 } from '@mantine/core';
 import type { ReactNode } from 'react';
 
+import { shareArtifactUrl } from '../../../lib/deployment';
 import { primaryWatchedRepo } from '../../../lib/github-client';
 import { sessionDurationSeconds } from '../../../lib/session-archive';
 import {
@@ -25,12 +26,7 @@ import {
 } from '../../agent-activity-panel';
 import { ArtifactPreviewToggle } from '../../artifact-viewer';
 import { Eyebrow } from '../../eyebrow';
-import {
-  formatCost,
-  formatDuration,
-  formatRelativeTime,
-  shareArtifactUrl,
-} from '../../format';
+import { formatCost, formatDuration, formatRelativeTime } from '../../format';
 import { TakeoverCommand } from '../../takeover-command';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

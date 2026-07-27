@@ -1,3 +1,4 @@
+import { agentFleetLogin, maintainerLogin } from './deployment';
 import {
   getGithubClient,
   getWatchedRepos,
@@ -6,16 +7,10 @@ import {
   type WatchedRepo,
 } from './github-client';
 
-/** The human this console serves: review requests are matched against this
- * login, and a newest comment by it means the ball is back with the agent. */
-export const MAINTAINER_LOGIN = 'jlapenna';
-
-/** The machine user the agent fleet claims work as (#2783): claude.yml
- * assigns it to the anchor issue at run start, claude-automerge.yml assigns
- * it to agent-authored PRs, and interactive sessions claim with it per the
- * sprinkles-dev SKILL.md guardrail. (The claude[bot] app identity itself is
- * not an assignable user, so this account IS the fleet's assignee.) */
-export const AGENT_FLEET_LOGIN = 'jclaw-bot';
+/** Re-exported for the modules that already import it from here. The value
+ * itself now comes from `deployment.ts`, which is the single place this
+ * instance's identity lives. */
+export { agentFleetLogin, maintainerLogin };
 
 export type ActionType =
   | 'human-needed'
@@ -113,7 +108,7 @@ export function isDeployWaitOnly(item: ActionItem): boolean {
 export function isHandedBack(item: ActionItem): boolean {
   return (
     item.actionTypes.includes('human-needed') &&
-    item.lastCommentAuthor === MAINTAINER_LOGIN &&
+    item.lastCommentAuthor === maintainerLogin() &&
     item.actionTypes.every(
       (type) => type === 'human-needed' || type === 'post-deploy-action',
     )
@@ -341,7 +336,7 @@ async function classifyIssue(
   // every session now announces its takeover command where it works:
   // claude.yml runs on their anchor issue/PR, interactive sessions per
   // pr.md Step 0 and the SKILL.md claim guardrail.
-  const wantsTakeover = assigneeLogins.includes(AGENT_FLEET_LOGIN);
+  const wantsTakeover = assigneeLogins.includes(agentFleetLogin());
   if (isHumanNeeded || isPostDeploy || wantsTakeover) {
     const scan = await scanComments(repo, issue.number, issue.comments ?? 0);
     if (isHumanNeeded || isPostDeploy) {
@@ -375,7 +370,7 @@ async function classifyIssue(
     // review at PR creation, but a draft is by definition still being
     // iterated on. It surfaces once the PR is marked ready.
     const reviewRequested = pr.requested_reviewers?.some(
-      (reviewer) => reviewer.login === MAINTAINER_LOGIN,
+      (reviewer) => reviewer.login === maintainerLogin(),
     );
     if (reviewRequested && !pr.draft) {
       actionTypes.push('review-requested');
@@ -464,44 +459,51 @@ async function classifyIssue(
 // say `is:issue` or `is:pull-request` ("Query must include 'is:issue' or
 // 'is:pull-request'", 422) - there's no single qualifier meaning "both", so
 // each base query below is expanded into both variants.
-const BASE_QUERIES = [
-  // The assignee field is the ownership spine (#2783): jclaw-bot assigned
-  // means the agent fleet has claimed the item. This single query covers
-  // what used to need an author:app/claude query AND still missed things -
-  // @claude PR threads, runbook anchors, and interactive-session claims
-  // never carry the claude label, but all get the fleet assignee now
-  // (claude.yml claims issues at run start; claude-automerge.yml claims
-  // agent-authored PRs on open).
-  'is:open assignee:jclaw-bot',
-  // jlapenna assigned = the ball is in the maintainer's court: human-needed
-  // endings and failed-run reports assign him automatically, and anything
-  // he owns personally belongs on his console too.
-  'is:open assignee:jlapenna',
-  // Belt and suspenders: a claude-labeled issue whose run never started
-  // (runner outage, queue loss) is dispatched-but-unclaimed - the claim
-  // step only runs once a runner picks the job up, so without this query
-  // exactly the items most in need of attention would be invisible.
-  'is:open label:claude',
-  // Same belt-and-suspenders parity for the experimental OpenCode pipeline
-  // (opencode.yml, #2988/#2994) - dispatched via the `opencode` label
-  // instead of `claude`, so it needs its own dispatched-but-unclaimed
-  // query or a stalled opencode run is invisible too.
-  'is:open label:opencode',
-  // Codex uses an independent label-triggered worker too; keep a queued run
-  // visible before its first claim step executes.
-  'is:open label:codex',
-  // human-needed is one of this dashboard's own action types, but not every
-  // human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
-  // carry human-needed without ever having the claude label or an agent
-  // author (or, if labeled by hand, an assignee), and without this query it
-  // never enters the dashboard at all.
-  'is:open label:human-needed',
-  'is:open review-requested:jlapenna',
-];
-const SEARCH_QUERIES = BASE_QUERIES.flatMap((query) => [
-  `${query} is:issue`,
-  `${query} is:pull-request`,
-]);
+function baseQueries(): string[] {
+  return [
+    // The assignee field is the ownership spine (#2783): jclaw-bot assigned
+    // means the agent fleet has claimed the item. This single query covers
+    // what used to need an author:app/claude query AND still missed things -
+    // @claude PR threads, runbook anchors, and interactive-session claims
+    // never carry the claude label, but all get the fleet assignee now
+    // (claude.yml claims issues at run start; claude-automerge.yml claims
+    // agent-authored PRs on open).
+    `is:open assignee:${agentFleetLogin()}`,
+    // jlapenna assigned = the ball is in the maintainer's court: human-needed
+    // endings and failed-run reports assign him automatically, and anything
+    // he owns personally belongs on his console too.
+    `is:open assignee:${maintainerLogin()}`,
+    // Belt and suspenders: a claude-labeled issue whose run never started
+    // (runner outage, queue loss) is dispatched-but-unclaimed - the claim
+    // step only runs once a runner picks the job up, so without this query
+    // exactly the items most in need of attention would be invisible.
+    'is:open label:claude',
+    // Same belt-and-suspenders parity for the experimental OpenCode pipeline
+    // (opencode.yml, #2988/#2994) - dispatched via the `opencode` label
+    // instead of `claude`, so it needs its own dispatched-but-unclaimed
+    // query or a stalled opencode run is invisible too.
+    'is:open label:opencode',
+    // Codex uses an independent label-triggered worker too; keep a queued run
+    // visible before its first claim step executes.
+    'is:open label:codex',
+    // human-needed is one of this dashboard's own action types, but not every
+    // human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
+    // carry human-needed without ever having the claude label or an agent
+    // author (or, if labeled by hand, an assignee), and without this query it
+    // never enters the dashboard at all.
+    'is:open label:human-needed',
+    `is:open review-requested:${maintainerLogin()}`,
+  ];
+}
+// A function, not a module-level const: the logins come from
+// `deployment.ts` now, and a const would freeze whatever the environment
+// happened to hold at import time (which in tests is "not yet set").
+function searchQueries(): string[] {
+  return baseQueries().flatMap((query) => [
+    `${query} is:issue`,
+    `${query} is:pull-request`,
+  ]);
+}
 
 // GitHub's search API hard-caps any single query at 1000 results (per_page
 // maxes at 100, so 10 pages is the true ceiling) - paging past that just
@@ -540,16 +542,16 @@ export async function getActionItems(): Promise<ActionItemsResult> {
   const warnings: string[] = [];
 
   // GitHub's search API can't meaningfully OR multiple `repo:` qualifiers
-  // (see SEARCH_QUERIES's own doc comment on qualifier OR-ing), so multiple
+  // (see `baseQueries`'s own doc comment on qualifier OR-ing), so multiple
   // watched repos means fanning out one request per (repo, query) pair and
   // merging - naive N-repo x M-query fan-out, deliberately unthrottled for
   // now (see #13, filed alongside this change).
   const tasks: SearchTask[] = getWatchedRepos().flatMap((repo) =>
-    SEARCH_QUERIES.map((query) => ({ repo, query })),
+    searchQueries().map((query) => ({ repo, query })),
   );
 
   // One malformed/rejected query (e.g. a future GitHub search-API contract
-  // change, as already happened once - see the SEARCH_QUERIES comment)
+  // change, as already happened once - see the `baseQueries` comment)
   // shouldn't take down the whole dashboard. Log and skip it instead.
   const results = await Promise.allSettled(
     tasks.map(({ repo, query }) => searchAllRepo(repo, query)),

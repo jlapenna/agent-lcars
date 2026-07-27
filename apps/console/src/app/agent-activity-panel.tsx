@@ -30,17 +30,13 @@ import {
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
+import { shareArtifactUrl } from '../lib/deployment';
 import { getWatchedRepos, repoDisplayName } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
 import { Eyebrow } from './eyebrow';
-import {
-  formatCost,
-  formatDuration,
-  formatRelativeTime,
-  shareArtifactUrl,
-} from './format';
+import { formatCost, formatDuration, formatRelativeTime } from './format';
 import { lcarsPanelStyle } from './lcars';
 import { TakeoverCommand } from './takeover-command';
 
