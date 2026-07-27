@@ -81,7 +81,12 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	go runtimes[0].scaler.RunHostSampler(ctx)
 	go runFleetOrphanSweeper(ctx, runtimes)
 	for _, runtime := range runtimes {
-		if runtime.config.MountDockerSocket {
+		// ShareWorkDir, not MountDockerSocket: this sweeper enforces
+		// workdir_size_cap on the SHARED _work tree. Keyed off the socket, a
+		// socketless shared-workdir pool would get only the opportunistic
+		// job-completion sweep, so a crash or a quiet period could leave
+		// _work over its cap indefinitely.
+		if runtime.config.ShareWorkDir {
 			go runtime.scaler.RunWorkDirSweeper(ctx)
 			break
 		}
@@ -135,7 +140,7 @@ func buildScaleSetRuntime(c Config, dockerHosts []DockerHost, fleet *FleetCoordi
 		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage: c.RunnerImage, runnerMemory: memory,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
-		dockerHosts: dockerHosts, mountDockerSocket: c.MountDockerSocket, fileMounts: c.FileMounts,
+		dockerHosts: dockerHosts, mountDockerSocket: c.MountDockerSocket, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMemoryExempt:    stringSet(c.HostMemoryExempt),

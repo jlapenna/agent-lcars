@@ -11,16 +11,19 @@ import (
 // scale-set listener in this process. Reservations close the count/create
 // race without serializing slow image/JIT/container work across hosts.
 type FleetCoordinator struct {
-	mu                 sync.Mutex
-	maxRunners         int
-	reservations       map[string]int
-	socketReservations map[string]int
-	startInFlight      map[string]bool
-	lastFleetCounts    map[string]int
-	dockerSocketGIDs   map[string]string
-	workDirSizeCaps    map[string]int64
-	hostRunnerLimits   map[string]int
-	gate               *weightedPlacementGate
+	mu           sync.Mutex
+	maxRunners   int
+	reservations map[string]int
+	// sharedWorkDirReservations: hosts with an in-flight placement from a
+	// scale set that shares the host workdir. Tracks occupancy of the
+	// CHECKOUT, not possession of docker.sock -- see Config.ShareWorkDir.
+	sharedWorkDirReservations map[string]int
+	startInFlight             map[string]bool
+	lastFleetCounts           map[string]int
+	dockerSocketGIDs          map[string]string
+	workDirSizeCaps           map[string]int64
+	hostRunnerLimits          map[string]int
+	gate                      *weightedPlacementGate
 
 	hostSampleMu     sync.Mutex
 	hostSamples      map[string]hostSample
@@ -36,16 +39,16 @@ type FleetCoordinator struct {
 // (on success or failure) always decrements the matching reservation/socket
 // counters exactly once, even if release is called from multiple defers.
 type hostReservation struct {
-	fleet  *FleetCoordinator
-	host   string
-	socket bool
-	once   sync.Once
+	fleet         *FleetCoordinator
+	host          string
+	sharedWorkDir bool
+	once          sync.Once
 }
 
 func newFleetCoordinator(maxRunners int, limits map[string]int, workCaps map[string]int64, socketGIDs map[string]string, weights map[string]int, order []string) *FleetCoordinator {
 	return &FleetCoordinator{
 		maxRunners:   maxRunners,
-		reservations: map[string]int{}, socketReservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
+		reservations: map[string]int{}, sharedWorkDirReservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
 		hostRunnerLimits: limits, workDirSizeCaps: workCaps, dockerSocketGIDs: socketGIDs,
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
 		gate: newWeightedPlacementGate(weights, order),
@@ -70,11 +73,11 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 	}
 	f.reservations[host]++
 	f.startInFlight[host] = true
-	if scaler.mountDockerSocket {
-		f.socketReservations[host]++
+	if scaler.shareWorkDir {
+		f.sharedWorkDirReservations[host]++
 	}
 	reservationGauge.WithLabelValues(scaler.scaleSetName, host).Inc()
-	return &hostReservation{fleet: f, host: host, socket: scaler.mountDockerSocket}, nil
+	return &hostReservation{fleet: f, host: host, sharedWorkDir: scaler.shareWorkDir}, nil
 }
 
 func (r *hostReservation) release(scaleSet string) {
@@ -86,8 +89,8 @@ func (r *hostReservation) release(scaleSet string) {
 		if r.fleet.reservations[r.host] > 0 {
 			r.fleet.reservations[r.host]--
 		}
-		if r.socket && r.fleet.socketReservations[r.host] > 0 {
-			r.fleet.socketReservations[r.host]--
+		if r.sharedWorkDir && r.fleet.sharedWorkDirReservations[r.host] > 0 {
+			r.fleet.sharedWorkDirReservations[r.host]--
 		}
 		r.fleet.startInFlight[r.host] = false
 		r.fleet.mu.Unlock()

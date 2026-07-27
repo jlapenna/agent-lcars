@@ -58,7 +58,7 @@ func TestFleetReservationEnforcesGlobalLimit(t *testing.T) {
 	}
 }
 
-func TestSocketPlacementRejectsOtherSetsSharedWorkdirRunner(t *testing.T) {
+func TestSharedWorkDirPlacementRejectsOtherSetsSharedWorkdirRunner(t *testing.T) {
 	fake := newFakeDockerServer(t)
 	fake.setContainers([]container.Summary{{
 		ID: "existing", State: container.StateRunning,
@@ -68,12 +68,12 @@ func TestSocketPlacementRejectsOtherSetsSharedWorkdirRunner(t *testing.T) {
 	fleet := newFleetCoordinator(4, nil, nil, map[string]string{"host": "1"},
 		map[string]int{"e2e": 1}, []string{"e2e"})
 	scaler := &Scaler{
-		scaleSetName: "e2e", maxRunners: 1, mountDockerSocket: true,
+		scaleSetName: "e2e", maxRunners: 1, shareWorkDir: true,
 		dockerHosts: []DockerHost{host}, logger: slog.Default(),
 		runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}}, fleet: fleet,
 	}
 	if _, err := fleet.reserve(context.Background(), scaler); err == nil {
-		t.Fatal("socket placement overlapped another set's shared-workdir runner")
+		t.Fatal("shared-workdir placement overlapped another set's shared-workdir runner")
 	}
 }
 
