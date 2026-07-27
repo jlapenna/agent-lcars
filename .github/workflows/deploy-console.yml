@@ -43,8 +43,17 @@ jobs:
       - uses: google-github-actions/auth@v3
         id: gcp-auth
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          # Variables, not secrets: neither value is confidential, and both
+          # are fully determined by infra/terraform/main.tf -- it defines
+          # exactly one workload identity pool ("github") and one provider
+          # ("github") in project agent-lcars (number 611425338852), so the
+          # provider path has no other possible value, and the deployer SA
+          # is google_service_account.github_deployer's account_id. The
+          # agent workflows read the same GCP_WIF_PROVIDER variable, so
+          # there is now one place to change it instead of a secret and a
+          # variable that had to be kept in sync by hand.
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
           token_format: access_token
 
       - name: Deploy App Hosting backend
@@ -53,8 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           pnpm exec firebase deploy \
-            --only apphosting:agent-lcars \
-            --project agent-lcars \
+            --only "apphosting:${{ vars.APPHOSTING_BACKEND_ID }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
             --non-interactive 2>&1 | tee firebase-deploy.log
 
           # The CLI deploys an archive rather than a Git source reference.
@@ -81,8 +90,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          BACKEND=$(pnpm exec firebase apphosting:backends:get agent-lcars \
-            --project agent-lcars --json --non-interactive \
+          BACKEND=$(pnpm exec firebase apphosting:backends:get "${{ vars.APPHOSTING_BACKEND_ID }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --json --non-interactive \
             | jq -r '.result.name')
           if [ -z "$BACKEND" ] || [ "$BACKEND" = null ]; then
             echo "::error::Could not resolve the App Hosting backend resource."

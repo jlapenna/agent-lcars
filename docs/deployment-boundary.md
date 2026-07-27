@@ -51,18 +51,62 @@ all three encodings derive from.
 Note runner mode deliberately ignores it — see `runner.ts`'s
 `RUNNER_ALLOWLIST` / `RUNNER_CODEX_CWD_ALLOWLIST`.
 
-### 3. Workflows
+### 3. Workflows — repo variables
 
-Not extractable by relocation; use repo variables instead. Instance values
-currently inline in `.github/workflows/`:
+Not extractable by relocation (`.github/workflows/` is a fixed path), so
+these live as **repo variables** instead. Every one fails _closed_ if unset:
+an unset variable interpolates to an empty string, which makes a `runs-on`
+unschedulable, an auth step fail, and the `github.actor == vars.MAINTAINER_LOGIN`
+dispatch guard evaluate false. Nothing silently falls back to a default.
 
-- runner pool label — `claude-agent-lcars` (claude/codex/opencode)
-- WIF provider — `projects/611425338852/.../providers/github`
-- service accounts — `telemetry-writer@`, `codex-agent@agent-lcars`
-- registry host — `docker-registry.lan.jlapenna.net`
-  (`publish-runner-autoscaler.yml`)
-- maintainer login in dispatch guards (`github.actor == 'jlapenna'`)
-- `AGENT_BOT_LOGINS`, `NX_CACHE_URL` — already repo variables
+| Variable                  | This deployment                            | Used by                                   |
+| ------------------------- | ------------------------------------------ | ----------------------------------------- |
+| `AGENT_RUNNER_LABEL`      | `claude-agent-lcars`                       | claude / codex / opencode                 |
+| `DEFAULT_RUNNER_LABEL`    | `lcars-default`                            | agent-automerge                           |
+| `BUILD_RUNNER_LABEL`      | `lcars-build-client`                       | publish-runner-autoscaler                 |
+| `GCP_PROJECT_ID`          | `agent-lcars`                              | codex (secret access)                     |
+| `GCP_WIF_PROVIDER`        | `projects/611425338852/…/providers/github` | claude / codex / opencode                 |
+| `GCP_TELEMETRY_WRITER_SA` | `telemetry-writer@agent-lcars…`            | claude / codex                            |
+| `GCP_CODEX_AGENT_SA`      | `codex-agent@agent-lcars…`                 | codex                                     |
+| `HOMELAB_REGISTRY`        | `docker-registry.lan.jlapenna.net`         | publish-runner-autoscaler                 |
+| `MAINTAINER_LOGIN`        | `jlapenna`                                 | dispatch guards, failure assignment       |
+| `AGENT_FLEET_LOGIN`       | `jclaw-bot`                                | claim steps, git identity, queue hand-off |
+| `APPHOSTING_BACKEND_ID`   | `agent-lcars`                              | deploy-console                            |
+| `AGENT_BOT_LOGINS`        | `["claude[bot]","github-actions[bot]"]`    | agent-automerge (pre-existing)            |
+| `NX_CACHE_URL`            | homelab Nx cache                           | all agent lanes (pre-existing)            |
+
+Two values in `publish-runner-autoscaler.yml` are deliberately **not**
+variables — its `runs-on: lcars-build-client` and its BuildKit
+`endpoint:`. That workflow publishes the images the entire fleet pulls and
+trusts, so where it runs and where it builds are trust decisions, not
+configuration: a mutable repository variable would let anyone who can edit
+variables redirect fleet-image publishing to a pool or builder they
+control. The `runs-on` comment records that this was already fixed once
+(it used to read `fromJSON(vars.CI_RUNS_ON || ...)`). A fork edits those
+two lines by hand.
+
+One further exception:
+
+- **Prose still names the logins** — step names ("Claim the issue as
+  jclaw-bot"), `::warning::` text, and the agent prompt bodies. These are
+  human-readable strings, not config; interpolating them would make the
+  already-long prompts harder to read for no functional gain. A fork should
+  update the prompt text by hand.
+
+`deploy-console.yml` previously read the provider and deployer SA from
+repository _secrets_, duplicating what the agent workflows hardcoded.
+Neither value is confidential, and both are fully determined by
+`infra/terraform/main.tf`: it declares exactly one workload identity pool
+(`github`) and one provider (`github`) in project `agent-lcars`
+(number `611425338852`), so the provider path has no other possible value,
+and the deployer SA is `google_service_account.github_deployer`'s
+`account_id`. Both now read the same variables as everything else.
+
+The old `GCP_WORKLOAD_IDENTITY_PROVIDER` / `GCP_DEPLOYER_SERVICE_ACCOUNT`
+secrets are now unreferenced. They were left in place rather than deleted —
+secret values cannot be read back, so deleting them is irreversible and
+buys nothing. Remove them by hand once a deploy has run green on the
+variables.
 
 ### 4. Terraform
 
@@ -81,5 +125,5 @@ _this_ repo, not a reusable library.
 1. `apps/console/src/lib/deployment.ts` — or just set the env vars.
 2. `apps/telemetry-watcher/src/lib/default-checkout.ts`.
 3. `infra/terraform/variables.tf` — project id, owner, repo.
-4. `.github/workflows/*` — the values in §3.
+4. The repo variables in §3 (`gh variable set …`) — no workflow edits needed.
 5. `apps/console/apphosting.yaml` — backend id and the env block.
