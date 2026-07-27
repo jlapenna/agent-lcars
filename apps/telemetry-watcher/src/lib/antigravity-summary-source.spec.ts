@@ -120,7 +120,7 @@ describe('parseGoTimestamp', () => {
 });
 
 describe('pollAntigravitySummaries', () => {
-  const MEMBERS_PREFIX = '/home/jlapenna/p/members';
+  const CHECKOUT_PREFIX = '/home/jlapenna/p/sprinkles';
 
   it('ships a row whose workspace_uris matches the allowlist', () => {
     const dbPath = trackedFixtureDb([
@@ -128,18 +128,18 @@ describe('pollAntigravitySummaries', () => {
         conversation_id: 'convo-attributable',
         step_count: 42,
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
     ]);
 
-    const summaries = pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX]);
+    const summaries = pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX]);
 
     expect(summaries).toHaveLength(1);
     expect(summaries[0]).toMatchObject({
       sessionId: 'convo-attributable',
       source: 'cli',
       agent: 'antigravity',
-      cwd: MEMBERS_PREFIX,
+      cwd: CHECKOUT_PREFIX,
       turns: 42,
       startedAt: '2026-07-01T00:42:40.565Z',
       lastActivityAt: '2026-07-01T00:42:40.565Z',
@@ -156,7 +156,7 @@ describe('pollAntigravitySummaries', () => {
   });
 
   it('ships a row whose workspace_uris is a worktree subpath of the allowlist', () => {
-    const worktreePath = `${MEMBERS_PREFIX}/.claude/worktrees/some-feature`;
+    const worktreePath = `${CHECKOUT_PREFIX}/.claude/worktrees/some-feature`;
     const dbPath = trackedFixtureDb([
       {
         conversation_id: 'convo-worktree',
@@ -165,7 +165,7 @@ describe('pollAntigravitySummaries', () => {
       },
     ]);
 
-    const summaries = pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX]);
+    const summaries = pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX]);
 
     expect(summaries).toHaveLength(1);
     expect(summaries[0].cwd).toBe(worktreePath);
@@ -180,7 +180,7 @@ describe('pollAntigravitySummaries', () => {
       },
     ]);
 
-    expect(pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX])).toEqual([]);
+    expect(pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX])).toEqual([]);
   });
 
   it('does not match a sibling directory that merely shares the allowlist prefix as a string', () => {
@@ -188,11 +188,11 @@ describe('pollAntigravitySummaries', () => {
       {
         conversation_id: 'convo-sibling',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}2`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}2`]),
       },
     ]);
 
-    expect(pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX])).toEqual([]);
+    expect(pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX])).toEqual([]);
   });
 
   it('drops a row with malformed (non-JSON) workspace_uris', () => {
@@ -204,7 +204,7 @@ describe('pollAntigravitySummaries', () => {
       },
     ]);
 
-    expect(pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX])).toEqual([]);
+    expect(pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX])).toEqual([]);
   });
 
   it('drops a row with empty-string workspace_uris (observed on 32/221 real rows)', () => {
@@ -216,7 +216,7 @@ describe('pollAntigravitySummaries', () => {
       },
     ]);
 
-    expect(pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX])).toEqual([]);
+    expect(pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX])).toEqual([]);
   });
 
   it('drops a row whose last_modified_time is unparseable/the Go zero sentinel', () => {
@@ -224,11 +224,11 @@ describe('pollAntigravitySummaries', () => {
       {
         conversation_id: 'convo-no-activity',
         last_modified_time: GO_ZERO_TIME,
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
     ]);
 
-    expect(pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX])).toEqual([]);
+    expect(pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX])).toEqual([]);
   });
 
   it('falls back startedAt to lastActivityAt when last_user_input_time is the Go zero sentinel', () => {
@@ -237,11 +237,11 @@ describe('pollAntigravitySummaries', () => {
         conversation_id: 'convo-no-user-input',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
         last_user_input_time: GO_ZERO_TIME,
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
     ]);
 
-    const summaries = pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX]);
+    const summaries = pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX]);
 
     expect(summaries[0].startedAt).toBe(summaries[0].lastActivityAt);
   });
@@ -252,11 +252,11 @@ describe('pollAntigravitySummaries', () => {
         conversation_id: 'convo-real-user-input',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
         last_user_input_time: '2026-06-30 12:00:00+00:00',
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
     ]);
 
-    const summaries = pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX]);
+    const summaries = pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX]);
 
     expect(summaries[0].startedAt).toBe('2026-06-30T12:00:00.000Z');
     expect(summaries[0].lastActivityAt).toBe('2026-07-01T00:42:40.565Z');
@@ -268,11 +268,11 @@ describe('pollAntigravitySummaries', () => {
         conversation_id: 'convo-titled',
         title: 'Fix the flaky test',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
     ]);
 
-    const summaries = pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX]);
+    const summaries = pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX]);
 
     expect(summaries[0].title).toBe('Fix the flaky test');
   });
@@ -282,19 +282,19 @@ describe('pollAntigravitySummaries', () => {
       {
         conversation_id: '',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
     ]);
 
-    expect(pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX])).toEqual([]);
+    expect(pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX])).toEqual([]);
   });
 
-  it('ships attributable rows and drops non-members rows from the same DB', () => {
+  it('ships attributable rows and drops out-of-scope rows from the same DB', () => {
     const dbPath = trackedFixtureDb([
       {
         conversation_id: 'convo-a',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
       {
         conversation_id: 'convo-b',
@@ -303,7 +303,7 @@ describe('pollAntigravitySummaries', () => {
       },
     ]);
 
-    const summaries = pollAntigravitySummaries(dbPath, [MEMBERS_PREFIX]);
+    const summaries = pollAntigravitySummaries(dbPath, [CHECKOUT_PREFIX]);
 
     expect(summaries.map((s) => s.sessionId)).toEqual(['convo-a']);
   });
@@ -316,7 +316,7 @@ describe('pollAntigravitySummaries', () => {
     );
     const errors: unknown[] = [];
 
-    const summaries = pollAntigravitySummaries(missingPath, [MEMBERS_PREFIX], {
+    const summaries = pollAntigravitySummaries(missingPath, [CHECKOUT_PREFIX], {
       onUnavailable: (error) => errors.push(error),
     });
 
@@ -333,7 +333,7 @@ describe('pollAntigravitySummaries', () => {
     fs.writeFileSync(garbagePath, 'definitely not a sqlite database');
     const errors: unknown[] = [];
 
-    const summaries = pollAntigravitySummaries(garbagePath, [MEMBERS_PREFIX], {
+    const summaries = pollAntigravitySummaries(garbagePath, [CHECKOUT_PREFIX], {
       onUnavailable: (error) => errors.push(error),
     });
 
@@ -341,12 +341,12 @@ describe('pollAntigravitySummaries', () => {
     expect(errors).toHaveLength(1);
   });
 
-  it('defaults the allowlist to the members repo prefix when none is passed', () => {
+  it('defaults the allowlist to the configured checkout prefix when none is passed', () => {
     const dbPath = trackedFixtureDb([
       {
         conversation_id: 'convo-default-allowlist',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
-        workspace_uris: JSON.stringify([`file://${MEMBERS_PREFIX}`]),
+        workspace_uris: JSON.stringify([`file://${CHECKOUT_PREFIX}`]),
       },
     ]);
 

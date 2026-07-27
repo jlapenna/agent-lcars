@@ -2,8 +2,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_PROJECT_DIR_ALLOWLIST } from './allowlist';
-import { DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES } from './antigravity-summary-source';
+import { defaultProjectDirAllowlist } from './allowlist';
+import { defaultAntigravityWorkspacePrefixes } from './antigravity-summary-source';
 import { loadConfig } from './config';
 
 const ENV_KEYS = [
@@ -50,13 +50,13 @@ describe('loadConfig', () => {
       {
         path: path.join(os.homedir(), '.claude', 'projects'),
         adapter: 'claude-code',
-        projectDirAllowlist: DEFAULT_PROJECT_DIR_ALLOWLIST,
+        projectDirAllowlist: defaultProjectDirAllowlist(),
       },
       {
         path: path.join(os.homedir(), '.codex', 'sessions'),
         adapter: 'codex',
         recursive: true,
-        cwdAllowlist: ['/home/jlapenna/p/members*'],
+        cwdAllowlist: ['/home/jlapenna/p/sprinkles*'],
       },
     ]);
     expect(config.heartbeatIntervalMs).toBe(10_000);
@@ -91,7 +91,7 @@ describe('loadConfig', () => {
       expect(config.watchRoots[0]).toEqual({
         path: '/custom/projects',
         adapter: 'claude-code',
-        projectDirAllowlist: DEFAULT_PROJECT_DIR_ALLOWLIST,
+        projectDirAllowlist: defaultProjectDirAllowlist(),
       });
     });
 
@@ -220,7 +220,7 @@ describe('loadConfig', () => {
   });
 
   describe('AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB (#3123 phase 3)', () => {
-    it('defaults to enabled at ~/.gemini/antigravity-cli/conversation_summaries.db with the members workspace prefix', () => {
+    it('defaults to enabled at ~/.gemini/antigravity-cli/conversation_summaries.db with the configured checkout workspace prefix', () => {
       const config = loadConfig();
 
       expect(config.antigravitySummaryDb).toEqual({
@@ -230,7 +230,7 @@ describe('loadConfig', () => {
           'antigravity-cli',
           'conversation_summaries.db',
         ),
-        workspacePrefixes: DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+        workspacePrefixes: defaultAntigravityWorkspacePrefixes(),
       });
     });
 
@@ -242,7 +242,7 @@ describe('loadConfig', () => {
 
       expect(config.antigravitySummaryDb).toEqual({
         path: '/custom/summaries.db',
-        workspacePrefixes: DEFAULT_ANTIGRAVITY_WORKSPACE_PREFIXES,
+        workspacePrefixes: defaultAntigravityWorkspacePrefixes(),
       });
     });
 

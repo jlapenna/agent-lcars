@@ -68,6 +68,10 @@ export interface EnvVars {
   // Agent telemetry host watcher (issue #2540). See
   // infra/terraform/main.tf for the dedicated Firestore database + writer
   // SA this daemon authenticates as.
+  /** The checkout this watcher is scoped to. Every source's default
+   * allowlist derives from it - see `default-checkout.ts`. Deployment
+   * config; the fallback is this deployment's own checkout. */
+  AGENT_TELEMETRY_CHECKOUT_ROOT?: string;
   /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts.
    * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
@@ -75,7 +79,7 @@ export interface EnvVars {
   AGENT_TELEMETRY_CODEX_SESSIONS_DIR?: string;
   /** Comma-separated cwd globs limiting which Codex sessions may ship. */
   AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST?: string;
-  /** Comma-separated `*`-wildcard glob patterns; defaults to the members-repo slug only.
+  /** Comma-separated `*`-wildcard glob patterns; defaults to the configured checkout's slug only.
    * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST?: string;
   /** JSON array of `{ path, adapter, projectDirAllowlist?, recursive?, cwdAllowlist? }` watch-root objects

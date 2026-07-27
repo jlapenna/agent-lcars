@@ -4,20 +4,20 @@ import { isAllowedProjectDir } from './allowlist';
 
 describe('isAllowedProjectDir', () => {
   it('allows the primary checkout slug', () => {
-    expect(isAllowedProjectDir('-home-jlapenna-p-members')).toBe(true);
+    expect(isAllowedProjectDir('-home-jlapenna-p-sprinkles')).toBe(true);
   });
 
   it('allows worktree slugs nested under the primary checkout', () => {
     expect(
       isAllowedProjectDir(
-        '-home-jlapenna-p-members-claude-worktrees-agent-lcars-telemetry-watcher',
+        '-home-jlapenna-p-sprinkles-claude-worktrees-agent-lcars-telemetry-watcher',
       ),
     ).toBe(true);
   });
 
   it('rejects unrelated project slugs', () => {
     expect(isAllowedProjectDir('-home-jlapenna-p-homelab')).toBe(false);
-    expect(isAllowedProjectDir('-home-someone-else-p-members')).toBe(false);
+    expect(isAllowedProjectDir('-home-someone-else-p-sprinkles')).toBe(false);
   });
 
   it('respects a custom allowlist', () => {

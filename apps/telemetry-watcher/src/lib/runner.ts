@@ -6,7 +6,7 @@ import { SessionStore } from './store';
 
 /**
  * Runner mode has no privacy-scoping concept the way the host watcher does
- * (see `allowlist.ts`'s `DEFAULT_PROJECT_DIR_ALLOWLIST` comment): a
+ * (see `allowlist.ts`'s `defaultProjectDirAllowlist` comment): a
  * claude.yml runner container is single-purpose and destroyed after one
  * job — there's exactly one checkout, one agent turn, and nothing else
  * ever lands under `$HOME/.claude/projects` on it, unlike a developer
@@ -18,8 +18,8 @@ const RUNNER_ALLOWLIST = ['*'];
 
 /**
  * The same reasoning applied to Codex's own `cwd`-keyed allowlist. The host
- * watcher scopes codex sessions to `DEFAULT_CHECKOUT_ROOT*`
- * (`/home/jlapenna/p/members*`) because a workstation runs Codex against
+ * watcher scopes codex sessions to `checkoutRoot()*`
+ * (the configured checkout root) because a workstation runs Codex against
  * many unrelated checkouts; a runner container has exactly one, at a path
  * (`/home/runner/_work/...`) that would never match that workstation glob.
  * Reusing the host default here would silently discard every session this
