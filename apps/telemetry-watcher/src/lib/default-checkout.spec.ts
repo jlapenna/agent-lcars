@@ -36,6 +36,37 @@ describe('checkout root', () => {
     expect(isAllowedProjectDir('-home-jlapenna-p-members')).toBe(false);
   });
 
+  // A set-but-empty variable is what an unresolved interpolation produces,
+  // and this value can only ever WIDEN scope when it degrades: an empty
+  // root makes the Claude glob `*`, the Codex glob `/*`, and the
+  // Antigravity prefix empty (which `startsWith` then matches for every
+  // absolute path). Falling back is the fail-closed choice.
+  it.each([
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['root alone', '/'],
+    ['root with extra separators', '///'],
+  ])('ignores a %s override instead of widening scope', (_label, value) => {
+    process.env[VAR] = value;
+    expect(checkoutRoot()).toBe('/home/jlapenna/p/sprinkles');
+    expect(checkoutSlugGlob()).toBe('-home-jlapenna-p-sprinkles*');
+    // The blast radius if this ever regressed: everything.
+    expect(isAllowedProjectDir('-home-someone-else-p-secrets')).toBe(false);
+  });
+
+  it.each([
+    ['/srv/checkouts/thing/', '/srv/checkouts/thing'],
+    ['/srv/checkouts/thing//', '/srv/checkouts/thing'],
+    ['  /srv/checkouts/thing  ', '/srv/checkouts/thing'],
+  ])('normalizes %s so the checkout itself stays in scope', (given, want) => {
+    process.env[VAR] = given;
+    expect(checkoutRoot()).toBe(want);
+    // Without normalization this glob would be `-srv-checkouts-thing-*`,
+    // which excludes the checkout root it is supposed to admit.
+    expect(checkoutSlugGlob()).toBe('-srv-checkouts-thing*');
+    expect(isAllowedProjectDir('-srv-checkouts-thing')).toBe(true);
+  });
+
   it('re-reads the environment per call rather than freezing at import', () => {
     expect(checkoutRoot()).toBe('/home/jlapenna/p/sprinkles');
     process.env[VAR] = '/tmp/other';
