@@ -175,6 +175,21 @@ jobs:
           echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
 
       - name: Restore subscription authentication
+        # DO NOT populate this secret by copying the blob out of
+        # supersprinklesracing's own CODEX_AUTH_JSON, however tempting the
+        # shortcut looks. Codex rotates the credential on every run and the
+        # "Persist refreshed..." step below writes the new one back — that
+        # project's secret had 23 versions across a few days, several per
+        # day, one per run.
+        #
+        # Two repos sharing one blob therefore invalidate each other: a run
+        # here rotates the upstream token, and the other repo's stored copy
+        # is stale by its next run. The concurrency group above serializes
+        # runs within THIS repo; nothing can serialize across repos, so
+        # there is no configuration that makes a shared credential safe.
+        #
+        # Mint an independent one instead (`codex login`) — same ChatGPT
+        # subscription, separate token, rotating on its own.
         id: restore-auth
         run: |
           mkdir -p "$HOME/.codex"
