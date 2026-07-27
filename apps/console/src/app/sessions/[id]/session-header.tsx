@@ -208,18 +208,39 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         </Stack>
       )}
 
-      {doc.source === 'issue-agent' && doc.transcriptGcsUri && (
-        <Stack gap={4}>
-          <Eyebrow>Resume from archive</Eyebrow>
-          <Text size="xs" c="dimmed">
-            This runner&apos;s container is gone, but its transcript is archived
-            — run this on a workstation checkout to resume it there.
-          </Text>
-          <TakeoverCommand
-            command={`~/p/members/tools/claude-agent-session.sh resume-archive ${doc.transcriptGcsUri}`}
-          />
-        </Stack>
-      )}
+      {/* Gated on the agent, not just the source: `resume-archive` installs
+          the JSONL under ~/.claude/projects and runs `claude --resume`, so
+          it cannot resume a Codex rollout. Since codex.yml started shipping
+          issue-agent docs with a transcriptGcsUri, offering this
+          unconditionally would hand out a command that silently can't work
+          on the session it's shown for. */}
+      {doc.source === 'issue-agent' &&
+        doc.transcriptGcsUri &&
+        sessionAgent(doc) === 'claude-code' && (
+          <Stack gap={4}>
+            <Eyebrow>Resume from archive</Eyebrow>
+            <Text size="xs" c="dimmed">
+              This runner&apos;s container is gone, but its transcript is
+              archived — run this on a workstation checkout to resume it there.
+            </Text>
+            <TakeoverCommand
+              command={`~/p/members/tools/claude-agent-session.sh resume-archive ${doc.transcriptGcsUri}`}
+            />
+          </Stack>
+        )}
+
+      {doc.source === 'issue-agent' &&
+        doc.transcriptGcsUri &&
+        sessionAgent(doc) !== 'claude-code' && (
+          <Stack gap={4}>
+            <Eyebrow>Archived transcript</Eyebrow>
+            <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
+              Archived at <code>{doc.transcriptGcsUri}</code>. No resume command
+              yet for {sessionAgent(doc)} sessions — the existing one is
+              Claude-specific.
+            </Text>
+          </Stack>
+        )}
 
       {doc.source === 'cli' && (
         <Text size="xs" c="dimmed" data-testid="cli-summary-note">

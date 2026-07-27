@@ -295,6 +295,12 @@ jobs:
             your deliverable (PR update or comment) exists.',
             github.event.issue.number, github.event.issue.title) }}
         run: |
+          # pipefail is load-bearing: without it this step's status is
+          # `tee`'s, which is always 0, so a crashed/auth-failed codex run
+          # would report success. The deliverable gate does not reliably
+          # catch that -- a pre-existing human-needed label, or a PR opened
+          # just before the crash, satisfies it.
+          set -o pipefail
           codex exec --json --dangerously-bypass-approvals-and-sandbox \
             "$CODEX_PROMPT" | tee "$RUNNER_TEMP/codex-output.jsonl"
 

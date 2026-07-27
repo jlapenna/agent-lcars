@@ -196,6 +196,26 @@ describe('SessionHeader', () => {
     ).toBeTruthy();
   });
 
+  it('offers no Claude resume command for an archived Codex session', () => {
+    renderHeader(
+      agentDoc({
+        agent: 'codex',
+        transcriptGcsUri:
+          'gs://agent-lcars-agent-session-transcripts/runs/5150/codex.jsonl',
+      }),
+    );
+
+    // resume-archive installs the JSONL under ~/.claude/projects and runs
+    // `claude --resume`; it cannot resume a Codex rollout, so offering it
+    // would be a command that silently does the wrong thing.
+    expect(screen.queryByText(/resume-archive/)).toBeNull();
+    // The archive location is still surfaced - just without a command.
+    const note = screen.getByTestId('archive-no-resume-note');
+    expect(note.textContent).toContain(
+      'gs://agent-lcars-agent-session-transcripts/runs/5150/codex.jsonl',
+    );
+  });
+
   it('omits the resume-archive command for an issue-agent session with no transcriptGcsUri', () => {
     renderHeader(agentDoc());
     expect(screen.queryByText(/resume-archive/)).toBeNull();
