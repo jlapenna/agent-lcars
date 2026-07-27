@@ -102,10 +102,18 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
 # Adds, mirroring the existing static-runner image (github-runner/docker/):
 #   - Node 24: the base image's system Node is too old for pnpm/action-setup's
 #     self-installer (members#2004).
-#   - docker CLI: the members `e2e-docker` job shells out to docker; in the
-#     autoscaler this talks to a host socket mounted into the runner (a
-#     scaler.go change, tracked as phase-2 work — the CLI belongs in the image
-#     regardless).
+#
+# NO docker CLI. It was here for the members `e2e-docker` job, which shelled
+# out to a host socket bind-mounted into the runner. No scale set mounts
+# docker.sock any more (agent-lcars#101, jlapenna/homelab#168 — the e2e lane
+# now runs on a runner image that IS the sandbox, so it never needs to
+# create a container), which leaves the client with nothing to talk to.
+#
+# Removing it is the point rather than tidiness: this image backs the
+# claude-agent pool, so shipping a Docker client here puts one in front of
+# arbitrary agent-authored code. A tool that cannot reach a daemon today is
+# still a tool that starts working the moment someone re-adds a socket
+# somewhere.
 FROM ${RUNNER_BASE}
 
 USER root
@@ -125,17 +133,13 @@ RUN set -eux; \
       | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
       > /etc/apt/sources.list.d/nodesource.list; \
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
     . /etc/os-release; \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
-      > /etc/apt/sources.list.d/docker.list; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nodejs docker-ce-cli git-lfs gh python3-pip $EXTRA_APT_PACKAGES; \
+    apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip $EXTRA_APT_PACKAGES; \
     node --version; \
     docker --version; \
     git-lfs --version; \
