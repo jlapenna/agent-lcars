@@ -137,8 +137,13 @@ test.describe('populated dashboard', () => {
     // fixture: model, turns, tokens, cost, and the issue-agent-only Run /
     // Issue links.
     await expect(header.getByText('claude-opus-5')).toBeVisible();
-    await expect(header.getByText('Tokens')).toBeVisible();
-    await expect(header.getByText('Cost')).toBeVisible();
+    // `exact`, and the post-#111 label: the stat grid now says
+    // "Cost-weighted tokens", so a substring match on "Cost" hits that
+    // label, the "Cost" field, and the weighted total in the value itself.
+    await expect(
+      header.getByText('Cost-weighted tokens', { exact: true }),
+    ).toBeVisible();
+    await expect(header.getByText('Cost', { exact: true })).toBeVisible();
     await expect(
       header.getByRole('link', { name: `#${E2E_ITEM_NUMBERS.silentError}` }),
     ).toBeVisible();
