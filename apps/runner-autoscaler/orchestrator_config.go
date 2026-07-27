@@ -543,8 +543,16 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 				if r.DockerSocketGID[h.Name] == "" {
 					return nil, 0, fmt.Errorf("socket-enabled scale set %q requires docker_socket_gid for host %q", s.Name, h.Name)
 				}
+			}
+		}
+		// workdir_size_cap guards the SHARED _work tree, so it is required
+		// by share_workdir rather than by the socket: a socket-only pool on
+		// a host that deliberately omits the cap must not be refused, and a
+		// shared-workdir pool must not skip the requirement.
+		if s.ShareWorkDir {
+			for _, h := range r.Raw.Fleet.Hosts {
 				if _, ok := r.WorkDirSizeCaps[h.Name]; !ok {
-					return nil, 0, fmt.Errorf("socket-enabled scale set %q requires workdir_size_cap for host %q", s.Name, h.Name)
+					return nil, 0, fmt.Errorf("shared-workdir scale set %q requires workdir_size_cap for host %q", s.Name, h.Name)
 				}
 			}
 		}

@@ -81,7 +81,12 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	go runtimes[0].scaler.RunHostSampler(ctx)
 	go runFleetOrphanSweeper(ctx, runtimes)
 	for _, runtime := range runtimes {
-		if runtime.config.MountDockerSocket {
+		// ShareWorkDir, not MountDockerSocket: this sweeper enforces
+		// workdir_size_cap on the SHARED _work tree. Keyed off the socket, a
+		// socketless shared-workdir pool would get only the opportunistic
+		// job-completion sweep, so a crash or a quiet period could leave
+		// _work over its cap indefinitely.
+		if runtime.config.ShareWorkDir {
 			go runtime.scaler.RunWorkDirSweeper(ctx)
 			break
 		}

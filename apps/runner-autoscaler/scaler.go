@@ -1242,6 +1242,13 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			return "", gidErr
 		}
 		groupAdd = []string{gid}
+	}
+	// Ownership normalization belongs to the WORKDIR, not the socket. Docker
+	// creates a missing _work/externals as root:root on a host's first
+	// placement, and the runner is non-root -- so a socketless
+	// shared-workdir pool could not create the entrypoint lock or populate
+	// externals, and every placement would crash-loop.
+	if a.shareWorkDir {
 		if err := a.ensureWorkDirOwnership(ctx, client, host); err != nil {
 			a.logger.Warn("Failed to normalize shared workdir ownership before runner start", slog.String("host", host), slog.String("error", err.Error()))
 		}
