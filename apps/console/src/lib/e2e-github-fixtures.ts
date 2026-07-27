@@ -1,3 +1,4 @@
+import { agentFleetLogin, maintainerLogin } from './deployment';
 import {
   E2E_FIXTURE_BRANCH,
   E2E_FIXTURE_PR_NUMBER,
@@ -23,10 +24,13 @@ import {
  * `agent-activity-cli-sessions.spec.ts` depends on.
  */
 
-/** Whose console this is, per `MAINTAINER_LOGIN` in action-items.ts. */
-const MAINTAINER = 'jlapenna';
-/** The fleet's assignee, per `AGENT_FLEET_LOGIN` in action-items.ts. */
-const FLEET = 'jclaw-bot';
+// Resolved from deployment config, NOT hardcoded: `tools/e2e/ci.env` sets
+// AGENT_LCARS_ADMIN_GITHUB_LOGIN to a dummy value, so a literal 'jlapenna'
+// here would no longer match what classifyIssue() compares
+// `requested_reviewers` against, nor what the assignee search queries ask
+// for -- the fixtures would build items the app then refuses to classify.
+const MAINTAINER = maintainerLogin();
+const FLEET = agentFleetLogin();
 
 /** The single repo the e2e environment watches (`DEFAULT_WATCHED_REPOS`,
  * since `tools/e2e/ci.env` sets no `AGENT_LCARS_WATCHED_REPOS`). */
