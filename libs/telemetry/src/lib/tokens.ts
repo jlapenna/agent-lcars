@@ -1,20 +1,30 @@
 import { TokenUsage } from './types';
 
+/** Claude's five-minute prompt-cache price relative to a fresh input token.
+ * @see https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing
+ */
+const CLAUDE_CACHE_CREATION_COST_WEIGHT = 1.25;
+
+/** Claude's prompt-cache read price relative to a fresh input token.
+ * @see https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing
+ */
+const CLAUDE_CACHE_READ_COST_WEIGHT = 0.1;
+
 /**
- * The token volume a session actually processed: `inputTokens` alone is
- * "non-cached input only" (see {@link TokenUsage.inputTokens}'s doc
- * comment), so a "total" that adds only `inputTokens` and `outputTokens`
- * silently drops `cacheCreationTokens`/`cacheReadTokens` — often the
- * majority of a long Claude Code session's usage, since every turn replays
- * prior context via cache reads. Every consumer that shows a session's
- * "total tokens" must call this instead of summing fields itself, so the
- * displayed total always matches the four numbers it was built from.
+ * Cost-weighted token equivalent for a session. Fresh input and output keep
+ * their recorded token counts; Claude cache writes and reads are weighted by
+ * their five-minute prompt-cache price relative to fresh input (1.25x and
+ * 0.1x). This keeps cache traffic visible without letting repeated cache
+ * reads dominate a token-based cost proxy.
+ *
+ * The source transcript does not record cache TTL, so a cache creation uses
+ * the standard five-minute rate rather than guessing a one-hour rate.
  */
 export function totalTokens(tokens: TokenUsage): number {
-  return (
+  return Math.round(
     tokens.inputTokens +
-    tokens.outputTokens +
-    tokens.cacheCreationTokens +
-    tokens.cacheReadTokens
+      tokens.outputTokens +
+      tokens.cacheCreationTokens * CLAUDE_CACHE_CREATION_COST_WEIGHT +
+      tokens.cacheReadTokens * CLAUDE_CACHE_READ_COST_WEIGHT,
   );
 }

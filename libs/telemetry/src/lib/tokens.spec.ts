@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { totalTokens } from './tokens';
 
 describe('totalTokens', () => {
-  it('sums fresh input, output, and both cache categories', () => {
+  it('weights cache creation and reads by their relative Claude cost', () => {
     expect(
       totalTokens({
         inputTokens: 100,
@@ -11,10 +11,10 @@ describe('totalTokens', () => {
         cacheCreationTokens: 5,
         cacheReadTokens: 10,
       }),
-    ).toBe(165);
+    ).toBe(157);
   });
 
-  it('is dominated by cache-read volume on a long, heavily cached session', () => {
+  it('keeps cache reads from dominating a long, heavily cached session', () => {
     // The shape a real multi-turn Claude Code session actually produces:
     // each turn's fresh input/output is small, but every turn re-reads the
     // full prior context from cache, so cacheReadTokens dwarfs the rest.
@@ -27,7 +27,7 @@ describe('totalTokens', () => {
         cacheCreationTokens: 1_000,
         cacheReadTokens: 250_000,
       }),
-    ).toBe(251_700);
+    ).toBe(26_950);
   });
 
   it('returns 0 for all-zero usage', () => {
