@@ -85,7 +85,12 @@ jobs:
     # NOT point this at homelab-autoscale-claude-agent; that label is a
     # distinct registration reserved for the members repo's runner fleet.
     runs-on: [claude-agent-lcars]
-    timeout-minutes: 180
+    # Backstop only - the real bound is the per-step timeout on Run OpenCode
+    # below (#51). Matched to claude.yml's job timeout, which is also what
+    # the console's RUN_TIMEOUT_MINUTES classifies runs against: at the old
+    # 180 the dashboard called a run "timeout" a full 90 minutes before the
+    # job would actually be killed.
+    timeout-minutes: 90
     env:
       npm_config_store_dir: /tmp/runner/pnpm-store
     steps:
@@ -131,6 +136,21 @@ jobs:
         # dereference the returned tag object's `.object.sha`) rather than
         # reverting to the floating tag.
         uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # latest as of 2026-07-25
+        # #51: two dispatches against #44 retried a persistent LiteLLM 429
+        # with a backoff growing from seconds to tens of minutes and never
+        # gave up - no comment, no label, no PR - until a human cancelled
+        # at ~100 minutes. The pinned action exposes no max-retry or
+        # max-elapsed-time input (its action.yml takes only model/agent/
+        # share/prompt/use_github_token/mentions/variant/oidc_base_url), so
+        # the bound has to live here.
+        #
+        # A *step* timeout, not just the job's: exceeding this marks the
+        # step failed rather than cancelling the job, so `Report failure on
+        # the issue` still runs and the issue actually hears about it -
+        # which, in both original hangs, was the only notification that
+        # ever arrived. The job-level backstop above stays 30 minutes
+        # clear of this so it never fires first.
+        timeout-minutes: 60
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # use_github_token needs this passed explicitly - it does not
@@ -292,7 +312,7 @@ jobs:
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
             REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `/opencode`, and consider whether the prompt needs to be even more explicit for this issue.'
           fi
-          if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 180-minute timeout)"; fi
+          if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 90-minute job timeout)"; fi
           gh issue comment "$ISSUE_NUM" \
             --repo "$REPO" \
             --body "OpenCode agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
