@@ -67,7 +67,7 @@ describe('aggregateSessionLedger', () => {
     expect(byKey.get(42)?.tokens).toBe(3000); // (1000+500)*2
   });
 
-  it('includes cache-creation and cache-read tokens in the bucketed total', () => {
+  it('cost-weights cache-creation and cache-read tokens in the bucketed total', () => {
     const { byIssue } = aggregateSessionLedger([
       agentDoc({
         sessionId: 'a1',
@@ -82,7 +82,7 @@ describe('aggregateSessionLedger', () => {
     ]);
 
     const byKey = new Map(byIssue.map((row) => [row.issueNumber, row]));
-    expect(byKey.get(42)?.tokens).toBe(41_700);
+    expect(byKey.get(42)?.tokens).toBe(5_750);
   });
 
   it('buckets an issue-agent doc with no issueNumber under no-issue too', () => {

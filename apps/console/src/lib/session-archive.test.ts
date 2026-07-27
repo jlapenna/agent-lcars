@@ -193,7 +193,7 @@ describe('toSessionRow', () => {
     expect(toSessionRow(cliDoc(), now).totalTokens).toBe(150);
   });
 
-  it('includes cache-creation and cache-read tokens in the total', () => {
+  it('cost-weights cache-creation and cache-read tokens in the total', () => {
     const doc = cliDoc({
       tokens: {
         inputTokens: 100,
@@ -202,7 +202,7 @@ describe('toSessionRow', () => {
         cacheReadTokens: 300,
       },
     });
-    expect(toSessionRow(doc, now).totalTokens).toBe(470);
+    expect(toSessionRow(doc, now).totalTokens).toBe(205);
   });
 });
 

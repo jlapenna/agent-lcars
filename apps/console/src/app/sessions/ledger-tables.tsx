@@ -68,8 +68,8 @@ function IssueCell({ row }: { row: IssueLedgerRow }) {
 }
 
 /**
- * `sm` and up: the full per-issue breakdown (Issue/Sessions/Turns/Tokens/
- * Cost), wrapped in its own scroll container (#3107) so an unusually wide
+ * `sm` and up: the full per-issue breakdown (Issue/Sessions/Turns/
+ * Cost-weighted tokens/Cost), wrapped in its own scroll container (#3107) so an unusually wide
  * issue-number column can never push the page body sideways - unlike the
  * session table, this one rarely needs the scroll in practice at `sm`+
  * widths, but the container costs nothing when unused.
@@ -83,7 +83,7 @@ function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
             <TableTh>Issue</TableTh>
             <TableTh>Sessions</TableTh>
             <TableTh>Turns</TableTh>
-            <TableTh>Tokens</TableTh>
+            <TableTh>Cost-weighted tokens</TableTh>
             <TableTh>Cost</TableTh>
           </TableTr>
         </TableThead>
@@ -109,7 +109,8 @@ function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
 
 /**
  * Below `sm`: Turns/Cost drop (both are one tap away on the session
- * table/detail page) so Issue/Sessions/Tokens - what a maintainer actually
+ * table/detail page) so Issue/Sessions/Cost-weighted tokens - what a
+ * maintainer actually
  * scans a budget ledger for on a phone - fits at 360px without the table
  * needing its own horizontal scroll at all. Still wrapped in a scroll
  * container defensively, since a long issue title... there isn't one here
@@ -124,7 +125,7 @@ function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
           <TableTr>
             <TableTh>Issue</TableTh>
             <TableTh>Sessions</TableTh>
-            <TableTh>Tokens</TableTh>
+            <TableTh>Cost-weighted tokens</TableTh>
           </TableTr>
         </TableThead>
         <TableTbody>
@@ -155,7 +156,7 @@ function WeekLedgerTable({ rows }: { rows: WeekLedgerRow[] }) {
             <TableTh>Week</TableTh>
             <TableTh>Sessions</TableTh>
             <TableTh>Turns</TableTh>
-            <TableTh>Tokens</TableTh>
+            <TableTh>Cost-weighted tokens</TableTh>
             <TableTh>Cost</TableTh>
           </TableTr>
         </TableThead>
@@ -185,7 +186,7 @@ function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
           <TableTr>
             <TableTh>Week</TableTh>
             <TableTh>Sessions</TableTh>
-            <TableTh>Tokens</TableTh>
+            <TableTh>Cost-weighted tokens</TableTh>
           </TableTr>
         </TableThead>
         <TableTbody>

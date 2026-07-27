@@ -109,11 +109,11 @@ describe('SessionHeader', () => {
     expect(screen.queryByTestId('cli-summary-note')).toBeNull();
   });
 
-  it('renders a full token breakdown including cache tokens when present, with the total summing all four', () => {
+  it('renders a full token breakdown including cost-weighted cache tokens', () => {
     renderHeader(cliDoc());
     expect(
       screen.getByText(
-        /165 total \(in 100, out 50, cache-create 5, cache-read 10\)/,
+        /157 cost-weighted total \(in 100, out 50, cache-create 5, cache-read 10\)/,
       ),
     ).toBeTruthy();
   });
@@ -129,7 +129,9 @@ describe('SessionHeader', () => {
         },
       }),
     );
-    expect(screen.getByText('15 total (in 10, out 5)')).toBeTruthy();
+    expect(
+      screen.getByText('15 cost-weighted total (in 10, out 5)'),
+    ).toBeTruthy();
   });
 
   it('shows an em-dash for cost when the doc has none, and a formatted cost when it does', () => {

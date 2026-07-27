@@ -21,6 +21,7 @@ import {
   AgentBadge,
   LIVENESS_COLORS,
   LIVENESS_LABELS,
+  SourceBadge,
 } from '../../agent-activity-panel';
 import { ArtifactPreviewToggle } from '../../artifact-viewer';
 import { Eyebrow } from '../../eyebrow';
@@ -57,7 +58,7 @@ function formatTokens(doc: SessionDoc): string {
       `cache-read ${doc.tokens.cacheReadTokens.toLocaleString('en-US')}`,
     );
   }
-  return `${total.toLocaleString('en-US')} total (${parts.join(', ')})`;
+  return `${total.toLocaleString('en-US')} cost-weighted total (${parts.join(', ')})`;
 }
 
 /**
@@ -92,12 +93,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
   return (
     <Stack gap="md" mb="xl" data-testid="session-header">
       <Group gap="sm" wrap="wrap" align="center">
-        <Badge
-          variant="outline"
-          color={doc.source === 'cli' ? 'blue' : 'violet'}
-        >
-          {doc.source === 'cli' ? 'cli' : 'agent'}
-        </Badge>
+        <SourceBadge source={doc.source} />
         <Badge
           variant="light"
           color={LIVENESS_COLORS[liveness]}
@@ -117,7 +113,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           <Field label="Permission mode">{doc.permissionMode}</Field>
         )}
         <Field label="Turns">{doc.turns}</Field>
-        <Field label="Tokens">{formatTokens(doc)}</Field>
+        <Field label="Cost-weighted tokens">{formatTokens(doc)}</Field>
         <Field label="Cost">
           {doc.totalCostUsd !== undefined ? formatCost(doc.totalCostUsd) : '—'}
         </Field>

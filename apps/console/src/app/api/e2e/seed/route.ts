@@ -1,5 +1,6 @@
 import {
   type CliSessionDoc,
+  type IssueAgentSessionDoc,
   SESSION_RETENTION_DAYS,
 } from '@agent-lcars/telemetry';
 import {
@@ -11,6 +12,12 @@ import { isE2eTesting } from '@repo/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { E2E_FIXTURE_BRANCH } from '../../../../lib/e2e-fixtures';
+import {
+  E2E_FIXTURE_REPO,
+  E2E_ITEM_NUMBERS,
+  E2E_RUN_IDS,
+  setPopulatedFixtures,
+} from '../../../../lib/e2e-github-fixtures';
 
 export const E2E_CLI_SESSION_IDS = {
   live: 'e2e-cli-session-live',
@@ -18,6 +25,11 @@ export const E2E_CLI_SESSION_IDS = {
   ended: 'e2e-cli-session-ended',
   stale: 'e2e-cli-session-stale',
 } as const;
+
+/** Populated mode only (#40). An `issue-agent` doc had never been seeded at
+ * all, so the session detail page's stat grid and the `agent` source badge
+ * had only ever been exercised by unit tests. */
+export const E2E_ISSUE_AGENT_SESSION_ID = 'e2e-issue-agent-session';
 
 // Timestamps are relative to seeding time, not frozen: the console applies a
 // lastActivityAt recency window both to which sessions it lists at all and to
@@ -127,8 +139,47 @@ function fixtureSessions(): CliSessionDoc[] {
   ];
 }
 
+/**
+ * The `issue-agent` half of the populated fixture set. Joined to
+ * `E2E_RUN_IDS.silentError` (a run GitHub reported as `success`) with zero
+ * turns and zero cost, which is exactly the signature
+ * `deriveSilentErrorDiagnoses` looks for — so seeding this is what makes
+ * the dashboard's `silent-error` action type render at all.
+ */
+function fixtureIssueAgentSession(): IssueAgentSessionDoc {
+  const lastActivityAt = minutesAgo(52);
+  return {
+    sessionId: E2E_ISSUE_AGENT_SESSION_ID,
+    source: 'issue-agent',
+    liveness: 'ended',
+    repo: { owner: E2E_FIXTURE_REPO.owner, name: E2E_FIXTURE_REPO.name },
+    runId: String(E2E_RUN_IDS.silentError),
+    issueNumber: E2E_ITEM_NUMBERS.silentError,
+    startedAt: minutesAgo(56),
+    lastActivityAt,
+    expireAt: expireAtFor(lastActivityAt),
+    turns: 0,
+    toolCallCounts: {},
+    tokens: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    },
+    model: 'claude-opus-5',
+    permissionMode: 'acceptEdits',
+    title: 'E2E fixture: issue-agent session that did no work',
+    totalCostUsd: 0,
+    result: { subtype: 'success', isError: false },
+    deliverables: { prNumbers: [], commitShas: [] },
+  };
+}
+
 interface SeedRequest {
-  action?: 'seed' | 'reset';
+  /** `seed` is the original CLI-session-only fixture set; `seed-populated`
+   * adds the issue-agent session and switches the GitHub fixture route into
+   * populated mode (#40). `reset` clears both. */
+  action?: 'seed' | 'seed-populated' | 'reset';
 }
 
 /**
@@ -150,13 +201,19 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as SeedRequest;
 
     if (body.action === 'reset') {
+      setPopulatedFixtures(false);
       const firestore = getAgentTelemetryWriterFirestore();
       const snapshot = await firestore.collection(SESSIONS_COLLECTION).get();
       await Promise.all(snapshot.docs.map((doc) => doc.ref.delete()));
       return NextResponse.json({ success: true });
     }
 
-    await Promise.all(fixtureSessions().map((doc) => upsertSession(doc)));
+    const populated = body.action === 'seed-populated';
+    setPopulatedFixtures(populated);
+    const docs = populated
+      ? [...fixtureSessions(), fixtureIssueAgentSession()]
+      : fixtureSessions();
+    await Promise.all(docs.map((doc) => upsertSession(doc)));
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('agent-lcars: error in E2E seed API:', error);

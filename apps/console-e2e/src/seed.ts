@@ -21,7 +21,22 @@ export const E2E_CLI_SESSION_IDS = {
 } as const;
 
 export const E2E_FIXTURE_PR_NUMBER = 4242;
-async function callSeedApi(action: 'seed' | 'reset') {
+
+/** Populated-mode identifiers, mirroring `E2E_ITEM_NUMBERS` /
+ * `E2E_ISSUE_AGENT_SESSION_ID` in the frontend app (duplicated for the same
+ * module-boundary reason as the ids above). */
+export const E2E_ITEM_NUMBERS = {
+  humanNeeded: 9001,
+  runFailed: 9002,
+  reviewRequested: 9003,
+  postDeploy: 9004,
+  silentError: 9005,
+  humanNeededPostDeploy: 9010,
+} as const;
+
+export const E2E_ISSUE_AGENT_SESSION_ID = 'e2e-issue-agent-session';
+
+async function callSeedApi(action: 'seed' | 'seed-populated' | 'reset') {
   const baseURL = process.env['BASE_URL'] || 'http://127.0.0.1:4200';
   const response = await fetch(`${baseURL}/api/e2e/seed`, {
     method: 'POST',
@@ -44,15 +59,42 @@ export async function resetCliSessions() {
   await callSeedApi('reset');
 }
 
-/** Seeds the fixture CLI sessions above before every test in the spec and
- * clears them once after the whole suite finishes. */
-export function useCliSessionFixtures() {
+/**
+ * Turns on the full populated fixture set (#40): the CLI sessions above,
+ * plus an `issue-agent` session doc, plus the action items, workflow runs,
+ * and runner fleet served by `/api/e2e/github` — which stay invisible
+ * otherwise, so the older specs keep asserting the zero state they were
+ * written against.
+ */
+export async function seedPopulatedFixtures() {
+  await callSeedApi('seed-populated');
+}
+
+/**
+ * Registers the seed/clear hooks for one fixture set. Both exported
+ * wrappers below funnel through this rather than each declaring their own
+ * `beforeEach`/`afterAll` — two hook pairs in one module read as duplicate
+ * hooks in a single describe block to `eslint-plugin-playwright`, even
+ * though a spec only ever calls one of them.
+ */
+function useFixtures(seed: () => Promise<void>) {
   test.beforeEach(async () => {
     await resetCliSessions();
-    await seedCliSessions();
+    await seed();
   });
 
   test.afterAll(async () => {
     await resetCliSessions();
   });
+}
+
+/** Seeds/clears the populated set around every test in a spec. */
+export function usePopulatedFixtures() {
+  useFixtures(seedPopulatedFixtures);
+}
+
+/** Seeds the fixture CLI sessions above before every test in the spec and
+ * clears them once after the whole suite finishes. */
+export function useCliSessionFixtures() {
+  useFixtures(seedCliSessions);
 }
