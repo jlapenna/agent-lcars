@@ -1318,6 +1318,19 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	return name, nil
 }
 
+// isDigestRef reports whether an image reference pins a content digest
+// (name@sha256:...), which makes it immutable and therefore safe to serve
+// from the local cache without consulting the registry.
+func isDigestRef(ref string) bool {
+	at := strings.LastIndex(ref, "@")
+	if at < 0 {
+		return false
+	}
+	// Guard against a digest-looking fragment inside a registry host:port or
+	// path segment by requiring the '@' to precede an algo:hex form.
+	return strings.Contains(ref[at+1:], ":")
+}
+
 func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Client, host string) error {
 	key := host + "\x00" + a.runnerImage
 	lockValue, _ := a.hostImageLocks.LoadOrStore(key, &sync.Mutex{})
@@ -1325,13 +1338,32 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 	lock.Lock()
 	defer lock.Unlock()
 
-	if _, err := client.ImageInspect(ctx, a.runnerImage); err == nil {
-		return nil
-	} else if !cerrdefs.IsNotFound(err) {
-		return fmt.Errorf("failed to inspect runner image %q on host %q: %w", a.runnerImage, host, err)
+	// A DIGEST reference is immutable, so a local hit is authoritative and
+	// re-pulling could never change the bytes. Skip the registry round-trip.
+	//
+	// A TAG is not. Treating a local hit as authoritative there is
+	// agent-lcars#139: the tag moves in the registry, every host keeps
+	// booting whatever it pulled first, and nothing surfaces the
+	// divergence. Observed 2026-07-27 with e2e-runner:latest -- four of five
+	// hosts served a stale image for hours while the fixed one sat published,
+	// and a CI job failed against code that had already been corrected. The
+	// only thing that ever refreshed a tag was the twice-daily prune
+	// deleting it locally so this function's not-found path finally ran,
+	// which also means a rebuilt image published to REMOVE something (a CVE
+	// fix, or #138 stripping the Docker CLI) did not take effect until an
+	// unrelated GC happened to fire.
+	//
+	// So: always pull for a tag. Layers are already local in the common
+	// case, making this a manifest check rather than a transfer.
+	if isDigestRef(a.runnerImage) {
+		if _, err := client.ImageInspect(ctx, a.runnerImage); err == nil {
+			return nil
+		} else if !cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("failed to inspect runner image %q on host %q: %w", a.runnerImage, host, err)
+		}
 	}
 
-	a.logger.Warn("Runner image missing on selected host; pulling it on demand",
+	a.logger.Info("Refreshing runner image on selected host",
 		slog.String("host", host), slog.String("image", a.runnerImage))
 	pull, err := client.ImagePull(ctx, a.runnerImage, image.PullOptions{})
 	if err != nil {

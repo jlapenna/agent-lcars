@@ -760,10 +760,41 @@ func TestPickHostSharedWorkDirNoColocation(t *testing.T) {
 	}
 }
 
-func TestEnsureRunnerImagePullsAfterHostPrune(t *testing.T) {
+// TestEnsureRunnerImageRefreshesMutableTags pins agent-lcars#139: a TAG can
+// move in the registry, so a local hit must never be treated as
+// authoritative. The previous behaviour pulled only when the image was
+// absent, which meant hosts served whatever they pulled first until an
+// unrelated prune deleted it -- including for images rebuilt specifically to
+// REMOVE something.
+func TestEnsureRunnerImageRefreshesMutableTags(t *testing.T) {
 	fake := newFakeDockerServer(t)
 	scaler := &Scaler{
 		runnerImage: "registry.example/runner:test",
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	client := fake.client(t)
+
+	// Absent (e.g. just pruned) -- must pull.
+	if err := scaler.ensureRunnerImage(context.Background(), client, "spark"); err != nil {
+		t.Fatalf("ensureRunnerImage after prune: %v", err)
+	}
+	// Present but MUTABLE -- must pull again, because the tag may have moved.
+	if err := scaler.ensureRunnerImage(context.Background(), client, "spark"); err != nil {
+		t.Fatalf("ensureRunnerImage with cached tag: %v", err)
+	}
+	if got := fake.pullCount(); got != 2 {
+		t.Fatalf("tag pulls = %d, want 2 (a cached tag must still be refreshed)", got)
+	}
+}
+
+// TestEnsureRunnerImageTrustsDigestCache is the other half: a digest
+// reference is immutable, so a local hit IS authoritative and re-pulling
+// could not change the bytes. Skipping it keeps the refresh above from
+// costing a registry round-trip on every placement for pinned images.
+func TestEnsureRunnerImageTrustsDigestCache(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		runnerImage: "registry.example/runner@sha256:" + strings.Repeat("a", 64),
 		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	client := fake.client(t)
@@ -772,10 +803,23 @@ func TestEnsureRunnerImagePullsAfterHostPrune(t *testing.T) {
 		t.Fatalf("ensureRunnerImage after prune: %v", err)
 	}
 	if err := scaler.ensureRunnerImage(context.Background(), client, "spark"); err != nil {
-		t.Fatalf("ensureRunnerImage with cached image: %v", err)
+		t.Fatalf("ensureRunnerImage with cached digest: %v", err)
 	}
 	if got := fake.pullCount(); got != 1 {
-		t.Fatalf("image pulls = %d, want exactly 1", got)
+		t.Fatalf("digest pulls = %d, want exactly 1 (immutable ref may be cached)", got)
+	}
+}
+
+func TestIsDigestRef(t *testing.T) {
+	for ref, want := range map[string]bool{
+		"registry.example/runner:test":                              false,
+		"registry.example:5000/ns/runner:test":                      false,
+		"registry.example/runner@sha256:" + strings.Repeat("a", 64): true,
+		"runner@sha256:" + strings.Repeat("b", 64):                  true,
+	} {
+		if got := isDigestRef(ref); got != want {
+			t.Errorf("isDigestRef(%q) = %v, want %v", ref, got, want)
+		}
 	}
 }
 
