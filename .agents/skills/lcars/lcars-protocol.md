@@ -39,10 +39,16 @@ jlapenna`), and use as the assignee in the parking recipe
   `MAINTAINER_LOGIN`.
 
 - **Reply triggers:** `@claude` (claude.yml) on an issue already carrying
-  the `claude` label, or directly on a pull request; `/opencode` or `/oc`
+  the `claude` label, or directly on a pull request; `/codex` (codex.yml)
+  on an issue carrying the `codex` label; `/opencode` or `/oc`
   (opencode.yml) on an issue carrying the `opencode` label. A plain reply
   with neither trigger is silently ignored — always end a parking comment
   with the correct one for whichever pipeline dispatched you.
+
+- **Pipeline precedence:** `claude` > `codex` > `opencode`. Each workflow
+  stands down when a higher-precedence label is also present, so a
+  mistakenly dual-labeled issue never gets two workers racing on the same
+  problem.
 
 ## Auto-merge
 

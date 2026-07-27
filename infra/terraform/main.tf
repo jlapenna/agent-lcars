@@ -200,6 +200,56 @@ resource "google_secret_manager_secret" "telemetry_writer_key" {
   depends_on = [google_project_service.services]
 }
 
+# codex.yml's ChatGPT subscription credential (issue #47). Terraform owns
+# the container; the VALUE is minted by hand (`codex login` on a
+# workstation, then `gcloud secrets versions add`) and never lives in this
+# repo or in GitHub Actions secrets.
+#
+# Unlike every other secret here this one ROTATES: Codex refreshes the
+# token during a run, and codex.yml writes the refreshed blob back as a new
+# version. That write access is why this needs its own service account
+# rather than reusing telemetry_writer or github_deployer.
+resource "google_secret_manager_secret" "codex_auth" {
+  secret_id = "CODEX_AUTH_JSON"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_service_account" "codex_agent" {
+  account_id   = "codex-agent"
+  display_name = "Agent LCARS Codex issue agent"
+}
+
+# Deliberately scoped to this ONE secret, not a project-level role.
+# codex.yml lets google-github-actions/auth export ambient ADC for this
+# identity (the `gcloud secrets` calls need it), which means agent-authored
+# code running in that job can reach whatever this SA can reach. Granting
+# it exactly the subscription credential it already handles - and nothing
+# else in the project - is what keeps that blast radius equal to the
+# credential itself.
+resource "google_secret_manager_secret_iam_member" "codex_auth_accessor" {
+  secret_id = google_secret_manager_secret.codex_auth.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.codex_agent.email}"
+}
+
+# secretVersionAdder, NOT secretAdmin: the run must be able to append a
+# refreshed version, never to delete/disable prior ones. A bad refresh
+# should be recoverable by pinning an earlier version.
+resource "google_secret_manager_secret_iam_member" "codex_auth_version_adder" {
+  secret_id = google_secret_manager_secret.codex_auth.id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${google_service_account.codex_agent.email}"
+}
+
+resource "google_service_account_iam_member" "codex_agent_impersonation" {
+  service_account_id = google_service_account.codex_agent.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
 resource "google_billing_budget" "monthly" {
   billing_account = var.billing_account
   display_name    = "Agent LCARS monthly budget"
