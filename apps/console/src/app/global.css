@@ -79,31 +79,59 @@
   color: var(--pill-ink);
 }
 
+/* Per-accent pill colors. `--pill-outline` is the light-scheme value, with
+   a `[data-mantine-color-scheme='dark']` override below rather than
+   `light-dark()`.
+
+   This is not a style preference — `light-dark()` was actively broken here
+   (found by #42's interaction pass). Next's CSS transform (Lightning CSS)
+   downlevels `light-dark(a, b)` into
+   `var(--lightningcss-light, a) var(--lightningcss-dark, b)` and expects a
+   `:root` rule per scheme to blank out the losing half. That rule never
+   made it into the bundle, so BOTH halves fell back and `--pill-outline`
+   computed to two space-separated colors — invalid wherever it was used:
+
+     - `color: var(--pill-outline)`         -> fell back to inherited text
+     - `border: 2px solid var(--pill-outline)` -> fell back to currentColor
+     - `color-mix(in srgb, var(--pill-outline) 16%, transparent)` -> invalid
+       at computed-value time, so the :hover tint never rendered at all
+
+   The redesign's screenshots didn't catch it because the *active* pill is
+   filled from `--pill-fill` (no `light-dark()`), which always rendered
+   correctly; only the inactive pills silently lost their accent.
+
+   Mantine drives the scheme with `data-mantine-color-scheme` on <html>
+   (`mantineHtmlProps` + `ColorSchemeScript`), so keying off that attribute
+   is both the app's own source of truth and immune to the downlevelling. */
+
 .lcars-nav-pill[data-accent='amber'] {
   --pill-fill: var(--mantine-color-orange-6);
   --pill-ink: var(--mantine-color-black);
-  --pill-outline: light-dark(
-    var(--mantine-color-orange-8),
-    var(--mantine-color-orange-5)
-  );
+  --pill-outline: var(--mantine-color-orange-8);
+}
+
+[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='amber'] {
+  --pill-outline: var(--mantine-color-orange-5);
 }
 
 .lcars-nav-pill[data-accent='periwinkle'] {
   --pill-fill: var(--mantine-color-violet-5);
   --pill-ink: var(--mantine-color-white);
-  --pill-outline: light-dark(
-    var(--mantine-color-violet-5),
-    var(--mantine-color-violet-3)
-  );
+  --pill-outline: var(--mantine-color-violet-5);
+}
+
+[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='periwinkle'] {
+  --pill-outline: var(--mantine-color-violet-3);
 }
 
 .lcars-nav-pill[data-accent='teal'] {
   --pill-fill: var(--mantine-color-teal-6);
   --pill-ink: var(--mantine-color-black);
-  --pill-outline: light-dark(
-    var(--mantine-color-teal-8),
-    var(--mantine-color-teal-6)
-  );
+  --pill-outline: var(--mantine-color-teal-8);
+}
+
+[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='teal'] {
+  --pill-outline: var(--mantine-color-teal-6);
 }
 
 /* ---- Operational controls ----
