@@ -872,3 +872,37 @@ func TestRunnerBinds(t *testing.T) {
 		t.Fatalf("file mount not appended read-only: %q", both[3])
 	}
 }
+
+// TestEnsureRunnerImageRejectsStreamedPullError is the other half of #139's
+// fix. Docker reports registry/auth/manifest failures INSIDE the pull
+// progress stream, with ImagePull itself returning nil. Since a refreshed
+// TAG is normally already present locally, simply discarding that body lets
+// the following ImageInspect succeed against the STALE image -- so the
+// function would return nil and launch exactly what the refresh exists to
+// replace, including for a security-removal rebuild.
+func TestEnsureRunnerImageRejectsStreamedPullError(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		runnerImage: "registry.example/runner:test",
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	client := fake.client(t)
+
+	// First pull succeeds, so the tag is present locally from here on --
+	// which is what makes the post-pull inspect an unreliable check.
+	if err := scaler.ensureRunnerImage(context.Background(), client, "spark"); err != nil {
+		t.Fatalf("initial pull: %v", err)
+	}
+
+	fake.mu.Lock()
+	fake.pullStreamError = true
+	fake.mu.Unlock()
+
+	err := scaler.ensureRunnerImage(context.Background(), client, "spark")
+	if err == nil {
+		t.Fatal("a streamed pull error must fail the refresh, not fall through to the cached image")
+	}
+	if !strings.Contains(err.Error(), "manifest unknown") {
+		t.Errorf("error should surface the daemon's message, got: %v", err)
+	}
+}

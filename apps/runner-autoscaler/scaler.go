@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1370,8 +1371,33 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 		return fmt.Errorf("failed to pull runner image %q on host %q: %w", a.runnerImage, host, err)
 	}
 	defer func() { _ = pull.Close() }()
-	if _, err := io.Copy(io.Discard, pull); err != nil {
-		return fmt.Errorf("failed while pulling runner image %q on host %q: %w", a.runnerImage, host, err)
+	// Docker streams pull progress as newline-delimited JSON and reports
+	// registry/auth/manifest failures INSIDE that stream -- ImagePull itself
+	// returns a nil error for them. Discarding the body would swallow that,
+	// and because a refreshed TAG is normally already present locally, the
+	// ImageInspect below would then succeed against the STALE image and this
+	// function would return nil. That is exactly the bug #139 exists to fix,
+	// reintroduced one layer down: before this change the pull only ran when
+	// the image was ABSENT, so a failed pull surfaced as a failed inspect.
+	dec := json.NewDecoder(pull)
+	for {
+		var msg struct {
+			Error       string `json:"error"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+		}
+		if decErr := dec.Decode(&msg); errors.Is(decErr, io.EOF) {
+			break
+		} else if decErr != nil {
+			return fmt.Errorf("failed while reading pull progress for runner image %q on host %q: %w", a.runnerImage, host, decErr)
+		}
+		if detail := msg.Error; detail != "" {
+			return fmt.Errorf("pull of runner image %q on host %q failed: %s", a.runnerImage, host, detail)
+		}
+		if detail := msg.ErrorDetail.Message; detail != "" {
+			return fmt.Errorf("pull of runner image %q on host %q failed: %s", a.runnerImage, host, detail)
+		}
 	}
 	if _, err := client.ImageInspect(ctx, a.runnerImage); err != nil {
 		return fmt.Errorf("runner image %q is still unavailable on host %q after pull: %w", a.runnerImage, host, err)
