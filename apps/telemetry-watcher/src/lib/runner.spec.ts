@@ -45,6 +45,40 @@ const ISSUE_AGENT_TRANSCRIPT = (sessionId: string, timestamp: string) =>
     }),
   ].join('\n');
 
+/** A Codex CLI rollout transcript, mirroring the shape
+ * `libs/telemetry/src/lib/fixtures/codex-session.jsonl` uses. Note it
+ * carries no issue-agent marker of any kind — Codex has no equivalent of
+ * Claude's `entrypoint` field, which is exactly why runner mode forces the
+ * source rather than trusting the transcript (see
+ * `BuildSessionDocOptions.forceSource`). */
+const CODEX_TRANSCRIPT = [
+  JSON.stringify({
+    timestamp: '2026-07-27T10:00:00.000Z',
+    type: 'session_meta',
+    payload: {
+      id: 'codex-runner-session',
+      cwd: '/home/runner/_work/agent-lcars/agent-lcars',
+      model: 'gpt-5.6',
+      approval_policy: 'on-request',
+      instructions: 'Port codex.yml',
+    },
+  }),
+  JSON.stringify({
+    timestamp: '2026-07-27T10:00:05.000Z',
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: {
+          input_tokens: 120,
+          cached_input_tokens: 40,
+          output_tokens: 30,
+        },
+      },
+    },
+  }),
+].join('\n');
+
 function createFakeStore() {
   const upserts: SessionDoc[] = [];
   const store: SessionStore = {
@@ -58,6 +92,7 @@ function createFakeStore() {
 function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
+    codexSessionsDir: '/home/runner/.codex/sessions',
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
     stalenessWindowMs: 50_000,
@@ -78,7 +113,8 @@ describe('startSidecar', () => {
       store,
       autoStart: false,
       now: () => '2026-07-19T10:00:01.000Z',
-      discover: () => Object.keys(files),
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((f) => f.startsWith(rootPath)),
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
       isProcessAliveForCwd: () => true,
@@ -109,7 +145,8 @@ describe('startSidecar', () => {
       store,
       autoStart: false,
       now: () => '2026-07-19T10:00:01.000Z',
-      discover: () => Object.keys(files),
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((f) => f.startsWith(rootPath)),
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
       isProcessAliveForCwd: () => true,
@@ -138,7 +175,8 @@ describe('startSidecar', () => {
       store,
       autoStart: false,
       now: () => '2026-07-19T10:00:01.000Z',
-      discover: () => Object.keys(files),
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((f) => f.startsWith(rootPath)),
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
       isProcessAliveForCwd: () => true,
@@ -164,9 +202,11 @@ describe('startSidecar', () => {
       store,
       autoStart: false,
       now: () => '2026-07-19T10:00:01.000Z',
-      discover: (_dir, allowlist) => {
-        seenAllowlist = allowlist;
-        return Object.keys(files);
+      discover: (rootPath, allowlist) => {
+        // Only the Claude root's allowlist: the Codex root declares its own
+        // (`RUNNER_CODEX_CWD_ALLOWLIST`), asserted separately below.
+        if (rootPath.includes('.claude')) seenAllowlist = allowlist;
+        return Object.keys(files).filter((f) => f.startsWith(rootPath));
       },
       readFile: (p: string) => files[p as keyof typeof files],
       statFile: () => ({ mtimeMs: 1, size: 10 }),
@@ -177,6 +217,76 @@ describe('startSidecar', () => {
     await daemon.tick();
 
     expect(seenAllowlist).toEqual(['*']);
+    expect(upserts).toHaveLength(1);
+  });
+
+  // Until codex.yml existed the sidecar declared only the Claude root, so a
+  // Codex run shipped no telemetry at all — no turns, no tokens, no session
+  // row in the console. These pin both halves of the fix.
+  it('discovers Codex transcripts under the Codex sessions root', async () => {
+    const { store, upserts } = createFakeStore();
+    const codexFile =
+      '/home/runner/.codex/sessions/2026/07/27/rollout-abc.jsonl';
+    const files = { [codexFile]: CODEX_TRANSCRIPT };
+
+    const daemon = startSidecar({
+      config: baseConfig({ runId: '5150', issueNumber: 47 }),
+      store,
+      autoStart: false,
+      now: () => '2026-07-27T10:00:01.000Z',
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((f) => f.startsWith(rootPath)),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: () => ({ mtimeMs: 1, size: 10 }),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+    });
+
+    await daemon.tick();
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).toMatchObject({
+      sessionId: 'codex-runner-session',
+      agent: 'codex',
+      runId: '5150',
+      issueNumber: 47,
+      // The whole point of watching this root: real token counts.
+      tokens: {
+        inputTokens: 80,
+        outputTokens: 30,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 40,
+      },
+    });
+  });
+
+  it('does not scope Codex sessions to the host watcher checkout glob', async () => {
+    const { store, upserts } = createFakeStore();
+    let codexAllowlist: string[] | undefined;
+    const codexFile =
+      '/home/runner/.codex/sessions/2026/07/27/rollout-abc.jsonl';
+    const files = { [codexFile]: CODEX_TRANSCRIPT };
+
+    const daemon = startSidecar({
+      config: baseConfig({ runId: '5150' }),
+      store,
+      autoStart: false,
+      now: () => '2026-07-27T10:00:01.000Z',
+      discover: (rootPath: string, allowlist: string[]) => {
+        if (rootPath.includes('.codex')) codexAllowlist = allowlist;
+        return Object.keys(files).filter((f) => f.startsWith(rootPath));
+      },
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: () => ({ mtimeMs: 1, size: 10 }),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+    });
+
+    await daemon.tick();
+
+    // A runner checkout lives at /home/runner/_work/..., which would never
+    // match the host default of `/home/jlapenna/p/members*`.
+    expect(codexAllowlist).toEqual(['*']);
     expect(upserts).toHaveLength(1);
   });
 

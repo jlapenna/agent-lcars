@@ -54,9 +54,12 @@ concurrency:
 
 jobs:
   opencode:
-    # Dual-label containment: when the issue ALSO carries the `claude`
-    # label, this pipeline stands down - `claude` wins. Without this, a
-    # dual-labeled issue could dispatch both agents onto the same problem.
+    # Dual-label containment: this pipeline stands down when the issue
+    # also carries a higher-precedence label. Precedence is
+    # `claude` > `codex` > `opencode` (see lcars-protocol.md), so OpenCode
+    # -- the lowest -- defers to both. Without this, a dual-labeled issue
+    # dispatches two agents onto the same problem: they edit the same
+    # branch and both report on the issue.
     #
     # github.actor == 'jlapenna' on the label-add path: this repo is public,
     # and Triage-level (or higher) collaborators can add a label without
@@ -70,14 +73,16 @@ jobs:
        github.event.action == 'labeled' &&
        github.event.label.name == 'opencode' &&
        github.actor == 'jlapenna' &&
-       !contains(github.event.issue.labels.*.name, 'claude')) ||
+       !contains(github.event.issue.labels.*.name, 'claude') &&
+       !contains(github.event.issue.labels.*.name, 'codex')) ||
       (github.event_name == 'issue_comment' &&
        github.event.comment.user.type != 'Bot' &&
        github.event.comment.author_association == 'OWNER' &&
        (contains(github.event.comment.body, '/opencode') ||
         contains(github.event.comment.body, '/oc')) &&
        contains(github.event.issue.labels.*.name, 'opencode') &&
-       !contains(github.event.issue.labels.*.name, 'claude')) ||
+       !contains(github.event.issue.labels.*.name, 'claude') &&
+       !contains(github.event.issue.labels.*.name, 'codex')) ||
       (github.event_name == 'workflow_dispatch' &&
        github.event.inputs.issue != '')
     # claude-agent-lcars has no runner registered behind it yet (tracked in

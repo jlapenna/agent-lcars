@@ -16,6 +16,18 @@ import { SessionStore } from './store';
  */
 const RUNNER_ALLOWLIST = ['*'];
 
+/**
+ * The same reasoning applied to Codex's own `cwd`-keyed allowlist. The host
+ * watcher scopes codex sessions to `DEFAULT_CHECKOUT_ROOT*`
+ * (`/home/jlapenna/p/members*`) because a workstation runs Codex against
+ * many unrelated checkouts; a runner container has exactly one, at a path
+ * (`/home/runner/_work/...`) that would never match that workstation glob.
+ * Reusing the host default here would silently discard every session this
+ * sidecar exists to record — so runner mode gets the same no-op wildcard as
+ * Claude above.
+ */
+const RUNNER_CODEX_CWD_ALLOWLIST = ['*'];
+
 export interface StartSidecarOptions {
   config: RunnerConfig;
   store: SessionStore;
@@ -42,18 +54,19 @@ export interface StartSidecarOptions {
  * Starts the long-lived sidecar loop for the duration of the agent's
  * turn (issue #3107 follow-up 5): on a fixed interval
  * (`config.heartbeatIntervalMs`, ~10s by default), discovers every
- * transcript under the runner's `$HOME/.claude/projects`, reduces it, and
- * upserts a session doc tagged with `runId`/`issueNumber`. This is what
+ * transcript under the runner's `$HOME/.claude/projects` and
+ * `$HOME/.codex/sessions`, reduces it, and upserts a session doc tagged
+ * with `runId`/`issueNumber`. This is what
  * lights up the Agent LCARS's In-Flight UI (#3092) mid-run instead of
  * only after the job ends — that UI already renders gauges whenever a live
  * session doc exists, so shipping docs mid-run needs zero console changes.
  *
  * Reuses `WatcherDaemon` wholesale (its per-tick read/stat/reduce/store
  * error handling is already fail-soft — see daemon.spec.ts) rather than
- * reimplementing discovery/liveness here. The reducer already tags
- * `source: 'issue-agent'` from the transcript's own
- * `claude-code-github-action` entrypoint marker, so no extra plumbing is
- * needed to distinguish a runner session from a host-watcher one.
+ * reimplementing discovery/liveness here. Every doc is forced to
+ * `source: 'issue-agent'`: Claude's reducer infers that from the
+ * transcript's own `claude-code-github-action` entrypoint marker, but Codex
+ * emits no equivalent, so the marker can't be the sole signal.
  *
  * Runner (`issue-agent`) sessions have no artifact story yet (see
  * `libs/telemetry/src/lib/types.ts`), so `shareDir` is intentionally
@@ -75,13 +88,31 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
   const { config, store } = options;
 
   const daemon = new WatcherDaemon({
+    // Both agents' transcript roots, unconditionally. A dispatch workflow
+    // only ever runs one of them, and the other root simply discovers
+    // nothing — cheaper and far less error-prone than having each workflow
+    // declare which agent it is. Until codex.yml existed this watched only
+    // Claude, which meant a Codex run would have shipped no telemetry at
+    // all: no turns, no tokens, no session row in the console.
     watchRoots: [
       {
         path: config.claudeProjectsDir,
         adapter: 'claude-code',
         projectDirAllowlist: RUNNER_ALLOWLIST,
       },
+      {
+        path: config.codexSessionsDir,
+        adapter: 'codex',
+        // Codex writes `~/.codex/sessions/<yyyy>/<mm>/<dd>/<uuid>.jsonl`,
+        // so unlike Claude's flat project dirs this root must be walked.
+        recursive: true,
+        cwdAllowlist: RUNNER_CODEX_CWD_ALLOWLIST,
+      },
     ],
+    // Every transcript on a dispatch runner belongs to that job's agent
+    // run, whatever the transcript itself claims — see
+    // BuildSessionDocOptions.forceSource.
+    forceSource: 'issue-agent',
     host: config.host,
     store,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
@@ -100,7 +131,7 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
   });
 
   logger.info(
-    `agent-lcars-telemetry-watcher: runner sidecar starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir} every ${config.heartbeatIntervalMs}ms`,
+    `agent-lcars-telemetry-watcher: runner sidecar starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir} and ${config.codexSessionsDir} every ${config.heartbeatIntervalMs}ms`,
   );
 
   if (options.autoStart ?? true) {

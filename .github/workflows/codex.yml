@@ -1,0 +1,450 @@
+name: Codex Issue Agent
+
+# Third issue-agent pipeline, alongside claude.yml and opencode.yml. Adding
+# the `codex` label dispatches OpenAI's Codex CLI on the same self-hosted
+# fleet; reply with `/codex` to continue a conversation on an issue that
+# already carries the label.
+#
+# Ported from supersprinklesracing/sprinkles' own codex.yml (issue #47).
+# What carried over unchanged is the hard-won part: the user-prefix npm
+# install, the subscription-auth restore/refresh cycle, the deliverable
+# gate, and the explicit queue hand-off. What did NOT carry over is that
+# repo's credential — it lives in the `supersprinklesracing` GCP project,
+# which this repo has no access to and, per AGENTS.md, should not reach
+# into. agent-lcars mints and stores its own (infra/terraform/main.tf's
+# CODEX_AUTH_JSON).
+#
+# Precedence: claude > codex > opencode. A dual-labeled issue never gets
+# two workers.
+#
+# See .agents/skills/agent-protocol/agent-protocol.md and
+# .agents/skills/lcars/lcars-protocol.md for the conventions this agent
+# follows.
+
+run-name: 'codex #${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}'
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to run against (manual testing)'
+        required: true
+
+# Least privilege: enough to comment, push a feature branch, and open a PR.
+# id-token: write is what lets this job mint a WIF token for the GCP
+# project that holds the subscription credential.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+  actions: write
+
+jobs:
+  codex:
+    # github.actor == 'jlapenna' on the label-add path: this repo is public,
+    # and a Triage-level collaborator can add a label without being the
+    # maintainer. The issues webhook has no author_association-equivalent
+    # for "who labeled this", so this compares github.actor directly —
+    # matching claude.yml/opencode.yml's identical guard.
+    if: >
+      (github.event_name == 'issues' &&
+       github.event.action == 'labeled' &&
+       github.event.label.name == 'codex' &&
+       github.actor == 'jlapenna' &&
+       !contains(github.event.issue.labels.*.name, 'claude')) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       github.event.comment.author_association == 'OWNER' &&
+       contains(github.event.comment.body, '/codex') &&
+       contains(github.event.issue.labels.*.name, 'codex') &&
+       !contains(github.event.issue.labels.*.name, 'claude')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.issue != '')
+    # Serialize every subscription-authenticated run: two agents must never
+    # rotate the same auth.json refresh token concurrently. This belongs on
+    # the job, not the workflow — issue_comment creates a workflow run
+    # before the dispatch predicate above is evaluated, so at workflow scope
+    # a later bot/no-op comment could evict a valid pending agent run from
+    # the group even though its own job would be skipped.
+    concurrency:
+      group: codex-subscription-auth
+      cancel-in-progress: false
+    runs-on: [claude-agent-lcars]
+    # 90, matching claude.yml/opencode.yml and the console's
+    # RUN_TIMEOUT_MINUTES. The real bound is the per-step timeout on `Run
+    # Codex` below; this is the backstop (see #51/#129 for what an unbounded
+    # agent step costs).
+    timeout-minutes: 90
+    env:
+      npm_config_store_dir: /tmp/runner/pnpm-store
+      NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
+      NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
+    steps:
+      - name: Claim the issue as jclaw-bot
+        # id/claimed is consumed by "Dispatch the next queued Codex issue"
+        # at the end of this job. That step treats "assigned to jclaw-bot"
+        # as the marker for an already-picked-up issue, so if claiming is
+        # broken repo-wide the hand-off must not run at all — otherwise two
+        # permanently-unclaimable issues would dispatch each other forever.
+        # Still non-fatal.
+        id: claim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
+               -f 'assignees[]=jclaw-bot' --silent; then
+            echo "claimed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "claimed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not assign jclaw-bot to #$NUM"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity for Codex
+        run: |
+          git config user.name 'jclaw-bot'
+          git config user.email 'jclaw-bot@users.noreply.github.com'
+
+      - name: Point Nx at the shared host cache when present
+        run: |
+          if [ -d /shared-cache ]; then
+            mkdir -p /shared-cache/nx
+            echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
+          fi
+
+      # Two distinct GCP identities are used by this job, deliberately kept
+      # separate:
+      #
+      #   codex-agent    (here)  — read AND add versions of CODEX_AUTH_JSON
+      #   telemetry-writer (below) — write session telemetry only
+      #
+      # export_environment_variables is left at its default (true) for this
+      # one because the `gcloud secrets` calls in later steps need ambient
+      # ADC. That is also why this credential is scoped to exactly one
+      # secret in Terraform and nothing else: it IS reachable from the
+      # agent's own shell.
+      - name: Authenticate to GCP for the subscription credential
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
+          service_account: codex-agent@agent-lcars.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # Separate WIF identity for telemetry, mirroring claude.yml exactly —
+      # including export_environment_variables: false, which keeps the
+      # storage-scoped writer credential out of the agent's ambient
+      # environment. if: always() + continue-on-error so a rotated/broken
+      # telemetry config can never turn a healthy agent run red.
+      - name: Authenticate telemetry writer
+        id: telemetry-auth
+        if: always()
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
+          service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
+          token_format: access_token
+          export_environment_variables: false
+
+      - name: Install Codex CLI
+        # npm's prefix in the runner image is /usr, so a bare `npm install
+        # --global` tries to mkdir /usr/lib/node_modules/@openai. That
+        # directory is root-owned 0755 and the runner executes as uid 1001,
+        # so every attempt dies with EACCES. Install into a user-writable
+        # prefix instead of reaching for sudo: this pool deliberately runs
+        # agent-authored code unprivileged (mount_docker_socket: false), and
+        # a global install is not a reason to hand it root.
+        #
+        # $GITHUB_PATH, not a bare export: later steps run in their own
+        # shells and would otherwise not find the binary.
+        run: |
+          npm config set prefix "$HOME/.npm-global"
+          npm install --global @openai/codex@0.144.6
+          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+
+      - name: Restore subscription authentication
+        # DO NOT populate this secret by copying the blob out of
+        # supersprinklesracing's own CODEX_AUTH_JSON, however tempting the
+        # shortcut looks. Codex rotates the credential on every run and the
+        # "Persist refreshed..." step below writes the new one back — that
+        # project's secret had 23 versions across a few days, several per
+        # day, one per run.
+        #
+        # Two repos sharing one blob therefore invalidate each other: a run
+        # here rotates the upstream token, and the other repo's stored copy
+        # is stale by its next run. The concurrency group above serializes
+        # runs within THIS repo; nothing can serialize across repos, so
+        # there is no configuration that makes a shared credential safe.
+        #
+        # Mint an independent one instead (`codex login`) — same ChatGPT
+        # subscription, separate token, rotating on its own.
+        id: restore-auth
+        run: |
+          mkdir -p "$HOME/.codex"
+          chmod 700 "$HOME/.codex"
+          gcloud secrets versions access latest \
+            --project=agent-lcars \
+            --secret=CODEX_AUTH_JSON > "$HOME/.codex/auth.json"
+          chmod 600 "$HOME/.codex/auth.json"
+          codex login status
+
+      # Best-effort mid-run telemetry, identical to claude.yml's. The
+      # sidecar watches ~/.codex/sessions as well as ~/.claude/projects (see
+      # apps/telemetry-watcher/src/lib/runner.ts) and forces
+      # source: 'issue-agent', so this run's turns/tokens/cost show up in
+      # the console the same way a Claude run's do.
+      - name: Start telemetry sidecar
+        continue-on-error: true
+        env:
+          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+          RUN_ID: ${{ github.run_id }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+          if [ -x "$SCRIPT" ]; then
+            "$SCRIPT" start
+          else
+            echo "Sidecar tooling not found at $SCRIPT (runner image predates this bake-in, or this isn't the claude-agent-lcars fleet); skipping telemetry sidecar."
+          fi
+
+      # Wall-clock anchor for the deliverable check below: only artifacts
+      # created/updated after this moment count as this run's output.
+      - name: Record run start time
+        id: start
+        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Run Codex
+        id: agent
+        # A step timeout, not just the job's: exceeding this fails the step
+        # rather than cancelling the job, so "Persist refreshed subscription
+        # authentication", the deliverable gate, the failure report, and the
+        # queue hand-off below all still run. #51 is the incident that
+        # taught this — an unbounded agent step burned the whole job budget
+        # and the issue was never told.
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # Same CI-rerun affordance claude.yml grants its agent (see
+          # agent-protocol.md §8).
+          ACTIONS_RERUN_TOKEN: ${{ github.token }}
+          CODEX_PROMPT: >-
+            ${{ (github.event_name == 'issues' &&
+            format('An issue was labeled for you to work on: #{0} ("{1}").
+            Read AGENTS.md, then
+            .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly - they define the goal, the hard rails, and
+            the reporting format. The workflow has already assigned
+            jclaw-bot to this issue for you. THIS IS A FULLY HEADLESS,
+            NON-INTERACTIVE RUN: there is no live user watching this session
+            who can answer a question or pick from options in real time. If
+            you find yourself presenting choices and waiting for a reply,
+            stop - that reply will never come. Any question you have must
+            instead be POSTED as an issue comment via gh, with the
+            human-needed label applied, and the session must then end -
+            never wait inline for a conversational answer. Work strictly
+            synchronously: never launch background agents or schedule
+            wakeups. Do not end until the issue has a PR open (ready for
+            review, jlapenna as reviewer, "Closes #{0}" in the body) - or a
+            clarifying comment is posted with the human-needed label applied
+            and jlapenna assigned. CRITICAL: you MUST end this session by
+            actually invoking a tool call that mutates GitHub (gh issue
+            comment, gh pr create, gh issue edit --add-label) - even if your
+            conclusion is "no fix is needed", you must still run gh issue
+            comment to say so before ending. A run that reasons to a
+            conclusion and replies with plain text only, without a matching
+            gh action, is NOT a valid ending and will be treated as a failed
+            run.', github.event.issue.number, github.event.issue.title)) ||
+            (github.event_name == 'workflow_dispatch' && format('Work issue
+            #{0} in this repo. Read AGENTS.md, then
+            .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly. THIS IS A FULLY HEADLESS, NON-INTERACTIVE
+            RUN: there is no live user watching who can answer a question in
+            real time. Any question you have must be POSTED as an issue
+            comment via gh, with the human-needed label applied, and the
+            session must then end. Do not end until the issue has a PR open
+            (ready for review, jlapenna as reviewer, "Closes #{0}" in the
+            body) - or a clarifying comment is posted with the human-needed
+            label applied and jlapenna assigned. CRITICAL: you MUST end this
+            session by actually invoking a tool call that mutates GitHub. A
+            plain text reply with no matching gh action is NOT a valid
+            ending.', github.event.inputs.issue)) || format('The repo owner
+            posted a reply on #{0} ("{1}") tagging you. Read AGENTS.md, then
+            .agents/skills/agent-protocol/agent-protocol.md, then
+            .agents/skills/lcars/lcars-protocol.md, in that order, and
+            follow them exactly. THIS IS A FULLY HEADLESS RUN: the repo
+            owner''s reply already happened and is in the thread above -
+            there is no further live back-and-forth available within this
+            session. Do not present options and wait for a reply; if you
+            need a decision, post your question as an issue comment with the
+            human-needed label applied and end the session. Do not end until
+            your deliverable (PR update or comment) exists.',
+            github.event.issue.number, github.event.issue.title) }}
+        run: |
+          # pipefail is load-bearing: without it this step's status is
+          # `tee`'s, which is always 0, so a crashed/auth-failed codex run
+          # would report success. The deliverable gate does not reliably
+          # catch that -- a pre-existing human-needed label, or a PR opened
+          # just before the crash, satisfies it.
+          set -o pipefail
+          codex exec --json --dangerously-bypass-approvals-and-sandbox \
+            "$CODEX_PROMPT" | tee "$RUNNER_TEMP/codex-output.jsonl"
+
+      - name: Persist refreshed subscription authentication
+        # Persist a refresh whether Codex succeeded or failed, but do not
+        # turn a restore/setup failure into a second, misleading auth
+        # failure.
+        if: always() && steps.restore-auth.outcome == 'success'
+        run: |
+          if [ ! -s "$HOME/.codex/auth.json" ]; then
+            echo "::error::Codex auth.json is missing or empty; refusing to replace the stored credential"
+            exit 1
+          fi
+          gcloud secrets versions add CODEX_AUTH_JSON \
+            --project=agent-lcars \
+            --data-file="$HOME/.codex/auth.json"
+
+      # Mirrors claude.yml's finalize: kills the sidecar daemon and writes
+      # the authoritative `ended` doc with the archived transcript URI.
+      - name: Finalize telemetry sidecar
+        if: always()
+        continue-on-error: true
+        env:
+          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+          RUN_ID: ${{ github.run_id }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+          if [ -x "$SCRIPT" ]; then
+            "$SCRIPT" finalize
+          else
+            echo "Sidecar tooling not found at $SCRIPT; skipping telemetry finalize."
+          fi
+
+      # Same gate claude.yml/opencode.yml use (agent-protocol.md §5): an
+      # agent can reason to a genuine conclusion and stop without ever
+      # posting it, so a bare "success" conclusion is not trusted.
+      - name: Verify a deliverable exists
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STARTED_AT: ${{ steps.start.outputs.ts }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          found=""
+          # The numeric boundary prevents "#4" from matching "#42"/"#400";
+          # updated-desc keeps older PRs with fresh pushes in the 50 results.
+          prs=$(gh pr list --repo "$REPO" --state all --limit 50 -S "sort:updated-desc" \
+            --json title,body,updatedAt \
+            --jq "[.[] | select(.updatedAt >= \"$STARTED_AT\") | select((.title + \" \" + (.body // \"\")) | test(\"#$NUM([^0-9]|\$)\"))] | length" \
+            2>/dev/null || echo 0)
+          if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM"; fi
+
+          if [ -z "$found" ]; then
+            closed_at=$(gh issue view "$NUM" --repo "$REPO" --json state,closedAt \
+              --jq 'if .state == "CLOSED" then .closedAt else "" end' 2>/dev/null || echo "")
+            if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then found="issue closed"; fi
+          fi
+
+          if [ -z "$found" ]; then
+            labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
+              --jq '[.labels[].name] | contains(["human-needed"])' 2>/dev/null || echo false)
+            if [ "$labeled" = "true" ]; then found="human-needed applied"; fi
+          fi
+
+          if [ -z "$found" ]; then
+            comments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT" \
+              --jq '[.[] | select(.user.type == "Bot")] | length' 2>/dev/null || echo 0)
+            if [ "${comments:-0}" -gt 0 ]; then found="bot comment posted"; fi
+          fi
+
+          if [ -z "$found" ]; then
+            echo "::error::Codex ended without a visible deliverable on #$NUM"
+            exit 1
+          fi
+          echo "Deliverable verified: $found"
+
+      # MUST cover cancelled(): a job-level timeout-minutes kill sets the
+      # conclusion to `cancelled`, not `failure`, so `if: failure()` alone
+      # would miss it (same carve-out as claude.yml/opencode.yml).
+      - name: Report failure on the issue
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          MSG="failed"
+          if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 90-minute job timeout)"; fi
+          gh issue comment "$NUM" --body "⚠️ Codex agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh issue edit "$NUM" --add-label human-needed --add-assignee jlapenna
+
+      # Hand the concurrency group off to the next queued issue.
+      #
+      # The group above is mandatory (one auth.json refresh at a time), but
+      # GitHub keeps only ONE pending run per group — a third arrival
+      # cancels whichever was already waiting. A burst of labels therefore
+      # collapses to a single survivor, and the cancelled runs are silent:
+      # they are killed while still pending, so not one step executes and
+      # "Report failure on the issue" above never fires.
+      #
+      # So don't use GitHub's queue as a queue. Serialize on the group, but
+      # queue explicitly: as this run releases the group, dispatch the next
+      # unclaimed issue. Exactly one run is ever pending, so there is
+      # nothing for GitHub to cancel.
+      #
+      # "Unclaimed" reuses the protocol's own marker rather than inventing
+      # state — the claim step assigns before any work starts, so anything
+      # already picked up is already assigned.
+      #
+      # always(): a failed or cancelled run must still pass the baton, or
+      # one bad issue strands everything behind it. Self-healing by
+      # construction: if a dispatched run is itself cancelled, its issue
+      # simply stays unclaimed and the next completing run picks it up.
+      - name: Dispatch the next queued Codex issue
+        if: always() && steps.claim.outputs.claimed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CURRENT: ${{ github.event.issue.number || github.event.inputs.issue }}
+        run: |
+          set -euo pipefail
+
+          # Mirrors this job's own `if:` precedence rule: Claude outranks
+          # Codex, so a dual-labeled issue is Claude's and must not be
+          # dispatched here.
+          NEXT=$(gh issue list --repo "$REPO" --state open --label codex \
+            --json number,labels,assignees --limit 100 \
+            | jq -r --argjson cur "${CURRENT:-0}" '
+                [ .[]
+                  | select((.labels | map(.name) | index("claude")) == null)
+                  | select((.assignees | map(.login) | index("jclaw-bot")) == null)
+                  | .number
+                ]
+                | map(select(. != $cur))
+                | sort
+                | first // empty')
+
+          if [ -z "$NEXT" ]; then
+            echo "No unclaimed codex issues remain; queue is drained."
+            exit 0
+          fi
+
+          echo "Handing off to #$NEXT."
+          gh workflow run codex.yml --repo "$REPO" -f issue="$NEXT"

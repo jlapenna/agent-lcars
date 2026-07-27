@@ -21,6 +21,10 @@ import {
  * comment for why a runner container's single checkout needs no scoping. */
 const RUNNER_ALLOWLIST = ['*'];
 
+/** Mirrors `runner.ts`'s `RUNNER_CODEX_CWD_ALLOWLIST` — see that constant's
+ * doc comment. */
+const RUNNER_CODEX_CWD_ALLOWLIST = ['*'];
+
 export interface FinalizeSidecarOptions {
   config: RunnerConfig;
   store: SessionStore;
@@ -64,12 +68,22 @@ export async function finalizeSidecar(
   const resolveGitRepo = options.resolveGitRepo ?? defaultResolveGitRepo;
   const uploadTranscript = options.uploadTranscript ?? defaultUploadTranscript;
 
+  // Mirrors startSidecar's roots exactly (see runner.ts): finalize is the
+  // authoritative last write, so a root the sidecar watched but this pass
+  // didn't would leave that session stuck on its final `live`/`idle`
+  // snapshot, never marked `ended` and never given a transcriptGcsUri.
   const discovered = discoverAcrossRoots(
     [
       {
         path: config.claudeProjectsDir,
         adapter: 'claude-code',
         projectDirAllowlist: RUNNER_ALLOWLIST,
+      },
+      {
+        path: config.codexSessionsDir,
+        adapter: 'codex',
+        recursive: true,
+        cwdAllowlist: RUNNER_CODEX_CWD_ALLOWLIST,
       },
     ],
     discover,
@@ -158,6 +172,10 @@ async function finalizeSummary(
     runId: config.runId,
     issueNumber: config.issueNumber,
     repo: config.repo,
+    // Same override the sidecar applies (see runner.ts) — this is the
+    // authoritative last write, so it must agree with the live snapshots
+    // rather than flipping a Codex session back to `cli` at the end.
+    forceSource: 'issue-agent',
     ...(transcriptGcsUri && { transcriptGcsUri }),
   });
 

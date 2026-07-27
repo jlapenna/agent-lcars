@@ -65,6 +65,11 @@ export interface WatcherDaemonOptions {
   runId?: string;
   /** Runner-mode only, see `runId`. */
   issueNumber?: number;
+  /** Runner-mode only: forces every doc this daemon upserts to the given
+   * source, overriding what the transcript claims. `runner.ts` sets
+   * `'issue-agent'` — see `BuildSessionDocOptions.forceSource` for why the
+   * transcript can't be trusted to say so for every agent. */
+  forceSource?: SessionSummary['source'];
   /** Runner-mode only, see `runId`. Threaded into `buildSessionDoc`'s
    * options for `issue-agent` docs, which can't derive repo from a git
    * remote the way CLI sessions do (see `resolveGitRepo` below) — a CI
@@ -340,6 +345,9 @@ export class WatcherDaemon {
         runId: this.options.runId,
         issueNumber: this.options.issueNumber,
         repo: this.options.repo,
+        ...(this.options.forceSource && {
+          forceSource: this.options.forceSource,
+        }),
         observedAt,
       });
       const serializedDoc = JSON.stringify(doc);

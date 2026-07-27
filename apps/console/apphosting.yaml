@@ -71,11 +71,10 @@ env:
   # apps/console/src/lib/github-client.ts. Not sensitive, just config; the
   # console falls back to supersprinklesracing/sprinkles alone when unset, so
   # this is the only place that needs editing to add/remove a watched repo.
-  # agent-lcars has no codex.yml (only claude.yml/opencode.yml), so its
-  # codex pipeline is marked null rather than left to 404 against a
-  # nonexistent workflow file on every dashboard load.
+  # Both repos now run all three pipelines (agent-lcars gained codex.yml in
+  # #47), so neither needs a workflowFiles override to opt out of one.
   - variable: AGENT_LCARS_WATCHED_REPOS
-    value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"lcars","workflowFiles":{"codex":null}}]'
+    value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"lcars"}]'
     availability:
       - RUNTIME
 

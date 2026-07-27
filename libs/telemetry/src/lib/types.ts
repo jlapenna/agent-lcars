@@ -200,6 +200,20 @@ export type SessionDoc = CliSessionDoc | IssueAgentSessionDoc;
 export interface BuildSessionDocOptions {
   /** Host-watcher observation time for CLI liveness. */
   observedAt?: string;
+  /**
+   * Overrides `summary.source` when the *caller's* context is more
+   * authoritative than the transcript's own self-description.
+   *
+   * Runner mode is the only such context: the container exists to run one
+   * dispatch job, so every transcript on it is by construction an
+   * `issue-agent` session. Claude's transcripts say so themselves (the
+   * reducer keys off `entrypoint: 'claude-code-github-action'`), but that
+   * marker is Claude-specific — Codex rollout JSONL has no equivalent, so
+   * `codexAdapter` always reports `source: 'cli'`. Without this override a
+   * Codex run's telemetry would land as a CLI session: no `runId`, no
+   * `issueNumber`, no `repo`, and 30-day instead of 365-day retention.
+   */
+  forceSource?: SessionSummary['source'];
   /** `issue-agent` sessions only. */
   runId?: string;
   /** `issue-agent` sessions only. */

@@ -63,6 +63,7 @@ function createFakeUploader() {
 function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
+    codexSessionsDir: '/home/runner/.codex/sessions',
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
     stalenessWindowMs: 50_000,
