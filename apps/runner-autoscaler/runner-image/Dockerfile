@@ -141,7 +141,6 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip $EXTRA_APT_PACKAGES; \
     node --version; \
-    docker --version; \
     git-lfs --version; \
     gh --version; \
     python3 -m pip --version; \
