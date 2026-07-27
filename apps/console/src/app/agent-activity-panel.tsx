@@ -2,6 +2,7 @@ import type {
   IssueAgentSessionDoc,
   RunStatusClassification,
   SessionAgent,
+  SessionSource,
 } from '@agent-lcars/telemetry';
 import {
   Alert,
@@ -158,6 +159,41 @@ export function AgentBadge({ agent }: { agent: SessionAgent }) {
       style={{ flexShrink: 0 }}
     >
       {AGENT_LABELS[agent]}
+    </Badge>
+  );
+}
+
+// How a session's transcript reached the console: streamed live off a
+// developer's machine by the watcher (`cli`) or shipped by an issue-agent
+// workflow run (`issue-agent`). Orthogonal to AGENT_* above (*which* tool
+// wrote the transcript) - a codex session can arrive by either route.
+const SOURCE_LABELS: Record<SessionSource, string> = {
+  cli: 'cli',
+  'issue-agent': 'agent',
+};
+
+const SOURCE_COLORS: Record<SessionSource, string> = {
+  cli: 'blue',
+  'issue-agent': 'violet',
+};
+
+/**
+ * Session-provenance badge, shared by the /sessions archive (table and
+ * card layouts) and the session detail header. Those three call sites each
+ * carried their own inline `source === 'cli' ? 'blue' : 'violet'` copy of
+ * this mapping until #43 - they agreed, but nothing made them agree, so a
+ * tweak to one would have drifted silently from the others.
+ */
+export function SourceBadge({
+  source,
+  size,
+}: {
+  source: SessionSource;
+  size?: string;
+}) {
+  return (
+    <Badge variant="outline" size={size} color={SOURCE_COLORS[source]}>
+      {SOURCE_LABELS[source]}
     </Badge>
   );
 }

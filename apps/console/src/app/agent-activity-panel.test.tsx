@@ -1,11 +1,14 @@
-import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import type {
+  IssueAgentSessionDoc,
+  SessionSource,
+} from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentActivity, AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
-import { AgentActivityPanel } from './agent-activity-panel';
+import { AgentActivityPanel, SourceBadge } from './agent-activity-panel';
 
 // CancelRunButton is a 'use server' client component wired to backend
 // actions - out of scope here, matching the pattern in
@@ -591,5 +594,34 @@ describe('AgentActivityPanel queue health alert', () => {
       ],
     });
     expect(screen.queryByTestId('queue-health-alert')).toBeNull();
+  });
+});
+
+describe('SourceBadge', () => {
+  const renderBadge = (source: SessionSource) =>
+    render(
+      <MantineProvider>
+        <SourceBadge source={source} />
+      </MantineProvider>,
+    );
+
+  // The label and the color are asserted together because #43's whole point
+  // is that they now come from one place: the /sessions table, its mobile
+  // card layout, and the session detail header each carried their own
+  // inline copy of both, free to drift apart.
+  it('renders a cli session in blue', () => {
+    const { container } = renderBadge('cli');
+    expect(screen.getByText('cli')).toBeTruthy();
+    expect(
+      container.querySelector('.mantine-Badge-root')?.getAttribute('style'),
+    ).toContain('--mantine-color-blue');
+  });
+
+  it('renders an issue-agent session as "agent" in violet', () => {
+    const { container } = renderBadge('issue-agent');
+    expect(screen.getByText('agent')).toBeTruthy();
+    expect(
+      container.querySelector('.mantine-Badge-root')?.getAttribute('style'),
+    ).toContain('--mantine-color-violet');
   });
 });

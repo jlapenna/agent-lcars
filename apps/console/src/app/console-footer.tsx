@@ -2,6 +2,7 @@ import { Group } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import { RefreshButton } from './refresh-button';
+import { SignOutButton } from './sign-out-button';
 import { ThemeToggle } from './theme-toggle';
 
 // Bottom-of-page chrome shared by every console route. Time-sensitive
@@ -20,6 +21,7 @@ export function ConsoleFooter({
         <RefreshButton generatedAt={generatedAt} initialLabel={refreshLabel} />
       )}
       <ThemeToggle />
+      <SignOutButton />
     </Group>
   );
 }
