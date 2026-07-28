@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 
 	"github.com/actions/scaleset"
 	"github.com/docker/go-units"
-	yaml "go.yaml.in/yaml/v2"
+	yaml "go.yaml.in/yaml/v3"
 )
 
 // OrchestratorConfig is the single, versioned configuration surface for the
@@ -278,7 +279,9 @@ func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
 	if err != nil {
 		return out, fmt.Errorf("reading orchestrator config %q: %w", path, err)
 	}
-	if err := yaml.UnmarshalStrict(b, &out.Raw); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(&out.Raw); err != nil {
 		return out, fmt.Errorf("parsing orchestrator config %q: %w", path, err)
 	}
 	if err := out.resolve(); err != nil {
