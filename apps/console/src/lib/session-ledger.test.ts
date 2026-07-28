@@ -116,6 +116,16 @@ describe('aggregateSessionLedger', () => {
     expect(row?.sessions).toBe(2);
   });
 
+  it('floors a stored negative totalCostUsd at 0 rather than dragging the bucket total down', () => {
+    const { byIssue } = aggregateSessionLedger([
+      agentDoc({ sessionId: 'a1', issueNumber: 7, totalCostUsd: 3 }),
+      agentDoc({ sessionId: 'a2', issueNumber: 7, totalCostUsd: -1.5 }),
+    ]);
+
+    const row = byIssue.find((r) => r.issueNumber === 7);
+    expect(row?.costUsd).toBe(3);
+  });
+
   it('sorts by cost desc, then tokens desc, with uncosted buckets ranked below any costed bucket', () => {
     const { byIssue } = aggregateSessionLedger([
       agentDoc({ sessionId: 'a1', issueNumber: 1, totalCostUsd: 0.5 }),

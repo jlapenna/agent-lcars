@@ -240,8 +240,13 @@ function finalizeState(state: SessionState): SessionSummary {
     tokens: state.tokens,
     ...(state.lastToolCall && { lastToolCall: state.lastToolCall }),
     ...(title && { title }),
+    // Claude Code occasionally emits a negative `costUSD` correction line
+    // (e.g. netting out a retried/cancelled turn's earlier charge); summing
+    // those against genuine charges can drive the running total below zero
+    // for a session dominated by corrections, which isn't a meaningful
+    // dollar figure - floor it at $0 rather than surfacing a negative cost.
     ...(state.totalCostUsd !== undefined && {
-      totalCostUsd: state.totalCostUsd,
+      totalCostUsd: Math.max(0, state.totalCostUsd),
     }),
     ...(state.result && { result: state.result }),
     deliverables: {
