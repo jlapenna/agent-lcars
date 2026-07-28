@@ -27,7 +27,28 @@ import { GITHUB_DATA_TAG } from './cache-tags';
  * meaningfully old data. Everything that should show a change immediately -
  * every mutation in `app/actions.ts`, the Refresh control, and the e2e seed
  * route - invalidates the tag rather than waiting this out.
+ *
+ * See DASHBOARD_CACHE_LIFE below for why the window is spelled out rather
+ * than taken from a named profile.
  */
+
+/**
+ * Explicit, NOT the built-in `seconds` profile.
+ *
+ * `seconds` is `{ stale: 30, revalidate: 1, expire: 60 }`, and that
+ * `revalidate: 1` is the problem: any load more than a second after the last
+ * one serves the cached value AND kicks off a background refetch. For a
+ * human clicking between Queue and Agents that is every single load, so the
+ * cache removes the *blocking* but not the *requests* - which is most of
+ * why it exists, given ~26 of the ~30 per load are `getAgentActivity`'s
+ * workflow-run listings that cannot be batched at all.
+ *
+ * `revalidate: 30` means loads inside a 30s window are genuinely free.
+ * `expire: 60` bounds how stale a served value can get; `stale: 30` is the
+ * client router's own window. None of this weakens correctness after a
+ * mutation - every writer invalidates the tag rather than waiting this out.
+ */
+const DASHBOARD_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
 
 /** Wall-clock time the underlying fetch actually ran.
  *
@@ -45,10 +66,7 @@ export async function getCachedActionItems(): Promise<
 > {
   'use cache';
   cacheTag(GITHUB_DATA_TAG);
-  // `seconds` is the shortest built-in profile. The exact bound matters far
-  // less than the tag invalidation above, which is what makes an action's
-  // effect visible immediately.
-  cacheLife('seconds');
+  cacheLife(DASHBOARD_CACHE_LIFE);
   return { data: await getActionItems(), fetchedAt: new Date().toISOString() };
 }
 
@@ -57,7 +75,7 @@ export async function getCachedAgentActivity(): Promise<
 > {
   'use cache';
   cacheTag(GITHUB_DATA_TAG);
-  cacheLife('seconds');
+  cacheLife(DASHBOARD_CACHE_LIFE);
   return {
     data: await getAgentActivity(),
     fetchedAt: new Date().toISOString(),
