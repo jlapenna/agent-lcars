@@ -28,6 +28,7 @@ import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader, DataWarnings } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { PageLoading } from '../page-loading';
+import { QuickTaskButton } from '../quick-task-button';
 import { ActiveAgentsSection } from './active-agents-section';
 import { ClaimedIdleSection } from './claimed-idle-section';
 import { FleetSnapshotBar } from './fleet-snapshot-bar';
@@ -224,6 +225,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
             )}
           </>
         }
+        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={5} header={false} />}>

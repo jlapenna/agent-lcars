@@ -4,6 +4,7 @@ import { cache, Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
+import { getWatchedRepos } from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
   getSessionArchive,
@@ -16,6 +17,7 @@ import { ConsoleHeader, DataWarnings } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
 import { PageLoading } from '../page-loading';
+import { QuickTaskButton } from '../quick-task-button';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { LedgerTables } from './ledger-tables';
 import { SessionTable } from './session-table';
@@ -257,6 +259,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const query = parseSessionArchiveQuery(rawParams);
   const view = parseView(rawParams);
   const tab = parseTab(rawParams);
+  const watchedRepos = getWatchedRepos();
 
   return (
     <Container size="xl" py="xl">
@@ -271,7 +274,12 @@ async function SessionsPageShell({ searchParams }: PageProps) {
             </Suspense>
           </>
         }
-        actions={<TabToggle query={query} view={view} tab={tab} />}
+        actions={
+          <>
+            <QuickTaskButton watchedRepos={watchedRepos} />
+            <TabToggle query={query} view={view} tab={tab} />
+          </>
+        }
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
