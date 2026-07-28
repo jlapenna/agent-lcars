@@ -204,7 +204,7 @@ Regardless of dispatch path:
 - Never force-push without `--force-with-lease` (never plain `--force`).
 - Never edit `.github/workflows/*` unless explicit permission is granted by a repository owner.
   - Flag workflow-layer root causes in your
-  report instead of trying to fix them yourself
+    report instead of trying to fix them yourself
 - Never deploy.
 - Never touch IAM/permissions.
 
