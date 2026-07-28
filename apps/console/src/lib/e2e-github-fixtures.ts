@@ -21,7 +21,8 @@ import {
  *
  * The one thing served unconditionally is the branch->PR join
  * `getCliSessions()` needs, which predates this file and which
- * `agent-activity-cli-sessions.spec.ts` depends on.
+ * `agent-activity-cli-sessions.spec.ts` depends on - see `openPulls`, which
+ * serves it now that the console no longer calls the search API.
  */
 
 // Resolved from deployment config, NOT hardcoded: `tools/e2e/ci.env` sets
@@ -358,43 +359,39 @@ export function openIssues() {
   return FIXTURE_ITEMS.map(issueFor);
 }
 
-/** `GET /repos/{owner}/{repo}/pulls?state=open` - only `number` and
- * `requested_reviewers` are read (the one board predicate the issue listing
- * can't express). */
+/**
+ * `GET /repos/{owner}/{repo}/pulls?state=open`. Two consumers read this now:
+ * `requested_reviewers` answers the board predicate the issue listing can't
+ * express, and `head.ref` answers `getCliSessions()`'s branch->PR join.
+ *
+ * The branch->PR entry is served UNCONDITIONALLY - it predates populated
+ * mode and `agent-activity-cli-sessions.spec.ts` depends on it in the zero
+ * state. It used to come from the `/search/issues` stub, which this replaced
+ * when the console stopped calling the search API at all.
+ */
 export function openPulls() {
-  if (!populatedFixturesEnabled()) return [];
-  return FIXTURE_ITEMS.filter((item) => item.isPr).map((item) => ({
-    number: item.number,
-    requested_reviewers: (item.pr?.requestedReviewers ?? []).map((login) => ({
-      login,
+  const branchJoinPr = {
+    number: E2E_FIXTURE_PR_NUMBER,
+    title: E2E_FIXTURE_PR_TITLE,
+    html_url: E2E_FIXTURE_PR_URL,
+    head: { ref: E2E_FIXTURE_BRANCH },
+    requested_reviewers: [],
+  };
+  if (!populatedFixturesEnabled()) return [branchJoinPr];
+  return [
+    branchJoinPr,
+    ...FIXTURE_ITEMS.filter((item) => item.isPr).map((item) => ({
+      number: item.number,
+      title: item.title,
+      html_url: itemUrl(item.number, 'pull'),
+      // Distinct from the join branch above: these exist to be selected by
+      // the review-requested predicate, not to be joined to a session.
+      head: { ref: `e2e-fixture-branch-${item.number}` },
+      requested_reviewers: (item.pr?.requestedReviewers ?? []).map((login) => ({
+        login,
+      })),
     })),
-  }));
-}
-
-/** `GET /search/issues`. Serves only the branch->PR join `getCliSessions()`
- * needs - the one search call left in the console after #13 moved the
- * action-item board onto the list endpoints above. */
-export function searchIssues(q: string) {
-  const matchesFixtureBranch =
-    q.includes('is:pr') &&
-    q.includes('is:open') &&
-    q.includes(`head:${E2E_FIXTURE_BRANCH}`);
-  if (matchesFixtureBranch) {
-    return {
-      total_count: 1,
-      incomplete_results: false,
-      items: [
-        {
-          number: E2E_FIXTURE_PR_NUMBER,
-          title: E2E_FIXTURE_PR_TITLE,
-          html_url: E2E_FIXTURE_PR_URL,
-          pull_request: {},
-        },
-      ],
-    };
-  }
-
-  return { total_count: 0, incomplete_results: false, items: [] };
+  ];
 }
 
 /** `GET /repos/{owner}/{repo}/issues/{number}/comments` */

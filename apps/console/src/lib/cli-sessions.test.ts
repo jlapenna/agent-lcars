@@ -43,12 +43,14 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   };
 }
 
-function mockSearch(items: unknown[] = []) {
-  const searchMock = vi.fn().mockResolvedValue({ data: { items } });
+/** The branch->PR join reads one `pulls.list` per repo and matches on
+ * `head.ref` - it no longer issues a search per branch (#13). */
+function mockOpenPulls(pulls: unknown[] = []) {
+  const listMock = vi.fn().mockResolvedValue({ data: pulls });
   (getGithubClient as Mock).mockReturnValue({
-    rest: { search: { issuesAndPullRequests: searchMock } },
+    rest: { pulls: { list: listMock } },
   });
-  return searchMock;
+  return listMock;
 }
 
 function mockPullsGet(merged: boolean | Error) {
@@ -57,7 +59,9 @@ function mockPullsGet(merged: boolean | Error) {
       ? vi.fn().mockRejectedValue(merged)
       : vi.fn().mockResolvedValue({ data: { merged } });
   (getGithubClient as Mock).mockReturnValue({
-    rest: { pulls: { get: getMock } },
+    rest: {
+      pulls: { get: getMock, list: vi.fn().mockResolvedValue({ data: [] }) },
+    },
   });
   return getMock;
 }
@@ -67,7 +71,7 @@ describe('getCliSessions', () => {
 
   it('passes a lastActivityAt cutoff to the store instead of listing everything', async () => {
     (listSessionDocs as Mock).mockResolvedValue([]);
-    mockSearch();
+    mockOpenPulls();
 
     await getCliSessions();
 
@@ -83,8 +87,12 @@ describe('getCliSessions', () => {
 
   it('joins an active session branch to an open PR when one exists', async () => {
     (listSessionDocs as Mock).mockResolvedValue([makeCliDoc()]);
-    const searchMock = mockSearch([
-      { number: 2600, html_url: 'https://github.com/o/r/pull/2600' },
+    const listMock = mockOpenPulls([
+      {
+        number: 2600,
+        html_url: 'https://github.com/o/r/pull/2600',
+        head: { ref: 'feat/agent-lcars-cli-sessions' },
+      },
     ]);
 
     const { sessions, warnings } = await getCliSessions();
@@ -100,9 +108,11 @@ describe('getCliSessions', () => {
       totalTokens: 1200,
       pr: { number: 2600, url: 'https://github.com/o/r/pull/2600' },
     });
-    expect(searchMock).toHaveBeenCalledWith(
+    expect(listMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        q: expect.stringContaining('head:feat/agent-lcars-cli-sessions'),
+        owner: 'supersprinklesracing',
+        repo: 'sprinkles',
+        state: 'open',
       }),
     );
   });
@@ -112,7 +122,7 @@ describe('getCliSessions', () => {
       makeCliDoc({ sessionId: 'legacy' }),
       makeCliDoc({ sessionId: 'opencode-session', agent: 'opencode' }),
     ]);
-    mockSearch();
+    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
@@ -124,11 +134,11 @@ describe('getCliSessions', () => {
     ).toBe('opencode');
   });
 
-  it('uses the transcript-recorded PR without a GitHub search when present', async () => {
+  it('uses the transcript-recorded PR without asking GitHub at all when present', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ deliverables: { prNumbers: [2650, 2662], commitShas: [] } }),
     ]);
-    const searchMock = mockSearch();
+    const listMock = mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
@@ -136,7 +146,7 @@ describe('getCliSessions', () => {
       number: 2662,
       url: 'https://github.com/supersprinklesracing/sprinkles/pull/2662',
     });
-    expect(searchMock).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
   });
 
   it('keeps an idle running session visible when a recorded PR has merged', async () => {
@@ -210,36 +220,74 @@ describe('getCliSessions', () => {
     expect(getMock).not.toHaveBeenCalled();
   });
 
-  it('never searches for ended sessions, even with a branch', async () => {
+  it('never looks up PRs for ended sessions, even with a branch', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ liveness: 'ended', lastActivityAt: minutesAgo(120) }),
     ]);
-    const searchMock = mockSearch();
+    const listMock = mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
     expect(sessions[0].liveness).toBe('ended');
     expect(sessions[0].pr).toBeUndefined();
-    expect(searchMock).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
   });
 
-  it('searches a shared branch once and warns once when the lookup fails', async () => {
+  it("lists a repo's open PRs once for many sessions, and warns once when it fails", async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ sessionId: 'session-1' }),
       makeCliDoc({ sessionId: 'session-2', lastActivityAt: minutesAgo(2) }),
     ]);
-    const searchMock = vi.fn().mockRejectedValue(new Error('502'));
+    const listMock = vi.fn().mockRejectedValue(new Error('502'));
     (getGithubClient as Mock).mockReturnValue({
-      rest: { search: { issuesAndPullRequests: searchMock } },
+      rest: { pulls: { list: listMock } },
     });
 
     const { sessions, warnings } = await getCliSessions();
 
     expect(sessions).toHaveLength(2);
-    expect(searchMock).toHaveBeenCalledTimes(1);
+    expect(listMock).toHaveBeenCalledTimes(1);
     expect(warnings).toEqual([
-      'PR lookup failed for branch "feat/agent-lcars-cli-sessions" (supersprinklesracing/sprinkles).',
+      'PR lookup failed for supersprinklesracing/sprinkles.',
     ]);
+  });
+
+  it('joins each session to the open PR whose head ref matches its branch', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({ sessionId: 'session-a', branch: 'feat/alpha' }),
+      makeCliDoc({
+        sessionId: 'session-b',
+        branch: 'feat/beta',
+        lastActivityAt: minutesAgo(2),
+      }),
+      makeCliDoc({
+        sessionId: 'session-c',
+        branch: 'feat/no-pr',
+        lastActivityAt: minutesAgo(3),
+      }),
+    ]);
+    const listMock = mockOpenPulls([
+      {
+        number: 11,
+        html_url: 'https://github.com/o/r/pull/11',
+        head: { ref: 'feat/alpha' },
+      },
+      {
+        number: 22,
+        html_url: 'https://github.com/o/r/pull/22',
+        head: { ref: 'feat/beta' },
+      },
+    ]);
+
+    const { sessions, warnings } = await getCliSessions();
+    const byId = new Map(sessions.map((s) => [s.sessionId, s.pr?.number]));
+
+    expect(byId.get('session-a')).toBe(11);
+    expect(byId.get('session-b')).toBe(22);
+    expect(byId.get('session-c')).toBeUndefined();
+    // Three sessions across one repo still cost exactly one request.
+    expect(listMock).toHaveBeenCalledTimes(1);
+    expect(warnings).toEqual([]);
   });
 
   it('recomputes liveness from activity recency instead of trusting the stored value', async () => {
@@ -255,7 +303,7 @@ describe('getCliSessions', () => {
         branch: undefined,
       }),
     ]);
-    mockSearch();
+    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
     const byId = new Map(sessions.map((s) => [s.sessionId, s.liveness]));
@@ -282,7 +330,7 @@ describe('getCliSessions', () => {
       }),
     ];
     (listSessionDocs as Mock).mockResolvedValue(docs);
-    mockSearch();
+    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
@@ -294,7 +342,7 @@ describe('getCliSessions', () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ artifacts: ['report.md', 'chart.png'] }),
     ]);
-    mockSearch();
+    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
     expect(sessions[0].artifacts).toEqual(['report.md', 'chart.png']);
@@ -311,7 +359,7 @@ describe('getCliSessions', () => {
         },
       }),
     ]);
-    mockSearch();
+    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
     expect(sessions[0].totalTokens).toBe(6_575);
@@ -337,7 +385,7 @@ describe('getCliSessions', () => {
         deliverables: { prNumbers: [], commitShas: [] },
       },
     ]);
-    mockSearch();
+    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
     expect(sessions).toHaveLength(1);

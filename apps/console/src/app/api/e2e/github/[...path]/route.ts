@@ -7,7 +7,6 @@ import {
   openIssues,
   openPulls,
   pullRequest,
-  searchIssues,
   selfHostedRunners,
   workflowRuns,
 } from '../../../../../lib/e2e-github-fixtures';
@@ -19,7 +18,8 @@ import {
  * token and would otherwise 401 against the real API.
  *
  * This started life as a single `search/issues` route serving only the
- * branch->PR join `getCliSessions()` needs. #40 needed the dashboard
+ * branch->PR join `getCliSessions()` needs - that route is gone now, the
+ * console having stopped calling the search API at all (#13). #40 needed the dashboard
  * rendered against non-empty data — action-item cards, run rows, a runner
  * fleet — so it grew into the catch-all it is now. The fixture data itself
  * (and the populated-mode toggle that keeps it invisible to the older
@@ -41,11 +41,6 @@ export async function GET(
 
   const { path } = await params;
   const query = req.nextUrl.searchParams;
-
-  // GET /search/issues?q=...
-  if (path[0] === 'search' && path[1] === 'issues') {
-    return NextResponse.json(searchIssues(query.get('q') ?? ''));
-  }
 
   // Everything below is repo-scoped: /repos/{owner}/{repo}/...
   if (path[0] === 'repos') {
