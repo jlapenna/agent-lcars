@@ -1,5 +1,5 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { totalTokens } from '@agent-lcars/telemetry';
+import { estimateCostUsd, totalTokens } from '@agent-lcars/telemetry';
 
 import {
   primaryWatchedRepo,
@@ -12,16 +12,26 @@ export interface LedgerTotals {
   turns: number;
   tokens: number;
   /**
-   * Sum of `totalCostUsd` across only the sessions in this bucket that
-   * *have* a recorded cost (see SessionDoc.totalCostUsd's doc comment - it's
-   * omitted, not zeroed, for a genuinely-unmeasured session). `undefined`
-   * when none of the bucket's sessions carried a cost at all, so the caller
-   * can render an em-dash instead of a misleading "$0.00" - a bucket mixing
-   * measured and unmeasured sessions still gets a real (partial) total, with
-   * that partiality called out as a footnote by the renderer, not silently
-   * hidden here.
+   * Sum, across every session in this bucket that has *either* a recorded
+   * `totalCostUsd` (see SessionDoc.totalCostUsd's doc comment) *or* a
+   * resolvable {@link estimateCostUsd} from its model + token usage - a
+   * session with neither (no model recorded, or a model this repo has no
+   * published rate for) contributes nothing. `undefined` when no session in
+   * the bucket had either, so the caller can render an em-dash instead of a
+   * misleading "$0.00" - a bucket mixing costed/estimated and truly-unpriced
+   * sessions still gets a real (partial) total, with that partiality called
+   * out as a footnote by the renderer, not silently hidden here.
    */
   costUsd?: number;
+  /**
+   * True when at least one session contributing to `costUsd` came from
+   * {@link estimateCostUsd} rather than a recorded `totalCostUsd` - lets the
+   * renderer flag a bucket's total as (at least partly) an estimate rather
+   * than presenting it as a measured dollar figure. `undefined`/`false`
+   * when every contributing session had a recorded cost, or when the bucket
+   * has no cost at all.
+   */
+  costEstimated?: boolean;
 }
 
 export interface IssueLedgerRow extends LedgerTotals {
@@ -125,18 +135,46 @@ function isoWeekKey(iso: string): string {
   return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
 }
 
+/** A single session's cost contribution to the ledger: its recorded
+ * `totalCostUsd` when present, else an {@link estimateCostUsd} from its
+ * model + token usage, else no cost at all - see `docCost`. */
+interface SessionCost {
+  costUsd: number | undefined;
+  /** True when `costUsd` came from `estimateCostUsd` rather than a recorded
+   * `totalCostUsd`. Meaningless when `costUsd` is undefined. */
+  estimated: boolean;
+}
+
+/**
+ * Resolves a session doc's cost contribution: its own recorded
+ * `totalCostUsd` when the transcript reported one, otherwise a published-
+ * rate estimate from its `model` + `tokens` (undefined when the model is
+ * absent or unrecognized - see {@link estimateCostUsd}'s doc comment for
+ * why that's the right fallback rather than treating it as a $0 session).
+ */
+function docCost(doc: SessionDoc): SessionCost {
+  if (doc.totalCostUsd !== undefined) {
+    return { costUsd: doc.totalCostUsd, estimated: false };
+  }
+  return { costUsd: estimateCostUsd(doc.model, doc.tokens), estimated: true };
+}
+
 function accumulateTotals(
   base: LedgerTotals,
   turns: number,
   tokens: number,
-  costUsd: number | undefined,
+  cost: SessionCost,
 ): LedgerTotals {
   return {
     sessions: base.sessions + 1,
     turns: base.turns + turns,
     tokens: base.tokens + tokens,
-    ...((base.costUsd !== undefined || costUsd !== undefined) && {
-      costUsd: (base.costUsd ?? 0) + (costUsd ?? 0),
+    ...((base.costUsd !== undefined || cost.costUsd !== undefined) && {
+      costUsd: (base.costUsd ?? 0) + (cost.costUsd ?? 0),
+    }),
+    ...((base.costEstimated ||
+      (cost.costUsd !== undefined && cost.estimated)) && {
+      costEstimated: true,
     }),
   };
 }
@@ -146,11 +184,11 @@ function accumulate<K>(
   key: K,
   turns: number,
   tokens: number,
-  costUsd: number | undefined,
+  cost: SessionCost,
 ): void {
   const existing = buckets.get(key);
   const base: LedgerTotals = existing ?? { sessions: 0, turns: 0, tokens: 0 };
-  buckets.set(key, accumulateTotals(base, turns, tokens, costUsd));
+  buckets.set(key, accumulateTotals(base, turns, tokens, cost));
 }
 
 /**
@@ -176,6 +214,7 @@ export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
 
   for (const doc of docs) {
     const tokens = totalTokens(doc.tokens);
+    const cost = docCost(doc);
     if (doc.source === 'issue-agent' && doc.issueNumber !== undefined) {
       const repo = doc.repo ?? primaryWatchedRepo();
       const key = repoItemKey(repo, doc.issueNumber);
@@ -187,7 +226,7 @@ export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
           existing ?? { sessions: 0, turns: 0, tokens: 0 },
           doc.turns,
           tokens,
-          doc.totalCostUsd,
+          cost,
         ),
       });
     } else {
@@ -198,17 +237,11 @@ export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
           existing ?? { sessions: 0, turns: 0, tokens: 0 },
           doc.turns,
           tokens,
-          doc.totalCostUsd,
+          cost,
         ),
       });
     }
-    accumulate(
-      byWeekMap,
-      isoWeekKey(doc.startedAt),
-      doc.turns,
-      tokens,
-      doc.totalCostUsd,
-    );
+    accumulate(byWeekMap, isoWeekKey(doc.startedAt), doc.turns, tokens, cost);
   }
 
   const byIssue = Array.from(byIssueMap.values()).sort(compareLedgerTotals);

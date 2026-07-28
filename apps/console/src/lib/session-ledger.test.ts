@@ -230,6 +230,85 @@ describe('aggregateSessionLedger', () => {
     ]);
   });
 
+  it('estimates cost from published rates when a session has a known model but no recorded totalCostUsd', () => {
+    const { byIssue } = aggregateSessionLedger([
+      agentDoc({
+        sessionId: 'a1',
+        issueNumber: 7,
+        totalCostUsd: undefined,
+        model: 'claude-opus-5',
+        tokens: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+        },
+      }),
+    ]);
+
+    const row = byIssue.find((r) => r.issueNumber === 7);
+    // claude-opus-5: $5/MTok input + $25/MTok output
+    expect(row?.costUsd).toBeCloseTo(30, 6);
+    expect(row?.costEstimated).toBe(true);
+  });
+
+  it('prefers a recorded totalCostUsd over the published-rate estimate', () => {
+    const { byIssue } = aggregateSessionLedger([
+      agentDoc({
+        sessionId: 'a1',
+        issueNumber: 7,
+        totalCostUsd: 1.5,
+        model: 'claude-opus-5',
+        tokens: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+        },
+      }),
+    ]);
+
+    const row = byIssue.find((r) => r.issueNumber === 7);
+    expect(row?.costUsd).toBe(1.5);
+    expect(row?.costEstimated).toBeUndefined();
+  });
+
+  it('leaves cost undefined for a session with neither a recorded cost nor a recognized model', () => {
+    const { byIssue } = aggregateSessionLedger([
+      cliDoc({ sessionId: 'c1', totalCostUsd: undefined, model: undefined }),
+    ]);
+
+    expect(byIssue[0].costUsd).toBeUndefined();
+    expect(byIssue[0].costEstimated).toBeUndefined();
+  });
+
+  it('flags a bucket costEstimated when it mixes a recorded cost with an estimated one', () => {
+    const { byIssue } = aggregateSessionLedger([
+      agentDoc({
+        sessionId: 'a1',
+        issueNumber: 7,
+        totalCostUsd: 1.5,
+      }),
+      agentDoc({
+        sessionId: 'a2',
+        issueNumber: 7,
+        totalCostUsd: undefined,
+        model: 'claude-sonnet-5',
+        tokens: {
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+        },
+      }),
+    ]);
+
+    const row = byIssue.find((r) => r.issueNumber === 7);
+    // 1.5 recorded + 2 estimated (claude-sonnet-5: $2/MTok input)
+    expect(row?.costUsd).toBeCloseTo(3.5, 6);
+    expect(row?.costEstimated).toBe(true);
+  });
+
   it('sorts weeks chronologically descending (newest first), not by cost/tokens', () => {
     const { byWeek } = aggregateSessionLedger([
       // Deliberately inserted out of chronological order, and with costs

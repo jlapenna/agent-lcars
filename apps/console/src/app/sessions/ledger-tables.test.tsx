@@ -81,6 +81,32 @@ describe('LedgerTables', () => {
     expect(screen.getAllByTestId('ledger-issue-row-compact')).toHaveLength(15);
   });
 
+  it('prefixes an estimated cost total with ~ and leaves a fully-measured total unmarked', () => {
+    renderLedger({
+      byIssue: [
+        {
+          issueNumber: 7,
+          sessions: 1,
+          turns: 1,
+          tokens: 100,
+          costUsd: 3.5,
+          costEstimated: true,
+        },
+        {
+          issueNumber: 8,
+          sessions: 1,
+          turns: 1,
+          tokens: 100,
+          costUsd: 2.5,
+        },
+      ],
+      byWeek: [],
+    });
+
+    expect(screen.getByText('~$3.50')).toBeTruthy();
+    expect(screen.getByText('$2.50')).toBeTruthy();
+  });
+
   it('renders the partial-cost footnote', () => {
     renderLedger({
       byIssue: [
