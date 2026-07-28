@@ -14,12 +14,13 @@ import { Container, Skeleton, Stack } from '@mantine/core';
  * layout from jumping when the real content swaps in.
  *
  * `header` defaults to `true` for the pages that still gate their real
- * title/subtitle behind this same boundary (sessions, session detail,
- * login). Pages whose header doesn't depend on the data being awaited
- * (dashboard, agents - see console-header.tsx's doc comment) render their
- * `ConsoleHeader` eagerly outside this boundary and pass `header={false}`
- * here, so the placeholder for their inner, data-only Suspense doesn't
- * duplicate a title/subtitle skeleton underneath the real one.
+ * title/subtitle behind this same boundary (session detail, login - neither
+ * splits an eager shell out the way the three nav destinations do). Every
+ * nav-destination page (dashboard, agents, sessions - see
+ * console-header.tsx's doc comment) instead renders its `ConsoleHeader`
+ * eagerly in an outer shell and passes `header={false}` here for its inner,
+ * data-only Suspense, so that placeholder doesn't duplicate a title/subtitle
+ * skeleton underneath the real one.
  */
 export function PageLoading({
   rows = 5,
