@@ -6,6 +6,12 @@ import {
   repoKey,
   type WatchedRepo,
 } from './github-client';
+import {
+  CHECK_WINDOW,
+  enrichItems,
+  type EnrichmentRequest,
+  type ItemEnrichment,
+} from './item-enrichment';
 
 /** Re-exported for the modules that already import it from here. The value
  * itself now comes from `deployment.ts`, which is the single place this
@@ -139,76 +145,11 @@ const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
   'post-deploy-action',
 ]);
 
-interface LastComment {
-  body: string;
-  url: string;
-  author?: string;
-}
-
-interface CommentScan {
-  last?: LastComment;
-  takeoverCommand?: string;
-}
-
 // The agent's kickoff prompt (see .github/workflows/claude.yml) makes it
 // post its exact takeover command in its first ack comment, e.g.
 // `~/p/members/tools/claude-agent-session.sh resume <session-id>`. Each new
 // run posts a fresh one, so the newest match wins.
 const TAKEOVER_COMMAND_RE = /(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/;
-
-// issues.listComments has no sort/direction parameters (unlike the
-// repo-level comment listings) - it ALWAYS returns ascending created order,
-// so the newest comments live on the LAST page. Verified live: passing
-// sort/direction is silently ignored, which used to make this scan return
-// the issue's oldest comment as the "last response" and the takeover command
-// of the first (long-dead) session.
-const COMMENTS_PER_PAGE = 100;
-
-async function scanComments(
-  repo: WatchedRepo,
-  issueNumber: number,
-  commentCount: number,
-): Promise<CommentScan> {
-  const octokit = getGithubClient();
-  const lastPage = Math.max(1, Math.ceil(commentCount / COMMENTS_PER_PAGE));
-  let { data: comments } = await octokit.rest.issues.listComments({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-    per_page: COMMENTS_PER_PAGE,
-    page: lastPage,
-  });
-  // The count from the search index can lag deletions; if the computed page
-  // is past the end, step back one page rather than reporting no comments.
-  if (comments.length === 0 && lastPage > 1) {
-    ({ data: comments } = await octokit.rest.issues.listComments({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-      per_page: COMMENTS_PER_PAGE,
-      page: lastPage - 1,
-    }));
-  }
-  const last = comments[comments.length - 1];
-  let takeoverCommand: string | undefined;
-  for (let i = comments.length - 1; i >= 0; i--) {
-    const match = comments[i].body?.match(TAKEOVER_COMMAND_RE);
-    if (match) {
-      takeoverCommand = match[1];
-      break;
-    }
-  }
-  return {
-    last: last?.body
-      ? {
-          body: last.body,
-          url: last.html_url,
-          author: last.user?.login ?? undefined,
-        }
-      : undefined,
-    takeoverCommand,
-  };
-}
 
 /** One item as returned by `issues.listForRepo`, which serves both issues
  * and PRs (a PR is an issue carrying a `pull_request` key). Verified against
@@ -256,56 +197,21 @@ function extractParentNumber(
   return match ? Number(match[1]) : undefined;
 }
 
-interface CheckRunLike {
-  name: string;
-  html_url?: string | null;
-  status: string;
-  conclusion: string | null;
-}
-
-// GitHub caps a single page at 100; a handful of pages comfortably covers
-// any real PR (one check run per workflow job, across a few workflows) -
-// this bounds the loop rather than expecting to actually hit it.
-const CHECKS_PER_PAGE = 100;
-const CHECKS_MAX_PAGES = 5;
-
-async function listAllCheckRuns(
-  repo: WatchedRepo,
-  sha: string,
-): Promise<{ checkRuns: CheckRunLike[]; truncated: boolean }> {
-  const octokit = getGithubClient();
-  const checkRuns: CheckRunLike[] = [];
-  let totalCount = 0;
-  for (let page = 1; page <= CHECKS_MAX_PAGES; page++) {
-    const { data } = await octokit.rest.checks.listForRef({
-      owner: repo.owner,
-      repo: repo.name,
-      ref: sha,
-      per_page: CHECKS_PER_PAGE,
-      page,
-    });
-    totalCount = data.total_count;
-    checkRuns.push(...data.check_runs);
-    if (
-      data.check_runs.length < CHECKS_PER_PAGE ||
-      checkRuns.length >= totalCount
-    ) {
-      break;
-    }
-  }
-  return { checkRuns, truncated: checkRuns.length < totalCount };
-}
-
 interface ClassifyResult {
   item: ActionItem;
   warnings: string[];
 }
 
-async function classifyIssue(
+/** Pure over its inputs now: every GitHub read this used to make per item
+ * is answered up front by one batched query per repo (see
+ * `item-enrichment.ts`). Undefined enrichment means that item's details
+ * didn't come back - it still classifies from the listing alone rather than
+ * dropping off the board. */
+function classifyIssue(
   repo: WatchedRepo,
   issue: RepoIssue,
-): Promise<ClassifyResult> {
-  const octokit = getGithubClient();
+  enrichment: ItemEnrichment | undefined,
+): ClassifyResult {
   const warnings: string[] = [];
   const isPr = Boolean(issue.pull_request);
   const labels = issue.labels.map((label) =>
@@ -343,13 +249,24 @@ async function classifyIssue(
   // pr.md Step 0 and the SKILL.md claim guardrail.
   const wantsTakeover = assigneeLogins.includes(agentFleetLogin());
   if (isHumanNeeded || isPostDeploy || wantsTakeover) {
-    const scan = await scanComments(repo, issue.number, issue.comments ?? 0);
+    const comments = enrichment?.comments ?? [];
+    const last = comments[comments.length - 1];
     if (isHumanNeeded || isPostDeploy) {
-      lastCommentBody = scan.last?.body;
-      lastCommentUrl = scan.last?.url;
-      lastCommentAuthor = scan.last?.author;
+      lastCommentBody = last?.body;
+      lastCommentUrl = last?.url;
+      lastCommentAuthor = last?.author;
     }
-    takeoverCommand = wantsTakeover ? scan.takeoverCommand : undefined;
+    // Newest match wins: each run posts a fresh takeover command, and the
+    // window is oldest-first, so scan backwards.
+    if (wantsTakeover) {
+      for (let i = comments.length - 1; i >= 0; i--) {
+        const match = comments[i].body.match(TAKEOVER_COMMAND_RE);
+        if (match) {
+          takeoverCommand = match[1];
+          break;
+        }
+      }
+    }
   }
 
   let draft: boolean | undefined;
@@ -359,66 +276,43 @@ async function classifyIssue(
   let linkedIssueNumbers = extractLinkedIssueNumbers(issue.body, issue.number);
 
   if (isPr) {
-    const { data: pr } = await octokit.rest.pulls.get({
-      owner: repo.owner,
-      repo: repo.name,
-      pull_number: issue.number,
-    });
-    draft = pr.draft;
-    mergeableState = (pr.mergeable_state as MergeableState) || 'unknown';
-    // The PR body returned here is authoritative (search results can lag);
-    // prefer it when present.
+    const pr = enrichment?.pr;
+    draft = pr?.draft;
+    mergeableState = (pr?.mergeableState as MergeableState) || 'unknown';
+    // The PR body from the item query is authoritative; the listing's copy
+    // can lag.
     linkedIssueNumbers =
-      extractLinkedIssueNumbers(pr.body, issue.number) ?? linkedIssueNumbers;
+      extractLinkedIssueNumbers(pr?.body, issue.number) ?? linkedIssueNumbers;
 
     // A review request on a draft isn't actionable yet - the agent asks for
     // review at PR creation, but a draft is by definition still being
     // iterated on. It surfaces once the PR is marked ready.
-    const reviewRequested = pr.requested_reviewers?.some(
-      (reviewer) => reviewer.login === maintainerLogin(),
-    );
-    if (reviewRequested && !pr.draft) {
+    const reviewRequested =
+      pr?.requestedReviewerLogins.includes(maintainerLogin());
+    if (reviewRequested && !pr?.draft) {
       actionTypes.push('review-requested');
     }
 
-    // Same defensive pattern as the search queries below: a single GitHub
-    // API hiccup for one PR (e.g. a token lacking the "Checks: read"
-    // permission) must not crash the whole dashboard for every item.
-    try {
-      const { checkRuns, truncated } = await listAllCheckRuns(
-        repo,
-        pr.head.sha,
+    if (pr?.checksTruncated) {
+      warnings.push(
+        `Check runs truncated for #${issue.number} (over ${CHECK_WINDOW} runs) - some failures may not be shown.`,
       );
-      if (truncated) {
-        warnings.push(
-          `Check runs truncated for #${issue.number} (over ${CHECKS_MAX_PAGES * CHECKS_PER_PAGE} runs) - some failures may not be shown.`,
-        );
-      }
-      // Only genuine failures count: a `cancelled` conclusion is almost
-      // always a superseded or manually-killed run, and badging it "CI run
-      // failed" steered the maintainer toward retriggers nobody needed.
-      const failed = checkRuns.filter(
-        (run) => run.status === 'completed' && run.conclusion === 'failure',
-      );
-      if (failed.length > 0) {
-        actionTypes.push('run-failed');
-        failingChecks = failed.map((run) => ({
-          name: run.name,
-          url: run.html_url ?? issue.html_url,
-        }));
-      }
-      ciRunning = checkRuns.some((run) => run.status !== 'completed');
-    } catch (error) {
-      // %s, not a template literal: issue.number ultimately traces back to
-      // a Server Action call, which isn't runtime-type-checked at the HTTP
-      // boundary (CodeQL js/tainted-format-string).
-      console.error(
-        'agent-lcars: failed to list check runs for #%s:',
-        issue.number,
-        error,
-      );
-      warnings.push(`Check runs unavailable for #${issue.number}.`);
     }
+    // Only genuine failures count: a `cancelled` conclusion is almost
+    // always a superseded or manually-killed run, and badging it "CI run
+    // failed" steered the maintainer toward retriggers nobody needed.
+    const checkRuns = pr?.checkRuns ?? [];
+    const failed = checkRuns.filter(
+      (run) => run.status === 'completed' && run.conclusion === 'failure',
+    );
+    if (failed.length > 0) {
+      actionTypes.push('run-failed');
+      failingChecks = failed.map((run) => ({
+        name: run.name,
+        url: run.html_url ?? issue.html_url,
+      }));
+    }
+    ciRunning = checkRuns.some((run) => run.status !== 'completed');
   }
 
   const subIssuesSummary = issue.sub_issues_summary;
@@ -635,9 +529,24 @@ export async function getActionItems(): Promise<ActionItemsResult> {
 
       return {
         repo,
-        issues: itemsResult.value.items.filter((issue) =>
-          isBoardItem(issue, reviewRequests?.get(issue.number)),
-        ),
+        issues: itemsResult.value.items.filter((issue) => {
+          // A malformed listing entry (a null `labels`, an unexpected
+          // shape) must drop that one item, not throw out of the filter and
+          // blank the whole repo's board.
+          try {
+            return isBoardItem(issue, reviewRequests?.get(issue.number));
+          } catch (error) {
+            console.error(
+              'agent-lcars: skipping a malformed item from %s:',
+              repoKey(repo),
+              error,
+            );
+            repoWarnings.push(
+              `Skipped a malformed item from ${repoKey(repo)}.`,
+            );
+            return false;
+          }
+        }),
         warnings: repoWarnings,
       };
     }),
@@ -654,25 +563,71 @@ export async function getActionItems(): Promise<ActionItemsResult> {
     }
   }
 
-  // Defense in depth: an unexpected error classifying one item (a GitHub API
-  // hiccup, a malformed listing entry, etc.) should drop that one item, not
-  // crash the whole dashboard for everyone.
   const issuesToClassify = Array.from(byKey.values());
-  const classified = await Promise.allSettled(
-    issuesToClassify.map((issue) => classifyIssue(issue.repo, issue)),
+
+  // One batched enrichment query per repo, replacing what used to be a
+  // per-item REST fan-out (a listComments for every parked/claimed item,
+  // plus a pulls.get and up to five checks.listForRef per PR). Grouped by
+  // repo because the query is repo-scoped.
+  const byRepo = new Map<
+    string,
+    { repo: WatchedRepo; requests: EnrichmentRequest[] }
+  >();
+  for (const issue of issuesToClassify) {
+    const key = repoKey(issue.repo);
+    let group = byRepo.get(key);
+    if (!group) {
+      group = { repo: issue.repo, requests: [] };
+      byRepo.set(key, group);
+    }
+    const labels = issue.labels.map((label) =>
+      typeof label === 'string' ? label : (label.name ?? ''),
+    );
+    const assignees = (issue.assignees ?? []).map((a) => a?.login ?? '');
+    group.requests.push({
+      number: issue.number,
+      isPr: Boolean(issue.pull_request),
+      // Mirrors classifyIssue's own condition for reading comments at all.
+      wantsComments:
+        labels.includes('human-needed') ||
+        labels.includes('post-deploy-action') ||
+        assignees.includes(agentFleetLogin()),
+    });
+  }
+
+  const enrichedPerRepo = await Promise.all(
+    Array.from(byRepo.values()).map(async ({ repo, requests }) => ({
+      repo,
+      result: await enrichItems(repo, requests),
+    })),
   );
+  const enrichment = new Map<string, ItemEnrichment>();
+  for (const { repo, result } of enrichedPerRepo) {
+    warnings.push(...result.warnings);
+    for (const [number, value] of result.byNumber) {
+      enrichment.set(repoItemKey(repo, number), value);
+    }
+  }
+
+  // Defense in depth: an unexpected error classifying one item (a malformed
+  // listing entry, an unexpected shape) should drop that one item, not
+  // crash the whole dashboard for everyone.
   const items: ActionItem[] = [];
-  for (const [i, result] of classified.entries()) {
-    const issue = issuesToClassify[i];
-    if (result.status === 'rejected') {
-      console.error('agent-lcars: failed to classify an item:', result.reason);
+  for (const issue of issuesToClassify) {
+    try {
+      const result = classifyIssue(
+        issue.repo,
+        issue,
+        enrichment.get(repoItemKey(issue.repo, issue.number)),
+      );
+      items.push(result.item);
+      warnings.push(...result.warnings);
+    } catch (error) {
+      console.error('agent-lcars: failed to classify an item:', error);
       warnings.push(
         `Failed to classify ${repoItemKey(issue.repo, issue.number)}.`,
       );
-      continue;
     }
-    items.push(result.value.item);
-    warnings.push(...result.value.warnings);
   }
 
   items.sort((a, b) => itemPriority(a) - itemPriority(b));
