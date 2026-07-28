@@ -316,4 +316,71 @@ describe('reduceTranscript', () => {
     const [summary] = reduceTranscript(content);
     expect(summary).not.toHaveProperty('result');
   });
+
+  it('does not attribute PR URLs merely looked up (e.g. via `gh pr list`) as deliverables', () => {
+    const content = [
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        uuid: 'u1',
+        timestamp: '2026-07-20T00:00:00.000Z',
+        sessionId: 'session-lookup-only',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Verify deployments for issue #175.' },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: false,
+        uuid: 'a1',
+        timestamp: '2026-07-20T00:00:05.000Z',
+        sessionId: 'session-lookup-only',
+        message: {
+          model: 'claude-sonnet-5',
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 't1',
+              name: 'Bash',
+              input: { command: 'gh pr list --state merged --limit 20' },
+            },
+          ],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        uuid: 'u2',
+        timestamp: '2026-07-20T00:00:06.000Z',
+        sessionId: 'session-lookup-only',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 't1',
+              content:
+                'https://github.com/org/repo/pull/159\n' +
+                'https://github.com/org/repo/pull/36\n' +
+                'https://github.com/org/repo/pull/34',
+            },
+          ],
+        },
+      }),
+    ].join('\n');
+
+    const [summary] = reduceTranscript(content);
+
+    expect(summary.deliverables.prNumbers).toEqual([]);
+  });
 });
