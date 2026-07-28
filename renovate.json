@@ -24,6 +24,14 @@
       "groupSlug": "all-minor-patch",
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "description": "This mirror lives on a LAN-only registry (docker-registry.lan.jlapenna.net) that Renovate's runner cannot reach or authenticate to, so digest lookups always fail here. The image is already pinned deliberately and updated by hand per the instructions in apps/runner-autoscaler/runner-image/Dockerfile — disable Renovate for it rather than have it keep filing the same unfixable lookup-failure warning.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": [
+        "docker-registry.lan.jlapenna.net/mirror/actions-runner"
+      ],
+      "enabled": false
     }
   ],
   "vulnerabilityAlerts": {
