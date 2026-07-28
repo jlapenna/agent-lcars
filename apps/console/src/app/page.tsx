@@ -37,7 +37,6 @@ import { ConsoleHeader, DataWarnings } from './console-header';
 import { formatCompactRelativeTime, formatRelativeTime } from './format';
 import { PageLoading } from './page-loading';
 import { QuickTaskButton } from './quick-task-button';
-import { UnstickPrsButton } from './unstick-prs-button';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -266,12 +265,7 @@ async function IndexShell({ searchParams }: PageProps) {
             )}
           </>
         }
-        actions={
-          <>
-            <QuickTaskButton watchedRepos={watchedRepos} />
-            <UnstickPrsButton />
-          </>
-        }
+        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
