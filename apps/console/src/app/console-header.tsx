@@ -20,31 +20,29 @@ export interface ConsoleHeaderProps {
   title: string;
   subtitle: ReactNode;
   actions?: ReactNode;
-  warnings?: string[];
 }
 
 /**
  * Shared top-of-page chrome for the three console destinations (dashboard,
- * agents, sessions): title/subtitle row, the LCARS pill nav rail (the one
- * page every page can jump from/to), and the optional data-warnings
- * disclosure. The session detail page (a drill-down, not a nav destination)
- * keeps its own lighter back-link header instead of this component.
+ * agents, sessions): title/subtitle row and the LCARS pill nav rail (the one
+ * page every page can jump from/to). The session detail page (a drill-down,
+ * not a nav destination) keeps its own lighter back-link header instead of
+ * this component.
  *
  * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
- * `cacheComponents` requires a Suspense boundary for, so a page whose
- * subtitle is likewise data-free (dashboard, agents) can render this outside
- * that boundary and skip `warnings` here, rendering `DataWarnings` itself
- * once the data resolves (see those pages' `*PageShell` components) - the
- * header then never sits behind the streamed content's placeholder. A page
- * whose subtitle genuinely needs the fetched data (sessions) has no such
- * option and passes `warnings` straight through as before.
+ * `cacheComponents` requires a Suspense boundary for, so every page renders
+ * this outside that boundary and renders `DataWarnings` itself once its data
+ * resolves (see those pages' `*PageShell`/body components) - the header
+ * then never sits behind the streamed content's placeholder. `sessions`'
+ * subtitle needs one fetched value (the row count) that dashboard/agents
+ * don't; it wraps just that value in its own inline Suspense rather than
+ * passing anything data-dependent through here (see its `SessionCount`).
  */
 export function ConsoleHeader({
   current,
   title,
   subtitle,
   actions,
-  warnings,
 }: ConsoleHeaderProps) {
   return (
     <Stack gap="md" mb="xl">
@@ -77,15 +75,13 @@ export function ConsoleHeader({
           </Anchor>
         ))}
       </nav>
-
-      {warnings && <DataWarnings warnings={warnings} />}
     </Stack>
   );
 }
 
-/** The data-warnings disclosure `ConsoleHeader` renders inline, factored out
- * so a page that splits its header from its data-dependent body (see
- * `ConsoleHeader`'s doc comment) can render it once the data resolves,
+/** The data-warnings disclosure, factored out of `ConsoleHeader` so every
+ * page (which all now split their header from their data-dependent body -
+ * see `ConsoleHeader`'s doc comment) can render it once its data resolves,
  * directly below the nav rail. */
 export function DataWarnings({ warnings }: { warnings: string[] }) {
   if (warnings.length === 0) return null;
