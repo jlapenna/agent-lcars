@@ -118,6 +118,9 @@ pnpm verify   # format:check, lint, lint:circular, then test/typecheck/build --a
   Sessions, live transcripts).
 - [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md) — adding a
   new GitHub account/repo as a registration on the shared runner fleet.
+- [docs/bot-identity-formats.md](docs/bot-identity-formats.md) — why
+  `claude[bot]` (REST) and `app/claude` (GraphQL) are the same identity in
+  two shapes, and which one is canonical here.
 - [.agents/skills/agent-protocol/agent-protocol.md](.agents/skills/agent-protocol/agent-protocol.md)
   and [.agents/skills/lcars/lcars-protocol.md](.agents/skills/lcars/lcars-protocol.md)
   — the conventions this repo's own dispatched agents follow.
