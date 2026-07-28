@@ -74,3 +74,31 @@ describe('CompactItemRow repo badge', () => {
     expect(badge.textContent).toBe('Repo B');
   });
 });
+
+describe('CompactItemRow second line (#169)', () => {
+  it('always renders a second line, even with no author or labels', () => {
+    render(
+      <MantineProvider>
+        <CompactItemRow item={makeItem()} hint="updated now" />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('compact-item-1')).toHaveTextContent(
+      '#1 Fix the thing',
+    );
+    expect(screen.getByText('updated now')).toBeTruthy();
+  });
+
+  it('folds the author and labels into the second line when present', () => {
+    render(
+      <MantineProvider>
+        <CompactItemRow
+          item={makeItem({ author: 'octocat', labels: ['claude', 'bug'] })}
+          hint="updated now"
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByText('updated now · by octocat · claude, bug'),
+    ).toBeTruthy();
+  });
+});

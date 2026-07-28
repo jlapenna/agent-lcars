@@ -9,13 +9,14 @@ import { SectionHeading } from './section-heading';
 import { useMutedItems } from './use-muted-items';
 
 /**
- * A muted row's one-line summary. Deliberately NOT CompactItemRow: that
+ * A muted row's two-line summary. Deliberately NOT CompactItemRow: that
  * component's RepoBadge calls getWatchedRepos() (server-only env access)
  * straight from its render body, so importing it here would drag
  * agent-activity-panel.tsx - and, through it, github-client.ts's Node-only
  * deps (firebase-admin, google-auth-library) - into the client bundle and
  * fail the build the same way a direct import would (#59). `multiRepo`
- * arrives as a prop instead, same as ActionItemCard already does.
+ * arrives as a prop instead, same as ActionItemCard already does. The second
+ * line always renders, matching CompactItemRow's own two-line shape (#169).
  */
 function MutedItemRow({
   item,
@@ -29,38 +30,49 @@ function MutedItemRow({
   onUnmute: () => void;
 }) {
   return (
-    <Group gap="xs" wrap="wrap" align="center">
-      <Badge variant="outline" color="gray" size="xs" style={{ flexShrink: 0 }}>
-        {item.kind === 'pr' ? 'PR' : 'Issue'}
-      </Badge>
-      {multiRepo && (
+    <Stack gap={2}>
+      <Group gap="xs" wrap="wrap" align="center">
         <Badge
           variant="outline"
           color="gray"
           size="xs"
           style={{ flexShrink: 0 }}
-          data-testid="repo-badge"
         >
-          {repoDisplayName(item.repo)}
+          {item.kind === 'pr' ? 'PR' : 'Issue'}
         </Badge>
-      )}
-      <Anchor
-        href={item.url}
-        target="_blank"
-        rel="noreferrer"
-        size="sm"
-        c="inherit"
-        style={{ minWidth: 180, flex: '1 1 18rem' }}
-      >
-        #{item.number} {item.title}
-      </Anchor>
-      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-        {hint}
-      </Text>
-      <Button variant="default" size="compact-xs" onClick={onUnmute}>
-        Unmute
-      </Button>
-    </Group>
+        {multiRepo && (
+          <Badge
+            variant="outline"
+            color="gray"
+            size="xs"
+            style={{ flexShrink: 0 }}
+            data-testid="repo-badge"
+          >
+            {repoDisplayName(item.repo)}
+          </Badge>
+        )}
+        <Anchor
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          size="sm"
+          c="inherit"
+          style={{ minWidth: 180, flex: '1 1 18rem' }}
+        >
+          #{item.number} {item.title}
+        </Anchor>
+      </Group>
+      <Group gap="xs" wrap="wrap" align="center">
+        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+          {hint}
+          {item.author && ` · by ${item.author}`}
+          {item.labels.length > 0 && ` · ${item.labels.join(', ')}`}
+        </Text>
+        <Button variant="default" size="compact-xs" onClick={onUnmute}>
+          Unmute
+        </Button>
+      </Group>
+    </Stack>
   );
 }
 

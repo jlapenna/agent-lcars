@@ -158,4 +158,24 @@ describe('YourQueueSection (#59)', () => {
     const muted = screen.getByTestId('muted-queue-items');
     expect(within(muted).getByTestId('repo-badge').textContent).toBe('Repo A');
   });
+
+  it('folds author and labels into a muted row second line (#169)', async () => {
+    renderSection([
+      card(
+        makeItem({
+          number: 1,
+          title: 'First',
+          author: 'octocat',
+          labels: ['claude'],
+        }),
+      ),
+    ]);
+
+    await muteItem(1);
+
+    const muted = screen.getByTestId('muted-queue-items');
+    expect(
+      within(muted).getByText(/updated now · by octocat · claude/),
+    ).toBeTruthy();
+  });
 });
