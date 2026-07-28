@@ -1,21 +1,51 @@
-import { Box, Card, Container } from '@mantine/core';
+import { Anchor, Box, Card, Container, Group, Text } from '@mantine/core';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
 import {
+  DEFAULT_ARCHIVE_DAYS,
   getSessionArchive,
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
+import { groupSessionsByIssue } from '../../lib/session-issue-groups';
 import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader, DataWarnings } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
 import { PageLoading } from '../page-loading';
+import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { LedgerTables } from './ledger-tables';
 import { SessionTable } from './session-table';
+
+type SessionsView = 'flat' | 'by-issue';
+
+function parseView(searchParams: { view?: string }): SessionsView {
+  return searchParams.view === 'by-issue' ? 'by-issue' : 'flat';
+}
+
+/** Preserves the page's other query params while toggling `view` - kept
+ * next to parseView rather than in session-archive.ts, since `view` is
+ * purely a display choice and never reaches getSessionArchive's Firestore
+ * query (unlike days/source/issue). */
+function viewToggleHref(
+  query: SessionArchiveQuery,
+  view: SessionsView,
+): string {
+  const params = new URLSearchParams();
+  if (query.days !== DEFAULT_ARCHIVE_DAYS) {
+    params.set('days', String(query.days));
+  }
+  if (query.source) params.set('source', query.source);
+  if (query.issueNumber !== undefined) {
+    params.set('issue', String(query.issueNumber));
+  }
+  if (view === 'by-issue') params.set('view', 'by-issue');
+  const qs = params.toString();
+  return qs ? `?${qs}` : '?';
+}
 
 // Request-scoped memoization (React's `cache`, not a `cacheLife`d Next.js
 // cache - getSessionArchive stays uncached so the archive is always
@@ -30,6 +60,7 @@ interface PageProps {
     days?: string;
     source?: string;
     issue?: string;
+    view?: string;
   }>;
 }
 
@@ -57,7 +88,13 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
   );
 }
 
-async function SessionsBody({ query }: { query: SessionArchiveQuery }) {
+async function SessionsBody({
+  query,
+  view,
+}: {
+  query: SessionArchiveQuery;
+  view: SessionsView;
+}) {
   const { rows, ledger, warnings } = await getArchive(query);
   const generatedAt = new Date().toISOString();
 
@@ -78,7 +115,11 @@ async function SessionsBody({ query }: { query: SessionArchiveQuery }) {
       >
         <LedgerTables ledger={ledger} />
 
-        <SessionTable rows={rows} />
+        {view === 'by-issue' ? (
+          <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
+        ) : (
+          <SessionTable rows={rows} />
+        )}
       </Card>
 
       <ConsoleFooter
@@ -86,6 +127,41 @@ async function SessionsBody({ query }: { query: SessionArchiveQuery }) {
         refreshLabel={formatRelativeTime(generatedAt)}
       />
     </>
+  );
+}
+
+/** The flat/by-issue toggle rendered in the header's `actions` slot - a
+ * display choice, not a data filter, so it lives beside the title rather
+ * than among the days/source/issue query params (#2694/#3019's "no filter
+ * chrome" rule is about narrowing the fetched set, not this). */
+function ViewToggle({
+  query,
+  view,
+}: {
+  query: SessionArchiveQuery;
+  view: SessionsView;
+}) {
+  return (
+    <Group gap={6} wrap="nowrap">
+      {(['flat', 'by-issue'] as const).map((candidate, i) => (
+        <Group key={candidate} gap={6} wrap="nowrap">
+          {i > 0 && (
+            <Text size="sm" c="dimmed">
+              ·
+            </Text>
+          )}
+          {candidate === view ? (
+            <Text size="sm" fw={600}>
+              {candidate === 'flat' ? 'Flat' : 'By issue'}
+            </Text>
+          ) : (
+            <Anchor href={viewToggleHref(query, candidate)} size="sm">
+              {candidate === 'flat' ? 'Flat' : 'By issue'}
+            </Anchor>
+          )}
+        </Group>
+      ))}
+    </Group>
   );
 }
 
@@ -110,6 +186,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
 
   const rawParams = await searchParams;
   const query = parseSessionArchiveQuery(rawParams);
+  const view = parseView(rawParams);
 
   return (
     <Container size="xl" py="xl">
@@ -124,10 +201,11 @@ async function SessionsPageShell({ searchParams }: PageProps) {
             </Suspense>
           </>
         }
+        actions={<ViewToggle query={query} view={view} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <SessionsBody query={query} />
+        <SessionsBody query={query} view={view} />
       </Suspense>
     </Container>
   );
