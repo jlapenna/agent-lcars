@@ -118,7 +118,7 @@ jobs:
             exit 0
           fi
 
-          AUTHOR=$(gh pr view "$PR" --repo "$REPO" --json author --jq '.author.login')
+          AUTHOR=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
           if ! jq -e --arg a "$AUTHOR" 'index($a) != null' <<<"$AGENT_BOT_LOGINS" >/dev/null; then
             echo "PR #$PR is not agent-authored ($AUTHOR); nothing to restore."
             exit 0
