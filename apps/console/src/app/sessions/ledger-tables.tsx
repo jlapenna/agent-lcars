@@ -125,10 +125,11 @@ function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
 }
 
 /**
- * Below `sm`: Turns/Cost drop (both are one tap away on the session
- * table/detail page) so Issue/Sessions/Cost-weighted tokens - what a
- * maintainer actually
- * scans a budget ledger for on a phone - fits at 360px without the table
+ * Below `sm`: Turns/Cost-weighted tokens drop (both are one tap away on the
+ * session table/detail page) so Issue/Sessions/Cost - what a maintainer
+ * actually scans a budget ledger for on a phone, especially on the Costs
+ * tab (#203: the compact table used to drop Cost itself, leaving no dollar
+ * figure visible on mobile at all) - fits at 360px without the table
  * needing its own horizontal scroll at all. Still wrapped in a scroll
  * container defensively, since a long issue title... there isn't one here
  * (issue numbers are short), but an unexpectedly narrow viewport should
@@ -142,7 +143,7 @@ function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
           <TableTr>
             <TableTh>Issue</TableTh>
             <TableTh>Sessions</TableTh>
-            <TableTh>Cost-weighted tokens</TableTh>
+            <TableTh>Cost</TableTh>
           </TableTr>
         </TableThead>
         <TableTbody>
@@ -155,7 +156,9 @@ function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
                 <IssueCell row={row} />
               </TableTd>
               <TableTd>{row.sessions}</TableTd>
-              <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
+              <TableTd>
+                <CostCell row={row} />
+              </TableTd>
             </TableTr>
           ))}
         </TableTbody>
@@ -203,7 +206,7 @@ function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
           <TableTr>
             <TableTh>Week</TableTh>
             <TableTh>Sessions</TableTh>
-            <TableTh>Cost-weighted tokens</TableTh>
+            <TableTh>Cost</TableTh>
           </TableTr>
         </TableThead>
         <TableTbody>
@@ -211,7 +214,9 @@ function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
             <TableTr key={row.isoWeek} data-testid="ledger-week-row-compact">
               <TableTd>{row.isoWeek}</TableTd>
               <TableTd>{row.sessions}</TableTd>
-              <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
+              <TableTd>
+                <CostCell row={row} />
+              </TableTd>
             </TableTr>
           ))}
         </TableTbody>
