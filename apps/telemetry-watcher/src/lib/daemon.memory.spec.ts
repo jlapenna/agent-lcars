@@ -4,6 +4,32 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+const STREAMING_RSS_RATIO_LIMIT = 0.75;
+
+interface RssMeasurement {
+  rssDeltaMb: number;
+  materializedBytes: number;
+}
+
+function measureTickRss(
+  corpusDir: string,
+  extraArgs: string[] = [],
+): RssMeasurement {
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--expose-gc',
+      require.resolve('tsx/cli'),
+      path.join(__dirname, 'measure-tick-rss.ts'),
+      corpusDir,
+      ...extraArgs,
+    ],
+    { encoding: 'utf8' },
+  );
+
+  return JSON.parse(output) as RssMeasurement;
+}
+
 // Regression coverage for #2606: `tick()` used to read every discovered
 // transcript file in full into a single array before reducing, so peak
 // memory scaled with the *whole* discovered corpus. Against a real
@@ -78,26 +104,17 @@ describe('WatcherDaemon tick() memory usage', () => {
     const totalMb = totalBytes / 1e6;
     expect(totalMb).toBeGreaterThan(200); // sanity-check the fixture is actually large
 
-    const output = execFileSync(
-      process.execPath,
-      [
-        '--expose-gc',
-        require.resolve('tsx/cli'),
-        path.join(__dirname, 'measure-tick-rss.ts'),
-        corpusDir,
-      ],
-      { encoding: 'utf8' },
-    );
-
-    const { rssDeltaMb } = JSON.parse(output) as { rssDeltaMb: number };
+    const { rssDeltaMb } = measureTickRss(corpusDir);
 
     // The naive (pre-fix) implementation's RSS growth roughly tracks the
     // full corpus size (measured ~120% of corpus size in practice, since it
     // holds every file's content plus the reduced state simultaneously).
-    // The streaming fix should stay near half of that. Allow a small margin
-    // for runtime allocator differences on GitHub-hosted runners while still
-    // remaining far below the pre-fix whole-corpus behavior.
-    expect(rssDeltaMb).toBeLessThan(totalMb * 0.55);
+    // Ten real-workload runs measured the streaming ratio at 30.6-31.1%
+    // locally; the loaded-runner incident reached roughly 55%. A 75% bound
+    // leaves 20 percentage points above that outlier while remaining well
+    // below both the old ~120% behavior and the 131-139% materializing
+    // control below.
+    expect(rssDeltaMb / totalMb).toBeLessThan(STREAMING_RSS_RATIO_LIMIT);
     // Timeout raised 60s -> 120s (#3123 phase 1 CI investigation): CI failed
     // once at 70.488s against this 200MB+ synthetic corpus while the
     // multi-root/adapter refactor's own local runs stayed well under 20s -
@@ -111,5 +128,19 @@ describe('WatcherDaemon tick() memory usage', () => {
     // loaded CI hardware for a deliberately oversized (200MB+) fixture, not
     // a regression - see #2606 (the original OOM issue this spec guards)
     // for why the fixture has to be this large to be a meaningful check.
+  }, 120_000);
+
+  it('rejects deliberate whole-corpus materialization', () => {
+    const totalMb = totalBytes / 1e6;
+    const { rssDeltaMb, materializedBytes } = measureTickRss(corpusDir, [
+      '--materialize-corpus',
+    ]);
+
+    // The helper reads this total only after its final GC/RSS sample, so this
+    // equality proves every corpus Buffer was still retained when measured.
+    expect(materializedBytes).toBe(totalBytes);
+    expect(rssDeltaMb / totalMb).toBeGreaterThanOrEqual(
+      STREAMING_RSS_RATIO_LIMIT,
+    );
   }, 120_000);
 });
