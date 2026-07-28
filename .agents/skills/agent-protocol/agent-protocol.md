@@ -202,11 +202,9 @@ Regardless of dispatch path:
 
 - Never `--no-verify`.
 - Never force-push without `--force-with-lease` (never plain `--force`).
-- Never edit `.github/workflows/*`. Flag workflow-layer root causes in your
-  report instead of trying to fix them yourself — and note that this is not
-  only policy: the default `GITHUB_TOKEN` a workflow runs with is
-  platform-restricted from pushing changes to workflow files at all, so an
-  attempt to do so will fail regardless.
+- Never edit `.github/workflows/*` unless explicit permission is granted by a human.
+  - Flag workflow-layer root causes in your
+  report instead of trying to fix them yourself
 - Never deploy.
 - Never touch IAM/permissions.
 
