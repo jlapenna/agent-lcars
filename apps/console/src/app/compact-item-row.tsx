@@ -22,7 +22,7 @@ export function CompactItemRow({
   return (
     <Group
       gap="xs"
-      wrap="wrap"
+      wrap="nowrap"
       align="center"
       data-testid={`compact-item-${item.number}`}
     >
@@ -36,7 +36,8 @@ export function CompactItemRow({
         rel="noreferrer"
         size="sm"
         c="inherit"
-        style={{ minWidth: 180, flex: '1 1 18rem' }}
+        truncate
+        style={{ minWidth: 0 }}
       >
         #{item.number} {item.title}
       </Anchor>
