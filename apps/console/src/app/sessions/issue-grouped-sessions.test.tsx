@@ -55,6 +55,35 @@ describe('IssueGroupedSessions', () => {
     expect(link.getAttribute('href')).toBe('https://github.com/o/r/issues/42');
   });
 
+  it('shows the issue title next to the issue number when present', () => {
+    renderGroups([
+      {
+        issueNumber: 175,
+        repo: { owner: 'o', name: 'r' },
+        issueUrl: 'https://github.com/o/r/issues/175',
+        issueTitle: 'Include issue title in sessions by-issue item',
+        sessions: [makeRow()],
+      },
+    ]);
+
+    expect(
+      screen.getByText('Include issue title in sessions by-issue item'),
+    ).toBeTruthy();
+  });
+
+  it('renders no title text when the group has none', () => {
+    renderGroups([
+      {
+        issueNumber: 42,
+        repo: { owner: 'o', name: 'r' },
+        issueUrl: 'https://github.com/o/r/issues/42',
+        sessions: [makeRow()],
+      },
+    ]);
+
+    expect(screen.getByRole('link', { name: '#42' })).toBeTruthy();
+  });
+
   it('labels the no-issue group in plain text with no link', () => {
     renderGroups([
       {
