@@ -22,12 +22,15 @@
 # being hardcoded here, so there is no second copy to drift.
 #
 # Usage:
-#   tools/e2e-local.sh                       # whole suite
-#   tools/e2e-local.sh -- --grep @smoke      # passthrough to Playwright
+#   tools/e2e-local.sh        # whole suite
 #
-# Note that the `e2e` target sets forwardAllArgs:false, so passthrough args
-# reach Playwright only via the `e2e-run` target -- see e2e-docker.sh's
-# matching guard for the failure mode that hides.
+# Deliberately takes no Playwright passthrough args. The `e2e` target sets
+# forwardAllArgs:false, so nx:run-commands silently DROPS trailing args and
+# runs the whole suite regardless -- the same trap tools/e2e-docker.sh
+# guards against, after a scoped `--grep` that never reached Playwright
+# rewrote unrelated specs' screenshot baselines (members#2448). Rather than
+# reimplement that guard, this rejects them outright and points at the
+# target that does forward them.
 
 set -euo pipefail
 
@@ -36,6 +39,16 @@ cd "$ROOT"
 
 PROJECT="${E2E_PROJECT:-@agent-lcars/console-e2e}"
 CI_ENV="$ROOT/tools/e2e/ci.env"
+
+# Fail loudly instead of silently running everything - see the usage note.
+if [ "$#" -gt 0 ]; then
+  echo "tools/e2e-local.sh: refusing to drop arguments: $*" >&2
+  echo "  The ':e2e' target sets forwardAllArgs:false, so nx would ignore" >&2
+  echo "  them and run the entire suite instead of the subset you asked" >&2
+  echo "  for. To scope a run, drive Playwright directly:" >&2
+  echo "    pnpm exec nx run ${PROJECT}:e2e-run --grep @smoke" >&2
+  exit 2
+fi
 
 if [ ! -f "$CI_ENV" ]; then
   echo "tools/e2e-local.sh: missing $CI_ENV" >&2
@@ -88,4 +101,4 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
 # `--skip-nx-cache` deliberately: an e2e result replayed from the Nx cache
 # reports a green suite that never actually ran, which is worse than useless
 # when the suite is what you are trying to trust.
-exec pnpm exec nx run "${PROJECT}:e2e" --skip-nx-cache "$@"
+exec pnpm exec nx run "${PROJECT}:e2e" --skip-nx-cache

@@ -103,6 +103,14 @@ the Nx cache reports a green suite that never ran, which is worse than
 useless when the suite is the thing you are trying to trust. For screenshot
 work use `:e2e-docker` instead, which pins the rendering environment.
 
+To scope a run, drive Playwright directly — `:e2e` sets
+`forwardAllArgs: false`, so trailing args passed to it are silently dropped
+and the whole suite runs anyway:
+
+```bash
+pnpm exec nx run @agent-lcars/console-e2e:e2e-run --grep @smoke
+```
+
 ## Hard limits specific to this repo
 
 These are additive to agent-protocol.md §11, not a relaxation of it:
