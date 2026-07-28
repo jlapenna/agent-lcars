@@ -106,26 +106,49 @@ function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
   };
 }
 
+// GitHub caps a page at 100. The watched repos carry single-digit open PRs,
+// so this bounds the loop rather than expecting to reach it.
+const PULLS_PER_PAGE = 100;
+const PULLS_MAX_PAGES = 5;
+
 /**
- * Joins a branch to an open PR via the same GitHub search client used for
- * runner `display_title` matching (see `agent-activity.ts`) - a live PR
- * search rather than a stored field, since a CLI session's branch can grow a
- * PR after the session doc was last written.
+ * Every open PR in the repo, keyed by its head branch - a live lookup rather
+ * than a stored field, since a CLI session's branch can grow a PR after the
+ * session doc was last written.
+ *
+ * This used to be one `search.issuesAndPullRequests` call per branch
+ * (`is:pr is:open head:<branch>`). #147 took the action-item board off the
+ * search API's 30-req/min budget and left this as the console's only
+ * remaining search call; listing open PRs once and joining in memory removes
+ * it too, and turns N branch lookups into one request per repo.
+ *
+ * `pulls.list` carries `head.ref` (verified against the live API), which is
+ * the same branch the search qualifier matched on.
  */
-export async function joinBranchToPr(
+export async function listOpenPrsByBranch(
   repo: WatchedRepo,
-  branch: string,
-): Promise<JoinedPr | undefined> {
+): Promise<Map<string, JoinedPr>> {
   const octokit = getGithubClient();
-  const { data } = await octokit.rest.search.issuesAndPullRequests({
-    q: `repo:${repoKey(repo)} is:pr is:open head:${branch}`,
-    per_page: 1,
-  });
-  const pr = data.items[0];
-  if (!pr) {
-    return undefined;
+  const byBranch = new Map<string, JoinedPr>();
+  for (let page = 1; page <= PULLS_MAX_PAGES; page++) {
+    const { data } = await octokit.rest.pulls.list({
+      owner: repo.owner,
+      repo: repo.name,
+      state: 'open',
+      per_page: PULLS_PER_PAGE,
+      page,
+    });
+    for (const pr of data) {
+      // First write wins, matching the old `per_page: 1` search: if two open
+      // PRs somehow share a head ref, take the one GitHub lists first rather
+      // than letting a later page silently reassign the branch.
+      if (pr.head?.ref && !byBranch.has(pr.head.ref)) {
+        byBranch.set(pr.head.ref, { number: pr.number, url: pr.html_url });
+      }
+    }
+    if (data.length < PULLS_PER_PAGE) break;
   }
-  return { number: pr.number, url: pr.html_url };
+  return byBranch;
 }
 
 export interface CliSessionsResult {
@@ -191,42 +214,36 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   ].slice(0, MAX_SESSIONS);
 
   const warnings: string[] = [];
-  // Dedupe live searches by repo+branch: resumed sessions share a worktree
-  // branch, and one lookup (and, on failure, one warning) answers for all
-  // of them. Keyed by repo too, not branch alone - two watched repos could
-  // legitimately share a branch-naming convention.
-  const searchByBranch = new Map<string, Promise<JoinedPr | undefined>>();
-  const searchBranch = (
-    repo: WatchedRepo,
-    branch: string,
-  ): Promise<JoinedPr | undefined> => {
-    const key = `${repoKey(repo)}#${branch}`;
-    let search = searchByBranch.get(key);
-    if (!search) {
-      search = joinBranchToPr(repo, branch).catch((error) => {
+  // One open-PR listing per repo, fetched once and shared by every session
+  // that needs a branch join - keyed by repo, not branch, because that is
+  // now the unit of work. Two watched repos could legitimately share a
+  // branch-naming convention, so the join itself stays repo-scoped.
+  const prsByRepo = new Map<string, Promise<Map<string, JoinedPr>>>();
+  const openPrsFor = (repo: WatchedRepo): Promise<Map<string, JoinedPr>> => {
+    const key = repoKey(repo);
+    let pending = prsByRepo.get(key);
+    if (!pending) {
+      pending = listOpenPrsByBranch(repo).catch((error) => {
         console.error(
-          'agent-lcars: failed to join branch "%s" (%s) to a PR:',
-          branch,
-          repoKey(repo),
+          'agent-lcars: failed to list open PRs for branch joins (%s):',
+          key,
           error,
         );
-        warnings.push(
-          `PR lookup failed for branch "${branch}" (${repoKey(repo)}).`,
-        );
-        return undefined;
+        warnings.push(`PR lookup failed for ${key}.`);
+        // An empty map degrades to "no PR attached" for this repo's
+        // sessions, matching the previous per-branch failure behavior.
+        return new Map<string, JoinedPr>();
       });
-      searchByBranch.set(key, search);
+      prsByRepo.set(key, pending);
     }
-    return search;
+    return pending;
   };
   const sessions = await Promise.all(
     capped.map(async ([doc, session]) => {
       session.pr = prFromDeliverables(doc);
       if (!session.pr && doc.branch && isActive(session.liveness)) {
-        session.pr = await searchBranch(
-          doc.repo ?? primaryWatchedRepo(),
-          doc.branch,
-        );
+        const openPrs = await openPrsFor(doc.repo ?? primaryWatchedRepo());
+        session.pr = openPrs.get(doc.branch);
       }
       return session;
     }),
