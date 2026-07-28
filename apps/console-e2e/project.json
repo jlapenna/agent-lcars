@@ -38,6 +38,15 @@
         }
       }
     },
+    "e2e-local": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./tools/e2e-local.sh",
+        "env": {
+          "E2E_PROJECT": "@agent-lcars/console-e2e"
+        }
+      }
+    },
     "e2e-run": {
       "executor": "@nx/playwright:playwright",
       "outputs": ["{workspaceRoot}/dist/.playwright/apps/console-e2e"],
