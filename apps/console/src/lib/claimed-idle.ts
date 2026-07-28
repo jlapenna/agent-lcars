@@ -49,6 +49,24 @@ export function findItemForSession(
 }
 
 /**
+ * The most recent CLI session that referenced this item, if any - unlike
+ * `findItemForSession`/`deriveClaimedIdle`, this deliberately does not care
+ * whether the session is still live/idle. It backs the Claimed but Idle
+ * section's "session" link (#182): those items are *defined* by having no
+ * active session behind them, but the fleet may well have worked one to
+ * completion (or left it stale) before the claim went idle, and that
+ * history is exactly what a maintainer wants to click into. `sessions` must
+ * already be newest-`lastActivityAt`-first, as `getCliSessions()` returns
+ * it - this just takes the first match rather than re-sorting.
+ */
+export function mostRecentSessionForItem(
+  item: ActionItem,
+  sessions: CliSession[],
+): CliSession | undefined {
+  return sessions.find((session) => sessionReferencesItemNumber(session, item));
+}
+
+/**
  * Open items the agent fleet has claimed (assignee `jclaw-bot`, #2783) but
  * which have no live CI run and no live/idle CLI session actually working
  * them - a stale claim per orchestration.md §4 ("jclaw-bot assigned but no

@@ -4,6 +4,7 @@ import type { ActionItem } from './action-items';
 import {
   deriveClaimedIdle,
   findItemForSession,
+  mostRecentSessionForItem,
   sessionReferencesItemNumber,
 } from './claimed-idle';
 import type { CliSession } from './cli-sessions';
@@ -121,6 +122,40 @@ describe('findItemForSession', () => {
     const items = [makeItem({ number: 10 })];
     const session = makeSession({ branch: 'unrelated-branch' });
     expect(findItemForSession(session, items)).toBeUndefined();
+  });
+});
+
+describe('mostRecentSessionForItem', () => {
+  it('finds an ended/stale session, unlike findItemForSession/deriveClaimedIdle', () => {
+    const item = makeItem({ number: 1 });
+    const session = makeSession({
+      liveness: 'ended',
+      pr: { number: 1, url: 'u' },
+    });
+    expect(mostRecentSessionForItem(item, [session])).toBe(session);
+  });
+
+  it('returns the first match, trusting callers to pass newest-first sessions', () => {
+    const item = makeItem({ number: 1 });
+    const older = makeSession({
+      sessionId: 'older',
+      pr: { number: 1, url: 'u' },
+      lastActivityAt: '2026-07-01T00:00:00Z',
+    });
+    const newer = makeSession({
+      sessionId: 'newer',
+      pr: { number: 1, url: 'u' },
+      lastActivityAt: '2026-07-20T00:00:00Z',
+    });
+    expect(mostRecentSessionForItem(item, [newer, older])?.sessionId).toBe(
+      'newer',
+    );
+  });
+
+  it('returns undefined when no session references the item', () => {
+    const item = makeItem({ number: 1 });
+    const session = makeSession({ pr: { number: 999, url: 'u' } });
+    expect(mostRecentSessionForItem(item, [session])).toBeUndefined();
   });
 });
 
