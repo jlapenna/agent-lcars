@@ -4,6 +4,8 @@ import type {
 } from '@agent-lcars/telemetry';
 import { isElisionDivider } from '@agent-lcars/telemetry';
 import { Alert, Box, Stack, Text } from '@mantine/core';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { Eyebrow } from '../../eyebrow';
 
@@ -24,9 +26,16 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
           }}
         >
           <Eyebrow>{event.role}</Eyebrow>
-          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-            {event.text}
-          </Text>
+          <Box fz="sm">
+            {/* No rehype-raw plugin: raw HTML embedded in a turn's text is
+             * never rendered, only escaped, and react-markdown's default
+             * urlTransform strips dangerous link/image schemes (e.g.
+             * javascript:) - a transcript turn is untrusted content the same
+             * way artifact-viewer.tsx's markdown preview treats it. */}
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {event.text}
+            </ReactMarkdown>
+          </Box>
         </Box>
       );
 
