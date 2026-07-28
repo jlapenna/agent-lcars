@@ -39,7 +39,7 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: apps/runner-autoscaler/go.mod
 
