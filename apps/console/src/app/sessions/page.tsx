@@ -21,18 +21,23 @@ import { LedgerTables } from './ledger-tables';
 import { SessionTable } from './session-table';
 
 type SessionsView = 'flat' | 'by-issue';
+type SessionsTab = 'sessions' | 'costs';
 
 function parseView(searchParams: { view?: string }): SessionsView {
   return searchParams.view === 'by-issue' ? 'by-issue' : 'flat';
 }
 
-/** Preserves the page's other query params while toggling `view` - kept
- * next to parseView rather than in session-archive.ts, since `view` is
- * purely a display choice and never reaches getSessionArchive's Firestore
- * query (unlike days/source/issue). */
-function viewToggleHref(
+function parseTab(searchParams: { tab?: string }): SessionsTab {
+  return searchParams.tab === 'costs' ? 'costs' : 'sessions';
+}
+
+/** Preserves the page's other query params while toggling `view` and/or
+ * `tab` - kept next to parseView/parseTab rather than in session-archive.ts,
+ * since both are purely display choices and never reach getSessionArchive's
+ * Firestore query (unlike days/source/issue). */
+function displayHref(
   query: SessionArchiveQuery,
-  view: SessionsView,
+  { view, tab }: { view: SessionsView; tab: SessionsTab },
 ): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
@@ -43,6 +48,7 @@ function viewToggleHref(
     params.set('issue', String(query.issueNumber));
   }
   if (view === 'by-issue') params.set('view', 'by-issue');
+  if (tab === 'costs') params.set('tab', 'costs');
   const qs = params.toString();
   return qs ? `?${qs}` : '?';
 }
@@ -61,6 +67,7 @@ interface PageProps {
     source?: string;
     issue?: string;
     view?: string;
+    tab?: string;
   }>;
 }
 
@@ -91,12 +98,15 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
 async function SessionsBody({
   query,
   view,
+  tab,
 }: {
   query: SessionArchiveQuery;
   view: SessionsView;
+  tab: SessionsTab;
 }) {
   const { rows, ledger, warnings } = await getArchive(query);
   const generatedAt = new Date().toISOString();
+  const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
 
   return (
     <>
@@ -113,12 +123,25 @@ async function SessionsBody({
         className="lcars-panel"
         style={lcarsPanelStyle('teal')}
       >
-        <LedgerTables ledger={ledger} />
-
-        {view === 'by-issue' ? (
-          <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
+        {tab === 'costs' ? (
+          hasLedgerData ? (
+            <LedgerTables ledger={ledger} />
+          ) : (
+            <Text size="sm" c="dimmed" data-testid="session-ledger-empty">
+              No cost data in this window.
+            </Text>
+          )
         ) : (
-          <SessionTable rows={rows} />
+          <>
+            <Group justify="flex-end" mb="sm">
+              <ViewToggle query={query} view={view} tab={tab} />
+            </Group>
+            {view === 'by-issue' ? (
+              <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
+            ) : (
+              <SessionTable rows={rows} />
+            )}
+          </>
         )}
       </Card>
 
@@ -130,16 +153,59 @@ async function SessionsBody({
   );
 }
 
-/** The flat/by-issue toggle rendered in the header's `actions` slot - a
+/** The Sessions/Costs tab switch rendered in the header's `actions` slot - a
  * display choice, not a data filter, so it lives beside the title rather
  * than among the days/source/issue query params (#2694/#3019's "no filter
- * chrome" rule is about narrowing the fetched set, not this). */
-function ViewToggle({
+ * chrome" rule is about narrowing the fetched set, not this). Splits the
+ * cost ledger (#186) out from the session list rather than stacking both in
+ * the same card. */
+function TabToggle({
   query,
   view,
+  tab,
 }: {
   query: SessionArchiveQuery;
   view: SessionsView;
+  tab: SessionsTab;
+}) {
+  return (
+    <Group gap={6} wrap="nowrap">
+      {(['sessions', 'costs'] as const).map((candidate, i) => (
+        <Group key={candidate} gap={6} wrap="nowrap">
+          {i > 0 && (
+            <Text size="sm" c="dimmed">
+              ·
+            </Text>
+          )}
+          {candidate === tab ? (
+            <Text size="sm" fw={600}>
+              {candidate === 'sessions' ? 'Sessions' : 'Costs'}
+            </Text>
+          ) : (
+            <Anchor
+              href={displayHref(query, { view, tab: candidate })}
+              size="sm"
+            >
+              {candidate === 'sessions' ? 'Sessions' : 'Costs'}
+            </Anchor>
+          )}
+        </Group>
+      ))}
+    </Group>
+  );
+}
+
+/** The flat/by-issue toggle rendered above the session table, only shown on
+ * the `sessions` tab - the cost ledger (`costs` tab) has no equivalent
+ * view. */
+function ViewToggle({
+  query,
+  view,
+  tab,
+}: {
+  query: SessionArchiveQuery;
+  view: SessionsView;
+  tab: SessionsTab;
 }) {
   return (
     <Group gap={6} wrap="nowrap">
@@ -155,7 +221,10 @@ function ViewToggle({
               {candidate === 'flat' ? 'Flat' : 'By issue'}
             </Text>
           ) : (
-            <Anchor href={viewToggleHref(query, candidate)} size="sm">
+            <Anchor
+              href={displayHref(query, { view: candidate, tab })}
+              size="sm"
+            >
               {candidate === 'flat' ? 'Flat' : 'By issue'}
             </Anchor>
           )}
@@ -187,6 +256,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const rawParams = await searchParams;
   const query = parseSessionArchiveQuery(rawParams);
   const view = parseView(rawParams);
+  const tab = parseTab(rawParams);
 
   return (
     <Container size="xl" py="xl">
@@ -201,11 +271,11 @@ async function SessionsPageShell({ searchParams }: PageProps) {
             </Suspense>
           </>
         }
-        actions={<ViewToggle query={query} view={view} />}
+        actions={<TabToggle query={query} view={view} tab={tab} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <SessionsBody query={query} view={view} />
+        <SessionsBody query={query} view={view} tab={tab} />
       </Suspense>
     </Container>
   );
