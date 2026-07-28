@@ -210,7 +210,12 @@ async function scanComments(
   };
 }
 
-interface SearchIssue {
+/** One item as returned by `issues.listForRepo`, which serves both issues
+ * and PRs (a PR is an issue carrying a `pull_request` key). Verified against
+ * the live API: this response carries `labels`, `assignees`, `comments`,
+ * `sub_issues_summary` and - on sub-issues - `parent_issue_url`, so it is a
+ * complete replacement for the search-result shape this used to be. */
+interface RepoIssue {
   number: number;
   title: string;
   html_url: string;
@@ -298,7 +303,7 @@ interface ClassifyResult {
 
 async function classifyIssue(
   repo: WatchedRepo,
-  issue: SearchIssue,
+  issue: RepoIssue,
 ): Promise<ClassifyResult> {
   const octokit = getGithubClient();
   const warnings: string[] = [];
@@ -450,141 +455,207 @@ async function classifyIssue(
   return { item, warnings };
 }
 
-// The search/issues API's `OR` only applies to free-text terms, not
-// qualifiers (`label:`/`author:`/`review-requested:`) - `q:
-// "label:claude OR author:app/claude"` 422s. Run one query per qualifier
-// and dedupe by issue number instead.
+// This used to run one `search.issuesAndPullRequests` call per (repo,
+// qualifier) pair - 7 base queries x 2 (`is:issue`/`is:pull-request`) = 14
+// search requests per repo. The search API has its own budget of 30
+// requests per MINUTE (entirely separate from, and ~166x tighter per-minute
+// than, the 5,000/hr core budget), so a single two-repo dashboard load spent
+// 28 of the 30 available that minute and a second refresh inside the same
+// minute 429'd. See #13.
 //
-// GitHub's search API also now rejects any query that doesn't explicitly
-// say `is:issue` or `is:pull-request` ("Query must include 'is:issue' or
-// 'is:pull-request'", 422) - there's no single qualifier meaning "both", so
-// each base query below is expanded into both variants.
-function baseQueries(): string[] {
-  return [
-    // The assignee field is the ownership spine (#2783): jclaw-bot assigned
-    // means the agent fleet has claimed the item. This single query covers
-    // what used to need an author:app/claude query AND still missed things -
-    // @claude PR threads, runbook anchors, and interactive-session claims
-    // never carry the claude label, but all get the fleet assignee now
-    // (claude.yml claims issues at run start; claude-automerge.yml claims
-    // agent-authored PRs on open).
-    `is:open assignee:${agentFleetLogin()}`,
-    // jlapenna assigned = the ball is in the maintainer's court: human-needed
-    // endings and failed-run reports assign him automatically, and anything
-    // he owns personally belongs on his console too.
-    `is:open assignee:${maintainerLogin()}`,
-    // Belt and suspenders: a claude-labeled issue whose run never started
-    // (runner outage, queue loss) is dispatched-but-unclaimed - the claim
-    // step only runs once a runner picks the job up, so without this query
-    // exactly the items most in need of attention would be invisible.
-    'is:open label:claude',
-    // Same belt-and-suspenders parity for the experimental OpenCode pipeline
-    // (opencode.yml, #2988/#2994) - dispatched via the `opencode` label
-    // instead of `claude`, so it needs its own dispatched-but-unclaimed
-    // query or a stalled opencode run is invisible too.
-    'is:open label:opencode',
-    // Codex uses an independent label-triggered worker too; keep a queued run
-    // visible before its first claim step executes.
-    'is:open label:codex',
-    // human-needed is one of this dashboard's own action types, but not every
-    // human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
-    // carry human-needed without ever having the claude label or an agent
-    // author (or, if labeled by hand, an assignee), and without this query it
-    // never enters the dashboard at all.
-    'is:open label:human-needed',
-    `is:open review-requested:${maintainerLogin()}`,
-  ];
-}
-// A function, not a module-level const: the logins come from
-// `deployment.ts` now, and a const would freeze whatever the environment
-// happened to hold at import time (which in tests is "not yet set").
-function searchQueries(): string[] {
-  return baseQueries().flatMap((query) => [
-    `${query} is:issue`,
-    `${query} is:pull-request`,
-  ]);
+// Every one of those qualifiers is a predicate over open items, and both
+// list endpoints below are on the roomy core budget. So: fetch the repo's
+// open items once, fetch its open PRs once, and evaluate the predicates in
+// memory. Search pressure drops to zero, the `is:issue`/`is:pull-request`
+// doubling disappears (one list covers both), and the 1000-result search
+// ceiling stops applying.
+
+/** Labels that put an item on the board on their own.
+ *
+ * `claude`/`opencode`/`codex` are belt and suspenders: a labeled issue whose
+ * run never started (runner outage, queue loss) is dispatched-but-unclaimed,
+ * because the claim step only runs once a runner picks the job up. Without
+ * these exactly the items most in need of attention would be invisible.
+ *
+ * `human-needed` is one of this dashboard's own action types, but not every
+ * human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
+ * carry it without ever having a pipeline label or an agent author (or, if
+ * labeled by hand, an assignee), and without this it never enters the
+ * dashboard at all. */
+const BOARD_LABELS = ['claude', 'opencode', 'codex', 'human-needed'];
+
+/**
+ * The open-item predicate, replacing the old per-qualifier search queries
+ * one for one.
+ *
+ * Assignee checks are the ownership spine (#2783): `jclaw-bot` assigned
+ * means the agent fleet has claimed the item - this covers what used to
+ * need an `author:app/claude` query AND still missed things (@claude PR
+ * threads, runbook anchors, and interactive-session claims never carry the
+ * claude label, but all get the fleet assignee now). `jlapenna` assigned
+ * means the ball is in the maintainer's court: human-needed endings and
+ * failed-run reports assign him automatically, and anything he owns
+ * personally belongs on his console too.
+ *
+ * `reviewRequestedLogins` comes from the PR listing (issues.listForRepo
+ * can't express `review-requested:`). Drafts are deliberately NOT filtered
+ * here - the old `review-requested:` query didn't filter them either, and
+ * classifyIssue is what declines to raise the actionType on a draft.
+ */
+function isBoardItem(
+  issue: RepoIssue,
+  reviewRequestedLogins: string[] | undefined,
+): boolean {
+  const assignees = (issue.assignees ?? []).map((a) => a?.login ?? '');
+  if (
+    assignees.includes(agentFleetLogin()) ||
+    assignees.includes(maintainerLogin())
+  ) {
+    return true;
+  }
+  const labels = issue.labels.map((label) =>
+    typeof label === 'string' ? label : (label.name ?? ''),
+  );
+  if (labels.some((label) => BOARD_LABELS.includes(label))) return true;
+  return reviewRequestedLogins?.includes(maintainerLogin()) ?? false;
 }
 
-// GitHub's search API hard-caps any single query at 1000 results (per_page
-// maxes at 100, so 10 pages is the true ceiling) - paging past that just
-// 422s, so this loop stops there and flags the query as truncated instead.
-const SEARCH_PER_PAGE = 100;
-const SEARCH_MAX_PAGES = 10;
+// A page cap rather than an expected limit: the watched repos carry tens of
+// open items, not thousands. Unlike the search API there is no 1000-result
+// ceiling here, so this only exists so a pathological repo can't page
+// forever - it degrades to a truncation warning the same way the search
+// path used to.
+const ITEMS_PER_PAGE = 100;
+const ITEMS_MAX_PAGES = 10;
 
-async function searchAllRepo(
+/** Every open issue AND pull request in the repo - `issues.listForRepo`
+ * serves both, with PRs carrying a `pull_request` key. */
+async function listOpenItems(
   repo: WatchedRepo,
-  query: string,
-): Promise<{ items: SearchIssue[]; truncated: boolean }> {
+): Promise<{ items: RepoIssue[]; truncated: boolean }> {
   const octokit = getGithubClient();
-  const items: SearchIssue[] = [];
-  let totalCount = 0;
-  for (let page = 1; page <= SEARCH_MAX_PAGES; page++) {
-    const { data } = await octokit.rest.search.issuesAndPullRequests({
-      q: `repo:${repoKey(repo)} ${query}`,
-      per_page: SEARCH_PER_PAGE,
+  const items: RepoIssue[] = [];
+  for (let page = 1; page <= ITEMS_MAX_PAGES; page++) {
+    const { data } = await octokit.rest.issues.listForRepo({
+      owner: repo.owner,
+      repo: repo.name,
+      state: 'open',
+      // Deterministic, triage-useful ordering within a priority tier (the
+      // final sort below is by action priority only, and is stable).
+      sort: 'updated',
+      direction: 'desc',
+      per_page: ITEMS_PER_PAGE,
       page,
     });
-    totalCount = data.total_count;
-    items.push(...(data.items as SearchIssue[]));
-    if (data.items.length < SEARCH_PER_PAGE || items.length >= totalCount) {
-      break;
-    }
+    items.push(...(data as RepoIssue[]));
+    if (data.length < ITEMS_PER_PAGE) return { items, truncated: false };
   }
-  return { items, truncated: items.length < totalCount };
+  return { items, truncated: true };
 }
 
-interface SearchTask {
-  repo: WatchedRepo;
-  query: string;
+/** Requested-reviewer logins per open PR number - the one predicate
+ * `issues.listForRepo` can't express. `pulls.list` populates
+ * `requested_reviewers` (verified against the live API), so this costs one
+ * listing rather than a `pulls.get` per open PR. */
+async function listReviewRequests(
+  repo: WatchedRepo,
+): Promise<Map<number, string[]>> {
+  const octokit = getGithubClient();
+  const byNumber = new Map<number, string[]>();
+  for (let page = 1; page <= ITEMS_MAX_PAGES; page++) {
+    const { data } = await octokit.rest.pulls.list({
+      owner: repo.owner,
+      repo: repo.name,
+      state: 'open',
+      per_page: ITEMS_PER_PAGE,
+      page,
+    });
+    for (const pr of data) {
+      byNumber.set(
+        pr.number,
+        (pr.requested_reviewers ?? []).map((reviewer) => reviewer?.login ?? ''),
+      );
+    }
+    if (data.length < ITEMS_PER_PAGE) break;
+  }
+  return byNumber;
 }
 
 export async function getActionItems(): Promise<ActionItemsResult> {
   const warnings: string[] = [];
 
-  // GitHub's search API can't meaningfully OR multiple `repo:` qualifiers
-  // (see `baseQueries`'s own doc comment on qualifier OR-ing), so multiple
-  // watched repos means fanning out one request per (repo, query) pair and
-  // merging - naive N-repo x M-query fan-out, deliberately unthrottled for
-  // now (see #13, filed alongside this change).
-  const tasks: SearchTask[] = getWatchedRepos().flatMap((repo) =>
-    searchQueries().map((query) => ({ repo, query })),
+  // Two calls per repo, both on the core budget. Each repo's pair settles
+  // independently: one repo's outage (or a token missing one permission)
+  // degrades that repo to a warning instead of blanking the dashboard,
+  // matching the per-query degradation the search fan-out used to give.
+  const perRepo = await Promise.all(
+    getWatchedRepos().map(async (repo) => {
+      const [itemsResult, reviewsResult] = await Promise.allSettled([
+        listOpenItems(repo),
+        listReviewRequests(repo),
+      ]);
+
+      if (itemsResult.status === 'rejected') {
+        console.error(
+          'agent-lcars: failed to list open items (%s):',
+          repoKey(repo),
+          itemsResult.reason,
+        );
+        return {
+          repo,
+          issues: [] as RepoIssue[],
+          warnings: [
+            `Open items unavailable for ${repoKey(repo)} (GitHub API request failed).`,
+          ],
+        };
+      }
+
+      const repoWarnings: string[] = [];
+      if (itemsResult.value.truncated) {
+        repoWarnings.push(
+          `Open items truncated for ${repoKey(repo)} (over ${ITEMS_MAX_PAGES * ITEMS_PER_PAGE} open) - some items may not be shown.`,
+        );
+      }
+
+      // A failed PR listing costs only the review-requested predicate;
+      // everything selected by label or assignee still lands.
+      let reviewRequests: Map<number, string[]> | undefined;
+      if (reviewsResult.status === 'fulfilled') {
+        reviewRequests = reviewsResult.value;
+      } else {
+        console.error(
+          'agent-lcars: failed to list open pull requests (%s):',
+          repoKey(repo),
+          reviewsResult.reason,
+        );
+        repoWarnings.push(
+          `Review requests unavailable for ${repoKey(repo)} - review-requested PRs may be missing.`,
+        );
+      }
+
+      return {
+        repo,
+        issues: itemsResult.value.items.filter((issue) =>
+          isBoardItem(issue, reviewRequests?.get(issue.number)),
+        ),
+        warnings: repoWarnings,
+      };
+    }),
   );
 
-  // One malformed/rejected query (e.g. a future GitHub search-API contract
-  // change, as already happened once - see the `baseQueries` comment)
-  // shouldn't take down the whole dashboard. Log and skip it instead.
-  const results = await Promise.allSettled(
-    tasks.map(({ repo, query }) => searchAllRepo(repo, query)),
-  );
-
-  // Deduped by repoItemKey, NOT bare issue.number - issue/PR numbers only
+  // Keyed by repoItemKey, NOT bare issue.number - issue/PR numbers only
   // disambiguate within one repo, so two different repos' #42 must survive
   // as two distinct entries here.
-  const byKey = new Map<string, SearchIssue & { repo: WatchedRepo }>();
-  for (const [i, result] of results.entries()) {
-    const { repo, query } = tasks[i];
-    if (result.status === 'rejected') {
-      console.error(
-        'agent-lcars: search query failed (%s: "%s"):',
-        repoKey(repo),
-        query,
-        result.reason,
-      );
-      warnings.push(`Search query failed for ${repoKey(repo)}: "${query}".`);
-      continue;
-    }
-    if (result.value.truncated) {
-      warnings.push(
-        `Search results truncated for ${repoKey(repo)} (over ${SEARCH_MAX_PAGES * SEARCH_PER_PAGE} matches): "${query}".`,
-      );
-    }
-    for (const issue of result.value.items) {
+  const byKey = new Map<string, RepoIssue & { repo: WatchedRepo }>();
+  for (const { repo, issues, warnings: repoWarnings } of perRepo) {
+    warnings.push(...repoWarnings);
+    for (const issue of issues) {
       byKey.set(repoItemKey(repo, issue.number), { ...issue, repo });
     }
   }
 
   // Defense in depth: an unexpected error classifying one item (a GitHub API
-  // hiccup, a malformed search result, etc.) should drop that one item, not
+  // hiccup, a malformed listing entry, etc.) should drop that one item, not
   // crash the whole dashboard for everyone.
   const issuesToClassify = Array.from(byKey.values());
   const classified = await Promise.allSettled(

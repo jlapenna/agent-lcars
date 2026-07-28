@@ -84,10 +84,6 @@ interface FixtureItem {
   assignees: string[];
   author: string;
   updatedAt: string;
-  /** Which of `SEARCH_QUERIES`' qualifiers this item answers to. The search
-   * endpoint matches on these rather than trying to evaluate GitHub's query
-   * language for real. */
-  matchesQualifiers: string[];
   comments?: { author: string; body: string }[];
   pr?: {
     draft: boolean;
@@ -108,12 +104,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [MAINTAINER, FLEET],
     author: FLEET,
     updatedAt: minutesAgo(14),
-    matchesQualifiers: [
-      `assignee:${FLEET}`,
-      `assignee:${MAINTAINER}`,
-      'label:claude',
-      'label:human-needed',
-    ],
     comments: [
       { author: MAINTAINER, body: 'Filing this so it does not get lost.' },
       {
@@ -134,7 +124,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [FLEET],
     author: FLEET,
     updatedAt: minutesAgo(6),
-    matchesQualifiers: [`assignee:${FLEET}`, 'label:claude'],
     comments: [
       {
         author: FLEET,
@@ -164,7 +153,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [FLEET],
     author: FLEET,
     updatedAt: minutesAgo(41),
-    matchesQualifiers: [`review-requested:${MAINTAINER}`, `assignee:${FLEET}`],
     pr: {
       draft: false,
       // `behind` drives the "Base branch has moved" affordance — another
@@ -187,7 +175,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [MAINTAINER],
     author: FLEET,
     updatedAt: minutesAgo(180),
-    matchesQualifiers: [`assignee:${MAINTAINER}`],
     comments: [
       {
         author: FLEET,
@@ -209,11 +196,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [MAINTAINER, FLEET],
     author: FLEET,
     updatedAt: minutesAgo(23),
-    matchesQualifiers: [
-      `assignee:${MAINTAINER}`,
-      `assignee:${FLEET}`,
-      'label:human-needed',
-    ],
     comments: [
       {
         author: FLEET,
@@ -230,7 +212,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [FLEET],
     author: FLEET,
     updatedAt: minutesAgo(52),
-    matchesQualifiers: [`assignee:${FLEET}`, 'label:claude'],
   },
 ];
 
@@ -348,7 +329,9 @@ export function populatedFixturesEnabled(): boolean {
   return (globalThis as Record<string, unknown>)[POPULATED_KEY] === true;
 }
 
-function searchIssueFor(item: FixtureItem) {
+/** The `issues.listForRepo` row shape - which serves issues and PRs alike,
+ * with a PR carrying a `pull_request` key. */
+function issueFor(item: FixtureItem) {
   return {
     number: item.number,
     title: item.title,
@@ -365,8 +348,32 @@ function searchIssueFor(item: FixtureItem) {
   };
 }
 
-/** `GET /search/issues`. Answers the branch->PR join unconditionally (it
- * predates populated mode); everything else only in populated mode. */
+/** `GET /repos/{owner}/{repo}/issues?state=open` - the board's item universe
+ * since #13 replaced the per-qualifier search fan-out. Deliberately returns
+ * every fixture item regardless of label/assignee: selecting which of them
+ * belong on the board is `isBoardItem`'s job in the app, and a fixture that
+ * pre-filtered would hide a regression in exactly that predicate. */
+export function openIssues() {
+  if (!populatedFixturesEnabled()) return [];
+  return FIXTURE_ITEMS.map(issueFor);
+}
+
+/** `GET /repos/{owner}/{repo}/pulls?state=open` - only `number` and
+ * `requested_reviewers` are read (the one board predicate the issue listing
+ * can't express). */
+export function openPulls() {
+  if (!populatedFixturesEnabled()) return [];
+  return FIXTURE_ITEMS.filter((item) => item.isPr).map((item) => ({
+    number: item.number,
+    requested_reviewers: (item.pr?.requestedReviewers ?? []).map((login) => ({
+      login,
+    })),
+  }));
+}
+
+/** `GET /search/issues`. Serves only the branch->PR join `getCliSessions()`
+ * needs - the one search call left in the console after #13 moved the
+ * action-item board onto the list endpoints above. */
 export function searchIssues(q: string) {
   const matchesFixtureBranch =
     q.includes('is:pr') &&
@@ -387,22 +394,7 @@ export function searchIssues(q: string) {
     };
   }
 
-  if (!populatedFixturesEnabled()) {
-    return { total_count: 0, incomplete_results: false, items: [] };
-  }
-
-  // getActionItems() expands every base query into an `is:issue` and an
-  // `is:pull-request` variant, so the kind filter has to be honored or a PR
-  // fixture would come back on the issue query and be classified wrong.
-  const wantsPr = q.includes('is:pull-request');
-  const wantsIssue = q.includes('is:issue');
-  const items = FIXTURE_ITEMS.filter(
-    (item) =>
-      (item.isPr ? wantsPr : wantsIssue) &&
-      item.matchesQualifiers.some((qualifier) => q.includes(qualifier)),
-  ).map(searchIssueFor);
-
-  return { total_count: items.length, incomplete_results: false, items };
+  return { total_count: 0, incomplete_results: false, items: [] };
 }
 
 /** `GET /repos/{owner}/{repo}/issues/{number}/comments` */

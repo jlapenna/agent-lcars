@@ -19,7 +19,7 @@ vi.mock('./github-client', async (importOriginal) => {
   };
 });
 
-interface FakeSearchItem {
+interface FakeRepoIssue {
   number: number;
   title: string;
   html_url: string;
@@ -34,8 +34,8 @@ interface FakeSearchItem {
 
 function makeItem(
   number: number,
-  overrides: Partial<FakeSearchItem> = {},
-): FakeSearchItem {
+  overrides: Partial<FakeRepoIssue> = {},
+): FakeRepoIssue {
   return {
     number,
     title: `Issue ${number}`,
@@ -50,11 +50,24 @@ function makeItem(
   };
 }
 
-// Every call site targets exactly one of the 10 expanded SEARCH_QUERIES via
-// this predicate, and every non-targeted query resolves empty - keeps each
-// test isolated to the one query path it's exercising.
-function emptySearchPage() {
-  return Promise.resolve({ data: { total_count: 0, items: [] } });
+/** A `pulls.list` row. Only `requested_reviewers` is read (it answers the
+ * review-requested predicate `issues.listForRepo` can't express). */
+function makePull(number: number, reviewers: string[] = []) {
+  return {
+    number,
+    requested_reviewers: reviewers.map((login) => ({ login })),
+  };
+}
+
+/** `issues.listForRepo` returns a bare array (no `total_count` envelope) and
+ * serves issues and PRs alike. Pages are keyed by repo so multi-repo tests
+ * can hand each repo its own list. */
+function pagedListForRepo(byRepo: Record<string, FakeRepoIssue[]>) {
+  return vi.fn().mockImplementation(({ owner, repo, page = 1 }) => {
+    const all = byRepo[`${owner}/${repo}`] ?? [];
+    const start = (page - 1) * 100;
+    return Promise.resolve({ data: all.slice(start, start + 100) });
+  });
 }
 
 describe('isDeployWaitOnly', () => {
@@ -162,41 +175,149 @@ describe('isHandedBack', () => {
 });
 
 describe('getActionItems', () => {
-  const TARGET_Q = (q: string) =>
-    q.includes('label:claude') && q.includes('is:issue');
+  // Every item a test wants on the board has to satisfy the open-item
+  // predicate (see isBoardItem) the way it would in production - by label,
+  // by assignee, or by a requested review. `claude` is the cheapest of
+  // those for tests not specifically exercising selection.
+  const ON_BOARD = { labels: ['claude'] };
 
   function setupOctokit({
-    issuesAndPullRequests,
+    listForRepo,
+    pullsList = vi.fn().mockResolvedValue({ data: [] }),
     listComments = vi.fn().mockResolvedValue({ data: [] }),
     pullsGet = vi.fn(),
-    checksListForRef = vi.fn(),
+    checksListForRef = vi
+      .fn()
+      .mockResolvedValue({ data: { total_count: 0, check_runs: [] } }),
+    searchSpy = vi.fn(),
   }: {
-    issuesAndPullRequests: Mock;
+    listForRepo: Mock;
+    pullsList?: Mock;
     listComments?: Mock;
     pullsGet?: Mock;
     checksListForRef?: Mock;
+    searchSpy?: Mock;
   }) {
     (getGithubClient as Mock).mockReturnValue({
       rest: {
-        search: { issuesAndPullRequests },
-        issues: { listComments },
-        pulls: { get: pullsGet },
+        // Present only so a regression back onto the search API is caught
+        // by the assertion in the #13 guard below rather than silently
+        // reintroducing the 30-req/min bottleneck.
+        search: { issuesAndPullRequests: searchSpy },
+        issues: { listForRepo, listComments },
+        pulls: { list: pullsList, get: pullsGet },
         checks: { listForRef: checksListForRef },
       },
     });
+    return searchSpy;
   }
 
+  // #13: the board used to cost 14 search requests per repo against a
+  // budget of 30 per minute. Selection now runs off two core-budget list
+  // endpoints, and must never quietly go back.
+  it('reads the board from list endpoints and never calls the search API', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [makeItem(1, ON_BOARD)],
+    });
+    const searchSpy = setupOctokit({ listForRepo });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([1]);
+    expect(searchSpy).not.toHaveBeenCalled();
+    // One listing pass per repo, not one per qualifier.
+    expect(listForRepo).toHaveBeenCalledTimes(1);
+    expect(listForRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: 'supersprinklesracing',
+        repo: 'sprinkles',
+        state: 'open',
+      }),
+    );
+  });
+
+  it('leaves open items that match no board predicate off the board', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(1, ON_BOARD),
+        makeItem(2), // no label, no assignee, no review request
+        makeItem(3, { labels: ['enhancement'] }),
+      ],
+    });
+    setupOctokit({ listForRepo });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([1]);
+  });
+
+  it('selects each pipeline label, both ownership assignees, and human-needed', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(1, { labels: ['claude'] }),
+        makeItem(2, { labels: ['opencode'] }),
+        makeItem(3, { labels: ['codex'] }),
+        makeItem(4, { labels: ['human-needed'] }),
+        makeItem(5, { assignees: [{ login: 'jclaw-bot' }] }),
+        makeItem(6, { assignees: [{ login: 'jlapenna' }] }),
+        makeItem(7), // control: must stay off
+      ],
+    });
+    setupOctokit({ listForRepo });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number).sort((a, b) => a - b)).toEqual([
+      1, 2, 3, 4, 5, 6,
+    ]);
+  });
+
+  it('selects a PR solely because the maintainer has a review requested', async () => {
+    // The one predicate issues.listForRepo cannot express - it comes from
+    // the PR listing instead.
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [makeItem(90, { pull_request: {} })],
+    });
+    const pullsList = vi
+      .fn()
+      .mockResolvedValue({ data: [makePull(90, ['jlapenna'])] });
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        draft: false,
+        mergeable_state: 'clean',
+        head: { sha: 'deadbeef' },
+        body: null,
+        requested_reviewers: [{ login: 'jlapenna' }],
+      },
+    });
+    setupOctokit({ listForRepo, pullsList, pullsGet });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([90]);
+    expect(result.items[0].actionTypes).toContain('review-requested');
+  });
+
+  it('keeps label-selected items when the PR listing fails, and warns', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [makeItem(11, ON_BOARD)],
+    });
+    const pullsList = vi.fn().mockRejectedValue(new Error('403 Forbidden'));
+    setupOctokit({ listForRepo, pullsList });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number)).toEqual([11]);
+    expect(
+      result.warnings.some((w) => w.includes('Review requests unavailable')),
+    ).toBe(true);
+  });
+
   it('captures the newest comment author on human-needed items (possession signal)', async () => {
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!TARGET_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [
-            makeItem(7, { labels: ['claude', 'human-needed'], comments: 2 }),
-          ],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(7, { labels: ['claude', 'human-needed'], comments: 2 }),
+      ],
     });
     const listComments = vi.fn().mockResolvedValue({
       data: [
@@ -212,7 +333,7 @@ describe('getActionItems', () => {
         },
       ],
     });
-    setupOctokit({ issuesAndPullRequests, listComments });
+    setupOctokit({ listForRepo, listComments });
 
     const result = await getActionItems();
 
@@ -221,88 +342,65 @@ describe('getActionItems', () => {
     expect(isHandedBack(result.items[0])).toBe(true);
   });
 
-  it('paginates a query across multiple pages and collects every item', async () => {
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q, page }) => {
-      if (!TARGET_Q(q)) return emptySearchPage();
-      if (page === 1) {
-        return Promise.resolve({
-          data: {
-            total_count: 120,
-            items: Array.from({ length: 100 }, (_, i) => makeItem(i + 1)),
-          },
-        });
-      }
-      if (page === 2) {
-        return Promise.resolve({
-          data: {
-            total_count: 120,
-            items: Array.from({ length: 20 }, (_, i) => makeItem(i + 101)),
-          },
-        });
-      }
-      return emptySearchPage();
+  it('paginates the open-item listing and collects every item', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': Array.from({ length: 120 }, (_, i) =>
+        makeItem(i + 1, ON_BOARD),
+      ),
     });
-    setupOctokit({ issuesAndPullRequests });
+    setupOctokit({ listForRepo });
 
     const result = await getActionItems();
 
     expect(result.items).toHaveLength(120);
+    expect(listForRepo).toHaveBeenCalledTimes(2);
     expect(result.warnings).toEqual([]);
   });
 
-  it('flags truncation once a query hits the 1000-result page cap', async () => {
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q, page }) => {
-      if (!TARGET_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1500,
-          items: Array.from({ length: 100 }, (_, i) =>
-            makeItem(page * 1000 + i),
-          ),
-        },
-      });
+  it('flags truncation once the open-item listing hits the page cap', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': Array.from({ length: 1100 }, (_, i) =>
+        makeItem(i + 1, ON_BOARD),
+      ),
     });
-    setupOctokit({ issuesAndPullRequests });
+    setupOctokit({ listForRepo });
 
     const result = await getActionItems();
 
     expect(result.items).toHaveLength(1000);
     expect(
-      result.warnings.some((w) => w.includes('Search results truncated')),
+      result.warnings.some((w) => w.includes('Open items truncated')),
     ).toBe(true);
   });
 
-  it('records a warning and keeps other queries when one search query rejects', async () => {
-    const FAILING_Q = (q: string) =>
-      q.includes('label:human-needed') && q.includes('is:issue');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (FAILING_Q(q)) return Promise.reject(new Error('502 Bad Gateway'));
-      if (TARGET_Q(q)) {
-        return Promise.resolve({
-          data: { total_count: 1, items: [makeItem(7)] },
-        });
+  it('records a warning and keeps other repos when one repo listing rejects', async () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    (getWatchedRepos as Mock).mockReturnValueOnce([repoA, repoB]);
+
+    const listForRepo = vi.fn().mockImplementation(({ owner }) => {
+      if (owner === 'org-a') {
+        return Promise.reject(new Error('502 Bad Gateway'));
       }
-      return emptySearchPage();
+      return Promise.resolve({ data: [makeItem(7, ON_BOARD)] });
     });
-    setupOctokit({ issuesAndPullRequests });
+    setupOctokit({ listForRepo });
 
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([7]);
-    expect(result.warnings.some((w) => w.includes('Search query failed'))).toBe(
-      true,
-    );
+    expect(
+      result.warnings.some((w) =>
+        w.includes('Open items unavailable for org-a/repo-a'),
+      ),
+    ).toBe(true);
   });
 
   it('flags truncated check runs on a PR without dropping the item', async () => {
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!TARGET_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [makeItem(500, { pull_request: {} })],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(500, { ...ON_BOARD, pull_request: {} }),
+      ],
     });
     const pullsGet = vi.fn().mockResolvedValue({
       data: {
@@ -326,7 +424,7 @@ describe('getActionItems', () => {
         },
       });
     });
-    setupOctokit({ issuesAndPullRequests, pullsGet, checksListForRef });
+    setupOctokit({ listForRepo, pullsGet, checksListForRef });
 
     const result = await getActionItems();
 
@@ -337,19 +435,16 @@ describe('getActionItems', () => {
   });
 
   it('sorts a review-requested PR ahead of a run-failed PR, tied with human-needed', async () => {
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!TARGET_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 3,
-          items: [
-            makeItem(1, { pull_request: {} }), // run-failed
-            makeItem(2, { pull_request: {} }), // review-requested
-            makeItem(3, { labels: ['human-needed'] }), // human-needed
-          ],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(1, { ...ON_BOARD, pull_request: {} }), // run-failed
+        makeItem(2, { pull_request: {} }), // review-requested
+        makeItem(3, { labels: ['human-needed'] }), // human-needed
+      ],
     });
+    const pullsList = vi
+      .fn()
+      .mockResolvedValue({ data: [makePull(1), makePull(2, ['jlapenna'])] });
     const pullsGet = vi.fn().mockImplementation(({ pull_number }) =>
       Promise.resolve({
         data: {
@@ -379,7 +474,7 @@ describe('getActionItems', () => {
         },
       }),
     );
-    setupOctokit({ issuesAndPullRequests, pullsGet, checksListForRef });
+    setupOctokit({ listForRepo, pullsList, pullsGet, checksListForRef });
 
     const result = await getActionItems();
 
@@ -387,14 +482,11 @@ describe('getActionItems', () => {
   });
 
   it('drops an item and records a warning when classification throws, without affecting siblings', async () => {
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!TARGET_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 2,
-          items: [makeItem(10), makeItem(20, { pull_request: {} })],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(10, ON_BOARD),
+        makeItem(20, { ...ON_BOARD, pull_request: {} }),
+      ],
     });
     const pullsGet = vi
       .fn()
@@ -403,7 +495,7 @@ describe('getActionItems', () => {
           ? Promise.reject(new Error('404 Not Found'))
           : Promise.resolve({ data: {} }),
       );
-    setupOctokit({ issuesAndPullRequests, pullsGet });
+    setupOctokit({ listForRepo, pullsGet });
 
     const result = await getActionItems();
 
@@ -416,22 +508,14 @@ describe('getActionItems', () => {
   });
 
   it('surfaces the takeover command on a jclaw-bot-assigned PR', async () => {
-    const PR_Q = (q: string) =>
-      q.includes('assignee:jclaw-bot') && q.includes('is:pull-request');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!PR_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [
-            makeItem(42, {
-              pull_request: {},
-              assignees: [{ login: 'jclaw-bot' }],
-              comments: 1,
-            }),
-          ],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(42, {
+          pull_request: {},
+          assignees: [{ login: 'jclaw-bot' }],
+          comments: 1,
+        }),
+      ],
     });
     const listComments = vi.fn().mockResolvedValue({
       data: [
@@ -451,15 +535,7 @@ describe('getActionItems', () => {
         requested_reviewers: [],
       },
     });
-    const checksListForRef = vi
-      .fn()
-      .mockResolvedValue({ data: { total_count: 0, check_runs: [] } });
-    setupOctokit({
-      issuesAndPullRequests,
-      listComments,
-      pullsGet,
-      checksListForRef,
-    });
+    setupOctokit({ listForRepo, listComments, pullsGet });
 
     const result = await getActionItems();
 
@@ -470,24 +546,12 @@ describe('getActionItems', () => {
   });
 
   it('surfaces assignee logins on the item (#3024 stale-claim detection)', async () => {
-    const ISSUE_Q = (q: string) =>
-      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!ISSUE_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [
-            makeItem(70, {
-              assignees: [{ login: 'jclaw-bot' }],
-              comments: 0,
-            }),
-          ],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(70, { assignees: [{ login: 'jclaw-bot' }], comments: 0 }),
+      ],
     });
-    const listComments = vi.fn().mockResolvedValue({ data: [] });
-    setupOctokit({ issuesAndPullRequests, listComments });
+    setupOctokit({ listForRepo });
 
     const result = await getActionItems();
 
@@ -496,18 +560,10 @@ describe('getActionItems', () => {
   });
 
   it('scans takeover for a jclaw-bot-assigned issue without the claude label (interactive claim)', async () => {
-    const ISSUE_Q = (q: string) =>
-      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!ISSUE_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [
-            makeItem(43, { assignees: [{ login: 'jclaw-bot' }], comments: 1 }),
-          ],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(43, { assignees: [{ login: 'jclaw-bot' }], comments: 1 }),
+      ],
     });
     const listComments = vi.fn().mockResolvedValue({
       data: [
@@ -518,7 +574,7 @@ describe('getActionItems', () => {
         },
       ],
     });
-    setupOctokit({ issuesAndPullRequests, listComments });
+    setupOctokit({ listForRepo, listComments });
 
     const result = await getActionItems();
 
@@ -531,17 +587,13 @@ describe('getActionItems', () => {
     // Dispatched-but-unclaimed (runner never started): there is no session
     // yet, so there is no takeover command to find - the claim assignee,
     // not the dispatch label, is what says a session exists (#2783).
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!TARGET_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [makeItem(44, { labels: ['claude'], comments: 3 })],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(44, { labels: ['claude'], comments: 3 }),
+      ],
     });
     const listComments = vi.fn().mockResolvedValue({ data: [] });
-    setupOctokit({ issuesAndPullRequests, listComments });
+    setupOctokit({ listForRepo, listComments });
 
     const result = await getActionItems();
 
@@ -550,23 +602,17 @@ describe('getActionItems', () => {
     expect(listComments).not.toHaveBeenCalled();
   });
 
-  it('surfaces a dispatched-but-unclaimed opencode-labeled issue via the label:opencode query (#3012)', async () => {
+  it('surfaces a dispatched-but-unclaimed opencode-labeled issue (#3012)', async () => {
     // Same belt-and-suspenders shape as the claude-labeled case above,
     // parity for the experimental opencode.yml pipeline: without this
-    // query a stalled opencode run (runner never picked it up) would be
+    // predicate a stalled opencode run (runner never picked it up) would be
     // invisible on the console.
-    const OPENCODE_Q = (q: string) =>
-      q.includes('label:opencode') && q.includes('is:issue');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!OPENCODE_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [makeItem(60, { labels: ['opencode'], comments: 0 })],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(60, { labels: ['opencode'], comments: 0 }),
+      ],
     });
-    setupOctokit({ issuesAndPullRequests });
+    setupOctokit({ listForRepo });
 
     const result = await getActionItems();
 
@@ -579,21 +625,13 @@ describe('getActionItems', () => {
     // the assignees, so a pair-based derivation kept answered items in the
     // queue forever. The label is the single park signal, matching
     // claude.yml's deliverable check and pr-heal's park-check.
-    const ISSUE_Q = (q: string) =>
-      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!ISSUE_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [
-            makeItem(50, {
-              assignees: [{ login: 'jclaw-bot' }, { login: 'jlapenna' }],
-              comments: 1,
-            }),
-          ],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(50, {
+          assignees: [{ login: 'jclaw-bot' }, { login: 'jlapenna' }],
+          comments: 1,
+        }),
+      ],
     });
     const listComments = vi.fn().mockResolvedValue({
       data: [
@@ -604,7 +642,7 @@ describe('getActionItems', () => {
         },
       ],
     });
-    setupOctokit({ issuesAndPullRequests, listComments });
+    setupOctokit({ listForRepo, listComments });
 
     const result = await getActionItems();
 
@@ -613,23 +651,12 @@ describe('getActionItems', () => {
   });
 
   it('does not derive human-needed from jclaw-bot alone (no maintainer assignee, no label)', async () => {
-    const ISSUE_Q = (q: string) =>
-      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!ISSUE_Q(q)) return emptySearchPage();
-      return Promise.resolve({
-        data: {
-          total_count: 1,
-          items: [
-            makeItem(51, {
-              assignees: [{ login: 'jclaw-bot' }],
-              comments: 0,
-            }),
-          ],
-        },
-      });
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(51, { assignees: [{ login: 'jclaw-bot' }], comments: 0 }),
+      ],
     });
-    setupOctokit({ issuesAndPullRequests });
+    setupOctokit({ listForRepo });
 
     const result = await getActionItems();
 
@@ -648,29 +675,11 @@ describe('getActionItems', () => {
     const repoB = { owner: 'org-b', name: 'repo-b' };
     (getWatchedRepos as Mock).mockReturnValueOnce([repoA, repoB]);
 
-    const ISSUE_Q = (q: string) =>
-      q.includes('assignee:jclaw-bot') && q.includes('is:issue');
-    const issuesAndPullRequests = vi.fn().mockImplementation(({ q }) => {
-      if (!ISSUE_Q(q)) return emptySearchPage();
-      if (q.includes('repo:org-a/repo-a')) {
-        return Promise.resolve({
-          data: {
-            total_count: 1,
-            items: [makeItem(42, { title: 'Repo A issue 42' })],
-          },
-        });
-      }
-      if (q.includes('repo:org-b/repo-b')) {
-        return Promise.resolve({
-          data: {
-            total_count: 1,
-            items: [makeItem(42, { title: 'Repo B issue 42' })],
-          },
-        });
-      }
-      return emptySearchPage();
+    const listForRepo = pagedListForRepo({
+      'org-a/repo-a': [makeItem(42, { ...ON_BOARD, title: 'Repo A issue 42' })],
+      'org-b/repo-b': [makeItem(42, { ...ON_BOARD, title: 'Repo B issue 42' })],
     });
-    setupOctokit({ issuesAndPullRequests });
+    setupOctokit({ listForRepo });
 
     const result = await getActionItems();
 

@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   checkRuns,
   issueComments,
+  openIssues,
+  openPulls,
   pullRequest,
   searchIssues,
   selfHostedRunners,
@@ -52,6 +54,19 @@ export async function GET(
     // GET /repos/{o}/{r}/issues/{number}/comments
     if (rest[0] === 'issues' && rest[2] === 'comments') {
       return NextResponse.json(issueComments(Number(rest[1])));
+    }
+
+    // GET /repos/{o}/{r}/issues - the action-item board's item universe
+    // since #13. Page 2+ is empty so the app's pagination loop terminates.
+    if (rest[0] === 'issues' && rest.length === 1) {
+      const page = Number(query.get('page') ?? '1');
+      return NextResponse.json(page > 1 ? [] : openIssues());
+    }
+
+    // GET /repos/{o}/{r}/pulls - supplies the review-requested predicate.
+    if (rest[0] === 'pulls' && rest.length === 1) {
+      const page = Number(query.get('page') ?? '1');
+      return NextResponse.json(page > 1 ? [] : openPulls());
     }
 
     // GET /repos/{o}/{r}/pulls/{number}
