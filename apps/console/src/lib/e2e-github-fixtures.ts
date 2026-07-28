@@ -394,6 +394,75 @@ export function openPulls() {
   ];
 }
 
+/**
+ * `POST /graphql` - the batched per-item enrichment query.
+ *
+ * Replaces what used to be a per-item REST fan-out (issueComments +
+ * pullRequest + checkRuns). This deliberately does NOT parse the query: it
+ * answers with a node for every fixture item, keyed by the same `i<number>`
+ * alias the app builds, and lets the app pick out the ones it asked for.
+ * Extra aliases in the response are ignored by the caller, and a fixture
+ * that tried to interpret GraphQL for real would be far more fragile than
+ * the thing it is standing in for.
+ *
+ * Enum values are SCREAMING_CASE exactly as the real API returns them, so
+ * the lowercasing in `item-enrichment.ts` stays exercised end to end rather
+ * than being bypassed by a conveniently pre-lowercased fixture.
+ */
+export function enrichmentGraphql() {
+  const repository: Record<string, unknown> = {};
+  if (!populatedFixturesEnabled()) return { repository };
+
+  for (const item of FIXTURE_ITEMS) {
+    const comments = {
+      nodes: (item.comments ?? []).map((comment, index) => ({
+        body: comment.body,
+        url: `${itemUrl(item.number, item.isPr ? 'pull' : 'issues')}#issuecomment-${item.number * 100 + index}`,
+        author: { login: comment.author },
+      })),
+    };
+    if (!item.isPr) {
+      repository[`i${item.number}`] = { __typename: 'Issue', comments };
+      continue;
+    }
+    const runs = item.checkRuns ?? [];
+    repository[`i${item.number}`] = {
+      __typename: 'PullRequest',
+      isDraft: item.pr?.draft ?? false,
+      mergeStateStatus: (item.pr?.mergeableState ?? 'unknown').toUpperCase(),
+      body: item.body,
+      comments,
+      reviewRequests: {
+        nodes: (item.pr?.requestedReviewers ?? []).map((login) => ({
+          requestedReviewer: { login },
+        })),
+      },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                contexts: {
+                  totalCount: runs.length,
+                  nodes: runs.map((run) => ({
+                    name: run.name,
+                    status: run.status.toUpperCase(),
+                    conclusion: run.conclusion
+                      ? run.conclusion.toUpperCase()
+                      : null,
+                    detailsUrl: 'https://github.com/check',
+                  })),
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+  }
+  return { repository };
+}
+
 /** `GET /repos/{owner}/{repo}/issues/{number}/comments` */
 export function issueComments(number: number) {
   const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
