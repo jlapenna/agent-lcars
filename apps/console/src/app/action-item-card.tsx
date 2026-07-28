@@ -4,6 +4,7 @@ import {
   Anchor,
   Badge,
   Blockquote,
+  Box,
   Button,
   Card,
   Group,
@@ -14,6 +15,8 @@ import {
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import type {
   ActionItem,
@@ -101,9 +104,14 @@ function CommentPreview({
             },
           }}
         >
-          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-            {body}
-          </Text>
+          <Box style={{ fontSize: 'var(--mantine-font-size-sm)' }}>
+            {/* No rehype-raw plugin: raw HTML embedded in the comment is
+             * never rendered, only escaped, and react-markdown's default
+             * urlTransform strips dangerous link/image schemes (e.g.
+             * javascript:) - this is GitHub comment content, untrusted the
+             * same way artifact-viewer.tsx's markdown preview treats it. */}
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+          </Box>
         </Blockquote>
         {isCollapsed && (
           <div
