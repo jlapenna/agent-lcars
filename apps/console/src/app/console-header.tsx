@@ -29,6 +29,15 @@ export interface ConsoleHeaderProps {
  * page every page can jump from/to), and the optional data-warnings
  * disclosure. The session detail page (a drill-down, not a nav destination)
  * keeps its own lighter back-link header instead of this component.
+ *
+ * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
+ * `cacheComponents` requires a Suspense boundary for, so a page whose
+ * subtitle is likewise data-free (dashboard, agents) can render this outside
+ * that boundary and skip `warnings` here, rendering `DataWarnings` itself
+ * once the data resolves (see those pages' `*PageShell` components) - the
+ * header then never sits behind the streamed content's placeholder. A page
+ * whose subtitle genuinely needs the fetched data (sessions) has no such
+ * option and passes `warnings` straight through as before.
  */
 export function ConsoleHeader({
   current,
@@ -69,24 +78,33 @@ export function ConsoleHeader({
         ))}
       </nav>
 
-      {warnings && warnings.length > 0 && (
-        <details data-testid="data-warnings">
-          <summary style={{ cursor: 'pointer' }}>
-            <Text size="sm" c="yellow" component="span">
-              ⚠ {warnings.length} data warning
-              {warnings.length === 1 ? '' : 's'} — some sections may be
-              incomplete
-            </Text>
-          </summary>
-          <Stack gap={4} mt="xs">
-            {warnings.map((warning) => (
-              <Text key={warning} size="xs" c="dimmed">
-                {warning}
-              </Text>
-            ))}
-          </Stack>
-        </details>
-      )}
+      {warnings && <DataWarnings warnings={warnings} />}
     </Stack>
+  );
+}
+
+/** The data-warnings disclosure `ConsoleHeader` renders inline, factored out
+ * so a page that splits its header from its data-dependent body (see
+ * `ConsoleHeader`'s doc comment) can render it once the data resolves,
+ * directly below the nav rail. */
+export function DataWarnings({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) return null;
+
+  return (
+    <details data-testid="data-warnings">
+      <summary style={{ cursor: 'pointer' }}>
+        <Text size="sm" c="yellow" component="span">
+          ⚠ {warnings.length} data warning{warnings.length === 1 ? '' : 's'} —
+          some sections may be incomplete
+        </Text>
+      </summary>
+      <Stack gap={4} mt="xs">
+        {warnings.map((warning) => (
+          <Text key={warning} size="xs" c="dimmed">
+            {warning}
+          </Text>
+        ))}
+      </Stack>
+    </details>
   );
 }

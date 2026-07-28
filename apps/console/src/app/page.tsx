@@ -1,4 +1,4 @@
-import { Anchor, Container } from '@mantine/core';
+import { Anchor, Box, Container } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -22,6 +22,7 @@ import {
   repoDisplayName,
   repoItemKey,
   repoKey,
+  type WatchedRepo,
 } from '../lib/github-client';
 import { derivePrimaryAction } from '../lib/primary-action';
 import {
@@ -32,7 +33,7 @@ import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleFooter } from './console-footer';
-import { ConsoleHeader } from './console-header';
+import { ConsoleHeader, DataWarnings } from './console-header';
 import { formatCompactRelativeTime, formatRelativeTime } from './format';
 import { PageLoading } from './page-loading';
 import { QuickTaskButton } from './quick-task-button';
@@ -50,13 +51,11 @@ interface PageProps {
   searchParams: Promise<{ repo?: string }>;
 }
 
-async function IndexContent({ searchParams }: PageProps) {
-  const session = await auth();
-  assertAdmin(session, '/login');
-
-  const watchedRepos = getWatchedRepos();
-  const repoFilter = parseRepoFilterParam((await searchParams).repo);
-
+async function IndexBody({
+  repoFilter,
+}: {
+  repoFilter: WatchedRepo | undefined;
+}) {
   const [
     {
       data: { items: rawItems, warnings: itemWarnings },
@@ -188,6 +187,60 @@ async function IndexContent({ searchParams }: PageProps) {
     ? cliSessions.filter((s) => matchesFilter(s.repo ?? primaryWatchedRepo()))
     : cliSessions;
 
+  return (
+    <>
+      {warnings.length > 0 && (
+        <Box mb="xl">
+          <DataWarnings warnings={warnings} />
+        </Box>
+      )}
+
+      <ActionItemsBoard
+        yourQueue={yourQueue
+          .filter((i) => matchesFilter(i.repo))
+          .map((item) => toCard(item))}
+        handedBack={handedBack
+          .filter((i) => matchesFilter(i.repo))
+          .map((item) => toCard(item))}
+        waitingOnDeploy={waitingOnDeploy
+          .filter((i) => matchesFilter(i.repo))
+          .map((item) => toCard(item))}
+        rest={rest
+          .filter((i) => matchesFilter(i.repo))
+          .map((item) => toCard(item))}
+      />
+
+      <AgentActivityPanel
+        activity={filteredActivity}
+        cliSessions={filteredCliSessions}
+        itemsByRunId={itemsByRunId}
+        sessionsByRunId={sessionsByRunId}
+      />
+
+      <ConsoleFooter
+        generatedAt={generatedAt}
+        refreshLabel={formatRelativeTime(generatedAt)}
+        bustsGithubCache
+      />
+    </>
+  );
+}
+
+/**
+ * Auth-gate, title/subtitle, actions, and nav render eagerly here - none of
+ * it needs the slow GitHub/Firestore reads `IndexBody` fetches, so this
+ * shell only has to wait on `auth()` and `searchParams` (both fast, no
+ * network), not the ~30-request fleet activity fetch. That keeps the header
+ * off the streamed placeholder `IndexBody`'s own Suspense boundary shows
+ * while its data resolves - see #160.
+ */
+async function IndexShell({ searchParams }: PageProps) {
+  const session = await auth();
+  assertAdmin(session, '/login');
+
+  const watchedRepos = getWatchedRepos();
+  const repoFilter = parseRepoFilterParam((await searchParams).repo);
+
   const subtitle =
     watchedRepos.length <= 1
       ? `${repoDisplayName(watchedRepos[0])} — Claude + OpenCode agent activity`
@@ -219,47 +272,24 @@ async function IndexContent({ searchParams }: PageProps) {
             <UnstickPrsButton />
           </>
         }
-        warnings={warnings}
       />
 
-      <ActionItemsBoard
-        yourQueue={yourQueue
-          .filter((i) => matchesFilter(i.repo))
-          .map((item) => toCard(item))}
-        handedBack={handedBack
-          .filter((i) => matchesFilter(i.repo))
-          .map((item) => toCard(item))}
-        waitingOnDeploy={waitingOnDeploy
-          .filter((i) => matchesFilter(i.repo))
-          .map((item) => toCard(item))}
-        rest={rest
-          .filter((i) => matchesFilter(i.repo))
-          .map((item) => toCard(item))}
-      />
-
-      <AgentActivityPanel
-        activity={filteredActivity}
-        cliSessions={filteredCliSessions}
-        itemsByRunId={itemsByRunId}
-        sessionsByRunId={sessionsByRunId}
-      />
-
-      <ConsoleFooter
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
-        bustsGithubCache
-      />
+      <Suspense fallback={<PageLoading rows={6} header={false} />}>
+        <IndexBody repoFilter={repoFilter} />
+      </Suspense>
     </Container>
   );
 }
 
 // `cacheComponents` requires uncached data access to sit inside a Suspense
-// boundary, so the page body streams in behind 6-row placeholder rather
-// than blocking the whole route on the GitHub/Firestore reads.
+// boundary, so `IndexShell` (auth() + searchParams, both fast) streams in
+// behind a 6-row placeholder rather than blocking on those; its own nested
+// Suspense around `IndexBody` covers the slow GitHub/Firestore reads
+// separately, so the header never waits on those (see #160).
 export default function Index({ searchParams }: PageProps) {
   return (
     <Suspense fallback={<PageLoading rows={6} />}>
-      <IndexContent searchParams={searchParams} />
+      <IndexShell searchParams={searchParams} />
     </Suspense>
   );
 }
