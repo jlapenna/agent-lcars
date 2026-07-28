@@ -50,6 +50,13 @@ jlapenna`), and use as the assignee in the parking recipe
   mistakenly dual-labeled issue never gets two workers racing on the same
   problem.
 
+- **Bot login format:** `claude[bot]` (REST) and `app/claude` (GraphQL) are
+  the same App installation, encoded two different ways depending on which
+  GitHub API answered — see `docs/bot-identity-formats.md` for the full
+  decision. REST shape is canonical here; never compare a `gh pr`/`issue
+list`/`view --json author` login straight against `AGENT_BOT_LOGINS` or
+  `AGENT_FLEET_LOGIN` without normalizing it first.
+
 ## Auto-merge
 
 `.github/workflows/agent-automerge.yml` squash-auto-merges any PR whose
