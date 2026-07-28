@@ -16,12 +16,29 @@ import {
 import { primaryWatchedRepo, repoItemKey } from '../../lib/github-client';
 import type {
   IssueLedgerRow,
+  LedgerTotals,
   SessionLedger,
   WeekLedgerRow,
 } from '../../lib/session-ledger';
 import { RepoBadge } from '../agent-activity-panel';
 import { Eyebrow } from '../eyebrow';
 import { formatCost } from '../format';
+
+/** Cost cell contents for a ledger row - `~$1.23` when the total includes
+ * at least one published-rate estimate (see LedgerTotals.costEstimated's
+ * doc comment) rather than being entirely recorded costs, so a maintainer
+ * doesn't mistake an estimate for a metered dollar figure at a glance. */
+function CostCell({ row }: { row: LedgerTotals }) {
+  if (row.costUsd === undefined) {
+    return <>—</>;
+  }
+  return (
+    <>
+      {row.costEstimated ? '~' : ''}
+      {formatCost(row.costUsd)}
+    </>
+  );
+}
 
 /** Each ledger is already fully sorted (cost desc, then tokens desc) by
  * aggregateSessionLedger - this just windows the display, since a busy
@@ -97,7 +114,7 @@ function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
               <TableTd>{row.turns}</TableTd>
               <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
               <TableTd>
-                {row.costUsd !== undefined ? formatCost(row.costUsd) : '—'}
+                <CostCell row={row} />
               </TableTd>
             </TableTr>
           ))}
@@ -168,7 +185,7 @@ function WeekLedgerTable({ rows }: { rows: WeekLedgerRow[] }) {
               <TableTd>{row.turns}</TableTd>
               <TableTd>{row.tokens.toLocaleString('en-US')}</TableTd>
               <TableTd>
-                {row.costUsd !== undefined ? formatCost(row.costUsd) : '—'}
+                <CostCell row={row} />
               </TableTd>
             </TableTr>
           ))}
@@ -207,12 +224,15 @@ function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
  * The cost/token ledger for the session set currently in view - same data
  * as the table below it, just rolled up two ways (per issue, per ISO week)
  * so a maintainer can spot where budget is going without adding a session
- * up by hand. `costUsd` is a real dollar total, but only across the
- * sessions in a bucket that recorded one - a bucket mixing costed and
- * uncosted sessions still shows a (partial) total rather than an em-dash,
- * called out by the footnote below rather than tracked per-row (see
- * session-ledger.ts's LedgerTotals doc comment for why that tradeoff is
- * made at aggregation time, not render time).
+ * up by hand. `costUsd` sums each bucket's sessions' recorded costs where
+ * present, falling back to a published-rate estimate from model + tokens
+ * otherwise (see session-ledger.ts's `docCost`) - a session with neither
+ * (no model recorded, or an unrecognized one) still contributes nothing,
+ * so a bucket mixing priced and unpriced sessions still shows a (partial)
+ * total rather than an em-dash, called out by the footnote below rather
+ * than tracked per-row. `~$…` (CostCell, driven by `costEstimated`) marks a
+ * total that includes at least one estimate rather than being entirely
+ * recorded costs.
  */
 export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
   if (ledger.byIssue.length === 0 && ledger.byWeek.length === 0) {
@@ -240,9 +260,12 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
         </Stack>
       </Group>
       <Text size="xs" c="dimmed">
-        Token totals include every session in view; cost totals include only
-        sessions with a recorded cost, so a bucket mixing measured and
-        unmeasured sessions still shows a partial dollar figure.
+        Token totals include every session in view. Cost totals use each
+        session&apos;s recorded cost where available, otherwise an estimate from
+        published Claude API rates for its model and token usage (
+        <code>~$…</code>); a session with no recorded cost and no recognized
+        model is excluded, so a bucket mixing priced and unpriced sessions still
+        shows a partial dollar figure.
       </Text>
     </Stack>
   );
