@@ -199,9 +199,15 @@ interface SeedRequest {
  *
  * `revalidateTag` with an explicit profile, not `updateTag`: this is a Route
  * Handler, and `updateTag` is Server-Action-only.
+ *
+ * `{ expire: 0 }`, not the `'max'` profile: named profiles carry
+ * stale-while-revalidate semantics, so the first request after a fixture
+ * switch could still render the PREVIOUS fixture while refreshing behind
+ * it - reintroducing exactly the run-order dependence this exists to
+ * prevent. Zero expiry drops the entry outright.
  */
 function revalidateDashboardCache() {
-  revalidateTag(GITHUB_DATA_TAG, 'max');
+  revalidateTag(GITHUB_DATA_TAG, { expire: 0 });
 }
 
 export async function POST(req: NextRequest) {

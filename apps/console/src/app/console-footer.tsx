@@ -10,15 +10,22 @@ import { ThemeToggle } from './theme-toggle';
 export function ConsoleFooter({
   generatedAt,
   refreshLabel,
+  bustsGithubCache = false,
 }: {
   generatedAt?: string;
   refreshLabel?: string;
   actions?: ReactNode;
+  /** Forwarded to RefreshButton - see its own doc. */
+  bustsGithubCache?: boolean;
 }) {
   return (
     <Group justify="center" mt="xl" gap="md">
       {generatedAt && refreshLabel && (
-        <RefreshButton generatedAt={generatedAt} initialLabel={refreshLabel} />
+        <RefreshButton
+          generatedAt={generatedAt}
+          initialLabel={refreshLabel}
+          bustsGithubCache={bustsGithubCache}
+        />
       )}
       <ThemeToggle />
       <SignOutButton />

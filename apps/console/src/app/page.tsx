@@ -247,6 +247,7 @@ async function IndexContent({ searchParams }: PageProps) {
       <ConsoleFooter
         generatedAt={generatedAt}
         refreshLabel={formatRelativeTime(generatedAt)}
+        bustsGithubCache
       />
     </Container>
   );

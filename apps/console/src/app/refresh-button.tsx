@@ -11,9 +11,16 @@ import { refreshDashboard } from './refresh-action';
 export function RefreshButton({
   generatedAt,
   initialLabel,
+  bustsGithubCache = false,
 }: {
   generatedAt: string;
   initialLabel: string;
+  /** Whether this page renders cached GitHub data (see
+   * lib/dashboard-data.ts). Only the Queue and Agents pages do; the session
+   * pages read Firestore/GCS, and busting the GitHub tag from there would
+   * force the next Queue visit to repeat ~30 requests for state that never
+   * changed. */
+  bustsGithubCache?: boolean;
 }) {
   const router = useRouter();
   const [label, setLabel] = useState(initialLabel);
@@ -46,7 +53,7 @@ export function RefreshButton({
             startTransition(async () => {
               // Drop the cached GitHub read first, then re-render against
               // the fresh one - see refreshDashboard's own comment.
-              await refreshDashboard();
+              if (bustsGithubCache) await refreshDashboard();
               router.refresh();
             })
           }

@@ -198,6 +198,7 @@ async function AgentsPageContent({ searchParams }: PageProps) {
       <ConsoleFooter
         generatedAt={generatedAt}
         refreshLabel={formatRelativeTime(generatedAt)}
+        bustsGithubCache
       />
     </Container>
   );
