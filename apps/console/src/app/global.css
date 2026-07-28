@@ -36,9 +36,16 @@
    unmistakably-LCARS structural device on the page. The active page's
    segment is solid-filled; the others sit as quiet outlines in the same
    accent, so the row reads as one console control rather than a list of
-   links. */
+   links.
 
-.lcars-nav {
+   `.lcars-tab-nav` is the same layout applied to in-page tab switches (e.g.
+   the sessions page's Sessions/Costs tabs, #192) - a distinct class from
+   `.lcars-nav` (rather than reusing it directly) so `nav.lcars-nav` stays a
+   locator that matches only the one top-level pill rail per page, not a
+   page's own sub-nav too. */
+
+.lcars-nav,
+.lcars-tab-nav {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
