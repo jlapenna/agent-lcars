@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState, useTransition } from 'react';
 
 import { formatRelativeTime } from './format';
+import { refreshDashboard } from './refresh-action';
 
 export function RefreshButton({
   generatedAt,
@@ -41,7 +42,14 @@ export function RefreshButton({
           size="sm"
           loading={isPending}
           aria-label="Refresh"
-          onClick={() => startTransition(() => router.refresh())}
+          onClick={() =>
+            startTransition(async () => {
+              // Drop the cached GitHub read first, then re-render against
+              // the fresh one - see refreshDashboard's own comment.
+              await refreshDashboard();
+              router.refresh();
+            })
+          }
         >
           <IconRefresh aria-hidden="true" size={16} stroke={1.5} />
         </ActionIcon>

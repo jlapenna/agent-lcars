@@ -1,12 +1,17 @@
 import { Anchor, Container } from '@mantine/core';
+import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
 import { type ActionItem } from '../../lib/action-items';
-import { getAgentActivity } from '../../lib/agent-activity';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
+import {
+  getCachedActionItems,
+  getCachedAgentActivity,
+  oldestFetchedAt,
+} from '../../lib/dashboard-data';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
@@ -17,23 +22,21 @@ import {
 } from '../../lib/github-client';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
-import { getActionItems } from '../actions';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader } from '../console-header';
 import { formatRelativeTime } from '../format';
+import { PageLoading } from '../page-loading';
 import { ActiveAgentsSection } from './active-agents-section';
 import { ClaimedIdleSection } from './claimed-idle-section';
 import { FleetSnapshotBar } from './fleet-snapshot-bar';
 import { RecentOutcomesSection } from './recent-outcomes-section';
 
-export const dynamic = 'force-dynamic';
-
 interface PageProps {
   searchParams: Promise<{ repo?: string }>;
 }
 
-export default async function AgentsPage({ searchParams }: PageProps) {
+async function AgentsPageContent({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
 
@@ -43,13 +46,16 @@ export default async function AgentsPage({ searchParams }: PageProps) {
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
 
   const [
-    { items, warnings: itemWarnings },
-    activity,
+    {
+      data: { items, warnings: itemWarnings },
+      fetchedAt: itemsAt,
+    },
+    { data: activity, fetchedAt: activityAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
-    getActionItems(),
-    getAgentActivity(),
+    getCachedActionItems(),
+    getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
   ]);
@@ -114,7 +120,7 @@ export default async function AgentsPage({ searchParams }: PageProps) {
     activeSessions,
   );
 
-  const generatedAt = new Date().toISOString();
+  const generatedAt = oldestFetchedAt(itemsAt, activityAt);
 
   // Applied last, after every cross-repo join above already ran against the
   // full, unfiltered data - see page.tsx's identical comment for why.
@@ -194,5 +200,16 @@ export default async function AgentsPage({ searchParams }: PageProps) {
         refreshLabel={formatRelativeTime(generatedAt)}
       />
     </Container>
+  );
+}
+
+// `cacheComponents` requires uncached data access to sit inside a Suspense
+// boundary, so the page body streams in behind 5-row placeholder rather
+// than blocking the whole route on the GitHub/Firestore reads.
+export default function AgentsPage({ searchParams }: PageProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={5} />}>
+      <AgentsPageContent searchParams={searchParams} />
+    </Suspense>
   );
 }

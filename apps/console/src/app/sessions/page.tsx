@@ -1,4 +1,5 @@
 import { Card, Container } from '@mantine/core';
+import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -11,10 +12,9 @@ import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
+import { PageLoading } from '../page-loading';
 import { LedgerTables } from './ledger-tables';
 import { SessionTable } from './session-table';
-
-export const dynamic = 'force-dynamic';
 
 interface PageProps {
   searchParams: Promise<{
@@ -45,7 +45,7 @@ function describeWindow(query: {
  * params are parsed defensively by parseSessionArchiveQuery; there's no form
  * to validate against, a maintainer edits the URL bar directly.
  */
-export default async function SessionsPage({ searchParams }: PageProps) {
+async function SessionsPageContent({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
 
@@ -86,5 +86,16 @@ export default async function SessionsPage({ searchParams }: PageProps) {
         refreshLabel={formatRelativeTime(generatedAt)}
       />
     </Container>
+  );
+}
+
+// `cacheComponents` requires uncached data access to sit inside a Suspense
+// boundary, so the page body streams in behind 6-row placeholder rather
+// than blocking the whole route on the GitHub/Firestore reads.
+export default function SessionsPage({ searchParams }: PageProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={6} />}>
+      <SessionsPageContent searchParams={searchParams} />
+    </Suspense>
   );
 }
