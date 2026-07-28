@@ -294,7 +294,7 @@ export function LiveRunRow({
         <PipelineBadge pipeline={run.pipeline} />
         <RepoBadge repo={run.repo} />
         <Anchor
-          href={item?.url ?? run.url}
+          href={item?.url ?? issueUrlForRun(run) ?? run.url}
           target="_blank"
           rel="noreferrer"
           size="sm"
@@ -302,6 +302,7 @@ export function LiveRunRow({
           c="inherit"
           truncate
           style={{ minWidth: 0 }}
+          data-testid="live-run-issue-link"
         >
           {item ? `#${item.number} ${item.title}` : displayRunTitle(run)}
         </Anchor>
@@ -326,6 +327,16 @@ export function LiveRunRow({
           >
             View run ↗
           </Anchor>
+          {session && (
+            <Anchor
+              href={`/sessions/${session.sessionId}`}
+              size="xs"
+              c="dimmed"
+              data-testid="live-run-session-link"
+            >
+              session
+            </Anchor>
+          )}
           <CancelRunButton
             repo={run.repo}
             runId={run.id}
