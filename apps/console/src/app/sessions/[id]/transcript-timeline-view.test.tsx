@@ -1,9 +1,20 @@
 import type { TranscriptTimelineEvent } from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { TranscriptTimelineView } from './transcript-timeline-view';
+
+// react-markdown/remark-gfm are ESM-only (unified ecosystem) - stubbed here
+// rather than added to the jest.config esmModules allowlist, matching the
+// existing pattern in artifact-viewer.test.tsx.
+vi.mock('react-markdown', () => ({
+  __esModule: true,
+  default: ({ children }: { children: string }) => (
+    <div data-testid="markdown-stub">{children}</div>
+  ),
+}));
+vi.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
 
 function renderTimeline(
   events: Parameters<typeof TranscriptTimelineView>[0]['events'],
