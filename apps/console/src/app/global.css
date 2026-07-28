@@ -31,6 +31,72 @@
   text-transform: uppercase;
 }
 
+/* ---- Page header elbow ----
+   The marquee LCARS structural device: a swept corner bar - the same
+   vertical-stripe-plus-curved-cap shape `.lcars-panel` uses for cards (see
+   below), scaled up as the one full-bleed accent anchoring the page title,
+   echoing where classic LCARS screens anchor their corner piece. The
+   segmented signal bar below the title reuses the nav rail's own three
+   accent colors, previewing the rail before it appears. */
+
+.lcars-header {
+  position: relative;
+  padding-left: 2.5rem;
+}
+
+.lcars-header::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 10px;
+  background: var(--mantine-color-orange-6);
+}
+
+.lcars-header::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2.5rem;
+  height: 0.85rem;
+  background: var(--mantine-color-orange-6);
+  border-bottom-right-radius: 1rem;
+}
+
+.lcars-header-title {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lcars-header-bar {
+  display: flex;
+  gap: 4px;
+  height: 6px;
+  margin: 0.75rem 0 0 -2.5rem;
+}
+
+.lcars-header-bar-segment {
+  flex: none;
+  border-radius: 999px;
+}
+
+.lcars-header-bar-segment[data-accent='amber'] {
+  width: 4.5rem;
+  background: var(--mantine-color-orange-6);
+}
+
+.lcars-header-bar-segment[data-accent='periwinkle'] {
+  width: 2rem;
+  background: var(--mantine-color-violet-5);
+}
+
+.lcars-header-bar-segment[data-accent='teal'] {
+  flex: 1 1 auto;
+  max-width: 8rem;
+  background: var(--mantine-color-teal-6);
+}
+
 /* ---- Signature: LCARS pill nav rail ----
    A row of fully-rounded, adjoining color-blocked segments — the one
    unmistakably-LCARS structural device on the page. The active page's
