@@ -8,7 +8,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentActivity, AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
-import { AgentActivityPanel, SourceBadge } from './agent-activity-panel';
+import {
+  AgentActivityPanel,
+  type RunItemRef,
+  SourceBadge,
+} from './agent-activity-panel';
 
 // CancelRunButton is a 'use server' client component wired to backend
 // actions - out of scope here, matching the pattern in
@@ -75,6 +79,7 @@ function renderPanel(
   cliSessions: CliSession[],
   activity: AgentActivity = EMPTY_ACTIVITY,
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>,
+  itemsByRunId?: Record<number, RunItemRef>,
 ) {
   render(
     <MantineProvider>
@@ -82,6 +87,7 @@ function renderPanel(
         activity={activity}
         cliSessions={cliSessions}
         sessionsByRunId={sessionsByRunId}
+        itemsByRunId={itemsByRunId}
       />
     </MantineProvider>,
   );
@@ -427,6 +433,73 @@ describe('AgentActivityPanel recent runs', () => {
       recentRuns: [makeAgentRun({ id: 15 })],
     });
     expect(screen.queryByTestId('finished-run-session-link')).toBeNull();
+  });
+});
+
+describe('AgentActivityPanel live run links (#176)', () => {
+  it('links a live run to its joined item when one exists', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        liveRuns: [makeAgentRun({ id: 30, status: 'running' })],
+      },
+      undefined,
+      {
+        30: {
+          number: 42,
+          title: 'Fix the thing',
+          url: 'https://github.com/o/r/issues/42',
+        },
+      },
+    );
+    const link = screen.getByTestId('live-run-issue-link');
+    expect(link.getAttribute('href')).toBe('https://github.com/o/r/issues/42');
+  });
+
+  it('falls back to the direct issue link (not the raw run URL) when no item is joined but issueNumber parses', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [makeAgentRun({ id: 31, status: 'running', issueNumber: 99 })],
+    });
+    const link = screen.getByTestId('live-run-issue-link');
+    expect(link.getAttribute('href')).toBe(
+      'https://github.com/supersprinklesracing/sprinkles/issues/99',
+    );
+  });
+
+  it('falls back to the raw run URL only when issueNumber cannot be parsed either', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({ id: 32, status: 'running', issueNumber: undefined }),
+      ],
+    });
+    const link = screen.getByTestId('live-run-issue-link');
+    expect(link.getAttribute('href')).toBe(
+      'https://github.com/o/r/actions/runs/1',
+    );
+  });
+
+  it('links to the session detail page when a session doc is joined to a live run', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        liveRuns: [makeAgentRun({ id: 33, status: 'running' })],
+      },
+      { 33: makeIssueAgentSessionDoc({ sessionId: 'session-runner-33' }) },
+    );
+    const link = screen.getByTestId('live-run-session-link');
+    expect(link.getAttribute('href')).toBe('/sessions/session-runner-33');
+  });
+
+  it('renders no session link on a live run when no session doc is joined', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [makeAgentRun({ id: 34, status: 'running' })],
+    });
+    expect(screen.queryByTestId('live-run-session-link')).toBeNull();
   });
 });
 
