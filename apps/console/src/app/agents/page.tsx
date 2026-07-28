@@ -1,4 +1,4 @@
-import { Anchor, Container } from '@mantine/core';
+import { Anchor, Box, Container } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -19,12 +19,13 @@ import {
   repoDisplayName,
   repoItemKey,
   repoKey,
+  type WatchedRepo,
 } from '../../lib/github-client';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleFooter } from '../console-footer';
-import { ConsoleHeader } from '../console-header';
+import { ConsoleHeader, DataWarnings } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { PageLoading } from '../page-loading';
 import { ActiveAgentsSection } from './active-agents-section';
@@ -36,12 +37,11 @@ interface PageProps {
   searchParams: Promise<{ repo?: string }>;
 }
 
-async function AgentsPageContent({ searchParams }: PageProps) {
-  const session = await auth();
-  assertAdmin(session, '/login');
-
-  const watchedRepos = getWatchedRepos();
-  const repoFilter = parseRepoFilterParam((await searchParams).repo);
+async function AgentsPageBody({
+  repoFilter,
+}: {
+  repoFilter: WatchedRepo | undefined;
+}) {
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
 
@@ -145,6 +145,58 @@ async function AgentsPageContent({ searchParams }: PageProps) {
     matchesFilter(item.repo),
   );
 
+  return (
+    <>
+      {warnings.length > 0 && (
+        <Box mb="xl">
+          <DataWarnings warnings={warnings} />
+        </Box>
+      )}
+
+      <FleetSnapshotBar
+        activity={filteredActivity}
+        activeCliSessionCount={filteredActiveSessions.length}
+      />
+
+      <ActiveAgentsSection
+        liveRuns={filteredActivity.liveRuns}
+        itemsByRunId={itemsByRunId}
+        activeSessions={filteredActiveSessions}
+        items={filteredItems}
+        sessionsByRunId={sessionsByRunId}
+      />
+
+      <ClaimedIdleSection items={filteredClaimedIdle} />
+
+      <RecentOutcomesSection
+        recentRuns={filteredActivity.recentRuns}
+        sessionsByRunId={sessionsByRunId}
+      />
+
+      <ConsoleFooter
+        generatedAt={generatedAt}
+        refreshLabel={formatRelativeTime(generatedAt)}
+        bustsGithubCache
+      />
+    </>
+  );
+}
+
+/**
+ * Auth-gate, title/subtitle, and nav render eagerly here - none of it needs
+ * the slow GitHub/Firestore reads `AgentsPageBody` fetches, so this shell
+ * only has to wait on `auth()` and `searchParams` (both fast, no network),
+ * not the ~30-request fleet activity fetch. That keeps the header off the
+ * streamed placeholder `AgentsPageBody`'s own Suspense boundary shows while
+ * its data resolves - see #160.
+ */
+async function AgentsPageShell({ searchParams }: PageProps) {
+  const session = await auth();
+  assertAdmin(session, '/login');
+
+  const watchedRepos = getWatchedRepos();
+  const repoFilter = parseRepoFilterParam((await searchParams).repo);
+
   const subtitlePrefix =
     watchedRepos.length <= 1
       ? undefined
@@ -172,45 +224,24 @@ async function AgentsPageContent({ searchParams }: PageProps) {
             )}
           </>
         }
-        warnings={warnings}
       />
 
-      <FleetSnapshotBar
-        activity={filteredActivity}
-        activeCliSessionCount={filteredActiveSessions.length}
-      />
-
-      <ActiveAgentsSection
-        liveRuns={filteredActivity.liveRuns}
-        itemsByRunId={itemsByRunId}
-        activeSessions={filteredActiveSessions}
-        items={filteredItems}
-        sessionsByRunId={sessionsByRunId}
-      />
-
-      <ClaimedIdleSection items={filteredClaimedIdle} />
-
-      <RecentOutcomesSection
-        recentRuns={filteredActivity.recentRuns}
-        sessionsByRunId={sessionsByRunId}
-      />
-
-      <ConsoleFooter
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
-        bustsGithubCache
-      />
+      <Suspense fallback={<PageLoading rows={5} header={false} />}>
+        <AgentsPageBody repoFilter={repoFilter} />
+      </Suspense>
     </Container>
   );
 }
 
 // `cacheComponents` requires uncached data access to sit inside a Suspense
-// boundary, so the page body streams in behind 5-row placeholder rather
-// than blocking the whole route on the GitHub/Firestore reads.
+// boundary, so `AgentsPageShell` (auth() + searchParams, both fast) streams
+// in behind a 5-row placeholder rather than blocking on those; its own
+// nested Suspense around `AgentsPageBody` covers the slow GitHub/Firestore
+// reads separately, so the header never waits on those (see #160).
 export default function AgentsPage({ searchParams }: PageProps) {
   return (
     <Suspense fallback={<PageLoading rows={5} />}>
-      <AgentsPageContent searchParams={searchParams} />
+      <AgentsPageShell searchParams={searchParams} />
     </Suspense>
   );
 }
