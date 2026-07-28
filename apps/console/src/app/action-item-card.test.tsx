@@ -19,6 +19,16 @@ vi.mock('./retrigger-button', () => ({
     <div data-testid="retrigger-button" data-pipeline={pipeline ?? 'claude'} />
   ),
 }));
+// react-markdown/remark-gfm are ESM-only (unified ecosystem) - stubbed here
+// rather than added to the jest.config esmModules allowlist, matching the
+// existing pattern in artifact-viewer.test.tsx.
+vi.mock('react-markdown', () => ({
+  __esModule: true,
+  default: ({ children }: { children: string }) => (
+    <div data-testid="markdown-stub">{children}</div>
+  ),
+}));
+vi.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -352,6 +362,27 @@ describe('ActionItemCard', () => {
       renderCard(makeItem({ actionTypes: [] }));
 
       expect(screen.queryByTestId('silent-error-diagnosis')).toBeNull();
+    });
+  });
+
+  describe('last-comment preview', () => {
+    it('renders the comment body through the markdown renderer (#171)', () => {
+      renderCard(
+        makeItem({
+          lastCommentBody: '**bold** and a [link](https://example.com)',
+          lastCommentUrl: 'https://github.com/o/r/issues/1#issuecomment-1',
+        }),
+      );
+
+      expect(screen.getByTestId('markdown-stub').textContent).toBe(
+        '**bold** and a [link](https://example.com)',
+      );
+    });
+
+    it('renders nothing when the item has no last comment', () => {
+      renderCard(makeItem());
+
+      expect(screen.queryByTestId('markdown-stub')).toBeNull();
     });
   });
 });
