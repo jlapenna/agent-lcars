@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import {
   checkRuns,
+  enrichmentGraphql,
   issueComments,
   openIssues,
   openPulls,
@@ -95,5 +96,29 @@ export async function GET(
   }
 
   console.error('agent-lcars: no e2e GitHub fixture for /%s', path.join('/'));
+  return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+}
+
+/**
+ * `POST /graphql`. Octokit's `graphql()` posts to `{baseUrl}/graphql`, so
+ * pointing the client at this fixture catches the enrichment query too -
+ * without this the console would reach past the fixture to the real API
+ * mid-suite (and 401, having no real token).
+ */
+export async function POST(
+  _req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  if (!isE2eTesting()) {
+    return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+  }
+  const { path } = await params;
+  if (path[0] === 'graphql') {
+    return NextResponse.json({ data: enrichmentGraphql() });
+  }
+  console.error(
+    'agent-lcars: no e2e GitHub fixture for POST /%s',
+    path.join('/'),
+  );
   return NextResponse.json({ message: 'Not Found' }, { status: 404 });
 }
