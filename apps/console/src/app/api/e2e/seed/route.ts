@@ -9,8 +9,10 @@ import {
   upsertSession,
 } from '@agent-lcars/telemetry/server';
 import { isE2eTesting } from '@repo/util-server';
+import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 
+import { GITHUB_DATA_TAG } from '../../../../lib/cache-tags';
 import { E2E_FIXTURE_BRANCH } from '../../../../lib/e2e-fixtures';
 import {
   E2E_FIXTURE_REPO,
@@ -189,6 +191,25 @@ interface SeedRequest {
  * itself writes here (never the Playwright test process, whose writes
  * wouldn't reach the store the running app server reads).
  */
+/**
+ * Seeding changes what the fixture GitHub API will answer, so it has to drop
+ * the dashboard's cached read of it (lib/dashboard-data.ts) - otherwise a
+ * spec that loaded any page before seeding would keep rendering the pre-seed
+ * response, and whether it passed would depend on how fast the spec ran.
+ *
+ * `revalidateTag` with an explicit profile, not `updateTag`: this is a Route
+ * Handler, and `updateTag` is Server-Action-only.
+ *
+ * `{ expire: 0 }`, not the `'max'` profile: named profiles carry
+ * stale-while-revalidate semantics, so the first request after a fixture
+ * switch could still render the PREVIOUS fixture while refreshing behind
+ * it - reintroducing exactly the run-order dependence this exists to
+ * prevent. Zero expiry drops the entry outright.
+ */
+function revalidateDashboardCache() {
+  revalidateTag(GITHUB_DATA_TAG, { expire: 0 });
+}
+
 export async function POST(req: NextRequest) {
   if (!isE2eTesting()) {
     return NextResponse.json(
@@ -202,6 +223,7 @@ export async function POST(req: NextRequest) {
 
     if (body.action === 'reset') {
       setPopulatedFixtures(false);
+      revalidateDashboardCache();
       const firestore = getAgentTelemetryWriterFirestore();
       const snapshot = await firestore.collection(SESSIONS_COLLECTION).get();
       await Promise.all(snapshot.docs.map((doc) => doc.ref.delete()));
@@ -210,6 +232,7 @@ export async function POST(req: NextRequest) {
 
     const populated = body.action === 'seed-populated';
     setPopulatedFixtures(populated);
+    revalidateDashboardCache();
     const docs = populated
       ? [...fixtureSessions(), fixtureIssueAgentSession()]
       : fixtureSessions();

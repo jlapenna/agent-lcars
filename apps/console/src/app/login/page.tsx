@@ -1,11 +1,11 @@
 import { Button, Center, Stack, Text, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 
 import { auth, signIn } from '../../auth';
+import { PageLoading } from '../page-loading';
 
-export const dynamic = 'force-dynamic';
-
-export default async function LoginPage() {
+async function LoginPageContent() {
   const session = await auth();
   if (session?.user?.isAdmin) {
     redirect('/');
@@ -30,5 +30,16 @@ export default async function LoginPage() {
         </form>
       </Stack>
     </Center>
+  );
+}
+
+// `cacheComponents` requires uncached data access to sit inside a Suspense
+// boundary, so the page body streams in behind 2-row placeholder rather
+// than blocking the whole route on the GitHub/Firestore reads.
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<PageLoading rows={2} />}>
+      <LoginPageContent />
+    </Suspense>
   );
 }

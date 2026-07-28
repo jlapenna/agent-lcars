@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, updateTag } from 'next/cache';
 
 import { createAdminAction } from '@/lib/auth-guards';
 
@@ -23,6 +23,7 @@ import {
   retriggerIssue as retriggerIssueLib,
   updatePrBranch,
 } from '../lib/backend-actions';
+import { GITHUB_DATA_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
 
@@ -72,6 +73,21 @@ export async function getActionItems(): Promise<ActionItemsResult> {
   return fetchActionItems();
 }
 
+/**
+ * Everything a mutation has to invalidate. `revalidatePath` alone would
+ * re-render the page against the still-cached GitHub read (see
+ * lib/dashboard-data.ts), so a merge or a reply could appear not to have
+ * happened until the cache lifetime elapsed.
+ *
+ * `updateTag`, not `revalidateTag`: this runs inside a Server Action, and
+ * read-your-own-writes is exactly the semantic a mutation needs - the
+ * caller must see its own effect on the very next render.
+ */
+function revalidateDashboard() {
+  updateTag(GITHUB_DATA_TAG);
+  revalidatePath('/');
+}
+
 export async function replyToItem(
   repo: WatchedRepo,
   number: number,
@@ -81,7 +97,7 @@ export async function replyToItem(
   await requireAdmin();
   try {
     await postComment(resolveWatchedRepo(repo), number, body, labels);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -95,7 +111,7 @@ export async function mergePr(
   await requireAdmin();
   try {
     await approveAndMergePr(resolveWatchedRepo(repo), number);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -109,7 +125,7 @@ export async function rebasePr(
   await requireAdmin();
   try {
     await updatePrBranch(resolveWatchedRepo(repo), number);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -123,7 +139,7 @@ export async function approveAndRebase(
   await requireAdmin();
   try {
     await approveAndRebasePr(resolveWatchedRepo(repo), number);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -139,7 +155,7 @@ export async function retriggerIssue(
   await requireAdmin();
   try {
     await retriggerIssueLib(resolveWatchedRepo(repo), number, note, pipeline);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -153,7 +169,7 @@ export async function cancelRun(
   await requireAdmin();
   try {
     await cancelWorkflowRunLib(resolveWatchedRepo(repo), runId);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -186,7 +202,7 @@ export async function createQuickTask(
       repo && resolveWatchedRepo(repo),
       pipeline,
     );
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true, url, number };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -200,7 +216,7 @@ export async function closeIssue(
   await requireAdmin();
   try {
     await closeIssueLib(resolveWatchedRepo(repo), number);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -214,7 +230,7 @@ export async function clearHumanNeeded(
   await requireAdmin();
   try {
     await clearHumanNeededLabel(resolveWatchedRepo(repo), number);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -229,7 +245,7 @@ export async function reassignPipeline(
   await requireAdmin();
   try {
     await reassignPipelineLib(resolveWatchedRepo(repo), number, pipeline);
-    revalidatePath('/');
+    revalidateDashboard();
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };

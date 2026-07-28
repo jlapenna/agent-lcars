@@ -10,6 +10,7 @@ import {
   Title,
 } from '@mantine/core';
 import { notFound } from 'next/navigation';
+import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -18,11 +19,10 @@ import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleFooter } from '../../console-footer';
 import { formatRelativeTime } from '../../format';
+import { PageLoading } from '../../page-loading';
 import { RefreshButton } from '../../refresh-button';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
-
-export const dynamic = 'force-dynamic';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -99,7 +99,7 @@ export function ArchivedSessionTranscript({
  * a warning rather than a 500 - see session-detail.ts/session-transcript.ts
  * for where each of those is absorbed.
  */
-export default async function SessionDetailPage({ params }: PageProps) {
+async function SessionDetailPageContent({ params }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
 
@@ -152,5 +152,16 @@ export default async function SessionDetailPage({ params }: PageProps) {
 
       <ConsoleFooter />
     </Container>
+  );
+}
+
+// `cacheComponents` requires uncached data access to sit inside a Suspense
+// boundary, so the page body streams in behind 4-row placeholder rather
+// than blocking the whole route on the GitHub/Firestore reads.
+export default function SessionDetailPage({ params }: PageProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={4} />}>
+      <SessionDetailPageContent params={params} />
+    </Suspense>
   );
 }

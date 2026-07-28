@@ -8,7 +8,7 @@ import { ConsoleFooter } from './console-footer';
 // server-only entrypoints - the same reason actions.test.ts stubs it. The
 // button under test only needs `signOut` to exist as a callable; the form
 // is never submitted here (jsdom has no server-action runtime).
-vi.mock('../auth', () => ({ signOut: vi.fn() }));
+vi.mock('../auth', () => ({ signOut: vi.fn(), auth: vi.fn() }));
 
 function renderFooter() {
   return render(

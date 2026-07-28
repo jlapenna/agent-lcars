@@ -1,4 +1,5 @@
 import { Anchor, Container } from '@mantine/core';
+import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -8,8 +9,12 @@ import {
   isDeployWaitOnly,
   isHandedBack,
 } from '../lib/action-items';
-import { getAgentActivity } from '../lib/agent-activity';
 import { getCliSessions } from '../lib/cli-sessions';
+import {
+  getCachedActionItems,
+  getCachedAgentActivity,
+  oldestFetchedAt,
+} from '../lib/dashboard-data';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
@@ -25,15 +30,13 @@ import {
 } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
-import { getActionItems } from './actions';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleFooter } from './console-footer';
 import { ConsoleHeader } from './console-header';
 import { formatCompactRelativeTime, formatRelativeTime } from './format';
+import { PageLoading } from './page-loading';
 import { QuickTaskButton } from './quick-task-button';
 import { UnstickPrsButton } from './unstick-prs-button';
-
-export const dynamic = 'force-dynamic';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -47,7 +50,7 @@ interface PageProps {
   searchParams: Promise<{ repo?: string }>;
 }
 
-export default async function Index({ searchParams }: PageProps) {
+async function IndexContent({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
 
@@ -55,13 +58,16 @@ export default async function Index({ searchParams }: PageProps) {
   const repoFilter = parseRepoFilterParam((await searchParams).repo);
 
   const [
-    { items: rawItems, warnings: itemWarnings },
-    activity,
+    {
+      data: { items: rawItems, warnings: itemWarnings },
+      fetchedAt: itemsAt,
+    },
+    { data: activity, fetchedAt: activityAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
-    getActionItems(),
-    getAgentActivity(),
+    getCachedActionItems(),
+    getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
   ]);
@@ -153,7 +159,7 @@ export default async function Index({ searchParams }: PageProps) {
     (item) => isDeployWaitOnly(item) && !isHandedBack(item),
   );
   const rest = idle.filter((item) => item.actionTypes.length === 0);
-  const generatedAt = new Date().toISOString();
+  const generatedAt = oldestFetchedAt(itemsAt, activityAt);
 
   // Applied last, after every cross-repo join above (itemsByRunId,
   // liveRunFor, silent-error diagnoses) already ran against the full,
@@ -241,7 +247,19 @@ export default async function Index({ searchParams }: PageProps) {
       <ConsoleFooter
         generatedAt={generatedAt}
         refreshLabel={formatRelativeTime(generatedAt)}
+        bustsGithubCache
       />
     </Container>
+  );
+}
+
+// `cacheComponents` requires uncached data access to sit inside a Suspense
+// boundary, so the page body streams in behind 6-row placeholder rather
+// than blocking the whole route on the GitHub/Firestore reads.
+export default function Index({ searchParams }: PageProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={6} />}>
+      <IndexContent searchParams={searchParams} />
+    </Suspense>
   );
 }
