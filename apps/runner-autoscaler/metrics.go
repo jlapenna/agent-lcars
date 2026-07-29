@@ -13,6 +13,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// The complete set of `reason` label values placementBlocked is ever
+// incremented with. Keeping them here — rather than as literals at each
+// scaler.go call site — is what keeps the label bounded: a reason invented
+// inline would silently add a new Prometheus time series per scale set.
+const (
+	placementReasonFleetLimit = "fleet_limit"
+	placementReasonHostLimits = "host_limits"
+	// A shared-workdir scale set allows at most one runner per host, so it
+	// can exhaust placement while every host is reachable and under its
+	// own runner limit. Distinct from host_limits for that reason.
+	placementReasonSharedWorkDirExclusive = "shared_workdir_exclusive"
+)
+
 var (
 	metricsOnce                   sync.Once
 	orchestratorSchedulerReady    atomic.Bool
@@ -176,7 +189,9 @@ var (
 	}, []string{"scale_set", "host"})
 	placementBlocked = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_placement_blocked_total",
-		Help: "Placement attempts blocked by a fleet scheduling invariant.",
+		Help: "Placement attempts blocked by a fleet scheduling invariant, by reason: " +
+			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
+			placementReasonSharedWorkDirExclusive + ".",
 	}, []string{"scale_set", "reason"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
