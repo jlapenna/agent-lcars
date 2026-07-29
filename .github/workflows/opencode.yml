@@ -253,20 +253,21 @@ jobs:
           set -uo pipefail
           found=""
 
-          # Excludes app/claude explicitly so this check can't credit
-          # opencode with a DIFFERENT pipeline's pre-existing PR just
-          # because its updatedAt happened to fall after this run's start.
+          # Excludes canonical claude[bot] explicitly so this check can't
+          # credit opencode with a DIFFERENT pipeline's pre-existing PR just
+          # because its updated_at happened to fall after this run's start.
+          # The REST pulls endpoint keeps bot logins in the repo's canonical
+          # login[bot] shape; see docs/bot-identity-formats.md.
           # Only matters when both pipelines are dispatched against
           # overlapping issues (a testing artifact, not normal usage), but
           # cheap to guard against.
           # test(...) boundary, not contains(): an unanchored substring
-          # match on "#4" also hits "#42"/"#400" in any PR title/body. -S
-          # "sort:updated-desc" so a push to an OLDER existing PR isn't
-          # missed once >50 PRs exist (default sort is by creation date).
-          prs=$(gh pr list --repo "$REPO" --state all --limit 50 -S "sort:updated-desc" \
-            --json number,title,body,updatedAt,author \
-            --jq "[.[] | select(.updatedAt >= \"$STARTED_AT\")
-                       | select(.author.login != \"app/claude\")
+          # match on "#4" also hits "#42"/"#400" in any PR title/body.
+          # sort=updated&direction=desc ensures a push to an OLDER existing
+          # PR isn't missed once >50 PRs exist (default sort is by creation date).
+          prs=$(gh api "repos/$REPO/pulls?state=all&sort=updated&direction=desc&per_page=50" \
+            --jq "[.[] | select(.updated_at >= \"$STARTED_AT\")
+                       | select(.user.login != \"claude[bot]\")
                        | select((.title + \" \" + (.body // \"\")) | test(\"#$NUM([^0-9]|\$)\"))]
                   | length" 2>/dev/null || echo 0)
           if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM created/updated since $STARTED_AT"; fi
