@@ -141,15 +141,20 @@ type FleetPlacementFile struct {
 }
 
 type ScaleSetConfigFile struct {
-	Name              string   `yaml:"name"`
-	Labels            []string `yaml:"labels"`
-	RunnerImage       string   `yaml:"runner_image"`
-	RunnerMemory      string   `yaml:"runner_memory,omitempty"`
-	MinRunners        int      `yaml:"min_runners"`
-	MaxRunners        int      `yaml:"max_runners"`
-	Weight            int      `yaml:"weight,omitempty"`
-	MountDockerSocket bool     `yaml:"mount_docker_socket,omitempty"`
-	ShareWorkDir      bool     `yaml:"share_workdir,omitempty"`
+	Name         string   `yaml:"name"`
+	Labels       []string `yaml:"labels"`
+	RunnerImage  string   `yaml:"runner_image"`
+	RunnerMemory string   `yaml:"runner_memory,omitempty"`
+	// PidsLimit and ShmSize are homelab additions restoring what e2e.yml's
+	// dropped job-level `container:` block carried (homelab#148); see
+	// Config.RunnerPidsLimit / Config.RunnerShmSize.
+	PidsLimit         int64  `yaml:"pids_limit,omitempty"`
+	ShmSize           string `yaml:"shm_size,omitempty"`
+	MinRunners        int    `yaml:"min_runners"`
+	MaxRunners        int    `yaml:"max_runners"`
+	Weight            int    `yaml:"weight,omitempty"`
+	MountDockerSocket bool   `yaml:"mount_docker_socket,omitempty"`
+	ShareWorkDir      bool   `yaml:"share_workdir,omitempty"`
 	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
 	// See Config.FileMounts and fleet.file_mount_allowlist.
 	FileMounts []string `yaml:"file_mounts,omitempty"`
@@ -564,6 +569,14 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 				return nil, 0, fmt.Errorf("scale set %q has invalid runner_memory %q", s.Name, s.RunnerMemory)
 			}
 		}
+		if s.PidsLimit < 0 {
+			return nil, 0, fmt.Errorf("scale set %q has invalid pids_limit %d", s.Name, s.PidsLimit)
+		}
+		if s.ShmSize != "" {
+			if n, err := units.RAMInBytes(s.ShmSize); err != nil || n <= 0 {
+				return nil, 0, fmt.Errorf("scale set %q has invalid shm_size %q", s.Name, s.ShmSize)
+			}
+		}
 		fileMounts, err := parseFileMounts(s.Name, s.FileMounts, r.Raw.Fleet.FileMountAllowlist)
 		if err != nil {
 			return nil, 0, err
@@ -573,7 +586,8 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 		out = append(out, Config{
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
-			RunnerMemory: s.RunnerMemory, MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
+			RunnerMemory: s.RunnerMemory, RunnerPidsLimit: s.PidsLimit, RunnerShmSize: s.ShmSize,
+			MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
 			MountDockerSocket: s.MountDockerSocket, ShareWorkDir: s.ShareWorkDir, FileMounts: fileMounts,
 			LogLevel: r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
 		})

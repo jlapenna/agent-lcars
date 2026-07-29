@@ -251,6 +251,33 @@ describe('reduceTranscript', () => {
     expect(summary.deliverables.prNumbers).toEqual([99]);
   });
 
+  it('floors totalCostUsd at 0 when negative correction lines outweigh charges', () => {
+    const content = [
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: false,
+        uuid: 'a1',
+        timestamp: '2026-07-16T00:00:00.000Z',
+        sessionId: 'session-negative-cost',
+        costUSD: 0.02,
+        message: { role: 'assistant', content: [] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: false,
+        uuid: 'a2',
+        timestamp: '2026-07-16T00:01:00.000Z',
+        sessionId: 'session-negative-cost',
+        costUSD: -0.05,
+        message: { role: 'assistant', content: [] },
+      }),
+    ].join('\n');
+
+    const [summary] = reduceTranscript(content);
+
+    expect(summary.totalCostUsd).toBe(0);
+  });
+
   it('captures an error_max_turns result line', () => {
     const content = [
       JSON.stringify({

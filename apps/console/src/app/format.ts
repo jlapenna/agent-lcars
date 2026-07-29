@@ -61,9 +61,13 @@ export function formatDuration(totalSeconds: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-/** Running cost for the in-flight budget gauge: "$0.42", "$3.10". */
+/** Running cost for the in-flight budget gauge: "$0.42", "$3.10". Floors at
+ * $0 - a stored `totalCostUsd` can still be negative for a doc written
+ * before reducer.ts started clamping it (see docCost's doc comment in
+ * session-ledger.ts), and a negative dollar figure is never meaningful to
+ * show here regardless of which upstream value produced it. */
 export function formatCost(usd: number): string {
-  return `$${usd.toFixed(2)}`;
+  return `$${Math.max(0, usd).toFixed(2)}`;
 }
 
 /* `shareArtifactUrl` moved to lib/deployment.ts: its base URL is
