@@ -186,6 +186,9 @@ jobs:
           # exactly what the PR declared - no keyword regex of our own to
           # drift. Filtering to OPEN keeps it idempotent across the
           # pull_request and workflow_run invocations, which both reach here.
+          # SC2016: the $owner/$name/$pr below are GraphQL variables bound by
+          # the -F flags, not shell expansions - single quotes are required.
+          # shellcheck disable=SC2016
           LINKED=$(gh api graphql \
             -f query='query($owner:String!,$name:String!,$pr:Int!){
               repository(owner:$owner,name:$name){
