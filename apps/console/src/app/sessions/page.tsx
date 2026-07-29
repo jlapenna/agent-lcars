@@ -5,6 +5,11 @@ import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
 import {
+  repoDisplayName,
+  repoKey,
+  type WatchedRepo,
+} from '../../lib/github-client';
+import {
   DEFAULT_ARCHIVE_DAYS,
   getSessionArchive,
   parseSessionArchiveQuery,
@@ -31,10 +36,11 @@ function parseTab(searchParams: { tab?: string }): SessionsTab {
   return searchParams.tab === 'costs' ? 'costs' : 'sessions';
 }
 
-/** Preserves the page's other query params while toggling `view` and/or
- * `tab` - kept next to parseView/parseTab rather than in session-archive.ts,
- * since both are purely display choices and never reach getSessionArchive's
- * Firestore query (unlike days/source/issue). */
+/** Preserves the page's other query params while toggling `view`/`tab`
+ * and/or dropping the `repo` filter (the "show all repos" link) - kept next
+ * to parseView/parseTab rather than in session-archive.ts, since view/tab
+ * are purely display choices that never reach getSessionArchive's Firestore
+ * query (unlike days/source/issue/repo). */
 function displayHref(
   query: SessionArchiveQuery,
   { view, tab }: { view: SessionsView; tab: SessionsTab },
@@ -47,6 +53,7 @@ function displayHref(
   if (query.issueNumber !== undefined) {
     params.set('issue', String(query.issueNumber));
   }
+  if (query.repo) params.set('repo', repoKey(query.repo));
   if (view === 'by-issue') params.set('view', 'by-issue');
   if (tab === 'costs') params.set('tab', 'costs');
   const qs = params.toString();
@@ -66,6 +73,7 @@ interface PageProps {
     days?: string;
     source?: string;
     issue?: string;
+    repo?: string;
     view?: string;
     tab?: string;
   }>;
@@ -75,8 +83,10 @@ function describeWindow(query: {
   days: number;
   source?: string;
   issueNumber?: number;
+  repo?: WatchedRepo;
 }): string {
   const parts = [`last ${query.days} day${query.days === 1 ? '' : 's'}`];
+  if (query.repo) parts.push(repoDisplayName(query.repo));
   if (query.source) parts.push(`source=${query.source}`);
   if (query.issueNumber !== undefined)
     parts.push(`issue #${query.issueNumber}`);
@@ -235,12 +245,15 @@ function ViewToggle({
 
 /**
  * The session archive: every CLI and issue-agent session (not just the last
- * 24h the dashboard shows), searchable by three plain query params
- * (`days`/`source`/`issue`) - deliberately no filter chrome beyond that
- * (#2694/#3019's "no speculative widgets" rule still applies here, even
- * though this route can otherwise be denser than the dashboard). Query
- * params are parsed defensively by parseSessionArchiveQuery; there's no form
- * to validate against, a maintainer edits the URL bar directly.
+ * 24h the dashboard shows), searchable by four plain query params
+ * (`days`/`source`/`issue`/`repo`) - deliberately no filter chrome beyond
+ * that (#2694/#3019's "no speculative widgets" rule still applies here,
+ * even though this route can otherwise be denser than the dashboard).
+ * `repo` matches the dashboard/`/agents` `?repo=owner/name` convention
+ * (parseRepoFilterParam) and gets the same "show all repos" escape hatch
+ * those pages show once it narrows the view. Query params are parsed
+ * defensively by parseSessionArchiveQuery; there's no form to validate
+ * against, a maintainer edits the URL bar directly.
  *
  * Unlike the dashboard/agents pages, the subtitle can't render eagerly in
  * full - it includes the fetched row count. Only that count sits behind its
@@ -268,6 +281,20 @@ async function SessionsPageShell({ searchParams }: PageProps) {
             <Suspense fallback="…">
               <SessionCount query={query} />
             </Suspense>
+            {query.repo && (
+              <>
+                {' · '}
+                <Anchor
+                  href={displayHref(
+                    { ...query, repo: undefined },
+                    { view, tab },
+                  )}
+                  size="sm"
+                >
+                  show all repos
+                </Anchor>
+              </>
+            )}
           </>
         }
         actions={<TabToggle query={query} view={view} tab={tab} />}
