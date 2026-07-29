@@ -142,11 +142,37 @@ These are additive to agent-protocol.md §11, not a relaxation of it:
 
 Per agent-protocol.md §1, the console's takeover-command scanner expects a
 resume command containing the literal substring `claude-agent-session.sh`.
-**This repo does not have that script yet.** The `claude-agent-lcars`
-runner registration itself is confirmed live as of issue #39 (a dispatched
-`claude` label run executed on it end to end) — the remaining gap is only
-the script, not the runner. Add `tools/claude-agent-session.sh` (mirroring
-the private `members` repo's script of the same name, adapted to this
-repo's runner-container layout); until it lands, a takeover comment posted
-by this repo's agents can state that resume tooling is not yet available
-rather than inventing a path that does not exist.
+**`tools/claude-agent-session.sh` exists in this repo** — post the real
+command, always:
+
+```
+tools/claude-agent-session.sh resume <session-id>
+```
+
+Find `<session-id>` the way agent-protocol.md §1 describes (the basename of
+the newest `~/.claude/projects/<slugified-repo-path>/*.jsonl`).
+
+This section used to say the script did not exist here, and stayed that way
+long after it landed. Agents read it and posted "resume tooling is not yet
+available" instead of a command — which is exactly the string the console's
+`TAKEOVER_COMMAND_RE` (`apps/console/src/lib/action-items.ts`) cannot match,
+so the takeover affordance stayed dark on this repo's own issues while
+working for every other repo the fleet watches. If you are about to write
+that sentence into a comment, check `tools/` first.
+
+Two things worth putting in the takeover comment itself, because they
+change what the maintainer can actually do:
+
+- `resume` reaches a session only while its runner container is alive, and
+  JIT runners are torn down at job end. `list` shows what is still live.
+- After the run ends, the maintainer needs
+  `tools/claude-agent-session.sh resume-archive <run-id>`, which restores
+  the archived transcript from GCS and prints the `claude --resume` line
+  for it. Worth naming in the comment, since by the time anyone reads a
+  finished run's anchor, plain `resume` will no longer find it.
+
+Mention `resume-archive` in *addition* to the `resume` line, never instead
+of it: `TAKEOVER_COMMAND_RE` is
+`/(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/`, which requires
+whitespace after `resume` and so does not match `resume-archive` at all. A
+comment carrying only the archive form surfaces nothing in the console.
