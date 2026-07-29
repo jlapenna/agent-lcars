@@ -23,6 +23,12 @@ export type ActionType =
   | 'run-failed'
   | 'review-requested'
   | 'post-deploy-action'
+  // A non-draft PR whose branch has fallen behind its base (mergeableState
+  // 'behind') after the maintainer already approved it, so 'review-requested'
+  // no longer applies - GitHub's own auto-merge won't catch a PR up on its
+  // own (#216), so this is the maintainer's to unstick with a single
+  // "Rebase onto base branch" click (see ItemOverflowMenu's canRebase).
+  | 'merge-blocked'
   // A finished run's GitHub conclusion said success, but its joined session
   // telemetry shows a session-provable anomaly (an error result - expired
   // token, max-turns exhaustion, a crash - or essentially zero recorded
@@ -127,6 +133,7 @@ export function isHandedBack(item: ActionItem): boolean {
 const ACTION_PRIORITY: Record<ActionType, number> = {
   'human-needed': 0,
   'review-requested': 0,
+  'merge-blocked': 0,
   'run-failed': 1,
   'silent-error': 1,
   'post-deploy-action': 2,
@@ -293,6 +300,15 @@ function classifyIssue(
       actionTypes.push('review-requested');
     }
 
+    // Already approved (so 'review-requested' cleared), but the branch fell
+    // behind its base afterward - GitHub's own auto-merge waits forever for
+    // someone to catch it up rather than doing so itself (#216). Skipped
+    // when review-requested already fired: that case's own primary action
+    // (approve-rebase) already covers catching the branch up.
+    if (!reviewRequested && !pr?.draft && mergeableState === 'behind') {
+      actionTypes.push('merge-blocked');
+    }
+
     if (pr?.checksTruncated) {
       warnings.push(
         `Check runs truncated for #${issue.number} (over ${CHECK_WINDOW} runs) - some failures may not be shown.`,
@@ -378,6 +394,17 @@ function classifyIssue(
  * dashboard at all. */
 const BOARD_LABELS = ['claude', 'opencode', 'codex', 'human-needed'];
 
+/** REST-shaped logins (docs/bot-identity-formats.md) of every pipeline that
+ * opens PRs under its own identity - kept in sync with the
+ * `AGENT_BOT_LOGINS` repo variable `agent-automerge.yml` reads. Belt and
+ * suspenders, same reasoning as `BOARD_LABELS`: the assignee-based ownership
+ * spine (#2783) is the primary signal, but it depends on `jclaw-bot`
+ * actually holding assignable (triage+) repo access, and an agent-authored
+ * PR must not go invisible the moment that assignment silently no-ops or
+ * every other signal (a label, a still-open review request) has cleared
+ * (#216). */
+const AGENT_AUTHOR_LOGINS = ['claude[bot]', 'github-actions[bot]'];
+
 /**
  * The open-item predicate, replacing the old per-qualifier search queries
  * one for one.
@@ -411,6 +438,7 @@ function isBoardItem(
     typeof label === 'string' ? label : (label.name ?? ''),
   );
   if (labels.some((label) => BOARD_LABELS.includes(label))) return true;
+  if (AGENT_AUTHOR_LOGINS.includes(issue.user?.login ?? '')) return true;
   return reviewRequestedLogins?.includes(maintainerLogin()) ?? false;
 }
 

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 
 /**
- * The three nav-destination identity colors (matches the pill rail in
+ * The nav-destination identity colors (matches the pill rail in
  * console-header.tsx). Top-level panel shells on a page pick up that same
  * page's accent via the `.lcars-panel` elbow treatment, so "which color am
  * I in" stays one consistent signal across the pill nav and the panels
@@ -11,6 +11,7 @@ const LCARS_ACCENT = {
   amber: 'var(--mantine-color-orange-6)',
   periwinkle: 'var(--mantine-color-violet-5)',
   teal: 'var(--mantine-color-teal-6)',
+  gold: 'var(--mantine-color-yellow-5)',
 } as const;
 
 export function lcarsPanelStyle(

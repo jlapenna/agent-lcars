@@ -368,6 +368,29 @@ describe('getActionItems', () => {
     ]);
   });
 
+  it('selects a PR solely because it was authored by a known agent bot login (#216)', async () => {
+    // Mirrors a PR whose assignee-based claim (jclaw-bot) never took and
+    // whose review request already cleared (approved) - author is the last
+    // signal keeping it from going invisible.
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(198, { pull_request: {}, user: { login: 'claude[bot]' } }),
+        makeItem(199, {
+          pull_request: {},
+          user: { login: 'github-actions[bot]' },
+        }),
+        makeItem(200, { pull_request: {}, user: { login: 'someone-else' } }), // control: must stay off
+      ],
+    });
+    setupOctokit({ listForRepo });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((i) => i.number).sort((a, b) => a - b)).toEqual([
+      198, 199,
+    ]);
+  });
+
   it('selects a PR solely because the maintainer has a review requested', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [makeItem(90, { pull_request: {} })],
@@ -595,6 +618,56 @@ describe('getActionItems', () => {
 
     expect(byNumber.get(81)).toBe('behind');
     expect(byNumber.get(82)).toBe('unknown');
+  });
+
+  it('raises merge-blocked on an already-approved PR whose branch fell behind (#216)', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(83, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      // No requested reviewers - review-requested already cleared (approved).
+      83: prNode({ mergeStateStatus: 'BEHIND' }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].actionTypes).toContain('merge-blocked');
+  });
+
+  it('does not raise merge-blocked while review is still outstanding', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(84, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      84: prNode({ mergeStateStatus: 'BEHIND', reviewers: ['jlapenna'] }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].actionTypes).toContain('review-requested');
+    expect(result.items[0].actionTypes).not.toContain('merge-blocked');
+  });
+
+  it('does not raise merge-blocked on a draft PR', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(85, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      85: prNode({ mergeStateStatus: 'BEHIND', isDraft: true }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].actionTypes).not.toContain('merge-blocked');
   });
 
   it('still renders an item when its enrichment is missing entirely', async () => {

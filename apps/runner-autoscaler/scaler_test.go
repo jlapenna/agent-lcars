@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/actions/scaleset"
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // newStubScalesetClient builds a real *scaleset.Client wired against a local
@@ -757,6 +759,48 @@ func TestPickHostSharedWorkDirNoColocation(t *testing.T) {
 
 	if _, err := scaler.pickHost(context.Background()); err == nil {
 		t.Errorf("expected pickHost to error once every reachable host already has a runner placed")
+	}
+}
+
+// TestPickHostSharedWorkDirExhaustionCountsPlacementBlocked pins
+// agent-lcars#210: the shared-workdir exclusivity branch used to return
+// errFleetAtCapacity without touching placement_blocked_total, so a real
+// placement-capacity cause was invisible to Prometheus. The homelab
+// controller saw 25 such blocks in 24h for homelab-autoscale-e2e -- with
+// every host reachable and under its runner limit -- and the only signal
+// was an error log line.
+func TestPickHostSharedWorkDirExhaustionCountsPlacementBlocked(t *testing.T) {
+	fake := newFakeDockerServer(t)
+
+	scaler := &Scaler{
+		scaleSetName: "e2e",
+		shareWorkDir: true,
+		dockerHosts:  []DockerHost{{Name: "a", Client: fake.client(t)}},
+		runners: runnerState{
+			idle: map[string]runnerRef{"runner-1": {host: "a", containerID: "c1"}},
+			busy: make(map[string]runnerRef),
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	// Counters are process-global and other tests share them, so measure the
+	// delta this call produces rather than an absolute value.
+	blocked := placementBlocked.WithLabelValues("e2e", placementReasonSharedWorkDirExclusive)
+	hostLimits := placementBlocked.WithLabelValues("e2e", placementReasonHostLimits)
+	beforeBlocked := testutil.ToFloat64(blocked)
+	beforeHostLimits := testutil.ToFloat64(hostLimits)
+
+	if _, err := scaler.pickHost(context.Background()); !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost error = %v, want one wrapping errFleetAtCapacity", err)
+	}
+
+	if got := testutil.ToFloat64(blocked) - beforeBlocked; got != 1 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonSharedWorkDirExclusive, got)
+	}
+	// The whole point of a dedicated reason is that this cause is
+	// distinguishable, so it must not also land on a coarser one.
+	if got := testutil.ToFloat64(hostLimits) - beforeHostLimits; got != 0 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 0", placementReasonHostLimits, got)
 	}
 }
 

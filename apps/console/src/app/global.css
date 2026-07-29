@@ -91,6 +91,11 @@
   background: var(--mantine-color-violet-5);
 }
 
+.lcars-header-bar-segment[data-accent='gold'] {
+  width: 1.25rem;
+  background: var(--mantine-color-yellow-5);
+}
+
 .lcars-header-bar-segment[data-accent='teal'] {
   flex: 1 1 auto;
   max-width: 8rem;
@@ -104,14 +109,13 @@
    accent, so the row reads as one console control rather than a list of
    links.
 
-   `.lcars-tab-nav` is the same layout applied to in-page tab switches (e.g.
-   the sessions page's Sessions/Costs tabs, #192) - a distinct class from
-   `.lcars-nav` (rather than reusing it directly) so `nav.lcars-nav` stays a
-   locator that matches only the one top-level pill rail per page, not a
-   page's own sub-nav too. */
+   There is exactly one such rail per page, so `nav.lcars-nav` stays a
+   locator that matches only it. The sessions page briefly carried a second,
+   in-page Sessions/Costs switch on this same layout (`.lcars-tab-nav`);
+   #192 moved the cost ledger to its own top-level destination, so the rail
+   below is once again the only pill nav in the app. */
 
-.lcars-nav,
-.lcars-tab-nav {
+.lcars-nav {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -205,6 +209,16 @@
 
 [data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='teal'] {
   --pill-outline: var(--mantine-color-teal-6);
+}
+
+.lcars-nav-pill[data-accent='gold'] {
+  --pill-fill: var(--mantine-color-yellow-5);
+  --pill-ink: var(--mantine-color-black);
+  --pill-outline: var(--mantine-color-yellow-7);
+}
+
+[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='gold'] {
+  --pill-outline: var(--mantine-color-yellow-5);
 }
 
 /* ---- Operational controls ----
