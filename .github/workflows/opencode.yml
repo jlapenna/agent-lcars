@@ -157,6 +157,7 @@ jobs:
 
       - name: Install OpenCode
         if: steps.opencode-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         env:
           OPENCODE_VERSION: ${{ steps.opencode-version.outputs.version }}
         run: |
