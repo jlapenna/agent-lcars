@@ -3,6 +3,7 @@ import type { Octokit } from '@octokit/rest';
 import {
   getGithubClient,
   getWatchedRepos,
+  repoItemKey,
   repoKey,
   type WatchedRepo,
 } from './github-client';
@@ -174,6 +175,42 @@ export function findStalledQueuedRun(
         run.elapsedSeconds > QUEUE_STALL_THRESHOLD_SECONDS,
     )
     .sort((a, b) => b.elapsedSeconds - a.elapsedSeconds)[0];
+}
+
+/** One or more live runs clustered onto the same issue/PR - e.g. two
+ * pipelines racing the same item, or a stray duplicate dispatch. */
+export interface LiveRunGroup {
+  /** `repoItemKey(repo, issueNumber)` for a run whose issue number parsed;
+   * a synthetic `run-<id>` key for one that didn't (predates the run-name
+   * rollout - see `AgentRun.issueNumber`'s own doc), so it still gets a
+   * (singleton) group of its own instead of colliding with every other
+   * unparsed run under one bucket. */
+  key: string;
+  issueNumber?: number;
+  runs: AgentRun[];
+}
+
+/**
+ * Clusters live runs by the issue/PR they're working, preserving each
+ * group's and each run's first-seen order - the In Flight panel renders
+ * runs racing the same item together instead of scattered across the flat
+ * list (#239).
+ */
+export function groupLiveRunsByIssue(liveRuns: AgentRun[]): LiveRunGroup[] {
+  const groups = new Map<string, LiveRunGroup>();
+  for (const run of liveRuns) {
+    const key =
+      run.issueNumber === undefined
+        ? `run-${run.id}`
+        : repoItemKey(run.repo, run.issueNumber);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.runs.push(run);
+    } else {
+      groups.set(key, { key, issueNumber: run.issueNumber, runs: [run] });
+    }
+  }
+  return Array.from(groups.values());
 }
 
 interface WorkflowRunLike {

@@ -7,7 +7,7 @@ import { findItemForSession } from '../../lib/claimed-idle';
 import type { CliSession } from '../../lib/cli-sessions';
 import {
   CliSessionRow,
-  LiveRunRow,
+  LiveRunGroupList,
   type RunItemRef,
 } from '../agent-activity-panel';
 import { lcarsPanelStyle } from '../lcars';
@@ -15,11 +15,12 @@ import { lcarsPanelStyle } from '../lcars';
 /**
  * One row per actor currently working something, agent by agent - the
  * fleet-focused counterpart to the home page's maintainer-focused "In
- * Flight" panel (see agent-activity-panel.tsx). Reuses the exact same row
- * components (LiveRunRow, CliSessionRow) for visual consistency; the only
- * addition here is surfacing a CLI session's takeover command when it's
- * working a claimed item that has one (joined via
- * findItemForSession/sessionReferencesItemNumber - see claimed-idle.ts).
+ * Flight" panel (see agent-activity-panel.tsx). Reuses the exact same
+ * grouped-run/session rendering (LiveRunGroupList, CliSessionRow) for
+ * visual consistency; the only addition here is surfacing a CLI session's
+ * takeover command when it's working a claimed item that has one (joined
+ * via findItemForSession/sessionReferencesItemNumber - see
+ * claimed-idle.ts).
  */
 export function ActiveAgentsSection({
   liveRuns,
@@ -59,16 +60,11 @@ export function ActiveAgentsSection({
         )}
 
         {liveRuns.length > 0 && (
-          <Stack gap="xs">
-            {liveRuns.map((run) => (
-              <LiveRunRow
-                key={run.id}
-                run={run}
-                item={itemsByRunId[run.id]}
-                session={sessionsByRunId[run.id]}
-              />
-            ))}
-          </Stack>
+          <LiveRunGroupList
+            liveRuns={liveRuns}
+            itemsByRunId={itemsByRunId}
+            sessionsByRunId={sessionsByRunId}
+          />
         )}
 
         {activeSessions.length > 0 && (

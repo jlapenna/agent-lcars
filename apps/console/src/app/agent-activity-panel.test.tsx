@@ -43,6 +43,25 @@ vi.mock('../lib/agent-activity', () => ({
     run.issueNumber === undefined
       ? undefined
       : `https://github.com/supersprinklesracing/sprinkles/issues/${run.issueNumber}`,
+  groupLiveRunsByIssue: (liveRuns: AgentRun[]) => {
+    const groups = new Map<
+      string,
+      { key: string; issueNumber?: number; runs: AgentRun[] }
+    >();
+    for (const run of liveRuns) {
+      const key =
+        run.issueNumber === undefined
+          ? `run-${run.id}`
+          : `${run.repo.owner}/${run.repo.name}#${run.issueNumber}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.runs.push(run);
+      } else {
+        groups.set(key, { key, issueNumber: run.issueNumber, runs: [run] });
+      }
+    }
+    return Array.from(groups.values());
+  },
 }));
 
 // react-markdown/remark-gfm (pulled in via artifact-viewer.tsx) are ESM-only
@@ -500,6 +519,81 @@ describe('AgentActivityPanel live run links (#176)', () => {
       liveRuns: [makeAgentRun({ id: 34, status: 'running' })],
     });
     expect(screen.queryByTestId('live-run-session-link')).toBeNull();
+  });
+});
+
+describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
+  it('renders no group wrapper for a single live run on its own issue', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [makeAgentRun({ id: 50, status: 'running', issueNumber: 50 })],
+    });
+    expect(screen.queryByTestId('live-run-group-50')).toBeNull();
+    expect(screen.getByTestId('live-run-issue-link')).toBeTruthy();
+  });
+
+  it('clusters two live runs sharing the same issue number under one group', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({
+          id: 40,
+          status: 'running',
+          issueNumber: 42,
+          pipeline: 'claude',
+        }),
+        makeAgentRun({
+          id: 41,
+          status: 'running',
+          issueNumber: 42,
+          pipeline: 'codex',
+        }),
+      ],
+    });
+    const group = screen.getByTestId('live-run-group-42');
+    expect(within(group).getAllByTestId('live-run-issue-link')).toHaveLength(2);
+    expect(group.textContent).toContain('2 runs');
+  });
+
+  it('keeps runs on different issue numbers out of each others groups', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({ id: 45, status: 'running', issueNumber: 45 }),
+        makeAgentRun({ id: 46, status: 'running', issueNumber: 46 }),
+      ],
+    });
+    expect(screen.queryByTestId('live-run-group-45')).toBeNull();
+    expect(screen.queryByTestId('live-run-group-46')).toBeNull();
+    expect(screen.getAllByTestId('live-run-issue-link')).toHaveLength(2);
+  });
+
+  it('labels the group with the joined item title when one is known', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        liveRuns: [
+          makeAgentRun({ id: 42, status: 'running', issueNumber: 7 }),
+          makeAgentRun({
+            id: 43,
+            status: 'running',
+            issueNumber: 7,
+            pipeline: 'opencode',
+          }),
+        ],
+      },
+      undefined,
+      {
+        42: {
+          number: 7,
+          title: 'Fix the thing',
+          url: 'https://github.com/o/r/issues/7',
+        },
+      },
+    );
+    const group = screen.getByTestId('live-run-group-7');
+    expect(group.textContent).toContain('#7 Fix the thing');
   });
 });
 
