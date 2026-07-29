@@ -76,6 +76,7 @@ async function CostsBody({ query }: { query: SessionArchiveQuery }) {
       <ConsoleFooter
         generatedAt={generatedAt}
         refreshLabel={formatRelativeTime(generatedAt)}
+        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
       />
     </>
   );
@@ -99,7 +100,6 @@ async function CostsPageShell({ searchParams }: PageProps) {
   assertAdmin(session, '/login');
 
   const query = parseSessionArchiveQuery(await searchParams);
-  const watchedRepos = getWatchedRepos();
 
   return (
     <Container size="xl" py="xl">
@@ -115,7 +115,6 @@ async function CostsPageShell({ searchParams }: PageProps) {
             </Suspense>
           </>
         }
-        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>

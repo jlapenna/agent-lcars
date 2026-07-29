@@ -129,6 +129,7 @@ async function SessionsBody({
       <ConsoleFooter
         generatedAt={generatedAt}
         refreshLabel={formatRelativeTime(generatedAt)}
+        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
       />
     </>
   );
@@ -195,7 +196,6 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const rawParams = await searchParams;
   const query = parseSessionArchiveQuery(rawParams);
   const view = parseView(rawParams);
-  const watchedRepos = getWatchedRepos();
 
   // The cost ledger lived here behind `?tab=costs` until #192 moved it to
   // its own destination. Send those links (bookmarks, and anything already
@@ -231,7 +231,6 @@ async function SessionsPageShell({ searchParams }: PageProps) {
             )}
           </>
         }
-        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>

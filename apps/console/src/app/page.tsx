@@ -220,13 +220,14 @@ async function IndexBody({
         generatedAt={generatedAt}
         refreshLabel={formatRelativeTime(generatedAt)}
         bustsGithubCache
+        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
       />
     </>
   );
 }
 
 /**
- * Auth-gate, title/subtitle, actions, and nav render eagerly here - none of
+ * Auth-gate, title/subtitle, and nav render eagerly here - none of
  * it needs the slow GitHub/Firestore reads `IndexBody` fetches, so this
  * shell only has to wait on `auth()` and `searchParams` (both fast, no
  * network), not the ~30-request fleet activity fetch. That keeps the header
@@ -265,7 +266,6 @@ async function IndexShell({ searchParams }: PageProps) {
             )}
           </>
         }
-        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
