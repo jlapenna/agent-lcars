@@ -933,7 +933,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		reservedTotal += n
 	}
 	if fleet.maxRunners > 0 && actualTotal+reservedTotal >= fleet.maxRunners {
-		placementBlocked.WithLabelValues(scaleSet, "fleet_limit").Inc()
+		placementBlocked.WithLabelValues(scaleSet, placementReasonFleetLimit).Inc()
 		return "", fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
 	}
 	var withinHostLimits []DockerHost
@@ -950,7 +950,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		}
 	}
 	if len(withinHostLimits) == 0 {
-		placementBlocked.WithLabelValues(scaleSet, "host_limits").Inc()
+		placementBlocked.WithLabelValues(scaleSet, placementReasonHostLimits).Inc()
 		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
 
@@ -967,6 +967,12 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			}
 		}
 		if len(withCapacity) == 0 {
+			// Exclusivity saturation is a real placement-capacity cause and
+			// belongs alongside fleet_limit/host_limits, not only in the logs:
+			// without its own reason, a pending backlog on a shared-workdir
+			// scale set is indistinguishable in Prometheus from a listener or
+			// host outage.
+			placementBlocked.WithLabelValues(scaleSet, placementReasonSharedWorkDirExclusive).Inc()
 			return "", fmt.Errorf("shared-workdir scale set %q: every reachable docker host already has a runner placed: %w", scaleSet, errFleetAtCapacity)
 		}
 		candidates = withCapacity
