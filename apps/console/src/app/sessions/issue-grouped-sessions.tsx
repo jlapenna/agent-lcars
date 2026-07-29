@@ -3,6 +3,7 @@ import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 import { primaryWatchedRepo, repoItemKey } from '../../lib/github-client';
 import type { IssueSessionGroup } from '../../lib/session-issue-groups';
 import { RepoBadge } from '../agent-activity-panel';
+import { NoIssueSessionGroup } from './no-issue-session-group';
 import { SessionTable } from './session-table';
 
 /** Mirrors ledger-tables.tsx's issueRowKey - the bare issue number collides
@@ -13,41 +14,39 @@ function groupKey(group: IssueSessionGroup): string | number {
     : repoItemKey(group.repo ?? primaryWatchedRepo(), group.issueNumber);
 }
 
+function SessionCountLabel({ group }: { group: IssueSessionGroup }) {
+  return (
+    <Text size="xs" c="dimmed">
+      {group.sessions.length} session{group.sessions.length === 1 ? '' : 's'}
+    </Text>
+  );
+}
+
 function GroupHeading({ group }: { group: IssueSessionGroup }) {
   return (
     <Group gap={8} align="center" wrap="wrap">
-      {group.issueNumber === 'no-issue' ? (
-        <Title order={3} size="h5" c="dimmed">
-          No issue
-        </Title>
-      ) : (
-        <>
-          <Title order={3} size="h5">
-            {group.issueUrl ? (
-              <Anchor
-                href={group.issueUrl}
-                target="_blank"
-                rel="noreferrer"
-                underline="hover"
-                c="inherit"
-              >
-                #{group.issueNumber}
-              </Anchor>
-            ) : (
-              `#${group.issueNumber}`
-            )}
-          </Title>
-          {group.repo && <RepoBadge repo={group.repo} />}
-          {group.issueTitle && (
-            <Text size="sm" c="dimmed" truncate="end" style={{ maxWidth: 480 }}>
-              {group.issueTitle}
-            </Text>
-          )}
-        </>
+      <Title order={3} size="h5">
+        {group.issueUrl ? (
+          <Anchor
+            href={group.issueUrl}
+            target="_blank"
+            rel="noreferrer"
+            underline="hover"
+            c="inherit"
+          >
+            #{group.issueNumber}
+          </Anchor>
+        ) : (
+          `#${group.issueNumber}`
+        )}
+      </Title>
+      {group.repo && <RepoBadge repo={group.repo} />}
+      {group.issueTitle && (
+        <Text size="sm" c="dimmed" truncate="end" style={{ maxWidth: 480 }}>
+          {group.issueTitle}
+        </Text>
       )}
-      <Text size="xs" c="dimmed">
-        {group.sessions.length} session{group.sessions.length === 1 ? '' : 's'}
-      </Text>
+      <SessionCountLabel group={group} />
     </Group>
   );
 }
@@ -60,6 +59,11 @@ function GroupHeading({ group }: { group: IssueSessionGroup }) {
  * SessionTable unmodified per group (rather than duplicating its
  * table/card rendering) so both views always agree on how a single session
  * row looks.
+ *
+ * The 'no-issue' group's collapse toggle (#236) lives in a small client
+ * component (NoIssueSessionGroup) rather than here, so this component - and
+ * the SessionTable it renders per group - stays server-rendered; see that
+ * file's doc comment for why.
  */
 export function IssueGroupedSessions({
   groups,
@@ -82,8 +86,18 @@ export function IssueGroupedSessions({
           gap="xs"
           data-testid={`issue-group-${groupKey(group)}`}
         >
-          <GroupHeading group={group} />
-          <SessionTable rows={group.sessions} />
+          {group.issueNumber === 'no-issue' ? (
+            <NoIssueSessionGroup
+              sessionCount={<SessionCountLabel group={group} />}
+            >
+              <SessionTable rows={group.sessions} />
+            </NoIssueSessionGroup>
+          ) : (
+            <>
+              <GroupHeading group={group} />
+              <SessionTable rows={group.sessions} />
+            </>
+          )}
         </Stack>
       ))}
     </Stack>
