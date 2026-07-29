@@ -25,7 +25,6 @@ export interface ConsoleHeaderProps {
   current: NavKey;
   title: string;
   subtitle: ReactNode;
-  actions?: ReactNode;
   archiveQuery?: SessionArchiveQuery;
 }
 
@@ -75,7 +74,6 @@ export function ConsoleHeader({
   current,
   title,
   subtitle,
-  actions,
   archiveQuery,
 }: ConsoleHeaderProps) {
   return (
@@ -90,11 +88,6 @@ export function ConsoleHeader({
               {subtitle}
             </Text>
           </div>
-          {actions && (
-            <Group gap="sm" wrap="wrap">
-              {actions}
-            </Group>
-          )}
         </Group>
 
         <div className="lcars-header-bar" aria-hidden="true">
