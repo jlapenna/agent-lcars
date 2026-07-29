@@ -129,25 +129,49 @@ jobs:
         id: start
         run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
+      # The upstream composite action discovers its release with an
+      # unauthenticated api.github.com curl. Shared runners can exhaust that
+      # IP-level limit, and its `bash -e -o pipefail` shell then aborts before
+      # OpenCode starts. Keep the equivalent setup local so release discovery
+      # uses this workflow's authenticated token and the installer receives
+      # the exact version used by the cache key.
+      - name: Resolve OpenCode release
+        id: opencode-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name')
+          if [ -z "$version" ]; then
+            echo "::error::OpenCode latest release did not include a tag name."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache OpenCode
+        id: opencode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.opencode/bin
+          key: opencode-${{ runner.os }}-${{ runner.arch }}-${{ steps.opencode-version.outputs.version }}
+
+      - name: Install OpenCode
+        if: steps.opencode-cache.outputs.cache-hit != 'true'
+        env:
+          OPENCODE_VERSION: ${{ steps.opencode-version.outputs.version }}
+        run: |
+          curl -fsSL https://opencode.ai/install |
+            bash -s -- --version "$OPENCODE_VERSION" --no-modify-path
+
+      - name: Add OpenCode to PATH
+        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
       - name: Run OpenCode
-        # SHA-pinned, not the floating `latest` tag: this step is handed the
-        # job's full write GITHUB_TOKEN (contents/issues/pull-requests/
-        # actions:write) plus OPENCODE_LLM_API_KEY on a self-hosted runner.
-        # anomalyco/opencode has no versioned release tags for this
-        # subdirectory action (only vscode-v* extension tags), so `latest`
-        # was the only ref available when this was written - resolved here
-        # to the commit it pointed at on 2026-07-25. Re-resolve periodically
-        # (`gh api repos/anomalyco/opencode/git/refs/tags/latest`, then
-        # dereference the returned tag object's `.object.sha`) rather than
-        # reverting to the floating tag.
-        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # latest as of 2026-07-25
         # #51: two dispatches against #44 retried a persistent LiteLLM 429
         # with a backoff growing from seconds to tens of minutes and never
-        # gave up - no comment, no label, no PR - until a human cancelled
-        # at ~100 minutes. The pinned action exposes no max-retry or
-        # max-elapsed-time input (its action.yml takes only model/agent/
-        # share/prompt/use_github_token/mentions/variant/oidc_base_url), so
-        # the bound has to live here.
+        # gave up - no comment, no label, no PR - until a human cancelled at
+        # ~100 minutes. OpenCode exposes no max-retry or max-elapsed-time
+        # option for `github run`, so the bound has to live here.
         #
         # A *step* timeout, not just the job's: exceeding this marks the
         # step failed rather than cancelling the job, so `Report failure on
@@ -165,10 +189,9 @@ jobs:
           # agent-protocol.md §8): the recipe silently no-ops when this is
           # unset.
           ACTIONS_RERUN_TOKEN: ${{ github.token }}
-        with:
-          model: homelab/default
-          use_github_token: true
-          prompt: >-
+          MODEL: homelab/default
+          USE_GITHUB_TOKEN: 'true'
+          PROMPT: >-
             ${{ (github.event_name == 'issues' &&
             format('An issue was labeled for you to work on: #{0} ("{1}").
             Read AGENTS.md, then
@@ -232,6 +255,7 @@ jobs:
             wait inline. Do not end until your deliverable (PR update or
             comment) exists.', github.event.issue.number,
             github.event.issue.title) }}
+        run: opencode github run
 
       # Adapted from claude.yml's deliverable gate (agent-protocol.md §5),
       # tuned for opencode's lighter prompt contract. A bare comment counts
