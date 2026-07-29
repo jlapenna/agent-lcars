@@ -193,6 +193,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
     <Container size="xl" py="xl">
       <ConsoleHeader
         current="sessions"
+        archiveQuery={query}
         title="Session Archive"
         subtitle={
           <>

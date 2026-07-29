@@ -102,6 +102,7 @@ async function CostsPageShell({ searchParams }: PageProps) {
     <Container size="xl" py="xl">
       <ConsoleHeader
         current="costs"
+        archiveQuery={query}
         title="Cost Ledger"
         subtitle={
           <>

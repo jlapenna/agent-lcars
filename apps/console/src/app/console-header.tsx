@@ -1,6 +1,11 @@
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 
+import {
+  DEFAULT_ARCHIVE_DAYS,
+  type SessionArchiveQuery,
+} from '@/lib/session-archive';
+
 type NavKey = 'queue' | 'agents' | 'sessions' | 'costs';
 type Accent = 'amber' | 'periwinkle' | 'teal' | 'gold';
 
@@ -21,6 +26,27 @@ export interface ConsoleHeaderProps {
   title: string;
   subtitle: ReactNode;
   actions?: ReactNode;
+  archiveQuery?: SessionArchiveQuery;
+}
+
+function navHref(
+  item: (typeof NAV_ITEMS)[number],
+  archiveQuery: SessionArchiveQuery | undefined,
+): string {
+  if (!archiveQuery || (item.key !== 'sessions' && item.key !== 'costs')) {
+    return item.href;
+  }
+
+  const params = new URLSearchParams();
+  if (archiveQuery.days !== DEFAULT_ARCHIVE_DAYS) {
+    params.set('days', String(archiveQuery.days));
+  }
+  if (archiveQuery.source) params.set('source', archiveQuery.source);
+  if (archiveQuery.issueNumber !== undefined) {
+    params.set('issue', String(archiveQuery.issueNumber));
+  }
+  const queryString = params.toString();
+  return queryString ? `${item.href}?${queryString}` : item.href;
 }
 
 /**
@@ -50,6 +76,7 @@ export function ConsoleHeader({
   title,
   subtitle,
   actions,
+  archiveQuery,
 }: ConsoleHeaderProps) {
   return (
     <Stack gap="md" mb="xl">
@@ -82,7 +109,7 @@ export function ConsoleHeader({
         {NAV_ITEMS.map((item) => (
           <Anchor
             key={item.key}
-            href={item.href}
+            href={navHref(item, archiveQuery)}
             underline="never"
             className="lcars-nav-pill"
             data-accent={item.accent}

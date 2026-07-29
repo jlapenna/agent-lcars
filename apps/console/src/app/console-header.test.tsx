@@ -2,15 +2,21 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
+import type { SessionArchiveQuery } from '@/lib/session-archive';
+
 import { ConsoleHeader } from './console-header';
 
-function renderHeader(current: 'queue' | 'agents' | 'sessions' | 'costs') {
+function renderHeader(
+  current: 'queue' | 'agents' | 'sessions' | 'costs',
+  archiveQuery?: SessionArchiveQuery,
+) {
   return render(
     <MantineProvider>
       <ConsoleHeader
         current={current}
         title="Cost Ledger"
         subtitle="last 14 days"
+        archiveQuery={archiveQuery}
       />
     </MantineProvider>,
   );
@@ -50,5 +56,23 @@ describe('ConsoleHeader nav rail', () => {
         .getByRole('link', { name: 'Sessions' })
         .getAttribute('aria-current'),
     ).toBeNull();
+  });
+
+  it('preserves archive filters between Sessions and Costs', () => {
+    renderHeader('sessions', {
+      days: 90,
+      source: 'cli',
+      issueNumber: 42,
+    });
+
+    expect(
+      screen.getByRole('link', { name: 'Sessions' }).getAttribute('href'),
+    ).toBe('/sessions?days=90&source=cli&issue=42');
+    expect(
+      screen.getByRole('link', { name: 'Costs' }).getAttribute('href'),
+    ).toBe('/costs?days=90&source=cli&issue=42');
+    expect(
+      screen.getByRole('link', { name: 'Queue' }).getAttribute('href'),
+    ).toBe('/');
   });
 });
