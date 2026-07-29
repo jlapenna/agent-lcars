@@ -5,6 +5,7 @@ import { cache, Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
+import { repoDisplayName, repoKey } from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
   describeArchiveWindow,
@@ -28,11 +29,14 @@ function parseView(searchParams: { view?: string }): SessionsView {
 }
 
 /** Serializes the archive query back into a query string, preserving the
- * data params while toggling `view` - kept next to parseView rather than in
- * session-archive.ts, since `view` is a purely display choice that never
- * reaches getSessionArchive's Firestore query (unlike days/source/issue).
- * `path` is '' for a same-page link and '/costs' for the cost ledger, which
- * reads the same three data params. */
+ * data params while toggling `view` and/or dropping the `repo` filter (the
+ * "show all repos" link) - kept next to parseView rather than in
+ * session-archive.ts, since `view` and the presence of `repo` in the link
+ * itself are purely display choices that never reach getSessionArchive's
+ * Firestore query in this form (unlike days/source/issue/repo on `query`
+ * itself). `path` is '' for a same-page link and '/costs' for the cost
+ * ledger, which reads the same three data params (but not `repo` - see
+ * getSessionArchive). */
 function displayHref(
   query: SessionArchiveQuery,
   { view, path = '' }: { view: SessionsView; path?: string },
@@ -45,6 +49,7 @@ function displayHref(
   if (query.issueNumber !== undefined) {
     params.set('issue', String(query.issueNumber));
   }
+  if (query.repo) params.set('repo', repoKey(query.repo));
   if (view === 'by-issue') params.set('view', 'by-issue');
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path || '?';
@@ -63,6 +68,7 @@ interface PageProps {
     days?: string;
     source?: string;
     issue?: string;
+    repo?: string;
     view?: string;
     tab?: string;
   }>;
@@ -159,13 +165,17 @@ function ViewToggle({
 
 /**
  * The session archive: every CLI and issue-agent session (not just the last
- * 24h the dashboard shows), searchable by three plain query params
- * (`days`/`source`/`issue`) - the same three the /costs page reads, so the
- * two describe one window two ways - deliberately no filter chrome beyond that
- * (#2694/#3019's "no speculative widgets" rule still applies here, even
- * though this route can otherwise be denser than the dashboard). Query
- * params are parsed defensively by parseSessionArchiveQuery; there's no form
- * to validate against, a maintainer edits the URL bar directly.
+ * 24h the dashboard shows), searchable by four plain query params
+ * (`days`/`source`/`issue`/`repo`) - the first three are the same the /costs
+ * page reads, so the two describe one window two ways; `repo` is
+ * sessions-only (see getSessionArchive) - deliberately no filter chrome
+ * beyond that (#2694/#3019's "no speculative widgets" rule still applies
+ * here, even though this route can otherwise be denser than the dashboard).
+ * `repo` matches the dashboard/`/agents` `?repo=owner/name` convention
+ * (parseRepoFilterParam) and gets the same "show all repos" escape hatch
+ * those pages show once it narrows the view. Query params are parsed
+ * defensively by parseSessionArchiveQuery; there's no form to validate
+ * against, a maintainer edits the URL bar directly.
  *
  * Unlike the dashboard/agents pages, the subtitle can't render eagerly in
  * full - it includes the fetched row count. Only that count sits behind its
@@ -197,10 +207,22 @@ async function SessionsPageShell({ searchParams }: PageProps) {
         title="Session Archive"
         subtitle={
           <>
+            {query.repo && `${repoDisplayName(query.repo)} — `}
             {describeArchiveWindow(query)} ·{' '}
             <Suspense fallback="…">
               <SessionCount query={query} />
             </Suspense>
+            {query.repo && (
+              <>
+                {' · '}
+                <Anchor
+                  href={displayHref({ ...query, repo: undefined }, { view })}
+                  size="sm"
+                >
+                  show all repos
+                </Anchor>
+              </>
+            )}
           </>
         }
       />
