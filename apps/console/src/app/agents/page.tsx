@@ -132,6 +132,9 @@ async function AgentsPageBody({
   const filteredActiveSessions = activeSessions.filter((s) =>
     matchesFilter(s.repo ?? primaryWatchedRepo()),
   );
+  const filteredCliSessions = cliSessions.filter((s) =>
+    matchesFilter(s.repo ?? primaryWatchedRepo()),
+  );
   const filteredActivity = repoFilter
     ? {
         ...activity,
@@ -166,7 +169,10 @@ async function AgentsPageBody({
         sessionsByRunId={sessionsByRunId}
       />
 
-      <ClaimedIdleSection items={filteredClaimedIdle} />
+      <ClaimedIdleSection
+        items={filteredClaimedIdle}
+        cliSessions={filteredCliSessions}
+      />
 
       <RecentOutcomesSection
         recentRuns={filteredActivity.recentRuns}

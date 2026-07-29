@@ -1,4 +1,4 @@
-import { findDeliverables } from './deliverables';
+import { findDeliverables, isDeliverableCommand } from './deliverables';
 import {
   ReduceTranscriptOptions,
   SessionResult,
@@ -39,6 +39,9 @@ interface SessionState {
   commitShas: Set<string>;
   totalCostUsd?: number;
   result?: SessionResult;
+  // Bash tool_use id -> command, so a later tool_result can be checked
+  // against isDeliverableCommand before its output is scanned.
+  pendingBashCommands: Map<string, string>;
 }
 
 function createState(sessionId: string, host?: string): SessionState {
@@ -57,6 +60,7 @@ function createState(sessionId: string, host?: string): SessionState {
     },
     prNumbers: new Set(),
     commitShas: new Set(),
+    pendingBashCommands: new Map(),
   };
 }
 
@@ -86,13 +90,35 @@ function applyMessage(
 
   const content = asArray(message['content']) ?? [];
 
-  if (role === 'user' && !isSidechain && !state.firstUserPrompt) {
+  if (role === 'user') {
     for (const block of content) {
       const record = asRecord(block);
-      const text = record && asString(record['text']);
-      if (record && asString(record['type']) === 'text' && text) {
-        state.firstUserPrompt = text;
-        break;
+      if (!record) {
+        continue;
+      }
+      const blockType = asString(record['type']);
+
+      if (
+        !isSidechain &&
+        !state.firstUserPrompt &&
+        blockType === 'text' &&
+        asString(record['text'])
+      ) {
+        state.firstUserPrompt = asString(record['text']);
+      }
+
+      if (blockType === 'tool_result') {
+        const toolUseId = asString(record['tool_use_id']);
+        const command = toolUseId && state.pendingBashCommands.get(toolUseId);
+        if (command && isDeliverableCommand(command)) {
+          const found = findDeliverables(record['content']);
+          for (const prNumber of found.prNumbers) {
+            state.prNumbers.add(prNumber);
+          }
+          for (const sha of found.commitShas) {
+            state.commitShas.add(sha);
+          }
+        }
       }
     }
   }
@@ -135,6 +161,15 @@ function applyMessage(
       state.toolCallCounts[name] = (state.toolCallCounts[name] ?? 0) + 1;
       if (timestamp) {
         state.lastToolCall = { name, timestamp };
+      }
+
+      if (name === 'Bash') {
+        const id = asString(record['id']);
+        const input = asRecord(record['input']);
+        const command = input && asString(input['command']);
+        if (id && command) {
+          state.pendingBashCommands.set(id, command);
+        }
       }
     }
   }
@@ -205,14 +240,6 @@ function applyLine(state: SessionState, raw: Record<string, unknown>) {
   const message = asRecord(raw['message']);
   if (message) {
     applyMessage(state, message, isSidechain, timestamp);
-  }
-
-  const found = findDeliverables(raw);
-  for (const prNumber of found.prNumbers) {
-    state.prNumbers.add(prNumber);
-  }
-  for (const sha of found.commitShas) {
-    state.commitShas.add(sha);
   }
 }
 
