@@ -65,6 +65,18 @@ export function parseSessionArchiveQuery(
   return { days, source, issueNumber };
 }
 
+/** Human summary of which slice of the archive a page is showing, for the
+ * page subtitle. Shared by /sessions and /costs - both read the same
+ * archive through the same three query params, so a divergent wording
+ * would just be two ways of describing one window. */
+export function describeArchiveWindow(query: SessionArchiveQuery): string {
+  const parts = [`last ${query.days} day${query.days === 1 ? '' : 's'}`];
+  if (query.source) parts.push(`source=${query.source}`);
+  if (query.issueNumber !== undefined)
+    parts.push(`issue #${query.issueNumber}`);
+  return parts.join(', ');
+}
+
 /** Wall-clock span of a session's own recorded activity (lastActivityAt
  * minus startedAt) - not "now minus startedAt", so a long-idle-then-resumed
  * session doesn't inflate this with dead time. Shared by the archive table

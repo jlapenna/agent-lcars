@@ -75,7 +75,7 @@ test.describe('LCARS pill nav interaction states', () => {
         };
       });
 
-    for (const name of ['Queue', 'Agents', 'Sessions']) {
+    for (const name of ['Queue', 'Agents', 'Sessions', 'Costs']) {
       await page.getByRole('link', { name }).focus();
       const ring = await ringOf(name);
       expect(ring.style).toBe('solid');
@@ -95,6 +95,8 @@ test.describe('LCARS pill nav interaction states', () => {
     await expect(agentsPill(page)).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(page.getByRole('link', { name: 'Sessions' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('link', { name: 'Costs' })).toBeFocused();
   });
 });
 
