@@ -349,9 +349,26 @@ jobs:
 
             # Respect a deliberate reopen: if someone reopened this after the
             # PR merged, they want it open and the sweep must not fight them.
-            REOPENED=$(gh api "repos/$REPO/issues/$ISSUE/timeline" --paginate \
-              --jq "[.[] | select(.event == \"reopened\" and .created_at > \"$MERGED_AT\")] | length" \
-              2>/dev/null || echo 0)
+            #
+            # `--paginate --jq` runs the filter once PER PAGE and concatenates
+            # the results, so a long timeline yields "0\n1" and the numeric
+            # test below dies with "integer expression expected" - falling
+            # through to the close path and re-closing a reopened issue on
+            # every sweep. `--slurp` aggregates the pages, but gh (2.96.0)
+            # rejects `--slurp` together with `--jq`, so the aggregation has
+            # to happen in a real jq downstream of it.
+            #
+            # A lookup failure must skip, not default to "no reopens": under
+            # `set -o pipefail` the `if !` catches it. Guessing here would
+            # close an issue precisely when we cannot tell whether someone
+            # reopened it on purpose.
+            if ! REOPENED=$(gh api "repos/$REPO/issues/$ISSUE/timeline" --paginate --slurp 2>/dev/null \
+              | jq --arg merged "$MERGED_AT" \
+                '[.[][] | select(.event == "reopened" and .created_at > $merged)] | length'); then
+              echo "::warning::Could not read #$ISSUE's timeline; leaving it open rather than guessing."
+              KEPT=$((KEPT + 1))
+              continue
+            fi
             if [ "${REOPENED:-0}" -gt 0 ]; then
               echo "#$ISSUE was reopened after PR #$PR merged; leaving it open."
               KEPT=$((KEPT + 1))
@@ -368,7 +385,7 @@ jobs:
             fi
           done <<< "$CANDIDATES"
 
-          echo "Sweep since $SINCE: $CHECKED linked anchor(s) examined, $CLOSED closed, $KEPT left open (reopened deliberately), $FAILED failed."
+          echo "Sweep since $SINCE: $CHECKED linked anchor(s) examined, $CLOSED closed, $KEPT left open (reopened after merge, or timeline unreadable), $FAILED close attempt(s) failed."
           if [ "$CLOSED" -gt 0 ]; then
             echo "::warning::Swept $CLOSED anchor(s) the inline close in restore-main-checks did not reach."
           fi
