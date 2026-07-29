@@ -55,11 +55,12 @@ changes in between), the daemon:
 1. Discovers Claude transcripts under `~/.claude/projects/**/*.jsonl` whose
    project-dir basename matches the configured allowlist
    (`AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`, `*`-wildcard glob patterns;
-   default `-home-jlapenna-p-members*`). Interactive transcripts can contain
+   defaults to `AGENT_TELEMETRY_CHECKOUT_ROOT` encoded as a project slug).
+   Interactive transcripts can contain
    other projects' data, so this scoping is a privacy boundary, not just a
    filter (PRD #2112 amendment 2026-07-10, decision 3). It also recursively
    discovers Codex rollouts under `~/.codex/sessions/**/*.jsonl`, filtering
-   reduced summaries by cwd (default `/home/jlapenna/p/members*`) before
+   reduced summaries by cwd (defaulting to that same checkout root) before
    anything is shipped.
 2. Skips re-reading any file whose mtime/size hasn't changed since the last
    tick, and reduces the rest via `@agent-lcars/telemetry`'s
@@ -81,19 +82,31 @@ telemetry for the daemon's other tracked sessions.
 
 All via environment variables (see `src/lib/config.ts`):
 
-| Variable                                | Default                     | Purpose                                                                                       |
-| --------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------- |
-| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`   | `~/.claude/projects`        | Root to watch (overridable for Docker bind mounts / test fixtures).                           |
-| `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST` | `-home-jlapenna-p-members*` | Comma-separated `*`-wildcard globs matched against project-dir names.                         |
-| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`    | `~/.codex/sessions`         | Recursive root for Codex rollout JSONL.                                                       |
-| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`   | `/home/jlapenna/p/members*` | Cwd glob privacy boundary for Codex summaries.                                                |
-| `AGENT_TELEMETRY_HOST`                  | `os.hostname()`             | Host label recorded on each session doc.                                                      |
-| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS` | `10000`                     | Tick interval.                                                                                |
-| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`   | `heartbeatIntervalMs * 5`   | How long a session can go unrediscovered before it's marked `stale`.                          |
-| `AGENT_TELEMETRY_SHARE_DIR`             | `~/share`                   | Root for the share-media skill convention; artifact discovery is skipped entirely when unset. |
-| `AGENT_TELEMETRY_PROJECT_ID`            | —                           | Firestore project id for the real store.                                                      |
-| `AGENT_TELEMETRY_WRITER_KEY_JSON`       | —                           | Service-account key JSON for the real store's writer credentials.                             |
-| `FIRESTORE_EMULATOR_HOST`               | —                           | If set, writes to the emulator instead (takes precedence over the two above).                 |
+| Variable                                  | Default                          | Purpose                                                                                                                         |
+| ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TELEMETRY_CHECKOUT_ROOT`           | `/home/jlapenna/p/sprinkles`     | The checkout this host watcher is scoped to. **Both allowlist defaults below derive from it** — see `src/lib/default-checkout.ts`. |
+| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`     | `~/.claude/projects`             | Root to watch (overridable for Docker bind mounts / test fixtures).                                                             |
+| `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`   | checkout root as a project slug  | Comma-separated `*`-wildcard globs matched against project-dir names. Derived: `/` → `-`, plus a trailing `*` to admit worktrees. |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`      | `~/.codex/sessions`              | Recursive root for Codex rollout JSONL.                                                                                         |
+| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`     | checkout root + `*`              | Cwd glob privacy boundary for Codex summaries.                                                                                  |
+| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB`  | `~/.gemini/antigravity-cli/…`    | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes have **no** override and always follow the checkout root. |
+| `AGENT_TELEMETRY_HOST`                    | `os.hostname()`                  | Host label recorded on each session doc.                                                                                        |
+| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`   | `10000`                          | Tick interval.                                                                                                                  |
+| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`     | `heartbeatIntervalMs * 5`        | How long a session can go unrediscovered before it's marked `stale`.                                                            |
+| `AGENT_TELEMETRY_SHARE_DIR`               | `~/share`                        | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                   |
+| `AGENT_TELEMETRY_PROJECT_ID`              | —                                | Firestore project id for the real store.                                                                                        |
+| `AGENT_TELEMETRY_DATABASE_ID`             | `(default)`                      | Firestore database id within that project (`src/lib/store.ts`).                                                                 |
+| `AGENT_TELEMETRY_WRITER_KEY_JSON`         | —                                | Service-account key JSON for the real store's writer credentials.                                                               |
+| `FIRESTORE_EMULATOR_HOST`                 | —                                | If set, writes to the emulator instead (takes precedence over the two above).                                                   |
+
+The two allowlist rows deliberately describe how their defaults are
+**derived** rather than restating the literals. They used to spell out
+`-home-jlapenna-p-members*` and `/home/jlapenna/p/members*`, and stayed that
+way after the repo was renamed to `sprinkles` in #137 — so this table
+documented the exact stale value whose staleness blacked out telemetry for
+weeks (homelab#202), telling anyone who came here to diagnose it that the
+broken value was correct. Describing the derivation means the next rename
+cannot desync the docs the same way.
 
 If neither the emulator host nor both of `AGENT_TELEMETRY_PROJECT_ID` /
 `AGENT_TELEMETRY_WRITER_KEY_JSON` are set, the daemon falls back to a
