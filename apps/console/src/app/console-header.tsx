@@ -1,8 +1,8 @@
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-type NavKey = 'queue' | 'agents' | 'sessions';
-type Accent = 'amber' | 'periwinkle' | 'teal';
+type NavKey = 'queue' | 'agents' | 'sessions' | 'costs';
+type Accent = 'amber' | 'periwinkle' | 'teal' | 'gold';
 
 const NAV_ITEMS: Array<{
   key: NavKey;
@@ -13,6 +13,7 @@ const NAV_ITEMS: Array<{
   { key: 'queue', href: '/', label: 'Queue', accent: 'amber' },
   { key: 'agents', href: '/agents', label: 'Agents', accent: 'periwinkle' },
   { key: 'sessions', href: '/sessions', label: 'Sessions', accent: 'teal' },
+  { key: 'costs', href: '/costs', label: 'Costs', accent: 'gold' },
 ];
 
 export interface ConsoleHeaderProps {
@@ -23,17 +24,17 @@ export interface ConsoleHeaderProps {
 }
 
 /**
- * Shared top-of-page chrome for the three console destinations (dashboard,
- * agents, sessions): title/subtitle row and the LCARS pill nav rail (the one
- * page every page can jump from/to). The session detail page (a drill-down,
- * not a nav destination) keeps its own lighter back-link header instead of
- * this component.
+ * Shared top-of-page chrome for the four console destinations (dashboard,
+ * agents, sessions, costs): title/subtitle row and the LCARS pill nav rail
+ * (the one page every page can jump from/to). The session detail page (a
+ * drill-down, not a nav destination) keeps its own lighter back-link header
+ * instead of this component.
  *
  * The title/subtitle row itself carries the swept-corner "elbow" accent
  * (`.lcars-header`, sized up from the same shape `.lcars-panel` uses for
  * cards - see global.css) plus a segmented signal bar in the nav rail's own
- * three accent colors, so the marquee page title reads as LCARS chrome
- * rather than a plain heading sitting above the pill rail (#204).
+ * accent colors, so the marquee page title reads as LCARS chrome rather
+ * than a plain heading sitting above the pill rail (#204).
  *
  * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
  * `cacheComponents` requires a Suspense boundary for, so every page renders
@@ -72,6 +73,7 @@ export function ConsoleHeader({
         <div className="lcars-header-bar" aria-hidden="true">
           <span className="lcars-header-bar-segment" data-accent="amber" />
           <span className="lcars-header-bar-segment" data-accent="periwinkle" />
+          <span className="lcars-header-bar-segment" data-accent="gold" />
           <span className="lcars-header-bar-segment" data-accent="teal" />
         </div>
       </div>
