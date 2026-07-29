@@ -160,7 +160,14 @@ async function SessionsBody({
  * than among the days/source/issue query params (#2694/#3019's "no filter
  * chrome" rule is about narrowing the fetched set, not this). Splits the
  * cost ledger (#186) out from the session list rather than stacking both in
- * the same card. */
+ * the same card.
+ *
+ * Rendered as the same adjoining pill segments as the page's own nav rail
+ * (`.lcars-nav-pill`, teal accent - this page's own accent) rather than a
+ * dot-separated link list, so it reads as two tabs rather than a plain text
+ * selector (#192) - `.lcars-tab-nav` rather than `.lcars-nav` on the
+ * wrapper itself, so it doesn't collide with the page's own top-level pill
+ * rail under a shared `nav.lcars-nav` locator. */
 function TabToggle({
   query,
   view,
@@ -171,29 +178,21 @@ function TabToggle({
   tab: SessionsTab;
 }) {
   return (
-    <Group gap={6} wrap="nowrap">
-      {(['sessions', 'costs'] as const).map((candidate, i) => (
-        <Group key={candidate} gap={6} wrap="nowrap">
-          {i > 0 && (
-            <Text size="sm" c="dimmed">
-              ·
-            </Text>
-          )}
-          {candidate === tab ? (
-            <Text size="sm" fw={600}>
-              {candidate === 'sessions' ? 'Sessions' : 'Costs'}
-            </Text>
-          ) : (
-            <Anchor
-              href={displayHref(query, { view, tab: candidate })}
-              size="sm"
-            >
-              {candidate === 'sessions' ? 'Sessions' : 'Costs'}
-            </Anchor>
-          )}
-        </Group>
+    <nav className="lcars-tab-nav" aria-label="Sessions sections">
+      {(['sessions', 'costs'] as const).map((candidate) => (
+        <Anchor
+          key={candidate}
+          href={displayHref(query, { view, tab: candidate })}
+          underline="never"
+          className="lcars-nav-pill"
+          data-accent="teal"
+          data-active={candidate === tab ? '' : undefined}
+          aria-current={candidate === tab ? 'page' : undefined}
+        >
+          {candidate === 'sessions' ? 'Sessions' : 'Costs'}
+        </Anchor>
       ))}
-    </Group>
+    </nav>
   );
 }
 
