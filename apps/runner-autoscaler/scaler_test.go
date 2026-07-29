@@ -873,6 +873,34 @@ func TestRunnerBinds(t *testing.T) {
 	}
 }
 
+func TestRunnerHostConfig(t *testing.T) {
+	t.Run("zero pids limit means unlimited, not zero", func(t *testing.T) {
+		hc := runnerHostConfig(nil, nil, 0, 0, 0)
+		if hc.Resources.PidsLimit != nil {
+			t.Fatalf("PidsLimit = %v, want nil (unlimited)", *hc.Resources.PidsLimit)
+		}
+	})
+
+	t.Run("memory, pids limit and shm size are all set", func(t *testing.T) {
+		hc := runnerHostConfig([]string{"/a:/b"}, []string{"999"}, 12<<30, 8192, 1<<30)
+		if hc.Resources.Memory != 12<<30 {
+			t.Fatalf("Memory = %d, want %d", hc.Resources.Memory, int64(12<<30))
+		}
+		if hc.Resources.PidsLimit == nil || *hc.Resources.PidsLimit != 8192 {
+			t.Fatalf("PidsLimit = %v, want 8192", hc.Resources.PidsLimit)
+		}
+		if hc.ShmSize != 1<<30 {
+			t.Fatalf("ShmSize = %d, want %d", hc.ShmSize, int64(1<<30))
+		}
+		if len(hc.Binds) != 1 || hc.Binds[0] != "/a:/b" {
+			t.Fatalf("Binds = %#v", hc.Binds)
+		}
+		if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "999" {
+			t.Fatalf("GroupAdd = %#v", hc.GroupAdd)
+		}
+	})
+}
+
 // TestEnsureRunnerImageRejectsStreamedPullError is the other half of #139's
 // fix. Docker reports registry/auth/manifest failures INSIDE the pull
 // progress stream, with ImagePull itself returning nil. Since a refreshed

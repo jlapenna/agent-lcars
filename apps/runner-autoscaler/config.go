@@ -83,6 +83,22 @@ type Config struct {
 	// RunnerMemory is a homelab addition: optional memory limit for spawned
 	// runner containers (e.g. 16g, 4g, 512m). Empty means no limit.
 	RunnerMemory string
+	// RunnerPidsLimit is a homelab addition: optional PID-count ceiling for
+	// spawned runner containers (orchestrator.yml's `pids_limit`). Zero means
+	// no limit -- the same "unset means unlimited" convention as
+	// RunnerMemory, just expressed with the type's own zero value instead of
+	// an empty string, since a PID limit has no unit suffix to make an empty
+	// string the natural sentinel.
+	RunnerPidsLimit int64
+	// RunnerShmSize is a homelab addition: optional /dev/shm size for spawned
+	// runner containers (e.g. "1g"), same string-with-unit convention as
+	// RunnerMemory. Restores what e2e.yml's dropped job-level `container:`
+	// block covered with `--ipc=host` (homelab#148) -- implemented as an
+	// explicit shm_size rather than the full host IPC namespace share that
+	// flag implies: the documented need (Chromium/Playwright wanting more
+	// /dev/shm than Docker's 64m default) is satisfied by sizing /dev/shm
+	// directly, without also handing the container the host's IPC namespace.
+	RunnerShmSize string
 	// SparkMetricsURL is a homelab addition: URL to probe for Spark inference
 	// metrics. Both exposition shapes are understood — vLLM
 	// (vllm:num_requests_running / waiting) and llama-swap
