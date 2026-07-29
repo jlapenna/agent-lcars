@@ -78,19 +78,19 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | ------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
 | `AGENT_RUNNER_LABEL`      | `claude-agent-lcars`                       | claude / codex / opencode                                                        |
 | `DEFAULT_RUNNER_LABEL`    | `lcars-default`                            | agent-automerge                                                                  |
-| `BUILD_RUNNER_LABEL`      | `lcars-build-client`                       | publish-runner-autoscaler                                                        |
+| `BUILD_RUNNER_LABEL`      | `lcars-build-client`                       | publish-images                                                                   |
 | `GCP_PROJECT_ID`          | `agent-lcars`                              | codex (secret access)                                                            |
 | `GCP_WIF_PROVIDER`        | `projects/611425338852/…/providers/github` | claude / codex / opencode                                                        |
 | `GCP_TELEMETRY_WRITER_SA` | `telemetry-writer@agent-lcars…`            | claude / codex                                                                   |
 | `GCP_CODEX_AGENT_SA`      | `codex-agent@agent-lcars…`                 | codex                                                                            |
-| `HOMELAB_REGISTRY`        | `docker-registry.lan.jlapenna.net`         | publish-runner-autoscaler                                                        |
+| `HOMELAB_REGISTRY`        | `docker-registry.lan.jlapenna.net`         | publish-images                                                                   |
 | `MAINTAINER_LOGIN`        | `jlapenna`                                 | dispatch guards, failure assignment                                              |
 | `AGENT_FLEET_LOGIN`       | `jclaw-bot`                                | claim steps, git identity, queue hand-off                                        |
 | `APPHOSTING_BACKEND_ID`   | `agent-lcars`                              | deploy-console                                                                   |
 | `AGENT_BOT_LOGINS`        | `["claude[bot]","github-actions[bot]"]`    | agent-automerge (pre-existing) — REST-shaped, see `docs/bot-identity-formats.md` |
 | `NX_CACHE_URL`            | homelab Nx cache                           | all agent lanes (pre-existing)                                                   |
 
-Two values in `publish-runner-autoscaler.yml` are deliberately **not**
+Two values in `publish-images.yml` are deliberately **not**
 variables — its `runs-on: lcars-build-client` and its BuildKit
 `endpoint:`. That workflow publishes the images the entire fleet pulls and
 trusts, so where it runs and where it builds are trust decisions, not
