@@ -186,17 +186,40 @@ jobs:
           # exactly what the PR declared - no keyword regex of our own to
           # drift. Filtering to OPEN keeps it idempotent across the
           # pull_request and workflow_run invocations, which both reach here.
-          # SC2016: the $owner/$name/$pr below are GraphQL variables bound by
-          # the -F flags, not shell expansions - single quotes are required.
-          # shellcheck disable=SC2016
-          LINKED=$(gh api graphql \
-            -f query='query($owner:String!,$name:String!,$pr:Int!){
-              repository(owner:$owner,name:$name){
-                pullRequest(number:$pr){
-                  closingIssuesReferences(first:20){nodes{number state}}}}}' \
-            -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" \
-            --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[]
-                  | select(.state == "OPEN") | .number' 2>/dev/null || true)
+          # A swallowed failure here would reproduce the exact bug this step
+          # exists to fix - an empty result and an anchor left open, with
+          # nothing in the log saying why - so retry, and if it still fails,
+          # say so loudly. Empty output with a zero exit is the legitimate
+          # "this PR closes nothing" case and is not retried.
+          LINKED=""
+          LOOKUP_OK=false
+          GQL_ERR=$(mktemp)
+          for attempt in 1 2 3; do
+            # SC2016: the $owner/$name/$pr below are GraphQL variables bound
+            # by the -F flags, not shell expansions - single quotes required.
+            # shellcheck disable=SC2016
+            if LINKED=$(gh api graphql \
+              -f query='query($owner:String!,$name:String!,$pr:Int!){
+                repository(owner:$owner,name:$name){
+                  pullRequest(number:$pr){
+                    closingIssuesReferences(first:20){nodes{number state}}}}}' \
+              -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" \
+              --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[]
+                    | select(.state == "OPEN") | .number' 2>"$GQL_ERR"); then
+              LOOKUP_OK=true
+              break
+            fi
+            LINKED=""
+            echo "::warning::Linked-issue lookup for PR #$PR failed (attempt $attempt/3): $(tr '\n' ' ' <"$GQL_ERR")"
+            if [ "$attempt" -lt 3 ]; then
+              sleep 5
+            fi
+          done
+          rm -f "$GQL_ERR"
+          if [ "$LOOKUP_OK" != true ]; then
+            echo "::warning::Could not determine which issues PR #$PR closes; any anchor it declared stays open and needs closing by hand."
+          fi
+
           for ISSUE in $LINKED; do
             if gh issue close "$ISSUE" --repo "$REPO" \
               --comment "Closed by #$PR ($MERGE_SHA)." >/dev/null 2>&1; then
