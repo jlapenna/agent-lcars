@@ -55,6 +55,26 @@ on:
       #     this image -- which is precisely why the gap was easy to miss.
       - apps/telemetry-watcher/**
       - libs/telemetry/**
+      # Everything else the daemon bundle inlines. esbuild resolves these
+      # into the artifact, so a change here changes what ships even though
+      # nothing under apps/telemetry-watcher/ was touched. Omitting them
+      # would recreate this workflow's own bug at one remove: a Renovate
+      # dependency bump landing on main would leave production running a
+      # bundle built from superseded code until some unrelated change
+      # happened to match a path above.
+      #
+      # The lockfile and patches matter for the same reason -- every third
+      # party dep (including @google-cloud/firestore) is inlined, so
+      # bumping one rewrites the bundle. The cost is that dependency-only
+      # pushes now republish; that is the correct direction to be wrong in,
+      # and the registry-backed layer cache absorbs most of it.
+      - libs/logging/**
+      - libs/env-vars/**
+      - libs/util/**
+      - libs/util-server/**
+      - package.json
+      - pnpm-lock.yaml
+      - patches/**
   workflow_dispatch:
 
 permissions:
@@ -109,14 +129,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Whole workspace, not a per-project list. AGENTS.md requires the
+      # affected test/typecheck/build targets before publishing, and the
+      # published artifacts pull in far more than the two app directories:
+      # the daemon bundle inlines @repo/logging, @repo/env, @repo/util,
+      # @repo/util-server and @agent-lcars/telemetry. `nx run-many -p <app>`
+      # runs only that project's own targets -- a dependency's specs would
+      # be skipped while its code shipped, which is exactly the trigger this
+      # workflow's paths filter was just widened to catch.
+      #
+      # Enumerating the closure by hand instead would drift the moment an
+      # import is added, and drift silently -- the failure mode this whole
+      # workflow exists to eliminate. `--all` cannot drift. The tradeoff is
+      # real: an unrelated project's broken test now blocks publishing. That
+      # is a loud failure, and loud beats silent here. The shared Nx cache
+      # (NX_CACHE_URL) keeps the marginal cost small.
       - name: Build and test before publishing
-        run: |
-          ./tools/nx build @agent-lcars/runner-autoscaler
-          ./tools/nx test @agent-lcars/runner-autoscaler
-          ./tools/nx typecheck @agent-lcars/runner-autoscaler
-          ./tools/nx build @agent-lcars/telemetry-watcher
-          ./tools/nx test @agent-lcars/telemetry-watcher
-          ./tools/nx typecheck @agent-lcars/telemetry-watcher
+        run: ./tools/nx run-many -t build test typecheck --all
 
       # The `bundle` target is deliberately outside the default build graph
       # (nothing depends on it -- see apps/telemetry-watcher/README.md), so
