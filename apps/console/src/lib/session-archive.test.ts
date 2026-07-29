@@ -67,7 +67,26 @@ describe('parseSessionArchiveQuery', () => {
       days: DEFAULT_ARCHIVE_DAYS,
       source: undefined,
       issueNumber: undefined,
+      repo: undefined,
     });
+  });
+
+  it('parses a `repo=owner/name` param matching a watched repo', () => {
+    expect(
+      parseSessionArchiveQuery({
+        repo: 'supersprinklesracing/sprinkles',
+      }).repo,
+    ).toEqual({
+      owner: 'supersprinklesracing',
+      name: 'sprinkles',
+      alias: 'sprinkles',
+    });
+  });
+
+  it('ignores a `repo` value that matches no watched repo', () => {
+    expect(
+      parseSessionArchiveQuery({ repo: 'nope/not-watched' }).repo,
+    ).toBeUndefined();
   });
 
   it('parses a valid days/source/issue combination', () => {
@@ -235,6 +254,48 @@ describe('getSessionArchive', () => {
     expect(result.rows).toHaveLength(2);
     expect(result.ledger.byIssue.some((r) => r.issueNumber === 5)).toBe(true);
     expect(result.warnings).toEqual([]);
+  });
+
+  it('narrows to the given repo, in-memory, after the fetch', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      cliDoc({
+        sessionId: 'c1',
+        repo: { owner: 'org-a', name: 'repo-a' },
+      }),
+      agentDoc({
+        sessionId: 'a1',
+        repo: { owner: 'org-b', name: 'repo-b' },
+      }),
+    ]);
+
+    const result = await getSessionArchive({
+      days: 14,
+      repo: { owner: 'org-b', name: 'repo-b' },
+    });
+
+    expect(result.rows.map((r) => r.sessionId)).toEqual(['a1']);
+    // The repo filter is applied client-side, not passed to the store.
+    expect(listSessionDocs).toHaveBeenCalledWith(
+      undefined,
+      expect.not.objectContaining({ repo: expect.anything() }),
+    );
+  });
+
+  it('treats a repo-less doc as belonging to the primary watched repo when filtering', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      cliDoc({ sessionId: 'legacy' }),
+      agentDoc({
+        sessionId: 'other-repo',
+        repo: { owner: 'org-b', name: 'repo-b' },
+      }),
+    ]);
+
+    const result = await getSessionArchive({
+      days: 14,
+      repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
+    });
+
+    expect(result.rows.map((r) => r.sessionId)).toEqual(['legacy']);
   });
 
   it('degrades to an empty result with a warning when the store throws', async () => {

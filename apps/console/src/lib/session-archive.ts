@@ -14,7 +14,12 @@ import {
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
-import { primaryWatchedRepo, type WatchedRepo } from './github-client';
+import {
+  parseRepoFilterParam,
+  primaryWatchedRepo,
+  repoKey,
+  type WatchedRepo,
+} from './github-client';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 
 export const DEFAULT_ARCHIVE_DAYS = 14;
@@ -30,6 +35,7 @@ export interface SessionArchiveQuery {
   days: number;
   source?: SessionSource;
   issueNumber?: number;
+  repo?: WatchedRepo;
 }
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -44,6 +50,9 @@ function firstValue(value: string | string[] | undefined): string | undefined {
  * rather than throwing - there's no form validation UI here, just query
  * params a maintainer edits by hand in the URL bar (per the "no filter
  * chrome beyond simple query params" UI philosophy - see #2694/#3019).
+ * `repo` reuses the dashboard/`/agents` `?repo=owner/name` convention
+ * (parseRepoFilterParam) so all three pages agree on the same param name
+ * and fallback-to-"no filter" behavior for an unrecognized value.
  */
 export function parseSessionArchiveQuery(
   searchParams: RawSearchParams,
@@ -62,7 +71,9 @@ export function parseSessionArchiveQuery(
   const issueNumber =
     Number.isInteger(issueRaw) && issueRaw > 0 ? issueRaw : undefined;
 
-  return { days, source, issueNumber };
+  const repo = parseRepoFilterParam(searchParams['repo']);
+
+  return { days, source, issueNumber, repo };
 }
 
 /** Human summary of which slice of the archive a page is showing, for the
@@ -220,6 +231,20 @@ export async function getSessionArchive(
       ledger: { byIssue: [], byWeek: [] },
       warnings: ['Session archive unavailable (agent-telemetry store failed).'],
     };
+  }
+
+  // No repo field on `listSessionDocs` to filter server-side by, unlike
+  // source/issueNumber (which are indexed Firestore query params) - applied
+  // here instead, after the fetch, the same way the dashboard/`/agents`
+  // pages narrow their own already-fetched data (see page.tsx). A doc with
+  // no `repo` predates Phase 0's field and is treated as belonging to the
+  // primary watched repo, matching toSessionRow's own fallback just below.
+  if (query.repo) {
+    const repoFilter = query.repo;
+    docs = docs.filter(
+      (doc) =>
+        repoKey(doc.repo ?? primaryWatchedRepo()) === repoKey(repoFilter),
+    );
   }
 
   const now = new Date().toISOString();
