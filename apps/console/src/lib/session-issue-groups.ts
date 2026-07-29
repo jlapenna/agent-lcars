@@ -10,6 +10,12 @@ export interface IssueSessionGroup {
    * doc comment for why that one stays a single cross-repo catch-all. */
   repo?: WatchedRepo;
   issueUrl?: string;
+  /** The group's newest session's own `title` (SessionRow.title, already
+   * falls back to `Issue #N` when no transcript-derived title was
+   * recorded) - shown next to the issue number so a maintainer scanning
+   * the by-issue view doesn't have to open every group to see what it was
+   * about (#191). */
+  issueTitle?: string;
   /** Newest-first, inherited from `rows`' own order (getSessionArchive's
    * `listSessionDocs` sort) - never re-sorted within the group. */
   sessions: SessionRow[];
@@ -49,7 +55,10 @@ export function groupSessionsByIssue(rows: SessionRow[]): IssueSessionGroup[] {
     }
     groups.set(key, {
       issueNumber: row.issueNumber ?? 'no-issue',
-      ...(row.issueNumber !== undefined && { repo: row.repo }),
+      ...(row.issueNumber !== undefined && {
+        repo: row.repo,
+        issueTitle: row.title,
+      }),
       ...(row.issueUrl !== undefined && { issueUrl: row.issueUrl }),
       sessions: [row],
     });
