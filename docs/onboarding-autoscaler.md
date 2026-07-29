@@ -323,18 +323,18 @@ No `docker/setup-qemu-action` is needed — nothing is built on the runner,
 and arm64 emulation lives on the builder, which is where `RUN` steps
 actually execute under the remote driver.
 
-Pushes to `docker-registry.lan.jlapenna.net` are currently
-**unauthenticated**. Treat that as a known gap rather than a feature: any
-LAN-positioned host — including every ephemeral runner — can overwrite or
-delete the images the whole fleet executes (agent-lcars#112).
+Pushes to `docker-registry.lan.jlapenna.net` require the `publisher`
+credential. The registry keeps pulls anonymous but uses its Bearer-token
+service to authorize writes. The credential is distributed from the
+homelab Ansible vault to the socketless publish lane as the read-only
+`/secrets/registry-password` mount; it is not a GitHub Actions secret.
 
-Write auth was deployed and reverted on 2026-07-26. With Basic auth,
-`docker login` succeeded but the remote-driver push still returned 401 —
-observed in CI and reproduced by hand. The likely cause is that reads were
-anonymous while only writes challenged, so the client may never register a
-Basic handler for the host; that was not isolated. Whatever replaces it
-must be verified against the **remote driver** specifically — see
-jlapenna/homelab `docs/registry.md`.
+Run `docker login docker-registry.lan.jlapenna.net --username publisher
+--password-stdin < /secrets/registry-password` before invoking Buildx.
+With the remote driver, the client forwards that credential through the
+build session; the builder does not store it. Log out in an `always()`
+cleanup step. See jlapenna/homelab `docs/registry.md` for credential
+rotation and policy verification.
 
 ## Verifying it actually worked
 
