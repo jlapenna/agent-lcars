@@ -38,6 +38,11 @@ function GroupHeading({ group }: { group: IssueSessionGroup }) {
             )}
           </Title>
           {group.repo && <RepoBadge repo={group.repo} />}
+          {group.issueTitle && (
+            <Text size="sm" c="dimmed" truncate="end" style={{ maxWidth: 480 }}>
+              {group.issueTitle}
+            </Text>
+          )}
         </>
       )}
       <Text size="xs" c="dimmed">
