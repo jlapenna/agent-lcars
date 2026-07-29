@@ -29,6 +29,12 @@ export interface ConsoleHeaderProps {
  * not a nav destination) keeps its own lighter back-link header instead of
  * this component.
  *
+ * The title/subtitle row itself carries the swept-corner "elbow" accent
+ * (`.lcars-header`, sized up from the same shape `.lcars-panel` uses for
+ * cards - see global.css) plus a segmented signal bar in the nav rail's own
+ * three accent colors, so the marquee page title reads as LCARS chrome
+ * rather than a plain heading sitting above the pill rail (#204).
+ *
  * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
  * `cacheComponents` requires a Suspense boundary for, so every page renders
  * this outside that boundary and renders `DataWarnings` itself once its data
@@ -46,19 +52,29 @@ export function ConsoleHeader({
 }: ConsoleHeaderProps) {
   return (
     <Stack gap="md" mb="xl">
-      <Group justify="space-between" align="flex-start" gap="sm">
-        <div>
-          <Title order={1}>{title}</Title>
-          <Text c="dimmed" mt={4}>
-            {subtitle}
-          </Text>
+      <div className="lcars-header">
+        <Group justify="space-between" align="flex-start" gap="sm">
+          <div>
+            <Title order={1} className="lcars-header-title">
+              {title}
+            </Title>
+            <Text c="dimmed" mt={4}>
+              {subtitle}
+            </Text>
+          </div>
+          {actions && (
+            <Group gap="sm" wrap="wrap">
+              {actions}
+            </Group>
+          )}
+        </Group>
+
+        <div className="lcars-header-bar" aria-hidden="true">
+          <span className="lcars-header-bar-segment" data-accent="amber" />
+          <span className="lcars-header-bar-segment" data-accent="periwinkle" />
+          <span className="lcars-header-bar-segment" data-accent="teal" />
         </div>
-        {actions && (
-          <Group gap="sm" wrap="wrap">
-            {actions}
-          </Group>
-        )}
-      </Group>
+      </div>
 
       <nav className="lcars-nav" aria-label="Console sections">
         {NAV_ITEMS.map((item) => (
