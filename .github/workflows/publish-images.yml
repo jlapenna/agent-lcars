@@ -1,11 +1,27 @@
-name: Publish runner-autoscaler images
+name: Publish images
 
-# Builds and publishes both images this repo's runner fleet depends on:
-# the control-plane (apps/runner-autoscaler/Dockerfile) and the JIT worker image
-# (apps/runner-autoscaler/runner-image/Dockerfile) every other CI job in this
-# fleet actually executes inside. jlapenna/homelab pulls both rather than
-# building from source (agent-lcars#52) -- this workflow is the one place
-# that source gets compiled into a real, published artifact.
+# Builds and publishes every image this repo produces:
+#   1. the autoscaler control-plane (apps/runner-autoscaler/Dockerfile);
+#   2. the JIT worker image (apps/runner-autoscaler/runner-image/Dockerfile)
+#      every other CI job in this fleet actually executes inside;
+#   3. the standalone telemetry-watcher daemon
+#      (apps/telemetry-watcher/Dockerfile), the per-host image pike runs.
+# jlapenna/homelab pulls all three rather than building from source
+# (agent-lcars#52) -- this workflow is the one place that source gets
+# compiled into a real, published artifact.
+#
+# (3) was added in agent-lcars#231, after its absence caused a real outage.
+# Nothing in CI built it, so it only ever reached the registry when someone
+# ran `docker build` by hand. The members -> sprinkles allowlist fix landed
+# in #137 and then sat unpublished for weeks while pike kept running a
+# pre-fix image, reporting 0 active CLI sessions while ~10 were live
+# (homelab#202, and the postmortem in homelab's docs/incidents.md).
+#
+# Note that (2) and (3) are DIFFERENT artifacts built from the same source:
+# (2) bakes the telemetry bundle into the runner image for CI issue-agent
+# telemetry, while (3) is the long-lived workstation daemon. A telemetry
+# change must rebuild both -- which is why the paths filter below feeds two
+# publish steps, not one.
 #
 # Runs on lcars-build-client: a socketless pool that holds no Docker socket
 # and needs no local Docker daemon (agent-lcars#101). Images are built by a
@@ -23,14 +39,20 @@ on:
     branches: [main]
     paths:
       - apps/runner-autoscaler/**
-      - .github/workflows/publish-runner-autoscaler.yml
-      # The JIT worker image's Dockerfile clones this repo's own `main` at
-      # build time and bakes in `nx bundle @agent-lcars/telemetry-watcher`
-      # (see runner-image/Dockerfile) -- a telemetry-only change must
-      # rebuild the image too, or every self-hosted runner keeps the old
-      # sidecar until an unrelated autoscaler change or manual dispatch
-      # happens to trigger one (the same silent-staleness failure mode
-      # #52 exists to eliminate).
+      - .github/workflows/publish-images.yml
+      # A telemetry change rebuilds TWO images, for two different reasons:
+      #
+      #   - The JIT worker image's Dockerfile clones this repo's own `main`
+      #     at build time and bakes in `nx bundle
+      #     @agent-lcars/telemetry-watcher` (see runner-image/Dockerfile).
+      #     Without this trigger every self-hosted runner keeps the old
+      #     sidecar until an unrelated autoscaler change or manual dispatch
+      #     happens to trigger one (the same silent-staleness failure mode
+      #     #52 exists to eliminate).
+      #   - The standalone daemon image pike runs. Its absence from CI is
+      #     what #231 fixed; before that, this same paths filter already
+      #     matched telemetry changes and published something, just not
+      #     this image -- which is precisely why the gap was easy to miss.
       - apps/telemetry-watcher/**
       - libs/telemetry/**
   workflow_dispatch:
@@ -39,7 +61,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish-runner-autoscaler
+  group: publish-images
   cancel-in-progress: false
 
 jobs:
@@ -92,6 +114,51 @@ jobs:
           ./tools/nx build @agent-lcars/runner-autoscaler
           ./tools/nx test @agent-lcars/runner-autoscaler
           ./tools/nx typecheck @agent-lcars/runner-autoscaler
+          ./tools/nx build @agent-lcars/telemetry-watcher
+          ./tools/nx test @agent-lcars/telemetry-watcher
+          ./tools/nx typecheck @agent-lcars/telemetry-watcher
+
+      # The `bundle` target is deliberately outside the default build graph
+      # (nothing depends on it -- see apps/telemetry-watcher/README.md), so
+      # ci.yml's `nx run-many -t test typecheck build --all` never exercises
+      # it. That makes this the ONLY gate on the artifact both the runner
+      # sidecar and the daemon image actually execute, and bundling failures
+      # are invisible to unit tests: esbuild inlines every dependency, so a
+      # transitive dep that cannot be inlined breaks only at runtime.
+      #
+      # Runs the bundle from an empty directory on purpose. Executing it in
+      # place can succeed via an ambient node_modules resolution that will
+      # not exist inside the image -- the README calls this out as the
+      # manual verification step; this is that step, automated.
+      #
+      # Deliberately NOT `docker run`: this pool holds no Docker socket (the
+      # assertion below is the point of #101), so a container-based smoke
+      # test cannot work here. Plain node needs no daemon.
+      - name: Verify the telemetry-watcher bundle runs standalone
+        run: |
+          ./tools/nx bundle @agent-lcars/telemetry-watcher
+
+          smoke="$(mktemp -d)"
+          cp dist/apps/telemetry-watcher/sidecar.cjs "$smoke/"
+          mkdir -p "$smoke/projects" "$smoke/codex"
+
+          # No credentials configured, so it falls back to the log-only
+          # store by design and writes nothing to Firestore. It is a daemon
+          # and never exits on its own, hence `timeout`; `|| true` swallows
+          # timeout's 124, and the grep below is what actually decides
+          # pass/fail -- a genuine crash also lands here and still fails.
+          ( cd "$smoke" \
+            && AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR="$smoke/projects" \
+               AGENT_TELEMETRY_CODEX_SESSIONS_DIR="$smoke/codex" \
+               AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB='' \
+               timeout 30s node sidecar.cjs ) > "$smoke/out.log" 2>&1 || true
+
+          if ! grep -q "starting; watching" "$smoke/out.log"; then
+            echo "::error::telemetry-watcher bundle did not start standalone"
+            cat "$smoke/out.log"
+            exit 1
+          fi
+          grep "starting; watching" "$smoke/out.log"
 
       # Fail loudly rather than silently falling back to a local daemon if
       # this ever lands on a socket-mounted pool by mistake. The absence of
@@ -181,6 +248,43 @@ jobs:
             AGENT_LCARS_REF=${{ github.sha }}
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache,mode=max
+
+      # The standalone per-host daemon image (agent-lcars#231). Three things
+      # differ from the two steps above, all deliberate:
+      #
+      #   context: .    -- this Dockerfile does `COPY . .` from the REPO
+      #     ROOT and runs pnpm install + `nx bundle` inside the build, unlike
+      #     the autoscaler's self-contained subdirectory contexts. Scoping
+      #     this to apps/telemetry-watcher fails in a confusing way.
+      #
+      #   platforms     -- amd64 only. The images above are multi-arch
+      #     because the runner fleet is; this one's only consumer is pike,
+      #     which is amd64. arm64 here would mean a full monorepo install
+      #     and esbuild bundle under qemu emulation, on a max_runners:1
+      #     lane, for a platform nothing pulls. Revisit if the watcher ever
+      #     runs on an arm host.
+      #
+      #   two tags      -- homelab pins this image as tag@digest
+      #     deliberately (its compose is under docker:pinDigests), so a
+      #     moving-only tag would not serve that consumer. The immutable
+      #     sha tag is what a pin can point at; :latest gives a stable pull
+      #     target and matches the other two images here. Note Renovate
+      #     cannot bump that pin -- it is disabled for
+      #     docker-registry.lan.jlapenna.net/** in homelab, since its
+      #     runner cannot reach a LAN registry -- so publishing guarantees
+      #     the artifact EXISTS but a human still moves the pin.
+      - name: Build and push telemetry-watcher daemon image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/telemetry-watcher/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:latest
+            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
+          cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:buildcache
+          cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:buildcache,mode=max
 
       - name: Log out of the registry
         if: always()

@@ -136,10 +136,16 @@ node sidecar.cjs runner sidecar --run-id test --projects-dir /tmp/some/fixture/d
 
 Deliberately **not** in the default `build` target's dependency chain (a
 separate `bundle` target, not depended on by anything on its own) — it's
-invoked indirectly, by `.github/workflows/publish-runner-autoscaler.yml`
-building the runner image (see "CI issue-agent telemetry paths" above)
-whenever a push to `main` touches `apps/telemetry-watcher/**` or
-`libs/telemetry/**`, not by anything in this repo's own `ci.yml`. The old
+invoked by `.github/workflows/publish-images.yml`, whenever a push to
+`main` touches `apps/telemetry-watcher/**` or `libs/telemetry/**`, not by
+anything in this repo's own `ci.yml`.
+
+Because `ci.yml`'s `nx run-many -t test typecheck build --all` therefore
+never exercises it, that workflow also runs the standalone check above as a
+real step ("Verify the telemetry-watcher bundle runs standalone") before it
+publishes anything. That step is the only automated gate on this artifact:
+esbuild inlines every dependency, so a transitive dep that can't be inlined
+breaks at runtime and is invisible to unit tests. The old
 `publish-telemetry-tool.yml`
 workflow (publishing immutable semver-tagged releases to
 `gs://agent-lcars-tools/telemetry/`, curl-downloaded per job) is gone —
@@ -149,10 +155,26 @@ use the runner-image bake-in exclusively (members migrated in
 
 ## Deployment
 
-Packaged as a Docker image (`apps/telemetry-watcher/Dockerfile`,
-built directly from the live `members` checkout — see the image comments
-for why `COPY . .` is cache-invalidated on every build and how the cache
-mounts compensate):
+Packaged as a Docker image (`apps/telemetry-watcher/Dockerfile` — see the
+image comments for why `COPY . .` is cache-invalidated on every build and
+how the cache mounts compensate; note the build context is the **repo
+root**, not this directory).
+
+**CI publishes it.** `publish-images.yml` builds and pushes
+`agent-lcars/telemetry-watcher` — `:latest` plus an immutable commit-sha
+tag, linux/amd64 — on every push to `main` touching
+`apps/telemetry-watcher/**` or `libs/telemetry/**` (agent-lcars#231).
+
+That was not always true, and its absence caused a real outage: nothing in
+CI built this image, so it only reached the registry when someone ran
+`docker build` by hand. The `members` → `sprinkles` allowlist fix landed in
+#137 and then sat unpublished for weeks while pike kept running a pre-fix
+image, reporting 0 active CLI sessions while ~10 were live (homelab#202;
+postmortem in homelab's `docs/incidents.md`). The trap was that
+`apps/telemetry-watcher/**` _did_ already trigger a publish — of the runner
+image's baked-in sidecar, a different artifact.
+
+For a local image without pushing:
 
 ```bash
 ./tools/nx run @agent-lcars/telemetry-watcher:docker-build
@@ -161,4 +183,6 @@ mounts compensate):
 Deployed to the `pike` homelab host via that host's existing Docker Compose
 and homelab-ansible convention (outside this repo) — chosen over the PRD's
 original "bundled systemd unit" plan to match how the rest of the homelab
-fleet is managed.
+fleet is managed. **Publishing does not deploy:** homelab pins this image
+as `tag@digest` and Renovate is disabled for that LAN registry (its runner
+can't reach it), so moving the pin is still a human step.

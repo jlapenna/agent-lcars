@@ -314,7 +314,7 @@ that's not a pattern to repeat for a new image.
 
 Publish it from a **socketless build-client** scale set (§2 above) — never
 the AI-agent pool, and no longer from a docker-socket-enabled pool either.
-See this repo's own `.github/workflows/publish-runner-autoscaler.yml` for a
+See this repo's own `.github/workflows/publish-images.yml` for a
 working reference: multi-arch build+push through the remote BuildKit
 builder, with a registry-backed layer cache (`cache-from`/`cache-to:
 type=registry`).
