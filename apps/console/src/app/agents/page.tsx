@@ -184,6 +184,7 @@ async function AgentsPageBody({
         generatedAt={generatedAt}
         refreshLabel={formatRelativeTime(generatedAt)}
         bustsGithubCache
+        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
       />
     </>
   );
@@ -231,7 +232,6 @@ async function AgentsPageShell({ searchParams }: PageProps) {
             )}
           </>
         }
-        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={5} header={false} />}>

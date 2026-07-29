@@ -125,13 +125,10 @@ async function SessionDetailPageContent({ params }: PageProps) {
         >
           ← Sessions
         </Anchor>
-        <Group gap="sm">
-          <QuickTaskButton watchedRepos={getWatchedRepos()} />
-          <RefreshButton
-            generatedAt={generatedAt}
-            initialLabel={formatRelativeTime(generatedAt)}
-          />
-        </Group>
+        <RefreshButton
+          generatedAt={generatedAt}
+          initialLabel={formatRelativeTime(generatedAt)}
+        />
       </Group>
 
       {detail.status === 'error' && (
@@ -153,7 +150,9 @@ async function SessionDetailPageContent({ params }: PageProps) {
         </>
       )}
 
-      <ConsoleFooter />
+      <ConsoleFooter
+        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
+      />
     </Container>
   );
 }
