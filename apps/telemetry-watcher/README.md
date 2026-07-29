@@ -82,22 +82,22 @@ telemetry for the daemon's other tracked sessions.
 
 All via environment variables (see `src/lib/config.ts`):
 
-| Variable                                  | Default                          | Purpose                                                                                                                         |
-| ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_TELEMETRY_CHECKOUT_ROOT`           | `/home/jlapenna/p/sprinkles`     | The checkout this host watcher is scoped to. **Both allowlist defaults below derive from it** — see `src/lib/default-checkout.ts`. |
-| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`     | `~/.claude/projects`             | Root to watch (overridable for Docker bind mounts / test fixtures).                                                             |
-| `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`   | checkout root as a project slug  | Comma-separated `*`-wildcard globs matched against project-dir names. Derived: `/` → `-`, plus a trailing `*` to admit worktrees. |
-| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`      | `~/.codex/sessions`              | Recursive root for Codex rollout JSONL.                                                                                         |
-| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`     | checkout root + `*`              | Cwd glob privacy boundary for Codex summaries.                                                                                  |
-| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB`  | `~/.gemini/antigravity-cli/…`    | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes have **no** override and always follow the checkout root. |
-| `AGENT_TELEMETRY_HOST`                    | `os.hostname()`                  | Host label recorded on each session doc.                                                                                        |
-| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`   | `10000`                          | Tick interval.                                                                                                                  |
-| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`     | `heartbeatIntervalMs * 5`        | How long a session can go unrediscovered before it's marked `stale`.                                                            |
-| `AGENT_TELEMETRY_SHARE_DIR`               | `~/share`                        | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                   |
-| `AGENT_TELEMETRY_PROJECT_ID`              | —                                | Firestore project id for the real store.                                                                                        |
-| `AGENT_TELEMETRY_DATABASE_ID`             | `(default)`                      | Firestore database id within that project (`src/lib/store.ts`).                                                                 |
-| `AGENT_TELEMETRY_WRITER_KEY_JSON`         | —                                | Service-account key JSON for the real store's writer credentials.                                                               |
-| `FIRESTORE_EMULATOR_HOST`                 | —                                | If set, writes to the emulator instead (takes precedence over the two above).                                                   |
+| Variable                                 | Default                         | Purpose                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TELEMETRY_CHECKOUT_ROOT`          | `/home/jlapenna/p/sprinkles`    | The checkout this host watcher is scoped to. **Both allowlist defaults below derive from it** — see `src/lib/default-checkout.ts`.                                  |
+| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`            | Root to watch (overridable for Docker bind mounts / test fixtures).                                                                                                 |
+| `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`  | checkout root as a project slug | Comma-separated `*`-wildcard globs matched against project-dir names. Derived: `/` → `-`, plus a trailing `*` to admit worktrees.                                   |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`             | Recursive root for Codex rollout JSONL.                                                                                                                             |
+| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`    | checkout root + `*`             | Cwd glob privacy boundary for Codex summaries.                                                                                                                      |
+| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` | `~/.gemini/antigravity-cli/…`   | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes have **no** override and always follow the checkout root. |
+| `AGENT_TELEMETRY_HOST`                   | `os.hostname()`                 | Host label recorded on each session doc.                                                                                                                            |
+| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`  | `10000`                         | Tick interval.                                                                                                                                                      |
+| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`    | `heartbeatIntervalMs * 5`       | How long a session can go unrediscovered before it's marked `stale`.                                                                                                |
+| `AGENT_TELEMETRY_SHARE_DIR`              | `~/share`                       | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                                                       |
+| `AGENT_TELEMETRY_PROJECT_ID`             | —                               | Firestore project id for the real store.                                                                                                                            |
+| `AGENT_TELEMETRY_DATABASE_ID`            | `(default)`                     | Firestore database id within that project (`src/lib/store.ts`).                                                                                                     |
+| `AGENT_TELEMETRY_WRITER_KEY_JSON`        | —                               | Service-account key JSON for the real store's writer credentials.                                                                                                   |
+| `FIRESTORE_EMULATOR_HOST`                | —                               | If set, writes to the emulator instead (takes precedence over the two above).                                                                                       |
 
 The two allowlist rows deliberately describe how their defaults are
 **derived** rather than restating the literals. They used to spell out
