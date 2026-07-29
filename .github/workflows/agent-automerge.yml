@@ -34,6 +34,17 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  # The same GITHUB_TOKEN suppression, one level up: CI runs triggered by a
+  # bot's own push do not emit `workflow_run` either, so for a purely
+  # bot-driven PR the job below never runs at all and its anchor stays open.
+  # Measured 2026-07-29: #220's CI was triggered by github-actions[bot], no
+  # workflow_run fired, #215 was closed by hand 13 minutes later; #198's last
+  # CI was triggered by a human push, workflow_run fired, and #194 closed
+  # automatically 15 seconds after the merge. `close-orphaned-anchors` below
+  # is the periodic backstop for the first case.
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 permissions:
   actions: write
@@ -50,7 +61,11 @@ permissions:
 
 jobs:
   automerge:
+    # The event guard is redundant today (a scheduled run has no
+    # `pull_request` payload, so the login check already fails) but explicit:
+    # this job must never look like it could fire off the cron added above.
     if: >
+      (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') &&
       contains(fromJSON(vars.AGENT_BOT_LOGINS || '[]'), github.event.pull_request.user.login) &&
       (github.event_name != 'pull_request_review' ||
        github.event.review.state == 'approved')
@@ -271,3 +286,106 @@ jobs:
           # deploy-console.yml's `workflow_run.event == 'push'` gate anyway -
           # dispatch it explicitly instead of relying on the chain.
           gh workflow run deploy-console.yml --repo "$REPO" --ref main
+
+  # Backstop for the reach gap the cron comment above describes: the inline
+  # close in restore-main-checks is the fast path (#194 closed 15s after its
+  # merge), but it only runs when a workflow_run event fired, which a
+  # bot-triggered CI run does not emit. This sweep does not depend on any
+  # event cascade, so it catches the anchors that path never reaches.
+  close-orphaned-anchors:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    timeout-minutes: 10
+    steps:
+      - name: Close open anchors of recently-merged agent PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS || '[]' }}
+        run: |
+          set -euo pipefail
+
+          # Bounded to a day: an issue the maintainer deliberately reopens
+          # long after its PR merged must not be re-closed forever by a cron.
+          SINCE=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          # `gh pr list --json author` answers in the GRAPHQL shape
+          # (`app/claude`) while AGENT_BOT_LOGINS is REST-shaped
+          # (`claude[bot]`) - comparing them raw is exactly the silent
+          # mismatch that broke #175, and docs/bot-identity-formats.md makes
+          # REST canonical. Normalize before the membership test.
+          gh pr list --repo "$REPO" --state merged --limit 50 \
+            --json number,author,mergedAt,closingIssuesReferences >/tmp/merged.json
+
+          CANDIDATES=$(jq -r --argjson bots "$AGENT_BOT_LOGINS" --arg since "$SINCE" '
+            .[]
+            | select(.mergedAt > $since)
+            | .author.login as $raw
+            | (if ($raw | startswith("app/")) then ($raw[4:] + "[bot]") else $raw end) as $login
+            | select($bots | index($login) != null)
+            | . as $pr
+            | .closingIssuesReferences[]?
+            | "\($pr.number) \(.number) \($pr.mergedAt)"
+          ' /tmp/merged.json)
+
+          if [ -z "$CANDIDATES" ]; then
+            echo "No agent PRs merged since $SINCE declared a closing issue."
+            exit 0
+          fi
+
+          # A sweep that reports nothing is indistinguishable from a sweep
+          # that never ran - the failure mode this whole mechanism exists to
+          # correct. Always print what was examined.
+          CHECKED=0 CLOSED=0 KEPT=0 FAILED=0
+
+          while read -r PR ISSUE MERGED_AT; do
+            [ -n "${ISSUE:-}" ] || continue
+            CHECKED=$((CHECKED + 1))
+
+            STATE=$(gh issue view "$ISSUE" --repo "$REPO" --json state --jq .state 2>/dev/null || echo "")
+            if [ "$STATE" != OPEN ]; then
+              continue
+            fi
+
+            # Respect a deliberate reopen: if someone reopened this after the
+            # PR merged, they want it open and the sweep must not fight them.
+            #
+            # `--paginate --jq` runs the filter once PER PAGE and concatenates
+            # the results, so a long timeline yields "0\n1" and the numeric
+            # test below dies with "integer expression expected" - falling
+            # through to the close path and re-closing a reopened issue on
+            # every sweep. `--slurp` aggregates the pages, but gh (2.96.0)
+            # rejects `--slurp` together with `--jq`, so the aggregation has
+            # to happen in a real jq downstream of it.
+            #
+            # A lookup failure must skip, not default to "no reopens": under
+            # `set -o pipefail` the `if !` catches it. Guessing here would
+            # close an issue precisely when we cannot tell whether someone
+            # reopened it on purpose.
+            if ! REOPENED=$(gh api "repos/$REPO/issues/$ISSUE/timeline" --paginate --slurp 2>/dev/null \
+              | jq --arg merged "$MERGED_AT" \
+                '[.[][] | select(.event == "reopened" and .created_at > $merged)] | length'); then
+              echo "::warning::Could not read #$ISSUE's timeline; leaving it open rather than guessing."
+              KEPT=$((KEPT + 1))
+              continue
+            fi
+            if [ "${REOPENED:-0}" -gt 0 ]; then
+              echo "#$ISSUE was reopened after PR #$PR merged; leaving it open."
+              KEPT=$((KEPT + 1))
+              continue
+            fi
+
+            if gh issue close "$ISSUE" --repo "$REPO" \
+              --comment "Closed by #$PR, which declared it and has merged." >/dev/null 2>&1; then
+              echo "Swept: closed #$ISSUE, linked from merged PR #$PR."
+              CLOSED=$((CLOSED + 1))
+            else
+              echo "::warning::Could not close #$ISSUE, linked from merged PR #$PR."
+              FAILED=$((FAILED + 1))
+            fi
+          done <<< "$CANDIDATES"
+
+          echo "Sweep since $SINCE: $CHECKED linked anchor(s) examined, $CLOSED closed, $KEPT left open (reopened after merge, or timeline unreadable), $FAILED close attempt(s) failed."
+          if [ "$CLOSED" -gt 0 ]; then
+            echo "::warning::Swept $CLOSED anchor(s) the inline close in restore-main-checks did not reach."
+          fi
