@@ -5,7 +5,11 @@ import { cache, Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
-import { repoDisplayName, repoKey } from '../../lib/github-client';
+import {
+  getWatchedRepos,
+  repoDisplayName,
+  repoKey,
+} from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
   describeArchiveWindow,
@@ -19,6 +23,7 @@ import { ConsoleHeader, DataWarnings } from '../console-header';
 import { formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
 import { PageLoading } from '../page-loading';
+import { QuickTaskButton } from '../quick-task-button';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
 
@@ -190,6 +195,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const rawParams = await searchParams;
   const query = parseSessionArchiveQuery(rawParams);
   const view = parseView(rawParams);
+  const watchedRepos = getWatchedRepos();
 
   // The cost ledger lived here behind `?tab=costs` until #192 moved it to
   // its own destination. Send those links (bookmarks, and anything already
@@ -225,6 +231,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
             )}
           </>
         }
+        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>

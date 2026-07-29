@@ -15,11 +15,13 @@ import { Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../../auth';
+import { getWatchedRepos } from '../../../lib/github-client';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleFooter } from '../../console-footer';
 import { formatRelativeTime } from '../../format';
 import { PageLoading } from '../../page-loading';
+import { QuickTaskButton } from '../../quick-task-button';
 import { RefreshButton } from '../../refresh-button';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
@@ -124,6 +126,7 @@ async function SessionDetailPageContent({ params }: PageProps) {
           ← Sessions
         </Anchor>
         <Group gap="sm">
+          <QuickTaskButton watchedRepos={getWatchedRepos()} />
           <RefreshButton
             generatedAt={generatedAt}
             initialLabel={formatRelativeTime(generatedAt)}
