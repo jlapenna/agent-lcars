@@ -142,8 +142,13 @@ These are additive to agent-protocol.md §11, not a relaxation of it:
 
 Per agent-protocol.md §1, the console's takeover-command scanner expects a
 resume command containing the literal substring `claude-agent-session.sh`.
-**`tools/claude-agent-session.sh` exists in this repo** — post the real
-command, always:
+**`tools/claude-agent-session.sh` exists in this repo.** What to post
+depends on which pipeline dispatched you, because the script is
+Claude-specific — it discovers transcripts only under
+`~/.claude/projects`, authenticates with `CLAUDE_CODE_OAUTH_TOKEN`, and
+hands off to `claude --resume`.
+
+**Dispatched by `claude.yml`:** post the real command.
 
 ```
 tools/claude-agent-session.sh resume <session-id>
@@ -152,16 +157,26 @@ tools/claude-agent-session.sh resume <session-id>
 Find `<session-id>` the way agent-protocol.md §1 describes (the basename of
 the newest `~/.claude/projects/<slugified-repo-path>/*.jsonl`).
 
-This section used to say the script did not exist here, and stayed that way
-long after it landed. Agents read it and posted "resume tooling is not yet
-available" instead of a command — which is exactly the string the console's
-`TAKEOVER_COMMAND_RE` (`apps/console/src/lib/action-items.ts`) cannot match,
-so the takeover affordance stayed dark on this repo's own issues while
-working for every other repo the fleet watches. If you are about to write
-that sentence into a comment, check `tools/` first.
+**Dispatched by `codex.yml` or `opencode.yml`:** this script cannot resume
+your session, and `opencode.yml` archives no transcript at all. Say plainly
+that no resume tooling exists for your pipeline rather than pasting a
+command that will fail for the maintainer — and do not substitute a
+differently-named script, since agent-protocol.md §1's scanner matches the
+literal `claude-agent-session.sh` and does not generalize per agent. That
+gap is real and unclosed; naming it in your comment is the honest
+deliverable here.
 
-Two things worth putting in the takeover comment itself, because they
-change what the maintainer can actually do:
+This section used to say the script did not exist here at all, and stayed
+that way long after it landed. Every pipeline's agents read it and posted
+"resume tooling is not yet available" — which is exactly the string the
+console's `TAKEOVER_COMMAND_RE` (`apps/console/src/lib/action-items.ts`)
+cannot match, so the takeover affordance stayed dark on this repo's own
+issues while working for every other repo the fleet watches. If you are
+about to write that sentence as a `claude.yml` run, check `tools/` first.
+
+The rest of this section applies to `claude.yml` runs. Two things are worth
+putting in the takeover comment itself, because they change what the
+maintainer can actually do:
 
 - `resume` reaches a session only while its runner container is alive, and
   JIT runners are torn down at job end. `list` shows what is still live.
@@ -171,7 +186,7 @@ change what the maintainer can actually do:
   for it. Worth naming in the comment, since by the time anyone reads a
   finished run's anchor, plain `resume` will no longer find it.
 
-Mention `resume-archive` in *addition* to the `resume` line, never instead
+Mention `resume-archive` in _addition_ to the `resume` line, never instead
 of it: `TAKEOVER_COMMAND_RE` is
 `/(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/`, which requires
 whitespace after `resume` and so does not match `resume-archive` at all. A
