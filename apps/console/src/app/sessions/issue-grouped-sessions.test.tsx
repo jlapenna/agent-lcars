@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { SessionRow } from '../../lib/session-archive';
@@ -132,6 +132,55 @@ describe('IssueGroupedSessions', () => {
     expect(
       screen.getAllByRole('link', { name: 'Second session' }),
     ).toHaveLength(2);
+  });
+
+  it('starts the no-issue group collapsed, with its sessions hidden', () => {
+    renderGroups([
+      {
+        issueNumber: 'no-issue',
+        sessions: [makeRow({ title: 'Ad-hoc CLI session' })],
+      },
+    ]);
+
+    expect(screen.getByText('No issue')).toBeTruthy();
+    expect(
+      screen.queryByRole('link', { name: 'Ad-hoc CLI session' }),
+    ).toBeNull();
+  });
+
+  it('expands the no-issue group on click, and re-collapses on a second click', () => {
+    renderGroups([
+      {
+        issueNumber: 'no-issue',
+        sessions: [makeRow({ title: 'Ad-hoc CLI session' })],
+      },
+    ]);
+
+    const toggle = screen.getByTestId('no-issue-group-toggle');
+    fireEvent.click(toggle);
+    expect(
+      screen.getAllByRole('link', { name: 'Ad-hoc CLI session' }),
+    ).toHaveLength(2);
+
+    fireEvent.click(toggle);
+    expect(
+      screen.queryByRole('link', { name: 'Ad-hoc CLI session' }),
+    ).toBeNull();
+  });
+
+  it("renders a real issue group's sessions unconditionally, with no collapse toggle", () => {
+    renderGroups([
+      {
+        issueNumber: 42,
+        repo: { owner: 'o', name: 'r' },
+        sessions: [makeRow({ title: 'Fix flaky login test' })],
+      },
+    ]);
+
+    expect(
+      screen.getAllByRole('link', { name: 'Fix flaky login test' }),
+    ).toHaveLength(2);
+    expect(screen.queryByTestId('no-issue-group-toggle')).toBeNull();
   });
 
   it('renders one section per group, in the order given', () => {
