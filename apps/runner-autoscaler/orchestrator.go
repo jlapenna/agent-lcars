@@ -135,10 +135,17 @@ func buildScaleSetRuntime(c Config, dockerHosts []DockerHost, fleet *FleetCoordi
 			return nil, err
 		}
 	}
+	shmSize := int64(0)
+	if c.RunnerShmSize != "" {
+		shmSize, err = units.RAMInBytes(c.RunnerShmSize)
+		if err != nil {
+			return nil, err
+		}
+	}
 	scaler := &Scaler{
 		scaleSetName: c.ScaleSetName, registrationName: c.RegistrationName, logger: logger.With("component", "scaler"),
 		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
-		runnerImage: c.RunnerImage, runnerMemory: memory,
+		runnerImage: c.RunnerImage, runnerMemory: memory, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, mountDockerSocket: c.MountDockerSocket, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,

@@ -108,6 +108,51 @@ func TestOrchestratorConfigDockerSocketAllowlistAllowsListed(t *testing.T) {
 	}
 }
 
+func TestOrchestratorConfigParsesPidsLimitAndShmSize(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    mount_docker_socket: true\n",
+		"    mount_docker_socket: true\n    pids_limit: 8192\n    shm_size: 1g\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e2e *Config
+	for i := range resolved.ScaleSets {
+		if resolved.ScaleSets[i].ScaleSetName == "e2e" {
+			e2e = &resolved.ScaleSets[i]
+		}
+	}
+	if e2e == nil {
+		t.Fatal("e2e scale set not found in resolved config")
+	}
+	if e2e.RunnerPidsLimit != 8192 {
+		t.Fatalf("RunnerPidsLimit = %d, want 8192", e2e.RunnerPidsLimit)
+	}
+	if e2e.RunnerShmSize != "1g" {
+		t.Fatalf("RunnerShmSize = %q, want 1g", e2e.RunnerShmSize)
+	}
+}
+
+func TestOrchestratorConfigRejectsNegativePidsLimit(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    mount_docker_socket: true\n",
+		"    mount_docker_socket: true\n    pids_limit: -1\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "invalid pids_limit") {
+		t.Fatalf("expected invalid pids_limit error, got %v", err)
+	}
+}
+
+func TestOrchestratorConfigRejectsInvalidShmSize(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    mount_docker_socket: true\n",
+		"    mount_docker_socket: true\n    shm_size: not-a-size\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "invalid shm_size") {
+		t.Fatalf("expected invalid shm_size error, got %v", err)
+	}
+}
+
 func TestLoadCredentials(t *testing.T) {
 	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
 	if err != nil {
