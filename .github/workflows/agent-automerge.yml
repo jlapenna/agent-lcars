@@ -39,15 +39,12 @@ permissions:
   actions: write
   checks: read
   contents: write
-  # A merge closes the pull request's linked issues on behalf of whoever
-  # merged it, so the closing keyword only takes effect if that actor can
-  # write issues. A human merge here has always closed the anchor issue in
-  # the same second; every `gh pr merge --auto` below merged as
-  # github-actions with no issues scope, so the "Closes #N" in each
-  # agent-authored PR body silently did nothing and the anchor stayed open -
-  # 17 already-fixed issues had accumulated in the tracker by 2026-07-29,
-  # each closed by hand afterwards. Same shape of failure as #175: a
-  # bot-identity gap that no-ops quietly instead of erroring.
+  # Needed by restore-main-checks' explicit `gh issue close` below. #214
+  # added this scope on the theory that it alone would let the platform's own
+  # "Closes #N" handling fire for a GITHUB_TOKEN auto-merge; measured
+  # afterwards, it does not - see that step's comment for the two negative
+  # data points. Keep the scope, but it is the explicit close that does the
+  # work, not this line.
   issues: write
   pull-requests: write
 
@@ -171,6 +168,40 @@ jobs:
             echo "::warning::PR #$PR is green but did not merge within two minutes; auto-merge remains responsible."
             exit 0
           fi
+
+          # Close the PR's linked issues ourselves.
+          #
+          # GitHub is supposed to do this: "Closes #N" in an agent-authored
+          # PR body creates a real link, and merging is supposed to close it.
+          # It does for a human merge (jlapenna's merges close their anchor in
+          # the same second) and has never once worked for a GITHUB_TOKEN
+          # `gh pr merge --auto` here. Granting this workflow `issues: write`
+          # (#214) did NOT fix it: #202 merged four minutes after that landed
+          # and left #191 open, and #222 was opened AND merged entirely after
+          # it and left #216 for an agent to close by hand twelve minutes
+          # later. Two clean post-fix data points, both negative.
+          #
+          # So stop relying on the platform for it. `closingIssuesReferences`
+          # is GitHub's own resolution of the closing keywords, so this closes
+          # exactly what the PR declared - no keyword regex of our own to
+          # drift. Filtering to OPEN keeps it idempotent across the
+          # pull_request and workflow_run invocations, which both reach here.
+          LINKED=$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$pr:Int!){
+              repository(owner:$owner,name:$name){
+                pullRequest(number:$pr){
+                  closingIssuesReferences(first:20){nodes{number state}}}}}' \
+            -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" \
+            --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[]
+                  | select(.state == "OPEN") | .number' 2>/dev/null || true)
+          for ISSUE in $LINKED; do
+            if gh issue close "$ISSUE" --repo "$REPO" \
+              --comment "Closed by #$PR ($MERGE_SHA)." >/dev/null 2>&1; then
+              echo "Closed #$ISSUE, linked from merged PR #$PR."
+            else
+              echo "::warning::Could not close #$ISSUE, linked from merged PR #$PR."
+            fi
+          done
 
           # Natural human/App merges already emit push runs. GITHUB_TOKEN
           # merges do not, so dispatch CI only when it's actually missing.
