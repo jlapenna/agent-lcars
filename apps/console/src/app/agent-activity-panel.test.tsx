@@ -551,9 +551,7 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
       ],
     });
     const group = screen.getByTestId('live-run-group-42');
-    expect(within(group).getAllByTestId('live-run-issue-link')).toHaveLength(
-      2,
-    );
+    expect(within(group).getAllByTestId('live-run-issue-link')).toHaveLength(2);
     expect(group.textContent).toContain('2 runs');
   });
 
