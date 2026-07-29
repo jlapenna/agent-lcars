@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/actions/scaleset"
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // newStubScalesetClient builds a real *scaleset.Client wired against a local
@@ -760,6 +762,48 @@ func TestPickHostSharedWorkDirNoColocation(t *testing.T) {
 	}
 }
 
+// TestPickHostSharedWorkDirExhaustionCountsPlacementBlocked pins
+// agent-lcars#210: the shared-workdir exclusivity branch used to return
+// errFleetAtCapacity without touching placement_blocked_total, so a real
+// placement-capacity cause was invisible to Prometheus. The homelab
+// controller saw 25 such blocks in 24h for homelab-autoscale-e2e -- with
+// every host reachable and under its runner limit -- and the only signal
+// was an error log line.
+func TestPickHostSharedWorkDirExhaustionCountsPlacementBlocked(t *testing.T) {
+	fake := newFakeDockerServer(t)
+
+	scaler := &Scaler{
+		scaleSetName: "e2e",
+		shareWorkDir: true,
+		dockerHosts:  []DockerHost{{Name: "a", Client: fake.client(t)}},
+		runners: runnerState{
+			idle: map[string]runnerRef{"runner-1": {host: "a", containerID: "c1"}},
+			busy: make(map[string]runnerRef),
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	// Counters are process-global and other tests share them, so measure the
+	// delta this call produces rather than an absolute value.
+	blocked := placementBlocked.WithLabelValues("e2e", placementReasonSharedWorkDirExclusive)
+	hostLimits := placementBlocked.WithLabelValues("e2e", placementReasonHostLimits)
+	beforeBlocked := testutil.ToFloat64(blocked)
+	beforeHostLimits := testutil.ToFloat64(hostLimits)
+
+	if _, err := scaler.pickHost(context.Background()); !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost error = %v, want one wrapping errFleetAtCapacity", err)
+	}
+
+	if got := testutil.ToFloat64(blocked) - beforeBlocked; got != 1 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonSharedWorkDirExclusive, got)
+	}
+	// The whole point of a dedicated reason is that this cause is
+	// distinguishable, so it must not also land on a coarser one.
+	if got := testutil.ToFloat64(hostLimits) - beforeHostLimits; got != 0 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 0", placementReasonHostLimits, got)
+	}
+}
+
 // TestEnsureRunnerImageRefreshesMutableTags pins agent-lcars#139: a TAG can
 // move in the registry, so a local hit must never be treated as
 // authoritative. The previous behaviour pulled only when the image was
@@ -871,6 +915,34 @@ func TestRunnerBinds(t *testing.T) {
 	if both[3] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
 		t.Fatalf("file mount not appended read-only: %q", both[3])
 	}
+}
+
+func TestRunnerHostConfig(t *testing.T) {
+	t.Run("zero pids limit means unlimited, not zero", func(t *testing.T) {
+		hc := runnerHostConfig(nil, nil, 0, 0, 0)
+		if hc.Resources.PidsLimit != nil {
+			t.Fatalf("PidsLimit = %v, want nil (unlimited)", *hc.Resources.PidsLimit)
+		}
+	})
+
+	t.Run("memory, pids limit and shm size are all set", func(t *testing.T) {
+		hc := runnerHostConfig([]string{"/a:/b"}, []string{"999"}, 12<<30, 8192, 1<<30)
+		if hc.Resources.Memory != 12<<30 {
+			t.Fatalf("Memory = %d, want %d", hc.Resources.Memory, int64(12<<30))
+		}
+		if hc.Resources.PidsLimit == nil || *hc.Resources.PidsLimit != 8192 {
+			t.Fatalf("PidsLimit = %v, want 8192", hc.Resources.PidsLimit)
+		}
+		if hc.ShmSize != 1<<30 {
+			t.Fatalf("ShmSize = %d, want %d", hc.ShmSize, int64(1<<30))
+		}
+		if len(hc.Binds) != 1 || hc.Binds[0] != "/a:/b" {
+			t.Fatalf("Binds = %#v", hc.Binds)
+		}
+		if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "999" {
+			t.Fatalf("GroupAdd = %#v", hc.GroupAdd)
+		}
+	})
 }
 
 // TestEnsureRunnerImageRejectsStreamedPullError is the other half of #139's

@@ -64,6 +64,31 @@ describe('groupSessionsByIssue', () => {
     expect(issueGroup?.issueUrl).toBe('https://github.com/o/r/issues/42');
   });
 
+  it("takes the group's issueTitle from its newest (first) session", () => {
+    const groups = groupSessionsByIssue([
+      makeRow({
+        sessionId: 'a2',
+        source: 'issue-agent',
+        issueNumber: 42,
+        title: 'Fix the flaky retry loop',
+      }),
+      makeRow({
+        sessionId: 'a1',
+        source: 'issue-agent',
+        issueNumber: 42,
+        title: 'Older, superseded title',
+      }),
+    ]);
+
+    expect(groups[0].issueTitle).toBe('Fix the flaky retry loop');
+  });
+
+  it('leaves issueTitle undefined for the no-issue group', () => {
+    const groups = groupSessionsByIssue([makeRow({ sessionId: 'c1' })]);
+
+    expect(groups[0].issueTitle).toBeUndefined();
+  });
+
   it('keeps two different repos with the same issue number in separate groups', () => {
     const groups = groupSessionsByIssue([
       makeRow({

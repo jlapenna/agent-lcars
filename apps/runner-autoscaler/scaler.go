@@ -37,7 +37,12 @@ type Scaler struct {
 	runners          runnerState
 	runnerImage      string
 	runnerMemory     int64
-	scaleSetID       int
+	// runnerPidsLimit: see Config.RunnerPidsLimit. Zero means no limit.
+	runnerPidsLimit int64
+	// runnerShmSize: see Config.RunnerShmSize. Zero means Docker's own
+	// default (64m).
+	runnerShmSize int64
+	scaleSetID    int
 	// Homelab change: a pool of docker hosts (local + SSH-proxied remotes)
 	// instead of a single client, so ONE scale set/label can spread runners
 	// across the whole fleet — see hosts.go. Order is round-robin fallback;
@@ -928,7 +933,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		reservedTotal += n
 	}
 	if fleet.maxRunners > 0 && actualTotal+reservedTotal >= fleet.maxRunners {
-		placementBlocked.WithLabelValues(scaleSet, "fleet_limit").Inc()
+		placementBlocked.WithLabelValues(scaleSet, placementReasonFleetLimit).Inc()
 		return "", fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
 	}
 	var withinHostLimits []DockerHost
@@ -945,7 +950,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		}
 	}
 	if len(withinHostLimits) == 0 {
-		placementBlocked.WithLabelValues(scaleSet, "host_limits").Inc()
+		placementBlocked.WithLabelValues(scaleSet, placementReasonHostLimits).Inc()
 		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
 
@@ -962,6 +967,12 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			}
 		}
 		if len(withCapacity) == 0 {
+			// Exclusivity saturation is a real placement-capacity cause and
+			// belongs alongside fleet_limit/host_limits, not only in the logs:
+			// without its own reason, a pending backlog on a shared-workdir
+			// scale set is indistinguishable in Prometheus from a listener or
+			// host outage.
+			placementBlocked.WithLabelValues(scaleSet, placementReasonSharedWorkDirExclusive).Inc()
 			return "", fmt.Errorf("shared-workdir scale set %q: every reachable docker host already has a runner placed: %w", scaleSet, errFleetAtCapacity)
 		}
 		candidates = withCapacity
@@ -1169,6 +1180,26 @@ func runnerBinds(mountDockerSocket, shareWorkDir bool, fileMounts []FileMount) [
 	return binds
 }
 
+// runnerHostConfig builds the HostConfig for a newly created runner
+// container. Extracted from startRunner (mirroring runnerBinds above) so the
+// resource-limit wiring is unit-testable without a live Docker API. A zero
+// pidsLimit means "no limit" -- container.Resources.PidsLimit is a pointer
+// specifically so that omitting it (nil) reads as "don't change/unlimited"
+// to the Docker API, which a literal 0 would not.
+func runnerHostConfig(binds, groupAdd []string, memory, pidsLimit, shmSize int64) *container.HostConfig {
+	resources := container.Resources{Memory: memory}
+	if pidsLimit > 0 {
+		limit := pidsLimit
+		resources.PidsLimit = &limit
+	}
+	return &container.HostConfig{
+		Binds:     binds,
+		GroupAdd:  groupAdd,
+		ShmSize:   shmSize,
+		Resources: resources,
+	}
+}
+
 func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	if a.draining.Load() {
 		return "", fmt.Errorf("scale set %q is draining", a.scaleSetName)
@@ -1254,13 +1285,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			a.logger.Warn("Failed to normalize shared workdir ownership before runner start", slog.String("host", host), slog.String("error", err.Error()))
 		}
 	}
-	hostConfig := &container.HostConfig{
-		Binds:    binds,
-		GroupAdd: groupAdd,
-		Resources: container.Resources{
-			Memory: a.runnerMemory,
-		},
-	}
+	hostConfig := runnerHostConfig(binds, groupAdd, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize)
 
 	c, err := client.ContainerCreate(
 		ctx,

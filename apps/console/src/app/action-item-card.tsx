@@ -36,6 +36,7 @@ const ACTION_LABELS: Record<ActionType, string> = {
   'human-needed': 'Needs a human',
   'run-failed': 'CI run failed',
   'review-requested': 'Review requested',
+  'merge-blocked': 'Base branch moved',
   'post-deploy-action': 'Awaiting next deploy',
   'silent-error': 'Silent error',
 };
@@ -44,6 +45,7 @@ const ACTION_COLORS: Record<ActionType, string> = {
   'human-needed': 'blue',
   'run-failed': 'red',
   'review-requested': 'grape',
+  'merge-blocked': 'yellow',
   'post-deploy-action': 'gray',
   'silent-error': 'orange',
 };

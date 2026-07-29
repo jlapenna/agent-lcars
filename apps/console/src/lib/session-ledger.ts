@@ -151,10 +151,14 @@ interface SessionCost {
  * rate estimate from its `model` + `tokens` (undefined when the model is
  * absent or unrecognized - see {@link estimateCostUsd}'s doc comment for
  * why that's the right fallback rather than treating it as a $0 session).
+ * Floors a recorded cost at $0 - reducer.ts now clamps newly-ingested
+ * sessions the same way, but a doc written before that fix can still carry
+ * a stored negative total, which would otherwise drag a bucket's summed
+ * total below what its other, correctly-priced sessions actually cost.
  */
 function docCost(doc: SessionDoc): SessionCost {
   if (doc.totalCostUsd !== undefined) {
-    return { costUsd: doc.totalCostUsd, estimated: false };
+    return { costUsd: Math.max(0, doc.totalCostUsd), estimated: false };
   }
   return { costUsd: estimateCostUsd(doc.model, doc.tokens), estimated: true };
 }

@@ -1,4 +1,5 @@
 import { Anchor, Box, Card, Container, Group, Text } from '@mantine/core';
+import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -7,6 +8,7 @@ import { auth } from '../../auth';
 import { getWatchedRepos } from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
+  describeArchiveWindow,
   getSessionArchive,
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
@@ -19,27 +21,23 @@ import { lcarsPanelStyle } from '../lcars';
 import { PageLoading } from '../page-loading';
 import { QuickTaskButton } from '../quick-task-button';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
-import { LedgerTables } from './ledger-tables';
 import { SessionTable } from './session-table';
 
 type SessionsView = 'flat' | 'by-issue';
-type SessionsTab = 'sessions' | 'costs';
 
 function parseView(searchParams: { view?: string }): SessionsView {
   return searchParams.view === 'by-issue' ? 'by-issue' : 'flat';
 }
 
-function parseTab(searchParams: { tab?: string }): SessionsTab {
-  return searchParams.tab === 'costs' ? 'costs' : 'sessions';
-}
-
-/** Preserves the page's other query params while toggling `view` and/or
- * `tab` - kept next to parseView/parseTab rather than in session-archive.ts,
- * since both are purely display choices and never reach getSessionArchive's
- * Firestore query (unlike days/source/issue). */
+/** Serializes the archive query back into a query string, preserving the
+ * data params while toggling `view` - kept next to parseView rather than in
+ * session-archive.ts, since `view` is a purely display choice that never
+ * reaches getSessionArchive's Firestore query (unlike days/source/issue).
+ * `path` is '' for a same-page link and '/costs' for the cost ledger, which
+ * reads the same three data params. */
 function displayHref(
   query: SessionArchiveQuery,
-  { view, tab }: { view: SessionsView; tab: SessionsTab },
+  { view, path = '' }: { view: SessionsView; path?: string },
 ): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
@@ -50,9 +48,8 @@ function displayHref(
     params.set('issue', String(query.issueNumber));
   }
   if (view === 'by-issue') params.set('view', 'by-issue');
-  if (tab === 'costs') params.set('tab', 'costs');
   const qs = params.toString();
-  return qs ? `?${qs}` : '?';
+  return qs ? `${path}?${qs}` : path || '?';
 }
 
 // Request-scoped memoization (React's `cache`, not a `cacheLife`d Next.js
@@ -73,18 +70,6 @@ interface PageProps {
   }>;
 }
 
-function describeWindow(query: {
-  days: number;
-  source?: string;
-  issueNumber?: number;
-}): string {
-  const parts = [`last ${query.days} day${query.days === 1 ? '' : 's'}`];
-  if (query.source) parts.push(`source=${query.source}`);
-  if (query.issueNumber !== undefined)
-    parts.push(`issue #${query.issueNumber}`);
-  return parts.join(', ');
-}
-
 /** The subtitle's row count, split out so it can stream in on its own,
  * narrower Suspense boundary while the rest of the header (title, window
  * description, nav) renders eagerly - see `SessionsPageShell` (#160). */
@@ -100,15 +85,12 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
 async function SessionsBody({
   query,
   view,
-  tab,
 }: {
   query: SessionArchiveQuery;
   view: SessionsView;
-  tab: SessionsTab;
 }) {
-  const { rows, ledger, warnings } = await getArchive(query);
+  const { rows, warnings } = await getArchive(query);
   const generatedAt = new Date().toISOString();
-  const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
 
   return (
     <>
@@ -125,25 +107,13 @@ async function SessionsBody({
         className="lcars-panel"
         style={lcarsPanelStyle('teal')}
       >
-        {tab === 'costs' ? (
-          hasLedgerData ? (
-            <LedgerTables ledger={ledger} />
-          ) : (
-            <Text size="sm" c="dimmed" data-testid="session-ledger-empty">
-              No cost data in this window.
-            </Text>
-          )
+        <Group justify="flex-end" mb="sm">
+          <ViewToggle query={query} view={view} />
+        </Group>
+        {view === 'by-issue' ? (
+          <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
         ) : (
-          <>
-            <Group justify="flex-end" mb="sm">
-              <ViewToggle query={query} view={view} tab={tab} />
-            </Group>
-            {view === 'by-issue' ? (
-              <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
-            ) : (
-              <SessionTable rows={rows} />
-            )}
-          </>
+          <SessionTable rows={rows} />
         )}
       </Card>
 
@@ -155,58 +125,15 @@ async function SessionsBody({
   );
 }
 
-/** The Sessions/Costs tab switch rendered in the header's `actions` slot - a
- * display choice, not a data filter, so it lives beside the title rather
- * than among the days/source/issue query params (#2694/#3019's "no filter
- * chrome" rule is about narrowing the fetched set, not this). Splits the
- * cost ledger (#186) out from the session list rather than stacking both in
- * the same card.
- *
- * Rendered as the same adjoining pill segments as the page's own nav rail
- * (`.lcars-nav-pill`, teal accent - this page's own accent) rather than a
- * dot-separated link list, so it reads as two tabs rather than a plain text
- * selector (#192) - `.lcars-tab-nav` rather than `.lcars-nav` on the
- * wrapper itself, so it doesn't collide with the page's own top-level pill
- * rail under a shared `nav.lcars-nav` locator. */
-function TabToggle({
-  query,
-  view,
-  tab,
-}: {
-  query: SessionArchiveQuery;
-  view: SessionsView;
-  tab: SessionsTab;
-}) {
-  return (
-    <nav className="lcars-tab-nav" aria-label="Sessions sections">
-      {(['sessions', 'costs'] as const).map((candidate) => (
-        <Anchor
-          key={candidate}
-          href={displayHref(query, { view, tab: candidate })}
-          underline="never"
-          className="lcars-nav-pill"
-          data-accent="teal"
-          data-active={candidate === tab ? '' : undefined}
-          aria-current={candidate === tab ? 'page' : undefined}
-        >
-          {candidate === 'sessions' ? 'Sessions' : 'Costs'}
-        </Anchor>
-      ))}
-    </nav>
-  );
-}
-
-/** The flat/by-issue toggle rendered above the session table, only shown on
- * the `sessions` tab - the cost ledger (`costs` tab) has no equivalent
- * view. */
+/** The flat/by-issue toggle rendered above the session table. The cost
+ * ledger has no equivalent view, and since #192 it isn't on this page at
+ * all - it's the top-level /costs destination. */
 function ViewToggle({
   query,
   view,
-  tab,
 }: {
   query: SessionArchiveQuery;
   view: SessionsView;
-  tab: SessionsTab;
 }) {
   return (
     <Group gap={6} wrap="nowrap">
@@ -222,10 +149,7 @@ function ViewToggle({
               {candidate === 'flat' ? 'Flat' : 'By issue'}
             </Text>
           ) : (
-            <Anchor
-              href={displayHref(query, { view: candidate, tab })}
-              size="sm"
-            >
+            <Anchor href={displayHref(query, { view: candidate })} size="sm">
               {candidate === 'flat' ? 'Flat' : 'By issue'}
             </Anchor>
           )}
@@ -238,7 +162,8 @@ function ViewToggle({
 /**
  * The session archive: every CLI and issue-agent session (not just the last
  * 24h the dashboard shows), searchable by three plain query params
- * (`days`/`source`/`issue`) - deliberately no filter chrome beyond that
+ * (`days`/`source`/`issue`) - the same three the /costs page reads, so the
+ * two describe one window two ways - deliberately no filter chrome beyond that
  * (#2694/#3019's "no speculative widgets" rule still applies here, even
  * though this route can otherwise be denser than the dashboard). Query
  * params are parsed defensively by parseSessionArchiveQuery; there's no form
@@ -257,32 +182,35 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const rawParams = await searchParams;
   const query = parseSessionArchiveQuery(rawParams);
   const view = parseView(rawParams);
-  const tab = parseTab(rawParams);
   const watchedRepos = getWatchedRepos();
+
+  // The cost ledger lived here behind `?tab=costs` until #192 moved it to
+  // its own destination. Send those links (bookmarks, and anything already
+  // pasted into an issue thread) to the page that now owns them rather than
+  // silently dropping them onto the session list.
+  if (rawParams.tab === 'costs') {
+    redirect(displayHref(query, { view, path: '/costs' }));
+  }
 
   return (
     <Container size="xl" py="xl">
       <ConsoleHeader
         current="sessions"
+        archiveQuery={query}
         title="Session Archive"
         subtitle={
           <>
-            {describeWindow(query)} ·{' '}
+            {describeArchiveWindow(query)} ·{' '}
             <Suspense fallback="…">
               <SessionCount query={query} />
             </Suspense>
           </>
         }
-        actions={
-          <>
-            <QuickTaskButton watchedRepos={watchedRepos} />
-            <TabToggle query={query} view={view} tab={tab} />
-          </>
-        }
+        actions={<QuickTaskButton watchedRepos={watchedRepos} />}
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <SessionsBody query={query} view={view} tab={tab} />
+        <SessionsBody query={query} view={view} />
       </Suspense>
     </Container>
   );
