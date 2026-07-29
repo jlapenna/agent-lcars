@@ -5,6 +5,7 @@ import {
   displayRunTitle,
   findStalledQueuedRun,
   getAgentActivity,
+  groupLiveRunsByIssue,
   issueNumberFromDisplayTitle,
   issueUrlForRun,
 } from './agent-activity';
@@ -137,6 +138,51 @@ describe('findStalledQueuedRun', () => {
   it('ignores queued runs at or under the threshold', () => {
     const run = makeAgentRun({ id: 1, status: 'queued', elapsedSeconds: 300 });
     expect(findStalledQueuedRun([run])).toBeUndefined();
+  });
+});
+
+describe('groupLiveRunsByIssue', () => {
+  it('clusters runs sharing the same repo and issue number into one group', () => {
+    const first = makeAgentRun({ id: 1, issueNumber: 42 });
+    const second = makeAgentRun({ id: 2, issueNumber: 42, pipeline: 'codex' });
+    const groups = groupLiveRunsByIssue([first, second]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].issueNumber).toBe(42);
+    expect(groups[0].runs.map((r) => r.id)).toEqual([1, 2]);
+  });
+
+  it('keeps runs on different issue numbers in separate groups', () => {
+    const groups = groupLiveRunsByIssue([
+      makeAgentRun({ id: 1, issueNumber: 42 }),
+      makeAgentRun({ id: 2, issueNumber: 43 }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.runs[0].id)).toEqual([1, 2]);
+  });
+
+  it('never merges same-numbered issues across different repos', () => {
+    const groups = groupLiveRunsByIssue([
+      makeAgentRun({
+        id: 1,
+        issueNumber: 42,
+        repo: { owner: 'ownerA', name: 'repoA' },
+      }),
+      makeAgentRun({
+        id: 2,
+        issueNumber: 42,
+        repo: { owner: 'ownerB', name: 'repoB' },
+      }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it('gives each run with no parsed issue number its own singleton group', () => {
+    const groups = groupLiveRunsByIssue([
+      makeAgentRun({ id: 1, issueNumber: undefined }),
+      makeAgentRun({ id: 2, issueNumber: undefined }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((g) => g.runs.length === 1)).toBe(true);
   });
 });
 

@@ -14,19 +14,25 @@ import { ActiveAgentsSection } from './active-agents-section';
 // (the takeover-command join in particular) - the row components' own
 // rendering is covered by agent-activity-panel.test.tsx.
 vi.mock('../agent-activity-panel', () => ({
-  LiveRunRow: ({
-    run,
-    item,
-    session,
+  LiveRunGroupList: ({
+    liveRuns,
+    itemsByRunId = {},
+    sessionsByRunId = {},
   }: {
-    run: AgentRun;
-    item?: RunItemRef;
-    session?: IssueAgentSessionDoc;
+    liveRuns: AgentRun[];
+    itemsByRunId?: Record<number, RunItemRef>;
+    sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
   }) => (
-    <div data-testid={`live-run-${run.id}`}>
-      {item ? `#${item.number}` : ''}
-      {session ? ` (${session.sessionId})` : ''}
-    </div>
+    <>
+      {liveRuns.map((run) => (
+        <div key={run.id} data-testid={`live-run-${run.id}`}>
+          {itemsByRunId[run.id] ? `#${itemsByRunId[run.id].number}` : ''}
+          {sessionsByRunId[run.id]
+            ? ` (${sessionsByRunId[run.id].sessionId})`
+            : ''}
+        </div>
+      ))}
+    </>
   ),
   CliSessionRow: ({
     session,

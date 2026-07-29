@@ -25,6 +25,7 @@ import type {
 import {
   displayRunTitle,
   findStalledQueuedRun,
+  groupLiveRunsByIssue,
   issueUrlForRun,
   MAX_TURNS_BUDGET,
   RUN_TIMEOUT_MINUTES,
@@ -375,6 +376,61 @@ export function LiveRunRow({
 }
 
 /**
+ * Renders `liveRuns` clustered by the issue/PR they're working
+ * (`groupLiveRunsByIssue`), so two runs racing the same item - a second
+ * pipeline dispatched onto it, a stray duplicate - show up visibly
+ * together instead of scattered across the flat list (#239). A group of
+ * one renders exactly as a bare `LiveRunRow` always has; only a group of
+ * two or more gets the clustering chrome, so the overwhelmingly common
+ * single-run case is unchanged.
+ */
+export function LiveRunGroupList({
+  liveRuns,
+  itemsByRunId = {},
+  sessionsByRunId = {},
+}: {
+  liveRuns: AgentRun[];
+  itemsByRunId?: Record<number, RunItemRef>;
+  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+}) {
+  return (
+    <Stack gap="xs">
+      {groupLiveRunsByIssue(liveRuns).map((group) => {
+        const rows = group.runs.map((run) => (
+          <LiveRunRow
+            key={run.id}
+            run={run}
+            item={itemsByRunId[run.id]}
+            session={sessionsByRunId[run.id]}
+          />
+        ));
+        if (group.runs.length === 1) {
+          return rows[0];
+        }
+        const item = itemsByRunId[group.runs[0].id];
+        return (
+          <Stack
+            key={group.key}
+            gap={6}
+            data-testid={`live-run-group-${group.issueNumber}`}
+            style={{
+              borderLeft: '2px solid var(--mantine-color-blue-4)',
+              paddingLeft: 8,
+            }}
+          >
+            <Text size="xs" c="dimmed" fw={600}>
+              {item ? `#${item.number} ${item.title}` : `#${group.issueNumber}`}{' '}
+              · {group.runs.length} runs
+            </Text>
+            <Stack gap="xs">{rows}</Stack>
+          </Stack>
+        );
+      })}
+    </Stack>
+  );
+}
+
+/**
  * A finished run row: unlike the old title-only text, the run's title is
  * now a real link to the issue/PR it worked (derived from `issueNumber`),
  * so a finished run can be followed straight to its outcome instead of only
@@ -631,16 +687,11 @@ export function AgentActivityPanel({
         )}
 
         {liveRuns.length > 0 && (
-          <Stack gap="xs">
-            {liveRuns.map((run) => (
-              <LiveRunRow
-                key={run.id}
-                run={run}
-                item={itemsByRunId[run.id]}
-                session={sessionsByRunId[run.id]}
-              />
-            ))}
-          </Stack>
+          <LiveRunGroupList
+            liveRuns={liveRuns}
+            itemsByRunId={itemsByRunId}
+            sessionsByRunId={sessionsByRunId}
+          />
         )}
 
         {activeSessions.length > 0 && (
