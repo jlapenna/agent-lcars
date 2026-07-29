@@ -61,13 +61,28 @@ export function formatDuration(totalSeconds: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-/** Running cost for the in-flight budget gauge: "$0.42", "$3.10". Floors at
- * $0 - a stored `totalCostUsd` can still be negative for a doc written
- * before reducer.ts started clamping it (see docCost's doc comment in
- * session-ledger.ts), and a negative dollar figure is never meaningful to
+/** Fixed `en-US` rather than the ambient locale: this renders on the server
+ * and again on the client during hydration, and a server whose ICU default
+ * differs from the browser's would produce two different strings for the
+ * same number and trip a hydration mismatch. The console is single-locale
+ * anyway. */
+const USD = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+});
+
+/** Costs anywhere they're shown - the in-flight budget gauge, the session
+ * table, the cost ledger: "$0.42", "$3.10", "$3,953.71". Grouped, because
+ * the ledger's whole-window totals reach four and five figures and an
+ * ungrouped "$3953.71" is genuinely harder to read at a glance (#213) -
+ * matching the token columns beside it, which have always been grouped.
+ *
+ * Floors at $0 - a stored `totalCostUsd` can still be negative for a doc
+ * written before reducer.ts started clamping it (see docCost's doc comment
+ * in session-ledger.ts), and a negative dollar figure is never meaningful to
  * show here regardless of which upstream value produced it. */
 export function formatCost(usd: number): string {
-  return `$${Math.max(0, usd).toFixed(2)}`;
+  return USD.format(Math.max(0, usd));
 }
 
 /* `shareArtifactUrl` moved to lib/deployment.ts: its base URL is
