@@ -54,7 +54,7 @@ describe('LedgerTables', () => {
     expect(screen.getAllByText('2026-W29')).toHaveLength(2);
   });
 
-  it('shows an em-dash for a bucket with no recorded cost, and a formatted total for one that has it (full table only - the compact table drops the Cost column)', () => {
+  it('shows an em-dash for a bucket with no recorded cost, and a formatted total for one that has it, in both the full and compact tables', () => {
     renderLedger({
       byIssue: [
         { issueNumber: 'no-issue', sessions: 1, turns: 1, tokens: 100 },
@@ -63,8 +63,8 @@ describe('LedgerTables', () => {
       byWeek: [],
     });
 
-    expect(screen.getByText('—')).toBeTruthy();
-    expect(screen.getByText('$2.50')).toBeTruthy();
+    expect(screen.getAllByText('—')).toHaveLength(2);
+    expect(screen.getAllByText('$2.50')).toHaveLength(2);
   });
 
   it('caps each table at the top 15 rows in both the full and compact variants', () => {
@@ -103,8 +103,8 @@ describe('LedgerTables', () => {
       byWeek: [],
     });
 
-    expect(screen.getByText('~$3.50')).toBeTruthy();
-    expect(screen.getByText('$2.50')).toBeTruthy();
+    expect(screen.getAllByText('~$3.50')).toHaveLength(2);
+    expect(screen.getAllByText('$2.50')).toHaveLength(2);
   });
 
   it('renders the partial-cost footnote', () => {
@@ -118,7 +118,7 @@ describe('LedgerTables', () => {
     expect(screen.getByText(/partial dollar figure/)).toBeTruthy();
   });
 
-  it('drops Turns and Cost from the compact per-issue table', () => {
+  it('drops Turns and cost-weighted tokens from the compact per-issue table, but keeps Cost (#203)', () => {
     renderLedger({
       byIssue: [
         { issueNumber: 42, sessions: 2, turns: 10, tokens: 3000, costUsd: 1.5 },
@@ -127,20 +127,30 @@ describe('LedgerTables', () => {
     });
 
     const compactRow = screen.getByTestId('ledger-issue-row-compact');
-    expect(compactRow.textContent).not.toContain('1.5');
-    expect(compactRow.textContent).not.toContain('$1.50');
-    // Sessions (2) and Tokens (3,000) still show; Turns (10) does not appear
+    expect(compactRow.textContent).toContain('$1.50');
+    expect(compactRow.textContent).not.toContain('3,000');
+    // Sessions (2) and Cost ($1.50) still show; Turns (10) does not appear
     // as its own cell since the compact row omits that column entirely.
     expect(compactRow.querySelectorAll('td')).toHaveLength(3);
   });
 
-  it('drops Turns and Cost from the compact per-week table', () => {
+  it('drops Turns and cost-weighted tokens from the compact per-week table, but keeps Cost (#203)', () => {
     renderLedger({
       byIssue: [],
-      byWeek: [{ isoWeek: '2026-W29', sessions: 3, turns: 12, tokens: 4000 }],
+      byWeek: [
+        {
+          isoWeek: '2026-W29',
+          sessions: 3,
+          turns: 12,
+          tokens: 4000,
+          costUsd: 6,
+        },
+      ],
     });
 
     const compactRow = screen.getByTestId('ledger-week-row-compact');
+    expect(compactRow.textContent).toContain('$6.00');
+    expect(compactRow.textContent).not.toContain('4,000');
     expect(compactRow.querySelectorAll('td')).toHaveLength(3);
   });
 });
