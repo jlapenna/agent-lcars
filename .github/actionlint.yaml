@@ -1,16 +1,17 @@
 # actionlint doesn't know about self-hosted runner labels by default, so it
 # flags `runs-on: [claude-agent-lcars]` (claude.yml, opencode.yml) as an
 # unknown label. Declare it here so CI's actionlint step (.github/workflows/
-# ci.yml) stays green - this label has no runner registered behind it yet
-# (tracked in jlapenna/homelab, see the workflow files' own comments), but
-# is a valid `runs-on` value the moment that lands.
+# ci.yml) stays green - this label is registered in jlapenna/homelab's
+# github-runner-autoscaler/orchestrator.yml as
+# homelab-autoscale-claude-agent-lcars (homelab#97, see the workflow files'
+# own comments).
 self-hosted-runner:
   labels:
     - claude-agent-lcars
     # Socketless BuildKit publish lane (agent-lcars#101), registered in
     # homelab's github-runner-autoscaler/orchestrator.yml as
     # homelab-autoscale-lcars-build-client. Needed here because
-    # publish-runner-autoscaler.yml now pins its `runs-on` literally
+    # publish-images.yml now pins its `runs-on` literally
     # instead of routing it through `fromJSON(vars.CI_RUNS_ON || ...)`,
     # which actionlint could not analyse -- so the label is checkable now,
     # which is the point.

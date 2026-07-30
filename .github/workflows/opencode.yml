@@ -85,10 +85,11 @@ jobs:
        !contains(github.event.issue.labels.*.name, 'codex')) ||
       (github.event_name == 'workflow_dispatch' &&
        github.event.inputs.issue != '')
-    # claude-agent-lcars has no runner registered behind it yet (tracked in
-    # jlapenna/homelab, see homelab#97) - jobs queue until that lands. Do
-    # NOT point this at homelab-autoscale-claude-agent; that label is a
-    # distinct registration reserved for the members repo's runner fleet.
+    # claude-agent-lcars is registered in jlapenna/homelab's
+    # github-runner-autoscaler/orchestrator.yml as
+    # homelab-autoscale-claude-agent-lcars (homelab#97). Do NOT point this
+    # at homelab-autoscale-claude-agent; that label is a distinct
+    # registration reserved for the members repo's runner fleet.
     runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
     # Backstop only - the real bound is the per-step timeout on Run OpenCode
     # below (#51). Matched to claude.yml's job timeout, which is also what

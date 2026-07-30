@@ -133,8 +133,11 @@ These are additive to agent-protocol.md §11, not a relaxation of it:
   deploy to make a change "live" faster.
 - **Keep this repo independent from the `supersprinklesracing` source
   tree** (per `AGENTS.md`): no cross-repository source imports or shared
-  build contexts. Shared telemetry integration goes through the versioned
-  standalone bundle, not a source-level dependency.
+  build contexts. Shared telemetry integration goes through the runner
+  image's build-time bake-in of `apps/telemetry-watcher`'s bundle
+  (`apps/runner-autoscaler/runner-image/Dockerfile`), not a source-level
+  dependency — the earlier versioned-standalone-bundle-on-GCS scheme this
+  used to describe was retired for good in #66.
 - Never write to this repo's Firestore database directly from an agent
   run; go through the application code paths the console itself uses.
 
