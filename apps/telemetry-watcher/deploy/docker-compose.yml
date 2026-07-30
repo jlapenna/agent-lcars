@@ -1,0 +1,134 @@
+name: agent-lcars-telemetry-watcher
+
+# Per-host CLI telemetry watcher for Agent LCARS (members#2540,
+# members#2548). Ships summary+heartbeat telemetry for Claude Code CLI sessions
+# on pike into the dedicated agent-telemetry Firestore database, so they show
+# up in Agent LCARS alongside GitHub Actions runner sessions.
+#
+# The immutable image is built from this repo's own main
+# (.github/workflows/publish-images.yml) and published to the homelab
+# registry. Pike only pulls and runs it; it does not build application code
+# during deployment.
+#
+# Canonical copy of this compose file lives here, in jlapenna/agent-lcars
+# (moved from jlapenna/homelab in homelab#218 Phase 6 -- the deployment
+# config lives with the image that builds it and the semantics it depends
+# on), deployed to pike via deploy.sh in this same directory. See
+# deploy/README.md for how secrets (writer-key.json, .env) reach pike.
+#
+# jlapenna/homelab keeps only the Prometheus alert that watches this
+# container via cAdvisor metrics (observability/prometheus/rules.yml,
+# AgentLcarsTelemetryWatcherCrashLooping) -- that's homelab's own
+# cadvisor/Prometheus stack, not something this repo can own.
+#
+# Read-only bind mounts, at the SAME absolute paths as the host: the daemon
+# resolves `git -C <cwd>` against paths recorded in transcripts verbatim
+# (e.g. /home/jlapenna/p/sprinkles or a .claude/worktrees/<name> subdir), so
+# there's no path-translation option here — the container has to see the
+# real filesystem at the real paths.
+#
+# Runs as uid:gid 1000 (jlapenna), not the image's default "watcher" user —
+# ~/.claude/projects is 0700, owned by jlapenna, so a different uid can't
+# read it even read-only.
+services:
+  agent-lcars-telemetry-watcher:
+    # agent-lcars 5bb8ac6. The previous pin (b456a8c) predated the
+    # members -> sprinkles rename fix (agent-lcars#137), so the image's
+    # built-in default allowlist still said members: it matched none of this
+    # host's live sessions, and separately matched ~1.5GB of archived members
+    # worktrees, which OOM-killed the daemon on its first tick every time it
+    # restarted. Both symptoms trace to that one stale pin.
+    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:5bb8ac6@sha256:8356a37da287f512008196953d412801a191507d28fb4616acb551353128fe44
+    container_name: agent-lcars-telemetry-watcher
+    user: '1000:1000'
+    # Shares the host PID namespace so isProcessAliveForCwd's /proc/<pid>/cwd
+    # scan sees real host processes (Claude CLI sessions), not just this
+    # container's own PID 1 — without this, liveness computation always sees
+    # processAlive=false and every session is misreported as `ended`, even
+    # while genuinely live. Same pattern the cadvisor container on this host
+    # already uses for process introspection.
+    pid: host
+    # pid:host alone isn't enough (members#2682): Docker's default AppArmor
+    # profile (docker-default) denies ptrace-read against processes outside
+    # the container, which is what a readlink of /proc/<pid>/cwd is. Yama
+    # ptrace_scope=1 is NOT the blocker — it only restricts ATTACH, and
+    # same-uid suffices for READ — so no capability grant is needed either
+    # (cap_add: [SYS_PTRACE] was tested and does nothing anyway: caps are
+    # stripped on execve for non-root container users). Unconfining AppArmor
+    # while staying uid 1000 with default (no) effective caps means the
+    # container can read cwd symlinks of jlapenna's own processes and
+    # nothing more — strictly narrower than a CAP_SYS_PTRACE grant, and far
+    # narrower than cadvisor's privileged:true on this same host.
+    security_opt:
+      - apparmor=unconfined
+    entrypoint:
+      - sh
+      - -c
+      # sidecar.cjs, not the old ride-along.cjs: the bundle output was renamed
+      # in agent-lcars#49. This override has to track that rename — the image's
+      # own ENTRYPOINT is already correct, so a bare tag bump past #49 without
+      # this line would leave the container failing to start on a missing
+      # module rather than doing anything visible.
+      - 'AGENT_TELEMETRY_WRITER_KEY_JSON="$(cat /secrets/writer-key.json)" exec node sidecar.cjs'
+    environment:
+      - AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR=/home/jlapenna/.claude/projects
+      - AGENT_TELEMETRY_CODEX_SESSIONS_DIR=/home/jlapenna/.codex/sessions
+      - AGENT_TELEMETRY_HOST=pike
+      # Both checkouts this host actually runs agents against, set explicitly
+      # rather than left to the image's built-in default. That default is a
+      # single checkout (AGENT_TELEMETRY_CHECKOUT_ROOT, one root by design),
+      # so it cannot express the two-checkout reality of pike — and when it
+      # silently went stale across the members -> sprinkles rename, every
+      # session on this host was dropped and Agent LCARS showed 0 active for
+      # weeks. Naming the roots here means a future rename breaks loudly, in
+      # a file that lives next to the deploy, instead of failing closed to
+      # whatever the image happened to be built with.
+      #
+      # These are a privacy boundary, not just a filter: ~/.claude/projects
+      # holds transcripts for every project on this workstation, and only
+      # what matches ships. Keep both lists narrow, and keep them in sync
+      # with each other.
+      - AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST=-home-jlapenna-p-sprinkles*,-home-jlapenna-p-agent-lcars*
+      - AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST=/home/jlapenna/p/sprinkles*,/home/jlapenna/p/agent-lcars*
+      - AGENT_TELEMETRY_PROJECT_ID=${AGENT_TELEMETRY_PROJECT_ID}
+      - AGENT_TELEMETRY_DATABASE_ID=(default)
+      # share-media skill convention (members#2631) — artifact discovery
+      # no-ops soft on a missing dir, so leaving this unset wouldn't crash
+      # anything, it'd just silently never find artifacts.
+      - AGENT_TELEMETRY_SHARE_DIR=/home/jlapenna/share
+      # Antigravity summary-DB poller (members#3123 phase 3). Antigravity's
+      # per-conversation transcripts are opaque (SQLite BLOBs / binary .pb),
+      # but its own conversation_summaries.db carries authoritative
+      # per-conversation workspace attribution, step counts, and activity
+      # timestamps — enough for summary-tier docs without decoding anything.
+      # Only conversations attributed to the checkout root ship; the poller
+      # no-ops soft when this file is absent (other hosts). Note this one
+      # source has no env override — its workspace prefixes derive from the
+      # image's single built-in checkout root, so unlike the two allowlists
+      # above it stays scoped to sprinkles only.
+      - AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB=/home/jlapenna/.gemini/antigravity-cli/conversation_summaries.db
+      # firebase-admin pulls in gRPC/protobuf, which has a real baseline
+      # footprint — 256m OOM-crash-looped on startup before this was added.
+      # Explicit --max-old-space-size avoids V8 sizing its heap against the
+      # host's total memory instead of the container's cgroup limit.
+      - NODE_OPTIONS=--max-old-space-size=384
+    volumes:
+      - /home/jlapenna/.claude/projects:/home/jlapenna/.claude/projects:ro
+      - /home/jlapenna/.codex/sessions:/home/jlapenna/.codex/sessions:ro
+      - /home/jlapenna/p:/home/jlapenna/p:ro
+      - /home/jlapenna/share:/home/jlapenna/share:ro
+      # Read-only: the live Antigravity CLI writes this DB; the poller opens
+      # it read-only every tick and fails soft if it's locked or missing.
+      - /home/jlapenna/.gemini/antigravity-cli:/home/jlapenna/.gemini/antigravity-cli:ro
+      - /home/homelab/agent-lcars-telemetry-watcher/writer-key.json:/secrets/writer-key.json:ro
+    # Just fs-watching + small periodic writes — nothing like the runner
+    # fleet's build load. 512m (not the original 256m — see NODE_OPTIONS
+    # comment above) still leaves this negligible next to the runner fleet.
+    cpus: 0.5
+    mem_limit: 512m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
