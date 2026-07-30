@@ -30,7 +30,15 @@
 # below fails at the push with a 401, not at the read -- which reads like a
 # broken upstream digest if you do not know to log in.
 #
-#   docker login docker-registry.lan.jlapenna.net --username publisher
+# In the socketless publishing lane the credential arrives as a read-only
+# mount and there is no TTY, so use the stdin form -- an interactive prompt
+# just hangs there:
+#
+#   docker login docker-registry.lan.jlapenna.net \
+#     --username publisher --password-stdin < /secrets/registry-password
+#
+# From a workstation without that mount, drop `--password-stdin` and let it
+# prompt.
 #
 #   docker buildx imagetools create \
 #     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:vX.Y.Z \
