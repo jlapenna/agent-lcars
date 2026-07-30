@@ -22,6 +22,19 @@ function renderHeader(
   );
 }
 
+describe('ConsoleHeader subtitle', () => {
+  // #243: a subtitle free to wrap makes the header a different height on
+  // whichever tab's content happens to be longest that day. Truncating to
+  // one line keeps every tab's header the same height regardless of copy.
+  it('is truncated to a single line', () => {
+    renderHeader('costs');
+
+    expect(screen.getByText('last 14 days').getAttribute('data-truncate')).toBe(
+      'end',
+    );
+  });
+});
+
 describe('ConsoleHeader nav rail', () => {
   it('offers every console destination', () => {
     renderHeader('queue');

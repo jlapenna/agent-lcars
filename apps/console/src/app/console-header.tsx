@@ -69,6 +69,12 @@ function navHref(
  * subtitle needs one fetched value (the row count) that dashboard/agents
  * don't; it wraps just that value in its own inline Suspense rather than
  * passing anything data-dependent through here (see its `SessionCount`).
+ *
+ * The subtitle is forced to a single truncated line (#243): four pages each
+ * build their own subtitle text, and a subtitle that's free to wrap adds a
+ * second line on whichever page's content happens to be longest that day,
+ * making the header a different height depending which tab you're on. Keep
+ * subtitle copy short - truncation hides the tail if a caller doesn't.
  */
 export function ConsoleHeader({
   current,
@@ -84,7 +90,7 @@ export function ConsoleHeader({
             <Title order={1} className="lcars-header-title">
               {title}
             </Title>
-            <Text c="dimmed" mt={4}>
+            <Text c="dimmed" mt={4} truncate="end">
               {subtitle}
             </Text>
           </div>
