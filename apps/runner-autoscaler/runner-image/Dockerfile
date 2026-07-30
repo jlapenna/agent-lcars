@@ -22,7 +22,23 @@
 #
 # The digest is the multi-arch INDEX digest, so both linux/amd64 and
 # linux/arm64 resolve from it. Mirror is a manifest copy, so these are the
-# same bytes upstream published:
+# same bytes upstream published.
+#
+# This writes to the registry, so it needs the publisher credential first:
+# the registry enforces Bearer auth on writes again as of homelab#220
+# (agent-lcars#112). Anonymous pulls still work, so the `imagetools create`
+# below fails at the push with a 401, not at the read -- which reads like a
+# broken upstream digest if you do not know to log in.
+#
+# In the socketless publishing lane the credential arrives as a read-only
+# mount and there is no TTY, so use the stdin form -- an interactive prompt
+# just hangs there:
+#
+#   docker login docker-registry.lan.jlapenna.net \
+#     --username publisher --password-stdin < /secrets/registry-password
+#
+# From a workstation without that mount, drop `--password-stdin` and let it
+# prompt.
 #
 #   docker buildx imagetools create \
 #     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:vX.Y.Z \
