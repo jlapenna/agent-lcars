@@ -42,9 +42,13 @@ if [ ! -f "$WRITER_KEY" ]; then
   cat >&2 <<EOF
 $WRITER_KEY must exist.
 
-Hand-placed, never committed -- same convention as homelab's github-runner
-RUNNER_TOKEN .env (see deploy/README.md's "Owner TODO" for automating
-this):
+Preferred: add agent_lcars_writer_key_json to jlapenna/homelab's encrypted
+ansible/secrets.yml (via ./bin/manage-secrets.sh there), then run
+deploy_secrets.yml followed by sync_agent_lcars_writer_key.yml -- see
+deploy/README.md's "Secrets" section for the full pipeline.
+
+Fallback (hand-placed, never committed -- same convention as homelab's
+github-runner RUNNER_TOKEN .env):
   gcloud secrets versions access latest --project=agent-lcars \\
     --secret=AGENT_TELEMETRY_WRITER_KEY_JSON > "$WRITER_KEY"
   chmod 600 "$WRITER_KEY"
@@ -69,15 +73,20 @@ cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
 cd "$DEPLOY_DIR"
 
 docker compose pull
+docker compose --env-file "$ENV_FILE" up -d --remove-orphans
 
-# Baseline restart count / health status BEFORE `up`, so the post-deploy
-# check below can tell "already broken" apart from "broke just now" --
-# same idiom as homelab's shared tasks/docker_compose_up.yml.
-baseline="$(docker inspect --format '{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || echo '0|')"
+# Baseline restart count / health status AFTER `up`, not before: a changed
+# image pin or config recreates the container (docker compose's own
+# behavior), which resets RestartCount to 0 on the NEW container -- baselining
+# against the OLD container would compare across that reset and either false-
+# positive-fail a healthy fresh container, or (for a container's first-ever
+# HEALTHCHECK) wrongly take the no-health branch below. Baselining here,
+# right after `up`, always reflects whichever container is actually running
+# now; the checks below only care about restarts/health *during this script's
+# own wait window*, not the container's full lifetime.
+baseline="$(docker inspect --format '{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$CONTAINER_NAME")"
 baseline_restarts="${baseline%%|*}"
 baseline_health="${baseline#*|}"
-
-docker compose --env-file "$ENV_FILE" up -d --remove-orphans
 
 # --- post-deploy health gate -------------------------------------------------
 # "docker compose up" exiting 0 only means the API calls succeeded, not that

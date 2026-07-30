@@ -34,9 +34,30 @@ bring the service up:
   (JSON), bind-mounted read-only into the container and read as uid 1000
   (see the compose file's comment for why: the container's process reads
   it directly at a fixed uid, unlike `.env`, which the host's `docker`
-  CLI reads under whatever identity invokes it). Placement today is manual
-  (fallback convention, same as homelab's `github-runner`'s `RUNNER_TOKEN`
-  `.env`):
+  CLI reads under whatever identity invokes it).
+
+  **This credential's source of truth stays `jlapenna/homelab`'s encrypted
+  vault**, not this repo — per this repo's own [`AGENTS.md`](../../../AGENTS.md)
+  ("the host writer credential belongs in the encrypted homelab secret
+  store"). Only the _deployment_ (compose file, image, health checks) moved
+  here in homelab#218 Phase 6; the _secret_ did not, because agent-lcars has
+  no encrypted secret store or SSH-based host access of its own — homelab
+  still owns both. Concretely:
+  1. `agent_lcars_writer_key_json` is a var in `jlapenna/homelab`'s
+     encrypted `ansible/secrets.yml` (add via `./bin/manage-secrets.sh`
+     there).
+  2. `ansible/deploy_secrets.yml` decrypts it and stages it in that repo's
+     tree.
+  3. `ansible/sync_agent_lcars_writer_key.yml` (hosts: `pike`) pushes the
+     staged file to `/home/homelab/agent-lcars-telemetry-watcher/writer-key.json`
+     over SSH+`become` and applies the container's required `1000:1000`
+     ownership — this is deliberately the one narrow piece of
+     watcher-specific logic that stays in homelab, scoped to _secret
+     delivery_ rather than _deployment_.
+
+  Fallback (hand-placed, same convention as homelab's `github-runner`'s
+  `RUNNER_TOKEN` `.env`, for a first deploy before the vault var above
+  exists):
 
   ```bash
   gcloud secrets versions access latest --project=agent-lcars \
@@ -46,18 +67,8 @@ bring the service up:
 
   `deploy.sh` checks for this file and fails with these same instructions
   if it's missing, then enforces `1000:1000` ownership and `0600` mode on
-  it every run regardless of how it arrived.
-
-  **Owner TODO:** `jlapenna/homelab` used to have a vault-backed staging
-  path for this key (`ansible/deploy_secrets.yml`'s guarded
-  `agent_lcars_writer_key_json` var, added in homelab#240 / Phase 4) — it
-  was removed from homelab as part of the same move that brought this
-  deploy config here (homelab#218 Phase 6), since the config it served no
-  longer lives there. If this secret's manual placement becomes a
-  recurring pain point, rebuild the equivalent mechanism here instead (a
-  secret manager pull, or a small script analogous to homelab's
-  `manage-secrets.sh`) rather than reintroducing a homelab-side dependency
-  on a file this repo now owns the deployment of.
+  it every run regardless of how it arrived (vault-synced or hand-placed)
+  — this repo's deploy never needs to know which.
 
 ## Deploying
 
