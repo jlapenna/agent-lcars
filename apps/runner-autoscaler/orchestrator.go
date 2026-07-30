@@ -80,6 +80,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// sampler populates fleet load/cooldown state for every listener.
 	go runtimes[0].scaler.RunHostSampler(ctx)
 	go runFleetOrphanSweeper(ctx, runtimes)
+	startGitHubRunnerStatusMonitors(ctx, runtimes, logger)
 	for _, runtime := range runtimes {
 		// ShareWorkDir, not MountDockerSocket: this sweeper enforces
 		// workdir_size_cap on the SHARED _work tree. Keyed off the socket, a

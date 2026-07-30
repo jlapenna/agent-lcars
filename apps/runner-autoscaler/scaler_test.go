@@ -118,7 +118,7 @@ func TestRunnerStateUntracked(t *testing.T) {
 	}
 
 	// Add a runner and test standard workflow
-	rs.addIdle("runner-1", "host-a", "cid-1")
+	rs.addIdle("runner-1", "host-a", "cid-1", time.Now())
 	if !rs.markBusy("runner-1") {
 		t.Errorf("expected markBusy for idle runner-1 to return true")
 	}

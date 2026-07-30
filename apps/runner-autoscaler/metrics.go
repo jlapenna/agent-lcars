@@ -205,6 +205,14 @@ var (
 		Name: "github_runner_autoscaler_scheduler_pending_runners",
 		Help: "Runner deficit still waiting for a safe fleet placement.",
 	}, []string{"scale_set"})
+	githubUnavailableRunnersGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_github_unavailable_runners",
+		Help: "Number of locally tracked runner containers older than the startup grace period that GitHub reports offline or no longer lists.",
+	}, []string{"scale_set", "host", "reason"})
+	runnerStatusProbeUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_runner_status_probe_up",
+		Help: "1 when the latest registration-scoped GitHub runner-status reconciliation succeeded, 0 when it failed.",
+	}, []string{"registration"})
 	fleetMaxRunnersGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_fleet_max_runners",
 		Help: "Configured hard maximum runner count across the fleet.",
@@ -243,6 +251,8 @@ func registerMetrics() {
 			listenerUpGauge,
 			listenerRestarts,
 			pendingRunnersGauge,
+			githubUnavailableRunnersGauge,
+			runnerStatusProbeUpGauge,
 			fleetMaxRunnersGauge,
 		)
 	})
