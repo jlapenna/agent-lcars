@@ -205,9 +205,9 @@ async function AgentsPageShell({ searchParams }: PageProps) {
   const watchedRepos = getWatchedRepos();
   const repoFilter = parseRepoFilterParam((await searchParams).repo);
 
-  const subtitlePrefix =
+  const subtitle =
     watchedRepos.length <= 1
-      ? undefined
+      ? repoDisplayName(watchedRepos[0])
       : repoFilter
         ? repoDisplayName(repoFilter)
         : `${watchedRepos.length} repos`;
@@ -219,9 +219,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
         title="Agent Status"
         subtitle={
           <>
-            {subtitlePrefix && `${subtitlePrefix} — `}
-            Fleet-wide view of every claude/opencode run and CLI session, agent
-            by agent.
+            {subtitle}
             {repoFilter && (
               <>
                 {' · '}

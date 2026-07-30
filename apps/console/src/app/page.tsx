@@ -243,10 +243,10 @@ async function IndexShell({ searchParams }: PageProps) {
 
   const subtitle =
     watchedRepos.length <= 1
-      ? `${repoDisplayName(watchedRepos[0])} — Claude + OpenCode agent activity`
+      ? repoDisplayName(watchedRepos[0])
       : repoFilter
-        ? `${repoDisplayName(repoFilter)} — Claude + OpenCode agent activity`
-        : `${watchedRepos.length} repos — Claude + OpenCode agent activity`;
+        ? repoDisplayName(repoFilter)
+        : `${watchedRepos.length} repos`;
 
   return (
     <Container size="xl" py="xl">
