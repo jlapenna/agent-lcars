@@ -1,0 +1,386 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/rsa"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/golang-jwt/jwt/v4"
+)
+
+const (
+	runnerStatusPollInterval = time.Minute
+	runnerStartupGracePeriod = 5 * time.Minute
+	runnerStatusHTTPTimeout  = 15 * time.Second
+)
+
+const (
+	runnerUnavailableOffline = "offline"
+	runnerUnavailableMissing = "missing"
+)
+
+type runnerStatusSource interface {
+	ListRunnerStatuses(context.Context, map[string]struct{}) (map[string]string, error)
+}
+
+type bearerTokenSource interface {
+	Token(context.Context) (string, error)
+}
+
+type staticBearerToken string
+
+func (t staticBearerToken) Token(context.Context) (string, error) {
+	return string(t), nil
+}
+
+type githubRunnerStatusClient struct {
+	apiBaseURL  string
+	runnersPath string
+	httpClient  *http.Client
+	tokenSource bearerTokenSource
+}
+
+type githubRunnerStatusList struct {
+	TotalCount int `json:"total_count"`
+	Runners    []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	} `json:"runners"`
+}
+
+func newGitHubRunnerStatusClient(c Config) (*githubRunnerStatusClient, error) {
+	apiBaseURL, runnersPath, err := runnerStatusEndpoint(c.RegistrationURL)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := &http.Client{Timeout: runnerStatusHTTPTimeout}
+
+	var tokens bearerTokenSource
+	if c.GitHubApp.Validate() == nil {
+		tokens, err = newInstallationTokenSource(c.GitHubApp.ClientID, c.GitHubApp.InstallationID, c.GitHubApp.PrivateKey, apiBaseURL, httpClient)
+		if err != nil {
+			return nil, fmt.Errorf("creating GitHub App token source: %w", err)
+		}
+	} else if c.Token != "" {
+		tokens = staticBearerToken(c.Token)
+	} else {
+		return nil, fmt.Errorf("runner status client requires GitHub App credentials or a token")
+	}
+
+	return &githubRunnerStatusClient{
+		apiBaseURL:  apiBaseURL,
+		runnersPath: runnersPath,
+		httpClient:  httpClient,
+		tokenSource: tokens,
+	}, nil
+}
+
+// runnerStatusEndpoint maps the same organization/repository registration URL
+// used by actions/scaleset to GitHub's public runner-status endpoint. The
+// scale-set service's GetRunnerByName response carries registration identity
+// but not the online/offline state, so it cannot detect #230 by itself.
+func runnerStatusEndpoint(registrationURL string) (string, string, error) {
+	u, err := url.Parse(registrationURL)
+	if err != nil {
+		return "", "", fmt.Errorf("parsing registration URL: %w", err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", "", fmt.Errorf("registration URL must include a scheme and host")
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	var runnersPath string
+	switch len(parts) {
+	case 1:
+		if parts[0] == "" {
+			return "", "", fmt.Errorf("registration URL must identify an organization or repository")
+		}
+		runnersPath = "/orgs/" + url.PathEscape(parts[0]) + "/actions/runners"
+	case 2:
+		runnersPath = "/repos/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1]) + "/actions/runners"
+	default:
+		return "", "", fmt.Errorf("registration URL path must be /owner or /owner/repository")
+	}
+
+	apiBaseURL := u.Scheme + "://" + u.Host
+	if strings.EqualFold(u.Hostname(), "github.com") {
+		apiBaseURL = "https://api.github.com"
+	} else {
+		apiBaseURL += "/api/v3"
+	}
+	return apiBaseURL, runnersPath, nil
+}
+
+// ListRunnerStatuses fetches one registration-scoped page stream and stops
+// once every locally tracked runner has been found. It never issues one
+// request per runner and is called by one monitor per registration, not by
+// Prometheus scrapes or by each scale set.
+func (c *githubRunnerStatusClient) ListRunnerStatuses(ctx context.Context, wanted map[string]struct{}) (map[string]string, error) {
+	found := make(map[string]string, len(wanted))
+	if len(wanted) == 0 {
+		return found, nil
+	}
+
+	token, err := c.tokenSource.Token(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting GitHub token: %w", err)
+	}
+	for page := 1; ; page++ {
+		u, err := url.Parse(c.apiBaseURL + c.runnersPath)
+		if err != nil {
+			return nil, err
+		}
+		query := u.Query()
+		query.Set("per_page", "100")
+		query.Set("page", strconv.Itoa(page))
+		u.RawQuery = query.Encode()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("listing GitHub runners: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("listing GitHub runners returned HTTP %d", resp.StatusCode)
+		}
+		var pageResult githubRunnerStatusList
+		decodeErr := json.NewDecoder(resp.Body).Decode(&pageResult)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decoding GitHub runner list: %w", decodeErr)
+		}
+
+		for _, runner := range pageResult.Runners {
+			if _, ok := wanted[runner.Name]; ok {
+				found[runner.Name] = strings.ToLower(runner.Status)
+			}
+		}
+		if len(found) == len(wanted) || len(pageResult.Runners) == 0 || page*100 >= pageResult.TotalCount {
+			return found, nil
+		}
+	}
+}
+
+type installationTokenSource struct {
+	mu             sync.Mutex
+	clientID       string
+	installationID int64
+	signingKey     *rsa.PrivateKey
+	apiBaseURL     string
+	httpClient     *http.Client
+	now            func() time.Time
+	token          string
+	expiresAt      time.Time
+}
+
+func newInstallationTokenSource(clientID string, installationID int64, privateKey, apiBaseURL string, httpClient *http.Client) (*installationTokenSource, error) {
+	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKey))
+	if err != nil {
+		return nil, err
+	}
+	return &installationTokenSource{
+		clientID:       clientID,
+		installationID: installationID,
+		signingKey:     key,
+		apiBaseURL:     apiBaseURL,
+		httpClient:     httpClient,
+		now:            time.Now,
+	}, nil
+}
+
+func (s *installationTokenSource) Token(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := s.now()
+	if s.token != "" && now.Add(time.Minute).Before(s.expiresAt) {
+		return s.token, nil
+	}
+
+	claims := jwt.RegisteredClaims{
+		Issuer:    s.clientID,
+		IssuedAt:  jwt.NewNumericDate(now.Add(-time.Minute)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(9 * time.Minute)),
+	}
+	appJWT, err := jwt.NewWithClaims(jwt.SigningMethodRS256, claims).SignedString(s.signingKey)
+	if err != nil {
+		return "", fmt.Errorf("signing GitHub App JWT: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", s.apiBaseURL, s.installationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+appJWT)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("creating GitHub App installation token: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("creating GitHub App installation token returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding GitHub App installation token: %w", err)
+	}
+	if result.Token == "" || result.ExpiresAt.IsZero() {
+		return "", fmt.Errorf("GitHub App installation token response was incomplete")
+	}
+	s.token, s.expiresAt = result.Token, result.ExpiresAt
+	return s.token, nil
+}
+
+type trackedRunnerStatus struct {
+	name      string
+	host      string
+	startedAt time.Time
+}
+
+func (r *runnerState) statusSnapshot() []trackedRunnerStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make([]trackedRunnerStatus, 0, len(r.idle)+len(r.busy))
+	for name, ref := range r.idle {
+		out = append(out, trackedRunnerStatus{name: name, host: ref.host, startedAt: ref.startedAt})
+	}
+	for name, ref := range r.busy {
+		out = append(out, trackedRunnerStatus{name: name, host: ref.host, startedAt: ref.startedAt})
+	}
+	return out
+}
+
+type registrationRunnerStatusMonitor struct {
+	registration string
+	source       runnerStatusSource
+	scalers      []*Scaler
+	logger       *slog.Logger
+	now          func() time.Time
+}
+
+func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) {
+	snapshots := make(map[*Scaler][]trackedRunnerStatus, len(m.scalers))
+	wanted := map[string]struct{}{}
+	for _, scaler := range m.scalers {
+		snapshot := scaler.runners.statusSnapshot()
+		snapshots[scaler] = snapshot
+		for _, runner := range snapshot {
+			wanted[runner.name] = struct{}{}
+		}
+	}
+
+	statuses, err := m.source.ListRunnerStatuses(ctx, wanted)
+	if err != nil {
+		runnerStatusProbeUpGauge.WithLabelValues(m.registration).Set(0)
+		m.logger.Warn("GitHub runner-status reconciliation failed; preserving the previous unavailable-runner gauges", slog.String("registration", m.registration), slog.String("error", err.Error()))
+		return
+	}
+	runnerStatusProbeUpGauge.WithLabelValues(m.registration).Set(1)
+
+	now := m.now()
+	for _, scaler := range m.scalers {
+		counts := map[string]map[string]int{}
+		for _, host := range scaler.dockerHosts {
+			counts[host.Name] = map[string]int{
+				runnerUnavailableOffline: 0,
+				runnerUnavailableMissing: 0,
+			}
+		}
+		for _, runner := range snapshots[scaler] {
+			if !runner.startedAt.IsZero() && now.Sub(runner.startedAt) < runnerStartupGracePeriod {
+				continue
+			}
+			status, ok := statuses[runner.name]
+			reason := ""
+			switch {
+			case !ok:
+				reason = runnerUnavailableMissing
+			case status != "online":
+				reason = runnerUnavailableOffline
+			}
+			if reason != "" {
+				if counts[runner.host] == nil {
+					counts[runner.host] = map[string]int{}
+				}
+				counts[runner.host][reason]++
+			}
+		}
+		for host, byReason := range counts {
+			for _, reason := range []string{runnerUnavailableOffline, runnerUnavailableMissing} {
+				githubUnavailableRunnersGauge.WithLabelValues(scaler.scaleSetLabel(), host, reason).Set(float64(byReason[reason]))
+			}
+		}
+	}
+}
+
+func (m *registrationRunnerStatusMonitor) run(ctx context.Context) {
+	m.reconcile(ctx)
+	ticker := time.NewTicker(runnerStatusPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.reconcile(ctx)
+		}
+	}
+}
+
+func startGitHubRunnerStatusMonitors(ctx context.Context, runtimes []*scaleSetRuntime, logger *slog.Logger) {
+	type registrationGroup struct {
+		config  Config
+		scalers []*Scaler
+	}
+	groups := map[string]*registrationGroup{}
+	for _, runtime := range runtimes {
+		group := groups[runtime.config.RegistrationName]
+		if group == nil {
+			group = &registrationGroup{config: runtime.config}
+			groups[runtime.config.RegistrationName] = group
+		}
+		group.scalers = append(group.scalers, runtime.scaler)
+	}
+
+	for registration, group := range groups {
+		source, err := newGitHubRunnerStatusClient(group.config)
+		if err != nil {
+			runnerStatusProbeUpGauge.WithLabelValues(registration).Set(0)
+			logger.Error("Could not initialize GitHub runner-status monitor", slog.String("registration", registration), slog.String("error", err.Error()))
+			continue
+		}
+		monitor := &registrationRunnerStatusMonitor{
+			registration: registration,
+			source:       source,
+			scalers:      group.scalers,
+			logger:       logger.With("component", "runner-status-monitor"),
+			now:          time.Now,
+		}
+		go monitor.run(ctx)
+	}
+}

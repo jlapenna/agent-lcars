@@ -1073,11 +1073,11 @@ func (a *Scaler) cleanupOrphans(ctx context.Context, boot bool) {
 			if boot && c.State == container.StateRunning {
 				top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
 				if topErr == nil && !topHasRunnerWorker(top) {
-					a.runners.addIdle(cleanName, h.Name, c.ID)
+					a.runners.addIdle(cleanName, h.Name, c.ID, time.Unix(c.Created, 0))
 					a.logger.Info("Adopted idle runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
 				} else {
 					a.runners.mu.Lock()
-					a.runners.busy[cleanName] = runnerRef{host: h.Name, containerID: c.ID}
+					a.runners.busy[cleanName] = runnerRef{host: h.Name, containerID: c.ID, startedAt: time.Unix(c.Created, 0)}
 					a.runners.mu.Unlock()
 					a.logger.Info("Adopted busy runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID), slog.Any("top_error", topErr))
 				}
@@ -1339,7 +1339,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 
 	runnerStartDuration.WithLabelValues(scaleSet, host).Observe(time.Since(start).Seconds())
 	a.logger.Info("Placed runner", slog.String("name", name), slog.String("host", host))
-	a.runners.addIdle(name, host, c.ID)
+	a.runners.addIdle(name, host, c.ID, time.Now())
 	a.updateRunnerMetrics()
 	return name, nil
 }
@@ -1770,6 +1770,10 @@ var _ listener.Scaler = (*Scaler)(nil)
 type runnerRef struct {
 	host        string
 	containerID string
+	// startedAt is the container creation time, not the control-plane
+	// adoption time. A restart must not grant an hours-old runner a fresh
+	// startup grace period and hide an existing GitHub disconnect.
+	startedAt time.Time
 }
 
 type runnerState struct {
@@ -1871,8 +1875,8 @@ func (r *runnerState) markDoneUnlocked(name string) (runnerRef, bool) {
 	return runnerRef{}, false
 }
 
-func (r *runnerState) addIdle(name, host, containerID string) {
+func (r *runnerState) addIdle(name, host, containerID string, startedAt time.Time) {
 	r.mu.Lock()
-	r.idle[name] = runnerRef{host: host, containerID: containerID}
+	r.idle[name] = runnerRef{host: host, containerID: containerID, startedAt: startedAt}
 	r.mu.Unlock()
 }

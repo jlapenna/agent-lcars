@@ -20,6 +20,23 @@ and affected-project detection all run through the workspace task graph.
 ./tools/nx typecheck @agent-lcars/runner-autoscaler
 ```
 
+## Runner connectivity metrics
+
+The control plane reconciles its locally tracked containers against GitHub's
+runner list once per minute per registration. Runners receive a five-minute
+startup grace period based on their container creation time; after that,
+GitHub-side divergence is exposed as:
+
+- `github_runner_autoscaler_github_unavailable_runners{scale_set,host,reason}`
+  where `reason` is bounded to `offline` or `missing`.
+- `github_runner_autoscaler_runner_status_probe_up{registration}`, which is
+  `0` when the latest GitHub status query failed. Unavailable-runner counts
+  retain their last successful values while the probe is down.
+
+The deployment-owned alert can page on unavailable runners persisting for ten
+minutes without mistaking the brief registration window during startup for a
+dead broker connection.
+
 ## Deployment
 
 The actual runtime config (`orchestrator.yml`: fleet host inventory, GitHub
