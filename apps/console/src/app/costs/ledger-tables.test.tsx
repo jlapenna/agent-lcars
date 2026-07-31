@@ -1,9 +1,16 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, type Mock, vi } from 'vitest';
 
+import { getWatchedRepos } from '../../lib/github-client';
 import type { SessionLedger } from '../../lib/session-ledger';
 import { LedgerTables } from './ledger-tables';
+
+vi.mock('../../lib/github-client', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../lib/github-client')>();
+  return { ...actual, getWatchedRepos: vi.fn(actual.getWatchedRepos) };
+});
 
 function renderLedger(ledger: SessionLedger) {
   render(
@@ -147,5 +154,41 @@ describe('LedgerTables', () => {
     expect(compactRow.textContent).toContain('$6.00');
     expect(compactRow.textContent).not.toContain('4,000');
     expect(compactRow.textContent).toContain('3 sessions');
+  });
+
+  it('marks a long multi-repo identity for safe compact-row truncation', () => {
+    const watchedRepos = [
+      { owner: 'org-a', name: 'repo-a' },
+      {
+        owner: 'very-long-organization-name',
+        name: 'very-long-repository-name',
+      },
+    ];
+    (getWatchedRepos as Mock)
+      .mockReturnValueOnce(watchedRepos)
+      .mockReturnValueOnce(watchedRepos);
+
+    renderLedger({
+      byIssue: [
+        {
+          issueNumber: 42,
+          repo: watchedRepos[1],
+          sessions: 2,
+          turns: 10,
+          tokens: 3000,
+          costUsd: 1.5,
+        },
+      ],
+      byWeek: [],
+    });
+
+    const compactRow = screen.getByTestId('ledger-issue-row-compact');
+    const identity = compactRow.querySelector('.costs-ledger-issue-identity');
+    expect(identity?.getAttribute('title')).toBe(
+      'very-long-organization-name/very-long-repository-name',
+    );
+    expect(
+      compactRow.querySelector('.costs-ledger-mobile-row__primary'),
+    ).not.toBeNull();
   });
 });

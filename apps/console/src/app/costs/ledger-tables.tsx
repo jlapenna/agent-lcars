@@ -69,7 +69,12 @@ function IssueCell({ row }: { row: IssueLedgerRow }) {
   // Phase 0's `repo` field. Kept here too as a type-safe fallback.
   const repo = row.repo ?? primaryWatchedRepo();
   return (
-    <Group gap={6} wrap="nowrap">
+    <Group
+      gap={6}
+      wrap="nowrap"
+      className="costs-ledger-issue-identity"
+      title={`${repo.owner}/${repo.name}`}
+    >
       <Anchor
         href={`https://github.com/${repo.owner}/${repo.name}/issues/${row.issueNumber}`}
         target="_blank"
@@ -152,7 +157,7 @@ function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
           role="listitem"
           data-testid="ledger-issue-row-compact"
         >
-          <div>
+          <div className="costs-ledger-mobile-row__primary">
             <div className="costs-ledger-mobile-row__identity">
               <IssueCell row={row} />
             </div>

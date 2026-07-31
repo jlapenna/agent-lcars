@@ -1476,6 +1476,31 @@
     align-items: center;
   }
 
+  .costs-ledger-mobile-row__primary,
+  .costs-ledger-issue-identity {
+    min-width: 0;
+  }
+
+  .costs-ledger-mobile-row__primary {
+    flex: 1 1 auto;
+  }
+
+  .costs-ledger-issue-identity {
+    width: 100%;
+  }
+
+  .costs-ledger-issue-identity [data-testid='repo-badge'] {
+    min-width: 0;
+    max-width: calc(100% - 3.25rem);
+    overflow: hidden;
+  }
+
+  .costs-ledger-issue-identity [data-testid='repo-badge'] .mantine-Badge-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .costs-ledger-mobile-row__cost {
     flex: 0 0 auto;
     font-size: 1rem;
