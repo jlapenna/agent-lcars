@@ -150,9 +150,14 @@ function ViewToggle({
 function SessionsUtilities({
   watchedRepos,
   includeNavigation = false,
+  navigationHrefs,
 }: {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   includeNavigation?: boolean;
+  navigationHrefs?: {
+    sessions: string;
+    costs: string;
+  };
 }) {
   return (
     <Group gap={4} wrap="nowrap">
@@ -160,6 +165,7 @@ function SessionsUtilities({
       <RefreshButton compact />
       <QueueUtilityMenu
         includeNavigation={includeNavigation}
+        navigationHrefs={navigationHrefs}
         signOutControl={<SignOutButton />}
       />
     </Group>
@@ -194,6 +200,17 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const query = parseSessionArchiveQuery(rawParams);
   const view = parseView(rawParams);
   const watchedRepos = getWatchedRepos();
+  const sharedArchiveQuery = { ...query, repo: undefined };
+  const mobileNavigationHrefs = {
+    sessions: displayHref(sharedArchiveQuery, {
+      view: 'flat',
+      path: '/sessions',
+    }),
+    costs: displayHref(sharedArchiveQuery, {
+      view: 'flat',
+      path: '/costs',
+    }),
+  };
 
   // The cost ledger lived here behind `?tab=costs` until #192 moved it to
   // its own destination. Send those links (bookmarks, and anything already
@@ -238,6 +255,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
               <SessionsUtilities
                 watchedRepos={watchedRepos}
                 includeNavigation
+                navigationHrefs={mobileNavigationHrefs}
               />
             </div>
           </>

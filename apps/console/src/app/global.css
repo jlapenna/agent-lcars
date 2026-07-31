@@ -972,6 +972,20 @@
   }
 }
 
+@media (min-width: 48em) and (max-width: 63.99em) {
+  .console-header[data-current='sessions'] .lcars-nav-pill:not([data-active]) {
+    display: none;
+  }
+
+  .sessions-utilities--desktop {
+    display: none;
+  }
+
+  .sessions-utilities--mobile {
+    display: block;
+  }
+}
+
 @media (max-width: 47.99em) {
   .queue-page-shell,
   .agents-page-shell,

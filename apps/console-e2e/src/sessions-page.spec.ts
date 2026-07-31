@@ -59,7 +59,7 @@ test.describe('/sessions workspace @smoke', () => {
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/sessions');
+    await page.goto('/sessions?days=30&source=issue-agent&issue=9005');
 
     const header = page.locator('.console-header[data-current="sessions"]');
     const workspace = page.getByRole('region', { name: 'Session archive' });
@@ -78,6 +78,10 @@ test.describe('/sessions workspace @smoke', () => {
     await page.getByRole('button', { name: 'More console options' }).click();
     await expect(page.getByRole('menuitem', { name: 'Queue' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Agents' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Costs' })).toHaveAttribute(
+      'href',
+      '/costs?days=30&source=issue-agent&issue=9005',
+    );
     await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
     await page.keyboard.press('Escape');
 
@@ -113,5 +117,24 @@ test.describe('/sessions workspace @smoke', () => {
       path: capture,
       contentType: 'image/png',
     });
+  });
+
+  test('keeps the tablet command rail within the viewport', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await page.goto('/sessions?days=30');
+
+    const header = page.locator('.console-header[data-current="sessions"]');
+    await expect(header.getByRole('link', { name: 'Sessions' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Queue' })).toBeHidden();
+    await expect(
+      header.getByRole('button', { name: 'More console options' }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
   });
 });
