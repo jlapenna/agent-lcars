@@ -26,6 +26,10 @@ export interface ConsoleHeaderProps {
   title: string;
   subtitle: ReactNode;
   archiveQuery?: SessionArchiveQuery;
+  /** Optional route-level global actions. Keeping this a slot lets Queue
+   * move its reachable utilities into the command rail without forcing the
+   * other routes into the first responsive-workspace slice. */
+  utilities?: ReactNode;
 }
 
 function navHref(
@@ -81,9 +85,10 @@ export function ConsoleHeader({
   title,
   subtitle,
   archiveQuery,
+  utilities,
 }: ConsoleHeaderProps) {
   return (
-    <Stack gap="md" mb="xl">
+    <Stack gap="md" mb="xl" className="console-header" data-current={current}>
       <div className="lcars-header">
         <Group justify="space-between" align="flex-start" gap="sm">
           <div>
@@ -104,21 +109,26 @@ export function ConsoleHeader({
         </div>
       </div>
 
-      <nav className="lcars-nav" aria-label="Console sections">
-        {NAV_ITEMS.map((item) => (
-          <Anchor
-            key={item.key}
-            href={navHref(item, archiveQuery)}
-            underline="never"
-            className="lcars-nav-pill"
-            data-accent={item.accent}
-            data-active={item.key === current ? '' : undefined}
-            aria-current={item.key === current ? 'page' : undefined}
-          >
-            {item.label}
-          </Anchor>
-        ))}
-      </nav>
+      <div className="lcars-command-row">
+        <nav className="lcars-nav" aria-label="Console sections">
+          {NAV_ITEMS.map((item) => (
+            <Anchor
+              key={item.key}
+              href={navHref(item, archiveQuery)}
+              underline="never"
+              className="lcars-nav-pill"
+              data-accent={item.accent}
+              data-active={item.key === current ? '' : undefined}
+              aria-current={item.key === current ? 'page' : undefined}
+            >
+              {item.label}
+            </Anchor>
+          ))}
+        </nav>
+        {utilities && (
+          <div className="lcars-command-utilities">{utilities}</div>
+        )}
+      </div>
     </Stack>
   );
 }

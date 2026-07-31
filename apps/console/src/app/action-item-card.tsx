@@ -28,6 +28,7 @@ import { repoDisplayName } from '../lib/watched-repo';
 import { approveAndRebase, mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
+import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
 import { RetriggerButton } from './retrigger-button';
 import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
@@ -169,6 +170,7 @@ export function ActionItemCard({
   multiRepo = false,
   muted,
   onToggleMute,
+  variant = 'card',
 }: {
   item: ActionItem;
   updatedAtLabel: string;
@@ -182,8 +184,12 @@ export function ActionItemCard({
    * truth instead of each card syncing its own copy. */
   muted?: boolean;
   onToggleMute?: () => void;
+  /** Workspace mode keeps the existing action behavior but presents it as
+   * the selected item's detail pane instead of another card in a card list. */
+  variant?: 'card' | 'workspace';
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [labelsExpanded, setLabelsExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
   // The reply input renders already open when replying IS the task; on
   // other cards it stays behind a "Reply…" toggle.
@@ -301,43 +307,93 @@ export function ActionItemCard({
   // it's deliberately not in the disabled check the way NOT_MERGEABLE_STATES
   // guards the merge button above.
   const rebaseDisabled = isPending || item.draft;
+  const workspace = variant === 'workspace';
+  const queueReason = queueReasonFor(item);
+  const disclosureLabels = queueDisclosureLabels(item);
+  const visibleLabels = labelsExpanded
+    ? disclosureLabels
+    : disclosureLabels.slice(0, 2);
+  const hiddenLabelCount = disclosureLabels.length - visibleLabels.length;
 
   return (
-    <Card withBorder radius="md" padding="md">
+    <Card
+      withBorder={!workspace}
+      radius={workspace ? 0 : 'md'}
+      padding={workspace ? 'lg' : 'md'}
+      className={workspace ? 'queue-detail-card' : undefined}
+    >
       <Stack gap={6}>
         <Group justify="space-between" align="flex-start" gap="sm">
-          <Anchor
-            href={item.url}
-            target="_blank"
-            rel="noreferrer"
-            fw={600}
-            c="inherit"
-            style={{ minWidth: 0, overflowWrap: 'break-word' }}
-          >
-            #{item.number} {item.title}
-          </Anchor>
-          <Group gap={6} wrap="wrap" style={{ flexShrink: 0 }}>
-            {multiRepo && (
-              <Badge
-                variant="outline"
-                color="gray"
-                size="xs"
-                style={{ flexShrink: 0 }}
-                data-testid="repo-badge"
-              >
-                {repoDisplayName(item.repo)}
-              </Badge>
+          <div style={{ minWidth: 0 }}>
+            {workspace && (
+              <Text component="div" size="xs" c="dimmed" ff="monospace" mb={4}>
+                {repoDisplayName(item.repo)} / #{item.number}
+              </Text>
             )}
-            {item.actionTypes.map((type) => (
-              <Badge
-                key={type}
-                color={ACTION_COLORS[type]}
-                variant="light"
-                size="sm"
-              >
-                {ACTION_LABELS[type]}
-              </Badge>
-            ))}
+            <Anchor
+              href={item.url}
+              target="_blank"
+              rel="noreferrer"
+              fw={600}
+              c="inherit"
+              className={workspace ? 'queue-detail-title' : undefined}
+              style={{ minWidth: 0, overflowWrap: 'break-word' }}
+            >
+              {workspace ? item.title : `#${item.number} ${item.title}`}
+            </Anchor>
+          </div>
+          <Group gap={6} wrap="wrap" style={{ flexShrink: 0 }}>
+            {workspace ? (
+              <>
+                <Badge variant="outline" color="gray" size="xs">
+                  {item.kind === 'pr' ? 'PR' : 'Issue'}
+                </Badge>
+                {queueReason && (
+                  <Badge
+                    color={queueReason.color}
+                    variant="light"
+                    size="sm"
+                    className="queue-reason-badge"
+                  >
+                    {queueReason.label}
+                  </Badge>
+                )}
+                <Anchor
+                  href={item.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="xs"
+                  c="dimmed"
+                  className="queue-github-link"
+                >
+                  View on GitHub ↗
+                </Anchor>
+              </>
+            ) : (
+              <>
+                {multiRepo && (
+                  <Badge
+                    variant="outline"
+                    color="gray"
+                    size="xs"
+                    style={{ flexShrink: 0 }}
+                    data-testid="repo-badge"
+                  >
+                    {repoDisplayName(item.repo)}
+                  </Badge>
+                )}
+                {item.actionTypes.map((type) => (
+                  <Badge
+                    key={type}
+                    color={ACTION_COLORS[type]}
+                    variant="light"
+                    size="sm"
+                  >
+                    {ACTION_LABELS[type]}
+                  </Badge>
+                ))}
+              </>
+            )}
             <ItemOverflowMenu
               item={item}
               muted={muted}
@@ -379,8 +435,37 @@ export function ActionItemCard({
               · closes {item.linkedIssueNumbers.map((n) => `#${n}`).join(', ')}
             </>
           )}
-          {item.labels.length > 0 && <> · {item.labels.join(', ')}</>}
+          {!workspace && item.labels.length > 0 && (
+            <> · {item.labels.join(', ')}</>
+          )}
         </Text>
+
+        {workspace && disclosureLabels.length > 0 && (
+          <Group gap={6} wrap="wrap" className="queue-detail-labels">
+            {visibleLabels.map((label) => (
+              <Badge key={label} variant="outline" color="gray" size="sm">
+                {label}
+              </Badge>
+            ))}
+            {(hiddenLabelCount > 0 || labelsExpanded) && (
+              <Button
+                variant="subtle"
+                color="gray"
+                size="compact-xs"
+                className="queue-label-disclosure"
+                aria-expanded={labelsExpanded}
+                aria-label={
+                  labelsExpanded
+                    ? 'Hide additional labels'
+                    : `Show ${hiddenLabelCount} additional labels`
+                }
+                onClick={() => setLabelsExpanded((value) => !value)}
+              >
+                {labelsExpanded ? 'Show less' : `+${hiddenLabelCount}`}
+              </Button>
+            )}
+          </Group>
+        )}
 
         {item.failingChecks && item.failingChecks.length > 0 && (
           <Text size="xs" c="red">
@@ -454,10 +539,16 @@ export function ActionItemCard({
           </Group>
         )}
 
-        <Group gap="sm" wrap="wrap" mt={4}>
+        <Group
+          gap="sm"
+          wrap="wrap"
+          mt={4}
+          className={workspace ? 'queue-detail-actions' : undefined}
+        >
           {primaryAction?.kind === 'approve-merge' && (
             <Button
-              color="dark"
+              color={workspace ? 'orange' : 'dark'}
+              className={workspace ? 'queue-primary-action' : undefined}
               // item.draft is belt-and-suspenders for the 'draft'
               // mergeable_state: merging a draft always 405s.
               disabled={mergeDisabled}
@@ -471,7 +562,8 @@ export function ActionItemCard({
           )}
           {primaryAction?.kind === 'approve-rebase' && (
             <Button
-              color="dark"
+              color={workspace ? 'orange' : 'dark'}
+              className={workspace ? 'queue-primary-action' : undefined}
               disabled={rebaseDisabled}
               title={item.draft ? MERGEABLE_WARNINGS.draft : undefined}
               onClick={confirmRebase}
@@ -487,6 +579,7 @@ export function ActionItemCard({
               rel="noreferrer"
               color="red"
               variant="light"
+              className={workspace ? 'queue-primary-action' : undefined}
             >
               Open failing check ↗
             </Button>

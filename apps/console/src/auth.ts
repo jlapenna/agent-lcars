@@ -65,7 +65,7 @@ async function testSession(): Promise<Session | null | undefined> {
 export const auth: typeof nextAuth.auth = (async (
   ...args: Parameters<typeof nextAuth.auth>
 ) => {
-  if (args.length === 0) {
+  if ((args as unknown[]).length === 0) {
     const session = await testSession();
     if (session !== undefined) return session;
   }

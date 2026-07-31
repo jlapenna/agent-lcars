@@ -12,21 +12,26 @@ export function RefreshButton({
   generatedAt,
   initialLabel,
   bustsGithubCache = false,
+  compact = false,
 }: {
-  generatedAt: string;
-  initialLabel: string;
+  generatedAt?: string;
+  initialLabel?: string;
   /** Whether this page renders cached GitHub data (see
    * lib/dashboard-data.ts). Only the Queue and Agents pages do; the session
    * pages read Firestore/GCS, and busting the GitHub tag from there would
    * force the next Queue visit to repeat ~30 requests for state that never
    * changed. */
   bustsGithubCache?: boolean;
+  /** Icon-only command-rail treatment. Mobile CSS still gives it a 44px
+   * target even though the visual icon remains compact. */
+  compact?: boolean;
 }) {
   const router = useRouter();
-  const [label, setLabel] = useState(initialLabel);
+  const [label, setLabel] = useState(initialLabel ?? '');
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
+    if (!generatedAt) return;
     // Resync immediately on a new generatedAt (e.g. right after a refresh) -
     // without this, the label kept showing the stale pre-refresh value until
     // the next 30s tick.
@@ -40,13 +45,15 @@ export function RefreshButton({
 
   return (
     <Group gap="xs">
-      <Text size="xs" c="dimmed">
-        Updated {label}
-      </Text>
+      {generatedAt && (
+        <Text size="xs" c="dimmed">
+          Updated {label}
+        </Text>
+      )}
       <Tooltip label="Refresh">
         <ActionIcon
           variant="subtle"
-          size="sm"
+          size={compact ? 44 : 'sm'}
           loading={isPending}
           aria-label="Refresh"
           onClick={() =>
