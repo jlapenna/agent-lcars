@@ -1,4 +1,4 @@
-import { Anchor, Box, Card, Container, Group, Text } from '@mantine/core';
+import { Anchor, Container, Group } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
@@ -18,14 +18,15 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { groupSessionsByIssue } from '../../lib/session-issue-groups';
-import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader, DataWarnings } from '../console-header';
-import { formatRelativeTime } from '../format';
-import { lcarsPanelStyle } from '../lcars';
 import { PageLoading } from '../page-loading';
+import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
+import { RefreshButton } from '../refresh-button';
+import { SignOutButton } from '../sign-out-button';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
+import { SessionsWorkspace } from './sessions-workspace';
 
 type SessionsView = 'flat' | 'by-issue';
 
@@ -99,39 +100,22 @@ async function SessionsBody({
   view: SessionsView;
 }) {
   const { rows, warnings } = await getArchive(query);
-  const generatedAt = new Date().toISOString();
 
   return (
-    <>
-      {warnings.length > 0 && (
-        <Box mb="xl">
-          <DataWarnings warnings={warnings} />
-        </Box>
-      )}
-
-      <Card
-        withBorder
-        radius="md"
-        padding="md"
-        className="lcars-panel"
-        style={lcarsPanelStyle('teal')}
-      >
-        <Group justify="flex-end" mb="sm">
-          <ViewToggle query={query} view={view} />
-        </Group>
+    <SessionsWorkspace
+      warnings={
+        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
+      }
+      toolbar={<ViewToggle query={query} view={view} />}
+    >
+      <div data-testid="sessions-archive-content">
         {view === 'by-issue' ? (
           <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
         ) : (
           <SessionTable rows={rows} />
         )}
-      </Card>
-
-      <ConsoleFooter
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
-        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
-      />
-    </>
+      </div>
+    </SessionsWorkspace>
   );
 }
 
@@ -146,25 +130,44 @@ function ViewToggle({
   view: SessionsView;
 }) {
   return (
-    <Group gap={6} wrap="nowrap">
-      {(['flat', 'by-issue'] as const).map((candidate, i) => (
-        <Group key={candidate} gap={6} wrap="nowrap">
-          {i > 0 && (
-            <Text size="sm" c="dimmed">
-              ·
-            </Text>
-          )}
-          {candidate === view ? (
-            <Text size="sm" fw={600}>
-              {candidate === 'flat' ? 'Flat' : 'By issue'}
-            </Text>
-          ) : (
-            <Anchor href={displayHref(query, { view: candidate })} size="sm">
-              {candidate === 'flat' ? 'Flat' : 'By issue'}
-            </Anchor>
-          )}
-        </Group>
+    <nav className="sessions-view-toggle" aria-label="Archive view">
+      {(['flat', 'by-issue'] as const).map((candidate) => (
+        <Anchor
+          key={candidate}
+          href={displayHref(query, { view: candidate })}
+          className="sessions-view-toggle__option"
+          data-active={candidate === view ? '' : undefined}
+          aria-current={candidate === view ? 'page' : undefined}
+          underline="never"
+        >
+          {candidate === 'flat' ? 'Flat' : 'By issue'}
+        </Anchor>
       ))}
+    </nav>
+  );
+}
+
+function SessionsUtilities({
+  watchedRepos,
+  includeNavigation = false,
+  navigationHrefs,
+}: {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  includeNavigation?: boolean;
+  navigationHrefs?: {
+    sessions: string;
+    costs: string;
+  };
+}) {
+  return (
+    <Group gap={4} wrap="nowrap">
+      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+      <RefreshButton compact />
+      <QueueUtilityMenu
+        includeNavigation={includeNavigation}
+        navigationHrefs={navigationHrefs}
+        signOutControl={<SignOutButton />}
+      />
     </Group>
   );
 }
@@ -196,6 +199,18 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const rawParams = await searchParams;
   const query = parseSessionArchiveQuery(rawParams);
   const view = parseView(rawParams);
+  const watchedRepos = getWatchedRepos();
+  const sharedArchiveQuery = { ...query, repo: undefined };
+  const mobileNavigationHrefs = {
+    sessions: displayHref(sharedArchiveQuery, {
+      view: 'flat',
+      path: '/sessions',
+    }),
+    costs: displayHref(sharedArchiveQuery, {
+      view: 'flat',
+      path: '/costs',
+    }),
+  };
 
   // The cost ledger lived here behind `?tab=costs` until #192 moved it to
   // its own destination. Send those links (bookmarks, and anything already
@@ -206,7 +221,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   }
 
   return (
-    <Container size="xl" py="xl">
+    <Container size="xl" py="xl" className="sessions-page-shell">
       <ConsoleHeader
         current="sessions"
         archiveQuery={query}
@@ -229,6 +244,20 @@ async function SessionsPageShell({ searchParams }: PageProps) {
                 </Anchor>
               </>
             )}
+          </>
+        }
+        utilities={
+          <>
+            <div className="sessions-utilities sessions-utilities--desktop">
+              <SessionsUtilities watchedRepos={watchedRepos} />
+            </div>
+            <div className="sessions-utilities sessions-utilities--mobile">
+              <SessionsUtilities
+                watchedRepos={watchedRepos}
+                includeNavigation
+                navigationHrefs={mobileNavigationHrefs}
+              />
+            </div>
           </>
         }
       />

@@ -79,7 +79,11 @@ export function IssueGroupedSessions({
   }
 
   return (
-    <Stack gap="xl" data-testid="issue-grouped-sessions">
+    <Stack
+      gap="xl"
+      data-testid="issue-grouped-sessions"
+      className="sessions-issue-groups"
+    >
       {groups.map((group) => (
         <Stack
           key={groupKey(group)}

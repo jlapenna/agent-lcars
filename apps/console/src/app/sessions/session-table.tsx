@@ -1,7 +1,6 @@
 import {
   Anchor,
   Badge,
-  Card,
   Group,
   Stack,
   Table,
@@ -62,10 +61,8 @@ function sessionCardMeta(row: SessionRow): string {
 function SessionCard({ row }: { row: SessionRow }) {
   const meta = sessionCardMeta(row);
   return (
-    <Card
-      withBorder
-      radius="md"
-      padding="sm"
+    <article
+      className="session-mobile-row"
       data-testid={`session-card-${row.sessionId}`}
     >
       <Stack gap={6}>
@@ -90,6 +87,7 @@ function SessionCard({ row }: { row: SessionRow }) {
           size="sm"
           fw={500}
           truncate
+          className="session-title-link"
           style={{ display: 'block' }}
         >
           {row.title}
@@ -147,7 +145,7 @@ function SessionCard({ row }: { row: SessionRow }) {
           </Text>
         )}
       </Stack>
-    </Card>
+    </article>
   );
 }
 
@@ -162,19 +160,24 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
 
   return (
     <>
-      <Stack gap="sm" hiddenFrom="sm" data-testid="session-cards">
+      <Stack gap={0} hiddenFrom="sm" data-testid="session-cards">
         {rows.map((row) => (
           <SessionCard key={row.sessionId} row={row} />
         ))}
       </Stack>
 
-      <TableScrollContainer minWidth={960} visibleFrom="sm">
+      <TableScrollContainer
+        minWidth={960}
+        visibleFrom="sm"
+        className="sessions-table-scroll"
+      >
         <Table
           striped
           highlightOnHover
           verticalSpacing="xs"
           fz="sm"
-          style={{ width: 'max-content' }}
+          className="sessions-table"
+          style={{ width: '100%' }}
         >
           <TableThead>
             <TableTr>
@@ -207,6 +210,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                       href={`/sessions/${row.sessionId}`}
                       size="sm"
                       truncate
+                      className="session-title-link"
                       style={{ maxWidth: 280, display: 'block' }}
                     >
                       {row.title}

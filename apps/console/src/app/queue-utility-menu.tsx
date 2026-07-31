@@ -7,18 +7,22 @@ import type { ReactNode } from 'react';
 import { ThemeToggle } from './theme-toggle';
 
 const MOBILE_DESTINATIONS = [
-  { href: '/', label: 'Queue' },
-  { href: '/agents', label: 'Agents' },
-  { href: '/sessions', label: 'Sessions' },
-  { href: '/costs', label: 'Costs' },
+  { key: 'queue', href: '/', label: 'Queue' },
+  { key: 'agents', href: '/agents', label: 'Agents' },
+  { key: 'sessions', href: '/sessions', label: 'Sessions' },
+  { key: 'costs', href: '/costs', label: 'Costs' },
 ] as const;
 
 export function QueueUtilityMenu({
   signOutControl,
   includeNavigation = false,
+  navigationHrefs,
 }: {
   signOutControl: ReactNode;
   includeNavigation?: boolean;
+  navigationHrefs?: Partial<
+    Record<(typeof MOBILE_DESTINATIONS)[number]['key'], string>
+  >;
 }) {
   return (
     <Menu position="bottom-end" withinPortal>
@@ -38,9 +42,9 @@ export function QueueUtilityMenu({
             <Menu.Label>Navigate</Menu.Label>
             {MOBILE_DESTINATIONS.map((destination) => (
               <Menu.Item
-                key={destination.href}
+                key={destination.key}
                 component="a"
-                href={destination.href}
+                href={navigationHrefs?.[destination.key] ?? destination.href}
               >
                 {destination.label}
               </Menu.Item>
