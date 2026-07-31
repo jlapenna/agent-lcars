@@ -5,6 +5,7 @@ import { pipelineForLabels } from '../lib/primary-action';
 import { repoKey } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { CompactItemRow } from './compact-item-row';
+import { repoScopedConsoleHrefs } from './console-header';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { QueueUtilityMenu } from './queue-utility-menu';
 import { QueueWorkspace } from './queue-workspace';
@@ -18,9 +19,11 @@ export type { BoardCard } from './board-card';
 export function DecisionInbox({
   yourQueue,
   selectedItemKey,
+  repoFilter,
 }: {
   yourQueue: BoardCard[];
   selectedItemKey?: string;
+  repoFilter?: string;
 }) {
   const watchedRepos = getWatchedRepos();
 
@@ -32,6 +35,7 @@ export function DecisionInbox({
       mobileUtilityMenu={
         <QueueUtilityMenu
           includeNavigation
+          navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
           signOutControl={<SignOutButton />}
         />
       }

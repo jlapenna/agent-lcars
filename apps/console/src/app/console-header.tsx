@@ -27,6 +27,8 @@ export interface ConsoleHeaderProps {
   title: string;
   subtitle: ReactNode;
   archiveQuery?: SessionArchiveQuery;
+  /** Active repository scope on Deck/Inbox; preserved between those routes. */
+  repoFilter?: string;
   /** Optional route-level global actions. Keeping this a slot lets each route
    * move its reachable utilities into the command rail without forcing the
    * other routes into the first responsive-workspace slice. */
@@ -36,7 +38,13 @@ export interface ConsoleHeaderProps {
 function navHref(
   item: (typeof NAV_ITEMS)[number],
   archiveQuery: SessionArchiveQuery | undefined,
+  repoFilter: string | undefined,
 ): string {
+  const repoScopedHrefs = repoScopedConsoleHrefs(repoFilter);
+  if (repoScopedHrefs && (item.key === 'deck' || item.key === 'inbox')) {
+    return repoScopedHrefs[item.key];
+  }
+
   if (!archiveQuery || (item.key !== 'sessions' && item.key !== 'costs')) {
     return item.href;
   }
@@ -51,6 +59,17 @@ function navHref(
   }
   const queryString = params.toString();
   return queryString ? `${item.href}?${queryString}` : item.href;
+}
+
+export function repoScopedConsoleHrefs(repoFilter?: string):
+  | {
+      deck: string;
+      inbox: string;
+    }
+  | undefined {
+  if (!repoFilter) return undefined;
+  const query = new URLSearchParams({ repo: repoFilter }).toString();
+  return { deck: `/?${query}`, inbox: `/inbox?${query}` };
 }
 
 /**
@@ -86,6 +105,7 @@ export function ConsoleHeader({
   title,
   subtitle,
   archiveQuery,
+  repoFilter,
   utilities,
 }: ConsoleHeaderProps) {
   return (
@@ -116,7 +136,7 @@ export function ConsoleHeader({
           {NAV_ITEMS.map((item) => (
             <Anchor
               key={item.key}
-              href={navHref(item, archiveQuery)}
+              href={navHref(item, archiveQuery, repoFilter)}
               underline="never"
               className="lcars-nav-pill"
               data-accent={item.accent}

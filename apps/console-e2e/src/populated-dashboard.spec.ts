@@ -207,6 +207,33 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
   });
 
+  test('preserves repository scope between Deck and Inbox navigation', async ({
+    page,
+  }) => {
+    const repoQuery = 'supersprinklesracing%2Fsprinkles';
+    await page.goto(`/?repo=${repoQuery}`);
+
+    const inboxLink = page.getByRole('link', { name: 'Inbox' });
+    await expect(inboxLink).toHaveAttribute('href', `/inbox?repo=${repoQuery}`);
+    await inboxLink.click();
+    await expect(page).toHaveURL(new RegExp(`/inbox\\?repo=${repoQuery}$`));
+    await expect(page.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+      'href',
+      `/?repo=${repoQuery}`,
+    );
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: 'More console options' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Deck' })).toHaveAttribute(
+      'href',
+      `/?repo=${repoQuery}`,
+    );
+    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toHaveAttribute(
+      'href',
+      `/inbox?repo=${repoQuery}`,
+    );
+  });
+
   test('uses a list-to-detail flow on a phone viewport', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/inbox');

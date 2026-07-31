@@ -26,7 +26,11 @@ import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, CommandDeckSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
-import { ConsoleHeader, DataWarnings } from './console-header';
+import {
+  ConsoleHeader,
+  DataWarnings,
+  repoScopedConsoleHrefs,
+} from './console-header';
 import { formatCompactRelativeTime } from './format';
 import { PageLoading } from './page-loading';
 import { QueueUtilityMenu } from './queue-utility-menu';
@@ -160,9 +164,11 @@ async function IndexBody({
 
 function DeckUtilities({
   watchedRepos,
+  repoFilter,
   includeNavigation = false,
 }: {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  repoFilter?: string;
   includeNavigation?: boolean;
 }) {
   return (
@@ -171,6 +177,7 @@ function DeckUtilities({
       <RefreshButton compact bustsGithubCache />
       <QueueUtilityMenu
         includeNavigation={includeNavigation}
+        navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
         signOutControl={<SignOutButton />}
       />
     </Group>
@@ -200,6 +207,7 @@ async function IndexShell({ searchParams }: PageProps) {
   }
 
   const repoFilter = parseRepoFilterParam(params.repo);
+  const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
 
   const subtitle =
     watchedRepos.length <= 1
@@ -213,6 +221,7 @@ async function IndexShell({ searchParams }: PageProps) {
       <ConsoleHeader
         current="deck"
         title="Command Deck"
+        repoFilter={repoFilterKey}
         subtitle={
           <>
             {subtitle}
@@ -229,10 +238,17 @@ async function IndexShell({ searchParams }: PageProps) {
         utilities={
           <>
             <div className="deck-utilities deck-utilities--desktop">
-              <DeckUtilities watchedRepos={watchedRepos} />
+              <DeckUtilities
+                watchedRepos={watchedRepos}
+                repoFilter={repoFilterKey}
+              />
             </div>
             <div className="deck-utilities deck-utilities--mobile">
-              <DeckUtilities watchedRepos={watchedRepos} includeNavigation />
+              <DeckUtilities
+                watchedRepos={watchedRepos}
+                repoFilter={repoFilterKey}
+                includeNavigation
+              />
             </div>
           </>
         }

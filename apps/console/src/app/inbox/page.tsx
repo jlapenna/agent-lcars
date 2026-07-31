@@ -20,7 +20,11 @@ import { derivePrimaryAction } from '../../lib/primary-action';
 import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
-import { ConsoleHeader, DataWarnings } from '../console-header';
+import {
+  ConsoleHeader,
+  DataWarnings,
+  repoScopedConsoleHrefs,
+} from '../console-header';
 import { formatCompactRelativeTime } from '../format';
 import { PageLoading } from '../page-loading';
 import { QueueUtilityMenu } from '../queue-utility-menu';
@@ -77,6 +81,7 @@ async function InboxBody({
           .filter((item) => matchesFilter(item.repo))
           .map(toCard)}
         selectedItemKey={selectedItemKey}
+        repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
       />
     </>
   );
@@ -84,9 +89,11 @@ async function InboxBody({
 
 function InboxUtilities({
   watchedRepos,
+  repoFilter,
   includeNavigation = false,
 }: {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  repoFilter?: string;
   includeNavigation?: boolean;
 }) {
   return (
@@ -95,6 +102,7 @@ function InboxUtilities({
       <RefreshButton compact bustsGithubCache />
       <QueueUtilityMenu
         includeNavigation={includeNavigation}
+        navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
         signOutControl={<SignOutButton />}
       />
     </Group>
@@ -108,6 +116,7 @@ async function InboxPageShell({ searchParams }: PageProps) {
   const watchedRepos = getWatchedRepos();
   const params = await searchParams;
   const repoFilter = parseRepoFilterParam(params.repo);
+  const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
   const subtitle =
     watchedRepos.length <= 1
       ? repoDisplayName(watchedRepos[0])
@@ -120,6 +129,7 @@ async function InboxPageShell({ searchParams }: PageProps) {
       <ConsoleHeader
         current="inbox"
         title="Decision Inbox"
+        repoFilter={repoFilterKey}
         subtitle={
           <>
             {subtitle}
@@ -136,10 +146,17 @@ async function InboxPageShell({ searchParams }: PageProps) {
         utilities={
           <>
             <div className="inbox-utilities inbox-utilities--desktop">
-              <InboxUtilities watchedRepos={watchedRepos} />
+              <InboxUtilities
+                watchedRepos={watchedRepos}
+                repoFilter={repoFilterKey}
+              />
             </div>
             <div className="inbox-utilities inbox-utilities--mobile">
-              <InboxUtilities watchedRepos={watchedRepos} includeNavigation />
+              <InboxUtilities
+                watchedRepos={watchedRepos}
+                repoFilter={repoFilterKey}
+                includeNavigation
+              />
             </div>
           </>
         }

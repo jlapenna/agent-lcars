@@ -108,4 +108,30 @@ describe('ConsoleHeader nav rail', () => {
       screen.getByRole('link', { name: 'Deck' }).getAttribute('href'),
     ).toBe('/');
   });
+
+  it('preserves repository scope between Deck and Inbox', () => {
+    render(
+      <MantineProvider>
+        <ConsoleHeader
+          current="deck"
+          title="Command Deck"
+          subtitle="one repo"
+          repoFilter="example/console"
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+      'href',
+      '/?repo=example%2Fconsole',
+    );
+    expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAttribute(
+      'href',
+      '/inbox?repo=example%2Fconsole',
+    );
+    expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute(
+      'href',
+      '/agents',
+    );
+  });
 });
