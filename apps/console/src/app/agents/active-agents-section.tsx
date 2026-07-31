@@ -45,7 +45,8 @@ export function ActiveAgentsSection({
       radius="md"
       padding="md"
       mb="xl"
-      className="lcars-panel"
+      data-testid="active-agents-section"
+      className="lcars-panel agents-panel agents-panel--active"
       style={lcarsPanelStyle('periwinkle')}
     >
       <Stack gap="sm">

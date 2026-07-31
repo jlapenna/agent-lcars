@@ -38,7 +38,7 @@ export function ClaimedIdleSection({
       padding="md"
       mb="xl"
       data-testid="claimed-idle-section"
-      className="lcars-panel"
+      className="lcars-panel agents-panel agents-panel--claimed"
       style={lcarsPanelStyle('periwinkle')}
     >
       <Stack gap="sm">
