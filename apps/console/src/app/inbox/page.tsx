@@ -1,4 +1,4 @@
-import { Anchor, Box, Container, Group } from '@mantine/core';
+import { Anchor, Box, Container } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -20,17 +20,10 @@ import { derivePrimaryAction } from '../../lib/primary-action';
 import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
-import {
-  ConsoleHeader,
-  DataWarnings,
-  repoScopedConsoleHrefs,
-} from '../console-header';
+import { ConsoleHeader, DataWarnings } from '../console-header';
 import { formatCompactRelativeTime } from '../format';
 import { PageLoading } from '../page-loading';
-import { QueueUtilityMenu } from '../queue-utility-menu';
-import { QuickTaskButton } from '../quick-task-button';
-import { RefreshButton } from '../refresh-button';
-import { SignOutButton } from '../sign-out-button';
+import { QueueConsoleUtilities } from '../queue-console-utilities';
 
 interface PageProps {
   searchParams: Promise<{ repo?: string; item?: string }>;
@@ -87,28 +80,6 @@ async function InboxBody({
   );
 }
 
-function InboxUtilities({
-  watchedRepos,
-  repoFilter,
-  includeNavigation = false,
-}: {
-  watchedRepos: ReturnType<typeof getWatchedRepos>;
-  repoFilter?: string;
-  includeNavigation?: boolean;
-}) {
-  return (
-    <Group gap={4} wrap="nowrap">
-      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
-      <RefreshButton compact bustsGithubCache />
-      <QueueUtilityMenu
-        includeNavigation={includeNavigation}
-        navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
-        signOutControl={<SignOutButton />}
-      />
-    </Group>
-  );
-}
-
 async function InboxPageShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
@@ -146,13 +117,13 @@ async function InboxPageShell({ searchParams }: PageProps) {
         utilities={
           <>
             <div className="inbox-utilities inbox-utilities--desktop">
-              <InboxUtilities
+              <QueueConsoleUtilities
                 watchedRepos={watchedRepos}
                 repoFilter={repoFilterKey}
               />
             </div>
             <div className="inbox-utilities inbox-utilities--mobile">
-              <InboxUtilities
+              <QueueConsoleUtilities
                 watchedRepos={watchedRepos}
                 repoFilter={repoFilterKey}
                 includeNavigation

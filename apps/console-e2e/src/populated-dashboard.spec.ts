@@ -198,15 +198,6 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
   });
 
-  test('redirects legacy root item links into the Inbox', async ({ page }) => {
-    await page.goto(`/?item=agent-lcars:issue:${E2E_ITEM_NUMBERS.humanNeeded}`);
-
-    await expect(page).toHaveURL(/\/inbox\?item=/);
-    await expect(
-      page.getByRole('region', { name: 'Decision Inbox' }),
-    ).toBeVisible();
-  });
-
   test('preserves repository scope between Deck and Inbox navigation', async ({
     page,
   }) => {
@@ -232,6 +223,63 @@ test.describe('responsive decision inbox', () => {
       'href',
       `/inbox?repo=${repoQuery}`,
     );
+  });
+
+  test('keeps the Inbox workspace and navigation usable on a tablet', async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await page.goto('/inbox');
+
+    const header = page.locator('.console-header[data-current="inbox"]');
+    const workspace = page.getByRole('region', { name: 'Decision Inbox' });
+    await expect(header).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
+    await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+
+    await page.getByRole('button', { name: 'More console options' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await testInfo.attach('inbox-tablet.png', {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: 'image/png',
+    });
+  });
+
+  test('exposes an operable keyboard and semantic Inbox workflow', async ({
+    page,
+  }) => {
+    await page.goto('/inbox');
+
+    const workspace = page.getByRole('region', { name: 'Decision Inbox' });
+    const rowLink = workspace
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link');
+    await rowLink.focus();
+    await expect(rowLink).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(
+      new RegExp(`\\bitem=[^&]*${E2E_ITEM_NUMBERS.reviewRequested}`),
+    );
+
+    const filter = workspace.getByRole('button', { name: 'Filter' });
+    await filter.focus();
+    await page.keyboard.press('Enter');
+    const choices = page.getByRole('menuitem');
+    await expect(choices).toHaveCount(6);
+    await expect(
+      page.getByRole('menuitem', { name: 'All reasons' }),
+    ).toHaveAttribute('aria-current', 'true');
+    await page.keyboard.press('Escape');
+    await expect(filter).toBeFocused();
   });
 
   test('uses a list-to-detail flow on a phone viewport', async ({ page }) => {

@@ -1,5 +1,4 @@
-import { Anchor, Box, Container, Group } from '@mantine/core';
-import { redirect } from 'next/navigation';
+import { Anchor, Box, Container } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -26,17 +25,10 @@ import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, CommandDeckSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
-import {
-  ConsoleHeader,
-  DataWarnings,
-  repoScopedConsoleHrefs,
-} from './console-header';
+import { ConsoleHeader, DataWarnings } from './console-header';
 import { formatCompactRelativeTime } from './format';
 import { PageLoading } from './page-loading';
-import { QueueUtilityMenu } from './queue-utility-menu';
-import { QuickTaskButton } from './quick-task-button';
-import { RefreshButton } from './refresh-button';
-import { SignOutButton } from './sign-out-button';
+import { QueueConsoleUtilities } from './queue-console-utilities';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -47,7 +39,7 @@ function toCard(item: ActionItem): BoardCard {
 }
 
 interface PageProps {
-  searchParams: Promise<{ repo?: string; item?: string }>;
+  searchParams: Promise<{ repo?: string }>;
 }
 
 async function IndexBody({
@@ -162,28 +154,6 @@ async function IndexBody({
   );
 }
 
-function DeckUtilities({
-  watchedRepos,
-  repoFilter,
-  includeNavigation = false,
-}: {
-  watchedRepos: ReturnType<typeof getWatchedRepos>;
-  repoFilter?: string;
-  includeNavigation?: boolean;
-}) {
-  return (
-    <Group gap={4} wrap="nowrap">
-      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
-      <RefreshButton compact bustsGithubCache />
-      <QueueUtilityMenu
-        includeNavigation={includeNavigation}
-        navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
-        signOutControl={<SignOutButton />}
-      />
-    </Group>
-  );
-}
-
 /**
  * Auth-gate, title/subtitle, and nav render eagerly here - none of
  * it needs the slow GitHub/Firestore reads `IndexBody` fetches, so this
@@ -198,13 +168,6 @@ async function IndexShell({ searchParams }: PageProps) {
 
   const watchedRepos = getWatchedRepos();
   const params = await searchParams;
-
-  // Preserve links and bookmarks from before the Inbox became its own page.
-  if (params.item) {
-    const inboxParams = new URLSearchParams({ item: params.item });
-    if (params.repo) inboxParams.set('repo', params.repo);
-    redirect(`/inbox?${inboxParams.toString()}`);
-  }
 
   const repoFilter = parseRepoFilterParam(params.repo);
   const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
@@ -238,13 +201,13 @@ async function IndexShell({ searchParams }: PageProps) {
         utilities={
           <>
             <div className="deck-utilities deck-utilities--desktop">
-              <DeckUtilities
+              <QueueConsoleUtilities
                 watchedRepos={watchedRepos}
                 repoFilter={repoFilterKey}
               />
             </div>
             <div className="deck-utilities deck-utilities--mobile">
-              <DeckUtilities
+              <QueueConsoleUtilities
                 watchedRepos={watchedRepos}
                 repoFilter={repoFilterKey}
                 includeNavigation

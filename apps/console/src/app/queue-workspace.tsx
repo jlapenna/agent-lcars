@@ -170,6 +170,7 @@ export function QueueWorkspace({
                 {FILTER_OPTIONS.map((option) => (
                   <Menu.Item
                     key={option.value}
+                    aria-current={filter === option.value ? 'true' : undefined}
                     onClick={() => setFilter(option.value)}
                     data-active={filter === option.value ? '' : undefined}
                   >
@@ -193,6 +194,7 @@ export function QueueWorkspace({
                 {SORT_OPTIONS.map((option) => (
                   <Menu.Item
                     key={option.value}
+                    aria-current={sort === option.value ? 'true' : undefined}
                     onClick={() => setSort(option.value)}
                     data-active={sort === option.value ? '' : undefined}
                   >
