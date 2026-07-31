@@ -1,4 +1,4 @@
-import { Anchor, Box, Container } from '@mantine/core';
+import { Anchor, Box, Container, Group } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -13,7 +13,6 @@ import { getCliSessions } from '../lib/cli-sessions';
 import {
   getCachedActionItems,
   getCachedAgentActivity,
-  oldestFetchedAt,
 } from '../lib/dashboard-data';
 import {
   getWatchedRepos,
@@ -32,11 +31,13 @@ import {
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { ActionItemsBoard, type BoardCard } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
-import { ConsoleFooter } from './console-footer';
 import { ConsoleHeader, DataWarnings } from './console-header';
-import { formatCompactRelativeTime, formatRelativeTime } from './format';
+import { formatCompactRelativeTime } from './format';
 import { PageLoading } from './page-loading';
+import { QueueUtilityMenu } from './queue-utility-menu';
 import { QuickTaskButton } from './quick-task-button';
+import { RefreshButton } from './refresh-button';
+import { SignOutButton } from './sign-out-button';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -47,20 +48,21 @@ function toCard(item: ActionItem): BoardCard {
 }
 
 interface PageProps {
-  searchParams: Promise<{ repo?: string }>;
+  searchParams: Promise<{ repo?: string; item?: string }>;
 }
 
 async function IndexBody({
   repoFilter,
+  selectedItemKey,
 }: {
   repoFilter: WatchedRepo | undefined;
+  selectedItemKey?: string;
 }) {
   const [
     {
       data: { items: rawItems, warnings: itemWarnings },
-      fetchedAt: itemsAt,
     },
-    { data: activity, fetchedAt: activityAt },
+    { data: activity },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
@@ -157,8 +159,6 @@ async function IndexBody({
     (item) => isDeployWaitOnly(item) && !isHandedBack(item),
   );
   const rest = idle.filter((item) => item.actionTypes.length === 0);
-  const generatedAt = oldestFetchedAt(itemsAt, activityAt);
-
   // Applied last, after every cross-repo join above (itemsByRunId,
   // liveRunFor, silent-error diagnoses) already ran against the full,
   // unfiltered data - a repo filter should narrow what's *displayed*, never
@@ -207,6 +207,7 @@ async function IndexBody({
         rest={rest
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}
+        selectedItemKey={selectedItemKey}
       />
 
       <AgentActivityPanel
@@ -214,13 +215,6 @@ async function IndexBody({
         cliSessions={filteredCliSessions}
         itemsByRunId={itemsByRunId}
         sessionsByRunId={sessionsByRunId}
-      />
-
-      <ConsoleFooter
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
-        bustsGithubCache
-        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
       />
     </>
   );
@@ -239,7 +233,8 @@ async function IndexShell({ searchParams }: PageProps) {
   assertAdmin(session, '/login');
 
   const watchedRepos = getWatchedRepos();
-  const repoFilter = parseRepoFilterParam((await searchParams).repo);
+  const params = await searchParams;
+  const repoFilter = parseRepoFilterParam(params.repo);
 
   const subtitle =
     watchedRepos.length <= 1
@@ -249,7 +244,7 @@ async function IndexShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <Container size="xl" py="xl">
+    <Container size="xl" py="xl" className="queue-page-shell">
       <ConsoleHeader
         current="queue"
         title="Agent LCARS"
@@ -266,10 +261,20 @@ async function IndexShell({ searchParams }: PageProps) {
             )}
           </>
         }
+        utilities={
+          <Group gap="xs" wrap="nowrap">
+            <QuickTaskButton watchedRepos={watchedRepos} />
+            <RefreshButton compact bustsGithubCache />
+            <QueueUtilityMenu signOutControl={<SignOutButton />} />
+          </Group>
+        }
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <IndexBody repoFilter={repoFilter} />
+        <IndexBody
+          repoFilter={repoFilter}
+          selectedItemKey={params.item || undefined}
+        />
       </Suspense>
     </Container>
   );

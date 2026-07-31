@@ -1,4 +1,4 @@
-import { Card, Group, Stack, Text, Title } from '@mantine/core';
+import { Group, Stack, Text, Title } from '@mantine/core';
 
 import { getWatchedRepos } from '../lib/github-client';
 import { pipelineForLabels } from '../lib/primary-action';
@@ -6,10 +6,11 @@ import { repoKey } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { CompactItemRow } from './compact-item-row';
 import { ItemOverflowMenu } from './item-overflow-menu';
-import { lcarsPanelStyle } from './lcars';
+import { QueueUtilityMenu } from './queue-utility-menu';
+import { QueueWorkspace } from './queue-workspace';
 import { RetriggerButton } from './retrigger-button';
 import { SectionHeading } from './section-heading';
-import { YourQueueSection } from './your-queue-section';
+import { SignOutButton } from './sign-out-button';
 
 export type { BoardCard } from './board-card';
 
@@ -25,28 +26,32 @@ export function ActionItemsBoard({
   handedBack,
   waitingOnDeploy,
   rest,
+  selectedItemKey,
 }: {
   yourQueue: BoardCard[];
   handedBack: BoardCard[];
   waitingOnDeploy: BoardCard[];
   rest: BoardCard[];
+  selectedItemKey?: string;
 }) {
   // Server component - safe to resolve here directly, then thread down as a
   // plain boolean prop to ActionItemCard (a client component that can't
   // call getWatchedRepos() itself - see its own doc comment).
-  const multiRepo = getWatchedRepos().length > 1;
+  const watchedRepos = getWatchedRepos();
 
   return (
     <Stack gap="xl" mb="xl">
-      <Card
-        withBorder
-        radius="md"
-        padding="md"
-        className="lcars-panel"
-        style={lcarsPanelStyle('amber')}
-      >
-        <YourQueueSection cards={yourQueue} multiRepo={multiRepo} />
-      </Card>
+      <QueueWorkspace
+        cards={yourQueue}
+        selectedItemKey={selectedItemKey}
+        watchedRepos={watchedRepos}
+        mobileUtilityMenu={
+          <QueueUtilityMenu
+            includeNavigation
+            signOutControl={<SignOutButton />}
+          />
+        }
+      />
 
       {handedBack.length > 0 && (
         <div>

@@ -63,6 +63,34 @@ function renderCard(
 }
 
 describe('ActionItemCard', () => {
+  it('uses one reason badge and progressively discloses labels in workspace mode', () => {
+    render(
+      <MantineProvider>
+        <ActionItemCard
+          item={makeItem({
+            actionTypes: ['run-failed', 'human-needed'],
+            labels: ['claude', 'bug', 'console', 'priority'],
+          })}
+          updatedAtLabel="now"
+          variant="workspace"
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText('Human needed')).toBeTruthy();
+    expect(screen.queryByText('CI run failed')).toBeNull();
+    expect(screen.getByText('bug')).toBeTruthy();
+    expect(screen.getByText('console')).toBeTruthy();
+    expect(screen.queryByText('priority')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Show 1 additional/ }));
+
+    expect(screen.getByText('priority')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Hide additional labels' }),
+    ).toBeTruthy();
+  });
+
   it('shows no repo badge by default (multiRepo unset)', () => {
     renderCard(makeItem());
     expect(screen.queryByTestId('repo-badge')).toBeNull();

@@ -1,4 +1,11 @@
 import { Text, type TextProps } from '@mantine/core';
+import type { PropsWithChildren } from 'react';
+
+type EyebrowProps = PropsWithChildren<
+  TextProps & {
+    component?: 'span';
+  }
+>;
 
 /**
  * The recurring micro-header idiom used across the console (section
@@ -6,7 +13,7 @@ import { Text, type TextProps } from '@mantine/core';
  * display face here so it carries the LCARS-panel-label character
  * consistently instead of each call site repeating the same prop bundle.
  */
-export function Eyebrow({ children, ...props }: TextProps) {
+export function Eyebrow({ children, ...props }: EyebrowProps) {
   return (
     <Text
       size="xs"

@@ -36,6 +36,25 @@ describe('ConsoleHeader subtitle', () => {
 });
 
 describe('ConsoleHeader nav rail', () => {
+  it('places route utilities beside the global navigation', () => {
+    render(
+      <MantineProvider>
+        <ConsoleHeader
+          current="queue"
+          title="Agent LCARS"
+          subtitle="Queue"
+          utilities={<button>Quick task</button>}
+        />
+      </MantineProvider>,
+    );
+
+    const navigation = screen.getByRole('navigation', {
+      name: 'Console sections',
+    });
+    const commandRow = navigation.parentElement;
+    expect(commandRow?.querySelector('button')?.textContent).toBe('Quick task');
+  });
+
   it('offers every console destination', () => {
     renderHeader('queue');
 

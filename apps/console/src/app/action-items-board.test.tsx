@@ -13,6 +13,24 @@ vi.mock('./action-item-card', () => ({
     <div data-testid="full-card">{`#${item.number} ${item.title}`}</div>
   ),
 }));
+vi.mock('./queue-workspace', () => ({
+  QueueWorkspace: ({
+    cards,
+  }: {
+    cards: Array<{ item: { number: number; title: string } }>;
+  }) =>
+    cards.length > 0 ? (
+      <>
+        {cards.map(({ item }) => (
+          <div key={item.number} data-testid="full-card">
+            #{item.number} {item.title}
+          </div>
+        ))}
+      </>
+    ) : (
+      <div>Nothing needs you right now.</div>
+    ),
+}));
 vi.mock('./retrigger-button', () => ({
   RetriggerButton: ({
     issueNumber,

@@ -5,6 +5,13 @@
   "sourceRoot": "apps/console/src",
   "projectType": "application",
   "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/console",
+        "command": "tsc --noEmit -p tsconfig.typecheck.json"
+      }
+    },
     "build": {
       "executor": "@nx/next:build",
       "outputs": ["{options.outputPath}"],

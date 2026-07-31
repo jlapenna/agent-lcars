@@ -35,21 +35,16 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('populated dashboard', () => {
-  test('renders every action-type badge against real items', async ({
-    page,
-  }) => {
+  test('renders each Inbox reason against real items', async ({ page }) => {
     await page.goto('/');
 
-    // One per ACTION_COLORS entry — the whole point of the fixture set.
-    // `Awaiting next deploy` needs an item carrying a second action type
-    // (#9010): a deploy-wait-only item drops to the compact tier below,
-    // which renders no action-type badge at all.
+    // The Inbox intentionally exposes one highest-priority semantic reason
+    // per row. Deploy-wait-only work remains in the compact tier below.
     for (const label of [
-      'Needs a human',
-      'CI run failed',
+      'Human needed',
+      'Run failed',
       'Review requested',
       'Silent error',
-      'Awaiting next deploy',
     ]) {
       await expect(page.getByText(label).first()).toBeVisible();
     }
@@ -63,6 +58,10 @@ test.describe('populated dashboard', () => {
     // The silent-error tier only exists because a run's joined session doc
     // contradicts its green conclusion — assert the diagnosis text, not just
     // the badge, since that join is the fragile half.
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.silentError}`)
+      .getByRole('link')
+      .click();
     await expect(page.getByTestId('silent-error-diagnosis')).toBeVisible();
   });
 
@@ -74,18 +73,28 @@ test.describe('populated dashboard', () => {
     // `.first()`: the same title also appears on this item's run row in the
     // In Flight panel, which is itself the join working.
     await expect(
-      page
-        .getByRole('link', {
-          name: `#${E2E_ITEM_NUMBERS.humanNeeded} Decide the retention window`,
-        })
-        .first(),
+      page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`),
     ).toBeVisible();
     // Failing-check list (run-failed) and the mergeable-state warning
-    // (review-requested, `behind`) are both card states no screenshot has
-    // ever shown.
+    // (review-requested, `behind`) are detail states no screenshot had
+    // shown before the master/detail workspace.
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.runFailed}`)
+      .getByRole('link')
+      .click();
     await expect(page.getByText(/^Failed: /).first()).toBeVisible();
+
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
     await expect(page.getByText(/Base branch has moved/).first()).toBeVisible();
+
     // The takeover command the fleet posts on a claimed item.
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
+      .getByRole('link')
+      .click();
     await expect(
       page.getByText(/claude-agent-session\.sh resume/).first(),
     ).toBeVisible();
@@ -150,6 +159,60 @@ test.describe('populated dashboard', () => {
   });
 });
 
+test.describe('responsive decision inbox', () => {
+  test('keeps list selection URL-addressable on desktop', async ({ page }) => {
+    await page.goto('/');
+
+    const workspace = page.getByRole('region', { name: 'Decision Inbox' });
+    await expect(
+      workspace.getByRole('heading', { name: 'Decision Inbox' }),
+    ).toBeVisible();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+
+    await workspace
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
+
+    await expect(page).toHaveURL(
+      new RegExp(`\\bitem=[^&]*${E2E_ITEM_NUMBERS.reviewRequested}`),
+    );
+    await expect(
+      workspace.getByText('Base branch has moved', { exact: false }),
+    ).toBeVisible();
+  });
+
+  test('uses a list-to-detail flow on a phone viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    const workspace = page.getByRole('region', { name: 'Decision Inbox' });
+    await expect(page.locator('.console-header')).toBeHidden();
+    await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
+
+    await page.getByRole('button', { name: 'More console options' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Agents' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await workspace
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
+
+    await expect(workspace.locator('.queue-workspace__list')).toBeHidden();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    await expect(
+      workspace.getByRole('link', { name: 'Queue', exact: true }),
+    ).toBeVisible();
+
+    await workspace.getByRole('link', { name: 'Queue', exact: true }).click();
+    await expect(page).not.toHaveURL(/\bitem=/);
+    await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
+  });
+});
+
 // Screenshots, not assertions: #40 asks for the populated pages to be looked
 // at in both schemes, so these capture them on every run and nothing here
 // fails on appearance. Deliberately NOT `toHaveScreenshot` baselines — this
@@ -194,4 +257,34 @@ test.describe('populated page captures', () => {
       }
     });
   }
+
+  test('captures the phone list and detail flow', async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(
+      page.getByRole('region', { name: 'Decision Inbox' }),
+    ).toBeVisible();
+
+    await expect(page.locator('.queue-workspace__list')).toBeVisible();
+    const listCapture = testInfo.outputPath('queue-mobile-list.png');
+    await page.screenshot({ path: listCapture });
+    await testInfo.attach('queue-mobile-list.png', {
+      path: listCapture,
+      contentType: 'image/png',
+    });
+
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
+    await expect(page.locator('.queue-workspace__detail')).toBeVisible();
+    const detailCapture = testInfo.outputPath('queue-mobile-detail.png');
+    await page.screenshot({ path: detailCapture });
+    await testInfo.attach('queue-mobile-detail.png', {
+      path: detailCapture,
+      contentType: 'image/png',
+    });
+  });
 });
