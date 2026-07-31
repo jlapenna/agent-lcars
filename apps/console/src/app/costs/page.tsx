@@ -1,4 +1,4 @@
-import { Box, Card, Container, Text } from '@mantine/core';
+import { Container, Group, Text } from '@mantine/core';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -6,17 +6,19 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../auth';
 import { getWatchedRepos } from '../../lib/github-client';
 import {
+  DEFAULT_ARCHIVE_DAYS,
   describeArchiveWindow,
   getSessionArchive,
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
-import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader, DataWarnings } from '../console-header';
-import { formatRelativeTime } from '../format';
-import { lcarsPanelStyle } from '../lcars';
 import { PageLoading } from '../page-loading';
+import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
+import { RefreshButton } from '../refresh-button';
+import { SignOutButton } from '../sign-out-button';
+import { CostsWorkspace } from './costs-workspace';
 import { LedgerTables } from './ledger-tables';
 
 // Request-scoped memoization, same reasoning as /sessions': `CostsCount` and
@@ -46,39 +48,65 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
 
 async function CostsBody({ query }: { query: SessionArchiveQuery }) {
   const { ledger, warnings } = await getArchive(query);
-  const generatedAt = new Date().toISOString();
   const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
 
   return (
-    <>
-      {warnings.length > 0 && (
-        <Box mb="xl">
-          <DataWarnings warnings={warnings} />
-        </Box>
+    <CostsWorkspace
+      warnings={
+        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
+      }
+    >
+      {hasLedgerData ? (
+        <LedgerTables ledger={ledger} />
+      ) : (
+        <Text
+          size="sm"
+          c="dimmed"
+          data-testid="session-ledger-empty"
+          className="costs-workspace__empty"
+        >
+          No cost data in this window.
+        </Text>
       )}
+    </CostsWorkspace>
+  );
+}
 
-      <Card
-        withBorder
-        radius="md"
-        padding="md"
-        className="lcars-panel"
-        style={lcarsPanelStyle('gold')}
-      >
-        {hasLedgerData ? (
-          <LedgerTables ledger={ledger} />
-        ) : (
-          <Text size="sm" c="dimmed" data-testid="session-ledger-empty">
-            No cost data in this window.
-          </Text>
-        )}
-      </Card>
+function archiveHref(query: SessionArchiveQuery, path: string): string {
+  const params = new URLSearchParams();
+  if (query.days !== DEFAULT_ARCHIVE_DAYS) {
+    params.set('days', String(query.days));
+  }
+  if (query.source) params.set('source', query.source);
+  if (query.issueNumber !== undefined) {
+    params.set('issue', String(query.issueNumber));
+  }
+  const queryString = params.toString();
+  return queryString ? `${path}?${queryString}` : path;
+}
 
-      <ConsoleFooter
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
-        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
+function CostsUtilities({
+  watchedRepos,
+  includeNavigation = false,
+  navigationHrefs,
+}: {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  includeNavigation?: boolean;
+  navigationHrefs?: {
+    sessions: string;
+    costs: string;
+  };
+}) {
+  return (
+    <Group gap={4} wrap="nowrap">
+      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+      <RefreshButton compact />
+      <QueueUtilityMenu
+        includeNavigation={includeNavigation}
+        navigationHrefs={navigationHrefs}
+        signOutControl={<SignOutButton />}
       />
-    </>
+    </Group>
   );
 }
 
@@ -100,9 +128,14 @@ async function CostsPageShell({ searchParams }: PageProps) {
   assertAdmin(session, '/login');
 
   const query = parseSessionArchiveQuery(await searchParams);
+  const watchedRepos = getWatchedRepos();
+  const mobileNavigationHrefs = {
+    sessions: archiveHref(query, '/sessions'),
+    costs: archiveHref(query, '/costs'),
+  };
 
   return (
-    <Container size="xl" py="xl">
+    <Container size="xl" py="xl" className="costs-page-shell">
       <ConsoleHeader
         current="costs"
         archiveQuery={query}
@@ -113,6 +146,20 @@ async function CostsPageShell({ searchParams }: PageProps) {
             <Suspense fallback="…">
               <SessionCount query={query} />
             </Suspense>
+          </>
+        }
+        utilities={
+          <>
+            <div className="costs-utilities costs-utilities--desktop">
+              <CostsUtilities watchedRepos={watchedRepos} />
+            </div>
+            <div className="costs-utilities costs-utilities--mobile">
+              <CostsUtilities
+                watchedRepos={watchedRepos}
+                includeNavigation
+                navigationHrefs={mobileNavigationHrefs}
+              />
+            </div>
           </>
         }
       />

@@ -10,7 +10,6 @@ import {
   TableThead,
   TableTr,
   Text,
-  Title,
 } from '@mantine/core';
 
 import { primaryWatchedRepo, repoItemKey } from '../../lib/github-client';
@@ -93,8 +92,12 @@ function IssueCell({ row }: { row: IssueLedgerRow }) {
  */
 function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
   return (
-    <TableScrollContainer minWidth={360} visibleFrom="sm">
-      <Table verticalSpacing="xs" fz="sm">
+    <TableScrollContainer
+      minWidth={360}
+      visibleFrom="sm"
+      className="costs-ledger-scroll"
+    >
+      <Table verticalSpacing="xs" fz="sm" className="costs-ledger-table">
         <TableThead>
           <TableTr>
             <TableTh>Issue</TableTh>
@@ -137,40 +140,43 @@ function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
  */
 function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
   return (
-    <TableScrollContainer minWidth={240} hiddenFrom="sm">
-      <Table verticalSpacing="xs" fz="sm">
-        <TableThead>
-          <TableTr>
-            <TableTh>Issue</TableTh>
-            <TableTh>Sessions</TableTh>
-            <TableTh>Cost</TableTh>
-          </TableTr>
-        </TableThead>
-        <TableTbody>
-          {rows.map((row) => (
-            <TableTr
-              key={issueRowKey(row)}
-              data-testid="ledger-issue-row-compact"
-            >
-              <TableTd>
-                <IssueCell row={row} />
-              </TableTd>
-              <TableTd>{row.sessions}</TableTd>
-              <TableTd>
-                <CostCell row={row} />
-              </TableTd>
-            </TableTr>
-          ))}
-        </TableTbody>
-      </Table>
-    </TableScrollContainer>
+    <div
+      className="costs-ledger-mobile-list"
+      role="list"
+      aria-label="Costs by issue"
+    >
+      {rows.map((row) => (
+        <article
+          key={issueRowKey(row)}
+          className="costs-ledger-mobile-row"
+          role="listitem"
+          data-testid="ledger-issue-row-compact"
+        >
+          <div>
+            <div className="costs-ledger-mobile-row__identity">
+              <IssueCell row={row} />
+            </div>
+            <Text size="xs" c="dimmed">
+              {row.sessions} session{row.sessions === 1 ? '' : 's'}
+            </Text>
+          </div>
+          <Text className="costs-ledger-mobile-row__cost">
+            <CostCell row={row} />
+          </Text>
+        </article>
+      ))}
+    </div>
   );
 }
 
 function WeekLedgerTable({ rows }: { rows: WeekLedgerRow[] }) {
   return (
-    <TableScrollContainer minWidth={360} visibleFrom="sm">
-      <Table verticalSpacing="xs" fz="sm">
+    <TableScrollContainer
+      minWidth={360}
+      visibleFrom="sm"
+      className="costs-ledger-scroll"
+    >
+      <Table verticalSpacing="xs" fz="sm" className="costs-ledger-table">
         <TableThead>
           <TableTr>
             <TableTh>Week</TableTh>
@@ -200,28 +206,30 @@ function WeekLedgerTable({ rows }: { rows: WeekLedgerRow[] }) {
 
 function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
   return (
-    <TableScrollContainer minWidth={240} hiddenFrom="sm">
-      <Table verticalSpacing="xs" fz="sm">
-        <TableThead>
-          <TableTr>
-            <TableTh>Week</TableTh>
-            <TableTh>Sessions</TableTh>
-            <TableTh>Cost</TableTh>
-          </TableTr>
-        </TableThead>
-        <TableTbody>
-          {rows.map((row) => (
-            <TableTr key={row.isoWeek} data-testid="ledger-week-row-compact">
-              <TableTd>{row.isoWeek}</TableTd>
-              <TableTd>{row.sessions}</TableTd>
-              <TableTd>
-                <CostCell row={row} />
-              </TableTd>
-            </TableTr>
-          ))}
-        </TableTbody>
-      </Table>
-    </TableScrollContainer>
+    <div
+      className="costs-ledger-mobile-list"
+      role="list"
+      aria-label="Costs by week"
+    >
+      {rows.map((row) => (
+        <article
+          key={row.isoWeek}
+          className="costs-ledger-mobile-row"
+          role="listitem"
+          data-testid="ledger-week-row-compact"
+        >
+          <div>
+            <Text fw={600}>{row.isoWeek}</Text>
+            <Text size="xs" c="dimmed">
+              {row.sessions} session{row.sessions === 1 ? '' : 's'}
+            </Text>
+          </div>
+          <Text className="costs-ledger-mobile-row__cost">
+            <CostCell row={row} />
+          </Text>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -248,23 +256,24 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
   const byWeek = ledger.byWeek.slice(0, MAX_LEDGER_ROWS);
 
   return (
-    <Stack gap="sm" mb="xl" data-testid="session-ledger">
-      <Title order={2} size="h4">
-        Cost ledger
-      </Title>
-      <Group align="flex-start" gap="xl" wrap="wrap">
-        <Stack gap={4} style={{ flex: '1 1 320px' }}>
-          <Eyebrow>By issue</Eyebrow>
+    <Stack gap={0} data-testid="session-ledger">
+      <div className="costs-ledger-grid">
+        <section className="costs-ledger-section" aria-labelledby="by-issue">
+          <div className="costs-ledger-section__heading" id="by-issue">
+            <Eyebrow>By issue</Eyebrow>
+          </div>
           <IssueLedgerTable rows={byIssue} />
           <IssueLedgerTableCompact rows={byIssue} />
-        </Stack>
-        <Stack gap={4} style={{ flex: '1 1 320px' }}>
-          <Eyebrow>By week</Eyebrow>
+        </section>
+        <section className="costs-ledger-section" aria-labelledby="by-week">
+          <div className="costs-ledger-section__heading" id="by-week">
+            <Eyebrow>By week</Eyebrow>
+          </div>
           <WeekLedgerTable rows={byWeek} />
           <WeekLedgerTableCompact rows={byWeek} />
-        </Stack>
-      </Group>
-      <Text size="xs" c="dimmed">
+        </section>
+      </div>
+      <Text size="xs" c="dimmed" className="costs-ledger-note">
         Token totals include every session in view. Cost totals use each
         session&apos;s recorded cost where available, otherwise an estimate from
         published Claude API rates for its model and token usage (
