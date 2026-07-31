@@ -525,6 +525,134 @@
   background: var(--mantine-color-cyan-5);
 }
 
+/* ---- Costs ledger workspace (#255) ---- */
+
+.costs-utilities--mobile {
+  display: none;
+}
+
+.costs-workspace {
+  --mantine-color-text: var(--mantine-color-gray-0);
+  --mantine-color-dimmed: var(--mantine-color-dark-2);
+  --mantine-color-default-border: var(--mantine-color-dark-4);
+  overflow: hidden;
+  color: var(--mantine-color-text);
+  background: var(--mantine-color-dark-9);
+}
+
+.costs-workspace__warnings {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-6) 8%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.costs-workspace__content {
+  min-width: 0;
+}
+
+.costs-workspace__empty {
+  padding: 18px 16px;
+}
+
+.costs-ledger-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(18px, 3vw, 32px);
+  padding: 16px;
+}
+
+.costs-ledger-section {
+  min-width: 0;
+}
+
+.costs-ledger-section__heading {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-8) 8%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.costs-ledger-section__heading::before {
+  content: '';
+  align-self: stretch;
+  width: 8px;
+  margin: -8px 0 -8px -16px;
+  border-radius: 0 12px 12px 0;
+  background: var(--mantine-color-yellow-5);
+}
+
+.costs-ledger-section__heading::after {
+  content: '';
+  height: 8px;
+  flex: 1;
+  border-radius: 999px;
+  background: var(--mantine-color-yellow-7);
+  opacity: 0.75;
+}
+
+.costs-ledger-scroll {
+  margin: 0;
+}
+
+.costs-ledger-table {
+  width: 100%;
+  color: var(--mantine-color-gray-0);
+  background: var(--mantine-color-dark-9);
+}
+
+.costs-ledger-table thead {
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--mantine-color-dark-8);
+}
+
+.costs-ledger-table th,
+.costs-ledger-table td {
+  border: 0;
+}
+
+.costs-ledger-table tbody tr:nth-of-type(odd) {
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-9) 7%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.costs-ledger-table tbody tr:hover {
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-8) 16%,
+    var(--mantine-color-dark-9)
+  ) !important;
+}
+
+.costs-ledger-table tbody td:first-child {
+  border-left: 3px solid var(--mantine-color-yellow-7);
+}
+
+.costs-ledger-mobile-list {
+  display: none;
+}
+
+.costs-ledger-note {
+  margin: 0 16px 16px;
+  padding: 4px 0 4px 12px;
+  border-left: 4px solid var(--mantine-color-yellow-7);
+}
+
 /* ---- Queue command deck / decision Inbox (#249) ---- */
 
 .lcars-command-row {
@@ -816,7 +944,8 @@
 @media (min-width: 48em) {
   .queue-page-shell,
   .agents-page-shell,
-  .sessions-page-shell {
+  .sessions-page-shell,
+  .costs-page-shell {
     width: 100%;
     max-width: none;
     padding-top: 0 !important;
@@ -825,7 +954,8 @@
   .console-header:is(
     [data-current='queue'],
     [data-current='agents'],
-    [data-current='sessions']
+    [data-current='sessions'],
+    [data-current='costs']
   ) {
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
@@ -842,7 +972,8 @@
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-header {
     display: flex;
@@ -855,7 +986,8 @@
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-header-title {
     display: block !important;
@@ -867,14 +999,16 @@
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-header
     .mantine-Text-root,
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-header-bar {
     display: none;
@@ -883,7 +1017,8 @@
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-command-row {
     min-width: 0;
@@ -893,7 +1028,8 @@
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-nav {
     flex-wrap: nowrap;
@@ -902,7 +1038,8 @@
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-nav-pill {
     padding: 6px 16px;
@@ -912,7 +1049,8 @@
   .console-header:is(
       [data-current='queue'],
       [data-current='agents'],
-      [data-current='sessions']
+      [data-current='sessions'],
+      [data-current='costs']
     )
     .lcars-command-utilities {
     border-color: var(--mantine-color-dark-4);
@@ -961,6 +1099,18 @@
     background: var(--mantine-color-cyan-5) !important;
   }
 
+  .console-header[data-current='costs'] .lcars-header::before,
+  .console-header[data-current='costs'] .lcars-header::after {
+    background: var(--mantine-color-yellow-5);
+  }
+
+  .console-header[data-current='costs']
+    .lcars-nav-pill[data-accent='gold'][data-active] {
+    border-color: var(--mantine-color-yellow-5) !important;
+    color: var(--mantine-color-dark-9) !important;
+    background: var(--mantine-color-yellow-5) !important;
+  }
+
   .agents-workspace {
     min-height: calc(100vh - 80px);
     border-top: 0;
@@ -970,10 +1120,16 @@
     min-height: calc(100vh - 80px);
     border-top: 0;
   }
+
+  .costs-workspace {
+    min-height: calc(100vh - 80px);
+    border-top: 0;
+  }
 }
 
 @media (min-width: 48em) and (max-width: 63.99em) {
-  .console-header[data-current='sessions'] .lcars-nav-pill:not([data-active]) {
+  .console-header:is([data-current='sessions'], [data-current='costs'])
+    .lcars-nav-pill:not([data-active]) {
     display: none;
   }
 
@@ -984,12 +1140,21 @@
   .sessions-utilities--mobile {
     display: block;
   }
+
+  .costs-utilities--desktop {
+    display: none;
+  }
+
+  .costs-utilities--mobile {
+    display: block;
+  }
 }
 
 @media (max-width: 47.99em) {
   .queue-page-shell,
   .agents-page-shell,
-  .sessions-page-shell {
+  .sessions-page-shell,
+  .costs-page-shell {
     width: 100%;
     max-width: none;
     padding: 0 !important;
@@ -999,7 +1164,11 @@
     display: none;
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions']) {
+  .console-header:is(
+    [data-current='agents'],
+    [data-current='sessions'],
+    [data-current='costs']
+  ) {
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: block;
@@ -1011,30 +1180,50 @@
     border-bottom: 1px solid var(--mantine-color-dark-4);
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-header {
     display: none;
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-command-row {
     height: 64px;
     gap: 4px;
     padding-right: 8px;
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-nav {
     align-self: stretch;
     flex: 0 0 auto;
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-nav-pill {
     display: none;
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-nav-pill[data-active] {
     display: inline-flex;
     min-width: 8rem;
@@ -1054,23 +1243,44 @@
     background: var(--mantine-color-cyan-5);
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header[data-current='costs'] .lcars-nav-pill[data-active] {
+    color: var(--mantine-color-dark-9);
+    background: var(--mantine-color-yellow-5);
+  }
+
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-command-utilities {
     margin-left: auto;
     padding-left: 0;
     border: 0;
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-command-utilities
     .mantine-Button-root,
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-command-utilities
     .mantine-ActionIcon-root {
     min-height: 44px;
   }
 
-  .console-header:is([data-current='agents'], [data-current='sessions'])
+  .console-header:is(
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-command-utilities
     .mantine-Button-root {
     padding-inline: 10px;
@@ -1090,6 +1300,14 @@
   }
 
   .sessions-utilities--mobile {
+    display: block;
+  }
+
+  .costs-utilities--desktop {
+    display: none;
+  }
+
+  .costs-utilities--mobile {
     display: block;
   }
 
@@ -1195,6 +1413,107 @@
 
   .sessions-workspace .mantine-ActionIcon-root,
   .sessions-workspace .mantine-Button-root {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .costs-workspace {
+    border: 0;
+  }
+
+  .costs-ledger-grid {
+    display: block;
+    padding: 0;
+  }
+
+  .costs-ledger-section + .costs-ledger-section {
+    border-left: 0;
+    border-top: 12px solid var(--mantine-color-dark-8);
+  }
+
+  .costs-ledger-section__heading {
+    min-height: 48px;
+    padding-inline: 16px;
+  }
+
+  .costs-ledger-mobile-list {
+    display: block;
+  }
+
+  .costs-ledger-mobile-row {
+    position: relative;
+    display: flex;
+    min-height: 68px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 16px;
+    background: color-mix(
+      in srgb,
+      var(--mantine-color-yellow-9) 6%,
+      var(--mantine-color-dark-9)
+    );
+  }
+
+  .costs-ledger-mobile-row:nth-child(even) {
+    background: var(--mantine-color-dark-9);
+  }
+
+  .costs-ledger-mobile-row::before {
+    content: '';
+    position: absolute;
+    inset-block: 8px;
+    left: 0;
+    width: 4px;
+    border-radius: 0 8px 8px 0;
+    background: var(--mantine-color-yellow-5);
+  }
+
+  .costs-ledger-mobile-row__identity a {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .costs-ledger-mobile-row__primary,
+  .costs-ledger-issue-identity {
+    min-width: 0;
+  }
+
+  .costs-ledger-mobile-row__primary {
+    flex: 1 1 auto;
+  }
+
+  .costs-ledger-issue-identity {
+    width: 100%;
+  }
+
+  .costs-ledger-issue-identity [data-testid='repo-badge'] {
+    min-width: 0;
+    max-width: calc(100% - 3.25rem);
+    overflow: hidden;
+  }
+
+  .costs-ledger-issue-identity [data-testid='repo-badge'] .mantine-Badge-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .costs-ledger-mobile-row__cost {
+    flex: 0 0 auto;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .costs-ledger-note {
+    margin: 14px 16px 0;
+    padding-left: 12px;
+  }
+
+  .costs-workspace .mantine-ActionIcon-root,
+  .costs-workspace .mantine-Button-root {
     min-width: 44px;
     min-height: 44px;
   }

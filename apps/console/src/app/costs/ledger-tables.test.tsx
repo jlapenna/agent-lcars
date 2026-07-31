@@ -1,9 +1,16 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, type Mock, vi } from 'vitest';
 
+import { getWatchedRepos } from '../../lib/github-client';
 import type { SessionLedger } from '../../lib/session-ledger';
 import { LedgerTables } from './ledger-tables';
+
+vi.mock('../../lib/github-client', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../lib/github-client')>();
+  return { ...actual, getWatchedRepos: vi.fn(actual.getWatchedRepos) };
+});
 
 function renderLedger(ledger: SessionLedger) {
   render(
@@ -13,13 +20,10 @@ function renderLedger(ledger: SessionLedger) {
   );
 }
 
-// Below `sm`, each ledger table renders a Turns/Cost-dropped compact variant
-// alongside the full one (#3107); both branches render unconditionally in
-// jsdom (which doesn't evaluate the visibleFrom/hiddenFrom CSS media queries
-// that keep only one visible in a real browser), so content shared by both
-// - the issue/week label itself - appears twice and needs getAllBy* rather
-// than getBy*. Turns/Cost values are full-table-only, so those assertions
-// are unaffected.
+// Below `sm`, each ledger renders a flat, Turns/Cost-weighted-token-dropped
+// list alongside the full semantic table. Both branches render in jsdom
+// (which doesn't evaluate the media queries that keep only one visible in a
+// browser), so shared issue/week labels appear twice.
 describe('LedgerTables', () => {
   it('renders nothing when both ledgers are empty', () => {
     renderLedger({ byIssue: [], byWeek: [] });
@@ -129,9 +133,7 @@ describe('LedgerTables', () => {
     const compactRow = screen.getByTestId('ledger-issue-row-compact');
     expect(compactRow.textContent).toContain('$1.50');
     expect(compactRow.textContent).not.toContain('3,000');
-    // Sessions (2) and Cost ($1.50) still show; Turns (10) does not appear
-    // as its own cell since the compact row omits that column entirely.
-    expect(compactRow.querySelectorAll('td')).toHaveLength(3);
+    expect(compactRow.textContent).toContain('2 sessions');
   });
 
   it('drops Turns and cost-weighted tokens from the compact per-week table, but keeps Cost (#203)', () => {
@@ -151,6 +153,42 @@ describe('LedgerTables', () => {
     const compactRow = screen.getByTestId('ledger-week-row-compact');
     expect(compactRow.textContent).toContain('$6.00');
     expect(compactRow.textContent).not.toContain('4,000');
-    expect(compactRow.querySelectorAll('td')).toHaveLength(3);
+    expect(compactRow.textContent).toContain('3 sessions');
+  });
+
+  it('marks a long multi-repo identity for safe compact-row truncation', () => {
+    const watchedRepos = [
+      { owner: 'org-a', name: 'repo-a' },
+      {
+        owner: 'very-long-organization-name',
+        name: 'very-long-repository-name',
+      },
+    ];
+    (getWatchedRepos as Mock)
+      .mockReturnValueOnce(watchedRepos)
+      .mockReturnValueOnce(watchedRepos);
+
+    renderLedger({
+      byIssue: [
+        {
+          issueNumber: 42,
+          repo: watchedRepos[1],
+          sessions: 2,
+          turns: 10,
+          tokens: 3000,
+          costUsd: 1.5,
+        },
+      ],
+      byWeek: [],
+    });
+
+    const compactRow = screen.getByTestId('ledger-issue-row-compact');
+    const identity = compactRow.querySelector('.costs-ledger-issue-identity');
+    expect(identity?.getAttribute('title')).toBe(
+      'very-long-organization-name/very-long-repository-name',
+    );
+    expect(
+      compactRow.querySelector('.costs-ledger-mobile-row__primary'),
+    ).not.toBeNull();
   });
 });
