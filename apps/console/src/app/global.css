@@ -382,6 +382,149 @@
   letter-spacing: 0.04em;
 }
 
+/* ---- Sessions archive workspace (#253) ---- */
+
+.sessions-utilities--mobile {
+  display: none;
+}
+
+.sessions-workspace {
+  --mantine-color-text: var(--mantine-color-gray-0);
+  --mantine-color-dimmed: var(--mantine-color-dark-2);
+  --mantine-color-default-border: var(--mantine-color-dark-4);
+  overflow: hidden;
+  color: var(--mantine-color-text);
+  background: var(--mantine-color-dark-9);
+  border: 1px solid var(--mantine-color-default-border);
+}
+
+.sessions-workspace__warnings {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-6) 8%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.sessions-workspace__toolbar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-cyan-9) 10%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.sessions-view-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--mantine-color-cyan-7);
+  border-radius: 999px;
+}
+
+.sessions-view-toggle__option {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 16px;
+  color: var(--mantine-color-cyan-3);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sessions-view-toggle__option + .sessions-view-toggle__option {
+  border-left: 1px solid var(--mantine-color-cyan-7);
+}
+
+.sessions-view-toggle__option[data-active] {
+  color: var(--mantine-color-dark-9);
+  background: var(--mantine-color-cyan-5);
+}
+
+.sessions-workspace__content {
+  min-width: 0;
+}
+
+.sessions-workspace__content > [data-testid='sessions-archive-content'] {
+  min-width: 0;
+}
+
+.sessions-table-scroll {
+  margin: 0;
+}
+
+.sessions-table {
+  color: var(--mantine-color-gray-0);
+  background: var(--mantine-color-dark-9);
+}
+
+.sessions-table thead {
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--mantine-color-dark-8);
+}
+
+.sessions-table th,
+.sessions-table td {
+  border-color: var(--mantine-color-default-border);
+}
+
+.sessions-table tbody tr:nth-of-type(odd) {
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-cyan-9) 5%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.sessions-table tbody tr:hover {
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-cyan-8) 15%,
+    var(--mantine-color-dark-9)
+  ) !important;
+}
+
+.sessions-workspace .session-title-link {
+  color: var(--mantine-color-gray-0);
+  font-weight: 600;
+}
+
+.sessions-workspace .session-title-link:hover {
+  color: var(--mantine-color-cyan-3);
+}
+
+.sessions-issue-groups {
+  padding: 16px;
+}
+
+.session-mobile-row {
+  position: relative;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-dark-9);
+}
+
+.session-mobile-row::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 4px;
+  background: var(--mantine-color-cyan-5);
+}
+
 /* ---- Queue command deck / decision Inbox (#249) ---- */
 
 .lcars-command-row {
@@ -672,13 +815,18 @@
 
 @media (min-width: 48em) {
   .queue-page-shell,
-  .agents-page-shell {
+  .agents-page-shell,
+  .sessions-page-shell {
     width: 100%;
     max-width: none;
     padding-top: 0 !important;
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents']) {
+  .console-header:is(
+    [data-current='queue'],
+    [data-current='agents'],
+    [data-current='sessions']
+  ) {
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
@@ -691,7 +839,11 @@
     border-bottom: 1px solid var(--mantine-color-dark-4);
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-header {
     display: flex;
     min-width: 0;
@@ -700,7 +852,11 @@
     border-right: 1px solid var(--mantine-color-dark-4);
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-header-title {
     display: block !important;
     font-size: clamp(1.35rem, 2.2vw, 1.75rem);
@@ -708,32 +864,56 @@
     color: var(--mantine-color-gray-0) !important;
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-header
     .mantine-Text-root,
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-header-bar {
     display: none;
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-command-row {
     min-width: 0;
     padding: 0 16px;
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-nav {
     flex-wrap: nowrap;
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-nav-pill {
     padding: 6px 16px;
     font-size: 0.75rem;
   }
 
-  .console-header:is([data-current='queue'], [data-current='agents'])
+  .console-header:is(
+      [data-current='queue'],
+      [data-current='agents'],
+      [data-current='sessions']
+    )
     .lcars-command-utilities {
     border-color: var(--mantine-color-dark-4);
   }
@@ -769,7 +949,24 @@
     background: var(--mantine-color-violet-5) !important;
   }
 
+  .console-header[data-current='sessions'] .lcars-header::before,
+  .console-header[data-current='sessions'] .lcars-header::after {
+    background: var(--mantine-color-cyan-5);
+  }
+
+  .console-header[data-current='sessions']
+    .lcars-nav-pill[data-accent='teal'][data-active] {
+    border-color: var(--mantine-color-cyan-5) !important;
+    color: var(--mantine-color-dark-9) !important;
+    background: var(--mantine-color-cyan-5) !important;
+  }
+
   .agents-workspace {
+    min-height: calc(100vh - 80px);
+    border-top: 0;
+  }
+
+  .sessions-workspace {
     min-height: calc(100vh - 80px);
     border-top: 0;
   }
@@ -777,7 +974,8 @@
 
 @media (max-width: 47.99em) {
   .queue-page-shell,
-  .agents-page-shell {
+  .agents-page-shell,
+  .sessions-page-shell {
     width: 100%;
     max-width: none;
     padding: 0 !important;
@@ -787,7 +985,7 @@
     display: none;
   }
 
-  .console-header[data-current='agents'] {
+  .console-header:is([data-current='agents'], [data-current='sessions']) {
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: block;
@@ -799,26 +997,31 @@
     border-bottom: 1px solid var(--mantine-color-dark-4);
   }
 
-  .console-header[data-current='agents'] .lcars-header {
+  .console-header:is([data-current='agents'], [data-current='sessions'])
+    .lcars-header {
     display: none;
   }
 
-  .console-header[data-current='agents'] .lcars-command-row {
+  .console-header:is([data-current='agents'], [data-current='sessions'])
+    .lcars-command-row {
     height: 64px;
     gap: 4px;
     padding-right: 8px;
   }
 
-  .console-header[data-current='agents'] .lcars-nav {
+  .console-header:is([data-current='agents'], [data-current='sessions'])
+    .lcars-nav {
     align-self: stretch;
     flex: 0 0 auto;
   }
 
-  .console-header[data-current='agents'] .lcars-nav-pill {
+  .console-header:is([data-current='agents'], [data-current='sessions'])
+    .lcars-nav-pill {
     display: none;
   }
 
-  .console-header[data-current='agents'] .lcars-nav-pill[data-active] {
+  .console-header:is([data-current='agents'], [data-current='sessions'])
+    .lcars-nav-pill[data-active] {
     display: inline-flex;
     min-width: 8rem;
     height: 64px;
@@ -826,25 +1029,34 @@
     border: 0;
     border-radius: 0 0 24px;
     color: var(--mantine-color-white);
+  }
+
+  .console-header[data-current='agents'] .lcars-nav-pill[data-active] {
     background: var(--mantine-color-violet-5);
   }
 
-  .console-header[data-current='agents'] .lcars-command-utilities {
+  .console-header[data-current='sessions'] .lcars-nav-pill[data-active] {
+    color: var(--mantine-color-dark-9);
+    background: var(--mantine-color-cyan-5);
+  }
+
+  .console-header:is([data-current='agents'], [data-current='sessions'])
+    .lcars-command-utilities {
     margin-left: auto;
     padding-left: 0;
     border: 0;
   }
 
-  .console-header[data-current='agents']
+  .console-header:is([data-current='agents'], [data-current='sessions'])
     .lcars-command-utilities
     .mantine-Button-root,
-  .console-header[data-current='agents']
+  .console-header:is([data-current='agents'], [data-current='sessions'])
     .lcars-command-utilities
     .mantine-ActionIcon-root {
     min-height: 44px;
   }
 
-  .console-header[data-current='agents']
+  .console-header:is([data-current='agents'], [data-current='sessions'])
     .lcars-command-utilities
     .mantine-Button-root {
     padding-inline: 10px;
@@ -856,6 +1068,14 @@
   }
 
   .agents-utilities--mobile {
+    display: block;
+  }
+
+  .sessions-utilities--desktop {
+    display: none;
+  }
+
+  .sessions-utilities--mobile {
     display: block;
   }
 
@@ -896,6 +1116,71 @@
 
   .agents-workspace .mantine-ActionIcon-root,
   .agents-workspace .mantine-Button-root {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .sessions-workspace {
+    border: 0;
+  }
+
+  .sessions-workspace__warnings {
+    padding: 10px 16px;
+  }
+
+  .sessions-workspace__toolbar {
+    min-height: 56px;
+    padding: 6px 16px;
+  }
+
+  .sessions-view-toggle {
+    width: 100%;
+  }
+
+  .sessions-view-toggle__option {
+    min-height: 44px;
+    flex: 1;
+    justify-content: center;
+  }
+
+  .sessions-issue-groups {
+    gap: 20px;
+    padding: 14px 0;
+  }
+
+  .sessions-issue-groups > .mantine-Stack-root {
+    gap: 0;
+  }
+
+  .sessions-issue-groups
+    > .mantine-Stack-root
+    > .mantine-Group-root:first-child {
+    min-height: 48px;
+    padding: 4px 16px;
+    border-bottom: 1px solid var(--mantine-color-default-border);
+  }
+
+  .sessions-no-issue-toggle {
+    min-height: 44px;
+  }
+
+  .session-mobile-row {
+    border-radius: 0;
+  }
+
+  .session-mobile-row a {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .session-mobile-row > .mantine-Stack-root > a {
+    display: flex !important;
+  }
+
+  .sessions-workspace .mantine-ActionIcon-root,
+  .sessions-workspace .mantine-Button-root {
     min-width: 44px;
     min-height: 44px;
   }

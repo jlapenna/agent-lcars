@@ -33,6 +33,7 @@ export function NoIssueSessionGroup({
         <UnstyledButton
           onClick={() => setCollapsed((prev) => !prev)}
           data-testid="no-issue-group-toggle"
+          className="sessions-no-issue-toggle"
           style={{ display: 'flex', alignItems: 'center', gap: 4 }}
         >
           {collapsed ? (
