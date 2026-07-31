@@ -6,8 +6,8 @@ import {
   type SessionArchiveQuery,
 } from '@/lib/session-archive';
 
-type NavKey = 'queue' | 'agents' | 'sessions' | 'costs';
-type Accent = 'amber' | 'periwinkle' | 'teal' | 'gold';
+type NavKey = 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs';
+type Accent = 'amber' | 'blue' | 'periwinkle' | 'teal' | 'gold';
 
 const NAV_ITEMS: Array<{
   key: NavKey;
@@ -15,7 +15,8 @@ const NAV_ITEMS: Array<{
   label: string;
   accent: Accent;
 }> = [
-  { key: 'queue', href: '/', label: 'Queue', accent: 'amber' },
+  { key: 'deck', href: '/', label: 'Deck', accent: 'amber' },
+  { key: 'inbox', href: '/inbox', label: 'Inbox', accent: 'blue' },
   { key: 'agents', href: '/agents', label: 'Agents', accent: 'periwinkle' },
   { key: 'sessions', href: '/sessions', label: 'Sessions', accent: 'teal' },
   { key: 'costs', href: '/costs', label: 'Costs', accent: 'gold' },
@@ -26,7 +27,7 @@ export interface ConsoleHeaderProps {
   title: string;
   subtitle: ReactNode;
   archiveQuery?: SessionArchiveQuery;
-  /** Optional route-level global actions. Keeping this a slot lets Queue
+  /** Optional route-level global actions. Keeping this a slot lets each route
    * move its reachable utilities into the command rail without forcing the
    * other routes into the first responsive-workspace slice. */
   utilities?: ReactNode;
@@ -53,8 +54,8 @@ function navHref(
 }
 
 /**
- * Shared top-of-page chrome for the four console destinations (dashboard,
- * agents, sessions, costs): title/subtitle row and the LCARS pill nav rail
+ * Shared top-of-page chrome for the five console destinations (Command Deck,
+ * Inbox, agents, sessions, costs): title/subtitle row and the LCARS pill nav rail
  * (the one page every page can jump from/to). The session detail page (a
  * drill-down, not a nav destination) keeps its own lighter back-link header
  * instead of this component.
@@ -74,8 +75,8 @@ function navHref(
  * don't; it wraps just that value in its own inline Suspense rather than
  * passing anything data-dependent through here (see its `SessionCount`).
  *
- * The subtitle is forced to a single truncated line (#243): four pages each
- * build their own subtitle text, and a subtitle that's free to wrap adds a
+ * The subtitle is forced to a single truncated line (#243): every page
+ * builds its own subtitle text, and a subtitle that's free to wrap adds a
  * second line on whichever page's content happens to be longest that day,
  * making the header a different height depending which tab you're on. Keep
  * subtitle copy short - truncation hides the tail if a caller doesn't.
@@ -103,6 +104,7 @@ export function ConsoleHeader({
 
         <div className="lcars-header-bar" aria-hidden="true">
           <span className="lcars-header-bar-segment" data-accent="amber" />
+          <span className="lcars-header-bar-segment" data-accent="blue" />
           <span className="lcars-header-bar-segment" data-accent="periwinkle" />
           <span className="lcars-header-bar-segment" data-accent="gold" />
           <span className="lcars-header-bar-segment" data-accent="teal" />

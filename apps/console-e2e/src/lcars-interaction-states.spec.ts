@@ -14,7 +14,8 @@ import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
  * human's call.
  */
 
-const queuePill = (page: Page) => page.getByRole('link', { name: 'Queue' });
+const deckPill = (page: Page) => page.getByRole('link', { name: 'Deck' });
+const inboxPill = (page: Page) => page.getByRole('link', { name: 'Inbox' });
 const agentsPill = (page: Page) => page.getByRole('link', { name: 'Agents' });
 
 const backgroundOf = (page: Page, name: string) =>
@@ -29,7 +30,7 @@ test.describe('LCARS pill nav interaction states', () => {
     page,
   }) => {
     await page.goto('/');
-    // Agents, not Queue: the active pill is filled, so it has a non
+    // Agents, not Deck: the active pill is filled, so it has a non
     // transparent background before any hover and can't show the change.
     const before = await backgroundOf(page, 'Agents');
     await agentsPill(page).hover();
@@ -75,7 +76,7 @@ test.describe('LCARS pill nav interaction states', () => {
         };
       });
 
-    for (const name of ['Queue', 'Agents', 'Sessions', 'Costs']) {
+    for (const name of ['Deck', 'Inbox', 'Agents', 'Sessions', 'Costs']) {
       await page.getByRole('link', { name }).focus();
       const ring = await ringOf(name);
       expect(ring.style).toBe('solid');
@@ -90,7 +91,9 @@ test.describe('LCARS pill nav interaction states', () => {
 
   test('keyboard focus actually walks the nav in order', async ({ page }) => {
     await page.goto('/');
-    await queuePill(page).focus();
+    await deckPill(page).focus();
+    await page.keyboard.press('Tab');
+    await expect(inboxPill(page)).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(agentsPill(page)).toBeFocused();
     await page.keyboard.press('Tab');

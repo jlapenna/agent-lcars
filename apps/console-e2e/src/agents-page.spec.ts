@@ -59,12 +59,12 @@ test.describe('/agents page @smoke', () => {
     // rather than asserting nothing.
     await expect(page.getByText('Claimed but Idle (0)')).toBeVisible();
 
-    // Cross-link back to the maintainer task queue (the shared
-    // ConsoleHeader nav rail's "Queue" pill, see console-header.tsx).
-    await page.getByRole('link', { name: 'Queue' }).click();
+    // Cross-link back to the overview (the shared ConsoleHeader nav rail's
+    // "Deck" pill, see console-header.tsx).
+    await page.getByRole('link', { name: 'Deck' }).click();
     await page.waitForURL('/');
     await expect(
-      page.getByRole('heading', { name: 'Agent LCARS' }),
+      page.getByRole('heading', { name: 'Command Deck' }),
     ).toBeVisible();
   });
 
@@ -110,7 +110,7 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toBeVisible();
     await expect(workspace).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Queue' })).toBeHidden();
+    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
@@ -132,7 +132,8 @@ test.describe('/agents page @smoke', () => {
     expect(sectionTops).toEqual([...sectionTops].sort((a, b) => a - b));
 
     await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Queue' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await expect(
       page.getByRole('menuitem', { name: 'Sessions' }),
     ).toBeVisible();

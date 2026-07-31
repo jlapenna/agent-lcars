@@ -14,45 +14,42 @@ import { SignOutButton } from './sign-out-button';
 
 export type { BoardCard } from './board-card';
 
-/**
- * The task board, tiered by whose move it is. Only "Your Queue" gets
- * full-weight cards with actions; every other tier renders one-line rows,
- * and the no-ones-move tier stays collapsed. No search/filter chrome - at
- * this queue size (tens of items) the filters were more pixels than the
- * items, and GitHub itself is the browsing surface.
- */
-export function ActionItemsBoard({
+/** The standalone master/detail surface for work awaiting a decision. */
+export function DecisionInbox({
   yourQueue,
-  handedBack,
-  waitingOnDeploy,
-  rest,
   selectedItemKey,
 }: {
   yourQueue: BoardCard[];
-  handedBack: BoardCard[];
-  waitingOnDeploy: BoardCard[];
-  rest: BoardCard[];
   selectedItemKey?: string;
 }) {
-  // Server component - safe to resolve here directly, then thread down as a
-  // plain boolean prop to ActionItemCard (a client component that can't
-  // call getWatchedRepos() itself - see its own doc comment).
   const watchedRepos = getWatchedRepos();
 
   return (
-    <Stack gap="xl" mb="xl">
-      <QueueWorkspace
-        cards={yourQueue}
-        selectedItemKey={selectedItemKey}
-        watchedRepos={watchedRepos}
-        mobileUtilityMenu={
-          <QueueUtilityMenu
-            includeNavigation
-            signOutControl={<SignOutButton />}
-          />
-        }
-      />
+    <QueueWorkspace
+      cards={yourQueue}
+      selectedItemKey={selectedItemKey}
+      watchedRepos={watchedRepos}
+      mobileUtilityMenu={
+        <QueueUtilityMenu
+          includeNavigation
+          signOutControl={<SignOutButton />}
+        />
+      }
+    />
+  );
+}
 
+export function CommandDeckSections({
+  handedBack,
+  waitingOnDeploy,
+  rest,
+}: {
+  handedBack: BoardCard[];
+  waitingOnDeploy: BoardCard[];
+  rest: BoardCard[];
+}) {
+  return (
+    <Stack gap="xl" mb="xl">
       {handedBack.length > 0 && (
         <div>
           <SectionHeading

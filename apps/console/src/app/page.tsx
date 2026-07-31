@@ -1,14 +1,11 @@
 import { Anchor, Box, Container, Group } from '@mantine/core';
+import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../auth';
-import {
-  type ActionItem,
-  isDeployWaitOnly,
-  isHandedBack,
-} from '../lib/action-items';
+import type { ActionItem } from '../lib/action-items';
 import { getCliSessions } from '../lib/cli-sessions';
 import {
   getCachedActionItems,
@@ -24,12 +21,10 @@ import {
   type WatchedRepo,
 } from '../lib/github-client';
 import { derivePrimaryAction } from '../lib/primary-action';
-import {
-  deriveSilentErrorDiagnoses,
-  indexSessionsByNumericRunId,
-} from '../lib/run-classification';
+import { buildQueueView } from '../lib/queue-view';
+import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
-import { ActionItemsBoard, type BoardCard } from './action-items-board';
+import { type BoardCard, CommandDeckSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from './console-header';
 import { formatCompactRelativeTime } from './format';
@@ -53,10 +48,8 @@ interface PageProps {
 
 async function IndexBody({
   repoFilter,
-  selectedItemKey,
 }: {
   repoFilter: WatchedRepo | undefined;
-  selectedItemKey?: string;
 }) {
   const [
     {
@@ -90,48 +83,15 @@ async function IndexBody({
     runnerSessionsByRunId,
   );
 
-  // Elevate finished runs the classifier flagged `silent-error` (GitHub said
-  // success, but the session shows a known failure signature or recorded
-  // essentially no work) into "Needs Your Action", even though nothing in
-  // the item's own GitHub state says anything is wrong.
-  const silentErrorByIssue = deriveSilentErrorDiagnoses(
-    activity.recentRuns,
-    runnerSessionsByRunId,
-  );
-  const items: ActionItem[] = rawItems.map((item) => {
-    const diagnosis = silentErrorByIssue.get(
-      repoItemKey(item.repo, item.number),
-    );
-    if (!diagnosis) return item;
-    return {
-      ...item,
-      actionTypes: [...item.actionTypes, 'silent-error'],
-      silentErrorDiagnosis: diagnosis,
-    };
-  });
-
-  // Join live agent runs to items by the run-name-derived issue number (see
-  // claude.yml and opencode.yml - issueNumberFromDisplayTitle accepts both
-  // run-name formats) - immune to title edits and duplicate titles, and
-  // pipeline-agnostic by construction. The old exact-title fallback for
-  // runs predating the run-name rollout is gone (#3023): every live run
-  // has carried a parseable run-name for months, and matching on a
-  // human-editable title string was the fragile path. An item with a live
-  // run is the AGENT's to act on, whatever its labels say - it must never
-  // be presented as waiting on the maintainer.
-  const liveRunByNumber = new Map(
-    activity.liveRuns
-      .filter((run) => run.issueNumber !== undefined)
-      .map((run) => [repoItemKey(run.repo, run.issueNumber as number), run]),
-  );
-  const liveRunFor = (item: ActionItem) =>
-    liveRunByNumber.get(repoItemKey(item.repo, item.number));
+  const queueView = buildQueueView(rawItems, activity, runnerSessionsByRunId);
 
   // The reverse join: live runs annotated with the item they're working, so
   // the In Flight panel can link the issue instead of the raw run title.
   const itemsByRunId: Record<number, RunItemRef> = {};
-  for (const item of items) {
-    const run = liveRunFor(item);
+  for (const item of queueView.items) {
+    const run = queueView.liveRunByItemKey.get(
+      repoItemKey(item.repo, item.number),
+    );
     if (run) {
       itemsByRunId[run.id] = {
         number: item.number,
@@ -141,24 +101,6 @@ async function IndexBody({
     }
   }
 
-  // Bucketing by whose move it is:
-  // - an item with a live run is the agent's (shown in In Flight);
-  // - human-needed answered by the maintainer is the agent's (Handed Back);
-  // - post-deploy-only waits on the deploy pipeline;
-  // - actionable leftovers are the maintainer's queue;
-  // - everything else is inventory, collapsed at the bottom.
-  const idle = items.filter((item) => !liveRunFor(item));
-  const handedBack = idle.filter(isHandedBack);
-  const yourQueue = idle.filter(
-    (item) =>
-      item.actionTypes.length > 0 &&
-      !isDeployWaitOnly(item) &&
-      !isHandedBack(item),
-  );
-  const waitingOnDeploy = idle.filter(
-    (item) => isDeployWaitOnly(item) && !isHandedBack(item),
-  );
-  const rest = idle.filter((item) => item.actionTypes.length === 0);
   // Applied last, after every cross-repo join above (itemsByRunId,
   // liveRunFor, silent-error diagnoses) already ran against the full,
   // unfiltered data - a repo filter should narrow what's *displayed*, never
@@ -194,20 +136,16 @@ async function IndexBody({
         </Box>
       )}
 
-      <ActionItemsBoard
-        yourQueue={yourQueue
+      <CommandDeckSections
+        handedBack={queueView.handedBack
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}
-        handedBack={handedBack
+        waitingOnDeploy={queueView.waitingOnDeploy
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}
-        waitingOnDeploy={waitingOnDeploy
+        rest={queueView.rest
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}
-        rest={rest
-          .filter((i) => matchesFilter(i.repo))
-          .map((item) => toCard(item))}
-        selectedItemKey={selectedItemKey}
       />
 
       <AgentActivityPanel
@@ -217,6 +155,25 @@ async function IndexBody({
         sessionsByRunId={sessionsByRunId}
       />
     </>
+  );
+}
+
+function DeckUtilities({
+  watchedRepos,
+  includeNavigation = false,
+}: {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  includeNavigation?: boolean;
+}) {
+  return (
+    <Group gap={4} wrap="nowrap">
+      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+      <RefreshButton compact bustsGithubCache />
+      <QueueUtilityMenu
+        includeNavigation={includeNavigation}
+        signOutControl={<SignOutButton />}
+      />
+    </Group>
   );
 }
 
@@ -234,6 +191,14 @@ async function IndexShell({ searchParams }: PageProps) {
 
   const watchedRepos = getWatchedRepos();
   const params = await searchParams;
+
+  // Preserve links and bookmarks from before the Inbox became its own page.
+  if (params.item) {
+    const inboxParams = new URLSearchParams({ item: params.item });
+    if (params.repo) inboxParams.set('repo', params.repo);
+    redirect(`/inbox?${inboxParams.toString()}`);
+  }
+
   const repoFilter = parseRepoFilterParam(params.repo);
 
   const subtitle =
@@ -244,10 +209,10 @@ async function IndexShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <Container size="xl" py="xl" className="queue-page-shell">
+    <Container size="xl" py="xl" className="deck-page-shell">
       <ConsoleHeader
-        current="queue"
-        title="Agent LCARS"
+        current="deck"
+        title="Command Deck"
         subtitle={
           <>
             {subtitle}
@@ -262,19 +227,19 @@ async function IndexShell({ searchParams }: PageProps) {
           </>
         }
         utilities={
-          <Group gap="xs" wrap="nowrap">
-            <QuickTaskButton watchedRepos={watchedRepos} />
-            <RefreshButton compact bustsGithubCache />
-            <QueueUtilityMenu signOutControl={<SignOutButton />} />
-          </Group>
+          <>
+            <div className="deck-utilities deck-utilities--desktop">
+              <DeckUtilities watchedRepos={watchedRepos} />
+            </div>
+            <div className="deck-utilities deck-utilities--mobile">
+              <DeckUtilities watchedRepos={watchedRepos} includeNavigation />
+            </div>
+          </>
         }
       />
 
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <IndexBody
-          repoFilter={repoFilter}
-          selectedItemKey={params.item || undefined}
-        />
+        <IndexBody repoFilter={repoFilter} />
       </Suspense>
     </Container>
   );

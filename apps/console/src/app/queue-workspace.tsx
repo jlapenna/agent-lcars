@@ -47,7 +47,7 @@ export function queueSelectionHref(
   if (itemKey) params.set('item', itemKey);
   else params.delete('item');
   const query = params.toString();
-  return query ? `/?${query}` : '/';
+  return query ? `/inbox?${query}` : '/inbox';
 }
 
 export function QueueWorkspace({
@@ -111,11 +111,11 @@ export function QueueWorkspace({
               component="a"
               href={backHref}
               variant="filled"
-              color="orange"
+              color="blue"
               leftSection={<IconChevronLeft aria-hidden="true" size={18} />}
               className="queue-mobile-back"
             >
-              Queue
+              Inbox
             </Button>
             <Text component="span" ff="monospace" size="xs" c="dimmed" truncate>
               {selectedCard
@@ -127,7 +127,7 @@ export function QueueWorkspace({
           <>
             <div className="queue-mobile-identity">
               <Text component="span" fw={700} tt="uppercase">
-                Queue
+                Inbox
               </Text>
               <Text component="span" ff="monospace" size="xs">
                 {visibleCards.length.toString().padStart(2, '0')}
@@ -286,7 +286,7 @@ export function QueueWorkspace({
               This item is stale, filtered out, or no longer needs a decision.
             </Text>
             <Button component="a" href={backHref} variant="default">
-              Back to Queue
+              Back to Inbox
             </Button>
           </div>
         ) : (

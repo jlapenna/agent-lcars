@@ -68,19 +68,23 @@ describe('queueSelectionHref', () => {
         'repo=agent-lcars%2Fconsole',
         'agent-lcars/console#249',
       ),
-    ).toBe('/?repo=agent-lcars%2Fconsole&item=agent-lcars%2Fconsole%23249');
+    ).toBe(
+      '/inbox?repo=agent-lcars%2Fconsole&item=agent-lcars%2Fconsole%23249',
+    );
   });
 
-  it('removes only item when returning to the Queue', () => {
+  it('removes only item when returning to the Inbox', () => {
     expect(
       queueSelectionHref(
         'repo=agent-lcars%2Fconsole&item=agent-lcars%2Fconsole%23249',
       ),
-    ).toBe('/?repo=agent-lcars%2Fconsole');
+    ).toBe('/inbox?repo=agent-lcars%2Fconsole');
   });
 
   it('returns the root route when no filters remain', () => {
-    expect(queueSelectionHref('item=agent-lcars%2Fconsole%23249')).toBe('/');
+    expect(queueSelectionHref('item=agent-lcars%2Fconsole%23249')).toBe(
+      '/inbox',
+    );
   });
 });
 
@@ -100,7 +104,10 @@ describe('QueueWorkspace', () => {
     );
     expect(
       screen.getByRole('link', { name: /Review the next item/ }),
-    ).toHaveAttribute('href', '/?repo=agent%2Flcars&item=agent%2Flcars%23250');
+    ).toHaveAttribute(
+      'href',
+      '/inbox?repo=agent%2Flcars&item=agent%2Flcars%23250',
+    );
   });
 
   it('renders a recoverable state for an explicit stale selection', () => {
@@ -110,9 +117,9 @@ describe('QueueWorkspace', () => {
       screen.getByRole('heading', { name: 'Item unavailable' }),
     ).toBeTruthy();
     expect(screen.queryByTestId('selected-detail')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Back to Queue' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Back to Inbox' })).toHaveAttribute(
       'href',
-      '/?repo=agent%2Flcars',
+      '/inbox?repo=agent%2Flcars',
     );
   });
 

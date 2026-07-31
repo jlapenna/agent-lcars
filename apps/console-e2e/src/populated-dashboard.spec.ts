@@ -36,7 +36,7 @@ usePopulatedFixtures();
 
 test.describe('populated dashboard', () => {
   test('renders each Inbox reason against real items', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/inbox');
 
     // The Inbox intentionally exposes one highest-priority semantic reason
     // per row. Deploy-wait-only work remains in the compact tier below.
@@ -49,12 +49,6 @@ test.describe('populated dashboard', () => {
       await expect(page.getByText(label).first()).toBeVisible();
     }
 
-    // And the compact tier itself, which is where a deploy-wait-only item
-    // (#9004) goes instead.
-    await expect(
-      page.getByRole('heading', { name: /Waiting on Next Deploy/ }),
-    ).toBeVisible();
-
     // The silent-error tier only exists because a run's joined session doc
     // contradicts its green conclusion — assert the diagnosis text, not just
     // the badge, since that join is the fragile half.
@@ -63,12 +57,18 @@ test.describe('populated dashboard', () => {
       .getByRole('link')
       .click();
     await expect(page.getByTestId('silent-error-diagnosis')).toBeVisible();
+
+    // Deploy-wait-only work remains on the Command Deck overview.
+    await page.goto('/');
+    await expect(
+      page.getByRole('heading', { name: /Waiting on Next Deploy/ }),
+    ).toBeVisible();
   });
 
   test('surfaces per-item detail that only appears on populated cards', async ({
     page,
   }) => {
-    await page.goto('/');
+    await page.goto('/inbox');
 
     // `.first()`: the same title also appears on this item's run row in the
     // In Flight panel, which is itself the join working.
@@ -160,8 +160,24 @@ test.describe('populated dashboard', () => {
 });
 
 test.describe('responsive decision inbox', () => {
-  test('keeps list selection URL-addressable on desktop', async ({ page }) => {
+  test('keeps the Command Deck focused on overview work', async ({ page }) => {
     await page.goto('/');
+
+    await expect(
+      page.getByRole('heading', { name: 'Command Deck' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Decision Inbox' }),
+    ).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    await expect(page.getByRole('link', { name: 'Inbox' })).toBeVisible();
+  });
+
+  test('keeps list selection URL-addressable on desktop', async ({ page }) => {
+    await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
     await expect(
@@ -182,9 +198,18 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
   });
 
+  test('redirects legacy root item links into the Inbox', async ({ page }) => {
+    await page.goto(`/?item=agent-lcars:issue:${E2E_ITEM_NUMBERS.humanNeeded}`);
+
+    await expect(page).toHaveURL(/\/inbox\?item=/);
+    await expect(
+      page.getByRole('region', { name: 'Decision Inbox' }),
+    ).toBeVisible();
+  });
+
   test('uses a list-to-detail flow on a phone viewport', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/');
+    await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
     await expect(page.locator('.console-header')).toBeHidden();
@@ -204,12 +229,36 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-workspace__list')).toBeHidden();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
     await expect(
-      workspace.getByRole('link', { name: 'Queue', exact: true }),
+      workspace.getByRole('link', { name: 'Inbox', exact: true }),
     ).toBeVisible();
 
-    await workspace.getByRole('link', { name: 'Queue', exact: true }).click();
+    await workspace.getByRole('link', { name: 'Inbox', exact: true }).click();
     await expect(page).not.toHaveURL(/\bitem=/);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
+  });
+
+  test('keeps the Command Deck compact and navigable on a phone', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    const header = page.locator('.console-header[data-current="deck"]');
+    await expect(header).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Deck' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Inbox' })).toBeHidden();
+    expect((await header.boundingBox())?.height).toBe(64);
+    await expect(
+      page.getByRole('region', { name: 'Decision Inbox' }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+
+    await page.getByRole('button', { name: 'More console options' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
   });
 });
 
@@ -236,7 +285,8 @@ test.describe('populated page captures', () => {
       // ConsoleHeader's doc comment) — each page gets its own readiness
       // marker rather than one shared nav assertion.
       for (const [name, path, ready] of [
-        ['queue', '/', 'nav.lcars-nav'],
+        ['deck', '/', 'nav.lcars-nav'],
+        ['inbox', '/inbox', 'nav.lcars-nav'],
         ['agents', '/agents', 'nav.lcars-nav'],
         ['sessions', '/sessions', 'nav.lcars-nav'],
         [
@@ -264,13 +314,26 @@ test.describe('populated page captures', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
     await expect(
+      page
+        .locator('.console-header[data-current="deck"]')
+        .getByRole('link', { name: 'Deck' }),
+    ).toBeVisible();
+    const deckCapture = testInfo.outputPath('deck-mobile.png');
+    await page.screenshot({ path: deckCapture });
+    await testInfo.attach('deck-mobile.png', {
+      path: deckCapture,
+      contentType: 'image/png',
+    });
+
+    await page.goto('/inbox');
+    await expect(
       page.getByRole('region', { name: 'Decision Inbox' }),
     ).toBeVisible();
 
     await expect(page.locator('.queue-workspace__list')).toBeVisible();
-    const listCapture = testInfo.outputPath('queue-mobile-list.png');
+    const listCapture = testInfo.outputPath('inbox-mobile-list.png');
     await page.screenshot({ path: listCapture });
-    await testInfo.attach('queue-mobile-list.png', {
+    await testInfo.attach('inbox-mobile-list.png', {
       path: listCapture,
       contentType: 'image/png',
     });
@@ -280,9 +343,9 @@ test.describe('populated page captures', () => {
       .getByRole('link')
       .click();
     await expect(page.locator('.queue-workspace__detail')).toBeVisible();
-    const detailCapture = testInfo.outputPath('queue-mobile-detail.png');
+    const detailCapture = testInfo.outputPath('inbox-mobile-detail.png');
     await page.screenshot({ path: detailCapture });
-    await testInfo.attach('queue-mobile-detail.png', {
+    await testInfo.attach('inbox-mobile-detail.png', {
       path: detailCapture,
       contentType: 'image/png',
     });
