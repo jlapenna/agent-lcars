@@ -285,6 +285,103 @@
   border-bottom-right-radius: 0.75rem;
 }
 
+/* ---- Agents operations workspace (#251) ---- */
+
+.agents-utilities--mobile {
+  display: none;
+}
+
+.agents-workspace {
+  --mantine-color-text: var(--mantine-color-gray-0);
+  --mantine-color-dimmed: var(--mantine-color-dark-2);
+  --mantine-color-default-border: var(--mantine-color-dark-4);
+  overflow: hidden;
+  color: var(--mantine-color-text);
+  background: var(--mantine-color-dark-9);
+  border: 1px solid var(--mantine-color-default-border);
+}
+
+.agents-workspace__warnings {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-6) 8%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.agents-fleet-strip,
+.agents-panel {
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--mantine-color-dark-9);
+}
+
+.agents-fleet-strip {
+  border-bottom: 1px solid var(--mantine-color-default-border) !important;
+}
+
+.agents-fleet-strip::after,
+.agents-panel::after {
+  display: none;
+}
+
+.agents-workspace__operations {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(20rem, 0.9fr);
+  gap: 1px;
+  min-width: 0;
+  background: var(--mantine-color-default-border);
+}
+
+.agents-workspace__primary,
+.agents-workspace__secondary {
+  min-width: 0;
+}
+
+.agents-workspace__secondary {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1px;
+  background: var(--mantine-color-default-border);
+}
+
+.agents-panel {
+  min-height: 100%;
+}
+
+.agents-panel--active {
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-violet-9) 8%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.agents-panel--claimed {
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-9) 7%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.agents-panel--recent {
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-blue-9) 7%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.agents-panel h2 {
+  font-family: var(--font-display), sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* ---- Queue command deck / decision Inbox (#249) ---- */
 
 .lcars-command-row {
@@ -574,13 +671,14 @@
 }
 
 @media (min-width: 48em) {
-  .queue-page-shell {
+  .queue-page-shell,
+  .agents-page-shell {
     width: 100%;
     max-width: none;
     padding-top: 0 !important;
   }
 
-  .console-header[data-current='queue'] {
+  .console-header:is([data-current='queue'], [data-current='agents']) {
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
@@ -593,7 +691,8 @@
     border-bottom: 1px solid var(--mantine-color-dark-4);
   }
 
-  .console-header[data-current='queue'] .lcars-header {
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-header {
     display: flex;
     min-width: 0;
     align-items: center;
@@ -601,33 +700,41 @@
     border-right: 1px solid var(--mantine-color-dark-4);
   }
 
-  .console-header[data-current='queue'] .lcars-header-title {
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-header-title {
     display: block !important;
     font-size: clamp(1.35rem, 2.2vw, 1.75rem);
     line-height: 1;
     color: var(--mantine-color-gray-0) !important;
   }
 
-  .console-header[data-current='queue'] .lcars-header .mantine-Text-root,
-  .console-header[data-current='queue'] .lcars-header-bar {
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-header
+    .mantine-Text-root,
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-header-bar {
     display: none;
   }
 
-  .console-header[data-current='queue'] .lcars-command-row {
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-command-row {
     min-width: 0;
     padding: 0 16px;
   }
 
-  .console-header[data-current='queue'] .lcars-nav {
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-nav {
     flex-wrap: nowrap;
   }
 
-  .console-header[data-current='queue'] .lcars-nav-pill {
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-nav-pill {
     padding: 6px 16px;
     font-size: 0.75rem;
   }
 
-  .console-header[data-current='queue'] .lcars-command-utilities {
+  .console-header:is([data-current='queue'], [data-current='agents'])
+    .lcars-command-utilities {
     border-color: var(--mantine-color-dark-4);
   }
 
@@ -649,10 +756,28 @@
       transparent
     ) !important;
   }
+
+  .console-header[data-current='agents'] .lcars-header::before,
+  .console-header[data-current='agents'] .lcars-header::after {
+    background: var(--mantine-color-violet-5);
+  }
+
+  .console-header[data-current='agents']
+    .lcars-nav-pill[data-accent='periwinkle'][data-active] {
+    border-color: var(--mantine-color-violet-5) !important;
+    color: var(--mantine-color-white) !important;
+    background: var(--mantine-color-violet-5) !important;
+  }
+
+  .agents-workspace {
+    min-height: calc(100vh - 80px);
+    border-top: 0;
+  }
 }
 
 @media (max-width: 47.99em) {
-  .queue-page-shell {
+  .queue-page-shell,
+  .agents-page-shell {
     width: 100%;
     max-width: none;
     padding: 0 !important;
@@ -660,6 +785,119 @@
 
   .console-header[data-current='queue'] {
     display: none;
+  }
+
+  .console-header[data-current='agents'] {
+    --mantine-color-text: var(--mantine-color-gray-0);
+    --mantine-color-dimmed: var(--mantine-color-dark-2);
+    display: block;
+    height: 64px;
+    min-height: 64px;
+    margin: 0 !important;
+    color: var(--mantine-color-text);
+    background: var(--mantine-color-dark-9);
+    border-bottom: 1px solid var(--mantine-color-dark-4);
+  }
+
+  .console-header[data-current='agents'] .lcars-header {
+    display: none;
+  }
+
+  .console-header[data-current='agents'] .lcars-command-row {
+    height: 64px;
+    gap: 4px;
+    padding-right: 8px;
+  }
+
+  .console-header[data-current='agents'] .lcars-nav {
+    align-self: stretch;
+    flex: 0 0 auto;
+  }
+
+  .console-header[data-current='agents'] .lcars-nav-pill {
+    display: none;
+  }
+
+  .console-header[data-current='agents'] .lcars-nav-pill[data-active] {
+    display: inline-flex;
+    min-width: 8rem;
+    height: 64px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 0 0 24px;
+    color: var(--mantine-color-white);
+    background: var(--mantine-color-violet-5);
+  }
+
+  .console-header[data-current='agents'] .lcars-command-utilities {
+    margin-left: auto;
+    padding-left: 0;
+    border: 0;
+  }
+
+  .console-header[data-current='agents']
+    .lcars-command-utilities
+    .mantine-Button-root,
+  .console-header[data-current='agents']
+    .lcars-command-utilities
+    .mantine-ActionIcon-root {
+    min-height: 44px;
+  }
+
+  .console-header[data-current='agents']
+    .lcars-command-utilities
+    .mantine-Button-root {
+    padding-inline: 10px;
+    font-size: 0.6875rem;
+  }
+
+  .agents-utilities--desktop {
+    display: none;
+  }
+
+  .agents-utilities--mobile {
+    display: block;
+  }
+
+  .agents-workspace {
+    border: 0;
+  }
+
+  .agents-workspace__warnings {
+    padding: 10px 16px;
+  }
+
+  .agents-workspace__operations,
+  .agents-workspace__secondary {
+    display: block;
+    background: transparent;
+  }
+
+  .agents-fleet-strip,
+  .agents-panel {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--mantine-color-default-border) !important;
+  }
+
+  .agents-fleet-strip::before,
+  .agents-panel::before {
+    width: 4px;
+  }
+
+  .agents-panel h2 {
+    font-size: 1.1rem;
+  }
+
+  .agents-workspace a {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .agents-workspace .mantine-ActionIcon-root,
+  .agents-workspace .mantine-Button-root {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .queue-workspace {

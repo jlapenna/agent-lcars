@@ -67,4 +67,109 @@ test.describe('/agents page @smoke', () => {
       page.getByRole('heading', { name: 'Agent LCARS' }),
     ).toBeVisible();
   });
+
+  test('uses the compact operational hierarchy on desktop', async ({
+    page,
+  }, testInfo) => {
+    await page.goto('/agents');
+
+    const header = page.locator('.console-header[data-current="agents"]');
+    const workspace = page.getByRole('region', { name: 'Agent operations' });
+    await expect(header).toBeVisible();
+    await expect(workspace).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Quick task' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+
+    expect((await header.boundingBox())?.height).toBeLessThanOrEqual(80);
+    await expect(workspace.locator('.agents-workspace__operations')).toHaveCSS(
+      'display',
+      'grid',
+    );
+    await expect(workspace.getByTestId('active-agents-section')).toBeVisible();
+    await expect(workspace.getByTestId('claimed-idle-section')).toBeVisible();
+    await expect(workspace.getByTestId('recent-outcomes')).toBeVisible();
+
+    const capture = testInfo.outputPath('agents-desktop.png');
+    await page.screenshot({ path: capture, fullPage: true });
+    await testInfo.attach('agents-desktop.png', {
+      path: capture,
+      contentType: 'image/png',
+    });
+  });
+
+  test('collapses to one mobile command strip and one overflow-safe column', async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/agents');
+
+    const header = page.locator('.console-header[data-current="agents"]');
+    const workspace = page.getByRole('region', { name: 'Agent operations' });
+    await expect(header).toBeVisible();
+    await expect(workspace).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Queue' })).toBeHidden();
+    await expect(
+      page.getByRole('button', { name: 'Quick task' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    expect((await header.boundingBox())?.height).toBe(64);
+
+    await expect(workspace.locator('.agents-workspace__operations')).toHaveCSS(
+      'display',
+      'block',
+    );
+    const sectionTops = await Promise.all(
+      [
+        page.getByTestId('fleet-snapshot-bar'),
+        page.getByTestId('active-agents-section'),
+        page.getByTestId('claimed-idle-section'),
+        page.getByTestId('recent-outcomes'),
+      ].map(async (locator) => (await locator.boundingBox())?.y ?? -1),
+    );
+    expect(sectionTops).toEqual([...sectionTops].sort((a, b) => a - b));
+
+    await page.getByRole('button', { name: 'More console options' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Queue' })).toBeVisible();
+    await expect(
+      page.getByRole('menuitem', { name: 'Sessions' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    const undersizedControls = await page
+      .locator(
+        '.console-header[data-current="agents"] a:visible, .console-header[data-current="agents"] button:visible, .agents-workspace a:visible, .agents-workspace button:visible',
+      )
+      .evaluateAll((elements) =>
+        elements
+          .map((element) => {
+            const box = element.getBoundingClientRect();
+            return {
+              label:
+                element.getAttribute('aria-label') ??
+                element.textContent?.trim() ??
+                element.tagName,
+              width: box.width,
+              height: box.height,
+            };
+          })
+          .filter(({ width, height }) => width < 44 || height < 44),
+      );
+    expect(undersizedControls).toEqual([]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+
+    const capture = testInfo.outputPath('agents-mobile.png');
+    await page.screenshot({ path: capture, fullPage: true });
+    await testInfo.attach('agents-mobile.png', {
+      path: capture,
+      contentType: 'image/png',
+    });
+  });
 });

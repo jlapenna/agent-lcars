@@ -35,7 +35,7 @@ export function RecentOutcomesSection({
       radius="md"
       padding="md"
       data-testid="recent-outcomes"
-      className="lcars-panel"
+      className="lcars-panel agents-panel agents-panel--recent"
       style={lcarsPanelStyle('periwinkle')}
     >
       <Stack gap="sm">

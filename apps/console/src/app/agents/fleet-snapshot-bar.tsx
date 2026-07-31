@@ -36,7 +36,7 @@ export function FleetSnapshotBar({
       padding="md"
       mb="xl"
       data-testid="fleet-snapshot-bar"
-      className="lcars-panel"
+      className="lcars-panel agents-fleet-strip"
       style={lcarsPanelStyle('periwinkle')}
     >
       <Stack gap="sm">

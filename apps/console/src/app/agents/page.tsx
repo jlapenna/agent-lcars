@@ -1,4 +1,4 @@
-import { Anchor, Box, Container } from '@mantine/core';
+import { Anchor, Container, Group } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -10,7 +10,6 @@ import { getCliSessions } from '../../lib/cli-sessions';
 import {
   getCachedActionItems,
   getCachedAgentActivity,
-  oldestFetchedAt,
 } from '../../lib/dashboard-data';
 import {
   getWatchedRepos,
@@ -24,12 +23,14 @@ import {
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
-import { ConsoleFooter } from '../console-footer';
 import { ConsoleHeader, DataWarnings } from '../console-header';
-import { formatRelativeTime } from '../format';
 import { PageLoading } from '../page-loading';
+import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
+import { RefreshButton } from '../refresh-button';
+import { SignOutButton } from '../sign-out-button';
 import { ActiveAgentsSection } from './active-agents-section';
+import { AgentsWorkspace } from './agents-workspace';
 import { ClaimedIdleSection } from './claimed-idle-section';
 import { FleetSnapshotBar } from './fleet-snapshot-bar';
 import { RecentOutcomesSection } from './recent-outcomes-section';
@@ -49,9 +50,8 @@ async function AgentsPageBody({
   const [
     {
       data: { items, warnings: itemWarnings },
-      fetchedAt: itemsAt,
     },
-    { data: activity, fetchedAt: activityAt },
+    { data: activity },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
@@ -121,8 +121,6 @@ async function AgentsPageBody({
     activeSessions,
   );
 
-  const generatedAt = oldestFetchedAt(itemsAt, activityAt);
-
   // Applied last, after every cross-repo join above already ran against the
   // full, unfiltered data - see page.tsx's identical comment for why.
   const filteredItems = items.filter((item) => matchesFilter(item.repo));
@@ -150,43 +148,57 @@ async function AgentsPageBody({
   );
 
   return (
-    <>
-      {warnings.length > 0 && (
-        <Box mb="xl">
-          <DataWarnings warnings={warnings} />
-        </Box>
-      )}
+    <AgentsWorkspace
+      warnings={
+        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
+      }
+      fleet={
+        <FleetSnapshotBar
+          activity={filteredActivity}
+          activeCliSessionCount={filteredActiveSessions.length}
+        />
+      }
+      active={
+        <ActiveAgentsSection
+          liveRuns={filteredActivity.liveRuns}
+          itemsByRunId={itemsByRunId}
+          activeSessions={filteredActiveSessions}
+          items={filteredItems}
+          sessionsByRunId={sessionsByRunId}
+        />
+      }
+      claimedIdle={
+        <ClaimedIdleSection
+          items={filteredClaimedIdle}
+          cliSessions={filteredCliSessions}
+        />
+      }
+      recentOutcomes={
+        <RecentOutcomesSection
+          recentRuns={filteredActivity.recentRuns}
+          sessionsByRunId={sessionsByRunId}
+        />
+      }
+    />
+  );
+}
 
-      <FleetSnapshotBar
-        activity={filteredActivity}
-        activeCliSessionCount={filteredActiveSessions.length}
+function AgentsUtilities({
+  watchedRepos,
+  includeNavigation = false,
+}: {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  includeNavigation?: boolean;
+}) {
+  return (
+    <Group gap={4} wrap="nowrap">
+      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+      <RefreshButton compact bustsGithubCache />
+      <QueueUtilityMenu
+        includeNavigation={includeNavigation}
+        signOutControl={<SignOutButton />}
       />
-
-      <ActiveAgentsSection
-        liveRuns={filteredActivity.liveRuns}
-        itemsByRunId={itemsByRunId}
-        activeSessions={filteredActiveSessions}
-        items={filteredItems}
-        sessionsByRunId={sessionsByRunId}
-      />
-
-      <ClaimedIdleSection
-        items={filteredClaimedIdle}
-        cliSessions={filteredCliSessions}
-      />
-
-      <RecentOutcomesSection
-        recentRuns={filteredActivity.recentRuns}
-        sessionsByRunId={sessionsByRunId}
-      />
-
-      <ConsoleFooter
-        generatedAt={generatedAt}
-        refreshLabel={formatRelativeTime(generatedAt)}
-        bustsGithubCache
-        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
-      />
-    </>
+    </Group>
   );
 }
 
@@ -213,7 +225,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <Container size="xl" py="xl">
+    <Container size="xl" py="xl" className="agents-page-shell">
       <ConsoleHeader
         current="agents"
         title="Agent Status"
@@ -228,6 +240,16 @@ async function AgentsPageShell({ searchParams }: PageProps) {
                 </Anchor>
               </>
             )}
+          </>
+        }
+        utilities={
+          <>
+            <div className="agents-utilities agents-utilities--desktop">
+              <AgentsUtilities watchedRepos={watchedRepos} />
+            </div>
+            <div className="agents-utilities agents-utilities--mobile">
+              <AgentsUtilities watchedRepos={watchedRepos} includeNavigation />
+            </div>
           </>
         }
       />
