@@ -135,7 +135,21 @@ describe('QueueWorkspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     const menu = await screen.findByRole('menu');
-    fireEvent.click(within(menu).getByText('Review requested'));
+    expect(
+      within(menu).getAllByRole('menuitem', { hidden: true }),
+    ).toHaveLength(6);
+    expect(
+      within(menu).getByRole('menuitem', {
+        name: 'All reasons',
+        hidden: true,
+      }),
+    ).toHaveAttribute('aria-current', 'true');
+    fireEvent.click(
+      within(menu).getByRole('menuitem', {
+        name: 'Review requested',
+        hidden: true,
+      }),
+    );
 
     expect(screen.queryByText('Responsive Inbox')).toBeNull();
     expect(screen.getByText('Review the next item')).toBeTruthy();
