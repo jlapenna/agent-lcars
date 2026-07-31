@@ -17,9 +17,9 @@ export function RefreshButton({
   generatedAt?: string;
   initialLabel?: string;
   /** Whether this page renders cached GitHub data (see
-   * lib/dashboard-data.ts). Only the Queue and Agents pages do; the session
+   * lib/dashboard-data.ts). Only Deck, Inbox, and Agents do; the session
    * pages read Firestore/GCS, and busting the GitHub tag from there would
-   * force the next Queue visit to repeat ~30 requests for state that never
+   * force the next data-heavy visit to repeat ~30 requests for state that never
    * changed. */
   bustsGithubCache?: boolean;
   /** Icon-only command-rail treatment. Mobile CSS still gives it a 44px

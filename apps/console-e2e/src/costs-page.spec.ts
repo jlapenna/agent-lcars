@@ -52,13 +52,15 @@ test.describe('/costs workspace @smoke', () => {
     const header = page.locator('.console-header[data-current="costs"]');
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
     await expect(header.getByRole('link', { name: 'Costs' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Queue' })).toBeHidden();
+    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
     await expect(workspace).toBeVisible();
     await expect(page.getByTestId('ledger-issue-row-compact')).toBeVisible();
     await expect(page.getByTestId('ledger-week-row-compact')).toBeVisible();
     expect((await header.boundingBox())?.height).toBe(64);
 
     await page.getByRole('button', { name: 'More console options' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await expect(
       page.getByRole('menuitem', { name: 'Sessions' }),
     ).toHaveAttribute(
@@ -110,7 +112,7 @@ test.describe('/costs workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="costs"]');
     await expect(header.getByRole('link', { name: 'Costs' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Queue' })).toBeHidden();
+    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
     await expect(
       header.getByRole('button', { name: 'More console options' }),
     ).toBeVisible();

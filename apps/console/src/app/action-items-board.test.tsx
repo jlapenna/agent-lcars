@@ -3,7 +3,11 @@ import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
-import { ActionItemsBoard, type BoardCard } from './action-items-board';
+import {
+  type BoardCard,
+  CommandDeckSections,
+  DecisionInbox,
+} from './action-items-board';
 
 // This suite exercises the board's tiering only - ActionItemCard and
 // RetriggerButton pull in the 'use server' actions module (auth, firestore,
@@ -73,20 +77,17 @@ function card(item: ActionItem): BoardCard {
 }
 
 function renderBoard({
-  yourQueue = [],
   handedBack = [],
   waitingOnDeploy = [],
   rest = [],
 }: {
-  yourQueue?: ActionItem[];
   handedBack?: ActionItem[];
   waitingOnDeploy?: ActionItem[];
   rest?: ActionItem[];
 }) {
   render(
     <MantineProvider>
-      <ActionItemsBoard
-        yourQueue={yourQueue.map(card)}
+      <CommandDeckSections
         handedBack={handedBack.map(card)}
         waitingOnDeploy={waitingOnDeploy.map(card)}
         rest={rest.map(card)}
@@ -95,21 +96,38 @@ function renderBoard({
   );
 }
 
-describe('ActionItemsBoard', () => {
+describe('Decision Inbox and Command Deck surfaces', () => {
   it('shows the empty-queue message when nothing needs the maintainer', () => {
-    renderBoard({});
+    render(
+      <MantineProvider>
+        <DecisionInbox yourQueue={[]} />
+      </MantineProvider>,
+    );
     expect(screen.getByText('Nothing needs you right now.')).toBeTruthy();
   });
 
-  it('renders full cards only for Your Queue; other tiers get compact rows', () => {
+  it('keeps full decision cards on the Inbox surface', () => {
+    render(
+      <MantineProvider>
+        <DecisionInbox
+          yourQueue={[
+            card(
+              makeItem({
+                number: 1,
+                title: 'Answer me',
+                actionTypes: ['human-needed'],
+              }),
+            ),
+          ]}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByTestId('full-card')).toHaveTextContent('#1 Answer me');
+  });
+
+  it('renders only compact secondary tiers on the Command Deck', () => {
     renderBoard({
-      yourQueue: [
-        makeItem({
-          number: 1,
-          title: 'Answer me',
-          actionTypes: ['human-needed'],
-        }),
-      ],
       waitingOnDeploy: [
         makeItem({
           number: 2,
@@ -120,15 +138,13 @@ describe('ActionItemsBoard', () => {
       rest: [makeItem({ number: 3, title: 'Background item' })],
     });
 
-    const fullCards = screen.getAllByTestId('full-card');
-    expect(fullCards).toHaveLength(1);
-    expect(fullCards[0].textContent).toContain('#1 Answer me');
+    expect(screen.queryByTestId('full-card')).toBeNull();
     expect(screen.getByTestId('compact-item-2')).toBeTruthy();
     expect(screen.getByTestId('compact-item-3')).toBeTruthy();
   });
 
   it('hides the handed-back and deploy tiers entirely when empty', () => {
-    renderBoard({ yourQueue: [makeItem()] });
+    renderBoard({});
     expect(screen.queryByText(/Handed Back/)).toBeNull();
     expect(screen.queryByText(/Waiting on Next Deploy/)).toBeNull();
     expect(screen.queryByText(/Everything Else/)).toBeNull();

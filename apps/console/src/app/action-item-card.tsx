@@ -175,13 +175,13 @@ export function ActionItemCard({
   item: ActionItem;
   updatedAtLabel: string;
   primaryAction?: PrimaryAction;
-  /** Whether more than one repo is watched - passed down from a server
-   * component (ActionItemsBoard) rather than resolved here, since this is a
-   * client component and getWatchedRepos() needs server-only env access. */
+  /** Whether more than one repo is watched - passed down from the server
+   * route rather than resolved here, since this is a client component and
+   * getWatchedRepos() needs server-only env access. */
   multiRepo?: boolean;
-  /** Per-browser mute state (#59), owned by the caller (your-queue-section.tsx)
-   * so every card in the list shares one localStorage-backed source of
-   * truth instead of each card syncing its own copy. */
+  /** Per-browser mute state (#59), owned by the caller so every card in the
+   * list shares one localStorage-backed source of truth instead of each card
+   * syncing its own copy. */
   muted?: boolean;
   onToggleMute?: () => void;
   /** Workspace mode keeps the existing action behavior but presents it as

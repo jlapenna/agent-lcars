@@ -7,7 +7,7 @@ import type { SessionArchiveQuery } from '@/lib/session-archive';
 import { ConsoleHeader } from './console-header';
 
 function renderHeader(
-  current: 'queue' | 'agents' | 'sessions' | 'costs',
+  current: 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs',
   archiveQuery?: SessionArchiveQuery,
 ) {
   return render(
@@ -40,9 +40,9 @@ describe('ConsoleHeader nav rail', () => {
     render(
       <MantineProvider>
         <ConsoleHeader
-          current="queue"
+          current="deck"
           title="Agent LCARS"
-          subtitle="Queue"
+          subtitle="Command Deck"
           utilities={<button>Quick task</button>}
         />
       </MantineProvider>,
@@ -56,13 +56,14 @@ describe('ConsoleHeader nav rail', () => {
   });
 
   it('offers every console destination', () => {
-    renderHeader('queue');
+    renderHeader('deck');
 
     expect(
       screen.getByRole('navigation', { name: 'Console sections' }),
     ).toBeTruthy();
     for (const [name, href] of [
-      ['Queue', '/'],
+      ['Deck', '/'],
+      ['Inbox', '/inbox'],
       ['Agents', '/agents'],
       ['Sessions', '/sessions'],
       ['Costs', '/costs'],
@@ -104,7 +105,33 @@ describe('ConsoleHeader nav rail', () => {
       screen.getByRole('link', { name: 'Costs' }).getAttribute('href'),
     ).toBe('/costs?days=90&source=cli&issue=42');
     expect(
-      screen.getByRole('link', { name: 'Queue' }).getAttribute('href'),
+      screen.getByRole('link', { name: 'Deck' }).getAttribute('href'),
     ).toBe('/');
+  });
+
+  it('preserves repository scope between Deck and Inbox', () => {
+    render(
+      <MantineProvider>
+        <ConsoleHeader
+          current="deck"
+          title="Command Deck"
+          subtitle="one repo"
+          repoFilter="example/console"
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+      'href',
+      '/?repo=example%2Fconsole',
+    );
+    expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAttribute(
+      'href',
+      '/inbox?repo=example%2Fconsole',
+    );
+    expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute(
+      'href',
+      '/agents',
+    );
   });
 });

@@ -86,6 +86,11 @@
   background: var(--mantine-color-orange-6);
 }
 
+.lcars-header-bar-segment[data-accent='blue'] {
+  width: 2.75rem;
+  background: var(--mantine-color-blue-5);
+}
+
 .lcars-header-bar-segment[data-accent='periwinkle'] {
   width: 2rem;
   background: var(--mantine-color-violet-5);
@@ -189,6 +194,16 @@
 
 [data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='amber'] {
   --pill-outline: var(--mantine-color-orange-5);
+}
+
+.lcars-nav-pill[data-accent='blue'] {
+  --pill-fill: var(--mantine-color-blue-5);
+  --pill-ink: var(--mantine-color-white);
+  --pill-outline: var(--mantine-color-blue-7);
+}
+
+[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='blue'] {
+  --pill-outline: var(--mantine-color-blue-4);
 }
 
 .lcars-nav-pill[data-accent='periwinkle'] {
@@ -655,6 +670,11 @@
 
 /* ---- Queue command deck / decision Inbox (#249) ---- */
 
+.deck-utilities--mobile,
+.inbox-utilities--mobile {
+  display: none;
+}
+
 .lcars-command-row {
   display: flex;
   align-items: center;
@@ -942,7 +962,8 @@
 }
 
 @media (min-width: 48em) {
-  .queue-page-shell,
+  .deck-page-shell,
+  .inbox-page-shell,
   .agents-page-shell,
   .sessions-page-shell,
   .costs-page-shell {
@@ -952,7 +973,8 @@
   }
 
   .console-header:is(
-    [data-current='queue'],
+    [data-current='deck'],
+    [data-current='inbox'],
     [data-current='agents'],
     [data-current='sessions'],
     [data-current='costs']
@@ -970,7 +992,8 @@
   }
 
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -984,7 +1007,8 @@
   }
 
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -997,7 +1021,8 @@
   }
 
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1005,7 +1030,8 @@
     .lcars-header
     .mantine-Text-root,
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1015,7 +1041,8 @@
   }
 
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1026,7 +1053,8 @@
   }
 
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1036,7 +1064,8 @@
   }
 
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1047,7 +1076,8 @@
   }
 
   .console-header:is(
-      [data-current='queue'],
+      [data-current='deck'],
+      [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1056,7 +1086,7 @@
     border-color: var(--mantine-color-dark-4);
   }
 
-  .console-header[data-current='queue']
+  .console-header[data-current='deck']
     .lcars-nav-pill[data-accent='amber'][data-active] {
     display: inline-flex !important;
     border-color: var(--mantine-color-orange-6) !important;
@@ -1064,7 +1094,7 @@
     background: var(--mantine-color-orange-6) !important;
   }
 
-  .console-header[data-current='queue'] .lcars-action-button {
+  .console-header[data-current='deck'] .lcars-action-button {
     display: inline-flex !important;
     border-color: var(--mantine-color-orange-6) !important;
     color: var(--mantine-color-orange-5) !important;
@@ -1073,6 +1103,18 @@
       var(--mantine-color-orange-6) 18%,
       transparent
     ) !important;
+  }
+
+  .console-header[data-current='inbox'] .lcars-header::before,
+  .console-header[data-current='inbox'] .lcars-header::after {
+    background: var(--mantine-color-blue-5);
+  }
+
+  .console-header[data-current='inbox']
+    .lcars-nav-pill[data-accent='blue'][data-active] {
+    border-color: var(--mantine-color-blue-5) !important;
+    color: var(--mantine-color-white) !important;
+    background: var(--mantine-color-blue-5) !important;
   }
 
   .console-header[data-current='agents'] .lcars-header::before,
@@ -1128,30 +1170,37 @@
 }
 
 @media (min-width: 48em) and (max-width: 63.99em) {
-  .console-header:is([data-current='sessions'], [data-current='costs'])
+  .console-header:is(
+      [data-current='deck'],
+      [data-current='inbox'],
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
     .lcars-nav-pill:not([data-active]) {
     display: none;
   }
 
-  .sessions-utilities--desktop {
-    display: none;
-  }
-
-  .sessions-utilities--mobile {
-    display: block;
-  }
-
+  .deck-utilities--desktop,
+  .inbox-utilities--desktop,
+  .agents-utilities--desktop,
+  .sessions-utilities--desktop,
   .costs-utilities--desktop {
     display: none;
   }
 
+  .deck-utilities--mobile,
+  .inbox-utilities--mobile,
+  .agents-utilities--mobile,
+  .sessions-utilities--mobile,
   .costs-utilities--mobile {
     display: block;
   }
 }
 
 @media (max-width: 47.99em) {
-  .queue-page-shell,
+  .deck-page-shell,
+  .inbox-page-shell,
   .agents-page-shell,
   .sessions-page-shell,
   .costs-page-shell {
@@ -1160,11 +1209,12 @@
     padding: 0 !important;
   }
 
-  .console-header[data-current='queue'] {
+  .console-header[data-current='inbox'] {
     display: none;
   }
 
   .console-header:is(
+    [data-current='deck'],
     [data-current='agents'],
     [data-current='sessions'],
     [data-current='costs']
@@ -1181,6 +1231,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1190,6 +1241,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1201,6 +1253,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1211,6 +1264,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1220,6 +1274,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1238,6 +1293,11 @@
     background: var(--mantine-color-violet-5);
   }
 
+  .console-header[data-current='deck'] .lcars-nav-pill[data-active] {
+    color: var(--mantine-color-dark-9);
+    background: var(--mantine-color-orange-6);
+  }
+
   .console-header[data-current='sessions'] .lcars-nav-pill[data-active] {
     color: var(--mantine-color-dark-9);
     background: var(--mantine-color-cyan-5);
@@ -1249,6 +1309,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1260,6 +1321,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1267,6 +1329,7 @@
     .lcars-command-utilities
     .mantine-Button-root,
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1277,6 +1340,7 @@
   }
 
   .console-header:is(
+      [data-current='deck'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
@@ -1287,10 +1351,14 @@
     font-size: 0.6875rem;
   }
 
+  .deck-utilities--desktop,
+  .inbox-utilities--desktop,
   .agents-utilities--desktop {
     display: none;
   }
 
+  .deck-utilities--mobile,
+  .inbox-utilities--mobile,
   .agents-utilities--mobile {
     display: block;
   }
@@ -1552,8 +1620,8 @@
     justify-content: space-between;
     gap: 12px;
     border-bottom-right-radius: 24px;
-    background: var(--mantine-color-orange-5);
-    color: var(--mantine-color-black);
+    background: var(--mantine-color-blue-5);
+    color: var(--mantine-color-white);
     font-family: var(--font-display), sans-serif;
     letter-spacing: 0.05em;
   }

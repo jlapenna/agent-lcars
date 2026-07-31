@@ -44,7 +44,7 @@ describe('RefreshButton', () => {
     refresh.mockClear();
     refreshDashboard.mockClear();
     // The session pages read Firestore/GCS only. Busting the GitHub tag from
-    // there would force the next Queue visit to repeat ~30 requests for
+    // there would force the next data-heavy visit to repeat ~30 requests for
     // state that never changed.
     renderButton();
 
