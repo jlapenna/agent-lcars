@@ -34,7 +34,7 @@ for (const worker of ['claude', 'codex', 'opencode']) {
   });
 }
 
-test('OpenCode accepts one post-anchor bot artifact and rejects pickup-only state', () => {
+test('OpenCode accepts one post-anchor Agent LCARS App artifact and rejects pickup-only state', () => {
   const source = workflow('opencode');
   const claim = namedStep(source, 'Claim the issue as the agent fleet');
   const claimPosition = source.indexOf(
@@ -54,7 +54,9 @@ test('OpenCode accepts one post-anchor bot artifact and rejects pickup-only stat
     step,
     /PICKUP_COMMENT_ID: \$\{\{ steps\.claim\.outputs\['pickup-comment-id'\] \}\}/,
   );
-  assert.match(step, /comments\?since=\$STARTED_AT/);
+  assert.match(step, /AGENT_LOGIN: agent-lcars\[bot\]/);
+  assert.match(step, /comments\?since=\$STARTED_AT&per_page=100/);
+  assert.match(step, /select\(\.user\.login == \\"\$AGENT_LOGIN\\"\)/);
   assert.match(
     step,
     /select\(\(\.id \| tostring\) != \\"\$PICKUP_COMMENT_ID\\"\)/,
@@ -63,20 +65,38 @@ test('OpenCode accepts one post-anchor bot artifact and rejects pickup-only stat
   assert.equal(threshold, 1);
 
   const pickupId = '100';
-  const commentIsDeliverable = (postAnchorCommentIds) =>
-    postAnchorCommentIds.filter((id) => id !== pickupId).length >= threshold;
+  const agentLogin = 'agent-lcars[bot]';
+  const commentIsDeliverable = (postAnchorComments) =>
+    postAnchorComments.filter(
+      ({ id, login }) => id !== pickupId && login === agentLogin,
+    ).length >= threshold;
   assert.equal(commentIsDeliverable([]), false, 'pickup-only run');
   assert.equal(
-    commentIsDeliverable([pickupId]),
+    commentIsDeliverable([{ id: pickupId, login: agentLogin }]),
     false,
     'edited pickup-only run',
   );
   assert.equal(
-    commentIsDeliverable([pickupId, '101']),
+    commentIsDeliverable([
+      { id: pickupId, login: agentLogin },
+      { id: '101', login: 'unrelated[bot]' },
+    ]),
+    false,
+    'unrelated bot comment',
+  );
+  assert.equal(
+    commentIsDeliverable([
+      { id: pickupId, login: agentLogin },
+      { id: '101', login: agentLogin },
+    ]),
     true,
     'pickup plus summary',
   );
-  assert.equal(commentIsDeliverable(['101']), true, 'reply summary');
+  assert.equal(
+    commentIsDeliverable([{ id: '101', login: agentLogin }]),
+    true,
+    'reply summary',
+  );
 });
 
 test('OpenCode retains every non-comment deliverable path', () => {
