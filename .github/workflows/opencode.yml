@@ -167,6 +167,17 @@ jobs:
         with:
           github-token: ${{ github.token }}
 
+      - name: Verify OpenCode GitHub identity
+        env:
+          GH_TOKEN: ${{ secrets.JCLAW_BOT_GITHUB_TOKEN }}
+          AGENT_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        run: |
+          actual_login="$(gh api user --jq '.login')"
+          if [ "$actual_login" != "$AGENT_LOGIN" ]; then
+            echo "::error::OpenCode GitHub token authenticated as $actual_login; expected $AGENT_LOGIN."
+            exit 1
+          fi
+
       - name: Run OpenCode
         # #51: two dispatches against #44 retried a persistent LiteLLM 429
         # with a backoff growing from seconds to tens of minutes and never
@@ -185,7 +196,10 @@ jobs:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # use_github_token needs this passed explicitly - it does not
           # fall back to the job's ambient token.
-          GITHUB_TOKEN: ${{ github.token }}
+          # Create branches and PRs as the trusted fleet account instead of
+          # app/github-actions, which GitHub treats as a first-time workflow
+          # contributor and routes through manual approval.
+          GITHUB_TOKEN: ${{ secrets.JCLAW_BOT_GITHUB_TOKEN }}
           # Same CI-rerun affordance claude.yml grants its agent (see
           # agent-protocol.md §8): the recipe silently no-ops when this is
           # unset.
