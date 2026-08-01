@@ -117,6 +117,7 @@ type FleetHostConfig struct {
 	Name              string `yaml:"name"`
 	Docker            string `yaml:"docker"`
 	RequireMains      bool   `yaml:"require_mains,omitempty"`
+	MetricsViaSSH     bool   `yaml:"metrics_via_ssh,omitempty"`
 	RunnerLimit       *int   `yaml:"runner_limit,omitempty"`
 	WorkDirSizeCapRaw string `yaml:"workdir_size_cap,omitempty"`
 	DockerSocketGID   string `yaml:"docker_socket_gid,omitempty"`
@@ -274,6 +275,7 @@ type resolvedOrchestratorConfig struct {
 	WorkDirSizeCaps map[string]int64
 	DockerSocketGID map[string]string
 	MainsRequired   map[string]bool
+	MetricsViaSSH   map[string]bool
 	Placement       hostLoadPolicy
 	Cooldown        time.Duration
 	ScaleSets       []Config
@@ -341,6 +343,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 				r.MainsRequired = map[string]bool{}
 			}
 			r.MainsRequired[h.Name] = true
+		}
+		if h.MetricsViaSSH {
+			if r.MetricsViaSSH == nil {
+				r.MetricsViaSSH = map[string]bool{}
+			}
+			r.MetricsViaSSH[h.Name] = true
 		}
 		r.DockerHosts = append(r.DockerHosts, h.Name+"="+h.Docker)
 		if h.RunnerLimit != nil {

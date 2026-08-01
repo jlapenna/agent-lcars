@@ -60,6 +60,17 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	}
 }
 
+func TestLoadOrchestratorConfigResolvesSSHMetrics(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway\n      metrics_via_ssh: true", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.MetricsViaSSH["janeway"] {
+		t.Fatalf("metrics_via_ssh was not resolved for janeway: %#v", resolved.MetricsViaSSH)
+	}
+}
+
 func TestValidateReloadCompatibilityAcceptsLiveSettings(t *testing.T) {
 	current, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
 	if err != nil {

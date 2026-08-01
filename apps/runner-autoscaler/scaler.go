@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -227,28 +229,18 @@ func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
 // number of idle CPU series. It fails open: telemetry trouble must not turn a
 // healthy Docker host into a fleet outage.
 func (a *Scaler) probeHostLoad(ctx context.Context, host string) (hostLoad, error) {
-	if a.hostMetricsURLTemplate == "" {
+	if a.hostMetricsURLTemplate == "" && !a.coordinator().metricsViaSSH[host] {
 		return hostLoad{}, nil
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, hostMetricsTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, fmt.Sprintf(a.hostMetricsURLTemplate, host), nil)
+	metrics, err := a.hostMetrics(ctx, host)
 	if err != nil {
 		return hostLoad{}, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return hostLoad{}, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return hostLoad{}, fmt.Errorf("metrics returned HTTP %d", resp.StatusCode)
 	}
 
 	var load1, idleSeconds, memAvailable, memTotal, cpuPressure, memoryPressure, swapIn, swapOut float64
 	var haveLoad bool
 	cpus := make(map[string]struct{})
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(bytes.NewReader(metrics))
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
@@ -1040,21 +1032,11 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 // hostOnMains is deliberately fail-closed for mains-required hosts: a missing
 // or unreadable exporter signal must never spend the workstation battery.
 func (a *Scaler) hostOnMains(ctx context.Context, host string) error {
-	probeCtx, cancel := context.WithTimeout(ctx, hostMetricsTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, fmt.Sprintf(a.hostMetricsURLTemplate, host), nil)
+	metrics, err := a.hostMetrics(ctx, host)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("metrics returned HTTP %d", resp.StatusCode)
-	}
-	s := bufio.NewScanner(resp.Body)
+	s := bufio.NewScanner(bytes.NewReader(metrics))
 	seen := false
 	for s.Scan() {
 		line := s.Text()
@@ -1072,6 +1054,53 @@ func (a *Scaler) hostOnMains(ctx context.Context, host string) error {
 		return errors.New("mains telemetry missing")
 	}
 	return errors.New("host is on battery")
+}
+
+// hostMetrics reads node-exporter through HTTP by default. WSL guests can opt
+// into the same pinned SSH transport as their Docker daemon, avoiding a
+// Windows-side port forward solely for safe placement telemetry.
+func (a *Scaler) hostMetrics(ctx context.Context, host string) ([]byte, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, hostMetricsTimeout)
+	defer cancel()
+	fleet := a.coordinator()
+	if fleet.metricsViaSSH[host] {
+		var target string
+		for _, h := range a.dockerHosts {
+			if h.Name == host {
+				target = h.Target
+				break
+			}
+		}
+		if !strings.HasPrefix(target, "ssh://") {
+			return nil, fmt.Errorf("host %q has no SSH Docker target", host)
+		}
+		cmd := exec.CommandContext(probeCtx, "ssh", "-i", fleetSSHKeyPath,
+			"-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile="+fleetKnownHostsPath,
+			"-o", "StrictHostKeyChecking=yes", "-o", "ControlMaster=no",
+			"-o", "ConnectTimeout=1", strings.TrimPrefix(target, "ssh://"),
+			"curl -fsS --max-time 1 http://127.0.0.1:9100/metrics")
+		output, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("read metrics over SSH: %w", err)
+		}
+		return output, nil
+	}
+	if a.hostMetricsURLTemplate == "" {
+		return nil, errors.New("host metrics URL template is not configured")
+	}
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, fmt.Sprintf(a.hostMetricsURLTemplate, host), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("metrics returned HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // runnerScaleSetLabelKey tags every container with the listener that owns it.

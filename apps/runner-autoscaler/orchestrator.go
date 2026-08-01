@@ -210,6 +210,7 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.workDirSizeCaps = resolved.WorkDirSizeCaps
 	fleet.dockerSocketGIDs = resolved.DockerSocketGID
 	fleet.mainsRequired = resolved.MainsRequired
+	fleet.metricsViaSSH = resolved.MetricsViaSSH
 	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
 	fleet.mu.Unlock()
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
