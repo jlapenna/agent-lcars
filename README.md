@@ -123,11 +123,11 @@ disabled. Each enrolled repository needs:
 - the `AGENT_LCARS_PRIVATE_KEY` Actions secret containing the App PEM key.
 
 `opencode.yml` and `codex.yml` mint a short-lived installation token and
-verify that it authenticates as `agent-lcars[bot]` before agent work. This
-keeps both non-Claude coding agents' branch/PR identity stable and avoids
-GitHub's first-contributor workflow approval path. Generate a replacement
-private key from the App's settings page when needed; never put it in source
-control or an issue.
+verify the expected App slug and bot login (`agent-lcars[bot]`) before agent
+work. This keeps both non-Claude coding agents' branch/PR identity stable
+and avoids GitHub's first-contributor workflow approval path. Generate a
+replacement private key from the App's settings page when needed; never put
+it in source control or an issue.
 
 `jclaw-bot` remains the separate, assignable fleet-ownership account on
 issues and pull requests. GitHub App identities, including

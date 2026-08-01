@@ -178,10 +178,15 @@ jobs:
       - name: Verify OpenCode GitHub identity
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
+          APP_SLUG: ${{ steps.agent-lcars-token.outputs.app-slug }}
         run: |
-          actual_login="$(gh api user --jq '.login')"
+          if [ "$APP_SLUG" != "agent-lcars" ]; then
+            echo "::error::OpenCode token was minted for $APP_SLUG; expected the Agent LCARS App."
+            exit 1
+          fi
+          actual_login="$(gh api "/users/${APP_SLUG}[bot]" --jq '.login')"
           if [ "$actual_login" != "agent-lcars[bot]" ]; then
-            echo "::error::OpenCode GitHub token authenticated as $actual_login; expected agent-lcars[bot]."
+            echo "::error::OpenCode App bot resolved as $actual_login; expected agent-lcars[bot]."
             exit 1
           fi
 
