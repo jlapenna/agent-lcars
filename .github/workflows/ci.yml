@@ -32,6 +32,9 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           "$(go env GOPATH)/bin/actionlint"
 
+      - name: Test agent dispatch preparation
+        run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
+
       - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v7

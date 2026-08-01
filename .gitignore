@@ -146,4 +146,8 @@ cs_build_full.json
 # never legitimate repo content.
 /.local/
 
+# Runtime-only dispatch briefs are written under $RUNNER_TEMP. Ignore the
+# legacy workspace path defensively so a stale action cannot publish one.
+/.agent-dispatch/
+
 vitest.config.*.timestamp*
