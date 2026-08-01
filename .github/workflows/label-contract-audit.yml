@@ -37,6 +37,7 @@ jobs:
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
           repositories: ${{ matrix.repository }}
+          permission-issues: read
 
       - name: Check labels
         env:
