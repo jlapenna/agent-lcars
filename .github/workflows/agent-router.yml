@@ -40,10 +40,24 @@ jobs:
         github.event.label.name == 'codex' ||
         github.event.label.name == 'opencode')) ||
       (github.event_name == 'issue_comment' &&
-       github.event.action == 'created') ||
+       github.event.action == 'created' &&
+       github.event.comment.user.type != 'Bot' &&
+       github.event.comment.author_association == 'OWNER' &&
+       ((contains(github.event.comment.body, '@claude') &&
+         (contains(github.event.issue.labels.*.name, 'claude') ||
+          github.event.issue.pull_request != null)) ||
+        (contains(github.event.comment.body, '/codex') &&
+         contains(github.event.issue.labels.*.name, 'codex') &&
+         !contains(github.event.issue.labels.*.name, 'claude')) ||
+        ((contains(github.event.comment.body, '/opencode') ||
+          contains(github.event.comment.body, '/oc')) &&
+         contains(github.event.issue.labels.*.name, 'opencode') &&
+         !contains(github.event.issue.labels.*.name, 'claude') &&
+         !contains(github.event.issue.labels.*.name, 'codex')))) ||
       (github.event_name == 'workflow_dispatch' &&
        github.event.inputs.issue != '' && github.event.inputs.pipeline != '')
-    runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Dispatch the selected agent
         env:
@@ -107,4 +121,4 @@ jobs:
           fi
           echo "Dispatching $workflow for issue #$ISSUE."
           gh workflow run "$workflow" --repo "$REPO" --ref main \
-            -f issue="$ISSUE" -f mode="$MODE"
+            -f issue="$ISSUE" -f mode="$MODE" -f reply="$COMMENT_BODY"

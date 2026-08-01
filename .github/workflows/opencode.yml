@@ -30,6 +30,10 @@ on:
         description: 'Dispatch mode for router-triggered issue work'
         required: false
         default: 'implement'
+      reply:
+        description: 'Original maintainer reply when mode is reply'
+        required: false
+        default: ''
 
 # Least privilege: enough to comment, push a feature branch, and open a PR.
 # actions:write lets the agent re-run failed CI on its own PRs via
@@ -83,6 +87,21 @@ jobs:
     env:
       npm_config_store_dir: /tmp/runner/pnpm-store
     steps:
+      - name: Claim the issue as the agent fleet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
+            -f "assignees[]=$CLAIM_LOGIN" --silent; then
+            gh issue comment "$NUM" --repo "${{ github.repository }}" \
+              --body "🤖 OpenCode agent run started — working on this issue: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              || echo "::warning::Could not post OpenCode pickup comment on #$NUM"
+          else
+            echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
+          fi
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -93,11 +112,7 @@ jobs:
         id: agent-setup
         uses: ./.github/actions/agent-setup
         with:
-          issue: ${{ github.event.issue.number || github.event.inputs.issue }}
-          pipeline: opencode
           agent-login: ${{ vars.AGENT_FLEET_LOGIN }}
-          persist-credentials: 'false'
-          pickup-comment: 'true'
 
       - name: Point Nx at the shared host cache when present
         run: |
@@ -229,7 +244,7 @@ jobs:
             you must still run gh issue comment to say so before ending. A
             plain text reply with no matching gh action is NOT a valid
             ending.', github.event.inputs.issue)) || format('The repo owner
-            posted a reply on #{0} ("{1}") tagging you. Read AGENTS.md,
+            posted a reply on #{0}: {1}. Read AGENTS.md,
             then .agents/skills/agent-protocol/agent-protocol.md, then
             .agents/skills/lcars/lcars-protocol.md, in that order, and
             follow them exactly. THIS IS A FULLY HEADLESS RUN: the repo
@@ -239,8 +254,8 @@ jobs:
             need a decision, post your question as an issue comment with
             the human-needed label applied and end the session - do not
             wait inline. Do not end until your deliverable (PR update or
-            comment) exists.', github.event.issue.number,
-            github.event.issue.title) }}
+            comment) exists.', github.event.inputs.issue,
+            github.event.inputs.reply) }}
         run: opencode github run
 
       # Adapted from claude.yml's deliverable gate (agent-protocol.md §5),

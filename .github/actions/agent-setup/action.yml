@@ -1,54 +1,16 @@
 name: Agent setup
-description: Claim the anchor, check out the repository, and record the run start.
+description: Configure the agent git identity and record the run start.
 inputs:
-  issue:
-    description: Anchor issue or pull request number.
-    required: true
-  pipeline:
-    description: Agent pipeline name.
-    required: true
   agent-login:
     description: Fleet account used for assignment and git identity.
     required: true
-  persist-credentials:
-    description: Whether checkout should persist the workflow token.
-    required: false
-    default: 'true'
-  pickup-comment:
-    description: Post a pipeline-specific pickup comment.
-    required: false
-    default: 'false'
 outputs:
-  claimed:
-    description: Whether the fleet account was assigned successfully.
-    value: ${{ steps.claim.outputs.claimed }}
   started-at:
     description: UTC timestamp used by the deliverable gate.
     value: ${{ steps.start.outputs.started_at }}
 runs:
   using: composite
   steps:
-    - name: Claim the issue as the agent fleet
-      shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
-        NUM: ${{ inputs.issue }}
-        AGENT_LOGIN: ${{ inputs.agent-login }}
-        PIPELINE: ${{ inputs.pipeline }}
-      run: |
-        if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-             -f "assignees[]=$AGENT_LOGIN" --silent; then
-          echo "claimed=true" >> "$GITHUB_OUTPUT"
-          if [[ "${{ inputs.pickup-comment }}" == "true" ]]; then
-            gh issue comment "$NUM" --repo "${{ github.repository }}" \
-              --body "🤖 $PIPELINE agent run started — working on this issue: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-              || echo "::warning::Could not post the $PIPELINE pickup comment on #$NUM"
-          fi
-        else
-          echo "claimed=false" >> "$GITHUB_OUTPUT"
-          echo "::warning::Could not assign $AGENT_LOGIN to #$NUM"
-        fi
-
     - name: Configure git identity
       if: inputs.agent-login != ''
       shell: bash

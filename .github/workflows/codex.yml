@@ -33,6 +33,10 @@ on:
         description: 'Dispatch mode for router-triggered issue work'
         required: false
         default: 'implement'
+      reply:
+        description: 'Original maintainer reply when mode is reply'
+        required: false
+        default: ''
 
 # Least privilege: enough to comment, push a feature branch, and open a PR.
 # id-token: write is what lets this job mint a WIF token for the GCP
@@ -72,6 +76,21 @@ jobs:
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
+      - name: Claim the issue as the agent fleet
+        id: claim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
+               -f "assignees[]=$CLAIM_LOGIN" --silent; then
+            echo "claimed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "claimed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
+          fi
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -81,8 +100,6 @@ jobs:
         id: agent-setup
         uses: ./.github/actions/agent-setup
         with:
-          issue: ${{ github.event.issue.number || github.event.inputs.issue }}
-          pipeline: codex
           agent-login: ${{ vars.AGENT_FLEET_LOGIN }}
 
       - name: Point Nx at the shared host cache when present
@@ -253,7 +270,7 @@ jobs:
             session by actually invoking a tool call that mutates GitHub. A
             plain text reply with no matching gh action is NOT a valid
             ending.', github.event.inputs.issue)) || format('The repo owner
-            posted a reply on #{0} ("{1}") tagging you. Read AGENTS.md, then
+            posted a reply on #{0}: {1}. Read AGENTS.md, then
             .agents/skills/agent-protocol/agent-protocol.md, then
             .agents/skills/lcars/lcars-protocol.md, in that order, and
             follow them exactly. THIS IS A FULLY HEADLESS RUN: the repo
@@ -263,7 +280,7 @@ jobs:
             need a decision, post your question as an issue comment with the
             human-needed label applied and end the session. Do not end until
             your deliverable (PR update or comment) exists.',
-            github.event.issue.number, github.event.issue.title) }}
+            github.event.inputs.issue, github.event.inputs.reply) }}
         run: |
           # pipefail is load-bearing: without it this step's status is
           # `tee`'s, which is always 0, so a crashed/auth-failed codex run
@@ -388,7 +405,7 @@ jobs:
       # construction: if a dispatched run is itself cancelled, its issue
       # simply stays unclaimed and the next completing run picks it up.
       - name: Dispatch the next queued Codex issue
-        if: always() && steps.agent-setup.outputs.claimed == 'true'
+        if: always() && steps.claim.outputs.claimed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
