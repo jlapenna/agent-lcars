@@ -114,7 +114,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # OpenCode finalizes a completed change with a raw `git push`,
+          # so retain this job-scoped workflow credential through that step.
+          persist-credentials: true
 
       - name: Shared agent setup
         id: agent-setup
@@ -280,6 +282,8 @@ jobs:
           gh issue comment "$ISSUE_NUM" \
             --repo "$REPO" \
             --body "OpenCode agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
+          gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label opencode \
+            || echo "::warning::Could not remove the opencode label from #$ISSUE_NUM"
           gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
             -f "assignees[]=${{ vars.MAINTAINER_LOGIN }}" --silent \
             || echo "::warning::Could not assign jlapenna"
