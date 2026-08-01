@@ -48,6 +48,65 @@ test('ambient credentials cannot cross the E2E boundary', () => {
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /sentinel-value/u);
 });
 
+test('safe Playwright selection controls cross the E2E boundary', () => {
+  const controls = {
+    E2E_GREP: '@smoke|@visual',
+    SKIP_VISUAL: '1',
+    UPDATE_SNAPSHOTS: '1',
+    VISUAL_ONLY: '1',
+  };
+  const probe = `
+    const expected = ${JSON.stringify(controls)};
+    if (Object.entries(expected).some(([key, value]) => process.env[key] !== value)) {
+      process.exit(9);
+    }
+    process.stdout.write('selection controls verified\\n');
+  `;
+
+  const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, ...controls },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'selection controls verified\n');
+});
+
+test('tool caches stay durable while HOME remains isolated', () => {
+  const callerHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lcars-e2e-caller-home-'),
+  );
+  const expectedCorepackHome = path.join(callerHome, '.cache/node/corepack');
+  const expectedFirebaseHome = path.join(
+    callerHome,
+    '.cache/firebase/emulators',
+  );
+  const probe = `
+    if (process.env.HOME === ${JSON.stringify(callerHome)}) process.exit(9);
+    if (process.env.COREPACK_HOME !== ${JSON.stringify(expectedCorepackHome)}) {
+      process.exit(10);
+    }
+    if (process.env.FIREBASE_EMULATORS_PATH !== ${JSON.stringify(expectedFirebaseHome)}) {
+      process.exit(11);
+    }
+    process.stdout.write('tool caches verified\\n');
+  `;
+
+  try {
+    const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, HOME: callerHome },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'tool caches verified\n');
+  } finally {
+    fs.rmSync(callerHome, { recursive: true, force: true });
+  }
+});
+
 test('dotenv validation names an unsafe key without echoing its value', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-env-test-'));
   const envFile = path.join(tempDir, '.env.e2e');

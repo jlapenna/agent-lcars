@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CI_ENV="$ROOT/tools/e2e/ci.env"
 VALIDATOR="$ROOT/tools/e2e/validate-env.mjs"
+CALLER_HOME="${HOME:-}"
 
 if [ "$#" -eq 0 ]; then
   echo "usage: tools/e2e/run-hermetic.sh <command> [args...]" >&2
@@ -74,13 +75,38 @@ case "${CI:-}" in
   1 | true) SAFE_ENV+=("CI=1") ;;
 esac
 
+# Corepack and Firebase normally store downloaded tooling below HOME. Point
+# only those caches at their conventional durable locations so an isolated HOME
+# does not force network downloads on every run (or break offline runs). Do not
+# preserve ambient cache overrides: they could widen the filesystem paths
+# admitted through this boundary.
+if [ -n "$CALLER_HOME" ]; then
+  SAFE_ENV+=(
+    "COREPACK_HOME=$CALLER_HOME/.cache/node/corepack"
+    "FIREBASE_EMULATORS_PATH=$CALLER_HOME/.cache/firebase/emulators"
+  )
+fi
+
+# These are deliberate, non-credential inputs to Playwright. Boolean controls
+# only have meaning when set to exactly 1; E2E_GREP is the supported way to
+# scope a host run because the public Nx target cannot forward CLI arguments.
+for key in SKIP_VISUAL VISUAL_ONLY UPDATE_SNAPSHOTS; do
+  value="${!key-}"
+  if [ "$value" = "1" ]; then
+    SAFE_ENV+=("$key=1")
+  fi
+done
+if [ -n "${E2E_GREP:-}" ]; then
+  SAFE_ENV+=("E2E_GREP=$E2E_GREP")
+fi
+
 # Playwright normally installs browsers below the caller's HOME. Preserve only
 # that cache location while replacing HOME itself; no other caller state crosses
 # the boundary.
 if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
   SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
-elif [ -n "${HOME:-}" ] && [ -d "$HOME/.cache/ms-playwright" ]; then
-  SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright")
+elif [ -n "$CALLER_HOME" ] && [ -d "$CALLER_HOME/.cache/ms-playwright" ]; then
+  SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$CALLER_HOME/.cache/ms-playwright")
 fi
 
 if [ -n "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]; then

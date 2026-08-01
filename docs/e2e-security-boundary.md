@@ -11,14 +11,22 @@ Run the local or CI suite through:
 ```
 
 The wrapper starts the Nx process with an empty environment, a temporary
-`HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and only the
-build-time Firebase/Auth dummy values required before Next.js compiles. It
-deliberately does not load a
-developer's `.env.e2e` or `.env.e2e.local`. The public Nx `e2e` target uses
-this wrapper too; only the internal `e2e-implementation` target retains the
-dotenv compatibility defaults, and it validates both files before loading
-them. Docker explicitly points that internal target at the checked-in fixture
-and an empty local-override path.
+`HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit
+allowlist. That list contains the build-time Firebase/Auth dummy values,
+Playwright's browser location, the safe suite-selection controls (`E2E_GREP`,
+`SKIP_VISUAL`, `VISUAL_ONLY`, and `UPDATE_SNAPSHOTS`), and the caller's
+conventional Corepack and Firebase emulator cache paths. Keeping
+`COREPACK_HOME` and `FIREBASE_EMULATORS_PATH` at those two derived locations
+lets already installed package-manager and emulator distributions work offline
+without exposing the rest of the caller's home as process configuration;
+ambient cache overrides are not trusted.
+
+The wrapper deliberately does not load a developer's `.env.e2e` or
+`.env.e2e.local`. The public Nx `e2e` target uses this wrapper too; only the
+internal `e2e-implementation` target retains the dotenv compatibility
+defaults, and it validates both files before loading them. Docker explicitly
+points that internal target at the checked-in fixture and an empty
+local-override path.
 
 `tools/e2e/validate-env.mjs` rejects verbose `DEBUG` mode and any
 credential-shaped key unless both its name and dummy value are explicitly
