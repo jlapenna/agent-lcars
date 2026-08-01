@@ -364,35 +364,56 @@ describe('retriggerIssue (pipeline routing)', () => {
     const removeLabel = vi.fn().mockResolvedValue({});
     const addLabels = vi.fn().mockResolvedValue({});
     const createComment = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { get, removeLabel, addLabels, createComment } },
+      rest: {
+        issues: { get, removeLabel, addLabels, createComment },
+        actions: { createWorkflowDispatch },
+      },
     });
-    return { get, removeLabel, addLabels, createComment };
+    return {
+      get,
+      removeLabel,
+      addLabels,
+      createComment,
+      createWorkflowDispatch,
+    };
   }
 
   it('defaults to cycling the claude label', async () => {
-    const { removeLabel, addLabels } = mockOctokit(['claude']);
+    const { removeLabel, addLabels, createWorkflowDispatch } = mockOctokit([
+      'claude',
+    ]);
 
     await retriggerIssue(DEFAULT_REPO, 2709);
 
-    expect(removeLabel).toHaveBeenCalledWith(
+    expect(removeLabel).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'claude' }),
     );
-    expect(addLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ['claude'] }),
+    expect(addLabels).not.toHaveBeenCalled();
+    expect(createWorkflowDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflow_id: 'agent-router.yml',
+        inputs: { issue: '2709', pipeline: 'claude', mode: 'implement' },
+      }),
     );
   });
 
   it('cycles the opencode label for the opencode pipeline', async () => {
-    const { removeLabel, addLabels } = mockOctokit(['opencode']);
+    const { removeLabel, addLabels, createWorkflowDispatch } = mockOctokit([
+      'opencode',
+    ]);
 
     await retriggerIssue(DEFAULT_REPO, 2709, undefined, 'opencode');
 
-    expect(removeLabel).toHaveBeenCalledWith(
+    expect(removeLabel).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'opencode' }),
     );
-    expect(addLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ['opencode'] }),
+    expect(addLabels).not.toHaveBeenCalled();
+    expect(createWorkflowDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputs: { issue: '2709', pipeline: 'opencode', mode: 'implement' },
+      }),
     );
   });
 
@@ -407,7 +428,8 @@ describe('retriggerIssue (pipeline routing)', () => {
   });
 
   it('posts the steering note and still cycles the label when the note carries no mention', async () => {
-    const { createComment, removeLabel, addLabels } = mockOctokit(['opencode']);
+    const { createComment, removeLabel, addLabels, createWorkflowDispatch } =
+      mockOctokit(['opencode']);
 
     await retriggerIssue(
       DEFAULT_REPO,
@@ -419,12 +441,16 @@ describe('retriggerIssue (pipeline routing)', () => {
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'try a different approach' }),
     );
-    expect(removeLabel).toHaveBeenCalled();
-    expect(addLabels).toHaveBeenCalled();
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'human-needed' }),
+    );
+    expect(addLabels).not.toHaveBeenCalled();
+    expect(createWorkflowDispatch).toHaveBeenCalled();
   });
 
   it('skips the label cycle when the note already carries the pipeline mention (would double-dispatch)', async () => {
-    const { createComment, removeLabel, addLabels } = mockOctokit(['opencode']);
+    const { createComment, removeLabel, addLabels, createWorkflowDispatch } =
+      mockOctokit(['opencode']);
 
     await retriggerIssue(
       DEFAULT_REPO,
@@ -443,16 +469,21 @@ describe('retriggerIssue (pipeline routing)', () => {
       expect.objectContaining({ name: 'opencode' }),
     );
     expect(addLabels).not.toHaveBeenCalled();
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });
 
   it('a claude-pipeline note carrying /oc does not trigger the claude early-return', async () => {
-    const { removeLabel, addLabels } = mockOctokit(['claude']);
+    const { removeLabel, addLabels, createWorkflowDispatch } = mockOctokit([
+      'claude',
+    ]);
 
     await retriggerIssue(DEFAULT_REPO, 2709, 'please /oc retry this', 'claude');
 
-    // /oc means nothing to claude.yml's trigger - the label still cycles.
-    expect(removeLabel).toHaveBeenCalled();
-    expect(addLabels).toHaveBeenCalled();
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'human-needed' }),
+    );
+    expect(addLabels).not.toHaveBeenCalled();
+    expect(createWorkflowDispatch).toHaveBeenCalled();
   });
 });
 

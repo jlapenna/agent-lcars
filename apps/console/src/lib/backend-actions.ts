@@ -242,6 +242,7 @@ export async function cancelWorkflowRun(
 // Dispatches the same workflow_dispatch event a human triggers from the
 // Actions tab or `gh workflow run` — see playbook-unstick-prs.yml.
 const DEFAULT_BRANCH = 'main';
+const AGENT_ROUTER_WORKFLOW = 'agent-router.yml';
 
 // dispatchUnstickPrs is a global console-level ops action, not scoped to any
 // one action item. Unlike createQuickTask below, it has neither a repo
@@ -269,9 +270,7 @@ export async function retriggerIssue(
   pipeline: Pipeline = 'claude',
 ): Promise<void> {
   const octokit = getGithubClient();
-  // Pipeline's two values ('claude' | 'opencode') are themselves the label
-  // names that dispatch each pipeline (claude.yml / opencode.yml's
-  // `issues: labeled` triggers) - no separate lookup table needed.
+  // Pipeline names intentionally match the dispatch router's choice inputs.
   const label: string = pipeline;
 
   const { data: issue } = await octokit.rest.issues.get({
@@ -294,11 +293,9 @@ export async function retriggerIssue(
   await clearHumanNeededLabel(repo, issueNumber);
 
   // A steering note goes up BEFORE the retrigger so the fresh run reads it
-  // as part of the thread. Deliberately NOT run through ensureMention: on a
-  // labeled issue a comment already containing the pipeline's own mention
-  // dispatches a run all by itself, so appending it here and then cycling
-  // the label would double-dispatch. Same reason for the early return below
-  // when the note already carries it.
+  // as part of the thread. Deliberately NOT run through ensureMention: a
+  // comment already containing the pipeline's own mention dispatches a run
+  // through the direct reply path, so dispatching here would double-run it.
   const trimmedNote = note?.trim();
   if (trimmedNote) {
     await octokit.rest.issues.createComment({
@@ -312,19 +309,16 @@ export async function retriggerIssue(
     }
   }
 
-  // Removing then re-adding the label is the only way to re-fire the
-  // `issues: labeled` trigger on the same label value.
-  await octokit.rest.issues.removeLabel({
+  await octokit.rest.actions.createWorkflowDispatch({
     owner: repo.owner,
     repo: repo.name,
-    issue_number: issueNumber,
-    name: label,
-  });
-  await octokit.rest.issues.addLabels({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-    labels: [label],
+    workflow_id: AGENT_ROUTER_WORKFLOW,
+    ref: DEFAULT_BRANCH,
+    inputs: {
+      issue: String(issueNumber),
+      pipeline,
+      mode: 'implement',
+    },
   });
 }
 
@@ -381,9 +375,8 @@ export async function reassignPipeline(
     });
   }
 
-  // Adding a label the issue didn't already carry fires the target
-  // pipeline's own `issues: labeled` trigger by itself - no remove-then-readd
-  // cycle needed here, unlike retriggerIssue's same-label case.
+  // Adding the target label fires the centralized agent-router workflow;
+  // there is no pipeline-specific label listener anymore.
   await octokit.rest.issues.addLabels({
     owner: repo.owner,
     repo: repo.name,

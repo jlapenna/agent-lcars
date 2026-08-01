@@ -38,6 +38,9 @@ jlapenna`), and use as the assignee in the parking recipe
   (agent-protocol.md §4). The console reads this exact login as
   `MAINTAINER_LOGIN`.
 
+- **Dispatch:** pipeline labels are routed by `agent-router.yml` to exactly
+  one of `claude.yml`, `codex.yml`, or `opencode.yml`, with precedence
+  `claude` > `codex` > `opencode`.
 - **Reply triggers:** `@claude` (claude.yml) on an issue already carrying
   the `claude` label, or directly on a pull request; `/codex` (codex.yml)
   on an issue carrying the `codex` label; `/opencode` or `/oc`

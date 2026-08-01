@@ -11,8 +11,8 @@ import { retriggerIssue } from './actions';
 /**
  * Retrigger-with-steering-note, shared by queue cards and compact rows.
  * Only rendered for claude- or opencode-labeled issues (the server 400s
- * otherwise) and disabled while a run is in flight (the label cycle would
- * double-dispatch). `pipeline` selects which label gets cycled - defaults
+ * otherwise) and disabled while a run is in flight. `pipeline` selects the
+ * target router pipeline - defaults
  * to `claude` for existing call sites that haven't been made pipeline-aware.
  */
 export function RetriggerButton({
