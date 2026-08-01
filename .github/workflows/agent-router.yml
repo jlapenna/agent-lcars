@@ -1,0 +1,77 @@
+name: Agent Issue Router
+
+# GitHub cannot filter `issues:labeled` by label name at the workflow trigger
+# level. Keep that unavoidable broad subscription in one cheap router, then
+# dispatch exactly one agent workflow for the selected pipeline.
+run-name: >-
+  route #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to route'
+        required: true
+      pipeline:
+        description: 'Agent pipeline to route to'
+        required: true
+        type: choice
+        options: [claude, codex, opencode]
+      mode:
+        description: 'Dispatch mode'
+        required: false
+        default: implement
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+
+jobs:
+  route:
+    if: >
+      (github.event_name == 'issues' && github.event.action == 'labeled' &&
+       github.actor == vars.MAINTAINER_LOGIN &&
+       (github.event.label.name == 'claude' ||
+        github.event.label.name == 'codex' ||
+        github.event.label.name == 'opencode')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.issue != '' && github.event.inputs.pipeline != '')
+    runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
+    steps:
+      - name: Dispatch the selected agent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          LABEL: ${{ github.event.label.name }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          INPUT_ISSUE: ${{ github.event.inputs.issue }}
+          INPUT_PIPELINE: ${{ github.event.inputs.pipeline }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ISSUE="${ISSUE:-$INPUT_ISSUE}"
+          LABEL="${LABEL:-$INPUT_PIPELINE}"
+          MODE="${INPUT_MODE:-implement}"
+          if [[ -z "$LABELS" && -n "$ISSUE" ]]; then
+            LABELS=$(gh issue view "$ISSUE" --repo "$REPO" --json labels --jq '[.labels[].name] | join(",")')
+          fi
+          has_label() { [[ ",${LABELS}," == *",$1,"* ]]; }
+          workflow=""
+          case "$LABEL" in
+            claude) workflow=claude.yml ;;
+            codex) has_label claude || workflow=codex.yml ;;
+            opencode)
+              if ! has_label claude && ! has_label codex; then workflow=opencode.yml; fi
+              ;;
+          esac
+          if [[ -z "$workflow" ]]; then
+            echo "No dispatch: a higher-precedence agent label is already present."
+            exit 0
+          fi
+          echo "Dispatching $workflow for issue #$ISSUE."
+          gh workflow run "$workflow" --repo "$REPO" --ref main \
+            -f issue="$ISSUE" -f mode="$MODE"

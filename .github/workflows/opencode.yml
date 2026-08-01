@@ -21,8 +21,6 @@ run-name: >-
   ${{ ((github.event_name == 'issues' && github.event.label.name != 'opencode') || (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot')) && 'noop ' || 'opencode ' }}#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}
 
 on:
-  issues:
-    types: [labeled]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -30,6 +28,10 @@ on:
       issue:
         description: 'Issue number to run against (manual testing)'
         required: true
+      mode:
+        description: 'Dispatch mode for router-triggered issue work'
+        required: false
+        default: 'implement'
 
 # Least privilege: enough to comment, push a feature branch, and open a PR.
 # actions:write lets the agent re-run failed CI on its own PRs via
@@ -68,12 +70,6 @@ jobs:
     # maintainer login (matching claude.yml's identical fix and this same
     # hardcoded login used elsewhere in this workflow).
     if: >
-      (github.event_name == 'issues' &&
-       github.event.action == 'labeled' &&
-       github.event.label.name == 'opencode' &&
-       github.actor == vars.MAINTAINER_LOGIN &&
-       !contains(github.event.issue.labels.*.name, 'claude') &&
-       !contains(github.event.issue.labels.*.name, 'codex')) ||
       (github.event_name == 'issue_comment' &&
        github.event.comment.user.type != 'Bot' &&
        github.event.comment.author_association == 'OWNER' &&

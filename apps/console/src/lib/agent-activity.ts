@@ -273,9 +273,10 @@ function toAgentRun(
   };
 }
 
-// Both claude.yml and opencode.yml fire on EVERY issue comment and label
-// event; almost all runs skip at the job-level `if:` and complete in
-// seconds with conclusion `skipped`. During a busy comment stretch the
+// Both claude.yml and opencode.yml still fire on every issue comment, while
+// agent-router.yml is the sole label listener. Most comment-triggered runs
+// skip at the job-level `if:` and complete in seconds with conclusion
+// `skipped`. During a busy comment stretch the
 // newest 50+ runs can ALL be skipped no-ops, so "recent real runs" cannot be
 // derived from a single recency-ordered page - query per real conclusion
 // instead (the API's `status` param also accepts conclusions) and merge.

@@ -25,8 +25,8 @@ const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
 /**
  * Files a new `quick-task`-labeled issue from a free-text description and
  * hands it to the selected agent pipeline (that pipeline's own label is
- * added as a follow-up call so the `issues: labeled` trigger actually fires
- * - see createQuickTask in backend-actions.ts). No polling here: the new
+ * added as a follow-up call so the centralized agent router receives the
+ * label event - see createQuickTask in backend-actions.ts). No polling here: the new
  * issue shows up in the board / In Flight panel on the next refresh.
  *
  * Full screen rather than a Popover: an autosizing Popover grows and shifts
