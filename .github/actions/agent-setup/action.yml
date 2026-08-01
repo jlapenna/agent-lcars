@@ -1,0 +1,26 @@
+name: Agent setup
+description: Configure the agent git identity and record the run start.
+inputs:
+  agent-login:
+    description: Fleet account used for assignment and git identity.
+    required: true
+outputs:
+  started-at:
+    description: UTC timestamp used by the deliverable gate.
+    value: ${{ steps.start.outputs.started_at }}
+runs:
+  using: composite
+  steps:
+    - name: Configure git identity
+      if: inputs.agent-login != ''
+      shell: bash
+      env:
+        AGENT_LOGIN: ${{ inputs.agent-login }}
+      run: |
+        git config user.name "$AGENT_LOGIN"
+        git config user.email "$AGENT_LOGIN@users.noreply.github.com"
+
+    - name: Record run start time
+      id: start
+      shell: bash
+      run: echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"

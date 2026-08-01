@@ -17,8 +17,6 @@ run-name: >-
   ${{ ((github.event_name == 'issues' && github.event.label.name != 'claude') || (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot')) && 'noop ' || '' }}#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title || format('manual dispatch #{0}', github.event.inputs.issue) }}
 
 on:
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       issue:
@@ -28,6 +26,10 @@ on:
         description: 'Dispatch mode for router-triggered issue work'
         required: false
         default: 'implement'
+      reply:
+        description: 'Original maintainer reply when mode is reply'
+        required: false
+        default: ''
 
 # Least privilege: enough for Claude to comment on the issue, push a feature
 # branch, open a pull request, and read CI results on the PRs it opens.
@@ -73,15 +75,7 @@ jobs:
     #  - a manual workflow_dispatch names an issue.
     # Claude's own github-actions[bot] comments cannot re-trigger the
     # workflow, so there is no comment loop.
-    if: >
-      (github.event_name == 'issue_comment' &&
-       github.event.comment.user.type != 'Bot' &&
-       github.event.comment.author_association == 'OWNER' &&
-       contains(github.event.comment.body, '@claude') &&
-       (contains(github.event.issue.labels.*.name, 'claude') ||
-        github.event.issue.pull_request != null)) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.issue != '')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
     # claude-agent-lcars is registered in jlapenna/homelab's
     # github-runner-autoscaler/orchestrator.yml as
     # homelab-autoscale-claude-agent-lcars (homelab#97). Do NOT point this
@@ -112,19 +106,26 @@ jobs:
       # idempotent: this never removes a human assignee. Non-blocking: a
       # failed claim must not cost the run. Runs before Checkout on purpose
       # - the claim should land even if workspace setup fails.
-      - name: Claim the issue as jclaw-bot
+      - name: Claim the issue as the agent fleet
         env:
           GH_TOKEN: ${{ github.token }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
           gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-            -f "assignees[]=${{ vars.AGENT_FLEET_LOGIN }}" --silent \
-            || echo "::warning::Could not assign jclaw-bot to #$NUM"
+            -f "assignees[]=$CLAIM_LOGIN" --silent \
+            || echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
 
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Shared agent setup
+        id: agent-setup
+        uses: ./.github/actions/agent-setup
+        with:
+          agent-login: ${{ vars.AGENT_FLEET_LOGIN }}
 
       # Same-host cache sharing with the CI runner: presence-gated so the
       # job still works on a runner container without the mount.
@@ -197,9 +198,8 @@ jobs:
       # Wall-clock anchor for the no-deliverable check below: only artifacts
       # (PRs, issue closes, labels, comments) created/updated AFTER this
       # moment count as this run's output.
-      - name: Record run start time
-        id: start
-        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      # The shared setup action records the wall-clock anchor used by the
+      # deliverable check below.
 
       - name: Run Claude Code
         # SHA-pinned (not the v1.0.181 tag, and not floating @v1) deliberately:
@@ -247,7 +247,8 @@ jobs:
           # back to tag mode with different tool rules and no
           # eyes-reaction/progress behavior.
           prompt: >-
-            ${{ (github.event_name == 'workflow_dispatch') && format('You
+            ${{ (github.event_name == 'workflow_dispatch' &&
+            github.event.inputs.mode != 'reply') && format('You
             are dispatched to work issue #{0} in this repo. Read AGENTS.md,
             then .agents/skills/agent-protocol/agent-protocol.md, then
             .agents/skills/lcars/lcars-protocol.md, in that order, and
@@ -273,19 +274,16 @@ jobs:
             in the body) - or a clarifying comment is posted with the
             human-needed label applied and jlapenna assigned.',
             github.event.issue.number, github.event.issue.title) ||
-            format('The repo owner posted an @claude reply on #{0} ("{1}")
-            - this may be the original tracking issue, or a pull request
-            you already opened (GitHub numbers both the same way; check
-            which one this is and, if it is a PR, also read the linked
-            tracking issue for full context). Read AGENTS.md, then
+            format('The repo owner posted an @claude reply on #{0}: {1}. Read
+            AGENTS.md, then
             .agents/skills/agent-protocol/agent-protocol.md, then
             .agents/skills/lcars/lcars-protocol.md, in that order, and
             follow them exactly - they define the goal, the hard rails, and
             the reporting format. This is a headless CI run: work strictly
             synchronously, never launch background subagents or schedule
             wakeups, and do not end your turn until your deliverable (PR
-            update or comment) exists.', github.event.issue.number,
-            github.event.issue.title) }}
+            update or comment) exists.', github.event.inputs.issue,
+            github.event.inputs.reply) }}
           # Allow Bash wholesale. The action denies all Bash by default, and
           # a granular allowlist is brittle (env-var prefixes and pipes
           # don't match Bash(cmd:*) patterns cleanly). The authorization
@@ -370,9 +368,9 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
-          STARTED_AT: ${{ steps.start.outputs.ts }}
+          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-          IS_COMMENT_REPLY: ${{ github.event_name == 'issue_comment' }}
+          IS_COMMENT_REPLY: ${{ github.event.inputs.mode == 'reply' }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
