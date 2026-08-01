@@ -111,6 +111,23 @@ Before opening a PR, match what CI runs:
 pnpm verify   # format:check, lint, lint:circular, then test/typecheck/build --all
 ```
 
+### OpenCode GitHub App
+
+OpenCode uses the private **Agent LCARS** GitHub App (`agent-lcars[bot]`),
+not a long-lived personal access token. Install it on every repository where
+OpenCode may work, with repository read/write access to **Actions**,
+**Contents**, **Issues**, **Pull requests**, and **Workflows**; keep webhooks
+disabled. Each enrolled repository needs:
+
+- the `AGENT_LCARS_APP_ID` repository variable;
+- the `AGENT_LCARS_PRIVATE_KEY` Actions secret containing the App PEM key.
+
+`opencode.yml` mints a short-lived installation token and verifies that it
+authenticates as `agent-lcars[bot]` before starting agent work. This keeps
+OpenCode's branch/PR identity stable and avoids GitHub's first-contributor
+workflow approval path. Generate a replacement private key from the App's
+settings page when needed; never put it in source control or an issue.
+
 ## Documentation
 
 - [docs/onboarding-console-and-telemetry.md](docs/onboarding-console-and-telemetry.md)
