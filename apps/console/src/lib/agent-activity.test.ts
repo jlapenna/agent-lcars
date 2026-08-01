@@ -2,6 +2,7 @@ import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
   type AgentRun,
+  collapseLogicalLiveRuns,
   displayRunTitle,
   findStalledQueuedRun,
   getAgentActivity,
@@ -186,6 +187,48 @@ describe('groupLiveRunsByIssue', () => {
   });
 });
 
+describe('collapseLogicalLiveRuns', () => {
+  it('represents queued and running attempts for one agent item as one run', () => {
+    const queued = makeAgentRun({
+      id: 1,
+      status: 'queued',
+      createdAt: '2026-07-07T00:01:00Z',
+    });
+    const running = makeAgentRun({
+      id: 2,
+      status: 'running',
+      createdAt: '2026-07-07T00:00:00Z',
+    });
+
+    expect(
+      collapseLogicalLiveRuns([queued, running]).map((run) => run.id),
+    ).toEqual([2]);
+  });
+
+  it('keeps different pipelines on the same issue visible', () => {
+    const runs = collapseLogicalLiveRuns([
+      makeAgentRun({ id: 1, status: 'running', pipeline: 'claude' }),
+      makeAgentRun({ id: 2, status: 'queued', pipeline: 'codex' }),
+    ]);
+
+    expect(runs.map((run) => run.id)).toEqual([1, 2]);
+  });
+
+  it('never collapses unparsed or cross-repository runs', () => {
+    const runs = collapseLogicalLiveRuns([
+      makeAgentRun({ id: 1, issueNumber: undefined }),
+      makeAgentRun({ id: 2, issueNumber: undefined }),
+      makeAgentRun({ id: 3 }),
+      makeAgentRun({
+        id: 4,
+        repo: { owner: 'elsewhere', name: 'sprinkles' },
+      }),
+    ]);
+
+    expect(runs.map((run) => run.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
 describe('getAgentActivity', () => {
   function setupOctokit({
     listWorkflowRuns,
@@ -228,6 +271,33 @@ describe('getAgentActivity', () => {
     expect(activity.liveRuns).toHaveLength(1);
     expect(activity.liveRuns[0].issueNumber).toBe(42);
     expect(activity.liveRuns[0].pipeline).toBe('claude');
+  });
+
+  it('returns one logical live run for duplicate attempts of the same agent item', async () => {
+    const listWorkflowRuns = vi
+      .fn()
+      .mockImplementation(({ workflow_id, status }) => {
+        if (workflow_id === 'claude.yml' && status === undefined) {
+          return Promise.resolve({
+            data: {
+              workflow_runs: [
+                makeRun({ id: 1, status: 'pending' }),
+                makeRun({ id: 2, status: 'in_progress' }),
+              ],
+            },
+          });
+        }
+        return Promise.resolve({ data: { workflow_runs: [] } });
+      });
+    const listSelfHostedRunnersForRepo = vi
+      .fn()
+      .mockResolvedValue({ data: { runners: [] } });
+    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.liveRuns.map((run) => run.id)).toEqual([2]);
+    expect(activity.liveRunAttempts?.map((run) => run.id)).toEqual([1, 2]);
   });
 
   it('falls back to undefined issueNumber for a legacy title', async () => {

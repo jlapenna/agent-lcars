@@ -303,6 +303,21 @@ describe('getActionItems', () => {
     ]);
   });
 
+  it('classifies a groomed ready-for-agent issue as Inbox work', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(7, { labels: ['status:ready-for-agent', 'type:bug'] }),
+      ],
+    });
+    setupOctokit({ listForRepo });
+
+    const result = await getActionItems();
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].actionTypes).toEqual(['ready-for-agent']);
+    expect(result.items[0].labels).toEqual(['type:bug']);
+  });
+
   it('selects a dispatched item using its repository integration label', async () => {
     const repo = {
       ...DEFAULT_REPO,

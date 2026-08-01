@@ -378,7 +378,7 @@ export function LiveRunRow({
 /**
  * Renders `liveRuns` clustered by the issue/PR they're working
  * (`groupLiveRunsByIssue`), so two runs racing the same item - a second
- * pipeline dispatched onto it, a stray duplicate - show up visibly
+ * pipeline dispatched onto it - show up visibly
  * together instead of scattered across the flat list (#239). A group of
  * one renders exactly as a bare `LiveRunRow` always has; only a group of
  * two or more gets the clustering chrome, so the overwhelmingly common
@@ -650,7 +650,7 @@ export function AgentActivityPanel({
    * renders exactly as before this telemetry existed (PRD user story 16). */
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
 }) {
-  const { liveRuns, recentRuns, fleet } = activity;
+  const { liveRuns, liveRunAttempts = liveRuns, recentRuns, fleet } = activity;
 
   const activeSessions = cliSessions.filter(
     (session) => session.liveness === 'live' || session.liveness === 'idle',
@@ -678,7 +678,7 @@ export function AgentActivityPanel({
           </Group>
         </Group>
 
-        <QueueHealthAlert liveRuns={liveRuns} />
+        <QueueHealthAlert liveRuns={liveRunAttempts} />
 
         {liveRuns.length === 0 && activeSessions.length === 0 && (
           <Text size="sm" c="dimmed">

@@ -28,6 +28,7 @@ const FILTER_OPTIONS: Array<{ value: QueueFilter; label: string }> = [
   { value: 'all', label: 'All reasons' },
   { value: 'needs-human', label: 'Human needed' },
   { value: 'review-requested', label: 'Review requested' },
+  { value: 'ready-for-agent', label: 'Ready for agent' },
   { value: 'run-failed', label: 'Run failed' },
   { value: 'merge-blocked', label: 'Merge blocked' },
   { value: 'silent-error', label: 'Silent error' },

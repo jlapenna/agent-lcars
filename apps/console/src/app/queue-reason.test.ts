@@ -37,6 +37,17 @@ describe('queueReasonFor', () => {
   it('returns undefined when an item has no actionable reason', () => {
     expect(queueReasonFor(makeItem())).toBeUndefined();
   });
+
+  it('describes a groomed item awaiting agent dispatch', () => {
+    expect(
+      queueReasonFor(makeItem({ actionTypes: ['ready-for-agent'] })),
+    ).toEqual({
+      type: 'ready-for-agent',
+      label: 'Ready for agent',
+      color: 'cyan',
+      rank: 2,
+    });
+  });
 });
 
 describe('queueDisclosureLabels', () => {
@@ -46,6 +57,7 @@ describe('queueDisclosureLabels', () => {
         makeItem({
           labels: [
             'agent:claude',
+            'status:ready-for-agent',
             'status:needs-human',
             'type:bug',
             'app:console',

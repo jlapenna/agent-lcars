@@ -31,6 +31,7 @@ export const E2E_ITEM_NUMBERS = {
   reviewRequested: 9003,
   postDeploy: 9004,
   silentError: 9005,
+  readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
 } as const;
 

@@ -21,6 +21,7 @@ export { agentFleetLogin, maintainerLogin };
 
 export type ActionType =
   | 'needs-human'
+  | 'ready-for-agent'
   | 'run-failed'
   | 'review-requested'
   | 'post-deploy-action'
@@ -117,6 +118,7 @@ const ACTION_PRIORITY: Record<ActionType, number> = {
   'needs-human': 0,
   'review-requested': 0,
   'merge-blocked': 0,
+  'ready-for-agent': 1,
   'run-failed': 1,
   'silent-error': 1,
   'post-deploy-action': 2,
@@ -131,6 +133,7 @@ function itemPriority(item: ActionItem): number {
 // ACTION_LABELS in action-item-card.tsx) - repeating them in the plain
 // label list would just be noise.
 const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
+  'status:ready-for-agent',
   'status:needs-human',
   'status:post-deploy-action',
 ]);
@@ -208,6 +211,7 @@ function classifyIssue(
     typeof label === 'string' ? label : (label.name ?? ''),
   );
   const isPostDeploy = labels.includes('status:post-deploy-action');
+  const isReadyForAgent = labels.includes('status:ready-for-agent');
   const assigneeLogins = (issue.assignees ?? []).map(
     (assignee) => assignee?.login ?? '',
   );
@@ -220,6 +224,9 @@ function classifyIssue(
   const isHumanNeeded = labels.includes('status:needs-human');
 
   const actionTypes: ActionType[] = [];
+  if (isReadyForAgent) {
+    actionTypes.push('ready-for-agent');
+  }
   if (isHumanNeeded) {
     actionTypes.push('needs-human');
   }
@@ -371,12 +378,11 @@ function classifyIssue(
  * step only runs once a runner picks the job up. Without these exactly the
  * items most in need of attention would be invisible.
  *
- * `status:needs-human` is one of this dashboard's own action types, but not every
- * human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
- * carry it without ever having a pipeline label or an agent author (or, if
- * labeled by hand, an assignee), and without this it never enters the
- * dashboard at all. */
-const BOARD_LABELS = ['status:needs-human'];
+ * `status:ready-for-agent` and `status:needs-human` are dashboard action
+ * types in their own right. Neither necessarily has a pipeline label or an
+ * agent/maintainer assignee yet, so both must select an item independently or
+ * exactly the handoff work they represent would remain invisible. */
+const BOARD_LABELS = ['status:needs-human', 'status:ready-for-agent'];
 
 /** REST-shaped logins (docs/bot-identity-formats.md) of every pipeline that
  * opens PRs under its own identity - kept in sync with the

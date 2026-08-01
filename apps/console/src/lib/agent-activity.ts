@@ -91,7 +91,14 @@ export interface FleetSummary {
 }
 
 export interface AgentActivity {
+  /** Logical work rows shown by the console. Duplicate workflow attempts for
+   * one repo/issue/pipeline are collapsed; distinct pipelines are retained. */
   liveRuns: AgentRun[];
+  /** Raw live workflow attempts before presentation collapse. Health checks
+   * use these so a stalled queued attempt cannot be hidden by a running or
+   * newer representative. Optional for callers constructing local fixtures;
+   * production fetches always populate it. */
+  liveRunAttempts?: AgentRun[];
   recentRuns: AgentRun[];
   /** undefined = runner API unavailable (e.g. token lacks admin:read).
    * Deduped by runner id across every watched repo (see `fleetByRepo` for
@@ -209,6 +216,45 @@ export function groupLiveRunsByIssue(liveRuns: AgentRun[]): LiveRunGroup[] {
     }
   }
   return Array.from(groups.values());
+}
+
+/**
+ * GitHub can briefly expose more than one workflow attempt for the same
+ * logical piece of work (the same repository, issue and agent pipeline),
+ * most visibly as one running attempt beside one queued attempt. The console
+ * reports work, not transport-level dispatch attempts, so retain one
+ * representative row for that logical run. Different pipelines on the same
+ * issue remain distinct: those really are separate agents racing the item.
+ *
+ * Prefer an actively running attempt over a queued one, then the newest
+ * attempt when statuses tie. Runs whose issue number cannot be parsed stay
+ * independent because there is no safe item identity on which to collapse.
+ */
+export function collapseLogicalLiveRuns(liveRuns: AgentRun[]): AgentRun[] {
+  const byLogicalKey = new Map<string, AgentRun>();
+  const statusRank: Record<AgentRunStatus, number> = {
+    completed: 0,
+    queued: 1,
+    running: 2,
+  };
+
+  for (const run of liveRuns) {
+    const key =
+      run.issueNumber === undefined
+        ? `run-${run.id}`
+        : `${repoItemKey(run.repo, run.issueNumber)}:${run.pipeline}`;
+    const current = byLogicalKey.get(key);
+    if (
+      !current ||
+      statusRank[run.status] > statusRank[current.status] ||
+      (statusRank[run.status] === statusRank[current.status] &&
+        run.createdAt > current.createdAt)
+    ) {
+      byLogicalKey.set(key, run);
+    }
+  }
+
+  return Array.from(byLogicalKey.values());
 }
 
 interface WorkflowRunLike {
@@ -379,6 +425,8 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       );
     }
   }
+  const liveRunAttempts = liveRuns;
+  liveRuns = collapseLogicalLiveRuns(liveRunAttempts);
 
   let recentRuns: AgentRun[] = [];
   for (const [i, result] of recentResults.entries()) {
@@ -450,6 +498,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
 
   return {
     liveRuns,
+    liveRunAttempts,
     recentRuns,
     fleet,
     fleetByRepo,

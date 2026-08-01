@@ -46,12 +46,17 @@ function activity(liveRuns: AgentRun[] = []): AgentActivity {
 describe('buildQueueView', () => {
   it('keeps the Inbox and Command Deck ownership buckets mutually exclusive', () => {
     const view = buildQueueView(
-      [item(1, ['needs-human']), item(2, ['post-deploy-action']), item(3, [])],
+      [
+        item(1, ['needs-human']),
+        item(2, ['post-deploy-action']),
+        item(3, []),
+        item(4, ['ready-for-agent']),
+      ],
       activity(),
       new Map(),
     );
 
-    expect(view.yourQueue.map(({ number }) => number)).toEqual([1]);
+    expect(view.yourQueue.map(({ number }) => number)).toEqual([1, 4]);
     expect(view.waitingOnDeploy.map(({ number }) => number)).toEqual([2]);
     expect(view.rest.map(({ number }) => number)).toEqual([3]);
   });

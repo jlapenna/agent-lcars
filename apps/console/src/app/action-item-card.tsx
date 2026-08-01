@@ -39,6 +39,7 @@ import { UnstickPrsButton } from './unstick-prs-button';
 
 const ACTION_LABELS: Record<ActionType, string> = {
   'needs-human': 'Needs a human',
+  'ready-for-agent': 'Ready for agent',
   'run-failed': 'CI run failed',
   'review-requested': 'Review requested',
   'merge-blocked': 'Base branch moved',
@@ -48,6 +49,7 @@ const ACTION_LABELS: Record<ActionType, string> = {
 
 const ACTION_COLORS: Record<ActionType, string> = {
   'needs-human': 'blue',
+  'ready-for-agent': 'cyan',
   'run-failed': 'red',
   'review-requested': 'grape',
   'merge-blocked': 'yellow',
