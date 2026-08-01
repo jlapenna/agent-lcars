@@ -48,6 +48,7 @@ export const E2E_ITEM_NUMBERS = {
   reviewRequested: 9003,
   postDeploy: 9004,
   silentError: 9005,
+  readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
 } as const;
 
@@ -62,6 +63,7 @@ export const E2E_RUN_IDS = {
    * `silent-error` classification is derived from that join, never from the
    * item's own GitHub state, so it needs both halves to render. */
   silentError: 70007,
+  duplicateQueued: 70008,
 } as const;
 
 const HEAD_SHAS = {
@@ -184,6 +186,16 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     ],
   },
   {
+    number: E2E_ITEM_NUMBERS.readyForAgent,
+    title: 'Add retention metrics to the session archive',
+    body: 'Groomed and ready for the maintainer to choose an agent.',
+    isPr: false,
+    labels: ['status:ready-for-agent', 'app:console'],
+    assignees: [],
+    author: MAINTAINER,
+    updatedAt: minutesAgo(33),
+  },
+  {
     number: E2E_ITEM_NUMBERS.humanNeededPostDeploy,
     title: 'Confirm the archive TTL took effect in production',
     body: 'Needs a call on the window, then a post-deploy check.',
@@ -253,6 +265,18 @@ const FIXTURE_RUNS: FixtureRun[] = [
     createdAt: minutesAgo(9),
     startedAt: minutesAgo(9),
     updatedAt: minutesAgo(9),
+  },
+  {
+    id: E2E_RUN_IDS.duplicateQueued,
+    workflow: 'claude.yml',
+    status: 'queued',
+    conclusion: null,
+    // Same logical work as `running`: the GitHub API exposes both workflow
+    // attempts, while the console should render one active item.
+    displayTitle: '#9008: feat(console): repo filter chips',
+    createdAt: minutesAgo(11),
+    startedAt: minutesAgo(11),
+    updatedAt: minutesAgo(11),
   },
   {
     id: E2E_RUN_IDS.succeeded,

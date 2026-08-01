@@ -137,13 +137,19 @@ describe('QueueWorkspace', () => {
     const menu = await screen.findByRole('menu');
     expect(
       within(menu).getAllByRole('menuitem', { hidden: true }),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
     expect(
       within(menu).getByRole('menuitem', {
         name: 'All reasons',
         hidden: true,
       }),
     ).toHaveAttribute('aria-current', 'true');
+    expect(
+      within(menu).getByRole('menuitem', {
+        name: 'Ready for agent',
+        hidden: true,
+      }),
+    ).toBeTruthy();
     fireEvent.click(
       within(menu).getByRole('menuitem', {
         name: 'Review requested',

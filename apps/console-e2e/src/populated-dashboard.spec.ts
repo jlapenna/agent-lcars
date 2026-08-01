@@ -42,12 +42,16 @@ test.describe('populated dashboard', () => {
     // per row. Deploy-wait-only work remains in the compact tier below.
     for (const label of [
       'Human needed',
+      'Ready for agent',
       'Run failed',
       'Review requested',
       'Silent error',
     ]) {
       await expect(page.getByText(label).first()).toBeVisible();
     }
+    await expect(
+      page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.readyForAgent}`),
+    ).toBeVisible();
 
     // The silent-error tier only exists because a run's joined session doc
     // contradicts its green conclusion — assert the diagnosis text, not just
@@ -108,6 +112,9 @@ test.describe('populated dashboard', () => {
     // Live: a running row (with its elapsed/turn gauges) and a queued row
     // stalled past the threshold, which is what drives the queue alert.
     await expect(page.getByTestId('queue-health-alert')).toBeVisible();
+    // The fixture API returns a third raw live attempt, queued behind the
+    // running Claude attempt for the same issue. It collapses into the same
+    // logical work item, so the fleet still reports two active runs.
     await expect(page.getByTestId('fleet-chip')).toHaveText(
       '2 runners active (1 busy)',
     );
@@ -274,10 +281,13 @@ test.describe('responsive decision inbox', () => {
     await filter.focus();
     await page.keyboard.press('Enter');
     const choices = page.getByRole('menuitem');
-    await expect(choices).toHaveCount(6);
+    await expect(choices).toHaveCount(7);
     await expect(
       page.getByRole('menuitem', { name: 'All reasons' }),
     ).toHaveAttribute('aria-current', 'true');
+    await expect(
+      page.getByRole('menuitem', { name: 'Ready for agent' }),
+    ).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(filter).toBeFocused();
   });

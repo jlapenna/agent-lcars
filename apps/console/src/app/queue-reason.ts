@@ -20,29 +20,35 @@ const QUEUE_REASONS: Record<ActionType, QueueReason> = {
     color: 'grape',
     rank: 1,
   },
+  'ready-for-agent': {
+    type: 'ready-for-agent',
+    label: 'Ready for agent',
+    color: 'cyan',
+    rank: 2,
+  },
   'run-failed': {
     type: 'run-failed',
     label: 'Run failed',
     color: 'red',
-    rank: 2,
+    rank: 3,
   },
   'merge-blocked': {
     type: 'merge-blocked',
     label: 'Merge blocked',
     color: 'yellow',
-    rank: 3,
+    rank: 4,
   },
   'silent-error': {
     type: 'silent-error',
     label: 'Silent error',
     color: 'orange',
-    rank: 4,
+    rank: 5,
   },
   'post-deploy-action': {
     type: 'post-deploy-action',
     label: 'Awaiting deploy',
     color: 'gray',
-    rank: 5,
+    rank: 6,
   },
 };
 
@@ -50,6 +56,7 @@ const HIDDEN_ROUTING_LABELS = new Set([
   'agent:claude',
   'agent:codex',
   'agent:opencode',
+  'status:ready-for-agent',
   'status:needs-human',
 ]);
 
