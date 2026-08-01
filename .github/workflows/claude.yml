@@ -13,7 +13,8 @@ name: Claude Issue Agent
 # whose issue number arrives as a plain input instead. The agent console
 # joins a live run to its action-item card by parsing the leading "#<number>:"
 # back out of the run's display_title.
-run-name: "#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title || format('manual dispatch #{0}', github.event.inputs.issue) }}"
+run-name: >-
+  ${{ ((github.event_name == 'issues' && github.event.label.name != 'claude') || (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot')) && 'noop ' || '' }}#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title || format('manual dispatch #{0}', github.event.inputs.issue) }}
 
 on:
   issues:
