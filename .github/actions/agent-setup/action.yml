@@ -2,7 +2,7 @@ name: Agent setup
 description: Configure the agent git identity and record the run start.
 inputs:
   agent-login:
-    description: Fleet account used for assignment and git identity.
+    description: Git identity used for agent commits.
     required: true
 outputs:
   started-at:

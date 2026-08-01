@@ -139,7 +139,7 @@ jobs:
         id: agent-setup
         uses: ./.github/actions/agent-setup
         with:
-          agent-login: ${{ vars.AGENT_FLEET_LOGIN }}
+          agent-login: agent-lcars[bot]
 
       - name: Prepare dispatch context
         uses: ./.github/actions/prepare-agent-dispatch
@@ -173,7 +173,7 @@ jobs:
       - name: Setup OpenCode
         uses: ./.github/actions/setup-opencode
         with:
-          github-token: ${{ github.token }}
+          github-token: ${{ steps.agent-lcars-token.outputs.token }}
 
       - name: Verify OpenCode GitHub identity
         env:
@@ -231,7 +231,7 @@ jobs:
       - name: Verify a deliverable exists
         if: success()
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
           IS_REPLY: ${{ github.event.inputs.mode == 'reply' }}
@@ -293,7 +293,7 @@ jobs:
       - name: Report failure on the issue
         if: failure() || cancelled()
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           RUN_ID: ${{ github.run_id }}
           ISSUE_NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
           REPO: ${{ github.repository }}
