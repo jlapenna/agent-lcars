@@ -70,7 +70,7 @@ const CRASH_DIAGNOSIS =
 // claude.yml before the console ever sees it: "Verify Claude run status"
 // (fails the job on an is_error/$0 startup crash) and "Verify a deliverable
 // exists" (fails the job unless GitHub state shows a PR/commit/closed-issue/
-// human-needed label, #2497). So this diagnosis is deliberately NOT a
+// status:needs-human label, #2497). So this diagnosis is deliberately NOT a
 // "no PR or commit" re-check of GitHub state — that would just re-litigate
 // a gate that already ran, with worse data (a comment-only reply, a
 // playbook run with no announce comment, or a session merely reading past

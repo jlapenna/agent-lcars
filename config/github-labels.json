@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "labels": {
+    "type:bug": {
+      "color": "d73a4a",
+      "description": "Something is not working"
+    },
+    "type:feature": {
+      "color": "a2eeef",
+      "description": "New capability or meaningful improvement"
+    },
+    "type:docs": {
+      "color": "0075ca",
+      "description": "Documentation-only work"
+    },
+    "type:maintenance": {
+      "color": "fbca04",
+      "description": "Maintenance, refactoring, or operational upkeep"
+    },
+    "type:security": {
+      "color": "b60205",
+      "description": "Security vulnerability or hardening work"
+    },
+    "type:dependency-update": {
+      "color": "0366d6",
+      "description": "Dependency update"
+    },
+    "status:ready-for-agent": {
+      "color": "d4c5f9",
+      "description": "Groomed and ready to dispatch to an agent"
+    },
+    "status:blocked": {
+      "color": "b60205",
+      "description": "Waiting on an external dependency or prerequisite"
+    },
+    "status:needs-human": {
+      "color": "d93f0b",
+      "description": "A maintainer must take the next action"
+    },
+    "status:post-deploy-action": {
+      "color": "fbca04",
+      "description": "Awaiting a human or agent action after deployment"
+    },
+    "agent:claude": {
+      "color": "d97757",
+      "description": "Dispatch this item to the Claude agent"
+    },
+    "agent:codex": {
+      "color": "14b8a6",
+      "description": "Dispatch this item to the Codex agent"
+    },
+    "agent:opencode": {
+      "color": "3776ab",
+      "description": "Dispatch this item to the OpenCode agent"
+    },
+    "agent-option:long-run": {
+      "color": "b60205",
+      "description": "Use the extended agent turn and time budget"
+    },
+    "intake:quick-task": {
+      "color": "5319e7",
+      "description": "Filed through the Agent LCARS quick-task intake"
+    },
+    "bot:renovate": {
+      "color": "0366d6",
+      "description": "Created or maintained by Renovate"
+    },
+    "automation:heal": {
+      "color": "f9d0c4",
+      "description": "Opt this pull request into automated diagnosis and repair"
+    },
+    "automation:unstick-prs": {
+      "color": "bfd4f2",
+      "description": "Anchor for the pull-request queue recovery playbook"
+    },
+    "automation:visual-refresh": {
+      "color": "d93f0b",
+      "description": "Anchor for visual baseline refresh automation"
+    },
+    "ci:run-e2e": {
+      "color": "0e8a16",
+      "description": "Run the full end-to-end test suite"
+    },
+    "ci:update-snapshots": {
+      "color": "0e8a16",
+      "description": "Regenerate visual snapshots in CI"
+    },
+    "planning": {
+      "color": "ededed",
+      "description": "Substantial planning, design, or proposal work is documented here"
+    },
+    "app:console": { "color": "1d76db", "description": "Agent LCARS console" },
+    "app:telemetry": {
+      "color": "5319e7",
+      "description": "Agent telemetry collection and transport"
+    },
+    "app:runner-autoscaler": {
+      "color": "0e8a16",
+      "description": "Ephemeral GitHub Actions runner autoscaler"
+    },
+    "app:members": {
+      "color": "1d76db",
+      "description": "Sprinkles Members application"
+    },
+    "app:onecake": {
+      "color": "ff69b4",
+      "description": "Sprinkles OneCake application"
+    },
+    "app:primes": {
+      "color": "f96335",
+      "description": "Sprinkles Primes application"
+    }
+  },
+  "repositories": {
+    "jlapenna/agent-lcars": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "agent-option:long-run",
+        "intake:quick-task",
+        "bot:renovate",
+        "planning",
+        "app:console",
+        "app:telemetry",
+        "app:runner-autoscaler"
+      ],
+      "migrations": {
+        "bug": ["type:bug"],
+        "documentation": ["type:docs"],
+        "enhancement": ["type:feature"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "security": ["type:security"],
+        "claude": ["agent:claude"],
+        "codex": ["agent:codex"],
+        "opencode": ["agent:opencode"],
+        "human-needed": ["status:needs-human"],
+        "quick-task": ["intake:quick-task"]
+      },
+      "remove": [
+        "duplicate",
+        "good first issue",
+        "help wanted",
+        "invalid",
+        "javascript",
+        "question",
+        "wontfix"
+      ]
+    },
+    "supersprinklesracing/sprinkles": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "agent-option:long-run",
+        "intake:quick-task",
+        "bot:renovate",
+        "automation:heal",
+        "automation:unstick-prs",
+        "automation:visual-refresh",
+        "ci:run-e2e",
+        "ci:update-snapshots",
+        "planning",
+        "app:members",
+        "app:onecake",
+        "app:primes"
+      ],
+      "migrations": {
+        "documentation": ["type:docs"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "ready-for-agent": ["status:ready-for-agent"],
+        "blocked": ["status:blocked"],
+        "human-needed": ["status:needs-human"],
+        "post-deploy-action": ["status:post-deploy-action"],
+        "claude": ["agent:claude"],
+        "codex": ["agent:codex"],
+        "opencode": ["agent:opencode"],
+        "claude-long": ["agent-option:long-run"],
+        "quick-task": ["intake:quick-task"],
+        "heal": ["automation:heal"],
+        "playbook-unstick-prs": ["automation:unstick-prs"],
+        "visual-baseline-drift": ["automation:visual-refresh"],
+        "run-e2e": ["ci:run-e2e"],
+        "update-snapshots": ["ci:update-snapshots"],
+        "project": ["planning"],
+        "members": ["app:members"],
+        "onecake": ["app:onecake"],
+        "primes": ["app:primes"]
+      },
+      "remove": ["conflicting", "heal:1", "heal:2", "wontfix"]
+    },
+    "jlapenna/homelab": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "planning",
+        "bot:renovate"
+      ],
+      "migrations": {
+        "bug": ["type:bug"],
+        "documentation": ["type:docs"],
+        "enhancement": ["type:feature"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "human-needed": ["status:needs-human"]
+      },
+      "remove": [
+        "duplicate",
+        "good first issue",
+        "help wanted",
+        "invalid",
+        "question",
+        "wontfix"
+      ]
+    }
+  }
+}

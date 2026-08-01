@@ -8,11 +8,11 @@ import {
   type WatchedRepo,
 } from './github-client';
 
-// Re-exported from github-client.ts, which owns this type (agent-activity.ts
-// can't own it: WatchedRepo.workflowFiles needs to reference it, and
-// github-client.ts is imported from here, not the other way around).
+// Re-exported from github-client.ts, which owns the server-side watched-repo
+// boundary; the pure integration shape itself lives in watched-repo.ts.
 export type { AgentPipeline } from './github-client';
 import type { AgentPipeline } from './github-client';
+import { agentIntegration } from './watched-repo';
 
 // Mirrors timeout-minutes in .github/workflows/claude.yml AND
 // .github/workflows/opencode.yml (both 90m) so the live-run progress bar
@@ -26,23 +26,13 @@ export const RUN_TIMEOUT_MINUTES = 90;
 // see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
-const WORKFLOW_FILES: Record<AgentPipeline, string> = {
-  claude: 'claude.yml',
-  codex: 'codex.yml',
-  opencode: 'opencode.yml',
-};
-
-/** Resolves which workflow filename a `(repo, pipeline)` pair fetches from,
- * honoring WatchedRepo.workflowFiles' per-repo override/opt-out - see its
- * doc comment in github-client.ts. Undefined means this repo doesn't run
- * this pipeline at all. */
+/** Resolves which workflow filename a `(repo, pipeline)` pair fetches from.
+ * Undefined means this repo does not declare that agent integration. */
 function resolveWorkflowFile(
   repo: WatchedRepo,
   pipeline: AgentPipeline,
 ): string | undefined {
-  const override = repo.workflowFiles?.[pipeline];
-  if (override === null) return undefined;
-  return override ?? WORKFLOW_FILES[pipeline];
+  return agentIntegration(repo, pipeline)?.workflowFile;
 }
 
 const RECENT_RUN_LIMIT = 8;

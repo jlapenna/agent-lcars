@@ -2,6 +2,7 @@ import { Octokit } from '@octokit/rest';
 import { optional, required } from '@repo/util-server';
 
 import {
+  type AgentIntegration,
   type AgentPipeline,
   repoDisplayName,
   repoItemKey,
@@ -76,21 +77,48 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
     );
   }
 
-  const workflowFiles = record['workflowFiles'];
-  if (workflowFiles !== undefined) {
+  const agents = record['agents'];
+  if (agents !== undefined) {
     if (
-      typeof workflowFiles !== 'object' ||
-      workflowFiles === null ||
-      Array.isArray(workflowFiles)
+      typeof agents !== 'object' ||
+      agents === null ||
+      Array.isArray(agents)
     ) {
       throw new Error(
-        `AGENT_LCARS_WATCHED_REPOS[${index}].workflowFiles must be an object when present`,
+        `AGENT_LCARS_WATCHED_REPOS[${index}].agents must be an object when present`,
       );
     }
-    for (const [pipeline, value] of Object.entries(workflowFiles)) {
-      if (typeof value !== 'string' && value !== null) {
+    const supportedPipelines: AgentPipeline[] = ['claude', 'codex', 'opencode'];
+    for (const [pipeline, value] of Object.entries(agents)) {
+      if (!supportedPipelines.includes(pipeline as AgentPipeline)) {
         throw new Error(
-          `AGENT_LCARS_WATCHED_REPOS[${index}].workflowFiles.${pipeline} must be a string or null`,
+          `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline} is not a supported agent pipeline`,
+        );
+      }
+      if (value === null) continue;
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new Error(
+          `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline} must be an object or null`,
+        );
+      }
+      for (const field of ['workflowFile', 'label', 'replyTrigger']) {
+        const fieldValue = (value as Record<string, unknown>)[field];
+        if (typeof fieldValue !== 'string' || fieldValue.length === 0) {
+          throw new Error(
+            `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline}.${field} must be a non-empty string`,
+          );
+        }
+      }
+      const aliases = (value as Record<string, unknown>)['replyTriggerAliases'];
+      if (
+        aliases !== undefined &&
+        (!Array.isArray(aliases) ||
+          aliases.some(
+            (alias) => typeof alias !== 'string' || alias.length === 0,
+          ))
+      ) {
+        throw new Error(
+          `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline}.replyTriggerAliases must be an array of non-empty strings`,
         );
       }
     }
@@ -100,17 +128,15 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
     owner,
     name,
     ...(alias !== undefined && { alias: alias as string }),
-    ...(workflowFiles && {
-      workflowFiles: workflowFiles as Partial<
-        Record<AgentPipeline, string | null>
-      >,
+    ...(agents && {
+      agents: agents as Partial<Record<AgentPipeline, AgentIntegration | null>>,
     }),
   };
 }
 
 /**
  * Parses `AGENT_LCARS_WATCHED_REPOS`: a JSON array of
- * `{ "owner": string, "name": string, "alias"?: string, "workflowFiles"?: Partial<Record<AgentPipeline, string>> }`
+ * `{ "owner": string, "name": string, "alias"?: string, "agents"?: Partial<Record<AgentPipeline, AgentIntegration>> }`
  * objects, e.g.
  * `[{"owner":"supersprinklesracing","name":"sprinkles"},{"owner":"supersprinklesracing","name":"website","alias":"Website"}]`.
  * Throws with a specific reason on malformed input rather than falling back
@@ -130,7 +156,7 @@ function parseWatchedReposJson(raw: string): WatchedRepo[] {
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error(
-      'AGENT_LCARS_WATCHED_REPOS must be a non-empty JSON array of {owner, name, alias?, workflowFiles?} objects',
+      'AGENT_LCARS_WATCHED_REPOS must be a non-empty JSON array of {owner, name, alias?, agents?} objects',
     );
   }
   return parsed.map((entry, index) => validateWatchedRepo(entry, index));

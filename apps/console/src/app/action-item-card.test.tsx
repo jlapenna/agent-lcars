@@ -68,8 +68,8 @@ describe('ActionItemCard', () => {
       <MantineProvider>
         <ActionItemCard
           item={makeItem({
-            actionTypes: ['run-failed', 'human-needed'],
-            labels: ['claude', 'bug', 'console', 'priority'],
+            actionTypes: ['run-failed', 'needs-human'],
+            labels: ['agent:claude', 'type:bug', 'app:console', 'priority'],
           })}
           updatedAtLabel="now"
           variant="workspace"
@@ -79,8 +79,8 @@ describe('ActionItemCard', () => {
 
     expect(screen.getByText('Human needed')).toBeTruthy();
     expect(screen.queryByText('CI run failed')).toBeNull();
-    expect(screen.getByText('bug')).toBeTruthy();
-    expect(screen.getByText('console')).toBeTruthy();
+    expect(screen.getByText('type:bug')).toBeTruthy();
+    expect(screen.getByText('app:console')).toBeTruthy();
     expect(screen.queryByText('priority')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Show 1 additional/ }));
@@ -123,7 +123,7 @@ describe('ActionItemCard', () => {
       makeItem({
         title: 'A title that should stay readable next to several badges',
         actionTypes: [
-          'human-needed',
+          'needs-human',
           'run-failed',
           'review-requested',
           'post-deploy-action',
@@ -293,51 +293,55 @@ describe('ActionItemCard', () => {
 
   describe('retrigger + reply pipeline routing (#3012)', () => {
     it('offers Retrigger, cycling claude, for a claude-labeled issue', () => {
-      renderCard(makeItem({ kind: 'issue', labels: ['claude'] }));
+      renderCard(makeItem({ kind: 'issue', labels: ['agent:claude'] }));
 
       const button = screen.getByTestId('retrigger-button');
       expect(button.dataset.pipeline).toBe('claude');
     });
 
     it('offers Retrigger, cycling opencode, for an opencode-only issue', () => {
-      renderCard(makeItem({ kind: 'issue', labels: ['opencode'] }));
+      renderCard(makeItem({ kind: 'issue', labels: ['agent:opencode'] }));
 
       const button = screen.getByTestId('retrigger-button');
       expect(button.dataset.pipeline).toBe('opencode');
     });
 
-    it('offers Retrigger, cycling claude, when an issue carries both labels', () => {
-      renderCard(makeItem({ kind: 'issue', labels: ['claude', 'opencode'] }));
+    it('omits Retrigger when an issue carries contradictory agent labels', () => {
+      renderCard(
+        makeItem({
+          kind: 'issue',
+          labels: ['agent:claude', 'agent:opencode'],
+        }),
+      );
 
-      const button = screen.getByTestId('retrigger-button');
-      expect(button.dataset.pipeline).toBe('claude');
+      expect(screen.queryByTestId('retrigger-button')).toBeNull();
     });
 
     it('omits Retrigger for an issue with neither pipeline label', () => {
-      renderCard(makeItem({ kind: 'issue', labels: ['human-needed'] }));
+      renderCard(makeItem({ kind: 'issue', labels: ['status:needs-human'] }));
 
       expect(screen.queryByTestId('retrigger-button')).toBeNull();
     });
 
     it('omits Retrigger for a PR even with the claude label (issues only)', () => {
-      renderCard(makeItem({ kind: 'pr', labels: ['claude'] }));
+      renderCard(makeItem({ kind: 'pr', labels: ['agent:claude'] }));
 
       expect(screen.queryByTestId('retrigger-button')).toBeNull();
     });
 
     it('shows the /oc reply placeholder for an opencode-only item', () => {
       renderCard(
-        makeItem({ labels: ['opencode'] }),
+        makeItem({ labels: ['agent:opencode'] }),
         { kind: 'reply' }, // opens the reply input
       );
 
       expect(screen.getByPlaceholderText('Reply with /oc…')).toBeTruthy();
     });
 
-    it('shows the @claude reply placeholder by default', () => {
+    it('shows a plain reply placeholder when no agent is selected', () => {
       renderCard(makeItem({ labels: [] }), { kind: 'reply' });
 
-      expect(screen.getByPlaceholderText('Reply with @claude…')).toBeTruthy();
+      expect(screen.getByPlaceholderText('Reply…')).toBeTruthy();
     });
   });
 

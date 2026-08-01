@@ -1,6 +1,6 @@
 name: Claude Issue Agent
 
-# Adding the `claude` label to an issue runs Claude Code on a self-hosted
+# Adding the `agent:claude` label to an issue runs Claude Code on a self-hosted
 # runner (this repo's agent runner) to work on that issue. Claude can ask
 # clarifying questions as issue comments; reply with `@claude ...` to
 # continue. See .agents/skills/agent-protocol/agent-protocol.md and
@@ -13,8 +13,7 @@ name: Claude Issue Agent
 # whose issue number arrives as a plain input instead. The agent console
 # joins a live run to its action-item card by parsing the leading "#<number>:"
 # back out of the run's display_title.
-run-name: >-
-  ${{ ((github.event_name == 'issues' && github.event.label.name != 'claude') || (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot')) && 'noop ' || '' }}#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title || format('manual dispatch #{0}', github.event.inputs.issue) }}
+run-name: '#${{ github.event.inputs.issue }}: Claude issue agent'
 
 on:
   workflow_dispatch:
@@ -55,12 +54,8 @@ permissions:
 # into one pending run instead of stacking full agent runs. Never cancel an
 # in-flight agent mid-implementation.
 #
-# No-op events get their own per-run group instead of sharing the issue's
-# group. GitHub only keeps one PENDING run per concurrency group; queueing
-# happens before job-level `if:` is checked. This covers both bot comments
-# and the quick-task label event emitted alongside the pipeline label.
 concurrency:
-  group: ${{ format('claude-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, ((github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') || (github.event_name == 'issues' && github.event.label.name != 'claude')) && format('-noop-{0}', github.run_id) || '') }}
+  group: claude-issue-${{ github.event.inputs.issue }}
   cancel-in-progress: false
 
 jobs:
@@ -73,9 +68,9 @@ jobs:
     #    comment, so this compares github.actor directly against the
     #    maintainer login, matching how this same login is already
     #    hardcoded elsewhere in this workflow, e.g. the parking assignee)
-    #    just added the `claude` label to an issue, OR
+    #    just added the `agent:claude` label to an issue, OR
     #  - the repo OWNER (same reasoning) posts a non-bot `@claude` reply on
-    #    an issue that already carries the `claude` label, OR posts one
+    #    an issue that already carries the `agent:claude` label, OR posts one
     #    directly on a pull request (`issue_comment` fires for PR comments
     #    too, distinguished by a non-null `github.event.issue.pull_request`;
     #    PRs aren't gated on the label since the agent's own PRs never carry
@@ -345,7 +340,7 @@ jobs:
       #     after this run started (covers new PRs AND pushes to existing
       #     ones, which bump updatedAt), or
       #   - the issue was closed, or
-      #   - the human-needed label is present (the sanctioned blocked/
+      #   - the status:needs-human label is present (the sanctioned blocked/
       #     clarifying-question ending - the prompt always pairs questions
       #     with the label), or
       #   - on any @claude-reply run (PR thread or the tracking issue
@@ -389,11 +384,11 @@ jobs:
             if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then found="issue #$NUM closed at $closed_at (after $STARTED_AT)"; fi
           fi
 
-          # (c) human-needed label (sanctioned blocked ending).
+          # (c) status:needs-human label (sanctioned blocked ending).
           if [ -z "$found" ]; then
             labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
-              --jq '[.labels[].name] | contains(["human-needed"])' 2>/dev/null || echo false)
-            if [ "$labeled" = "true" ]; then found="human-needed label applied on #$NUM"; fi
+              --jq '[.labels[].name] | contains(["status:needs-human"])' 2>/dev/null || echo false)
+            if [ "$labeled" = "true" ]; then found="status:needs-human label applied on #$NUM"; fi
           fi
 
           # (d) @claude-reply runs (PR thread or tracking issue): a bot
@@ -409,7 +404,7 @@ jobs:
             echo "Deliverable evidence: $found"
           else
             echo "NO_DELIVERABLE=1" >> "$GITHUB_ENV"
-            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no human-needed label). All of its local work is lost."
+            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no status:needs-human label). All of its local work is lost."
             exit 1
           fi
 
@@ -438,9 +433,9 @@ jobs:
           REASON=""
           LOG="$(gh run view "$RUN_ID" --log 2>/dev/null || true)"
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
-            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no human-needed label. All of its local work is lost. Re-dispatch by re-adding the `claude` label or replying with `@claude`, and remind it to push early.'
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no status:needs-human label. All of its local work is lost. Re-dispatch by re-adding the `agent:claude` label or replying with `@claude`, and remind it to push early.'
           elif echo "$LOG" | grep -qi "Reached maximum number of turns"; then
-            REASON=$'\n\nRan out of its turn budget mid-task (`error_max_turns`) - not a crash, it may have made real progress. Check its last comment for a takeover/resume command, or just re-add the `claude` label to retry with a fresh run.'
+            REASON=$'\n\nRan out of its turn budget mid-task (`error_max_turns`) - not a crash, it may have made real progress. Check its last comment for a takeover/resume command, or just re-add the `agent:claude` label to retry with a fresh run.'
           elif (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
                (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
             REASON=$'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'

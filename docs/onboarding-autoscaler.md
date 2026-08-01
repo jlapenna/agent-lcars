@@ -185,7 +185,7 @@ and how to add a new builder host.
 
 **Never let arbitrary agent-authored code hold the Docker socket.** A
 scale set that AI-agent-dispatched jobs run on (a `claude`/`opencode`/
-`codex` label pipeline) must have `mount_docker_socket: false`.
+`agent:codex` label pipeline) must have `mount_docker_socket: false`.
 
 The socket is root-equivalent on the placement host: anything that can call
 it can ask the host daemon to start a privileged container with arbitrary

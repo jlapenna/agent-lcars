@@ -1,10 +1,6 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 
-import {
-  type ActionItem,
-  isDeployWaitOnly,
-  isHandedBack,
-} from './action-items';
+import { type ActionItem, isDeployWaitOnly } from './action-items';
 import type { AgentActivity, AgentRun } from './agent-activity';
 import { repoItemKey } from './github-client';
 import { deriveSilentErrorDiagnoses } from './run-classification';
@@ -12,7 +8,6 @@ import { deriveSilentErrorDiagnoses } from './run-classification';
 export interface QueueView {
   items: ActionItem[];
   yourQueue: ActionItem[];
-  handedBack: ActionItem[];
   waitingOnDeploy: ActionItem[];
   rest: ActionItem[];
   liveRunByItemKey: Map<string, AgentRun>;
@@ -52,22 +47,15 @@ export function buildQueueView(
   const idle = items.filter(
     (item) => !liveRunByItemKey.has(repoItemKey(item.repo, item.number)),
   );
-  const handedBack = idle.filter(isHandedBack);
   const yourQueue = idle.filter(
-    (item) =>
-      item.actionTypes.length > 0 &&
-      !isDeployWaitOnly(item) &&
-      !isHandedBack(item),
+    (item) => item.actionTypes.length > 0 && !isDeployWaitOnly(item),
   );
-  const waitingOnDeploy = idle.filter(
-    (item) => isDeployWaitOnly(item) && !isHandedBack(item),
-  );
+  const waitingOnDeploy = idle.filter(isDeployWaitOnly);
   const rest = idle.filter((item) => item.actionTypes.length === 0);
 
   return {
     items,
     yourQueue,
-    handedBack,
     waitingOnDeploy,
     rest,
     liveRunByItemKey,

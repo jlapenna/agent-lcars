@@ -24,11 +24,11 @@ The console (`apps/console`, Next.js on Firebase App Hosting, gated behind a
 single-admin GitHub OAuth login) has three sections:
 
 - **Queue** (`/`) — the maintainer's action-item board: issues/PRs tagged
-  `human-needed`, a failed run, a review request, a post-deploy check, or a
+  `status:needs-human`, a failed run, a review request, a post-deploy check, or a
   run that reported success but whose own telemetry shows a silent-error
   signature (an error result or essentially zero recorded work). Each card
   carries the right one-click action. **Quick task** files a new
-  `quick-task`-labeled issue from free text and hands it straight to the
+  `intake:quick-task`-labeled issue from free text and hands it straight to the
   agent; **Run unstick-prs** dispatches a maintenance playbook that finds
   and un-sticks stalled PRs.
 - **Agents** (`/agents`) — a fleet-wide, agent-by-agent view: a snapshot bar
@@ -51,7 +51,7 @@ transient Firestore hiccup never takes the whole console down.
    `opencode.yml`) follows the shared, cross-repo conventions in
    `.agents/skills/agent-protocol`: a takeover comment with a resume command,
    👀 reactions as the agent reads a thread, one continuously edited status
-   comment, and — when blocked on a human — the fixed `human-needed` label
+   comment, and — when waiting on a human — the fixed `status:needs-human` label
    plus a maintainer assignee so the console's queue can find it.
 2. **Telemetry** (`apps/telemetry-watcher`, reduced by `libs/telemetry`) —
    reports session data to a dedicated `agent-telemetry` Firestore database,

@@ -4,6 +4,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "check:dependencies": "./tools/check-dependencies.sh",
+    "check:labels": "node ./tools/sync-github-labels.mjs",
     "format": "nx format:write --all",
     "format:check": "nx format:check --all",
     "lint": "nx run-many -t lint --all",

@@ -11,6 +11,11 @@ import {
 } from './github-client';
 
 const ENV_KEY = 'AGENT_LCARS_WATCHED_REPOS';
+const CLAUDE_INTEGRATION = {
+  workflowFile: 'claude.yml',
+  label: 'agent:claude',
+  replyTrigger: '@claude',
+};
 
 afterEach(() => {
   delete process.env[ENV_KEY];
@@ -24,12 +29,12 @@ describe('getWatchedRepos', () => {
   it('parses a valid JSON array from the env var', () => {
     process.env[ENV_KEY] = JSON.stringify([
       { owner: 'org-a', name: 'repo-a' },
-      { owner: 'org-b', name: 'repo-b', workflowFiles: { opencode: null } },
+      { owner: 'org-b', name: 'repo-b', agents: { opencode: null } },
     ]);
 
     expect(getWatchedRepos()).toEqual([
       { owner: 'org-a', name: 'repo-a' },
-      { owner: 'org-b', name: 'repo-b', workflowFiles: { opencode: null } },
+      { owner: 'org-b', name: 'repo-b', agents: { opencode: null } },
     ]);
   });
 
@@ -48,11 +53,46 @@ describe('getWatchedRepos', () => {
     expect(() => getWatchedRepos()).toThrow(/name must be a non-empty string/);
   });
 
-  it('throws when workflowFiles has a non-string, non-null value', () => {
+  it('throws when an agent integration is not an object or null', () => {
     process.env[ENV_KEY] = JSON.stringify([
-      { owner: 'org-a', name: 'repo-a', workflowFiles: { claude: 42 } },
+      { owner: 'org-a', name: 'repo-a', agents: { claude: 42 } },
     ]);
-    expect(() => getWatchedRepos()).toThrow(/must be a string or null/);
+    expect(() => getWatchedRepos()).toThrow(/must be an object or null/);
+  });
+
+  it('throws when an agent integration is incomplete', () => {
+    process.env[ENV_KEY] = JSON.stringify([
+      {
+        owner: 'org-a',
+        name: 'repo-a',
+        agents: { claude: { workflowFile: 'claude.yml' } },
+      },
+    ]);
+    expect(() => getWatchedRepos()).toThrow(/agents\.claude\.label/);
+  });
+
+  it('parses a complete agent integration', () => {
+    process.env[ENV_KEY] = JSON.stringify([
+      {
+        owner: 'org-a',
+        name: 'repo-a',
+        agents: { claude: CLAUDE_INTEGRATION },
+      },
+    ]);
+    expect(getWatchedRepos()[0].agents?.claude).toEqual(CLAUDE_INTEGRATION);
+  });
+
+  it('throws when reply-trigger aliases are malformed', () => {
+    process.env[ENV_KEY] = JSON.stringify([
+      {
+        owner: 'org-a',
+        name: 'repo-a',
+        agents: {
+          claude: { ...CLAUDE_INTEGRATION, replyTriggerAliases: [''] },
+        },
+      },
+    ]);
+    expect(() => getWatchedRepos()).toThrow(/replyTriggerAliases/);
   });
 
   it('parses an alias', () => {
@@ -83,13 +123,13 @@ describe('getWatchedRepos', () => {
 describe('resolveWatchedRepo', () => {
   it('returns the canonical watched-list entry for a match', () => {
     process.env[ENV_KEY] = JSON.stringify([
-      { owner: 'org-a', name: 'repo-a', workflowFiles: { opencode: null } },
+      { owner: 'org-a', name: 'repo-a', agents: { opencode: null } },
     ]);
 
     expect(resolveWatchedRepo({ owner: 'org-a', name: 'repo-a' })).toEqual({
       owner: 'org-a',
       name: 'repo-a',
-      workflowFiles: { opencode: null },
+      agents: { opencode: null },
     });
   });
 

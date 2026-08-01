@@ -26,7 +26,7 @@ type QueueSort = 'priority' | 'newest' | 'oldest';
 
 const FILTER_OPTIONS: Array<{ value: QueueFilter; label: string }> = [
   { value: 'all', label: 'All reasons' },
-  { value: 'human-needed', label: 'Human needed' },
+  { value: 'needs-human', label: 'Human needed' },
   { value: 'review-requested', label: 'Review requested' },
   { value: 'run-failed', label: 'Run failed' },
   { value: 'merge-blocked', label: 'Merge blocked' },

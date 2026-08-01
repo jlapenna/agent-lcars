@@ -77,18 +77,15 @@ function card(item: ActionItem): BoardCard {
 }
 
 function renderBoard({
-  handedBack = [],
   waitingOnDeploy = [],
   rest = [],
 }: {
-  handedBack?: ActionItem[];
   waitingOnDeploy?: ActionItem[];
   rest?: ActionItem[];
 }) {
   render(
     <MantineProvider>
       <CommandDeckSections
-        handedBack={handedBack.map(card)}
         waitingOnDeploy={waitingOnDeploy.map(card)}
         rest={rest.map(card)}
       />
@@ -115,7 +112,7 @@ describe('Decision Inbox and Command Deck surfaces', () => {
               makeItem({
                 number: 1,
                 title: 'Answer me',
-                actionTypes: ['human-needed'],
+                actionTypes: ['needs-human'],
               }),
             ),
           ]}
@@ -143,25 +140,17 @@ describe('Decision Inbox and Command Deck surfaces', () => {
     expect(screen.getByTestId('compact-item-3')).toBeTruthy();
   });
 
-  it('hides the handed-back and deploy tiers entirely when empty', () => {
+  it('hides the deploy and catch-all tiers entirely when empty', () => {
     renderBoard({});
-    expect(screen.queryByText(/Handed Back/)).toBeNull();
     expect(screen.queryByText(/Waiting on Next Deploy/)).toBeNull();
     expect(screen.queryByText(/Everything Else/)).toBeNull();
   });
 
   it('renders consistent two-line headings with counts in the description', () => {
     renderBoard({
-      handedBack: [makeItem({ number: 4 })],
       waitingOnDeploy: [makeItem({ number: 5 }), makeItem({ number: 6 })],
     });
 
-    expect(screen.getByRole('heading', { name: 'Handed Back' })).toBeTruthy();
-    expect(
-      screen.getByText(
-        '1 item · You answered; the agent hasn’t picked these back up yet.',
-      ),
-    ).toBeTruthy();
     expect(
       screen.getByRole('heading', { name: 'Waiting on Next Deploy' }),
     ).toBeTruthy();
@@ -172,85 +161,8 @@ describe('Decision Inbox and Command Deck surfaces', () => {
     ).toBeTruthy();
   });
 
-  it('offers Retrigger on handed-back claude issues but not on other rows', () => {
-    renderBoard({
-      handedBack: [
-        makeItem({
-          number: 4,
-          title: 'Answered question',
-          actionTypes: ['human-needed'],
-          labels: ['claude'],
-        }),
-        makeItem({
-          number: 5,
-          title: 'Answered non-agent question',
-          actionTypes: ['human-needed'],
-        }),
-      ],
-    });
-
-    const claudeRow = screen.getByTestId('compact-item-4');
-    expect(within(claudeRow).getByTestId('retrigger-4')).toBeTruthy();
-    const plainRow = screen.getByTestId('compact-item-5');
-    expect(within(plainRow).queryByTestId('retrigger-5')).toBeNull();
-  });
-
-  describe('handed-back retrigger pipeline routing (#3012)', () => {
-    it('offers Retrigger, cycling opencode, for an opencode-only handed-back issue', () => {
-      renderBoard({
-        handedBack: [
-          makeItem({
-            number: 8,
-            actionTypes: ['human-needed'],
-            labels: ['opencode'],
-          }),
-        ],
-      });
-
-      const button = screen.getByTestId('retrigger-8');
-      expect(button.dataset.pipeline).toBe('opencode');
-    });
-
-    it('offers Retrigger, cycling claude, when a handed-back issue carries both labels', () => {
-      renderBoard({
-        handedBack: [
-          makeItem({
-            number: 9,
-            actionTypes: ['human-needed'],
-            labels: ['claude', 'opencode'],
-          }),
-        ],
-      });
-
-      const button = screen.getByTestId('retrigger-9');
-      expect(button.dataset.pipeline).toBe('claude');
-    });
-
-    it('omits Retrigger on a handed-back PR even with the claude label (issues only)', () => {
-      renderBoard({
-        handedBack: [
-          makeItem({
-            kind: 'pr',
-            number: 10,
-            actionTypes: ['human-needed'],
-            labels: ['claude'],
-          }),
-        ],
-      });
-
-      expect(screen.queryByTestId('retrigger-10')).toBeNull();
-    });
-  });
-
   it('offers the overflow menu on every compact row', () => {
     renderBoard({
-      handedBack: [
-        makeItem({
-          number: 4,
-          title: 'Answered question',
-          actionTypes: ['human-needed'],
-        }),
-      ],
       waitingOnDeploy: [
         makeItem({
           number: 7,
@@ -261,7 +173,6 @@ describe('Decision Inbox and Command Deck surfaces', () => {
       rest: [makeItem({ number: 6, title: 'Background item' })],
     });
 
-    expect(screen.getByTestId('overflow-4')).toBeTruthy();
     expect(screen.getByTestId('overflow-7')).toBeTruthy();
     expect(screen.getByTestId('overflow-6')).toBeTruthy();
   });

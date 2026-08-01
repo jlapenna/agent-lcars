@@ -37,31 +37,26 @@ on:
 permissions:
   actions: write
   contents: read
-  issues: read
+  issues: write
 
 jobs:
   route:
     if: >
       (github.event_name == 'issues' && github.event.action == 'labeled' &&
        github.actor == vars.MAINTAINER_LOGIN &&
-       (github.event.label.name == 'claude' ||
-        github.event.label.name == 'codex' ||
-        github.event.label.name == 'opencode')) ||
+       startsWith(github.event.label.name, 'agent:')) ||
       (github.event_name == 'issue_comment' &&
        github.event.action == 'created' &&
        github.event.comment.user.type != 'Bot' &&
        github.event.comment.author_association == 'OWNER' &&
        ((contains(github.event.comment.body, '@claude') &&
-         (contains(github.event.issue.labels.*.name, 'claude') ||
+         (contains(github.event.issue.labels.*.name, 'agent:claude') ||
           github.event.issue.pull_request != null)) ||
         (contains(github.event.comment.body, '/codex') &&
-         contains(github.event.issue.labels.*.name, 'codex') &&
-         !contains(github.event.issue.labels.*.name, 'claude')) ||
+         contains(github.event.issue.labels.*.name, 'agent:codex')) ||
         ((contains(github.event.comment.body, '/opencode') ||
           contains(github.event.comment.body, '/oc')) &&
-         contains(github.event.issue.labels.*.name, 'opencode') &&
-         !contains(github.event.issue.labels.*.name, 'claude') &&
-         !contains(github.event.issue.labels.*.name, 'codex')))) ||
+         contains(github.event.issue.labels.*.name, 'agent:opencode')))) ||
       (github.event_name == 'workflow_dispatch' &&
        github.event.inputs.issue != '' && github.event.inputs.pipeline != '')
     runs-on: ubuntu-latest
@@ -86,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           ISSUE="${ISSUE:-$INPUT_ISSUE}"
-          LABEL="${LABEL:-$INPUT_PIPELINE}"
+          LABEL="${LABEL:-agent:$INPUT_PIPELINE}"
           MODE="${INPUT_MODE:-implement}"
           if [[ -z "$LABELS" && -n "$ISSUE" ]]; then
             LABELS=$(gh issue view "$ISSUE" --repo "$REPO" --json labels --jq '[.labels[].name] | join(",")')
@@ -96,37 +91,55 @@ jobs:
             [[ ",${LABELS}," == *",$1,"* ]]
           }
 
+          select_agent() {
+            local pipeline="$1"
+            local selected="agent:$pipeline"
+            for agent_label in agent:claude agent:codex agent:opencode; do
+              if [[ "$agent_label" != "$selected" ]] && has_label "$agent_label"; then
+                gh issue edit "$ISSUE" --repo "$REPO" --remove-label "$agent_label"
+              fi
+            done
+            for stale_status in status:ready-for-agent status:needs-human; do
+              if has_label "$stale_status"; then
+                gh issue edit "$ISSUE" --repo "$REPO" --remove-label "$stale_status"
+              fi
+            done
+            LABEL="$selected"
+          }
+
           if [[ "${GITHUB_EVENT_NAME:-}" == "issue_comment" ]]; then
             if [[ "$COMMENT_USER_TYPE" == "Bot" || "$COMMENT_AUTHOR_ASSOC" != "OWNER" ]]; then
               echo "No dispatch: comment is not from the repository owner."
               exit 0
             fi
             if [[ "$COMMENT_BODY" == *"@claude"* ]] &&
-               { has_label claude || [[ "$IS_PR_COMMENT" == "true" ]]; }; then
-              LABEL=claude
+               { has_label agent:claude || [[ "$IS_PR_COMMENT" == "true" ]]; }; then
+              select_agent claude
               MODE=reply
-            elif [[ "$COMMENT_BODY" == *"/codex"* ]] && has_label codex; then
-              LABEL=codex
+            elif [[ "$COMMENT_BODY" == *"/codex"* ]] && has_label agent:codex; then
+              select_agent codex
               MODE=reply
             elif [[ ("$COMMENT_BODY" == *"/opencode"* || "$COMMENT_BODY" == *"/oc"*) ]] &&
-                 has_label opencode; then
-              LABEL=opencode
+                 has_label agent:opencode; then
+              select_agent opencode
               MODE=reply
             else
               echo "No dispatch: comment has no authorized agent command."
               exit 0
             fi
           fi
+          if [[ "${GITHUB_EVENT_NAME:-}" == "issues" ]]; then
+            select_agent "${LABEL#agent:}"
+          fi
+
           workflow=""
           case "$LABEL" in
-            claude) workflow=claude.yml ;;
-            codex) has_label claude || workflow=codex.yml ;;
-            opencode)
-              if ! has_label claude && ! has_label codex; then workflow=opencode.yml; fi
-              ;;
+            agent:claude) workflow=claude.yml ;;
+            agent:codex) workflow=codex.yml ;;
+            agent:opencode) workflow=opencode.yml ;;
           esac
           if [[ -z "$workflow" ]]; then
-            echo "No dispatch: a higher-precedence agent label is already present."
+            echo "No dispatch: unsupported agent label $LABEL."
             exit 0
           fi
           echo "Dispatching $workflow for issue #$ISSUE."

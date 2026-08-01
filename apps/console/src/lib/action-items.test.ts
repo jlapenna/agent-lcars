@@ -1,11 +1,6 @@
 import { describe, expect, it, type Mock, vi } from 'vitest';
 
-import {
-  type ActionItem,
-  getActionItems,
-  isDeployWaitOnly,
-  isHandedBack,
-} from './action-items';
+import { getActionItems, isDeployWaitOnly } from './action-items';
 import { getGithubClient, getWatchedRepos } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
@@ -93,7 +88,7 @@ describe('isDeployWaitOnly', () => {
         title: 't',
         url: 'u',
         updatedAt: 'now',
-        actionTypes: ['post-deploy-action', 'human-needed'],
+        actionTypes: ['post-deploy-action', 'needs-human'],
         labels: [],
         assigneeLogins: [],
       }),
@@ -114,72 +109,12 @@ describe('isDeployWaitOnly', () => {
   });
 });
 
-describe('isHandedBack', () => {
-  function makeActionItem(overrides: Partial<ActionItem> = {}): ActionItem {
-    return {
-      kind: 'issue',
-      repo: DEFAULT_REPO,
-      number: 1,
-      title: 't',
-      url: 'u',
-      updatedAt: 'now',
-      actionTypes: ['human-needed'],
-      labels: [],
-      assigneeLogins: [],
-      ...overrides,
-    };
-  }
-
-  it('is true when the maintainer wrote the newest comment on a human-needed item', () => {
-    expect(
-      isHandedBack(makeActionItem({ lastCommentAuthor: 'jlapenna' })),
-    ).toBe(true);
-  });
-
-  it('is false when the agent spoke last', () => {
-    expect(
-      isHandedBack(makeActionItem({ lastCommentAuthor: 'claude[bot]' })),
-    ).toBe(false);
-    expect(isHandedBack(makeActionItem())).toBe(false);
-  });
-
-  it('never hands back items that need the maintainer regardless of possession', () => {
-    expect(
-      isHandedBack(
-        makeActionItem({
-          actionTypes: ['human-needed', 'review-requested'],
-          lastCommentAuthor: 'jlapenna',
-        }),
-      ),
-    ).toBe(false);
-    expect(
-      isHandedBack(
-        makeActionItem({
-          actionTypes: ['human-needed', 'run-failed'],
-          lastCommentAuthor: 'jlapenna',
-        }),
-      ),
-    ).toBe(false);
-  });
-
-  it('still hands back when a post-deploy wait rides along', () => {
-    expect(
-      isHandedBack(
-        makeActionItem({
-          actionTypes: ['human-needed', 'post-deploy-action'],
-          lastCommentAuthor: 'jlapenna',
-        }),
-      ),
-    ).toBe(true);
-  });
-});
-
 describe('getActionItems', () => {
   // Every item a test wants on the board has to satisfy the open-item
   // predicate (see isBoardItem) the way it would in production - by label,
-  // by assignee, or by a requested review. `claude` is the cheapest of
+  // by assignee, or by a requested review. `agent:claude` is the cheapest of
   // those for tests not specifically exercising selection.
-  const ON_BOARD = { labels: ['claude'] };
+  const ON_BOARD = { labels: ['agent:claude'] };
 
   /** A GraphQL enrichment node, in the shape `item-enrichment.ts` parses.
    * Enum values are SCREAMING_CASE exactly as the real API returns them, so
@@ -320,7 +255,7 @@ describe('getActionItems', () => {
   it('enriches every item in one batched query per repo', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': Array.from({ length: 20 }, (_, i) =>
-        makeItem(i + 1, { labels: ['human-needed'] }),
+        makeItem(i + 1, { labels: ['status:needs-human'] }),
       ),
     });
     const graphql = mockGraphql();
@@ -347,13 +282,13 @@ describe('getActionItems', () => {
     expect(result.items.map((i) => i.number)).toEqual([1]);
   });
 
-  it('selects each pipeline label, both ownership assignees, and human-needed', async () => {
+  it('selects each agent label, both ownership assignees, and needs-human', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(1, { labels: ['claude'] }),
-        makeItem(2, { labels: ['opencode'] }),
-        makeItem(3, { labels: ['codex'] }),
-        makeItem(4, { labels: ['human-needed'] }),
+        makeItem(1, { labels: ['agent:claude'] }),
+        makeItem(2, { labels: ['agent:opencode'] }),
+        makeItem(3, { labels: ['agent:codex'] }),
+        makeItem(4, { labels: ['status:needs-human'] }),
         makeItem(5, { assignees: [{ login: 'jclaw-bot' }] }),
         makeItem(6, { assignees: [{ login: 'jlapenna' }] }),
         makeItem(7), // control: must stay off
@@ -368,6 +303,31 @@ describe('getActionItems', () => {
     ]);
   });
 
+  it('selects a dispatched item using its repository integration label', async () => {
+    const repo = {
+      ...DEFAULT_REPO,
+      agents: {
+        codex: {
+          workflowFile: 'custom-codex.yml',
+          label: 'agent:custom-codex',
+          replyTrigger: '/custom-codex',
+        },
+      },
+    };
+    (getWatchedRepos as Mock).mockReturnValueOnce([repo]);
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(8, { labels: ['agent:custom-codex'] }),
+        makeItem(9, { labels: ['agent:codex'] }),
+      ],
+    });
+    setupOctokit({ listForRepo });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((item) => item.number)).toEqual([8]);
+  });
+
   it('selects a PR solely because it was authored by a known agent bot login (#216)', async () => {
     // Mirrors a PR whose assignee-based claim (jclaw-bot) never took and
     // whose review request already cleared (approved) - author is the last
@@ -377,9 +337,12 @@ describe('getActionItems', () => {
         makeItem(198, { pull_request: {}, user: { login: 'claude[bot]' } }),
         makeItem(199, {
           pull_request: {},
-          user: { login: 'github-actions[bot]' },
+          user: { login: 'agent-lcars[bot]' },
         }),
-        makeItem(200, { pull_request: {}, user: { login: 'someone-else' } }), // control: must stay off
+        makeItem(200, {
+          pull_request: {},
+          user: { login: 'github-actions[bot]' },
+        }), // control: glue automation is not an agent author
       ],
     });
     setupOctokit({ listForRepo });
@@ -441,10 +404,13 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
-  it('captures the newest comment author on human-needed items (possession signal)', async () => {
+  it('captures the newest comment author on needs-human items for context', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(7, { labels: ['claude', 'human-needed'], comments: 2 }),
+        makeItem(7, {
+          labels: ['agent:claude', 'status:needs-human'],
+          comments: 2,
+        }),
       ],
     });
     const graphql = mockGraphql({
@@ -463,7 +429,6 @@ describe('getActionItems', () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].lastCommentAuthor).toBe('jlapenna');
-    expect(isHandedBack(result.items[0])).toBe(true);
   });
 
   it('paginates the open-item listing and collects every item', async () => {
@@ -546,12 +511,12 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
-  it('sorts a review-requested PR ahead of a run-failed PR, tied with human-needed', async () => {
+  it('sorts a review-requested PR ahead of a run-failed PR, tied with needs-human', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(1, { ...ON_BOARD, pull_request: {} }), // run-failed
         makeItem(2, { pull_request: {} }), // review-requested
-        makeItem(3, { labels: ['human-needed'] }), // human-needed
+        makeItem(3, { labels: ['status:needs-human'] }),
       ],
     });
     const pullsList = vi
@@ -675,7 +640,7 @@ describe('getActionItems', () => {
     // the board must degrade to listing-only data, not lose the row.
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(70, { labels: ['human-needed'] }),
+        makeItem(70, { labels: ['status:needs-human'] }),
       ],
     });
     setupOctokit({ listForRepo, graphql: mockGraphql() });
@@ -683,7 +648,7 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([70]);
-    expect(result.items[0].actionTypes).toContain('human-needed');
+    expect(result.items[0].actionTypes).toContain('needs-human');
     expect(result.items[0].lastCommentBody).toBeUndefined();
   });
 
@@ -799,7 +764,7 @@ describe('getActionItems', () => {
     );
   });
 
-  it('does not request comments for a claude-labeled issue nobody has claimed', async () => {
+  it('does not request comments for a Claude-labeled issue nobody has claimed', async () => {
     // Dispatched-but-unclaimed (runner never started): there is no session
     // yet, so there is no takeover command to find - the claim assignee,
     // not the dispatch label, is what says a session exists (#2783). The
@@ -807,7 +772,7 @@ describe('getActionItems', () => {
     // requested for items that will never read it.
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(44, { labels: ['claude'], comments: 3 }),
+        makeItem(44, { labels: ['agent:claude'], comments: 3 }),
       ],
     });
     const graphql = mockGraphql({ 44: issueNode() });
@@ -820,10 +785,10 @@ describe('getActionItems', () => {
     expect(graphql.queries[0]).not.toContain('comments(');
   });
 
-  it('surfaces a dispatched-but-unclaimed opencode-labeled issue (#3012)', async () => {
+  it('surfaces a dispatched-but-unclaimed OpenCode-labeled issue (#3012)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(60, { labels: ['opencode'], comments: 0 }),
+        makeItem(60, { labels: ['agent:opencode'], comments: 0 }),
       ],
     });
     setupOctokit({ listForRepo });
@@ -831,10 +796,10 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([60]);
-    expect(result.items[0].labels).toContain('opencode');
+    expect(result.items[0].labels).toContain('agent:opencode');
   });
 
-  it('does NOT derive human-needed from the assignee pair alone — label only (#2802 decided, #3023)', async () => {
+  it('does NOT derive needs-human from the assignee pair alone — label only (#2802 decided, #3023)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(50, {
@@ -853,10 +818,10 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([50]);
-    expect(result.items[0].actionTypes).not.toContain('human-needed');
+    expect(result.items[0].actionTypes).not.toContain('needs-human');
   });
 
-  it('does not derive human-needed from jclaw-bot alone (no maintainer assignee, no label)', async () => {
+  it('does not derive needs-human from jclaw-bot alone (no maintainer assignee, no label)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(51, { assignees: [{ login: 'jclaw-bot' }], comments: 0 }),
@@ -867,7 +832,7 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([51]);
-    expect(result.items[0].actionTypes).not.toContain('human-needed');
+    expect(result.items[0].actionTypes).not.toContain('needs-human');
   });
 
   // Phase-1 exit criterion (see the multi-repo plan): composite-key
@@ -906,8 +871,8 @@ describe('getActionItems', () => {
     (getWatchedRepos as Mock).mockReturnValueOnce([repoA, repoB]);
 
     const listForRepo = pagedListForRepo({
-      'org-a/repo-a': [makeItem(42, { labels: ['human-needed'] })],
-      'org-b/repo-b': [makeItem(42, { labels: ['human-needed'] })],
+      'org-a/repo-a': [makeItem(42, { labels: ['status:needs-human'] })],
+      'org-b/repo-b': [makeItem(42, { labels: ['status:needs-human'] })],
     });
     const graphql = vi
       .fn()

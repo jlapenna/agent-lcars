@@ -24,8 +24,7 @@ import { optional } from '@repo/util-server';
  */
 
 /** The human this console serves. Review requests are matched against this
- * login, and "the newest comment is theirs" is what
- * `isHandedBack` reads as the ball being back with the agent.
+ * login.
  *
  * Shares `AGENT_LCARS_ADMIN_GITHUB_LOGIN` with `auth.ts`'s sign-in gate
  * rather than introducing a second var: the person allowed to log in and

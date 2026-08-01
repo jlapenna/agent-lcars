@@ -23,8 +23,12 @@ import type {
   ActionType,
   MergeableState,
 } from '../lib/action-items';
-import { pipelineForLabels, type PrimaryAction } from '../lib/primary-action';
-import { repoDisplayName } from '../lib/watched-repo';
+import { type PrimaryAction } from '../lib/primary-action';
+import {
+  agentIntegration,
+  repoDisplayName,
+  selectedAgentPipeline,
+} from '../lib/watched-repo';
 import { approveAndRebase, mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
@@ -34,7 +38,7 @@ import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
 
 const ACTION_LABELS: Record<ActionType, string> = {
-  'human-needed': 'Needs a human',
+  'needs-human': 'Needs a human',
   'run-failed': 'CI run failed',
   'review-requested': 'Review requested',
   'merge-blocked': 'Base branch moved',
@@ -43,7 +47,7 @@ const ACTION_LABELS: Record<ActionType, string> = {
 };
 
 const ACTION_COLORS: Record<ActionType, string> = {
-  'human-needed': 'blue',
+  'needs-human': 'blue',
   'run-failed': 'red',
   'review-requested': 'grape',
   'merge-blocked': 'yellow',
@@ -197,15 +201,12 @@ export function ActionItemCard({
   const [error, setError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
-  // Which pipeline a reply/retrigger on this item routes to (claude vs the
-  // experimental opencode.yml, #2988/#2994) - see pipelineForLabels.
-  const pipeline = pipelineForLabels(item.labels);
-  const replyMention =
-    pipeline === 'opencode'
-      ? '/oc'
-      : pipeline === 'codex'
-        ? '/codex'
-        : '@claude';
+  // No agent label means a plain human reply. This matters for watched repos
+  // such as Homelab that intentionally expose no dispatch integration.
+  const pipeline = selectedAgentPipeline(item.repo, item.labels);
+  const replyMention = pipeline
+    ? agentIntegration(item.repo, pipeline)?.replyTrigger
+    : undefined;
 
   const handleReply = () => {
     if (!replyBody.trim()) return;
@@ -525,7 +526,9 @@ export function ActionItemCard({
               value={replyBody}
               onChange={(e) => setReplyBody(e.currentTarget.value)}
               onKeyDown={handleReplyKeyDown}
-              placeholder={`Reply with ${replyMention}…`}
+              placeholder={
+                replyMention ? `Reply with ${replyMention}…` : 'Reply…'
+              }
               autoFocus={primaryAction?.kind !== 'reply'}
               style={{ flex: 1, minWidth: 200 }}
             />
@@ -593,18 +596,15 @@ export function ActionItemCard({
               Reply…
             </Button>
           )}
-          {item.kind === 'issue' &&
-            (item.labels.includes('claude') ||
-              item.labels.includes('codex') ||
-              item.labels.includes('opencode')) && (
-              <RetriggerButton
-                repo={item.repo}
-                issueNumber={item.number}
-                pipeline={pipeline}
-                onError={setError}
-                size="sm"
-              />
-            )}
+          {item.kind === 'issue' && pipeline && (
+            <RetriggerButton
+              repo={item.repo}
+              issueNumber={item.number}
+              pipeline={pipeline}
+              onError={setError}
+              size="sm"
+            />
+          )}
           {item.kind === 'pr' && item.actionTypes.includes('run-failed') && (
             <UnstickPrsButton
               size="sm"
