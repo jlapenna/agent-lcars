@@ -98,11 +98,7 @@ export function QuickTaskButton({
       >
         Quick task
       </Button>
-      <Modal
-        opened={opened}
-        onClose={close}
-        title="File a quick task"
-      >
+      <Modal opened={opened} onClose={close} title="File a quick task">
         <Stack gap="sm">
           {watchedRepos.length > 1 && (
             <Select
