@@ -119,7 +119,7 @@ every repository where either agent may work, with repository read/write access 
 **Contents**, **Issues**, **Pull requests**, and **Workflows**; keep webhooks
 disabled. Each enrolled repository needs:
 
-- the `AGENT_LCARS_APP_ID` repository variable;
+- the `AGENT_LCARS_CLIENT_ID` repository variable;
 - the `AGENT_LCARS_PRIVATE_KEY` Actions secret containing the App PEM key.
 
 `opencode.yml` and `codex.yml` mint a short-lived installation token and
