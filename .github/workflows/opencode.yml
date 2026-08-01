@@ -17,7 +17,8 @@ name: OpenCode Issue Agent
 # not trust a bare "success" conclusion and the prompt explicitly forbids
 # ending without a communicated `gh` action.
 
-run-name: 'opencode #${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}'
+run-name: >-
+  ${{ ((github.event_name == 'issues' && github.event.label.name != 'opencode') || (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot')) && 'noop ' || 'opencode ' }}#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}
 
 on:
   issues:

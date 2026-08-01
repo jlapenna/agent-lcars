@@ -121,6 +121,14 @@ export interface AgentActivity {
 
 const DISPLAY_TITLE_NUMBER_RE = /^(?:(?:codex|opencode)\s+)?#(\d+):/;
 
+/** Workflow-level no-op runs are named explicitly by the workflow so they
+ * can be distinguished from a valid follow-up waiting on issue concurrency.
+ * Both can have no materialized job yet, but only the former should be hidden
+ * from In Flight. */
+function isNoOpWorkflowRun(displayTitle: string): boolean {
+  return displayTitle.startsWith('noop #');
+}
+
 export function issueNumberFromDisplayTitle(
   displayTitle: string,
 ): number | undefined {
@@ -285,41 +293,10 @@ async function fetchLiveRuns(
     workflow_id: workflowFile,
     per_page: 30,
   });
-  const liveRuns = response.data.workflow_runs.filter(
-    (run) => run.status !== 'completed',
-  );
-
-  // GitHub creates a workflow run before it evaluates the job-level `if:`.
-  // A run waiting on workflow concurrency therefore has status `pending` but
-  // no jobs at all (for example, the `quick-task` label event alongside the
-  // real `opencode` label event). It is not waiting for a runner and should
-  // not appear in In Flight or trip the queue-health alert. Real runner
-  // backlog runs already have a queued job, so retain those.
-  const queuedRunIds = new Set(
-    liveRuns.filter((run) => run.status !== 'in_progress').map((run) => run.id),
-  );
-  const queuedRunWithJobs = new Set<number>();
-  await Promise.all(
-    [...queuedRunIds].map(async (runId) => {
-      try {
-        const jobs = await octokit.rest.actions.listJobsForWorkflowRun({
-          owner: repo.owner,
-          repo: repo.name,
-          run_id: runId,
-          per_page: 1,
-        });
-        if (jobs.data.total_count > 0) queuedRunWithJobs.add(runId);
-      } catch {
-        // Preserve the old behavior if the secondary jobs lookup is
-        // unavailable; an actual queued job is safer to show than to hide.
-        queuedRunWithJobs.add(runId);
-      }
-    }),
-  );
-
-  return liveRuns
+  return response.data.workflow_runs
     .filter(
-      (run) => run.status === 'in_progress' || queuedRunWithJobs.has(run.id),
+      (run) =>
+        run.status !== 'completed' && !isNoOpWorkflowRun(run.display_title),
     )
     .map((run) => toAgentRun(run, repo, pipeline));
 }
