@@ -31,9 +31,9 @@ jobs:
 
       - name: Mint read token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ vars.AGENT_LCARS_APP_ID }}
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
           repositories: ${{ matrix.repository }}

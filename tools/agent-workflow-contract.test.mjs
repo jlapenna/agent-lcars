@@ -15,6 +15,22 @@ function namedStep(source, name) {
   return source.slice(start, next === -1 ? source.length : next);
 }
 
+const appTokenAction =
+  'actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3';
+
+for (const name of ['codex', 'opencode', 'label-contract-audit']) {
+  test(`${name} uses the pinned Node 24 App-token action and client ID`, () => {
+    const source = workflow(name);
+
+    assert.ok(source.includes(`uses: ${appTokenAction}`));
+    assert.match(source, /client-id: \$\{\{ vars\.AGENT_LCARS_CLIENT_ID \}\}/);
+    assert.doesNotMatch(
+      source,
+      /actions\/create-github-app-token@v2|AGENT_LCARS_APP_ID/,
+    );
+  });
+}
+
 for (const worker of ['claude', 'codex', 'opencode']) {
   test(`${worker} failure parks with both durable human signals`, () => {
     const step = namedStep(workflow(worker), 'Report failure on the issue');
