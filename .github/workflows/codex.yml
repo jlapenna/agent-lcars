@@ -37,6 +37,14 @@ on:
         description: 'Original maintainer reply when mode is reply'
         required: false
         default: ''
+      runbook:
+        description: 'Optional skill for a runbook dispatch'
+        required: false
+        default: ''
+      context:
+        description: 'Optional deployment or router context'
+        required: false
+        default: ''
 
 # Least privilege: enough to comment, push a feature branch, and open a PR.
 # id-token: write is what lets this job mint a WIF token for the GCP
@@ -109,6 +117,8 @@ jobs:
           issue: ${{ github.event.inputs.issue }}
           mode: ${{ github.event.inputs.mode }}
           reply: ${{ github.event.inputs.reply }}
+          runbook: ${{ github.event.inputs.runbook }}
+          context: ${{ github.event.inputs.context }}
 
       - name: Point Nx at the shared host cache when present
         run: |
