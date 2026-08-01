@@ -818,6 +818,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	type pingResult struct {
 		host                 DockerHost
 		ok                   bool
+		eligible             bool
 		err                  error
 		load                 hostLoad
 		loadErr              error
@@ -857,7 +858,14 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					}
 				}
 			}
-			ch <- pingResult{host: dh, ok: err == nil, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners}
+			eligible := err == nil
+			if eligible && fleet.mainsRequired[dh.Name] {
+				if mainsErr := a.hostOnMains(ctx, dh.Name); mainsErr != nil {
+					eligible = false
+					loadErr = errors.Join(loadErr, fmt.Errorf("mains power required: %w", mainsErr))
+				}
+			}
+			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners}
 		}(h)
 	}
 
@@ -911,7 +919,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	var reachableHosts []DockerHost
 	for _, configured := range a.dockerHosts {
 		for _, res := range results {
-			if res.ok && res.host.Name == configured.Name {
+			if res.ok && res.eligible && res.host.Name == configured.Name {
 				reachableHosts = append(reachableHosts, configured)
 				break
 			}
@@ -1002,6 +1010,43 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	fleet.placementMu.Unlock()
 	placementDecisions.WithLabelValues(scaleSet, best).Inc()
 	return best, nil
+}
+
+// hostOnMains is deliberately fail-closed for mains-required hosts: a missing
+// or unreadable exporter signal must never spend the workstation battery.
+func (a *Scaler) hostOnMains(ctx context.Context, host string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, hostMetricsTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, fmt.Sprintf(a.hostMetricsURLTemplate, host), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("metrics returned HTTP %d", resp.StatusCode)
+	}
+	s := bufio.NewScanner(resp.Body)
+	seen := false
+	for s.Scan() {
+		line := s.Text()
+		if strings.HasPrefix(line, "node_power_supply_online{") {
+			seen = true
+			if value, ok := parseMetricValue(line); ok && value > 0 {
+				return nil
+			}
+		}
+	}
+	if err := s.Err(); err != nil {
+		return err
+	}
+	if !seen {
+		return errors.New("mains telemetry missing")
+	}
+	return errors.New("host is on battery")
 }
 
 // runnerScaleSetLabelKey tags every container with the listener that owns it.

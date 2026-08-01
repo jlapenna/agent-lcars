@@ -116,6 +116,7 @@ type OrchestratorFleet struct {
 type FleetHostConfig struct {
 	Name              string `yaml:"name"`
 	Docker            string `yaml:"docker"`
+	RequireMains      bool   `yaml:"require_mains,omitempty"`
 	RunnerLimit       *int   `yaml:"runner_limit,omitempty"`
 	WorkDirSizeCapRaw string `yaml:"workdir_size_cap,omitempty"`
 	DockerSocketGID   string `yaml:"docker_socket_gid,omitempty"`
@@ -272,6 +273,7 @@ type resolvedOrchestratorConfig struct {
 	RunnerLimits    map[string]int
 	WorkDirSizeCaps map[string]int64
 	DockerSocketGID map[string]string
+	MainsRequired   map[string]bool
 	Placement       hostLoadPolicy
 	Cooldown        time.Duration
 	ScaleSets       []Config
@@ -334,6 +336,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			return fmt.Errorf("duplicate fleet host %q", h.Name)
 		}
 		seenHosts[h.Name] = true
+		if h.RequireMains {
+			if r.MainsRequired == nil {
+				r.MainsRequired = map[string]bool{}
+			}
+			r.MainsRequired[h.Name] = true
+		}
 		r.DockerHosts = append(r.DockerHosts, h.Name+"="+h.Docker)
 		if h.RunnerLimit != nil {
 			if *h.RunnerLimit < 1 {
