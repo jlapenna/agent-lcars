@@ -131,6 +131,12 @@ workflows should enforce this mechanically with a post-run
 deliverable-evidence check that fails the job when no such artifact exists;
 do not rely on the agent's own goodwill alone.
 
+A failed or cancelled worker is itself a machine-authored parking path. Its
+failure reporter must post the visible failure, add `status:needs-human`, and
+add the repository maintainer as an assignee. These updates are additive: keep
+the selected `agent:*` label for explicit redispatch, preserve an independent
+`status:blocked` label, and never remove an existing assignee.
+
 ## 6. Push early — never hold finished work locally
 
 Commit and push as soon as the smallest coherent slice of work exists (it

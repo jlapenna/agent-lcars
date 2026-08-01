@@ -212,17 +212,16 @@ jobs:
       # tuned for opencode's lighter prompt contract. A bare comment counts
       # as evidence here (unlike claude.yml, which excludes it on the issue
       # path) because the specific failure mode this pipeline guards
-      # against is "said nothing at all" - any comment beyond the initial
-      # pickup message proves the loop actually closed. On the reply path
-      # there is no separate pickup comment, so a single new bot comment
-      # already counts.
+      # against is "said nothing at all" - any comment after the shared
+      # setup action's start anchor proves the loop actually closed. The
+      # pickup comment is deliberately posted before that anchor, so it is
+      # excluded from the timestamp query on both implement and reply paths.
       - name: Verify a deliverable exists
         if: success()
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-          IS_REPLY: ${{ github.event.inputs.mode == 'reply' }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
@@ -265,16 +264,14 @@ jobs:
           if [ -z "$found" ]; then
             botcomments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT" \
               --jq '[.[] | select(.user.type == "Bot")] | length' 2>/dev/null || echo 0)
-            threshold=1
-            if [ "$IS_REPLY" != "true" ]; then threshold=2; fi
-            if [ "${botcomments:-0}" -ge "$threshold" ]; then found="bot posted a follow-up comment on #$NUM"; fi
+            if [ "${botcomments:-0}" -ge 1 ]; then found="bot posted a follow-up comment on #$NUM"; fi
           fi
 
           if [ -n "$found" ]; then
             echo "Deliverable evidence: $found"
           else
             echo "NO_DELIVERABLE=1" >> "$GITHUB_ENV"
-            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no status:needs-human label, no follow-up comment beyond the pickup message). Its conclusion, if any, was never communicated."
+            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no status:needs-human label, no bot comment after the run anchor). Its conclusion, if any, was never communicated."
             exit 1
           fi
 
@@ -287,6 +284,7 @@ jobs:
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           JOB_STATUS: ${{ job.status }}
+          MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
         run: |
           MSG="failed"
           REASON=""
@@ -297,6 +295,7 @@ jobs:
           gh issue comment "$ISSUE_NUM" \
             --repo "$REPO" \
             --body "OpenCode agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
+          gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
+            -f 'labels[]=status:needs-human' --silent
           gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-            -f "assignees[]=${{ vars.MAINTAINER_LOGIN }}" --silent \
-            || echo "::warning::Could not assign jlapenna"
+            -f "assignees[]=$MAINTAINER" --silent
