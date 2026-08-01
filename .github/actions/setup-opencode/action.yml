@@ -1,0 +1,51 @@
+name: Setup OpenCode
+description: Resolve, cache, and install a versioned OpenCode CLI for an agent workflow.
+
+inputs:
+  github-token:
+    description: Token used to resolve the public OpenCode release without anonymous API limits.
+    required: true
+
+outputs:
+  version:
+    description: The OpenCode release tag installed for this run.
+    value: ${{ steps.version.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve OpenCode release
+      id: version
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        version=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name')
+        if [ -z "$version" ]; then
+          echo "::error::OpenCode latest release did not include a tag name."
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Cache OpenCode
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.opencode/bin
+        key: opencode-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
+
+    - name: Install OpenCode
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        OPENCODE_VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        set -euo pipefail
+        timeout -k 30s 10m bash -o pipefail -c \
+          'curl --connect-timeout 30 --max-time 570 -fsSL https://opencode.ai/install |
+            bash -s -- --version "$OPENCODE_VERSION" --no-modify-path'
+
+    - name: Add OpenCode to PATH
+      shell: bash
+      run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
