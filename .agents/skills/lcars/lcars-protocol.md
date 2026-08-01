@@ -53,26 +53,28 @@ jlapenna`), and use as the assignee in the parking recipe
   mistakenly dual-labeled issue never gets two workers racing on the same
   problem.
 
-- **Bot login format:** `claude[bot]` (REST) and `app/claude` (GraphQL) are
-  the same App installation, encoded two different ways depending on which
-  GitHub API answered — see `docs/bot-identity-formats.md` for the full
-  decision. REST shape is canonical here; never compare a `gh pr`/`issue
-list`/`view --json author` login straight against `AGENT_BOT_LOGINS` or
-  `AGENT_FLEET_LOGIN` without normalizing it first.
+- **Bot login format:** `claude[bot]` (REST) / `app/claude` (GraphQL), and
+  `agent-lcars[bot]` / `app/agent-lcars`, are the same App installations
+  encoded two different ways depending on which GitHub API answered — see
+  `docs/bot-identity-formats.md` for the full decision. REST shape is
+  canonical here; never compare a `gh pr`/`issue list`/`view --json author`
+  login straight against `AGENT_BOT_LOGINS` or `AGENT_FLEET_LOGIN` without
+  normalizing it first.
 
 ## Auto-merge
 
 `.github/workflows/agent-automerge.yml` squash-auto-merges any PR whose
 author is listed in the `AGENT_BOT_LOGINS` repo variable (a JSON array —
-currently `claude[bot]` and `github-actions[bot]`, covering claude.yml and
-opencode.yml respectively), gated only on the ruleset's required `Verify`
-check. A new agent pipeline that follows this protocol (and therefore opens
-its PRs under its own distinct bot identity) needs its login appended to
-that variable to get auto-merge — never a change to the workflow itself:
+currently `claude[bot]` and `agent-lcars[bot]`, covering claude.yml and the
+OpenCode/Codex lanes respectively), gated only on the ruleset's required
+`Verify` check. A new agent pipeline that follows this protocol (and
+therefore opens its PRs under its own distinct bot identity) needs its login
+appended to that variable to get auto-merge — never a change to the workflow
+itself:
 
 ```bash
 gh variable set AGENT_BOT_LOGINS --repo jlapenna/agent-lcars \
-  --body '["claude[bot]","github-actions[bot]","<new-agent-login>"]'
+  --body '["claude[bot]","agent-lcars[bot]","<new-agent-login>"]'
 ```
 
 ## Verify before opening (or updating) a PR

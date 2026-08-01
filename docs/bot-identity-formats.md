@@ -1,9 +1,9 @@
 # Canonical format for agent bot identities: REST vs GraphQL
 
-`claude[bot]` and `app/claude` are two different string encodings of the
-_same_ underlying identity — this repo's `claude[bot]` GitHub App
-installation. They are not two accounts that can drift apart; they are two
-serializations of one account that happen to look nothing alike. Mixing
+`claude[bot]`/`app/claude` and `agent-lcars[bot]`/`app/agent-lcars` are pairs
+of different string encodings of the _same_ underlying GitHub App
+installation. They are not accounts that can drift apart; they are two
+serializations of one identity that happen to look nothing alike. Mixing
 them without translating is what silently broke the CI → deploy chain for
 every agent-merged PR (#175): `agent-automerge.yml`'s `restore-main-checks`
 job read a GraphQL-shaped login (`app/claude`) and compared it against
@@ -17,11 +17,12 @@ GitHub represents the actor behind a bot/App differently depending on
 which API answers the query:
 
 - **REST** renders any bot actor (a `User` whose `type` is `Bot`, backing a
-  GitHub App installation) as `{app-slug}[bot]` — e.g. `claude[bot]`.
+  GitHub App installation) as `{app-slug}[bot]` — e.g. `claude[bot]` or
+  `agent-lcars[bot]`.
 - **GraphQL** has a distinct `Bot` node type for the same actor and renders
-  it as `app/{app-slug}` — e.g. `app/claude`.
+  it as `app/{app-slug}` — e.g. `app/claude` or `app/agent-lcars`.
 
-Both are deterministic, 1:1 functions of the same App slug (`claude`).
+Both are deterministic, 1:1 functions of the same App slug.
 There is no trigger path (a `workflow_dispatch` run, an `@claude` mention
 reply, a direct API push) that changes which identity is acting — it is
 always the same App installation — only which API you asked, and therefore
@@ -80,12 +81,12 @@ not a hypothetical risk.
 
 ## Current-state inventory
 
-| Callsite                                                                                                                    | Shape | Status                                                                             |
-| --------------------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------- |
-| `agent-automerge.yml`'s `restore-main-checks` (`gh api .../pulls/$PR --jq '.user.login'`)                                   | REST  | Fixed (#188)                                                                       |
-| `agent-automerge.yml`'s `automerge` job `if:` / event-payload checks (`github.event.pull_request.user.login`)               | REST  | Always was correct — Actions event payloads are REST-shaped                        |
-| `apps/console` (`github-client.ts`, `action-items.ts`)                                                                      | REST  | Correct by construction — Octokit REST only, no GraphQL client in this codebase    |
-| `opencode.yml`'s deliverable-check dedup guard (`gh api .../pulls?...` / `select(.user.login != "claude[bot]")`, ~line 271) | REST  | Correct — uses the REST list endpoint and compares the canonical REST-shaped login |
+| Callsite                                                                                                         | Shape | Status                                                                             |
+| ---------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------- |
+| `agent-automerge.yml`'s `restore-main-checks` (`gh api .../pulls/$PR --jq '.user.login'`)                        | REST  | Fixed (#188)                                                                       |
+| `agent-automerge.yml`'s `automerge` job `if:` / event-payload checks (`github.event.pull_request.user.login`)    | REST  | Always was correct — Actions event payloads are REST-shaped                        |
+| `apps/console` (`github-client.ts`, `action-items.ts`)                                                           | REST  | Correct by construction — Octokit REST only, no GraphQL client in this codebase    |
+| `opencode.yml`'s deliverable-check dedup guard (`gh api .../pulls?...` / `select(.user.login != "claude[bot]")`) | REST  | Correct — uses the REST list endpoint and compares the canonical REST-shaped login |
 
 ## If you add a new callsite
 

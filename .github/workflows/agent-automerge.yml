@@ -5,7 +5,7 @@ name: Agent PR Auto-Merge
 # click before merge is pure friction for agent-authored PRs, not a security
 # boundary. Any PR whose author is one of this repo's known coding-agent bot
 # identities (vars.AGENT_BOT_LOGINS - a JSON array, currently claude[bot]
-# from claude.yml and github-actions[bot] from opencode.yml) gets squash
+# from claude.yml and agent-lcars[bot] from opencode.yml/codex.yml) gets squash
 # auto-merge enabled the moment it's opened/marked ready, gated only on the
 # ruleset's required "Verify" check. Adding a new agent pipeline later (a
 # future codex.yml, gemini.yml, ...) that follows the existing
