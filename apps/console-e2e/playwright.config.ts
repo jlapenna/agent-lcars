@@ -60,7 +60,7 @@ export default defineConfig({
   // builds and bundles the standalone server up-front.
   webServer: {
     command:
-      'pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional -- node dist/apps/console/.next/standalone/apps/console/server.js',
+      'pnpm exec dotenv -e "${E2E_ENV_FILE:-.env.e2e}" -e "${E2E_ENV_LOCAL_FILE:-.env.e2e.local}" --optional -- node dist/apps/console/.next/standalone/apps/console/server.js',
     env: {
       PORT: '4200',
       HOSTNAME: '127.0.0.1',

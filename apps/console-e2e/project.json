@@ -14,18 +14,26 @@
     },
     "e2e": {
       "executor": "nx:run-commands",
+      "options": {
+        "command": "./tools/e2e-local.sh",
+        "env": {
+          "E2E_PROJECT": "@agent-lcars/console-e2e"
+        }
+      }
+    },
+    "e2e-implementation": {
+      "executor": "nx:run-commands",
       "defaultConfiguration": "emulator",
       "dependsOn": [
-        "@agent-lcars/console:build",
-        "@agent-lcars/console:bundle",
+        "@agent-lcars/console-e2e:e2e-build-hermetic",
         "@agent-lcars/console-e2e:killports"
       ],
       "configurations": {
         "emulator": {
-          "command": "pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional -- pnpm exec firebase emulators:exec --only auth,firestore,eventarc --project=demo-no-project \"pnpm exec nx run @agent-lcars/console-e2e:e2e-run\""
+          "command": "node tools/e2e/validate-env.mjs --require-hermetic --next-root apps/console \"${E2E_ENV_FILE:-.env.e2e}\" \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" && pnpm exec dotenv -e \"${E2E_ENV_FILE:-.env.e2e}\" -e \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" --optional -- pnpm exec firebase emulators:exec --only auth,firestore,eventarc --project=demo-no-project \"pnpm exec nx run @agent-lcars/console-e2e:e2e-run\""
         },
         "live": {
-          "command": "pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional -- nx run @agent-lcars/console-e2e:e2e-run"
+          "command": "node tools/e2e/validate-env.mjs --require-hermetic --next-root apps/console \"${E2E_ENV_FILE:-.env.e2e}\" \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" && pnpm exec dotenv -e \"${E2E_ENV_FILE:-.env.e2e}\" -e \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" --optional -- nx run @agent-lcars/console-e2e:e2e-run"
         }
       },
       "options": {
@@ -36,6 +44,13 @@
           "E2E_TESTING": "true",
           "AGENT_CONSOLE_GITHUB_API_BASE_URL": "http://localhost:4200/api/e2e/github"
         }
+      }
+    },
+    "e2e-build-hermetic": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/e2e/validate-env.mjs --require-hermetic --next-root apps/console \"${E2E_ENV_FILE:-.env.e2e}\" \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" && pnpm exec nx run @agent-lcars/console:bundle"
       }
     },
     "e2e-local": {
