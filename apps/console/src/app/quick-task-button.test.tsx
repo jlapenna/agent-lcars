@@ -32,13 +32,13 @@ describe('QuickTaskButton', () => {
     vi.clearAllMocks();
   });
 
-  it('opens a full screen dialog rather than an inline dropdown', async () => {
+  it('opens a centered dialog rather than a full-screen one or an inline dropdown', async () => {
     renderButton();
 
     const dialog = await openDialog();
 
     expect(screen.getByText('File a quick task')).toBeTruthy();
-    expect(dialog.getAttribute('data-full-screen')).toBe('true');
+    expect(dialog.getAttribute('data-full-screen')).toBeNull();
   });
 
   it('disables File & dispatch until a description is entered', async () => {

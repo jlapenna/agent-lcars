@@ -29,9 +29,11 @@ const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
  * label event - see createQuickTask in backend-actions.ts). No polling here: the new
  * issue shows up in the board / In Flight panel on the next refresh.
  *
- * Full screen rather than a Popover: an autosizing Popover grows and shifts
- * position as its content grows, so pasting a long description made the
- * whole dropdown jump around under the cursor - see #2773.
+ * A centered Modal rather than a Popover: an autosizing Popover grows and
+ * shifts position as its content grows, so pasting a long description made
+ * the whole dropdown jump around under the cursor - see #2773. A centered
+ * Modal does not have that jump problem, so it does not need to be
+ * full-screen - see #267.
  */
 export function QuickTaskButton({
   watchedRepos = [],
@@ -99,7 +101,6 @@ export function QuickTaskButton({
       <Modal
         opened={opened}
         onClose={close}
-        fullScreen
         title="File a quick task"
       >
         <Stack gap="sm">
