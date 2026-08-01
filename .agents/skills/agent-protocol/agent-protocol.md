@@ -23,8 +23,9 @@ isn't true for every repo that pulls this file in.
 
 Read instructions in this order: the repository's `AGENTS.md`, this shared
 protocol, then the repository-specific protocol it names. Only after those
-documents are understood, read `.agent-dispatch/context.json` when the
-workflow provides it. That brief identifies the anchor, dispatch mode, optional
+documents are understood, read the JSON file named by
+`$AGENT_DISPATCH_CONTEXT` when the workflow provides it. That brief identifies
+the anchor, dispatch mode, optional
 runbook/deployment context, and the maintainer's reply without interpolating
 that reply into the agent prompt.
 

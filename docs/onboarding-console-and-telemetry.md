@@ -19,20 +19,26 @@ but the console only becomes useful once all three are in place:
 Pull in the shared skill and follow it. Every dispatch workflow (however
 many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
 
-- Check out `.agents/skills/agent-protocol/agent-protocol.md` from this
-  repo and have the agent read it first, before its own repo-specific
-  delta skill:
+- Use the pinned `prepare-agent-dispatch` action and have the agent read the
+  shared protocol at `$AGENT_PROTOCOL_PATH` first, before its own repo-specific
+  delta skill. The action is already downloaded outside the consumer's Git
+  worktree, so it exposes its bundled protocol file and writes the dispatch
+  brief under `$RUNNER_TEMP`:
 
   ```yaml
-  - name: Checkout shared agent-protocol skill
-    uses: actions/checkout@v7
+  - name: Prepare dispatch context
+    id: dispatch
+    uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@<full-commit-sha>
     with:
-      repository: jlapenna/agent-lcars
-      path: .agent-protocol
-      sparse-checkout: |
-        .agents/skills/agent-protocol
-      sparse-checkout-cone-mode: false
+      agent: Claude
+      issue: ${{ github.event.inputs.issue }}
+      mode: ${{ github.event.inputs.mode }}
   ```
+
+  The action exports `AGENT_PROTOCOL_PATH` and `AGENT_DISPATCH_CONTEXT` for
+  subsequent steps and exposes the same values as `protocol-path` and `path`
+  outputs. Do not check this repository out inside the consumer repository;
+  runtime-only files must never appear in the consumer's Git status.
 
 - Write that delta skill (mirror `.agents/skills/lcars/lcars-protocol.md`
   in this repo): name the fleet-claim identity, the PR reviewer/park
