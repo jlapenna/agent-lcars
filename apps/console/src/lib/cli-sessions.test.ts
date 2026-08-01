@@ -251,6 +251,36 @@ describe('getCliSessions', () => {
     expect(sessions[0].pr).toBeUndefined();
   });
 
+  it('does not resolve a repo-less branch from partial lookup results', async () => {
+    (getWatchedRepos as Mock).mockReturnValue([
+      { owner: 'org-a', name: 'repo-a' },
+      { owner: 'org-b', name: 'repo-b' },
+    ]);
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({ repo: undefined, branch: 'fix/possibly-shared' }),
+    ]);
+    const listMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [
+          {
+            number: 11,
+            html_url: 'https://github.com/org-a/repo-a/pull/11',
+            head: { ref: 'fix/possibly-shared' },
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('502'));
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { pulls: { list: listMock } },
+    });
+
+    const { sessions, warnings } = await getCliSessions();
+
+    expect(sessions[0].pr).toBeUndefined();
+    expect(warnings).toEqual(['PR lookup failed for org-b/repo-b.']);
+  });
+
   it('keeps an idle running session visible when a recorded PR has merged', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({

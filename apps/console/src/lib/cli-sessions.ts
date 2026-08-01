@@ -218,11 +218,13 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   // now the unit of work. Two watched repos could legitimately share a
   // branch-naming convention, so the join itself stays repo-scoped.
   const prsByRepo = new Map<string, Promise<Map<string, JoinedPr>>>();
+  const failedPrRepos = new Set<string>();
   const openPrsFor = (repo: WatchedRepo): Promise<Map<string, JoinedPr>> => {
     const key = repoKey(repo);
     let pending = prsByRepo.get(key);
     if (!pending) {
       pending = listOpenPrsByBranch(repo).catch((error) => {
+        failedPrRepos.add(key);
         console.error(
           'agent-lcars: failed to list open PRs for branch joins (%s):',
           key,
@@ -243,9 +245,19 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
       if (!session.pr && doc.branch && isActive(session.liveness)) {
         const branch = doc.branch;
         const repos = doc.repo ? [doc.repo] : getWatchedRepos();
-        const matches = (
-          await Promise.all(repos.map((repo) => openPrsFor(repo)))
-        ).flatMap((openPrs) => {
+        const openPrsByRepo = await Promise.all(
+          repos.map((repo) => openPrsFor(repo)),
+        );
+        // A failed lookup leaves a legacy repo-less session indeterminate:
+        // the unavailable repo could contain the same branch and be the
+        // session's actual repository. Never resolve from partial evidence.
+        if (
+          !doc.repo &&
+          repos.some((repo) => failedPrRepos.has(repoKey(repo)))
+        ) {
+          return session;
+        }
+        const matches = openPrsByRepo.flatMap((openPrs) => {
           const match = openPrs.get(branch);
           return match ? [match] : [];
         });
