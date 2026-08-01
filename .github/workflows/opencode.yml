@@ -128,43 +128,15 @@ jobs:
       # The shared setup action records the wall-clock anchor used by the
       # deliverable check below.
 
-      # The upstream composite action discovers its release with an
-      # unauthenticated api.github.com curl. Shared runners can exhaust that
-      # IP-level limit, and its `bash -e -o pipefail` shell then aborts before
-      # OpenCode starts. Keep the equivalent setup local so release discovery
-      # uses this workflow's authenticated token and the installer receives
-      # the exact version used by the cache key.
-      - name: Resolve OpenCode release
-        id: opencode-version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name')
-          if [ -z "$version" ]; then
-            echo "::error::OpenCode latest release did not include a tag name."
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache OpenCode
-        id: opencode-cache
-        uses: actions/cache@v6
+      # Avoid the official composite action's unauthenticated release lookup:
+      # anonymous GitHub API traffic is shared across runners and can exhaust
+      # its per-IP budget before OpenCode starts. This local reusable action
+      # resolves with the workflow token, caches that exact release, and
+      # installs it without modifying runner shell configuration.
+      - name: Setup OpenCode
+        uses: ./.github/actions/setup-opencode
         with:
-          path: ~/.opencode/bin
-          key: opencode-${{ runner.os }}-${{ runner.arch }}-${{ steps.opencode-version.outputs.version }}
-
-      - name: Install OpenCode
-        if: steps.opencode-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 10
-        env:
-          OPENCODE_VERSION: ${{ steps.opencode-version.outputs.version }}
-        run: |
-          curl -fsSL https://opencode.ai/install |
-            bash -s -- --version "$OPENCODE_VERSION" --no-modify-path
-
-      - name: Add OpenCode to PATH
-        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          github-token: ${{ github.token }}
 
       - name: Run OpenCode
         # #51: two dispatches against #44 retried a persistent LiteLLM 429
