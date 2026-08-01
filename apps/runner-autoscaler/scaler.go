@@ -818,6 +818,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	type pingResult struct {
 		host                 DockerHost
 		ok                   bool
+		eligible             bool
 		err                  error
 		load                 hostLoad
 		loadErr              error
@@ -857,12 +858,14 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					}
 				}
 			}
-			if err == nil && fleet.mainsRequired[dh.Name] {
+			eligible := err == nil
+			if eligible && fleet.mainsRequired[dh.Name] {
 				if mainsErr := a.hostOnMains(ctx, dh.Name); mainsErr != nil {
-					err = fmt.Errorf("mains power required: %w", mainsErr)
+					eligible = false
+					loadErr = errors.Join(loadErr, fmt.Errorf("mains power required: %w", mainsErr))
 				}
 			}
-			ch <- pingResult{host: dh, ok: err == nil, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners}
+			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners}
 		}(h)
 	}
 
@@ -916,7 +919,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	var reachableHosts []DockerHost
 	for _, configured := range a.dockerHosts {
 		for _, res := range results {
-			if res.ok && res.host.Name == configured.Name {
+			if res.ok && res.eligible && res.host.Name == configured.Name {
 				reachableHosts = append(reachableHosts, configured)
 				break
 			}
@@ -1030,7 +1033,7 @@ func (a *Scaler) hostOnMains(ctx context.Context, host string) error {
 	seen := false
 	for s.Scan() {
 		line := s.Text()
-		if strings.HasPrefix(line, "node_power_supply_online{") && strings.Contains(line, `type="Mains"`) {
+		if strings.HasPrefix(line, "node_power_supply_online{") {
 			seen = true
 			if value, ok := parseMetricValue(line); ok && value > 0 {
 				return nil
