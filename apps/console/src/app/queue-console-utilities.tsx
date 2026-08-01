@@ -21,7 +21,11 @@ export function QueueConsoleUtilities({
 }) {
   return (
     <Group gap={4} wrap="nowrap">
-      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+      <QuickTaskButton
+        watchedRepos={watchedRepos}
+        initialRepoKey={repoFilter}
+        size="compact-xs"
+      />
       <RefreshButton compact bustsGithubCache />
       <QueueUtilityMenu
         includeNavigation={includeNavigation}

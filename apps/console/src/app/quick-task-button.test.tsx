@@ -200,6 +200,63 @@ describe('QuickTaskButton', () => {
     );
   });
 
+  it('defaults to the repository selected by the surrounding page', async () => {
+    (createQuickTask as Mock).mockResolvedValue({
+      ok: true,
+      url: 'https://github.com/org-b/repo-b/issues/1',
+      number: 1,
+    });
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    render(
+      <MantineProvider>
+        <QuickTaskButton
+          watchedRepos={[repoA, repoB]}
+          initialRepoKey="org-b/repo-b"
+        />
+      </MantineProvider>,
+    );
+    await openDialog();
+
+    expect(
+      (screen.getByRole('combobox', { name: 'Repo' }) as HTMLInputElement)
+        .value,
+    ).toBe('org-b/repo-b');
+
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Fix this repository' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+
+    await waitFor(() =>
+      expect(createQuickTask).toHaveBeenCalledWith(
+        'Fix this repository',
+        '',
+        repoB,
+        'claude',
+      ),
+    );
+  });
+
+  it('falls back to the first watched repo for an unknown page scope', async () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b' };
+    render(
+      <MantineProvider>
+        <QuickTaskButton
+          watchedRepos={[repoA, repoB]}
+          initialRepoKey="org-c/removed-repo"
+        />
+      </MantineProvider>,
+    );
+    await openDialog();
+
+    expect(
+      (screen.getByRole('combobox', { name: 'Repo' }) as HTMLInputElement)
+        .value,
+    ).toBe('org-a/repo-a');
+  });
+
   it('shows the configured alias in the repo picker instead of owner/name', async () => {
     (createQuickTask as Mock).mockResolvedValue({
       ok: true,

@@ -1,9 +1,17 @@
 import type { CliSessionDoc } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
-import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
 import { getCliSessions } from './cli-sessions';
-import { getGithubClient } from './github-client';
+import { getGithubClient, getWatchedRepos } from './github-client';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
@@ -15,6 +23,7 @@ vi.mock('./github-client', async (importOriginal) => {
   return {
     ...actual,
     getGithubClient: vi.fn(),
+    getWatchedRepos: vi.fn(),
   };
 });
 
@@ -37,6 +46,7 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
       cacheReadTokens: 0,
     },
     deliverables: { prNumbers: [], commitShas: [] },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     host: 'joes-workstation',
     branch: 'feat/agent-lcars-cli-sessions',
     ...overrides,
@@ -67,6 +77,12 @@ function mockPullsGet(merged: boolean | Error) {
 }
 
 describe('getCliSessions', () => {
+  beforeEach(() => {
+    (getWatchedRepos as Mock).mockReturnValue([
+      { owner: 'supersprinklesracing', name: 'sprinkles' },
+    ]);
+  });
+
   afterEach(() => vi.resetAllMocks());
 
   it('passes a lastActivityAt cutoff to the store instead of listing everything', async () => {
@@ -147,6 +163,92 @@ describe('getCliSessions', () => {
       url: 'https://github.com/supersprinklesracing/sprinkles/pull/2662',
     });
     expect(listMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fabricate a deliverable PR link for a legacy repo-less session', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({
+        repo: undefined,
+        branch: undefined,
+        deliverables: { prNumbers: [270], commitShas: [] },
+      }),
+    ]);
+    const listMock = mockOpenPulls();
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].pr).toBeUndefined();
+    expect(listMock).not.toHaveBeenCalled();
+  });
+
+  it('resolves a repo-less active session only when its branch matches one watched repo', async () => {
+    (getWatchedRepos as Mock).mockReturnValue([
+      { owner: 'org-a', name: 'repo-a' },
+      { owner: 'org-b', name: 'repo-b' },
+    ]);
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({ repo: undefined, branch: 'fix/right-repo' }),
+    ]);
+    const listMock = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            number: 272,
+            html_url: 'https://github.com/org-b/repo-b/pull/272',
+            head: { ref: 'fix/right-repo' },
+          },
+        ],
+      });
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { pulls: { list: listMock } },
+    });
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].pr).toEqual({
+      number: 272,
+      url: 'https://github.com/org-b/repo-b/pull/272',
+    });
+    expect(listMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not guess when a repo-less branch exists in multiple watched repos', async () => {
+    (getWatchedRepos as Mock).mockReturnValue([
+      { owner: 'org-a', name: 'repo-a' },
+      { owner: 'org-b', name: 'repo-b' },
+    ]);
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({ repo: undefined, branch: 'fix/shared-name' }),
+    ]);
+    const listMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [
+          {
+            number: 11,
+            html_url: 'https://github.com/org-a/repo-a/pull/11',
+            head: { ref: 'fix/shared-name' },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            number: 22,
+            html_url: 'https://github.com/org-b/repo-b/pull/22',
+            head: { ref: 'fix/shared-name' },
+          },
+        ],
+      });
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { pulls: { list: listMock } },
+    });
+
+    const { sessions } = await getCliSessions();
+
+    expect(sessions[0].pr).toBeUndefined();
   });
 
   it('keeps an idle running session visible when a recorded PR has merged', async () => {

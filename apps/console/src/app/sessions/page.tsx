@@ -149,10 +149,12 @@ function ViewToggle({
 
 function SessionsUtilities({
   watchedRepos,
+  repoFilter,
   includeNavigation = false,
   navigationHrefs,
 }: {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  repoFilter?: SessionArchiveQuery['repo'];
   includeNavigation?: boolean;
   navigationHrefs?: {
     sessions: string;
@@ -161,7 +163,11 @@ function SessionsUtilities({
 }) {
   return (
     <Group gap={4} wrap="nowrap">
-      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+      <QuickTaskButton
+        watchedRepos={watchedRepos}
+        initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
+        size="compact-xs"
+      />
       <RefreshButton compact />
       <QueueUtilityMenu
         includeNavigation={includeNavigation}
@@ -249,11 +255,15 @@ async function SessionsPageShell({ searchParams }: PageProps) {
         utilities={
           <>
             <div className="sessions-utilities sessions-utilities--desktop">
-              <SessionsUtilities watchedRepos={watchedRepos} />
+              <SessionsUtilities
+                watchedRepos={watchedRepos}
+                repoFilter={query.repo}
+              />
             </div>
             <div className="sessions-utilities sessions-utilities--mobile">
               <SessionsUtilities
                 watchedRepos={watchedRepos}
+                repoFilter={query.repo}
                 includeNavigation
                 navigationHrefs={mobileNavigationHrefs}
               />

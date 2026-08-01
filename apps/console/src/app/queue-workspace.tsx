@@ -134,7 +134,11 @@ export function QueueWorkspace({
               </Text>
             </div>
             <Group gap={4} wrap="nowrap" className="queue-mobile-utilities">
-              <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+              <QuickTaskButton
+                watchedRepos={watchedRepos}
+                initialRepoKey={searchParams.get('repo') ?? undefined}
+                size="compact-xs"
+              />
               <RefreshButton compact bustsGithubCache />
               {mobileUtilityMenu}
             </Group>

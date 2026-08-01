@@ -185,14 +185,20 @@ async function AgentsPageBody({
 
 function AgentsUtilities({
   watchedRepos,
+  repoFilter,
   includeNavigation = false,
 }: {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  repoFilter?: WatchedRepo;
   includeNavigation?: boolean;
 }) {
   return (
     <Group gap={4} wrap="nowrap">
-      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
+      <QuickTaskButton
+        watchedRepos={watchedRepos}
+        initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
+        size="compact-xs"
+      />
       <RefreshButton compact bustsGithubCache />
       <QueueUtilityMenu
         includeNavigation={includeNavigation}
@@ -245,10 +251,17 @@ async function AgentsPageShell({ searchParams }: PageProps) {
         utilities={
           <>
             <div className="agents-utilities agents-utilities--desktop">
-              <AgentsUtilities watchedRepos={watchedRepos} />
+              <AgentsUtilities
+                watchedRepos={watchedRepos}
+                repoFilter={repoFilter}
+              />
             </div>
             <div className="agents-utilities agents-utilities--mobile">
-              <AgentsUtilities watchedRepos={watchedRepos} includeNavigation />
+              <AgentsUtilities
+                watchedRepos={watchedRepos}
+                repoFilter={repoFilter}
+                includeNavigation
+              />
             </div>
           </>
         }

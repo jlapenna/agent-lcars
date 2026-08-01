@@ -15,7 +15,7 @@ import {
 
 import {
   getGithubClient,
-  primaryWatchedRepo,
+  getWatchedRepos,
   repoKey,
   type WatchedRepo,
 } from './github-client';
@@ -92,17 +92,16 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
 }
 
 /** The session's own transcript already names the PRs it touched - use that
- * before ever asking GitHub. The newest PR number wins. Falls back to the
- * primary watched repo for docs written before Phase 0's `repo` field
- * existed. */
+ * before ever asking GitHub. The newest PR number wins. A PR number is only
+ * unique inside a repository, so legacy docs without `repo` must not turn it
+ * into a guessed URL. */
 function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
   const prNumbers = doc.deliverables?.prNumbers;
-  if (!prNumbers || prNumbers.length === 0) return undefined;
+  if (!doc.repo || !prNumbers || prNumbers.length === 0) return undefined;
   const number = prNumbers[prNumbers.length - 1];
-  const repo = doc.repo ?? primaryWatchedRepo();
   return {
     number,
-    url: `https://github.com/${repo.owner}/${repo.name}/pull/${number}`,
+    url: `https://github.com/${doc.repo.owner}/${doc.repo.name}/pull/${number}`,
   };
 }
 
@@ -242,8 +241,18 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     capped.map(async ([doc, session]) => {
       session.pr = prFromDeliverables(doc);
       if (!session.pr && doc.branch && isActive(session.liveness)) {
-        const openPrs = await openPrsFor(doc.repo ?? primaryWatchedRepo());
-        session.pr = openPrs.get(doc.branch);
+        const branch = doc.branch;
+        const repos = doc.repo ? [doc.repo] : getWatchedRepos();
+        const matches = (
+          await Promise.all(repos.map((repo) => openPrsFor(repo)))
+        ).flatMap((openPrs) => {
+          const match = openPrs.get(branch);
+          return match ? [match] : [];
+        });
+        // A branch name can exist in more than one watched repo. Preserve a
+        // legacy session's unknown repository instead of attaching a
+        // plausible-looking but potentially wrong link.
+        session.pr = matches.length === 1 ? matches[0] : undefined;
       }
       return session;
     }),
