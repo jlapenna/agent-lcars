@@ -124,7 +124,7 @@ jobs:
         # workflow credential. Avoid printing the header: it contains the
         # token in base64 form.
         run: |
-          git config --local --get 'http.https://github.com/.extraheader' >/dev/null \
+          git config --includes --get 'http.https://github.com/.extraheader' >/dev/null \
             || { echo '::error::Checkout did not retain a GitHub credential for OpenCode finalization.'; exit 1; }
 
       - name: Shared agent setup
