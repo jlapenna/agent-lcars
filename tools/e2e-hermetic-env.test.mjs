@@ -107,6 +107,45 @@ test('tool caches stay durable while HOME remains isolated', () => {
   }
 });
 
+test('Playwright uses the platform-specific macOS browser cache', () => {
+  const tempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lcars-e2e-darwin-cache-'),
+  );
+  const callerHome = path.join(tempDir, 'home');
+  const fakeBin = path.join(tempDir, 'bin');
+  const browserCache = path.join(callerHome, 'Library/Caches/ms-playwright');
+  fs.mkdirSync(browserCache, { recursive: true });
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const uname = path.join(fakeBin, 'uname');
+  fs.writeFileSync(uname, '#!/bin/sh\nprintf "Darwin\\n"\n');
+  fs.chmodSync(uname, 0o755);
+
+  const probe = `
+    if (process.env.PLAYWRIGHT_BROWSERS_PATH !== ${JSON.stringify(browserCache)}) {
+      process.exit(9);
+    }
+    process.stdout.write('darwin browser cache verified\\n');
+  `;
+
+  try {
+    const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: callerHome,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        PLAYWRIGHT_BROWSERS_PATH: '',
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'darwin browser cache verified\n');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('dotenv validation names an unsafe key without echoing its value', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-env-test-'));
   const envFile = path.join(tempDir, '.env.e2e');

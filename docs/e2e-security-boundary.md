@@ -21,6 +21,13 @@ lets already installed package-manager and emulator distributions work offline
 without exposing the rest of the caller's home as process configuration;
 ambient cache overrides are not trusted.
 
+Playwright's browser cache is also derived from the caller's home using the
+platform default (`~/.cache/ms-playwright` on Linux,
+`~/Library/Caches/ms-playwright` on macOS, or
+`~/AppData/Local/ms-playwright` in Windows Bash environments). An explicit
+`PLAYWRIGHT_BROWSERS_PATH` remains the supported escape hatch for custom
+installations.
+
 The wrapper deliberately does not load a developer's `.env.e2e` or
 `.env.e2e.local`. The public Nx `e2e` target uses this wrapper too; only the
 internal `e2e-implementation` target retains the dotenv compatibility

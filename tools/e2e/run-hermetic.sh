@@ -105,8 +105,17 @@ fi
 # the boundary.
 if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
   SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
-elif [ -n "$CALLER_HOME" ] && [ -d "$CALLER_HOME/.cache/ms-playwright" ]; then
-  SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$CALLER_HOME/.cache/ms-playwright")
+elif [ -n "$CALLER_HOME" ]; then
+  case "$(uname -s)" in
+    Darwin) browser_cache="$CALLER_HOME/Library/Caches/ms-playwright" ;;
+    CYGWIN* | MINGW* | MSYS*)
+      browser_cache="$CALLER_HOME/AppData/Local/ms-playwright"
+      ;;
+    *) browser_cache="$CALLER_HOME/.cache/ms-playwright" ;;
+  esac
+  if [ -d "$browser_cache" ]; then
+    SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$browser_cache")
+  fi
 fi
 
 if [ -n "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]; then
