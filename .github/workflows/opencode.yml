@@ -42,14 +42,12 @@ permissions:
   actions: write
 
 concurrency:
-  # Bot-authored comment events get their own per-run group instead of
-  # sharing the issue's group. GitHub only keeps one PENDING run per
-  # concurrency group, and queueing happens before job-level `if:` is
-  # checked — without this, the agent's own progress-update comment could
-  # fire a fresh issue_comment event that evicts an already-queued human
-  # `/opencode ...` follow-up from the pending slot before it ever runs.
-  # Ported from claude.yml's identical carve-out.
-  group: ${{ format('opencode-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') && format('-bot-noop-{0}', github.run_id) || '') }}
+  # No-op events get their own per-run group instead of sharing the issue's
+  # group. GitHub only keeps one PENDING run per concurrency group, and
+  # queueing happens before job-level `if:` is checked. In particular,
+  # quick-task creation emits both a quick-task and an opencode label event;
+  # the former must not sit behind the real agent run as a fake queued run.
+  group: ${{ format('opencode-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, ((github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') || (github.event_name == 'issues' && github.event.label.name != 'opencode')) && format('-noop-{0}', github.run_id) || '') }}
   cancel-in-progress: false
 
 jobs:
