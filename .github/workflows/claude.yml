@@ -430,6 +430,7 @@ jobs:
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           JOB_STATUS: ${{ job.status }}
+          MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
         run: |
           REASON=""
           LOG="$(gh run view "$RUN_ID" --log 2>/dev/null || true)"
@@ -449,10 +450,10 @@ jobs:
           gh issue comment "$ISSUE_NUM" \
             --repo "$REPO" \
             --body "Claude agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
-          # A failed/cancelled run needs a human re-dispatch - put the ball
-          # in the maintainer's court on the assignee field too (additive:
-          # the jclaw-bot claim stays, reading as "fleet tried, human
-          # needed").
+          # Failure is a machine-authored parking path. Keep blocked state and
+          # the selected agent label intact while adding both durable human
+          # signals. The issue REST endpoints also work for PR anchors.
+          gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
+            -f 'labels[]=status:needs-human' --silent
           gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-            -f "assignees[]=${{ vars.MAINTAINER_LOGIN }}" --silent \
-            || echo "::warning::Could not assign jlapenna"
+            -f "assignees[]=$MAINTAINER" --silent

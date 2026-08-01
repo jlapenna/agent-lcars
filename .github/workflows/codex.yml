@@ -366,13 +366,18 @@ jobs:
         if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          ISSUE_NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          REPO: ${{ github.repository }}
           JOB_STATUS: ${{ job.status }}
+          MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
         run: |
           MSG="failed"
           if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 90-minute job timeout)"; fi
-          gh issue comment "$NUM" --body "⚠️ Codex agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          gh issue edit "$NUM" --add-label status:needs-human --add-assignee "${{ vars.MAINTAINER_LOGIN }}"
+          gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "⚠️ Codex agent run $MSG: ${{ github.server_url }}/$REPO/actions/runs/${{ github.run_id }}"
+          gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
+            -f 'labels[]=status:needs-human' --silent
+          gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
+            -f "assignees[]=$MAINTAINER" --silent
 
       # Hand the concurrency group off to the next queued issue.
       #
