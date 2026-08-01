@@ -297,6 +297,7 @@ describe('getAgentActivity', () => {
     const activity = await getAgentActivity();
 
     expect(activity.liveRuns.map((run) => run.id)).toEqual([2]);
+    expect(activity.liveRunAttempts?.map((run) => run.id)).toEqual([1, 2]);
   });
 
   it('falls back to undefined issueNumber for a legacy title', async () => {

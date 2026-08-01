@@ -91,7 +91,14 @@ export interface FleetSummary {
 }
 
 export interface AgentActivity {
+  /** Logical work rows shown by the console. Duplicate workflow attempts for
+   * one repo/issue/pipeline are collapsed; distinct pipelines are retained. */
   liveRuns: AgentRun[];
+  /** Raw live workflow attempts before presentation collapse. Health checks
+   * use these so a stalled queued attempt cannot be hidden by a running or
+   * newer representative. Optional for callers constructing local fixtures;
+   * production fetches always populate it. */
+  liveRunAttempts?: AgentRun[];
   recentRuns: AgentRun[];
   /** undefined = runner API unavailable (e.g. token lacks admin:read).
    * Deduped by runner id across every watched repo (see `fleetByRepo` for
@@ -418,7 +425,8 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       );
     }
   }
-  liveRuns = collapseLogicalLiveRuns(liveRuns);
+  const liveRunAttempts = liveRuns;
+  liveRuns = collapseLogicalLiveRuns(liveRunAttempts);
 
   let recentRuns: AgentRun[] = [];
   for (const [i, result] of recentResults.entries()) {
@@ -490,6 +498,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
 
   return {
     liveRuns,
+    liveRunAttempts,
     recentRuns,
     fleet,
     fleetByRepo,

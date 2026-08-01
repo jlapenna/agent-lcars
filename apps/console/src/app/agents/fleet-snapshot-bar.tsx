@@ -25,7 +25,7 @@ export function FleetSnapshotBar({
   activity: AgentActivity;
   activeCliSessionCount: number;
 }) {
-  const { liveRuns, fleet, fleetByRepo } = activity;
+  const { liveRuns, liveRunAttempts = liveRuns, fleet, fleetByRepo } = activity;
   const liveCountByPipeline = (pipeline: AgentPipeline) =>
     liveRuns.filter((run) => run.pipeline === pipeline).length;
 
@@ -71,7 +71,7 @@ export function FleetSnapshotBar({
             ))}
           </Group>
         )}
-        <QueueHealthAlert liveRuns={liveRuns} />
+        <QueueHealthAlert liveRuns={liveRunAttempts} />
       </Stack>
     </Card>
   );

@@ -650,7 +650,7 @@ export function AgentActivityPanel({
    * renders exactly as before this telemetry existed (PRD user story 16). */
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
 }) {
-  const { liveRuns, recentRuns, fleet } = activity;
+  const { liveRuns, liveRunAttempts = liveRuns, recentRuns, fleet } = activity;
 
   const activeSessions = cliSessions.filter(
     (session) => session.liveness === 'live' || session.liveness === 'idle',
@@ -678,7 +678,7 @@ export function AgentActivityPanel({
           </Group>
         </Group>
 
-        <QueueHealthAlert liveRuns={liveRuns} />
+        <QueueHealthAlert liveRuns={liveRunAttempts} />
 
         {liveRuns.length === 0 && activeSessions.length === 0 && (
           <Text size="sm" c="dimmed">

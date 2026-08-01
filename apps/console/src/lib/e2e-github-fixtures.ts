@@ -54,7 +54,7 @@ export const E2E_ITEM_NUMBERS = {
 
 export const E2E_RUN_IDS = {
   running: 70001,
-  queuedStalled: 70002,
+  queuedWaiting: 70002,
   succeeded: 70003,
   failed: 70004,
   timedOut: 70005,
@@ -255,16 +255,14 @@ const FIXTURE_RUNS: FixtureRun[] = [
     updatedAt: minutesAgo(1),
   },
   {
-    id: E2E_RUN_IDS.queuedStalled,
+    id: E2E_RUN_IDS.queuedWaiting,
     workflow: 'claude.yml',
     status: 'queued',
     conclusion: null,
     displayTitle: '#9009: chore(deps): bump the runner base image',
-    // Past QUEUE_STALL_THRESHOLD_SECONDS (300), so the queue-health alert
-    // renders — never seen against real data either.
-    createdAt: minutesAgo(9),
-    startedAt: minutesAgo(9),
-    updatedAt: minutesAgo(9),
+    createdAt: minutesAgo(2),
+    startedAt: minutesAgo(2),
+    updatedAt: minutesAgo(2),
   },
   {
     id: E2E_RUN_IDS.duplicateQueued,
@@ -274,6 +272,9 @@ const FIXTURE_RUNS: FixtureRun[] = [
     // Same logical work as `running`: the GitHub API exposes both workflow
     // attempts, while the console should render one active item.
     displayTitle: '#9008: feat(console): repo filter chips',
+    // Past QUEUE_STALL_THRESHOLD_SECONDS (300). The logical row chooses the
+    // running attempt above, but queue health must still inspect this raw
+    // attempt and render the alert.
     createdAt: minutesAgo(11),
     startedAt: minutesAgo(11),
     updatedAt: minutesAgo(11),
