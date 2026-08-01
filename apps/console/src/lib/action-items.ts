@@ -19,7 +19,7 @@ import {
 export { agentFleetLogin, maintainerLogin };
 
 export type ActionType =
-  | 'human-needed'
+  | 'needs-human'
   | 'run-failed'
   | 'review-requested'
   | 'post-deploy-action'
@@ -109,29 +109,11 @@ export function isDeployWaitOnly(item: ActionItem): boolean {
   );
 }
 
-/**
- * True when the maintainer already answered a `human-needed` item: the
- * newest comment is theirs, so the ball is back with the agent even though
- * the label is still set (replies posted directly on GitHub don't clear it
- * the way console replies do). Only `human-needed` is possession-based -
- * a failing CI run or an open review request needs the maintainer no matter
- * who spoke last.
- */
-export function isHandedBack(item: ActionItem): boolean {
-  return (
-    item.actionTypes.includes('human-needed') &&
-    item.lastCommentAuthor === maintainerLogin() &&
-    item.actionTypes.every(
-      (type) => type === 'human-needed' || type === 'post-deploy-action',
-    )
-  );
-}
-
-// human-needed and review-requested are tied at the top tier: both mean an
+// needs-human and review-requested are tied at the top tier: both mean an
 // agent cannot make further progress without Joe, so neither should get
 // buried behind run-failed items an agent may still be actively fixing.
 const ACTION_PRIORITY: Record<ActionType, number> = {
-  'human-needed': 0,
+  'needs-human': 0,
   'review-requested': 0,
   'merge-blocked': 0,
   'run-failed': 1,
@@ -148,8 +130,8 @@ function itemPriority(item: ActionItem): number {
 // ACTION_LABELS in action-item-card.tsx) - repeating them in the plain
 // label list would just be noise.
 const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
-  'human-needed',
-  'post-deploy-action',
+  'status:needs-human',
+  'status:post-deploy-action',
 ]);
 
 // The agent's kickoff prompt (see .github/workflows/claude.yml) makes it
@@ -224,7 +206,7 @@ function classifyIssue(
   const labels = issue.labels.map((label) =>
     typeof label === 'string' ? label : (label.name ?? ''),
   );
-  const isPostDeploy = labels.includes('post-deploy-action');
+  const isPostDeploy = labels.includes('status:post-deploy-action');
   const assigneeLogins = (issue.assignees ?? []).map(
     (assignee) => assignee?.login ?? '',
   );
@@ -234,11 +216,11 @@ function classifyIssue(
   // so the pair kept items in Your Queue forever after they were answered,
   // and claude.yml's deliverable check + pr-heal's park-check key on the
   // label anyway (#3023).
-  const isHumanNeeded = labels.includes('human-needed');
+  const isHumanNeeded = labels.includes('status:needs-human');
 
   const actionTypes: ActionType[] = [];
   if (isHumanNeeded) {
-    actionTypes.push('human-needed');
+    actionTypes.push('needs-human');
   }
   if (isPostDeploy) {
     actionTypes.push('post-deploy-action');
@@ -387,12 +369,17 @@ function classifyIssue(
  * because the claim step only runs once a runner picks the job up. Without
  * these exactly the items most in need of attention would be invisible.
  *
- * `human-needed` is one of this dashboard's own action types, but not every
+ * `status:needs-human` is one of this dashboard's own action types, but not every
  * human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
  * carry it without ever having a pipeline label or an agent author (or, if
  * labeled by hand, an assignee), and without this it never enters the
  * dashboard at all. */
-const BOARD_LABELS = ['claude', 'opencode', 'codex', 'human-needed'];
+const BOARD_LABELS = [
+  'agent:claude',
+  'agent:opencode',
+  'agent:codex',
+  'status:needs-human',
+];
 
 /** REST-shaped logins (docs/bot-identity-formats.md) of every pipeline that
  * opens PRs under its own identity - kept in sync with the
@@ -414,7 +401,7 @@ const AGENT_AUTHOR_LOGINS = ['claude[bot]', 'github-actions[bot]'];
  * need an `author:app/claude` query AND still missed things (@claude PR
  * threads, runbook anchors, and interactive-session claims never carry the
  * claude label, but all get the fleet assignee now). `jlapenna` assigned
- * means the ball is in the maintainer's court: human-needed endings and
+ * means the ball is in the maintainer's court: needs-human endings and
  * failed-run reports assign him automatically, and anything he owns
  * personally belongs on his console too.
  *
@@ -617,8 +604,8 @@ export async function getActionItems(): Promise<ActionItemsResult> {
       isPr: Boolean(issue.pull_request),
       // Mirrors classifyIssue's own condition for reading comments at all.
       wantsComments:
-        labels.includes('human-needed') ||
-        labels.includes('post-deploy-action') ||
+        labels.includes('status:needs-human') ||
+        labels.includes('status:post-deploy-action') ||
         assignees.includes(agentFleetLogin()),
     });
   }

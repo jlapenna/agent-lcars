@@ -1,7 +1,6 @@
-import { Group, Stack, Text, Title } from '@mantine/core';
+import { Stack, Text, Title } from '@mantine/core';
 
 import { getWatchedRepos } from '../lib/github-client';
-import { pipelineForLabels } from '../lib/primary-action';
 import { repoKey } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { CompactItemRow } from './compact-item-row';
@@ -9,7 +8,6 @@ import { repoScopedConsoleHrefs } from './console-header';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { QueueUtilityMenu } from './queue-utility-menu';
 import { QueueWorkspace } from './queue-workspace';
-import { RetriggerButton } from './retrigger-button';
 import { SectionHeading } from './section-heading';
 import { SignOutButton } from './sign-out-button';
 
@@ -44,51 +42,14 @@ export function DecisionInbox({
 }
 
 export function CommandDeckSections({
-  handedBack,
   waitingOnDeploy,
   rest,
 }: {
-  handedBack: BoardCard[];
   waitingOnDeploy: BoardCard[];
   rest: BoardCard[];
 }) {
   return (
     <Stack gap="xl" mb="xl">
-      {handedBack.length > 0 && (
-        <div>
-          <SectionHeading
-            title="Handed Back"
-            count={handedBack.length}
-            description="You answered; the agent hasn’t picked these back up yet."
-          />
-          <Stack gap={6}>
-            {handedBack.map(({ item, updatedAtLabel }) => (
-              <CompactItemRow
-                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
-                item={item}
-                hint={`you replied · updated ${updatedAtLabel}`}
-                action={
-                  <Group gap={4} wrap="nowrap">
-                    {item.kind === 'issue' &&
-                      (item.labels.includes('claude') ||
-                        item.labels.includes('codex') ||
-                        item.labels.includes('opencode')) && (
-                        <RetriggerButton
-                          repo={item.repo}
-                          issueNumber={item.number}
-                          pipeline={pipelineForLabels(item.labels)}
-                          size="compact-xs"
-                        />
-                      )}
-                    <ItemOverflowMenu item={item} />
-                  </Group>
-                }
-              />
-            ))}
-          </Stack>
-        </div>
-      )}
-
       {waitingOnDeploy.length > 0 && (
         <div>
           <SectionHeading

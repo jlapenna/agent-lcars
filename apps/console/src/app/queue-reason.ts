@@ -8,8 +8,8 @@ export interface QueueReason {
 }
 
 const QUEUE_REASONS: Record<ActionType, QueueReason> = {
-  'human-needed': {
-    type: 'human-needed',
+  'needs-human': {
+    type: 'needs-human',
     label: 'Human needed',
     color: 'blue',
     rank: 0,
@@ -47,10 +47,10 @@ const QUEUE_REASONS: Record<ActionType, QueueReason> = {
 };
 
 const HIDDEN_ROUTING_LABELS = new Set([
-  'claude',
-  'codex',
-  'opencode',
-  'human-needed',
+  'agent:claude',
+  'agent:codex',
+  'agent:opencode',
+  'status:needs-human',
 ]);
 
 export function queueReasonFor(item: ActionItem): QueueReason | undefined {

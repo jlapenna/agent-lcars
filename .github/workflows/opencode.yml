@@ -1,8 +1,8 @@
 name: OpenCode Issue Agent
 
 # EXPERIMENTAL second issue-agent pipeline, parallel to claude.yml. Adding
-# the `opencode` label to an issue runs the open-source anomalyco/opencode
-# agent on the same self-hosted runner fleet as the `claude` label, but
+# the `agent:opencode` label to an issue runs the open-source anomalyco/opencode
+# agent on the same self-hosted runner fleet as the `agent:claude` label, but
 # pointed at the homelab LiteLLM gateway (llm.lan.jlapenna.net) instead of
 # the Anthropic API - see opencode.json at repo root for the
 # provider/model config. Reply with `/opencode` or `/oc` to continue a
@@ -17,8 +17,7 @@ name: OpenCode Issue Agent
 # not trust a bare "success" conclusion and the prompt explicitly forbids
 # ending without a communicated `gh` action.
 
-run-name: >-
-  ${{ ((github.event_name == 'issues' && github.event.label.name != 'opencode') || (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot')) && 'noop ' || 'opencode ' }}#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}
+run-name: 'opencode #${{ github.event.inputs.issue }}'
 
 on:
   workflow_dispatch:
@@ -55,30 +54,13 @@ permissions:
   actions: write
 
 concurrency:
-  # No-op events get their own per-run group instead of sharing the issue's
-  # group. GitHub only keeps one PENDING run per concurrency group, and
-  # queueing happens before job-level `if:` is checked. In particular,
-  # quick-task creation emits both a quick-task and an opencode label event;
-  # the former must not sit behind the real agent run as a fake queued run.
-  group: ${{ format('opencode-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, ((github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') || (github.event_name == 'issues' && github.event.label.name != 'opencode')) && format('-noop-{0}', github.run_id) || '') }}
+  group: opencode-issue-${{ github.event.inputs.issue }}
   cancel-in-progress: false
 
 jobs:
   opencode:
-    # Dual-label containment: this pipeline stands down when the issue
-    # also carries a higher-precedence label. Precedence is
-    # `claude` > `codex` > `opencode` (see lcars-protocol.md), so OpenCode
-    # -- the lowest -- defers to both. Without this, a dual-labeled issue
-    # dispatches two agents onto the same problem: they edit the same
-    # branch and both report on the issue.
-    #
-    # github.actor == vars.MAINTAINER_LOGIN on the label-add path: this repo is public,
-    # and Triage-level (or higher) collaborators can add a label without
-    # being the maintainer — the issues webhook payload has no
-    # author_association-equivalent field for "who labeled this" the way a
-    # comment does, so this compares github.actor directly against the
-    # maintainer login (matching claude.yml's identical fix and this same
-    # hardcoded login used elsewhere in this workflow).
+    # The centralized router authorizes the request and enforces exactly one
+    # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
     # claude-agent-lcars is registered in jlapenna/homelab's
     # github-runner-autoscaler/orchestrator.yml as
@@ -275,8 +257,8 @@ jobs:
 
           if [ -z "$found" ]; then
             labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
-              --jq '[.labels[].name] | contains(["human-needed"])' 2>/dev/null || echo false)
-            if [ "$labeled" = "true" ]; then found="human-needed label applied on #$NUM"; fi
+              --jq '[.labels[].name] | contains(["status:needs-human"])' 2>/dev/null || echo false)
+            if [ "$labeled" = "true" ]; then found="status:needs-human label applied on #$NUM"; fi
           fi
 
           if [ -z "$found" ]; then
@@ -291,7 +273,7 @@ jobs:
             echo "Deliverable evidence: $found"
           else
             echo "NO_DELIVERABLE=1" >> "$GITHUB_ENV"
-            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no human-needed label, no follow-up comment beyond the pickup message). Its conclusion, if any, was never communicated."
+            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no status:needs-human label, no follow-up comment beyond the pickup message). Its conclusion, if any, was never communicated."
             exit 1
           fi
 

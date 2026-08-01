@@ -6,7 +6,7 @@
     "monorepo:nextjs",
     "monorepo:react"
   ],
-  "labels": ["dependencies"],
+  "labels": ["bot:renovate", "type:dependency-update"],
   "platformAutomerge": true,
   "rebaseWhen": "conflicted",
   "schedule": ["after 8pm on monday"],
@@ -44,6 +44,6 @@
   ],
   "vulnerabilityAlerts": {
     "enabled": true,
-    "labels": ["security"]
+    "labels": ["bot:renovate", "type:security"]
   }
 }

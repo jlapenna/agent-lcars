@@ -13,7 +13,11 @@ import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import type { Pipeline } from '../lib/primary-action';
-import { repoDisplayName, type WatchedRepo } from '../lib/watched-repo';
+import {
+  repoDisplayName,
+  supportedAgentPipelines,
+  type WatchedRepo,
+} from '../lib/watched-repo';
 import { createQuickTask } from './actions';
 
 const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
@@ -23,7 +27,7 @@ const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
 ];
 
 /**
- * Files a new `quick-task`-labeled issue from a free-text description and
+ * Files a new `intake:quick-task`-labeled issue from a free-text description and
  * hands it to the selected agent pipeline (that pipeline's own label is
  * added as a follow-up call so the centralized agent router receives the
  * label event - see createQuickTask in backend-actions.ts). No polling here: the new
@@ -51,19 +55,29 @@ export function QuickTaskButton({
   const [repoIndex, setRepoIndex] = useState('0');
   const [pipeline, setPipeline] = useState<Pipeline>('claude');
   const [isPending, startTransition] = useTransition();
+  const selectedRepo = watchedRepos[Number(repoIndex)] ?? watchedRepos[0];
+  const supportedPipelines = selectedRepo
+    ? supportedAgentPipelines(selectedRepo)
+    : (PIPELINE_OPTIONS.map((option) => option.value) as Pipeline[]);
+  const pipelineOptions = PIPELINE_OPTIONS.filter((option) =>
+    supportedPipelines.includes(option.value),
+  );
+  const effectivePipeline = supportedPipelines.includes(pipeline)
+    ? pipeline
+    : supportedPipelines[0];
 
   const close = () => setOpened(false);
 
   const handleCreate = () => {
     const trimmed = description.trim();
-    if (!trimmed) return;
+    if (!trimmed || !effectivePipeline) return;
     close();
     startTransition(async () => {
       const result = await createQuickTask(
         trimmed,
         title.trim(),
         watchedRepos.length > 1 ? watchedRepos[Number(repoIndex)] : undefined,
-        pipeline,
+        effectivePipeline,
       );
       if (!result.ok) {
         notifications.show({ message: result.message, color: 'red' });
@@ -115,10 +129,11 @@ export function QuickTaskButton({
           <Select
             label="Agent"
             description="Which pipeline picks up the task"
-            data={PIPELINE_OPTIONS}
-            value={pipeline}
+            data={pipelineOptions}
+            value={effectivePipeline ?? null}
             onChange={(value) => setPipeline((value as Pipeline) ?? 'claude')}
             allowDeselect={false}
+            disabled={pipelineOptions.length === 0}
           />
           <TextInput
             label="Title"
@@ -136,7 +151,9 @@ export function QuickTaskButton({
             minRows={12}
           />
           <Button
-            disabled={isPending || !description.trim()}
+            disabled={
+              isPending || !description.trim() || pipelineOptions.length === 0
+            }
             onClick={handleCreate}
           >
             File & dispatch

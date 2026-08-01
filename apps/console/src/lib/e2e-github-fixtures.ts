@@ -101,7 +101,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     title: 'Decide the retention window for archived agent transcripts',
     body: 'The archive TTL was never settled. Needs a call before the watcher ships.',
     isPr: false,
-    labels: ['human-needed', 'claude'],
+    labels: ['status:needs-human', 'agent:claude'],
     assignees: [MAINTAINER, FLEET],
     author: FLEET,
     updatedAt: minutesAgo(14),
@@ -121,7 +121,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     title: 'fix(watcher): stop double-counting streamed cache reads',
     body: 'Closes #9001.',
     isPr: true,
-    labels: ['claude'],
+    labels: ['agent:claude'],
     assignees: [FLEET],
     author: FLEET,
     updatedAt: minutesAgo(6),
@@ -172,7 +172,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     title: 'Verify the session-cost budget alert after the next deploy',
     body: 'Parked until the alert ships to production.',
     isPr: false,
-    labels: ['post-deploy-action'],
+    labels: ['status:post-deploy-action'],
     assignees: [MAINTAINER],
     author: FLEET,
     updatedAt: minutesAgo(180),
@@ -189,11 +189,11 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     body: 'Needs a call on the window, then a post-deploy check.',
     isPr: false,
     // Both types on one item deliberately: an item whose *only* type is
-    // post-deploy-action is `isDeployWaitOnly` and drops to the compact
+    // status:post-deploy-action is `isDeployWaitOnly` and drops to the compact
     // "Waiting on Next Deploy" tier, which renders no action-type badge at
-    // all. This is the only way the gray `post-deploy-action` badge ever
+    // all. This is the only way the gray post-deploy action badge ever
     // appears on a full card.
-    labels: ['human-needed', 'post-deploy-action'],
+    labels: ['status:needs-human', 'status:post-deploy-action'],
     assignees: [MAINTAINER, FLEET],
     author: FLEET,
     updatedAt: minutesAgo(23),
@@ -209,7 +209,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     title: 'chore(telemetry): prune expired session docs',
     body: 'Routine cleanup.',
     isPr: false,
-    labels: ['claude'],
+    labels: ['agent:claude'],
     assignees: [FLEET],
     author: FLEET,
     updatedAt: minutesAgo(52),

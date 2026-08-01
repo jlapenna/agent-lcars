@@ -6,15 +6,17 @@ import { notifications } from '@mantine/notifications';
 import { useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
-import { type Pipeline, pipelineForLabels } from '../lib/primary-action';
+import { type Pipeline } from '../lib/primary-action';
+import {
+  selectedAgentPipeline,
+  supportedAgentPipelines,
+} from '../lib/watched-repo';
 import {
   clearHumanNeeded,
   closeIssue,
   reassignPipeline,
   rebasePr,
 } from './actions';
-
-const PIPELINES: Pipeline[] = ['claude', 'codex', 'opencode'];
 
 /**
  * An overflow menu, shared by queue cards and compact rows, for secondary
@@ -37,7 +39,7 @@ export function ItemOverflowMenu({
   const [isPending, startTransition] = useTransition();
 
   const canClose = item.kind === 'issue';
-  const canClearHumanNeeded = item.actionTypes.includes('human-needed');
+  const canClearHumanNeeded = item.actionTypes.includes('needs-human');
   const canMute = Boolean(onToggleMute);
   // 'behind' is the MERGEABLE_WARNINGS/action-item-card.tsx state for
   // "Base branch has moved" - the one mergeable_state a maintainer can
@@ -47,12 +49,11 @@ export function ItemOverflowMenu({
   // dispatch off `issues: labeled`, not PRs) - an issue with none of the
   // three has never been handed to an agent, so there's nothing to
   // reassign FROM.
-  const currentPipeline = PIPELINES.some((p) => item.labels.includes(p))
-    ? pipelineForLabels(item.labels)
-    : undefined;
+  const pipelines = supportedAgentPipelines(item.repo);
+  const currentPipeline = selectedAgentPipeline(item.repo, item.labels);
   const reassignTargets =
     item.kind === 'issue' && currentPipeline
-      ? PIPELINES.filter((p) => p !== currentPipeline)
+      ? pipelines.filter((p) => p !== currentPipeline)
       : [];
   const canReassign = reassignTargets.length > 0;
   if (

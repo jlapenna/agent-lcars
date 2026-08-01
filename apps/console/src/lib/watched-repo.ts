@@ -8,23 +8,80 @@
  * and is safe to import from client components.
  */
 
-/** Which coding-agent workflow pipeline a repo runs, and the filename each
- * one lives under by default (see agent-activity.ts's WORKFLOW_FILES). */
+/** Coding-agent pipelines understood by the current console UI. */
 export type AgentPipeline = 'claude' | 'codex' | 'opencode';
+
+export interface AgentIntegration {
+  /** Workflow dispatched through the repository's agent router. */
+  workflowFile: string;
+  /** Durable GitHub control label that selects this executor. */
+  label: string;
+  /** Command that hands a parked thread back to this executor. */
+  replyTrigger: string;
+  /** Additional commands recognized as equivalent replies. */
+  replyTriggerAliases?: string[];
+}
+
+export const DEFAULT_AGENT_INTEGRATIONS: Record<
+  AgentPipeline,
+  AgentIntegration
+> = {
+  claude: {
+    workflowFile: 'claude.yml',
+    label: 'agent:claude',
+    replyTrigger: '@claude',
+  },
+  codex: {
+    workflowFile: 'codex.yml',
+    label: 'agent:codex',
+    replyTrigger: '/codex',
+  },
+  opencode: {
+    workflowFile: 'opencode.yml',
+    label: 'agent:opencode',
+    replyTrigger: '/oc',
+    replyTriggerAliases: ['/opencode'],
+  },
+};
 
 export interface WatchedRepo {
   owner: string;
   name: string;
-  /** Per-pipeline override of agent-activity.ts's default WORKFLOW_FILES
-   * filenames. A key absent from this map falls back to the default
-   * filename; an explicit `null` marks a pipeline this repo doesn't run at
-   * all, so it's simply not fetched for this repo. */
-  workflowFiles?: Partial<Record<AgentPipeline, string | null>>;
+  /** Agent integrations available in this repository. Omit the whole map to
+   * use the standard integrations; an empty map declares no agent support. */
+  agents?: Partial<Record<AgentPipeline, AgentIntegration | null>>;
   /** Display name shown in the UI instead of `owner/name` (repoKey's
    * format) wherever a repo badge/title is rendered - e.g. a shorter label
    * for a long or noisy repo name. Purely cosmetic: never affects GitHub
    * API calls, URLs, or the identity keys `repoKey`/`repoItemKey` produce. */
   alias?: string;
+}
+
+export function agentIntegration(
+  repo: WatchedRepo,
+  pipeline: AgentPipeline,
+): AgentIntegration | undefined {
+  if (!repo.agents) return DEFAULT_AGENT_INTEGRATIONS[pipeline];
+  return repo.agents[pipeline] ?? undefined;
+}
+
+export function supportedAgentPipelines(repo: WatchedRepo): AgentPipeline[] {
+  return (Object.keys(DEFAULT_AGENT_INTEGRATIONS) as AgentPipeline[]).filter(
+    (pipeline) => agentIntegration(repo, pipeline) !== undefined,
+  );
+}
+
+export function selectedAgentPipeline(
+  repo: WatchedRepo,
+  labels: string[],
+): AgentPipeline | undefined {
+  const matches = supportedAgentPipelines(repo).filter((pipeline) => {
+    const integration = agentIntegration(repo, pipeline);
+    return integration ? labels.includes(integration.label) : false;
+  });
+  // Contradictory multi-agent state has no implicit precedence. The routers
+  // repair direct label changes; the console withholds an action until then.
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function repoKey(repo: { owner: string; name: string }): string {

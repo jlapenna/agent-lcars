@@ -34,7 +34,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
     title: 'Responsive Inbox',
     url: 'https://github.com/agent/lcars/issues/249',
     updatedAt: '2026-07-30T00:00:00Z',
-    actionTypes: ['human-needed'],
+    actionTypes: ['needs-human'],
     labels: [],
     assigneeLogins: [],
     ...overrides,

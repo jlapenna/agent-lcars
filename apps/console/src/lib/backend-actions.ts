@@ -3,7 +3,13 @@ import {
   primaryWatchedRepo,
   type WatchedRepo,
 } from './github-client';
-import { type Pipeline, pipelineForLabels } from './primary-action';
+import { type Pipeline } from './primary-action';
+import {
+  type AgentIntegration,
+  agentIntegration,
+  selectedAgentPipeline,
+  supportedAgentPipelines,
+} from './watched-repo';
 
 export class ActionError extends Error {
   constructor(
@@ -15,33 +21,40 @@ export class ActionError extends Error {
   }
 }
 
-// The comment string ensured/appended when a reply doesn't already trigger
-// the target pipeline. "/oc" is the shorter of opencode.yml's two accepted
-// triggers (`contains(body, '/opencode') || contains(body, '/oc')`) and
-// sufficient on its own.
-const PIPELINE_MENTION: Record<Pipeline, string> = {
-  claude: '@claude',
-  codex: '/codex',
-  opencode: '/oc',
-};
+function replyTriggers(integration: AgentIntegration): string[] {
+  return [integration.replyTrigger, ...(integration.replyTriggerAliases ?? [])];
+}
 
-// Whether a body ALREADY triggers the target pipeline - has to check both
-// of opencode.yml's accepted strings, since neither is a substring of the
-// other ("/opencode" does NOT contain "/oc": the third character is 'p',
-// not 'c').
-const PIPELINE_MENTION_RE: Record<Pipeline, RegExp> = {
-  claude: /@claude/i,
-  codex: /\/codex/i,
-  opencode: /\/opencode|\/oc/i,
-};
+function containsReplyTrigger(
+  body: string,
+  integration: AgentIntegration,
+): boolean {
+  const normalized = body.toLowerCase();
+  return replyTriggers(integration).some((trigger) =>
+    normalized.includes(trigger.toLowerCase()),
+  );
+}
 
-// The target pipeline's issue_comment trigger only fires for comments that
-// contain its mention string - a reply posted from this console has to
-// carry it too, or the agent will never see it.
-function ensureMention(body: string, pipeline: Pipeline): string {
-  return PIPELINE_MENTION_RE[pipeline].test(body)
+// A console reply must carry the repository integration's declared trigger,
+// unless the body already contains that trigger or one of its aliases.
+function ensureReplyTrigger(
+  body: string,
+  integration: AgentIntegration,
+): string {
+  return containsReplyTrigger(body, integration)
     ? body
-    : `${body}\n\n${PIPELINE_MENTION[pipeline]}`;
+    : `${body}\n\n${integration.replyTrigger}`;
+}
+
+function requireAgentIntegration(repo: WatchedRepo, pipeline: Pipeline) {
+  const integration = agentIntegration(repo, pipeline);
+  if (!integration) {
+    throw new ActionError(
+      `${repo.owner}/${repo.name} does not declare a ${pipeline} agent integration`,
+      400,
+    );
+  }
+  return integration;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -53,22 +66,10 @@ function isNotFound(error: unknown): boolean {
   );
 }
 
-function isAlreadyExists(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'status' in error &&
-    (error as { status: unknown }).status === 422
-  );
-}
-
 // Replying or retriggering hands the ball back to the agent. The agent
-// applies `human-needed` but nothing ever cleared it, so answered items
-// stayed pinned to the top of "Needs Your Action" indefinitely. Also exposed
-// directly as its own console action, for when a reply isn't warranted (the
-// question was answered elsewhere, the tracker is stale) but the label
-// still needs clearing.
-export async function clearHumanNeededLabel(
+// applies `status:needs-human`; handing work back clears it centrally. Also
+// exposed as its own console action for stale trackers that need no reply.
+export async function clearNeedsHumanLabel(
   repo: WatchedRepo,
   issueNumber: number,
 ): Promise<void> {
@@ -78,7 +79,7 @@ export async function clearHumanNeededLabel(
       owner: repo.owner,
       repo: repo.name,
       issue_number: issueNumber,
-      name: 'human-needed',
+      name: 'status:needs-human',
     });
   } catch (error) {
     // 404 = the label wasn't set. Anything else: the primary action already
@@ -90,13 +91,17 @@ export async function clearHumanNeededLabel(
       // js/tainted-format-string) rather than interpolating it into the
       // format string itself.
       console.error(
-        'agent-lcars: failed to clear human-needed on #%s:',
+        'agent-lcars: failed to clear status:needs-human on #%s:',
         issueNumber,
         error,
       );
     }
   }
 }
+
+// Server-action API compatibility; the GitHub label itself is
+// `status:needs-human` and all label access is centralized above.
+export const clearHumanNeededLabel = clearNeedsHumanLabel;
 
 export async function postComment(
   repo: WatchedRepo,
@@ -108,13 +113,17 @@ export async function postComment(
     throw new ActionError('Comment body is required', 400);
   }
   const octokit = getGithubClient();
+  const selectedPipeline = selectedAgentPipeline(repo, labels);
+  const integration = selectedPipeline
+    ? requireAgentIntegration(repo, selectedPipeline)
+    : undefined;
   const { data } = await octokit.rest.issues.createComment({
     owner: repo.owner,
     repo: repo.name,
     issue_number: issueNumber,
-    body: ensureMention(body, pipelineForLabels(labels)),
+    body: integration ? ensureReplyTrigger(body, integration) : body,
   });
-  await clearHumanNeededLabel(repo, issueNumber);
+  await clearNeedsHumanLabel(repo, issueNumber);
   return { url: data.html_url };
 }
 
@@ -270,8 +279,9 @@ export async function retriggerIssue(
   pipeline: Pipeline = 'claude',
 ): Promise<void> {
   const octokit = getGithubClient();
+  const integration = requireAgentIntegration(repo, pipeline);
   // Pipeline names intentionally match the dispatch router's choice inputs.
-  const label: string = pipeline;
+  const label = integration.label;
 
   const { data: issue } = await octokit.rest.issues.get({
     owner: repo.owner,
@@ -290,7 +300,7 @@ export async function retriggerIssue(
     );
   }
 
-  await clearHumanNeededLabel(repo, issueNumber);
+  await clearNeedsHumanLabel(repo, issueNumber);
 
   // A steering note goes up BEFORE the retrigger so the fresh run reads it
   // as part of the thread. Deliberately NOT run through ensureMention: a
@@ -304,7 +314,7 @@ export async function retriggerIssue(
       issue_number: issueNumber,
       body: trimmedNote,
     });
-    if (PIPELINE_MENTION_RE[pipeline].test(trimmedNote)) {
+    if (containsReplyTrigger(trimmedNote, integration)) {
       return;
     }
   }
@@ -322,8 +332,6 @@ export async function retriggerIssue(
   });
 }
 
-const PIPELINE_LABELS: Pipeline[] = ['claude', 'codex', 'opencode'];
-
 // The console's "hand this off to a different agent" action (#143) - e.g. a
 // codex run got stuck and the maintainer wants claude to pick it up instead.
 // Distinct from retriggerIssue's same-pipeline cycle: this swaps which
@@ -335,6 +343,7 @@ export async function reassignPipeline(
   targetPipeline: Pipeline,
 ): Promise<void> {
   const octokit = getGithubClient();
+  const targetIntegration = requireAgentIntegration(repo, targetPipeline);
 
   const { data: issue } = await octokit.rest.issues.get({
     owner: repo.owner,
@@ -344,10 +353,11 @@ export async function reassignPipeline(
   const currentLabels = issue.labels.map((label) =>
     typeof label === 'string' ? label : (label.name ?? ''),
   );
-  const currentPipelineLabels = PIPELINE_LABELS.filter((label) =>
-    currentLabels.includes(label),
-  );
-  if (currentPipelineLabels.includes(targetPipeline)) {
+  const currentPipelineLabels = supportedAgentPipelines(repo)
+    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
+    .filter((label): label is string => Boolean(label))
+    .filter((label) => currentLabels.includes(label));
+  if (currentPipelineLabels.includes(targetIntegration.label)) {
     throw new ActionError(
       `Issue is already assigned to ${targetPipeline}`,
       400,
@@ -360,12 +370,11 @@ export async function reassignPipeline(
     );
   }
 
-  await clearHumanNeededLabel(repo, issueNumber);
+  await clearNeedsHumanLabel(repo, issueNumber);
 
-  // Drop every other pipeline label first - pipelineForLabels' claude >
-  // codex > opencode precedence means a stray leftover label could route a
-  // future reply/retrigger back to the old pipeline even after this
-  // hand-off.
+  // Drop every other agent label first. The router also enforces this
+  // invariant for direct GitHub label changes, so the console and GitHub
+  // paths cannot diverge.
   for (const label of currentPipelineLabels) {
     await octokit.rest.issues.removeLabel({
       owner: repo.owner,
@@ -381,11 +390,11 @@ export async function reassignPipeline(
     owner: repo.owner,
     repo: repo.name,
     issue_number: issueNumber,
-    labels: [targetPipeline],
+    labels: [targetIntegration.label],
   });
 }
 
-const QUICK_TASK_LABEL = 'quick-task';
+const QUICK_TASK_LABEL = 'intake:quick-task';
 // Issue titles show up in list views and the run-name banner - a raw,
 // possibly multi-paragraph task description would blow both out, so this
 // keeps just the first line and clips it to something scannable.
@@ -395,22 +404,6 @@ export function deriveQuickTaskTitle(description: string): string {
   const firstLine = description.split('\n', 1)[0].replace(/\s+/g, ' ').trim();
   if (firstLine.length <= QUICK_TASK_TITLE_MAX_LENGTH) return firstLine;
   return `${firstLine.slice(0, QUICK_TASK_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
-}
-
-async function ensureQuickTaskLabelExists(repo: WatchedRepo): Promise<void> {
-  const octokit = getGithubClient();
-  try {
-    await octokit.rest.issues.createLabel({
-      owner: repo.owner,
-      repo: repo.name,
-      name: QUICK_TASK_LABEL,
-      color: '5319E7',
-      description: 'Filed via the Agent LCARS quick task button',
-    });
-  } catch (error) {
-    // 422 = the label already exists; anything else is a real failure.
-    if (!isAlreadyExists(error)) throw error;
-  }
 }
 
 // Defaults to the primary watched repo; quick-task-button.tsx overrides
@@ -428,8 +421,7 @@ export async function createQuickTask(
     throw new ActionError('Task description is required', 400);
   }
   const trimmedTitle = title?.trim();
-
-  await ensureQuickTaskLabelExists(repo);
+  const integration = requireAgentIntegration(repo, pipeline);
 
   const octokit = getGithubClient();
   const { data: issue } = await octokit.rest.issues.create({
@@ -441,7 +433,7 @@ export async function createQuickTask(
   });
 
   // Add the pipeline label after creation so the pipeline's labeled event is
-  // distinct from the quick-task label event. GitHub emits both events (even
+  // distinct from the intake label event. GitHub emits both events (even
   // when the first label is supplied to issues.create); the workflow
   // concurrency groups in the serialized pipelines isolate the non-pipeline
   // event so it can skip without appearing as a second queued agent run.
@@ -449,7 +441,7 @@ export async function createQuickTask(
     owner: repo.owner,
     repo: repo.name,
     issue_number: issue.number,
-    labels: [pipeline],
+    labels: [integration.label],
   });
 
   return { url: issue.html_url, number: issue.number };

@@ -77,12 +77,12 @@ describe('ItemOverflowMenu', () => {
     vi.clearAllMocks();
   });
 
-  it('renders nothing for a PR that is not human-needed', () => {
+  it('renders nothing for a PR that does not need a human', () => {
     renderMenu(makeItem({ kind: 'pr' }));
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('offers only Close issue for an issue with no human-needed label', async () => {
+  it('offers only Close issue for an issue without needs-human state', async () => {
     renderMenu(makeItem());
     await openMenu();
 
@@ -90,8 +90,8 @@ describe('ItemOverflowMenu', () => {
     expect(screen.queryByText('Clear needs-human')).toBeNull();
   });
 
-  it('offers only Clear needs-human for a human-needed PR', async () => {
-    renderMenu(makeItem({ kind: 'pr', actionTypes: ['human-needed'] }));
+  it('offers only Clear needs-human for a PR in needs-human state', async () => {
+    renderMenu(makeItem({ kind: 'pr', actionTypes: ['needs-human'] }));
     await openMenu();
 
     expect(screen.getByText('Clear needs-human')).toBeTruthy();
@@ -163,7 +163,7 @@ describe('ItemOverflowMenu', () => {
 
   it('clears needs-human without a confirm modal', async () => {
     (clearHumanNeeded as Mock).mockResolvedValue({ ok: true });
-    renderMenu(makeItem({ actionTypes: ['human-needed'] }));
+    renderMenu(makeItem({ actionTypes: ['needs-human'] }));
     await openMenu();
 
     fireEvent.click(screen.getByText('Clear needs-human'));
@@ -236,7 +236,7 @@ describe('ItemOverflowMenu', () => {
   });
 
   it('offers the other two pipelines to reassign a codex-labeled issue to', async () => {
-    renderMenu(makeItem({ labels: ['codex'] }));
+    renderMenu(makeItem({ labels: ['agent:codex'] }));
     await openMenu();
 
     expect(screen.getByText('Reassign to claude')).toBeTruthy();
@@ -253,7 +253,11 @@ describe('ItemOverflowMenu', () => {
 
   it('does not offer reassign for a PR, even a pipeline-labeled one', async () => {
     renderMenu(
-      makeItem({ kind: 'pr', labels: ['codex'], mergeableState: 'behind' }),
+      makeItem({
+        kind: 'pr',
+        labels: ['agent:codex'],
+        mergeableState: 'behind',
+      }),
     );
     await openMenu();
 
@@ -262,7 +266,7 @@ describe('ItemOverflowMenu', () => {
 
   it('reassigns to the clicked pipeline, then notifies', async () => {
     (reassignPipeline as Mock).mockResolvedValue({ ok: true });
-    renderMenu(makeItem({ labels: ['codex'] }));
+    renderMenu(makeItem({ labels: ['agent:codex'] }));
     await openMenu();
 
     fireEvent.click(screen.getByText('Reassign to claude'));
@@ -283,7 +287,7 @@ describe('ItemOverflowMenu', () => {
       ok: false,
       message: 'Issue is already assigned to claude',
     });
-    renderMenu(makeItem({ labels: ['codex'] }));
+    renderMenu(makeItem({ labels: ['agent:codex'] }));
     await openMenu();
 
     fireEvent.click(screen.getByText('Reassign to claude'));

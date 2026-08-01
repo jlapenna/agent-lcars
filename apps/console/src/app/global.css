@@ -833,7 +833,7 @@
   margin-top: 2px;
 }
 
-.queue-item-row[data-reason='human-needed'] {
+.queue-item-row[data-reason='needs-human'] {
   --queue-row-accent: var(--mantine-color-blue-5);
 }
 

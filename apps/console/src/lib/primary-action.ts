@@ -3,26 +3,6 @@ import type { ActionItem } from './action-items';
 export type Pipeline = 'claude' | 'codex' | 'opencode';
 
 /**
- * Which agent pipeline - claude.yml, or the experimental opencode.yml
- * (#2988/#2994) - a console reply or retrigger on this item should target,
- * derived from its labels. Pure and client-safe by design (unlike
- * `backend-actions.ts`, which pulls in `@octokit/rest`) so it can run
- * inside `action-item-card.tsx` (a client component) as well as server-side
- * in `postComment`/`retriggerIssue`.
- *
- * `/oc` is opencode.yml's ONLY reply channel - a plain `@claude` mention
- * does nothing for it, so an opencode-only item has to route there instead
- * of the default. When an item carries BOTH labels, `claude` wins: a single
- * console action (one reply, one retrigger) must never dispatch two agent
- * pipelines at once.
- */
-export function pipelineForLabels(labels: string[]): Pipeline {
-  if (labels.includes('claude')) return 'claude';
-  if (labels.includes('codex')) return 'codex';
-  return labels.includes('opencode') ? 'opencode' : 'claude';
-}
-
-/**
  * The single next thing the maintainer should do with a queue item. Every
  * card in "Your Queue" leads with exactly one of these; all other operations
  * (retrigger, takeover, view on GitHub) are secondary. Derived, not stored -
@@ -36,7 +16,7 @@ export type PrimaryAction =
 
 /**
  * Priority mirrors ACTION_PRIORITY in action-items.ts: an open review
- * request or a human-needed question outranks a failing run (an agent may
+ * request or a needs-human question outranks a failing run (an agent may
  * still be fixing the latter on its own).
  */
 export function derivePrimaryAction(
@@ -55,7 +35,7 @@ export function derivePrimaryAction(
       ? { kind: 'approve-rebase' }
       : { kind: 'approve-merge' };
   }
-  if (item.actionTypes.includes('human-needed')) {
+  if (item.actionTypes.includes('needs-human')) {
     return { kind: 'reply' };
   }
   if (item.actionTypes.includes('run-failed')) {

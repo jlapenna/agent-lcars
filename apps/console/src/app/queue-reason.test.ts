@@ -22,12 +22,12 @@ describe('queueReasonFor', () => {
   it('returns one highest-priority reason instead of every action type', () => {
     const reason = queueReasonFor(
       makeItem({
-        actionTypes: ['run-failed', 'review-requested', 'human-needed'],
+        actionTypes: ['run-failed', 'review-requested', 'needs-human'],
       }),
     );
 
     expect(reason).toEqual({
-      type: 'human-needed',
+      type: 'needs-human',
       label: 'Human needed',
       color: 'blue',
       rank: 0,
@@ -44,9 +44,15 @@ describe('queueDisclosureLabels', () => {
     expect(
       queueDisclosureLabels(
         makeItem({
-          labels: ['claude', 'human-needed', 'bug', 'console', 'priority'],
+          labels: [
+            'agent:claude',
+            'status:needs-human',
+            'type:bug',
+            'app:console',
+            'priority',
+          ],
         }),
       ),
-    ).toEqual(['bug', 'console', 'priority']);
+    ).toEqual(['type:bug', 'app:console', 'priority']);
   });
 });

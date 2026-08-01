@@ -133,9 +133,6 @@ async function IndexBody({
       )}
 
       <CommandDeckSections
-        handedBack={queueView.handedBack
-          .filter((i) => matchesFilter(i.repo))
-          .map((item) => toCard(item))}
         waitingOnDeploy={queueView.waitingOnDeploy
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}

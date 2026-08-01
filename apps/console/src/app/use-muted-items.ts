@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 // Per-browser only (#59) - deliberately not a GitHub label or a Firestore
 // doc: muting is "get this out of my way for a while" on the maintainer's
 // own console, not a signal any other viewer or automation should ever see
-// (an agent still needs a human-needed item to show up as actionable
+// (an agent still needs a needs-human item to show up as actionable
 // everywhere else).
 const STORAGE_KEY = 'agent-lcars:muted-queue-items';
 

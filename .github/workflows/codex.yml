@@ -1,7 +1,7 @@
 name: Codex Issue Agent
 
 # Third issue-agent pipeline, alongside claude.yml and opencode.yml. Adding
-# the `codex` label dispatches OpenAI's Codex CLI on the same self-hosted
+# the `agent:codex` label dispatches OpenAI's Codex CLI on the same self-hosted
 # fleet; reply with `/codex` to continue a conversation on an issue that
 # already carries the label.
 #
@@ -13,9 +13,6 @@ name: Codex Issue Agent
 # which this repo has no access to and, per AGENTS.md, should not reach
 # into. agent-lcars mints and stores its own (infra/terraform/main.tf's
 # CODEX_AUTH_JSON).
-#
-# Precedence: claude > codex > opencode. A dual-labeled issue never gets
-# two workers.
 #
 # See .agents/skills/agent-protocol/agent-protocol.md and
 # .agents/skills/lcars/lcars-protocol.md for the conventions this agent
@@ -58,11 +55,8 @@ permissions:
 
 jobs:
   codex:
-    # github.actor == vars.MAINTAINER_LOGIN on the label-add path: this repo is public,
-    # and a Triage-level collaborator can add a label without being the
-    # maintainer. The issues webhook has no author_association-equivalent
-    # for "who labeled this", so this compares github.actor directly —
-    # matching claude.yml/opencode.yml's identical guard.
+    # The centralized router authorizes the request and enforces exactly one
+    # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
     # Serialize every subscription-authenticated run: two agents must never
     # rotate the same auth.json refresh token concurrently. This belongs on
@@ -282,7 +276,7 @@ jobs:
           # pipefail is load-bearing: without it this step's status is
           # `tee`'s, which is always 0, so a crashed/auth-failed codex run
           # would report success. The deliverable gate does not reliably
-          # catch that -- a pre-existing human-needed label, or a PR opened
+          # catch that -- a pre-existing status:needs-human label, or a PR opened
           # just before the crash, satisfies it.
           set -o pipefail
           codex exec --json --dangerously-bypass-approvals-and-sandbox \
@@ -348,8 +342,8 @@ jobs:
 
           if [ -z "$found" ]; then
             labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
-              --jq '[.labels[].name] | contains(["human-needed"])' 2>/dev/null || echo false)
-            if [ "$labeled" = "true" ]; then found="human-needed applied"; fi
+              --jq '[.labels[].name] | contains(["status:needs-human"])' 2>/dev/null || echo false)
+            if [ "$labeled" = "true" ]; then found="status:needs-human applied"; fi
           fi
 
           if [ -z "$found" ]; then
@@ -377,7 +371,7 @@ jobs:
           MSG="failed"
           if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 90-minute job timeout)"; fi
           gh issue comment "$NUM" --body "⚠️ Codex agent run $MSG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          gh issue edit "$NUM" --add-label human-needed --add-assignee "${{ vars.MAINTAINER_LOGIN }}"
+          gh issue edit "$NUM" --add-label status:needs-human --add-assignee "${{ vars.MAINTAINER_LOGIN }}"
 
       # Hand the concurrency group off to the next queued issue.
       #

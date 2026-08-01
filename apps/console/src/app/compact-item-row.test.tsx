@@ -92,13 +92,16 @@ describe('CompactItemRow second line (#169)', () => {
     render(
       <MantineProvider>
         <CompactItemRow
-          item={makeItem({ author: 'octocat', labels: ['claude', 'bug'] })}
+          item={makeItem({
+            author: 'octocat',
+            labels: ['agent:claude', 'bug'],
+          })}
           hint="updated now"
         />
       </MantineProvider>,
     );
     expect(
-      screen.getByText('updated now · by octocat · claude, bug'),
+      screen.getByText('updated now · by octocat · agent:claude, bug'),
     ).toBeTruthy();
   });
 });

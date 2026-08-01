@@ -9,7 +9,7 @@ this file wins for this repo.
 This repo is unusual among consumers of the shared file: it's both a
 consumer (see `.github/workflows/claude.yml` / `opencode.yml`) and, being
 the fleet's own operations console, a **reader** of the conventions it
-defines — `apps/console` parses the takeover command, the `human-needed`
+defines — `apps/console` parses the takeover command, the `status:needs-human`
 label, and the fleet-claim assignee straight out of GitHub state produced
 by agents following that protocol. That's why several of the "fixed
 vocabulary" strings the shared file calls out matter so much here
@@ -42,9 +42,9 @@ jlapenna`), and use as the assignee in the parking recipe
   one of `claude.yml`, `codex.yml`, or `opencode.yml`, with precedence
   `claude` > `codex` > `opencode`.
 - **Reply triggers:** `@claude` (claude.yml) on an issue already carrying
-  the `claude` label, or directly on a pull request; `/codex` (codex.yml)
-  on an issue carrying the `codex` label; `/opencode` or `/oc`
-  (opencode.yml) on an issue carrying the `opencode` label. A plain reply
+  the `agent:claude` label, or directly on a pull request; `/codex` (codex.yml)
+  on an issue carrying the `agent:codex` label; `/opencode` or `/oc`
+  (opencode.yml) on an issue carrying the `agent:opencode` label. A plain reply
   with neither trigger is silently ignored — always end a parking comment
   with the correct one for whichever pipeline dispatched you.
 

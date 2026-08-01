@@ -11,7 +11,7 @@ dispatch workflow's prompt — read that file too, and let it take precedence
 wherever the two disagree.
 
 Where this file states something as fixed vocabulary (not a per-repo
-parameter — e.g. the `human-needed` label name, or a resume-script
+parameter — e.g. the `status:needs-human` label name, or a resume-script
 filename convention), it is fixed because some cross-repo consumer of the
 GitHub state agents produce (an operations console, a dashboard, another
 automation) depends on the exact string. If you're consuming this file
@@ -98,11 +98,11 @@ turn. All parts are mandatory:
    the maintainer's court:
 
    ```bash
-   gh issue edit <N> --add-label human-needed --add-assignee <maintainer-login> 2>/dev/null \
-     || gh pr edit <N> --add-label human-needed --add-assignee <maintainer-login>
+   gh issue edit <N> --add-label status:needs-human --add-assignee <maintainer-login> 2>/dev/null \
+     || gh pr edit <N> --add-label status:needs-human --add-assignee <maintainer-login>
    ```
 
-   `human-needed` is **fixed protocol-level vocabulary, not a per-repo
+   `status:needs-human` is **fixed protocol-level vocabulary, not a per-repo
    parameter** — the fleet console parses this exact label name across every
    watched repo to build its "needs a human" queue. Do not rename or
    localize it per repo. `<maintainer-login>` is repo-specific; see your
@@ -115,8 +115,8 @@ expected, not a block. Un-park yourself when you become unblocked (e.g. the
 maintainer replied, or you found another way):
 
 ```bash
-gh issue edit <N> --remove-label human-needed 2>/dev/null \
-  || gh pr edit <N> --remove-label human-needed
+gh issue edit <N> --remove-label status:needs-human 2>/dev/null \
+  || gh pr edit <N> --remove-label status:needs-human
 ```
 
 ## 5. Deliverable rule — silence is failure

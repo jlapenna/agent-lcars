@@ -26,7 +26,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
     title: 'Fix the thing',
     url: 'https://github.com/supersprinklesracing/sprinkles/issues/1',
     updatedAt: '2026-07-07T00:00:00Z',
-    actionTypes: ['human-needed'],
+    actionTypes: ['needs-human'],
     labels: [],
     assigneeLogins: [],
     ...overrides,
@@ -166,7 +166,7 @@ describe('YourQueueSection (#59)', () => {
           number: 1,
           title: 'First',
           author: 'octocat',
-          labels: ['claude'],
+          labels: ['agent:claude'],
         }),
       ),
     ]);
@@ -175,7 +175,7 @@ describe('YourQueueSection (#59)', () => {
 
     const muted = screen.getByTestId('muted-queue-items');
     expect(
-      within(muted).getByText(/updated now · by octocat · claude/),
+      within(muted).getByText(/updated now · by octocat · agent:claude/),
     ).toBeTruthy();
   });
 });

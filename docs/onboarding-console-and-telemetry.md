@@ -45,7 +45,7 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
   generalize per agent. A takeover comment referencing any other filename
   never surfaces in the console UI, even for a non-Claude pipeline.
 - Use the exact fixed vocabulary agent-protocol.md calls out: the
-  `human-needed` label (never renamed/localized), the assignee-plus-label
+  `status:needs-human` label (never renamed/localized), the assignee-plus-label
   parking pattern, the eyes-reaction acknowledgement, one continuously
   edited progress comment.
 
@@ -165,7 +165,7 @@ rather than trying to work around it with a hand-rolled `gcloud` grant.
 Tell this console the new repo exists via `AGENT_LCARS_WATCHED_REPOS`
 (read by `apps/console/src/lib/github-client.ts`'s `getWatchedRepos()`,
 set in this repo's `apphosting.yaml`): a JSON array of
-`{owner, name, alias?, workflowFiles?}` objects.
+`{owner, name, alias?, agents?}` objects.
 
 ```json
 [
@@ -186,12 +186,13 @@ set in this repo's `apphosting.yaml`): a JSON array of
   `repoKey()` produces. It never affects GitHub API calls, URLs, or the
   identity keys used to join items/runs/sessions to a repo — those always
   use the real `owner`/`name`.
-- `workflowFiles` is an **override**, not a requirement: each of
-  `claude` / `codex` / `opencode` falls back to its default filename
-  (`agent-activity.ts`'s `WORKFLOW_FILES`) unless overridden here. Only
-  set a key if the new repo names that workflow file differently, or set
-  it explicitly to `null` for a pipeline the repo doesn't run at all (so
-  the console doesn't bother fetching it).
+- Omit `agents` for the standard Claude, Codex, and OpenCode integrations.
+  Set `agents` to an empty object for a repository that has no agent
+  dispatch, or provide a complete per-pipeline object with `workflowFile`,
+  `label`, and `replyTrigger` when an integration differs. Optional
+  `replyTriggerAliases` records equivalent accepted commands. This keeps the
+  console's routing behavior declarative and lets future integrations add
+  their own control label and reply syntax without hard-coded repo branches.
 - `AGENT_LCARS_GITHUB_TOKEN` (the token `getGithubClient()` uses) needs
   read access to the new repo too — check its scope/installation covers
   it, since a token that only reached an existing repo won't automatically
@@ -205,9 +206,9 @@ set in this repo's `apphosting.yaml`): a JSON array of
 
 Don't take any of the above on faith — confirm each layer:
 
-1. Dispatch a real, low-stakes issue in the new repo with the `claude` (or
-   `opencode`/`codex`) label and watch the run through to a real
-   deliverable (PR opened, or a parked `human-needed` comment) — not just
+1. Dispatch a real, low-stakes issue in the new repo with the `agent:claude`
+   (or `agent:opencode`/`agent:codex`) label and watch the run through to a real
+   deliverable (PR opened, or a parked `status:needs-human` comment) — not just
    a green job.
 2. While it's running, check this console's dashboard for the in-flight
    session (live turns/tokens updating) — proves the sidecar + WIF auth +
