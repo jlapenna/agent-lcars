@@ -14,6 +14,7 @@ import (
 
 	"github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
+	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 )
@@ -26,41 +27,115 @@ type scaleSetRuntime struct {
 	initialized bool
 }
 
+// runtimeGeneration owns all work that reads a particular resolved config.
+// Stopping it before replacing the runtimes guarantees a reload never races a
+// listener, sampler, or sweeper that still refers to the previous settings.
+type runtimeGeneration struct {
+	cancel context.CancelFunc
+	done   <-chan struct{}
+}
+
 func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) error {
 	logger := resolved.ScaleSets[0].Logger().With("component", "orchestrator")
-	dockerHosts, err := newDockerHostPool(resolved.DockerHosts)
+	placementHosts, err := newDockerHostPool(resolved.DockerHosts)
 	if err != nil {
 		return fmt.Errorf("connecting fleet docker hosts: %w", err)
 	}
-	order := make([]string, 0, len(resolved.ScaleSets))
-	for _, c := range resolved.ScaleSets {
-		order = append(order, c.ScaleSetName)
+	fleet := newFleetCoordinator(0, nil, nil, nil, nil, nil)
+	configureFleet(fleet, resolved)
+	managedHosts := placementHosts
+	runtimes, err := buildOrchestratorRuntimes(resolved, managedHosts, placementHosts, fleet)
+	if err != nil {
+		return err
 	}
-	fleet := newFleetCoordinator(
-		resolved.Raw.Fleet.MaxRunners,
-		resolved.RunnerLimits,
-		resolved.WorkDirSizeCaps,
-		resolved.DockerSocketGID,
-		resolved.Weights,
-		order,
-	)
-	fleet.mainsRequired = resolved.MainsRequired
-	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
+	pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
 
-	// Pull each distinct image once across the fleet rather than once per
-	// listener. Pulling is intentionally asynchronous and bounded per host.
-	seenImages := map[string]bool{}
-	for _, c := range resolved.ScaleSets {
-		if !seenImages[c.RunnerImage] {
-			seenImages[c.RunnerImage] = true
-			go pullRunnerImages(ctx, dockerHosts, c.RunnerImage, logger)
-		}
-	}
-
-	runtimes := make([]*scaleSetRuntime, 0, len(resolved.ScaleSets))
-	orchestratorExpectedListeners.Store(int64(len(resolved.ScaleSets)))
 	orchestratorSchedulerReady.Store(true)
 	defer orchestratorSchedulerReady.Store(false)
+
+	startMetricsServer(ctx, resolved.Raw.Server.MetricsAddr, logger)
+
+	generation := startRuntimeGeneration(ctx, runtimes, logger)
+	drainSignals := make(chan os.Signal, 1)
+	reloadSignals := make(chan os.Signal, 1)
+	signal.Notify(drainSignals, syscall.SIGUSR1)
+	signal.Notify(reloadSignals, syscall.SIGHUP)
+	defer signal.Stop(drainSignals)
+	defer signal.Stop(reloadSignals)
+	draining := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			generation.cancel()
+			<-generation.done
+			for _, runtime := range runtimes {
+				runtime.scaler.shutdown(context.WithoutCancel(ctx))
+			}
+			return nil
+		case <-drainSignals:
+			if draining {
+				continue
+			}
+			draining = true
+			logger.Info("Global drain requested")
+			for _, runtime := range runtimes {
+				runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
+			}
+		case <-reloadSignals:
+			next, reloadErr := loadOrchestratorConfig(orchestratorConfigPath)
+			if reloadErr == nil {
+				reloadErr = next.loadCredentials()
+			}
+			if reloadErr == nil {
+				reloadErr = validateReloadCompatibility(resolved, next)
+			}
+			if reloadErr != nil {
+				logger.Error("Configuration reload rejected; keeping current configuration", slog.Any("error", reloadErr))
+				continue
+			}
+			nextPlacementHosts, poolErr := newDockerHostPool(next.DockerHosts)
+			if poolErr != nil {
+				logger.Error("Configuration reload rejected; keeping current configuration", slog.Any("error", poolErr))
+				continue
+			}
+
+			// The old generation is stopped, but no runner is drained or
+			// removed. The new scalers adopt the still-running containers
+			// during initialization before accepting new work.
+			generation.cancel()
+			<-generation.done
+			nextManagedHosts := mergeDockerHosts(nextPlacementHosts, managedHosts, trackedRunnerHosts(runtimes))
+			configureFleet(fleet, next)
+			nextRuntimes, buildErr := buildOrchestratorRuntimes(next, nextManagedHosts, nextPlacementHosts, fleet)
+			if buildErr != nil {
+				// This should be impossible after loadOrchestratorConfig and
+				// compatibility validation. Keep the old config live if an
+				// internal construction error nevertheless occurs.
+				logger.Error("Configuration reload could not build runtimes; restoring current configuration", slog.Any("error", buildErr))
+				closeDockerHostClients(nextPlacementHosts)
+				configureFleet(fleet, resolved)
+				generation = startRuntimeGeneration(ctx, runtimes, logger)
+				continue
+			}
+			closeUnusedDockerHostClients(managedHosts, nextManagedHosts)
+			resolved, runtimes = next, nextRuntimes
+			managedHosts, placementHosts = nextManagedHosts, nextPlacementHosts
+			logger = resolved.ScaleSets[0].Logger().With("component", "orchestrator")
+			pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
+			if draining {
+				for _, runtime := range runtimes {
+					runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
+				}
+			}
+			generation = startRuntimeGeneration(ctx, runtimes, logger)
+			logger.Info("Configuration reloaded without draining runners")
+		}
+	}
+}
+
+func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator) ([]*scaleSetRuntime, error) {
+	runtimes := make([]*scaleSetRuntime, 0, len(resolved.ScaleSets))
 	for _, base := range resolved.ScaleSets {
 		c := base
 		c.DockerHosts = append([]string(nil), resolved.DockerHosts...)
@@ -68,63 +143,148 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		c.HostMetricsURLTemplate = resolved.Raw.Fleet.Placement.HostMetricsURLTemplate
 		c.HostLoadPolicy = resolved.Placement
 		c.HostMemoryExempt = append([]string(nil), resolved.Raw.Fleet.Placement.HostMemoryExempt...)
-
-		runtime, initErr := buildScaleSetRuntime(c, dockerHosts, fleet)
-		if initErr != nil {
-			return fmt.Errorf("initializing scale set %q: %w", c.ScaleSetName, initErr)
+		runtime, err := buildScaleSetRuntime(c, dockerHosts, placementHosts, fleet)
+		if err != nil {
+			return nil, fmt.Errorf("initializing scale set %q: %w", c.ScaleSetName, err)
 		}
 		runtimes = append(runtimes, runtime)
 	}
+	return runtimes, nil
+}
 
-	startMetricsServer(ctx, resolved.Raw.Server.MetricsAddr, logger)
-	// All scalers share the coordinator's telemetry maps, so exactly one
-	// sampler populates fleet load/cooldown state for every listener.
-	go runtimes[0].scaler.RunHostSampler(ctx)
-	go runFleetOrphanSweeper(ctx, runtimes)
-	startGitHubRunnerStatusMonitors(ctx, runtimes, logger)
-	for _, runtime := range runtimes {
-		// ShareWorkDir, not MountDockerSocket: this sweeper enforces
-		// workdir_size_cap on the SHARED _work tree. Keyed off the socket, a
-		// socketless shared-workdir pool would get only the opportunistic
-		// job-completion sweep, so a crash or a quiet period could leave
-		// _work over its cap indefinitely.
-		if runtime.config.ShareWorkDir {
-			go runtime.scaler.RunWorkDirSweeper(ctx)
-			break
+// mergeDockerHosts returns the new placement pool plus any removed host that
+// still owns a tracked runner. A retained host is no longer a placement
+// candidate, but the replacement scaler needs its client to adopt the runner
+// and remove it normally on JobCompleted.
+func mergeDockerHosts(next, previous []DockerHost, retain map[string]bool) []DockerHost {
+	merged := append([]DockerHost(nil), next...)
+	known := make(map[string]bool, len(merged))
+	for _, host := range merged {
+		known[host.Name] = true
+	}
+	for _, host := range previous {
+		if retain[host.Name] && !known[host.Name] {
+			merged = append(merged, host)
+			known[host.Name] = true
 		}
 	}
+	return merged
+}
 
-	drainSignals := make(chan os.Signal, 1)
-	signal.Notify(drainSignals, syscall.SIGUSR1)
-	defer signal.Stop(drainSignals)
-	go func() {
-		select {
-		case <-ctx.Done():
-		case <-drainSignals:
-			logger.Info("Global drain requested")
-			for _, runtime := range runtimes {
-				runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
-			}
+func trackedRunnerHosts(runtimes []*scaleSetRuntime) map[string]bool {
+	hosts := map[string]bool{}
+	for _, runtime := range runtimes {
+		for host := range runtime.scaler.runners.hosts() {
+			hosts[host] = true
 		}
-	}()
+	}
+	return hosts
+}
 
-	var wg sync.WaitGroup
-	for _, runtime := range runtimes {
-		wg.Add(1)
-		go func(rt *scaleSetRuntime) {
-			defer wg.Done()
-			runListenerSupervisor(ctx, rt, logger)
-		}(runtime)
+func closeUnusedDockerHostClients(previous, next []DockerHost) {
+	keep := map[*dockerclient.Client]bool{}
+	for _, host := range next {
+		keep[host.Client] = true
 	}
-	<-ctx.Done()
-	for _, runtime := range runtimes {
-		runtime.scaler.shutdown(context.WithoutCancel(ctx))
+	closed := map[*dockerclient.Client]bool{}
+	for _, host := range previous {
+		if host.Client != nil && !keep[host.Client] && !closed[host.Client] {
+			_ = host.Client.Close()
+			closed[host.Client] = true
+		}
 	}
-	wg.Wait()
+}
+
+func closeDockerHostClients(hosts []DockerHost) {
+	closeUnusedDockerHostClients(hosts, nil)
+}
+
+func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig) {
+	order := make([]string, 0, len(resolved.ScaleSets))
+	for _, c := range resolved.ScaleSets {
+		order = append(order, c.ScaleSetName)
+	}
+	fleet.mu.Lock()
+	fleet.maxRunners = resolved.Raw.Fleet.MaxRunners
+	fleet.hostRunnerLimits = resolved.RunnerLimits
+	fleet.workDirSizeCaps = resolved.WorkDirSizeCaps
+	fleet.dockerSocketGIDs = resolved.DockerSocketGID
+	fleet.mainsRequired = resolved.MainsRequired
+	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
+	fleet.mu.Unlock()
+	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
+}
+
+func pullConfiguredRunnerImages(ctx context.Context, dockerHosts []DockerHost, scaleSets []Config, logger *slog.Logger) {
+	seenImages := map[string]bool{}
+	for _, c := range scaleSets {
+		if !seenImages[c.RunnerImage] {
+			seenImages[c.RunnerImage] = true
+			go pullRunnerImages(ctx, dockerHosts, c.RunnerImage, logger)
+		}
+	}
+}
+
+// validateReloadCompatibility rejects changes that would leave existing
+// runner containers ambiguous. Docker hosts may change: removed hosts are
+// cordoned and retained only while they own tracked runners. The metrics bind
+// is a process-lifetime resource, and removing or moving a scale set could
+// orphan containers that are still executing jobs.
+func validateReloadCompatibility(current, next resolvedOrchestratorConfig) error {
+	if current.Raw.Server.MetricsAddr != next.Raw.Server.MetricsAddr {
+		return fmt.Errorf("server.metrics_addr cannot change during a live reload")
+	}
+	currentTargets, _, _ := ParseDockerHosts(current.DockerHosts)
+	nextTargets, _, _ := ParseDockerHosts(next.DockerHosts)
+	for name, currentTarget := range currentTargets {
+		if nextTarget, ok := nextTargets[name]; ok && nextTarget != currentTarget {
+			return fmt.Errorf("fleet host %q cannot change Docker transport during a live reload; remove it and add the replacement with a new name", name)
+		}
+	}
+	nextByName := make(map[string]Config, len(next.ScaleSets))
+	for _, c := range next.ScaleSets {
+		nextByName[c.ScaleSetName] = c
+	}
+	for _, currentSet := range current.ScaleSets {
+		nextSet, ok := nextByName[currentSet.ScaleSetName]
+		if !ok {
+			return fmt.Errorf("scale set %q cannot be removed during a live reload", currentSet.ScaleSetName)
+		}
+		if currentSet.RegistrationName != nextSet.RegistrationName || currentSet.RegistrationURL != nextSet.RegistrationURL || currentSet.RunnerGroup != nextSet.RunnerGroup {
+			return fmt.Errorf("scale set %q cannot change GitHub registration or runner group during a live reload", currentSet.ScaleSetName)
+		}
+	}
 	return nil
 }
 
-func buildScaleSetRuntime(c Config, dockerHosts []DockerHost, fleet *FleetCoordinator) (*scaleSetRuntime, error) {
+func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime, logger *slog.Logger) runtimeGeneration {
+	ctx, cancel := context.WithCancel(parent)
+	var wg sync.WaitGroup
+	orchestratorExpectedListeners.Store(int64(len(runtimes)))
+	// All scalers share the coordinator's telemetry maps, so exactly one
+	// sampler populates fleet load/cooldown state for every listener.
+	wg.Add(1)
+	go func() { defer wg.Done(); runtimes[0].scaler.RunHostSampler(ctx) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); runFleetOrphanSweeper(ctx, runtimes) }()
+	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)
+	for _, runtime := range runtimes {
+		if runtime.config.ShareWorkDir {
+			wg.Add(1)
+			go func(scaler *Scaler) { defer wg.Done(); scaler.RunWorkDirSweeper(ctx) }(runtime.scaler)
+			break
+		}
+	}
+	for _, runtime := range runtimes {
+		wg.Add(1)
+		go func(rt *scaleSetRuntime) { defer wg.Done(); runListenerSupervisor(ctx, rt, logger) }(runtime)
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	return runtimeGeneration{cancel: cancel, done: done}
+}
+
+func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator) (*scaleSetRuntime, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -149,7 +309,7 @@ func buildScaleSetRuntime(c Config, dockerHosts []DockerHost, fleet *FleetCoordi
 		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage: c.RunnerImage, runnerMemory: memory, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
-		dockerHosts: dockerHosts, mountDockerSocket: c.MountDockerSocket, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
+		dockerHosts: dockerHosts, placementHosts: placementHosts, mountDockerSocket: c.MountDockerSocket, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMemoryExempt:    stringSet(c.HostMemoryExempt),
@@ -200,6 +360,14 @@ func initializeGitHubScaleSet(ctx context.Context, runtime *scaleSetRuntime) err
 	runtime.initialized = true
 	runtime.mu.Unlock()
 	runtime.scaler.cleanupOrphans(ctx, true)
+	// A config reload can occur while SIGUSR1 drain is already active. The
+	// replacement scaler adopts runners after runOrchestrator reapplies the
+	// drain flag, so remove any newly adopted idle capacity here rather than
+	// leaving it behind until GitHub happens to send another desired-count
+	// message. Busy runners remain protected by removeIdleRunners.
+	if runtime.scaler.draining.Load() {
+		runtime.scaler.removeIdleRunners(context.WithoutCancel(ctx))
+	}
 	return nil
 }
 
