@@ -12,6 +12,7 @@ import {
   type EnrichmentRequest,
   type ItemEnrichment,
 } from './item-enrichment';
+import { supportedAgentLabels } from './watched-repo';
 
 /** Re-exported for the modules that already import it from here. The value
  * itself now comes from `deployment.ts`, which is the single place this
@@ -362,24 +363,20 @@ function classifyIssue(
 // doubling disappears (one list covers both), and the 1000-result search
 // ceiling stops applying.
 
-/** Labels that put an item on the board on their own.
+/** Workflow-independent labels that put an item on the board on their own.
  *
- * `claude`/`opencode`/`codex` are belt and suspenders: a labeled issue whose
- * run never started (runner outage, queue loss) is dispatched-but-unclaimed,
- * because the claim step only runs once a runner picks the job up. Without
- * these exactly the items most in need of attention would be invisible.
+ * Each repository's agent selector labels are added dynamically from its
+ * declared integrations below. A labeled issue whose run never started
+ * (runner outage, queue loss) is dispatched-but-unclaimed, because the claim
+ * step only runs once a runner picks the job up. Without these exactly the
+ * items most in need of attention would be invisible.
  *
  * `status:needs-human` is one of this dashboard's own action types, but not every
  * human-gated item is agent-touched: an ops decision issue (e.g. #2130) can
  * carry it without ever having a pipeline label or an agent author (or, if
  * labeled by hand, an assignee), and without this it never enters the
  * dashboard at all. */
-const BOARD_LABELS = [
-  'agent:claude',
-  'agent:opencode',
-  'agent:codex',
-  'status:needs-human',
-];
+const BOARD_LABELS = ['status:needs-human'];
 
 /** REST-shaped logins (docs/bot-identity-formats.md) of every pipeline that
  * opens PRs under its own identity - kept in sync with the
@@ -390,7 +387,7 @@ const BOARD_LABELS = [
  * PR must not go invisible the moment that assignment silently no-ops or
  * every other signal (a label, a still-open review request) has cleared
  * (#216). */
-const AGENT_AUTHOR_LOGINS = ['claude[bot]', 'github-actions[bot]'];
+const AGENT_AUTHOR_LOGINS = ['claude[bot]', 'agent-lcars[bot]'];
 
 /**
  * The open-item predicate, replacing the old per-qualifier search queries
@@ -411,6 +408,7 @@ const AGENT_AUTHOR_LOGINS = ['claude[bot]', 'github-actions[bot]'];
  * classifyIssue is what declines to raise the actionType on a draft.
  */
 function isBoardItem(
+  repo: WatchedRepo,
   issue: RepoIssue,
   reviewRequestedLogins: string[] | undefined,
 ): boolean {
@@ -424,7 +422,8 @@ function isBoardItem(
   const labels = issue.labels.map((label) =>
     typeof label === 'string' ? label : (label.name ?? ''),
   );
-  if (labels.some((label) => BOARD_LABELS.includes(label))) return true;
+  const repoBoardLabels = [...BOARD_LABELS, ...supportedAgentLabels(repo)];
+  if (labels.some((label) => repoBoardLabels.includes(label))) return true;
   if (AGENT_AUTHOR_LOGINS.includes(issue.user?.login ?? '')) return true;
   return reviewRequestedLogins?.includes(maintainerLogin()) ?? false;
 }
@@ -549,7 +548,7 @@ export async function getActionItems(): Promise<ActionItemsResult> {
           // shape) must drop that one item, not throw out of the filter and
           // blank the whole repo's board.
           try {
-            return isBoardItem(issue, reviewRequests?.get(issue.number));
+            return isBoardItem(repo, issue, reviewRequests?.get(issue.number));
           } catch (error) {
             console.error(
               'agent-lcars: skipping a malformed item from %s:',

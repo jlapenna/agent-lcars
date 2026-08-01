@@ -71,6 +71,14 @@ export function supportedAgentPipelines(repo: WatchedRepo): AgentPipeline[] {
   );
 }
 
+/** Durable selector labels for every agent integration this repo supports. */
+export function supportedAgentLabels(repo: WatchedRepo): string[] {
+  return supportedAgentPipelines(repo).flatMap((pipeline) => {
+    const integration = agentIntegration(repo, pipeline);
+    return integration ? [integration.label] : [];
+  });
+}
+
 export function selectedAgentPipeline(
   repo: WatchedRepo,
   labels: string[],

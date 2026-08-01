@@ -17,7 +17,7 @@ name: OpenCode Issue Agent
 # not trust a bare "success" conclusion and the prompt explicitly forbids
 # ending without a communicated `gh` action.
 
-run-name: 'opencode #${{ github.event.inputs.issue }}'
+run-name: 'opencode #${{ github.event.inputs.issue }}: OpenCode issue agent'
 
 on:
   workflow_dispatch:

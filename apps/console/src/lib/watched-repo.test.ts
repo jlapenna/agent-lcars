@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   selectedAgentPipeline,
+  supportedAgentLabels,
   supportedAgentPipelines,
   type WatchedRepo,
 } from './watched-repo';
@@ -14,6 +15,11 @@ describe('watched repository agent capabilities', () => {
       'claude',
       'codex',
       'opencode',
+    ]);
+    expect(supportedAgentLabels(standardRepo)).toEqual([
+      'agent:claude',
+      'agent:codex',
+      'agent:opencode',
     ]);
     expect(selectedAgentPipeline(standardRepo, ['agent:codex'])).toBe('codex');
   });
@@ -35,6 +41,7 @@ describe('watched repository agent capabilities', () => {
         },
       },
     };
+    expect(supportedAgentLabels(repo)).toEqual(['agent:custom-codex']);
     expect(selectedAgentPipeline(repo, ['agent:custom-codex'])).toBe('codex');
   });
 

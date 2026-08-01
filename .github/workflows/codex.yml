@@ -405,14 +405,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Mirrors this job's own `if:` precedence rule: Claude outranks
-          # Codex, so a dual-labeled issue is Claude's and must not be
-          # dispatched here.
-          NEXT=$(gh issue list --repo "$REPO" --state open --label codex \
+          # The router owns executor selection. Only an issue carrying
+          # exactly the Codex integration label belongs in this handoff;
+          # contradictory multi-agent state has no implicit precedence.
+          NEXT=$(gh issue list --repo "$REPO" --state open --label agent:codex \
             --json number,labels,assignees --limit 100 \
             | jq -r --argjson cur "${CURRENT:-0}" --arg fleet "$FLEET_LOGIN" '
                 [ .[]
-                  | select((.labels | map(.name) | index("claude")) == null)
+                  | select((.labels | map(.name) | index("agent:claude")) == null)
+                  | select((.labels | map(.name) | index("agent:opencode")) == null)
                   | select((.assignees | map(.login) | index($fleet)) == null)
                   | .number
                 ]

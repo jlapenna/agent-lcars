@@ -13,7 +13,7 @@ name: Claude Issue Agent
 # whose issue number arrives as a plain input instead. The agent console
 # joins a live run to its action-item card by parsing the leading "#<number>:"
 # back out of the run's display_title.
-run-name: 'claude #${{ github.event.inputs.issue }}'
+run-name: '#${{ github.event.inputs.issue }}: Claude issue agent'
 
 on:
   workflow_dispatch:

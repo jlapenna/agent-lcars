@@ -303,6 +303,31 @@ describe('getActionItems', () => {
     ]);
   });
 
+  it('selects a dispatched item using its repository integration label', async () => {
+    const repo = {
+      ...DEFAULT_REPO,
+      agents: {
+        codex: {
+          workflowFile: 'custom-codex.yml',
+          label: 'agent:custom-codex',
+          replyTrigger: '/custom-codex',
+        },
+      },
+    };
+    (getWatchedRepos as Mock).mockReturnValueOnce([repo]);
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(8, { labels: ['agent:custom-codex'] }),
+        makeItem(9, { labels: ['agent:codex'] }),
+      ],
+    });
+    setupOctokit({ listForRepo });
+
+    const result = await getActionItems();
+
+    expect(result.items.map((item) => item.number)).toEqual([8]);
+  });
+
   it('selects a PR solely because it was authored by a known agent bot login (#216)', async () => {
     // Mirrors a PR whose assignee-based claim (jclaw-bot) never took and
     // whose review request already cleared (approved) - author is the last
@@ -312,9 +337,12 @@ describe('getActionItems', () => {
         makeItem(198, { pull_request: {}, user: { login: 'claude[bot]' } }),
         makeItem(199, {
           pull_request: {},
-          user: { login: 'github-actions[bot]' },
+          user: { login: 'agent-lcars[bot]' },
         }),
-        makeItem(200, { pull_request: {}, user: { login: 'someone-else' } }), // control: must stay off
+        makeItem(200, {
+          pull_request: {},
+          user: { login: 'github-actions[bot]' },
+        }), // control: glue automation is not an agent author
       ],
     });
     setupOctokit({ listForRepo });
