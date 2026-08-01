@@ -11,6 +11,7 @@ import (
 // DockerHost is one fleet member the scaler can place runners on.
 type DockerHost struct {
 	Name   string
+	Target string
 	Client *dockerclient.Client
 }
 
@@ -96,7 +97,7 @@ func newDockerHostPool(entries []string) ([]DockerHost, error) {
 		if err != nil {
 			return nil, fmt.Errorf("connecting to docker host %q (%s): %w", name, targets[name], err)
 		}
-		hosts = append(hosts, DockerHost{Name: name, Client: c})
+		hosts = append(hosts, DockerHost{Name: name, Target: targets[name], Client: c})
 	}
 	return hosts, nil
 }
