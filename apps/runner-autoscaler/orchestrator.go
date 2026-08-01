@@ -44,6 +44,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		resolved.Weights,
 		order,
 	)
+	fleet.mainsRequired = resolved.MainsRequired
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
 
 	// Pull each distinct image once across the fleet rather than once per
