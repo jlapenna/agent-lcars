@@ -48,3 +48,20 @@ operational docs (secrets, GitHub App setup, fleet topology).
 
 Migrated from `jlapenna/homelab` — see
 [agent-lcars#52](https://github.com/jlapenna/agent-lcars/issues/52).
+
+## Live configuration reload
+
+Send the running orchestrator `SIGHUP` after atomically replacing
+`orchestrator.yml`. It validates the replacement configuration and
+credentials before changing anything, then reconnects listeners and adopts
+the existing runner containers; busy jobs and idle capacity are not drained.
+Invalid files leave the current configuration running.
+
+Live reload can update scale-set limits, images, resource settings, placement
+policy, weights, credentials, scale sets, and fleet hosts. Added hosts are
+immediately eligible for placements. Removed hosts are cordoned immediately,
+while their tracked runners remain managed until their jobs complete (and are
+dropped on the next reload). The metrics bind address and an existing scale
+set's GitHub registration/runner group are process-lifetime settings;
+removing a scale set remains a drain-and-restart operation. Renaming a host
+is required when its Docker transport changes.

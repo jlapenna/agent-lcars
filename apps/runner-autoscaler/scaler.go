@@ -47,7 +47,12 @@ type Scaler struct {
 	// instead of a single client, so ONE scale set/label can spread runners
 	// across the whole fleet — see hosts.go. Order is round-robin fallback;
 	// startRunner actually picks the LEAST LOADED host each time.
-	dockerHosts    []DockerHost
+	dockerHosts []DockerHost
+	// placementHosts is the subset of dockerHosts eligible for new runners.
+	// During a live fleet shrink, dockerHosts retains a removed host only long
+	// enough to finish and clean up its existing runners; placementHosts
+	// cordons it immediately so no new work can land there.
+	placementHosts []DockerHost
 	scalesetClient *scaleset.Client
 	minRunners     int
 	maxRunners     int
@@ -666,6 +671,25 @@ func (a *Scaler) hostClient(name string) (*dockerclient.Client, error) {
 	return nil, fmt.Errorf("unknown docker host %q", name)
 }
 
+func (a *Scaler) placementDockerHosts() []DockerHost {
+	// Unit tests and the single-scaler path construct Scaler directly. Their
+	// zero-value placementHosts retains the historical "all hosts place"
+	// behavior.
+	if len(a.placementHosts) == 0 {
+		return a.dockerHosts
+	}
+	return a.placementHosts
+}
+
+func (a *Scaler) placementHostSet() map[string]bool {
+	hosts := a.placementDockerHosts()
+	set := make(map[string]bool, len(hosts))
+	for _, host := range hosts {
+		set[host.Name] = true
+	}
+	return set
+}
+
 // parseMetricValue extracts the trailing numeric value from a Prometheus
 // exposition line (with or without a {labels} block).
 func parseMetricValue(line string) (float64, bool) {
@@ -814,6 +838,7 @@ var errFleetAtCapacity = errors.New("no docker host has placement capacity right
 // The caller must hold fleet.mu through the subsequent reservation update.
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (string, error) {
 	counts := a.runners.countsByHost()
+	placementHosts := a.placementHostSet()
 
 	type pingResult struct {
 		host                 DockerHost
@@ -858,7 +883,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					}
 				}
 			}
-			eligible := err == nil
+			eligible := err == nil && placementHosts[dh.Name]
 			if eligible && fleet.mainsRequired[dh.Name] {
 				if mainsErr := a.hostOnMains(ctx, dh.Name); mainsErr != nil {
 					eligible = false
@@ -927,7 +952,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	}
 
 	if len(reachableHosts) == 0 {
-		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(a.dockerHosts), errFleetAtCapacity)
+		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(placementHosts), errFleetAtCapacity)
 	}
 	actualTotal := 0
 	for _, h := range a.dockerHosts {
@@ -1594,7 +1619,10 @@ func (a *Scaler) RunWorkDirSweeper(ctx context.Context) {
 // A continuously busy host can defer cleanup; disk-pressure handling must
 // drain that host rather than delete files underneath a running job.
 func (a *Scaler) SweepWorkDirs(ctx context.Context) {
-	for _, h := range a.dockerHosts {
+	// A removed host stays in dockerHosts only to finish and clean up an
+	// existing runner. It is deliberately not swept: once cordoned, the
+	// autoscaler must not make unrelated filesystem changes on it.
+	for _, h := range a.placementDockerHosts() {
 		a.sweepHostIfIdle(ctx, h.Client, h.Name)
 	}
 }
@@ -1863,6 +1891,19 @@ func (r *runnerState) hasHost(host string) bool {
 		}
 	}
 	return false
+}
+
+func (r *runnerState) hosts() map[string]bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	hosts := make(map[string]bool)
+	for _, ref := range r.idle {
+		hosts[ref.host] = true
+	}
+	for _, ref := range r.busy {
+		hosts[ref.host] = true
+	}
+	return hosts
 }
 
 // isTracked reports whether name is currently tracked as idle or busy. Used

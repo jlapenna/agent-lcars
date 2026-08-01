@@ -77,6 +77,28 @@ func TestSharedWorkDirPlacementRejectsOtherSetsSharedWorkdirRunner(t *testing.T)
 	}
 }
 
+func TestRetiredHostIsCordonedFromNewPlacements(t *testing.T) {
+	retired := newFakeDockerServer(t)
+	active := newFakeDockerServer(t)
+	retired.setContainers([]container.Summary{})
+	active.setContainers([]container.Summary{})
+	retiredHost := DockerHost{Name: "retired", Client: retired.client(t)}
+	activeHost := DockerHost{Name: "active", Client: active.client(t)}
+	fleet := newFleetCoordinator(2, nil, nil, nil, map[string]int{"set": 1}, []string{"set"})
+	scaler := &Scaler{
+		scaleSetName: "set", maxRunners: 2,
+		dockerHosts: []DockerHost{activeHost, retiredHost}, placementHosts: []DockerHost{activeHost},
+		logger: slog.Default(), runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}}, fleet: fleet,
+	}
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "active" {
+		t.Fatalf("placement host = %q, want active; retired hosts must be cordoned", host)
+	}
+}
+
 // TestFleetReservationsAreAtomicUnderConcurrentGoroutines is the homelab#97
 // regression test for the race the multi-registration design introduces:
 // with N registrations' listeners now calling fleet.reserve concurrently

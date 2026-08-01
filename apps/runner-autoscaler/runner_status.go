@@ -352,7 +352,7 @@ func (m *registrationRunnerStatusMonitor) run(ctx context.Context) {
 	}
 }
 
-func startGitHubRunnerStatusMonitors(ctx context.Context, runtimes []*scaleSetRuntime, logger *slog.Logger) {
+func startGitHubRunnerStatusMonitors(ctx context.Context, runtimes []*scaleSetRuntime, logger *slog.Logger, wg *sync.WaitGroup) {
 	type registrationGroup struct {
 		config  Config
 		scalers []*Scaler
@@ -381,6 +381,10 @@ func startGitHubRunnerStatusMonitors(ctx context.Context, runtimes []*scaleSetRu
 			logger:       logger.With("component", "runner-status-monitor"),
 			now:          time.Now,
 		}
-		go monitor.run(ctx)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			monitor.run(ctx)
+		}()
 	}
 }

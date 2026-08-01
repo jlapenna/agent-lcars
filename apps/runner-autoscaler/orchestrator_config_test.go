@@ -60,6 +60,91 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	}
 }
 
+func TestValidateReloadCompatibilityAcceptsLiveSettings(t *testing.T) {
+	current, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextBody := strings.Replace(validOrchestratorYAML, "max_runners: 2", "max_runners: 1", 1)
+	nextBody = strings.Replace(nextBody, "runner_image: example/default:latest", "runner_image: example/default:next", 1)
+	next, err := loadOrchestratorConfig(writeConfig(t, nextBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateReloadCompatibility(current, next); err != nil {
+		t.Fatalf("expected live settings to be reloadable: %v", err)
+	}
+}
+
+func TestValidateReloadCompatibilityRejectsProcessLifetimeChanges(t *testing.T) {
+	current, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2eScaleSet := "\n  - name: e2e\n    labels: [e2e]\n    runner_image: example/e2e:latest\n    min_runners: 0\n    max_runners: 1\n    mount_docker_socket: true\n"
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "metrics bind",
+			body: strings.Replace(validOrchestratorYAML, "server: {}", "server:\n  metrics_addr: 0.0.0.0:8080", 1),
+			want: "server.metrics_addr",
+		},
+		{
+			name: "removed scale set",
+			body: strings.Replace(strings.Replace(validOrchestratorYAML, e2eScaleSet, "\n", 1), "max_runners: 2", "max_runners: 1", 1),
+			want: "cannot be removed",
+		},
+		{
+			name: "changed host transport",
+			body: strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway", 1),
+			want: "cannot change Docker transport",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			next, err := loadOrchestratorConfig(writeConfig(t, tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = validateReloadCompatibility(current, next)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validateReloadCompatibility() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateReloadCompatibilityAllowsFleetHostChanges(t *testing.T) {
+	current, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addedHost := `      docker_socket_gid: "108"
+    - name: laforge
+      docker: ssh://runner@laforge
+      docker_socket_gid: "108"
+`
+	next, err := loadOrchestratorConfig(writeConfig(t, strings.Replace(validOrchestratorYAML, "      docker_socket_gid: \"108\"\n", addedHost, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateReloadCompatibility(current, next); err != nil {
+		t.Fatalf("expected fleet host change to be reloadable: %v", err)
+	}
+}
+
+func TestMergeDockerHostsRetainsOnlyTrackedRemovedHosts(t *testing.T) {
+	current := []DockerHost{{Name: "janeway"}, {Name: "spark"}}
+	next := []DockerHost{{Name: "laforge"}}
+	merged := mergeDockerHosts(next, current, map[string]bool{"spark": true})
+	if len(merged) != 2 || merged[0].Name != "laforge" || merged[1].Name != "spark" {
+		t.Fatalf("merged hosts = %#v, want laforge plus tracked retired spark", merged)
+	}
+}
+
 func TestOrchestratorConfigRejectsUnknownField(t *testing.T) {
 	_, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML+"unknown: true\n"))
 	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {
