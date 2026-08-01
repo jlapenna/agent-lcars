@@ -95,9 +95,16 @@ jobs:
     env:
       npm_config_store_dir: /tmp/runner/pnpm-store
     steps:
+      - name: Mint Agent LCARS installation token
+        id: agent-lcars-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AGENT_LCARS_APP_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+
       - name: Claim the issue as the agent fleet
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
           CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
@@ -114,6 +121,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          token: ${{ steps.agent-lcars-token.outputs.token }}
           # OpenCode finalizes a completed change with a raw `git push`,
           # so retain this job-scoped workflow credential through that step.
           persist-credentials: true
@@ -169,12 +177,11 @@ jobs:
 
       - name: Verify OpenCode GitHub identity
         env:
-          GH_TOKEN: ${{ secrets.JCLAW_BOT_GITHUB_TOKEN }}
-          AGENT_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
         run: |
           actual_login="$(gh api user --jq '.login')"
-          if [ "$actual_login" != "$AGENT_LOGIN" ]; then
-            echo "::error::OpenCode GitHub token authenticated as $actual_login; expected $AGENT_LOGIN."
+          if [ "$actual_login" != "agent-lcars[bot]" ]; then
+            echo "::error::OpenCode GitHub token authenticated as $actual_login; expected agent-lcars[bot]."
             exit 1
           fi
 
@@ -196,10 +203,7 @@ jobs:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # use_github_token needs this passed explicitly - it does not
           # fall back to the job's ambient token.
-          # Create branches and PRs as the trusted fleet account instead of
-          # app/github-actions, which GitHub treats as a first-time workflow
-          # contributor and routes through manual approval.
-          GITHUB_TOKEN: ${{ secrets.JCLAW_BOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           # Same CI-rerun affordance claude.yml grants its agent (see
           # agent-protocol.md §8): the recipe silently no-ops when this is
           # unset.
