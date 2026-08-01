@@ -36,25 +36,47 @@ for (const worker of ['claude', 'codex', 'opencode']) {
 
 test('OpenCode accepts one post-anchor bot artifact and rejects pickup-only state', () => {
   const source = workflow('opencode');
-  const claim = source.indexOf(
+  const claim = namedStep(source, 'Claim the issue as the agent fleet');
+  const claimPosition = source.indexOf(
     '      - name: Claim the issue as the agent fleet',
   );
   const setup = source.indexOf('      - name: Shared agent setup');
   const step = namedStep(source, 'Verify a deliverable exists');
 
   assert.ok(
-    claim >= 0 && claim < setup,
+    claimPosition >= 0 && claimPosition < setup,
     'pickup must precede the start anchor',
   );
+  assert.match(claim, /id: claim/);
+  assert.match(claim, /pickup_comment_id=.*gh api/s);
+  assert.match(claim, /pickup-comment-id=\$pickup_comment_id/);
+  assert.match(
+    step,
+    /PICKUP_COMMENT_ID: \$\{\{ steps\.claim\.outputs\['pickup-comment-id'\] \}\}/,
+  );
   assert.match(step, /comments\?since=\$STARTED_AT/);
+  assert.match(
+    step,
+    /select\(\(\.id \| tostring\) != \\"\$PICKUP_COMMENT_ID\\"\)/,
+  );
   const threshold = Number(step.match(/\$\{botcomments:-0\}" -ge (\d+)/)?.[1]);
   assert.equal(threshold, 1);
 
-  const commentIsDeliverable = (postAnchorComments) =>
-    postAnchorComments >= threshold;
-  assert.equal(commentIsDeliverable(0), false, 'pickup-only run');
-  assert.equal(commentIsDeliverable(1), true, 'pickup plus summary');
-  assert.equal(commentIsDeliverable(1), true, 'reply summary');
+  const pickupId = '100';
+  const commentIsDeliverable = (postAnchorCommentIds) =>
+    postAnchorCommentIds.filter((id) => id !== pickupId).length >= threshold;
+  assert.equal(commentIsDeliverable([]), false, 'pickup-only run');
+  assert.equal(
+    commentIsDeliverable([pickupId]),
+    false,
+    'edited pickup-only run',
+  );
+  assert.equal(
+    commentIsDeliverable([pickupId, '101']),
+    true,
+    'pickup plus summary',
+  );
+  assert.equal(commentIsDeliverable(['101']), true, 'reply summary');
 });
 
 test('OpenCode retains every non-comment deliverable path', () => {

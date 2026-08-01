@@ -85,19 +85,25 @@ jobs:
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 
       - name: Claim the issue as the agent fleet
+        id: claim
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
           CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
+          pickup_comment_id=""
           if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
             -f "assignees[]=$CLAIM_LOGIN" --silent; then
-            gh issue comment "$NUM" --repo "${{ github.repository }}" \
-              --body "🤖 OpenCode agent run started — working on this issue: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-              || echo "::warning::Could not post OpenCode pickup comment on #$NUM"
+            pickup_comment_id=$(gh api "repos/${{ github.repository }}/issues/$NUM/comments" \
+              -f "body=🤖 OpenCode agent run started — working on this issue: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              --jq '.id' 2>/dev/null || true)
+            if [ -z "$pickup_comment_id" ]; then
+              echo "::warning::Could not post OpenCode pickup comment on #$NUM"
+            fi
           else
             echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
           fi
+          echo "pickup-comment-id=$pickup_comment_id" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@v7
@@ -213,14 +219,15 @@ jobs:
       # as evidence here (unlike claude.yml, which excludes it on the issue
       # path) because the specific failure mode this pipeline guards
       # against is "said nothing at all" - any comment after the shared
-      # setup action's start anchor proves the loop actually closed. The
-      # pickup comment is deliberately posted before that anchor, so it is
-      # excluded from the timestamp query on both implement and reply paths.
+      # setup action's start anchor proves the loop actually closed. GitHub's
+      # `since` filter uses updated_at, so the pickup comment is also excluded
+      # by ID in case OpenCode edits that pre-anchor comment during the run.
       - name: Verify a deliverable exists
         if: success()
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
+          PICKUP_COMMENT_ID: ${{ steps.claim.outputs['pickup-comment-id'] }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
           REPO: ${{ github.repository }}
         run: |
@@ -263,7 +270,9 @@ jobs:
 
           if [ -z "$found" ]; then
             botcomments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT" \
-              --jq '[.[] | select(.user.type == "Bot")] | length' 2>/dev/null || echo 0)
+              --jq "[.[] | select(.user.type == \"Bot\")
+                           | select((.id | tostring) != \"$PICKUP_COMMENT_ID\")]
+                    | length" 2>/dev/null || echo 0)
             if [ "${botcomments:-0}" -ge 1 ]; then found="bot posted a follow-up comment on #$NUM"; fi
           fi
 
