@@ -15,6 +15,7 @@ import { useState, useTransition } from 'react';
 import type { Pipeline } from '../lib/primary-action';
 import {
   repoDisplayName,
+  repoKey,
   supportedAgentPipelines,
   type WatchedRepo,
 } from '../lib/watched-repo';
@@ -41,18 +42,28 @@ const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
  */
 export function QuickTaskButton({
   watchedRepos = [],
+  initialRepoKey,
   size = 'compact-sm',
 }: {
   /** Passed down from the server component that already resolved
    * getWatchedRepos() - this is a client component, and AGENT_LCARS_
    * WATCHED_REPOS is a server-only env var, unreachable from browser code. */
   watchedRepos?: WatchedRepo[];
+  /** Canonical owner/name identity for the repository already selected by
+   * the surrounding page. The picker falls back to the first watched repo
+   * only when that identity is absent or no longer configured. */
+  initialRepoKey?: string;
   size?: string;
 }) {
   const [opened, setOpened] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [repoIndex, setRepoIndex] = useState('0');
+  const [repoIndex, setRepoIndex] = useState(() => {
+    const index = watchedRepos.findIndex(
+      (repo) => repoKey(repo) === initialRepoKey,
+    );
+    return String(index >= 0 ? index : 0);
+  });
   const [pipeline, setPipeline] = useState<Pipeline>('claude');
   const [isPending, startTransition] = useTransition();
   const selectedRepo = watchedRepos[Number(repoIndex)] ?? watchedRepos[0];
@@ -76,7 +87,7 @@ export function QuickTaskButton({
       const result = await createQuickTask(
         trimmed,
         title.trim(),
-        watchedRepos.length > 1 ? watchedRepos[Number(repoIndex)] : undefined,
+        selectedRepo,
         effectivePipeline,
       );
       if (!result.ok) {

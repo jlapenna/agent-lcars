@@ -151,7 +151,16 @@ async function SessionDetailPageContent({ params }: PageProps) {
       )}
 
       <ConsoleFooter
-        actions={<QuickTaskButton watchedRepos={getWatchedRepos()} />}
+        actions={
+          <QuickTaskButton
+            watchedRepos={getWatchedRepos()}
+            initialRepoKey={
+              detail.status === 'ok' && detail.doc.repo
+                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+                : undefined
+            }
+          />
+        }
       />
     </Container>
   );
