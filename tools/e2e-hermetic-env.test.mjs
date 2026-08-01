@@ -159,8 +159,8 @@ test('rejected Playwright arguments recommend the hermetic scoped path', () => {
   assert.doesNotMatch(result.stderr, /:e2e-run/u);
 });
 
-test('live configuration stays inside the hermetic implementation target', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-live-'));
+test('ambient mode cannot select a non-hermetic live implementation', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-mode-'));
   const fakeBin = path.join(tempDir, 'bin');
   const argsFile = path.join(tempDir, 'pnpm-args');
   fs.mkdirSync(fakeBin, { recursive: true });
@@ -187,7 +187,7 @@ test('live configuration stays inside the hermetic implementation target', () =>
       'exec',
       'nx',
       'run',
-      '@agent-lcars/console-e2e:e2e-implementation:live',
+      '@agent-lcars/console-e2e:e2e-implementation:emulator',
       '--skip-nx-cache',
     ]);
   } finally {
@@ -195,15 +195,37 @@ test('live configuration stays inside the hermetic implementation target', () =>
   }
 });
 
-test('public Nx live configuration selects the wrapped live path', () => {
+test('public and internal Nx targets explicitly reject live configuration', () => {
   const project = JSON.parse(
     fs.readFileSync(path.join(root, 'apps/console-e2e/project.json'), 'utf8'),
   );
   const e2e = project.targets.e2e;
+  const rejectionCommand = './tools/e2e/reject-live.sh';
 
   assert.equal(e2e.defaultConfiguration, 'emulator');
-  assert.equal(e2e.configurations.live.env.E2E_CONFIGURATION, 'live');
+  assert.equal(e2e.configurations.live.command, rejectionCommand);
   assert.equal(e2e.options.command, './tools/e2e-local.sh');
+  assert.equal(
+    project.targets['e2e-implementation'].configurations.live.command,
+    rejectionCommand,
+  );
+  assert.equal(
+    project.targets['e2e-local'].configurations.live.command,
+    rejectionCommand,
+  );
+});
+
+test('live rejection is static and does not echo ambient credentials', () => {
+  const sentinel = 'sentinel-live-credential';
+  const result = spawnSync(path.join(root, 'tools/e2e/reject-live.sh'), [], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, OPENCODE_LLM_API_KEY: sentinel },
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /live E2E is disabled/u);
+  assert.doesNotMatch(result.stderr, new RegExp(sentinel, 'u'));
 });
 
 test('dotenv validation names an unsafe key without echoing its value', () => {

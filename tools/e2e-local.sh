@@ -25,9 +25,8 @@
 # being hardcoded here, so there is no second copy to drift.
 #
 # Usage:
-#   tools/e2e-local.sh                        # emulator, whole suite
-#   E2E_GREP='@smoke' tools/e2e-local.sh      # emulator, scoped suite
-#   E2E_CONFIGURATION=live tools/e2e-local.sh # live, whole suite
+#   tools/e2e-local.sh                   # emulator, whole suite
+#   E2E_GREP='@smoke' tools/e2e-local.sh # emulator, scoped suite
 #
 # Deliberately takes no Playwright passthrough args. The `e2e` target sets
 # forwardAllArgs:false, so nx:run-commands silently DROPS trailing args and
@@ -43,16 +42,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PROJECT="${E2E_PROJECT:-@agent-lcars/console-e2e}"
-CONFIGURATION="${E2E_CONFIGURATION:-emulator}"
 HERMETIC_RUNNER="$ROOT/tools/e2e/run-hermetic.sh"
-
-case "$CONFIGURATION" in
-  emulator | live) ;;
-  *)
-    echo "tools/e2e-local.sh: unsupported E2E_CONFIGURATION: $CONFIGURATION" >&2
-    exit 2
-    ;;
-esac
 
 # Fail loudly instead of silently running everything - see the usage note.
 if [ "$#" -gt 0 ]; then
@@ -74,4 +64,4 @@ fi
 # when the suite is what you are trying to trust.
 exec "$HERMETIC_RUNNER" \
   pnpm exec nx run \
-    "${PROJECT}:e2e-implementation:${CONFIGURATION}" --skip-nx-cache
+    "${PROJECT}:e2e-implementation:emulator" --skip-nx-cache

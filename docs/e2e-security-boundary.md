@@ -11,15 +11,15 @@ Run the local or CI suite through:
 ```
 
 Scope a host run without leaving the boundary by setting `E2E_GREP`, for
-example `E2E_GREP='@smoke' ./tools/e2e-local.sh`. The Nx public target also
-preserves its supported configuration contract:
+example `E2E_GREP='@smoke' ./tools/e2e-local.sh`.
 
-```sh
-pnpm exec nx run @agent-lcars/console-e2e:e2e:live
-```
-
-That command selects the internal `live` implementation only after entering
-the same hermetic wrapper; it never invokes Playwright directly.
+The public and internal Nx targets support only the `emulator` execution path.
+They retain an explicit `live` tombstone because Nx silently falls back to the
+default configuration when a named configuration is absent. The tombstone
+exits before entering any test tooling and explains that real Firebase
+configuration conflicts with this dummy-only boundary. A future live
+write-path canary must use a separately validated design with explicit
+authorization (tracked by #307), never the direct `e2e-run` target.
 
 The wrapper starts the Nx process with an empty environment, a temporary
 `HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit
