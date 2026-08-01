@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CI_ENV="$ROOT/tools/e2e/ci.env"
 VALIDATOR="$ROOT/tools/e2e/validate-env.mjs"
 CALLER_HOME="${HOME:-}"
+PLATFORM="$(uname -s)"
 
 if [ "$#" -eq 0 ]; then
   echo "usage: tools/e2e/run-hermetic.sh <command> [args...]" >&2
@@ -81,8 +82,14 @@ esac
 # preserve ambient cache overrides: they could widen the filesystem paths
 # admitted through this boundary.
 if [ -n "$CALLER_HOME" ]; then
+  case "$PLATFORM" in
+    CYGWIN* | MINGW* | MSYS*)
+      corepack_cache="$CALLER_HOME/AppData/Local/node/corepack"
+      ;;
+    *) corepack_cache="$CALLER_HOME/.cache/node/corepack" ;;
+  esac
   SAFE_ENV+=(
-    "COREPACK_HOME=$CALLER_HOME/.cache/node/corepack"
+    "COREPACK_HOME=$corepack_cache"
     "FIREBASE_EMULATORS_PATH=$CALLER_HOME/.cache/firebase/emulators"
   )
 fi
@@ -106,7 +113,7 @@ fi
 if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
   SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
 elif [ -n "$CALLER_HOME" ]; then
-  case "$(uname -s)" in
+  case "$PLATFORM" in
     Darwin) browser_cache="$CALLER_HOME/Library/Caches/ms-playwright" ;;
     CYGWIN* | MINGW* | MSYS*)
       browser_cache="$CALLER_HOME/AppData/Local/ms-playwright"

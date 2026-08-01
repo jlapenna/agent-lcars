@@ -108,6 +108,44 @@ test('tool caches stay durable while HOME remains isolated', () => {
   }
 });
 
+test('Corepack uses the platform-specific Windows cache', () => {
+  const tempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lcars-e2e-windows-corepack-cache-'),
+  );
+  const callerHome = path.join(tempDir, 'home');
+  const fakeBin = path.join(tempDir, 'bin');
+  const corepackCache = path.join(callerHome, 'AppData/Local/node/corepack');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const uname = path.join(fakeBin, 'uname');
+  fs.writeFileSync(uname, '#!/bin/sh\nprintf "MINGW64_NT-10.0\\n"\n');
+  fs.chmodSync(uname, 0o755);
+
+  const probe = `
+    if (process.env.HOME === ${JSON.stringify(callerHome)}) process.exit(9);
+    if (process.env.COREPACK_HOME !== ${JSON.stringify(corepackCache)}) {
+      process.exit(10);
+    }
+    process.stdout.write('windows Corepack cache verified\\n');
+  `;
+
+  try {
+    const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: callerHome,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'windows Corepack cache verified\n');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('Playwright uses the platform-specific macOS browser cache', () => {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'lcars-e2e-darwin-cache-'),
