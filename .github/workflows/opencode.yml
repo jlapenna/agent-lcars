@@ -118,6 +118,15 @@ jobs:
           # so retain this job-scoped workflow credential through that step.
           persist-credentials: true
 
+      - name: Verify OpenCode can authenticate its final push
+        # Do not let the agent spend up to an hour implementing a change only
+        # to discover during its finalization that checkout discarded the
+        # workflow credential. Avoid printing the header: it contains the
+        # token in base64 form.
+        run: |
+          git config --local --get 'http.https://github.com/.extraheader' >/dev/null \
+            || { echo '::error::Checkout did not retain a GitHub credential for OpenCode finalization.'; exit 1; }
+
       - name: Shared agent setup
         id: agent-setup
         uses: ./.github/actions/agent-setup
