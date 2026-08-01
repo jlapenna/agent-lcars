@@ -190,15 +190,20 @@ describe('getAgentActivity', () => {
   function setupOctokit({
     listWorkflowRuns,
     listSelfHostedRunnersForRepo,
+    listJobsForWorkflowRun = vi
+      .fn()
+      .mockResolvedValue({ data: { total_count: 1, jobs: [] } }),
   }: {
     listWorkflowRuns: Mock;
     listSelfHostedRunnersForRepo: Mock;
+    listJobsForWorkflowRun?: Mock;
   }) {
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         actions: {
           listWorkflowRuns,
           listSelfHostedRunnersForRepo,
+          listJobsForWorkflowRun,
         },
       },
     });
@@ -254,6 +259,77 @@ describe('getAgentActivity', () => {
 
     expect(activity.liveRuns[0].issueNumber).toBeUndefined();
     expect(activity.liveRuns[0].displayTitle).toBe('Fix the thing');
+  });
+
+  it('ignores pending workflow runs that have no jobs', async () => {
+    const listWorkflowRuns = vi
+      .fn()
+      .mockImplementation(({ workflow_id, status }) => {
+        if (workflow_id === 'claude.yml' && status === undefined) {
+          return Promise.resolve({
+            data: {
+              workflow_runs: [
+                makeRun({ id: 1, status: 'in_progress' }),
+                makeRun({
+                  id: 2,
+                  status: 'pending',
+                  display_title: '#43: no-op',
+                }),
+              ],
+            },
+          });
+        }
+        return Promise.resolve({ data: { workflow_runs: [] } });
+      });
+    const listJobsForWorkflowRun = vi.fn().mockResolvedValue({
+      data: { total_count: 0, jobs: [] },
+    });
+    const listSelfHostedRunnersForRepo = vi
+      .fn()
+      .mockResolvedValue({ data: { runners: [] } });
+    setupOctokit({
+      listWorkflowRuns,
+      listJobsForWorkflowRun,
+      listSelfHostedRunnersForRepo,
+    });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.liveRuns.map((run) => run.id)).toEqual([1]);
+    expect(listJobsForWorkflowRun).toHaveBeenCalledWith(
+      expect.objectContaining({ run_id: 2, per_page: 1 }),
+    );
+  });
+
+  it('keeps a queued workflow run when GitHub reports a queued job', async () => {
+    const listWorkflowRuns = vi
+      .fn()
+      .mockImplementation(({ workflow_id, status }) => {
+        if (workflow_id === 'claude.yml' && status === undefined) {
+          return Promise.resolve({
+            data: {
+              workflow_runs: [makeRun({ id: 3, status: 'queued' })],
+            },
+          });
+        }
+        return Promise.resolve({ data: { workflow_runs: [] } });
+      });
+    const listJobsForWorkflowRun = vi.fn().mockResolvedValue({
+      data: { total_count: 1, jobs: [{ status: 'queued' }] },
+    });
+    const listSelfHostedRunnersForRepo = vi
+      .fn()
+      .mockResolvedValue({ data: { runners: [] } });
+    setupOctokit({
+      listWorkflowRuns,
+      listJobsForWorkflowRun,
+      listSelfHostedRunnersForRepo,
+    });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.liveRuns.map((run) => run.id)).toEqual([3]);
+    expect(activity.liveRuns[0].status).toBe('queued');
   });
 
   it('fetches live runs from both pipelines in parallel and tags each with its source workflow', async () => {
