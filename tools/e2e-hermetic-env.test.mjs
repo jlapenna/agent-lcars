@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const e2eLocal = path.join(root, 'tools/e2e-local.sh');
 const wrapper = path.join(root, 'tools/e2e/run-hermetic.sh');
 const validator = path.join(root, 'tools/e2e/validate-env.mjs');
 
@@ -144,6 +145,65 @@ test('Playwright uses the platform-specific macOS browser cache', () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('rejected Playwright arguments recommend the hermetic scoped path', () => {
+  const result = spawnSync(e2eLocal, ['--grep', '@smoke'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: process.env,
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /E2E_GREP='@smoke' \.\/tools\/e2e-local\.sh/u);
+  assert.doesNotMatch(result.stderr, /:e2e-run/u);
+});
+
+test('live configuration stays inside the hermetic implementation target', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-live-'));
+  const fakeBin = path.join(tempDir, 'bin');
+  const argsFile = path.join(tempDir, 'pnpm-args');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const pnpm = path.join(fakeBin, 'pnpm');
+  fs.writeFileSync(
+    pnpm,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(argsFile)}\n`,
+  );
+  fs.chmodSync(pnpm, 0o755);
+
+  try {
+    const result = spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        E2E_CONFIGURATION: 'live',
+        PATH: `${fakeBin}:${process.env.PATH}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(fs.readFileSync(argsFile, 'utf8').trim().split('\n'), [
+      'exec',
+      'nx',
+      'run',
+      '@agent-lcars/console-e2e:e2e-implementation:live',
+      '--skip-nx-cache',
+    ]);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('public Nx live configuration selects the wrapped live path', () => {
+  const project = JSON.parse(
+    fs.readFileSync(path.join(root, 'apps/console-e2e/project.json'), 'utf8'),
+  );
+  const e2e = project.targets.e2e;
+
+  assert.equal(e2e.defaultConfiguration, 'emulator');
+  assert.equal(e2e.configurations.live.env.E2E_CONFIGURATION, 'live');
+  assert.equal(e2e.options.command, './tools/e2e-local.sh');
 });
 
 test('dotenv validation names an unsafe key without echoing its value', () => {

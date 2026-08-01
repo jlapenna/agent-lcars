@@ -10,6 +10,17 @@ Run the local or CI suite through:
 ./tools/e2e-local.sh
 ```
 
+Scope a host run without leaving the boundary by setting `E2E_GREP`, for
+example `E2E_GREP='@smoke' ./tools/e2e-local.sh`. The Nx public target also
+preserves its supported configuration contract:
+
+```sh
+pnpm exec nx run @agent-lcars/console-e2e:e2e:live
+```
+
+That command selects the internal `live` implementation only after entering
+the same hermetic wrapper; it never invokes Playwright directly.
+
 The wrapper starts the Nx process with an empty environment, a temporary
 `HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit
 allowlist. That list contains the build-time Firebase/Auth dummy values,

@@ -14,6 +14,19 @@
     },
     "e2e": {
       "executor": "nx:run-commands",
+      "defaultConfiguration": "emulator",
+      "configurations": {
+        "emulator": {
+          "env": {
+            "E2E_CONFIGURATION": "emulator"
+          }
+        },
+        "live": {
+          "env": {
+            "E2E_CONFIGURATION": "live"
+          }
+        }
+      },
       "options": {
         "command": "./tools/e2e-local.sh",
         "env": {
