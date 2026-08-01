@@ -447,12 +447,11 @@ export async function createQuickTask(
     labels: [QUICK_TASK_LABEL],
   });
 
-  // Added as a follow-up call rather than in the labels above: GitHub only
-  // fires the `issues: labeled` webhook event each pipeline's workflow
-  // listens for when a label is attached after creation, not for one
-  // included in the create() call itself. Same reasoning as
-  // retriggerIssue's remove-then-readd above. The label IS the pipeline
-  // name (see retriggerIssue's identical `label: string = pipeline` above).
+  // Add the pipeline label after creation so the pipeline's labeled event is
+  // distinct from the quick-task label event. GitHub emits both events (even
+  // when the first label is supplied to issues.create); the workflow
+  // concurrency groups in the serialized pipelines isolate the non-pipeline
+  // event so it can skip without appearing as a second queued agent run.
   await octokit.rest.issues.addLabels({
     owner: repo.owner,
     repo: repo.name,

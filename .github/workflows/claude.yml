@@ -42,18 +42,12 @@ permissions:
 # into one pending run instead of stacking full agent runs. Never cancel an
 # in-flight agent mid-implementation.
 #
-# Bot-authored comment events get their own per-run group instead of sharing
-# the issue's group. GitHub only keeps one PENDING run per concurrency
-# group; without this, the agent's own progress-update comment could fire a
-# fresh issue_comment event that evicts an already-queued human `@claude ...`
-# follow-up from the pending slot before it ever runs — even though that
-# bot-comment run's job condition below would evaluate to skip anyway.
-# Concurrency queueing happens before job-level `if:` is checked, so the
-# skip never gets a chance to save it. Giving bot comments a unique group
-# (keyed on run_id, so it never collides with anything) means they can no
-# longer evict a real pending trigger.
+# No-op events get their own per-run group instead of sharing the issue's
+# group. GitHub only keeps one PENDING run per concurrency group; queueing
+# happens before job-level `if:` is checked. This covers both bot comments
+# and the quick-task label event emitted alongside the pipeline label.
 concurrency:
-  group: ${{ format('claude-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') && format('-bot-noop-{0}', github.run_id) || '') }}
+  group: ${{ format('claude-issue-{0}{1}', github.event.issue.number || github.event.inputs.issue, ((github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot') || (github.event_name == 'issues' && github.event.label.name != 'claude')) && format('-noop-{0}', github.run_id) || '') }}
   cancel-in-progress: false
 
 jobs:
