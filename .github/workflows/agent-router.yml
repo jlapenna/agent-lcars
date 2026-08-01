@@ -1,14 +1,16 @@
 name: Agent Issue Router
 
-# GitHub cannot filter `issues:labeled` by label name at the workflow trigger
-# level. Keep that unavoidable broad subscription in one cheap router, then
-# dispatch exactly one agent workflow for the selected pipeline.
+# GitHub cannot filter issue labels or comment bodies at the trigger level.
+# Keep those broad subscriptions in one cheap router, then dispatch exactly
+# one agent workflow for the selected pipeline.
 run-name: >-
   route #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
 
 on:
   issues:
     types: [labeled]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       issue:
@@ -37,6 +39,8 @@ jobs:
        (github.event.label.name == 'claude' ||
         github.event.label.name == 'codex' ||
         github.event.label.name == 'opencode')) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.action == 'created') ||
       (github.event_name == 'workflow_dispatch' &&
        github.event.inputs.issue != '' && github.event.inputs.pipeline != '')
     runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
@@ -47,6 +51,10 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           LABEL: ${{ github.event.label.name }}
           LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_USER_TYPE: ${{ github.event.comment.user.type }}
+          COMMENT_AUTHOR_ASSOC: ${{ github.event.comment.author_association }}
+          IS_PR_COMMENT: ${{ github.event.issue.pull_request != null }}
           INPUT_ISSUE: ${{ github.event.inputs.issue }}
           INPUT_PIPELINE: ${{ github.event.inputs.pipeline }}
           INPUT_MODE: ${{ github.event.inputs.mode }}
@@ -59,7 +67,32 @@ jobs:
           if [[ -z "$LABELS" && -n "$ISSUE" ]]; then
             LABELS=$(gh issue view "$ISSUE" --repo "$REPO" --json labels --jq '[.labels[].name] | join(",")')
           fi
-          has_label() { [[ ",${LABELS}," == *",$1,"* ]]; }
+
+          has_label() {
+            [[ ",${LABELS}," == *",$1,"* ]]
+          }
+
+          if [[ "${GITHUB_EVENT_NAME:-}" == "issue_comment" ]]; then
+            if [[ "$COMMENT_USER_TYPE" == "Bot" || "$COMMENT_AUTHOR_ASSOC" != "OWNER" ]]; then
+              echo "No dispatch: comment is not from the repository owner."
+              exit 0
+            fi
+            if [[ "$COMMENT_BODY" == *"@claude"* ]] &&
+               { has_label claude || [[ "$IS_PR_COMMENT" == "true" ]]; }; then
+              LABEL=claude
+              MODE=reply
+            elif [[ "$COMMENT_BODY" == *"/codex"* ]] && has_label codex; then
+              LABEL=codex
+              MODE=reply
+            elif [[ ("$COMMENT_BODY" == *"/opencode"* || "$COMMENT_BODY" == *"/oc"*) ]] &&
+                 has_label opencode; then
+              LABEL=opencode
+              MODE=reply
+            else
+              echo "No dispatch: comment has no authorized agent command."
+              exit 0
+            fi
+          fi
           workflow=""
           case "$LABEL" in
             claude) workflow=claude.yml ;;

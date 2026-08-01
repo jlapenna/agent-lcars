@@ -21,8 +21,6 @@ run-name: >-
   ${{ ((github.event_name == 'issues' && github.event.label.name != 'opencode') || (github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot')) && 'noop ' || 'opencode ' }}#${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}
 
 on:
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       issue:
@@ -69,17 +67,7 @@ jobs:
     # comment does, so this compares github.actor directly against the
     # maintainer login (matching claude.yml's identical fix and this same
     # hardcoded login used elsewhere in this workflow).
-    if: >
-      (github.event_name == 'issue_comment' &&
-       github.event.comment.user.type != 'Bot' &&
-       github.event.comment.author_association == 'OWNER' &&
-       (contains(github.event.comment.body, '/opencode') ||
-        contains(github.event.comment.body, '/oc')) &&
-       contains(github.event.issue.labels.*.name, 'opencode') &&
-       !contains(github.event.issue.labels.*.name, 'claude') &&
-       !contains(github.event.issue.labels.*.name, 'codex')) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.issue != '')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
     # claude-agent-lcars is registered in jlapenna/homelab's
     # github-runner-autoscaler/orchestrator.yml as
     # homelab-autoscale-claude-agent-lcars (homelab#97). Do NOT point this
@@ -95,29 +83,21 @@ jobs:
     env:
       npm_config_store_dir: /tmp/runner/pnpm-store
     steps:
-      - name: Claim the issue as jclaw-bot
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-        run: |
-          gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-            -f "assignees[]=${{ vars.AGENT_FLEET_LOGIN }}" --silent \
-            || echo "::warning::Could not assign jclaw-bot to #$NUM"
-
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      # OpenCode creates commits through the checkout's local git config.
-      # Configure the fleet identity explicitly; self-hosted runner images do
-      # not provide a global identity, so otherwise a perfectly good run can
-      # fail at its first commit with "Author identity unknown".
-      - name: Configure git identity for OpenCode
-        run: |
-          git config user.name "${{ vars.AGENT_FLEET_LOGIN }}"
-          git config user.email "${{ vars.AGENT_FLEET_LOGIN }}@users.noreply.github.com"
+      - name: Shared agent setup
+        id: agent-setup
+        uses: ./.github/actions/agent-setup
+        with:
+          issue: ${{ github.event.issue.number || github.event.inputs.issue }}
+          pipeline: opencode
+          agent-login: ${{ vars.AGENT_FLEET_LOGIN }}
+          persist-credentials: 'false'
+          pickup-comment: 'true'
 
       - name: Point Nx at the shared host cache when present
         run: |
@@ -130,9 +110,8 @@ jobs:
       # shared runner image now (homelab#132) -- see claude.yml's identical
       # comment for the full rationale and verification.
 
-      - name: Record run start time
-        id: start
-        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      # The shared setup action records the wall-clock anchor used by the
+      # deliverable check below.
 
       # The upstream composite action discovers its release with an
       # unauthenticated api.github.com curl. Shared runners can exhaust that
@@ -227,7 +206,8 @@ jobs:
             only, without a matching gh action, is NOT a valid ending and
             will be treated as a failed run.', github.event.issue.number,
             github.event.issue.title)) || (github.event_name ==
-            'workflow_dispatch' && format('Work issue #{0} in this repo.
+            'workflow_dispatch' && github.event.inputs.mode == 'implement' &&
+            format('Work issue #{0} in this repo.
             Read AGENTS.md, then
             .agents/skills/agent-protocol/agent-protocol.md, then
             .agents/skills/lcars/lcars-protocol.md, in that order, and
@@ -275,9 +255,9 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
-          STARTED_AT: ${{ steps.start.outputs.ts }}
+          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-          IS_REPLY: ${{ github.event_name == 'issue_comment' }}
+          IS_REPLY: ${{ github.event.inputs.mode == 'reply' }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail

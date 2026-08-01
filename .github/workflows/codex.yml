@@ -24,8 +24,6 @@ name: Codex Issue Agent
 run-name: 'codex #${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}'
 
 on:
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       issue:
@@ -53,15 +51,7 @@ jobs:
     # maintainer. The issues webhook has no author_association-equivalent
     # for "who labeled this", so this compares github.actor directly —
     # matching claude.yml/opencode.yml's identical guard.
-    if: >
-      (github.event_name == 'issue_comment' &&
-       github.event.comment.user.type != 'Bot' &&
-       github.event.comment.author_association == 'OWNER' &&
-       contains(github.event.comment.body, '/codex') &&
-       contains(github.event.issue.labels.*.name, 'codex') &&
-       !contains(github.event.issue.labels.*.name, 'claude')) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.issue != '')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
     # Serialize every subscription-authenticated run: two agents must never
     # rotate the same auth.json refresh token concurrently. This belongs on
     # the job, not the workflow — issue_comment creates a workflow run
@@ -82,35 +72,18 @@ jobs:
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
-      - name: Claim the issue as jclaw-bot
-        # id/claimed is consumed by "Dispatch the next queued Codex issue"
-        # at the end of this job. That step treats "assigned to jclaw-bot"
-        # as the marker for an already-picked-up issue, so if claiming is
-        # broken repo-wide the hand-off must not run at all — otherwise two
-        # permanently-unclaimable issues would dispatch each other forever.
-        # Still non-fatal.
-        id: claim
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-        run: |
-          if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-               -f "assignees[]=${{ vars.AGENT_FLEET_LOGIN }}" --silent; then
-            echo "claimed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "claimed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Could not assign jclaw-bot to #$NUM"
-          fi
-
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Configure git identity for Codex
-        run: |
-          git config user.name "${{ vars.AGENT_FLEET_LOGIN }}"
-          git config user.email "${{ vars.AGENT_FLEET_LOGIN }}@users.noreply.github.com"
+      - name: Shared agent setup
+        id: agent-setup
+        uses: ./.github/actions/agent-setup
+        with:
+          issue: ${{ github.event.issue.number || github.event.inputs.issue }}
+          pipeline: codex
+          agent-login: ${{ vars.AGENT_FLEET_LOGIN }}
 
       - name: Point Nx at the shared host cache when present
         run: |
@@ -218,9 +191,8 @@ jobs:
 
       # Wall-clock anchor for the deliverable check below: only artifacts
       # created/updated after this moment count as this run's output.
-      - name: Record run start time
-        id: start
-        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      # The shared setup action records the wall-clock anchor used by the
+      # deliverable check below.
 
       - name: Run Codex
         id: agent
@@ -265,7 +237,8 @@ jobs:
             conclusion and replies with plain text only, without a matching
             gh action, is NOT a valid ending and will be treated as a failed
             run.', github.event.issue.number, github.event.issue.title)) ||
-            (github.event_name == 'workflow_dispatch' && format('Work issue
+            (github.event_name == 'workflow_dispatch' &&
+            github.event.inputs.mode == 'implement' && format('Work issue
             #{0} in this repo. Read AGENTS.md, then
             .agents/skills/agent-protocol/agent-protocol.md, then
             .agents/skills/lcars/lcars-protocol.md, in that order, and
@@ -339,7 +312,7 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
-          STARTED_AT: ${{ steps.start.outputs.ts }}
+          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
           NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
           REPO: ${{ github.repository }}
         run: |
@@ -415,7 +388,7 @@ jobs:
       # construction: if a dispatched run is itself cancelled, its issue
       # simply stays unclaimed and the next completing run picks it up.
       - name: Dispatch the next queued Codex issue
-        if: always() && steps.claim.outputs.claimed == 'true'
+        if: always() && steps.agent-setup.outputs.claimed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
