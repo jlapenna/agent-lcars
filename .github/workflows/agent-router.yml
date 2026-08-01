@@ -25,6 +25,14 @@ on:
         description: 'Dispatch mode'
         required: false
         default: implement
+      runbook:
+        description: 'Optional skill for a runbook dispatch'
+        required: false
+        default: ''
+      context:
+        description: 'Optional deployment or router context'
+        required: false
+        default: ''
 
 permissions:
   actions: write
@@ -72,6 +80,8 @@ jobs:
           INPUT_ISSUE: ${{ github.event.inputs.issue }}
           INPUT_PIPELINE: ${{ github.event.inputs.pipeline }}
           INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_RUNBOOK: ${{ github.event.inputs.runbook }}
+          INPUT_CONTEXT: ${{ github.event.inputs.context }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -121,4 +131,5 @@ jobs:
           fi
           echo "Dispatching $workflow for issue #$ISSUE."
           gh workflow run "$workflow" --repo "$REPO" --ref main \
-            -f issue="$ISSUE" -f mode="$MODE" -f reply="$COMMENT_BODY"
+            -f issue="$ISSUE" -f mode="$MODE" -f reply="$COMMENT_BODY" \
+            -f runbook="$INPUT_RUNBOOK" -f context="$INPUT_CONTEXT"

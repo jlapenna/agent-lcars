@@ -30,6 +30,14 @@ on:
         description: 'Original maintainer reply when mode is reply'
         required: false
         default: ''
+      runbook:
+        description: 'Optional skill for a runbook dispatch'
+        required: false
+        default: ''
+      context:
+        description: 'Optional deployment or router context'
+        required: false
+        default: ''
 
 # Least privilege: enough for Claude to comment on the issue, push a feature
 # branch, open a pull request, and read CI results on the PRs it opens.
@@ -134,6 +142,8 @@ jobs:
           issue: ${{ github.event.inputs.issue }}
           mode: ${{ github.event.inputs.mode }}
           reply: ${{ github.event.inputs.reply }}
+          runbook: ${{ github.event.inputs.runbook }}
+          context: ${{ github.event.inputs.context }}
 
       # Same-host cache sharing with the CI runner: presence-gated so the
       # job still works on a runner container without the mount.
