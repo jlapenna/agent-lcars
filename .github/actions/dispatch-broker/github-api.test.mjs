@@ -9,8 +9,10 @@ import {
   createGitHubApi,
   findConflictingRouterRun,
   findSupersedingRouterRun,
+  GitHubApiError,
   loadLedger,
   pinLedgerWhenUnoccupied,
+  removeIssueLabel,
   validateBrokerConcurrencyResponse,
   validateDispatchResponse,
   verifyBrokerConcurrency,
@@ -717,6 +719,44 @@ test('missing ledger is created once and pinned only with an unoccupied issue pi
   assert.equal(
     (await pinLedgerWhenUnoccupied(api, loaded, true)).reason,
     'ineligible',
+  );
+});
+
+test('removeIssueLabel DELETEs the exact encoded label path and reports success on 200', async () => {
+  let request;
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return response(200, [{ name: 'agent:claude' }]);
+    },
+  });
+  const result = await removeIssueLabel(api, task, 'agent:codex');
+  assert.equal(
+    request.url,
+    'https://api.github.com/repos/jlapenna/agent-lcars/issues/304/labels/agent%3Acodex',
+  );
+  assert.equal(request.options.method, 'DELETE');
+  assert.deepEqual(result, { removed: true });
+});
+
+test('removeIssueLabel treats an already-absent label (404) as benign, not an error (#304 self-heal idempotency)', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => response(404, { message: 'Label does not exist' }),
+  });
+  const result = await removeIssueLabel(api, task, 'agent:codex');
+  assert.deepEqual(result, { removed: false });
+});
+
+test('removeIssueLabel propagates a genuine failure so the broker falls back to fail-closed', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => response(403, { message: 'Forbidden' }),
+  });
+  await assert.rejects(
+    () => removeIssueLabel(api, task, 'agent:codex'),
+    (error) => error instanceof GitHubApiError && error.status === 403,
   );
 });
 

@@ -558,6 +558,30 @@ async function findRunsForGeneration(api, task, generation) {
   );
 }
 
+// Removes a stale `agent:*` label as part of the broker's dual-label
+// self-heal (#304 audit item 4). A 404 means the label is already gone --
+// either a prior, interrupted heal attempt already removed it, or a
+// maintainer removed it manually in the same window -- and is treated as
+// success rather than an error, since the desired end state (the label is
+// gone) already holds. Any other non-2xx status is a real failure and
+// propagates so the broker falls back to its normal fail-closed path.
+async function removeIssueLabel(api, task, label) {
+  const root = repositoryPath(task);
+  const response = await api.request(
+    `${root}/issues/${task.issue}/labels/${encodeURIComponent(label)}`,
+    { method: 'DELETE' },
+  );
+  if (response.status === 404) return { removed: false };
+  if (response.status < 200 || response.status >= 300) {
+    throw new GitHubApiError(
+      `Failed to remove stale label ${label}: HTTP ${response.status}`,
+      response.status,
+      response.data,
+    );
+  }
+  return { removed: true };
+}
+
 async function failClosed(api, task, maintainer, message) {
   const root = repositoryPath(task);
   await api.requestOk(`${root}/issues/${task.issue}/labels`, {
@@ -590,6 +614,7 @@ export {
   listAll,
   loadLedger,
   pinLedgerWhenUnoccupied,
+  removeIssueLabel,
   repositoryPath,
   saveLedger,
   splitRepository,

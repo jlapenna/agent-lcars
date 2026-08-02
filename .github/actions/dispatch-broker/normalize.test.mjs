@@ -181,23 +181,104 @@ test('rapid stale relabel normalizes as retained but nondispatchable evidence', 
   assert.equal(normalized.intent.dispatchable, false);
 });
 
-test('a contradictory live agent-label selection fails closed', () => {
+test('a manual dual-label labeled event self-heals by honoring the event label and marking the other as stale (#304 item 4)', () => {
+  // Regression for #304's audit item 4: a manual GitHub UI relabel adds the
+  // new agent:* label before removing the old one, so `labeled` can fire
+  // while both labels are still on the issue. The event's own label (here
+  // agent:claude, matching issueEvent's default `label`) disambiguates
+  // against the single other stale label (agent:codex), so this must not
+  // throw -- it must dispatch to the event's label and flag the other one
+  // for main.mjs to remove.
+  const normalized = normalizeEvent({
+    eventName: 'issues',
+    event: issueEvent('labeled', {
+      label: { name: 'agent:claude' },
+      issue: {
+        ...baseIssue,
+        labels: [{ name: 'agent:claude' }, { name: 'agent:codex' }],
+      },
+    }),
+    context,
+    timeline: timeline('labeled', { label: { name: 'agent:claude' } }),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'intent');
+  assert.equal(normalized.intent.pipeline, 'claude');
+  assert.equal(normalized.intent.dispatchable, true);
+  assert.deepEqual(normalized.intent.staleAgentLabels, ['agent:codex']);
+});
+
+test('dual agent labels with no event label to disambiguate still fail closed', () => {
+  // The comment path never carries an event label -- `selectedPipeline`
+  // stays undefined whenever more than one agent:* label is present, so
+  // there is nothing to treat as the "newest maintainer action". Unlike the
+  // labeled-event case above, this ambiguity is real and must keep failing
+  // closed rather than guessing.
+  const dualLabelIssue = {
+    ...baseIssue,
+    labels: [{ name: 'agent:claude' }, { name: 'agent:codex' }],
+  };
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'issue_comment',
+        event: {
+          action: 'created',
+          issue: dualLabelIssue,
+          sender: { login: 'jlapenna' },
+          comment: {
+            id: 12345,
+            body: '/codex continue',
+            created_at: context.now,
+            author_association: 'OWNER',
+            user: { type: 'User' },
+          },
+        },
+        context,
+        maintainer: 'jlapenna',
+      }),
+    /does not match the selected integration/u,
+  );
+});
+
+test('three or more coexisting agent labels remain genuinely ambiguous and fail closed', () => {
   assert.throws(
     () =>
       normalizeEvent({
         eventName: 'issues',
         event: issueEvent('labeled', {
+          label: { name: 'agent:claude' },
           issue: {
             ...baseIssue,
-            labels: [{ name: 'agent:claude' }, { name: 'agent:codex' }],
+            labels: [
+              { name: 'agent:claude' },
+              { name: 'agent:codex' },
+              { name: 'agent:opencode' },
+            ],
           },
         }),
         context,
-        timeline: timeline('labeled'),
+        timeline: timeline('labeled', { label: { name: 'agent:claude' } }),
         maintainer: 'jlapenna',
       }),
     /contradictory agent labels/u,
   );
+});
+
+test('a follow-on unlabeled event for the self-healed stale label stays control-evidence, never a new intent (no loop)', () => {
+  // main.mjs removes the stale label via the API after a self-heal, which
+  // fires a genuine `unlabeled` webhook back through the router. That must
+  // stay a benign observation -- never re-enter the intent path or throw --
+  // regardless of how the label got removed.
+  const normalized = normalizeEvent({
+    eventName: 'issues',
+    event: issueEvent('unlabeled', { label: { name: 'agent:codex' } }),
+    context,
+    timeline: timeline('unlabeled', { label: { name: 'agent:codex' } }),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'control-evidence');
+  assert.equal(normalized.evidence.label, 'agent:codex');
 });
 
 test('unlabeled events are control evidence and never create dispatch intent', () => {

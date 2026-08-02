@@ -365,10 +365,38 @@ function normalizeEvent({
     const selectedAgentLabels = labelsOf(issue).filter((label) =>
       AGENT_LABELS.has(label),
     );
+    // A manual GitHub UI relabel adds the new agent:* label before removing
+    // the old one, so this `labeled` event can fire inside a transient
+    // dual-label window (the old pre-broker router self-healed this; #304's
+    // audit found the broker did not). When this event's own label
+    // disambiguates against exactly one other agent:* label already on the
+    // issue, self-heal: honor the newest explicit maintainer action (the
+    // event's own label) as authoritative and mark the other as stale so
+    // main.mjs can remove it before dispatching. Anything less clear-cut --
+    // the event's label missing from the current snapshot, or two or more
+    // other labels present -- stays genuinely ambiguous and fails closed,
+    // same as a comment/dispatch arriving with no event label to
+    // disambiguate.
+    let effectivePipeline = pipeline;
+    let staleAgentLabels;
     if (selectedAgentLabels.length > 1) {
-      throw new Error('Issue has contradictory agent labels');
+      const otherAgentLabels = selectedAgentLabels.filter(
+        (label) => label !== event.label.name,
+      );
+      if (
+        !selectedAgentLabels.includes(event.label.name) ||
+        otherAgentLabels.length !== 1
+      ) {
+        throw new Error('Issue has contradictory agent labels');
+      }
+      staleAgentLabels = otherAgentLabels;
+      effectivePipeline = eventPipeline;
     }
-    const quickTask = quickTaskRequest(issue, context.repository, pipeline);
+    const quickTask = quickTaskRequest(
+      issue,
+      context.repository,
+      effectivePipeline,
+    );
     return {
       kind: 'intent',
       intent: makeIntent({
@@ -384,7 +412,8 @@ function normalizeEvent({
         reply: '',
         runbook: '',
         context: '',
-        dispatchable: pipeline === eventPipeline,
+        dispatchable: effectivePipeline === eventPipeline,
+        ...(staleAgentLabels && { staleAgentLabels }),
         authorization: auth,
       }),
     };
