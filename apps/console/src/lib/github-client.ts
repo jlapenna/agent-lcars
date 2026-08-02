@@ -1,3 +1,5 @@
+import { retry } from '@octokit/plugin-retry';
+import { throttling } from '@octokit/plugin-throttling';
 import { Octokit } from '@octokit/rest';
 import { optional, required } from '@repo/util-server';
 
@@ -23,17 +25,76 @@ export {
   type WatchedRepo,
 };
 
+// The dashboard fans out ~26 GitHub calls per load across
+// agent-activity.ts/action-items.ts/item-enrichment.ts (see #13, filed
+// alongside the original unthrottled fan-out). A 429/secondary-rate-limit
+// used to just be a rejected promise that degraded that section to a
+// warning banner; retry a small bounded number of times first so a single
+// rate-limited call doesn't need the whole section to fail.
+const MAX_RATE_LIMIT_RETRIES = 2;
+
+// Bounds how long a single GitHub call can hang before this client gives up
+// on it, so a stalled connection can't block Next's `"use cache"` fill
+// indefinitely (the cache-populating fetch has no timeout of its own).
+const REQUEST_TIMEOUT_MS = 15_000;
+
+function timeoutFetch(
+  ...[input, init]: Parameters<typeof fetch>
+): ReturnType<typeof fetch> {
+  return fetch(input, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+}
+
+const ThrottledOctokit = Octokit.plugin(retry, throttling);
+
 let client: Octokit | undefined;
 
 export function getGithubClient(): Octokit {
   if (!client) {
-    client = new Octokit({
+    client = new ThrottledOctokit({
       auth: required('AGENT_LCARS_GITHUB_TOKEN'),
+      request: {
+        fetch: timeoutFetch,
+      },
+      // Layered with `throttle` below: this covers generic 5xx/network
+      // retries (plugin-retry), while `throttle` covers 429/secondary
+      // rate-limit responses specifically (plugin-throttling) - both
+      // capped at the same small retry budget.
+      retry: {
+        retries: MAX_RATE_LIMIT_RETRIES,
+      },
+      throttle: {
+        onRateLimit: (retryAfter, options, _octokit, retryCount) => {
+          console.warn(
+            'agent-lcars: GitHub rate limit hit for %s %s, retrying after %ss (attempt %s/%s)',
+            options.method,
+            options.url,
+            retryAfter,
+            retryCount + 1,
+            MAX_RATE_LIMIT_RETRIES,
+          );
+          return retryCount < MAX_RATE_LIMIT_RETRIES;
+        },
+        onSecondaryRateLimit: (retryAfter, options, _octokit, retryCount) => {
+          console.warn(
+            'agent-lcars: GitHub secondary rate limit hit for %s %s, retrying after %ss (attempt %s/%s)',
+            options.method,
+            options.url,
+            retryAfter,
+            retryCount + 1,
+            MAX_RATE_LIMIT_RETRIES,
+          );
+          return retryCount < MAX_RATE_LIMIT_RETRIES;
+        },
+      },
       // Only ever set by the agent-lcars e2e suite, which has no real
       // GitHub credentials and instead points this at its own fixture route
       // (apps/console/src/app/api/e2e/github) so PR-join
       // assertions don't depend on the real GitHub API. Never set in prod
-      // (absent from apphosting.yaml).
+      // (absent from apphosting.yaml). The fixture route is local and fast,
+      // well inside REQUEST_TIMEOUT_MS.
       ...(optional('AGENT_CONSOLE_GITHUB_API_BASE_URL') && {
         baseUrl: optional('AGENT_CONSOLE_GITHUB_API_BASE_URL'),
       }),

@@ -26,6 +26,8 @@
     "@mantine/core": "^9.0.2",
     "@mantine/modals": "^9.0.2",
     "@mantine/notifications": "^9.0.2",
+    "@octokit/plugin-retry": "^8.1.1",
+    "@octokit/plugin-throttling": "^11.0.5",
     "@octokit/rest": "^22.0.1",
     "@tabler/icons-react": "^3.41.1",
     "chokidar": "^5.0.0",

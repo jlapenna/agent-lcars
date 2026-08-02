@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_WATCHED_REPOS,
@@ -19,6 +19,140 @@ const CLAUDE_INTEGRATION = {
 
 afterEach(() => {
   delete process.env[ENV_KEY];
+});
+
+// getGithubClient constructs a real @octokit/rest client wired up with the
+// retry/throttling plugins; capturing the constructor args this way checks
+// the actual options getGithubClient passes rather than re-testing the
+// plugins' own retry/throttle mechanics (that's their test suite's job).
+const octokitConstructorSpy = vi.fn();
+
+vi.mock('@octokit/rest', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@octokit/rest')>();
+  class SpyOctokit extends actual.Octokit {
+    constructor(options: ConstructorParameters<typeof actual.Octokit>[0]) {
+      octokitConstructorSpy(options);
+      super(options);
+    }
+  }
+  return { Octokit: SpyOctokit };
+});
+
+describe('getGithubClient', () => {
+  const TOKEN_ENV_KEY = 'AGENT_LCARS_GITHUB_TOKEN';
+
+  beforeEach(() => {
+    vi.resetModules();
+    octokitConstructorSpy.mockClear();
+    process.env[TOKEN_ENV_KEY] = 'test-token';
+  });
+
+  afterEach(() => {
+    delete process.env[TOKEN_ENV_KEY];
+  });
+
+  it('configures a bounded retry budget and rate-limit throttling', async () => {
+    const { getGithubClient } = await import('./github-client');
+    getGithubClient();
+
+    expect(octokitConstructorSpy).toHaveBeenCalledTimes(1);
+    const options = octokitConstructorSpy.mock.calls[0][0];
+
+    expect(options.retry).toEqual({ retries: 2 });
+    expect(typeof options.throttle.onRateLimit).toBe('function');
+    expect(typeof options.throttle.onSecondaryRateLimit).toBe('function');
+    expect(typeof options.request.fetch).toBe('function');
+  });
+
+  it('caches the client across calls instead of constructing a new one', async () => {
+    const { getGithubClient } = await import('./github-client');
+
+    const first = getGithubClient();
+    const second = getGithubClient();
+
+    expect(second).toBe(first);
+    expect(octokitConstructorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a rate-limited request up to the bounded budget, then gives up', async () => {
+    const { getGithubClient } = await import('./github-client');
+    getGithubClient();
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    const fakeRequest = {
+      method: 'GET',
+      url: 'https://api.github.com/repos/o/r',
+    };
+
+    const warnSpy = vi.spyOn(console, 'warn').mockReturnValue(undefined);
+
+    expect(options.throttle.onRateLimit(30, fakeRequest, {}, 0)).toBe(true);
+    expect(options.throttle.onRateLimit(30, fakeRequest, {}, 1)).toBe(true);
+    expect(options.throttle.onRateLimit(30, fakeRequest, {}, 2)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledTimes(3);
+    expect(warnSpy.mock.calls[0][0]).toMatch(/^agent-lcars: GitHub rate limit/);
+
+    warnSpy.mockRestore();
+  });
+
+  it('retries a secondary rate limit up to the bounded budget, then gives up', async () => {
+    const { getGithubClient } = await import('./github-client');
+    getGithubClient();
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    const fakeRequest = {
+      method: 'POST',
+      url: 'https://api.github.com/graphql',
+    };
+
+    const warnSpy = vi.spyOn(console, 'warn').mockReturnValue(undefined);
+
+    expect(options.throttle.onSecondaryRateLimit(60, fakeRequest, {}, 0)).toBe(
+      true,
+    );
+    expect(options.throttle.onSecondaryRateLimit(60, fakeRequest, {}, 2)).toBe(
+      false,
+    );
+    expect(warnSpy.mock.calls[0][0]).toMatch(
+      /^agent-lcars: GitHub secondary rate limit/,
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it("adds a bounded timeout signal to requests that don't already have one", async () => {
+    const { getGithubClient } = await import('./github-client');
+    getGithubClient();
+    const options = octokitConstructorSpy.mock.calls[0][0];
+
+    const fetchSpy = vi.fn().mockResolvedValue(new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await options.request.fetch('https://api.github.com/repos/o/r');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const init = fetchSpy.mock.calls[0][1];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('preserves a caller-supplied signal instead of overriding it', async () => {
+    const { getGithubClient } = await import('./github-client');
+    getGithubClient();
+    const options = octokitConstructorSpy.mock.calls[0][0];
+
+    const fetchSpy = vi.fn().mockResolvedValue(new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const controller = new AbortController();
+    await options.request.fetch('https://api.github.com/repos/o/r', {
+      signal: controller.signal,
+    });
+
+    const init = fetchSpy.mock.calls[0][1];
+    expect(init.signal).toBe(controller.signal);
+
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('getWatchedRepos', () => {
