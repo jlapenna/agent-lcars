@@ -35,6 +35,9 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
+      - name: Test dispatch broker contracts
+        run: node --test .github/actions/dispatch-broker/*.test.mjs
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
       - uses: pnpm/action-setup@v6
