@@ -22,6 +22,7 @@ import {
   dispatchWorker,
   failClosed,
   findRunsForGeneration,
+  findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
   loadLedger,
@@ -324,17 +325,44 @@ function resolveTask(normalized) {
     : normalized.task;
 }
 
+// Only a `retryable: true` mismatch is eligible: every other failure mode
+// (config mismatch, malformed response, more than one match) is a real
+// anomaly that retrying or supersession-checking cannot explain away, so
+// it must keep failing red immediately (issue #344's "genuinely
+// unexplained mismatch" requirement). Even for the eligible case, absence
+// of a corroborating superseding run must NOT be treated as proof of
+// eviction -- it just means this run's mismatch is still unexplained, so
+// the caller keeps failing red.
+async function wasSupersededEviction(client, task, runId, group, error) {
+  if (error?.name !== 'BrokerConcurrencyMismatchError' || !error.retryable) {
+    return false;
+  }
+  const superseding = await findSupersedingRouterRun(client, task, runId);
+  if (!superseding) return false;
+  console.log(
+    `::notice::Broker run ${runId} (group ${group}, issue #${task.issue}) ` +
+      `was evicted from its concurrency queue by newer run ${superseding.id}, ` +
+      'which now reports the expected group. Treating this run as ' +
+      "superseded rather than failing (#344): this run's own control " +
+      'evidence for its triggering event is not recorded in the ledger -- ' +
+      'the superseding run already carries the issue forward correctly.',
+  );
+  return true;
+}
+
 async function broker() {
   const normalized = decode(env('BROKER_PAYLOAD'));
   if (normalized.kind === 'ignored') return;
   const task = resolveTask(normalized);
   const client = api();
-  await verifyBrokerConcurrency(
-    client,
-    task,
-    Number(env('GITHUB_RUN_ID')),
-    env('BROKER_GROUP'),
-  );
+  const runId = Number(env('GITHUB_RUN_ID'));
+  const group = env('BROKER_GROUP');
+  try {
+    await verifyBrokerConcurrency(client, task, runId, group);
+  } catch (error) {
+    if (await wasSupersededEviction(client, task, runId, group, error)) return;
+    throw error;
+  }
   let loaded;
   try {
     loaded = await loadLedger(client, task);
@@ -466,4 +494,5 @@ export {
   isDefiniteDispatchRejection,
   reconcileActive,
   resolveTask,
+  wasSupersededEviction,
 };

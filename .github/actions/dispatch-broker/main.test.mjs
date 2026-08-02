@@ -8,7 +8,10 @@ import {
   createLedger,
   recordControlEvidence,
 } from './broker.mjs';
-import { GitHubApiError } from './github-api.mjs';
+import {
+  BrokerConcurrencyMismatchError,
+  GitHubApiError,
+} from './github-api.mjs';
 import {
   assertWorkerRun,
   completionMatches,
@@ -18,6 +21,7 @@ import {
   isDefiniteDispatchRejection,
   reconcileActive,
   resolveTask,
+  wasSupersededEviction,
 } from './main.mjs';
 import { normalizeEvent } from './normalize.mjs';
 
@@ -382,6 +386,97 @@ test('a redelivered completion after terminal reconciliation is a no-op', async 
   );
   assert.equal(ledger.generations[0].state, 'completed');
   assert.equal(writes, 0);
+});
+
+test('wasSupersededEviction exits gracefully when a corroborated eviction is found (#344)', async () => {
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const client = {
+    requestOk: async (path) => {
+      if (path.includes('/workflows/agent-router.yml/runs?')) {
+        return {
+          workflow_runs: [
+            { id: 9002, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9002/concurrency_groups')) {
+        return { concurrency_groups: [{ group_name: group }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const error = new BrokerConcurrencyMismatchError(
+    'Broker run does not report the expected concurrency group (after 5 attempts)',
+    { retryable: true },
+  );
+  const originalLog = console.log;
+  const logged = [];
+  console.log = (message) => logged.push(message);
+  let handled;
+  try {
+    handled = await wasSupersededEviction(client, task, 9001, group, error);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(handled, true);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /^::notice::/u);
+  assert.match(logged[0], /evicted/u);
+  assert.match(logged[0], /9002/u);
+});
+
+test('wasSupersededEviction still fails a genuinely unexplained mismatch when no run corroborates eviction', async () => {
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const client = {
+    requestOk: async (path) => {
+      if (path.includes('/workflows/agent-router.yml/runs?')) {
+        return { workflow_runs: [] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const error = new BrokerConcurrencyMismatchError(
+    'Broker run does not report the expected concurrency group (after 5 attempts)',
+    { retryable: true },
+  );
+  assert.equal(
+    await wasSupersededEviction(client, task, 9001, group, error),
+    false,
+  );
+});
+
+test('wasSupersededEviction never queries for a superseding run on a non-retryable mismatch (a real anomaly)', async () => {
+  const client = {
+    requestOk: async () => {
+      throw new Error('must not query for supersession on a real anomaly');
+    },
+  };
+  const error = new BrokerConcurrencyMismatchError(
+    'Broker concurrency output does not match its TaskRef',
+    { retryable: false },
+  );
+  assert.equal(
+    await wasSupersededEviction(client, task, 9001, 'group', error),
+    false,
+  );
+});
+
+test('wasSupersededEviction ignores errors that are not a retryable BrokerConcurrencyMismatchError', async () => {
+  const client = {
+    requestOk: async () => {
+      throw new Error('must not query for supersession on an unrelated error');
+    },
+  };
+  assert.equal(
+    await wasSupersededEviction(
+      client,
+      task,
+      9001,
+      'group',
+      new GitHubApiError('boom', 500),
+    ),
+    false,
+  );
 });
 
 let failures = 0;
