@@ -581,6 +581,11 @@ describe('createQuickTask', () => {
       createIssue?: Mock;
       listForRepo?: Mock;
       searchIssues?: Mock;
+      getRef?: Mock;
+      getTag?: Mock;
+      createTag?: Mock;
+      createRef?: Mock;
+      deleteRef?: Mock;
     } = {},
   ) {
     const createIssue =
@@ -593,13 +598,71 @@ describe('createQuickTask', () => {
     const searchIssues =
       overrides.searchIssues ??
       vi.fn().mockResolvedValue({ data: { items: [] } });
+    const tagObjects = new Map<string, { message: string }>();
+    const claimRefs = new Map<string, string>();
+    let tagSequence = 0;
+    const getRef =
+      overrides.getRef ??
+      vi.fn().mockImplementation(async ({ ref }) => {
+        if (ref === 'heads/main') {
+          return {
+            data: { object: { type: 'commit', sha: 'base-commit-sha' } },
+          };
+        }
+        const sha = claimRefs.get(ref);
+        if (!sha) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return { data: { object: { type: 'tag', sha } } };
+      });
+    const getTag =
+      overrides.getTag ??
+      vi.fn().mockImplementation(async ({ tag_sha }) => ({
+        data: { message: tagObjects.get(tag_sha)?.message ?? '' },
+      }));
+    const createTag =
+      overrides.createTag ??
+      vi.fn().mockImplementation(async ({ message }) => {
+        const sha = `claim-tag-${++tagSequence}`;
+        tagObjects.set(sha, { message });
+        return { data: { sha } };
+      });
+    const createRef =
+      overrides.createRef ??
+      vi.fn().mockImplementation(async ({ ref, sha }) => {
+        const shortRef = ref.replace(/^refs\//u, '');
+        if (claimRefs.has(shortRef)) {
+          throw Object.assign(new Error('Reference already exists'), {
+            status: 422,
+          });
+        }
+        claimRefs.set(shortRef, sha);
+        return { data: { ref, object: { type: 'tag', sha } } };
+      });
+    const deleteRef =
+      overrides.deleteRef ??
+      vi.fn().mockImplementation(async ({ ref }) => {
+        claimRefs.delete(ref);
+        return { data: {} };
+      });
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: { create: createIssue, listForRepo },
         search: { issuesAndPullRequests: searchIssues },
+        repos: {
+          get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }),
+        },
+        git: { getRef, getTag, createTag, createRef, deleteRef },
       },
     });
-    return { createIssue, listForRepo, searchIssues };
+    return {
+      createIssue,
+      listForRepo,
+      searchIssues,
+      getRef,
+      getTag,
+      createTag,
+      createRef,
+      deleteRef,
+    };
   }
 
   it('rejects a blank description without calling GitHub', async () => {
@@ -622,7 +685,7 @@ describe('createQuickTask', () => {
   });
 
   it('creates one immediately-dispatchable issue with a durable request marker', async () => {
-    const { createIssue } = mockOctokit();
+    const { createIssue, createTag, createRef } = mockOctokit();
 
     const result = await createQuickTask(request);
 
@@ -634,6 +697,22 @@ describe('createQuickTask', () => {
         /^Fix the flaky test\nmore context\n\n<!-- agent-lcars:quick-task-request:v1 id=11111111-1111-4111-8111-111111111111 digest=[0-9a-f]{64} -->$/u,
       ),
       labels: ['intake:quick-task', 'agent:claude'],
+    });
+    expect(createTag).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tag: 'agent-lcars/quick-task/11111111-1111-4111-8111-111111111111',
+        message: expect.stringMatching(
+          /^agent-lcars:quick-task-claim:v1 \{"requestId":"11111111-1111-4111-8111-111111111111","digest":"[0-9a-f]{64}"\}$/u,
+        ),
+        object: 'base-commit-sha',
+        type: 'commit',
+      }),
+    );
+    expect(createRef).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      ref: 'refs/tags/agent-lcars/quick-task/11111111-1111-4111-8111-111111111111',
+      sha: 'claim-tag-1',
     });
     expect(result).toEqual({
       requestId: request.requestId,
@@ -749,6 +828,48 @@ describe('createQuickTask', () => {
     expect(createIssue).toHaveBeenCalledTimes(1);
   });
 
+  it('reconciles the winner when another instance wins the claim-ref race', async () => {
+    let claimMessage = '';
+    const getRef = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'commit', sha: 'base-commit-sha' } },
+      })
+      .mockResolvedValueOnce({
+        data: { object: { type: 'tag', sha: 'winner-tag-sha' } },
+      });
+    const createTag = vi.fn().mockImplementation(async (input) => {
+      claimMessage = input.message;
+      return { data: { sha: 'loser-tag-sha' } };
+    });
+    const createRef = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Reference already exists'), { status: 422 }),
+      );
+    const getTag = vi.fn().mockImplementation(async () => ({
+      data: { message: claimMessage },
+    }));
+    const { createIssue } = mockOctokit({
+      getRef,
+      getTag,
+      createTag,
+      createRef,
+    });
+
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Quick Task creation is already claimed but no issue is visible yet',
+    );
+    expect(createRef).toHaveBeenCalledTimes(1);
+    expect(getTag).toHaveBeenCalledWith(
+      expect.objectContaining({ tag_sha: 'winner-tag-sha' }),
+    );
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
   it('recovers an issue created before a transport timeout', async () => {
     let persistedBody = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {
@@ -770,6 +891,36 @@ describe('createQuickTask', () => {
     );
     expect(createIssue).toHaveBeenCalledTimes(1);
     expect(listForRepo).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps an ambiguous claim and blocks a second process from creating', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(new Error('socket timed out'));
+    const { createRef } = mockOctokit({ createIssue });
+
+    await expect(createQuickTask(request)).rejects.toThrow('socket timed out');
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Quick Task creation is already claimed but no issue is visible yet',
+    );
+
+    expect(createRef).toHaveBeenCalledTimes(1);
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects different content when an ambiguous claim is stranded', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(new Error('socket timed out'));
+    mockOctokit({ createIssue });
+
+    await expect(createQuickTask(request)).rejects.toThrow('socket timed out');
+    await expect(
+      createQuickTask({ ...request, description: 'Different task' }),
+    ).rejects.toThrow(
+      'Quick Task request ID was already used for different task content',
+    );
+    expect(createIssue).toHaveBeenCalledTimes(1);
   });
 
   it('rejects reuse of a request ID for different content', async () => {
@@ -801,11 +952,16 @@ describe('createQuickTask', () => {
       .mockRejectedValue(
         Object.assign(new Error('Validation Failed'), { status: 422 }),
       );
-    const { listForRepo } = mockOctokit({ createIssue });
+    const { listForRepo, deleteRef } = mockOctokit({ createIssue });
 
     await expect(createQuickTask(request)).rejects.toThrow('Validation Failed');
     expect(createIssue).toHaveBeenCalledTimes(1);
     expect(listForRepo).toHaveBeenCalledTimes(1);
+    expect(deleteRef).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      ref: 'tags/agent-lcars/quick-task/11111111-1111-4111-8111-111111111111',
+    });
   });
 
   it('uses the explicit title instead of deriving one when provided', async () => {

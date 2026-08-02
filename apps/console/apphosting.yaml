@@ -10,11 +10,6 @@ outputFiles:
       - dist/apps/console/.next/static
 runConfig:
   minInstances: 0
-  # Quick Task creation uses one process-wide single-flight coordinator plus
-  # a durable GitHub issue marker for replay after restarts/timeouts. Keep the
-  # single-admin console on one serving instance so concurrent submissions
-  # cannot bypass that coordinator on separate containers.
-  maxInstances: 1
   cpu: 1
   memoryMiB: 1024
 env:

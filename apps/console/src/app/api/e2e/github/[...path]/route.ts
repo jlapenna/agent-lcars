@@ -12,6 +12,11 @@ import {
   workflowRuns,
 } from '../../../../../lib/e2e-github-fixtures';
 
+const E2E_BASE_COMMIT_SHA = '1111111111111111111111111111111111111111';
+const quickTaskTagObjects = new Map<string, { message: string; tag: string }>();
+const quickTaskClaimRefs = new Map<string, string>();
+let quickTaskTagSequence = 0;
+
 /**
  * Stands in for the whole GitHub REST surface the dashboard reads when
  * `github-client.ts` is pointed at `AGENT_CONSOLE_GITHUB_API_BASE_URL` —
@@ -46,6 +51,38 @@ export async function GET(
   // Everything below is repo-scoped: /repos/{owner}/{repo}/...
   if (path[0] === 'repos') {
     const rest = path.slice(3);
+
+    // Quick Task's GitHub-native idempotency ledger resolves the repository's
+    // default branch only to give its annotated claim tag a valid target.
+    if (rest.length === 0) {
+      return NextResponse.json({ default_branch: 'main' });
+    }
+
+    // GET /repos/{o}/{r}/git/ref/{ref...}
+    if (rest[0] === 'git' && rest[1] === 'ref') {
+      const ref = rest.slice(2).join('/');
+      if (ref === 'heads/main') {
+        return NextResponse.json({
+          ref: 'refs/heads/main',
+          object: { type: 'commit', sha: E2E_BASE_COMMIT_SHA },
+        });
+      }
+      const tagSha = quickTaskClaimRefs.get(ref);
+      return tagSha
+        ? NextResponse.json({
+            ref: `refs/${ref}`,
+            object: { type: 'tag', sha: tagSha },
+          })
+        : NextResponse.json({ message: 'Not Found' }, { status: 404 });
+    }
+
+    // GET /repos/{o}/{r}/git/tags/{sha}
+    if (rest[0] === 'git' && rest[1] === 'tags' && rest[2]) {
+      const tag = quickTaskTagObjects.get(rest[2]);
+      return tag
+        ? NextResponse.json({ ...tag, sha: rest[2] })
+        : NextResponse.json({ message: 'Not Found' }, { status: 404 });
+    }
 
     // GET /repos/{o}/{r}/issues/{number}/comments
     if (rest[0] === 'issues' && rest[2] === 'comments') {
@@ -122,13 +159,26 @@ export async function POST(
       labels?: string[];
       title?: string;
     };
-    const hasRequestMarker =
-      /<!-- agent-lcars:quick-task-request:v1 id=[0-9a-f-]{36} digest=[0-9a-f]{64} -->/u.test(
+    const requestMarker =
+      /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f-]{36}) digest=([0-9a-f]{64}) -->/u.exec(
         body.body ?? '',
       );
+    const claimSha = requestMarker
+      ? quickTaskClaimRefs.get(
+          `tags/agent-lcars/quick-task/${requestMarker[1]}`,
+        )
+      : undefined;
+    const claim = claimSha ? quickTaskTagObjects.get(claimSha) : undefined;
+    const hasMatchingClaim =
+      requestMarker &&
+      claim?.message ===
+        `agent-lcars:quick-task-claim:v1 ${JSON.stringify({
+          requestId: requestMarker[1],
+          digest: requestMarker[2],
+        })}`;
     if (
       !body.title?.trim() ||
-      !hasRequestMarker ||
+      !hasMatchingClaim ||
       !body.labels?.includes('intake:quick-task') ||
       !body.labels.includes('agent:claude')
     ) {
@@ -143,6 +193,68 @@ export async function POST(
       title: body.title,
       body: body.body,
       labels: body.labels.map((name) => ({ name })),
+    });
+  }
+  if (
+    path[0] === 'repos' &&
+    path.length === 5 &&
+    path[3] === 'git' &&
+    path[4] === 'tags'
+  ) {
+    const body = (await req.json()) as {
+      message?: string;
+      object?: string;
+      tag?: string;
+      type?: string;
+    };
+    if (
+      !body.tag?.startsWith('agent-lcars/quick-task/') ||
+      !body.message?.startsWith('agent-lcars:quick-task-claim:v1 ') ||
+      body.object !== E2E_BASE_COMMIT_SHA ||
+      body.type !== 'commit'
+    ) {
+      return NextResponse.json(
+        { message: 'Invalid Quick Task claim tag' },
+        { status: 422 },
+      );
+    }
+    const sha = `${String(++quickTaskTagSequence).padStart(40, 'a')}`;
+    quickTaskTagObjects.set(sha, { message: body.message, tag: body.tag });
+    return NextResponse.json({
+      sha,
+      tag: body.tag,
+      message: body.message,
+      object: { type: 'commit', sha: body.object },
+    });
+  }
+  if (
+    path[0] === 'repos' &&
+    path.length === 5 &&
+    path[3] === 'git' &&
+    path[4] === 'refs'
+  ) {
+    const body = (await req.json()) as { ref?: string; sha?: string };
+    const ref = body.ref?.replace(/^refs\//u, '');
+    if (
+      !ref?.startsWith('tags/agent-lcars/quick-task/') ||
+      !body.sha ||
+      !quickTaskTagObjects.has(body.sha)
+    ) {
+      return NextResponse.json(
+        { message: 'Invalid Quick Task claim ref' },
+        { status: 422 },
+      );
+    }
+    if (quickTaskClaimRefs.has(ref)) {
+      return NextResponse.json(
+        { message: 'Reference already exists' },
+        { status: 422 },
+      );
+    }
+    quickTaskClaimRefs.set(ref, body.sha);
+    return NextResponse.json({
+      ref: body.ref,
+      object: { type: 'tag', sha: body.sha },
     });
   }
   console.error(

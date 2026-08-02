@@ -405,6 +405,9 @@ const QUICK_TASK_REQUEST_ID_PATTERN =
 const QUICK_TASK_MARKER_PATTERN =
   /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f-]{36}) digest=([0-9a-f]{64}) -->/gu;
 const QUICK_TASK_RECENT_ISSUE_LIMIT = 100;
+const QUICK_TASK_CLAIM_REF_PREFIX = 'tags/agent-lcars/quick-task/';
+const QUICK_TASK_CLAIM_TAG_PREFIX = 'agent-lcars/quick-task/';
+const QUICK_TASK_CLAIM_MESSAGE_PREFIX = 'agent-lcars:quick-task-claim:v1 ';
 // Issue titles show up in list views and the run-name banner - a raw,
 // possibly multi-paragraph task description would blow both out, so this
 // keeps just the first line and clips it to something scannable.
@@ -458,6 +461,46 @@ function quickTaskDigest(request: NormalizedQuickTaskRequest): string {
 
 function quickTaskMarker(requestId: string, digest: string): string {
   return `<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${digest} -->`;
+}
+
+function quickTaskClaimRef(requestId: string): string {
+  return `${QUICK_TASK_CLAIM_REF_PREFIX}${requestId}`;
+}
+
+function quickTaskClaimMessage(requestId: string, digest: string): string {
+  return `${QUICK_TASK_CLAIM_MESSAGE_PREFIX}${JSON.stringify({ requestId, digest })}`;
+}
+
+function parseQuickTaskClaim(message: string): {
+  requestId: string;
+  digest: string;
+} {
+  if (!message.startsWith(QUICK_TASK_CLAIM_MESSAGE_PREFIX)) {
+    throw new ActionError(
+      'Quick Task claim is malformed; manual reconciliation is required',
+      409,
+    );
+  }
+  try {
+    const value = JSON.parse(
+      message.slice(QUICK_TASK_CLAIM_MESSAGE_PREFIX.length),
+    ) as Record<string, unknown>;
+    if (
+      typeof value['requestId'] !== 'string' ||
+      !QUICK_TASK_REQUEST_ID_PATTERN.test(value['requestId']) ||
+      typeof value['digest'] !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test(value['digest'])
+    ) {
+      throw new Error('invalid claim fields');
+    }
+    return { requestId: value['requestId'], digest: value['digest'] };
+  } catch (error) {
+    if (error instanceof ActionError) throw error;
+    throw new ActionError(
+      'Quick Task claim is malformed; manual reconciliation is required',
+      409,
+    );
+  }
 }
 
 function markerDigest(body: string | null | undefined, requestId: string) {
@@ -548,6 +591,119 @@ function isDefinitiveCreateFailure(error: unknown): boolean {
   return typeof status === 'number' && status >= 400 && status < 500;
 }
 
+function githubStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null || !('status' in error)) {
+    return undefined;
+  }
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+async function readQuickTaskClaim(
+  request: NormalizedQuickTaskRequest,
+): Promise<{ requestId: string; digest: string } | undefined> {
+  const octokit = getGithubClient();
+  const ref = await (async () => {
+    try {
+      return (
+        await octokit.rest.git.getRef({
+          owner: request.repository.owner,
+          repo: request.repository.name,
+          ref: quickTaskClaimRef(request.requestId),
+        })
+      ).data;
+    } catch (error) {
+      if (githubStatus(error) === 404) return undefined;
+      throw error;
+    }
+  })();
+  if (!ref) return undefined;
+  if (ref.object.type !== 'tag') {
+    throw new ActionError(
+      'Quick Task claim points to an unexpected Git object; manual reconciliation is required',
+      409,
+    );
+  }
+  const { data: tag } = await octokit.rest.git.getTag({
+    owner: request.repository.owner,
+    repo: request.repository.name,
+    tag_sha: ref.object.sha,
+  });
+  return parseQuickTaskClaim(tag.message);
+}
+
+function assertMatchingQuickTaskClaim(
+  request: NormalizedQuickTaskRequest,
+  digest: string,
+  claim: { requestId: string; digest: string },
+): void {
+  if (claim.requestId !== request.requestId || claim.digest !== digest) {
+    throw new ActionError(
+      'Quick Task request ID was already used for different task content',
+      409,
+    );
+  }
+}
+
+async function createQuickTaskClaim(
+  request: NormalizedQuickTaskRequest,
+  digest: string,
+): Promise<'acquired' | 'existing'> {
+  const current = await readQuickTaskClaim(request);
+  if (current) {
+    assertMatchingQuickTaskClaim(request, digest, current);
+    return 'existing';
+  }
+
+  const octokit = getGithubClient();
+  const { data: repository } = await octokit.rest.repos.get({
+    owner: request.repository.owner,
+    repo: request.repository.name,
+  });
+  const { data: baseRef } = await octokit.rest.git.getRef({
+    owner: request.repository.owner,
+    repo: request.repository.name,
+    ref: `heads/${repository.default_branch}`,
+  });
+  const { data: tag } = await octokit.rest.git.createTag({
+    owner: request.repository.owner,
+    repo: request.repository.name,
+    tag: `${QUICK_TASK_CLAIM_TAG_PREFIX}${request.requestId}`,
+    message: quickTaskClaimMessage(request.requestId, digest),
+    object: baseRef.object.sha,
+    type: 'commit',
+  });
+
+  try {
+    await octokit.rest.git.createRef({
+      owner: request.repository.owner,
+      repo: request.repository.name,
+      ref: `refs/${quickTaskClaimRef(request.requestId)}`,
+      sha: tag.sha,
+    });
+    return 'acquired';
+  } catch (error) {
+    // Creating the annotated tag object is harmless; the reference is the
+    // atomic uniqueness boundary. A competing revision may have won between
+    // our initial read and this write, so always reconcile the canonical ref
+    // before deciding whether the createRef failure is actionable.
+    const winner = await readQuickTaskClaim(request);
+    if (!winner) throw error;
+    assertMatchingQuickTaskClaim(request, digest, winner);
+    return 'existing';
+  }
+}
+
+async function releaseQuickTaskClaim(
+  request: NormalizedQuickTaskRequest,
+): Promise<void> {
+  await getGithubClient().rest.git.deleteRef({
+    owner: request.repository.owner,
+    repo: request.repository.name,
+    ref: quickTaskClaimRef(request.requestId),
+  });
+}
+
 async function createQuickTaskOnce(
   request: NormalizedQuickTaskRequest,
   digest: string,
@@ -558,6 +714,17 @@ async function createQuickTaskOnce(
   );
   const existing = await findExistingQuickTask(request, digest);
   if (existing) return existing;
+
+  const claim = await createQuickTaskClaim(request, digest);
+  if (claim === 'existing') {
+    // The other claimant may still be inside GitHub's issue-create request.
+    // Never race it. The browser retains the request UUID, so a later retry
+    // will either discover its marker or return this same fail-closed result.
+    throw new ActionError(
+      'Quick Task creation is already claimed but no issue is visible yet; retry to reconcile it',
+      409,
+    );
+  }
 
   const octokit = getGithubClient();
   try {
@@ -570,7 +737,13 @@ async function createQuickTaskOnce(
     });
     return receiptFor(request, issue.number);
   } catch (error) {
-    if (isDefinitiveCreateFailure(error)) throw error;
+    if (isDefinitiveCreateFailure(error)) {
+      // A 4xx proves GitHub did not create the issue, so releasing the claim
+      // is safe and lets the same browser intent retry after the validation,
+      // permission, or label problem is corrected.
+      await releaseQuickTaskClaim(request);
+      throw error;
+    }
 
     // A transport timeout can happen after GitHub committed the issue but
     // before the response reached us. Re-read the marker before surfacing the
@@ -578,6 +751,10 @@ async function createQuickTaskOnce(
     // another one.
     const recovered = await findExistingQuickTask(request, digest);
     if (recovered) return recovered;
+    // Keep the atomic claim on any ambiguous failure. It may represent an
+    // issue GitHub committed after our reconciliation read; deleting it here
+    // would turn a harmless retry into a duplicate. A later retry rechecks
+    // the marker, while a truly stranded claim is reconciled manually.
     throw error;
   }
 }
