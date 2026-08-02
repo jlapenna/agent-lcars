@@ -170,6 +170,7 @@ export function QuickTaskButton({
                 setRepoIndex(value ?? '0');
               }}
               allowDeselect={false}
+              disabled={isPending}
             />
           )}
           <Select
@@ -182,7 +183,7 @@ export function QuickTaskButton({
               setPipeline((value as AgentPipeline) ?? 'claude');
             }}
             allowDeselect={false}
-            disabled={pipelineOptions.length === 0}
+            disabled={isPending || pipelineOptions.length === 0}
           />
           <TextInput
             label="Title"
@@ -193,6 +194,7 @@ export function QuickTaskButton({
               setTitle(e.currentTarget.value);
             }}
             placeholder="Short summary for the issue title"
+            disabled={isPending}
           />
           <Textarea
             label="Description"
@@ -204,6 +206,7 @@ export function QuickTaskButton({
             placeholder="Describe the task — this becomes the issue body"
             autosize
             minRows={12}
+            disabled={isPending}
           />
           <Button
             disabled={

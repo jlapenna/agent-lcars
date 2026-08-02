@@ -211,6 +211,37 @@ describe('QuickTaskButton', () => {
     );
   });
 
+  it('locks the submitted intent until its request finishes', async () => {
+    let resolveRequest!: (value: ReturnType<typeof receipt>) => void;
+    (createQuickTask as Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+    renderButton();
+    await openDialog();
+    enterDescription();
+    submit();
+
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText('Description') as HTMLTextAreaElement).disabled,
+      ).toBe(true),
+    );
+    expect((screen.getByLabelText('Title') as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (screen.getByRole('combobox', { name: 'Agent' }) as HTMLInputElement)
+        .disabled,
+    ).toBe(true);
+    submit();
+    expect(createQuickTask).toHaveBeenCalledTimes(1);
+
+    resolveRequest(receipt());
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
   it('creates a new request ID when the intent changes after failure', async () => {
     (createQuickTask as Mock)
       .mockResolvedValueOnce({ ok: false, message: 'try again' })
