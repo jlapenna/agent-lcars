@@ -19,6 +19,7 @@ import {
   assertWorkerRun,
   completionMatches,
   decode,
+  discoverReconcileCandidates,
   dispatchReconcileScan,
   encode,
   FRESH_INTENT_OUTCOMES,
@@ -1053,6 +1054,143 @@ test('dispatchReconcileScan continues past a per-candidate dispatch failure and 
   assert.equal(results.dispatched, 2);
   assert.equal(results.failed.length, 1);
   assert.equal(results.failed[0].issue, 305);
+});
+
+// --- discoverReconcileCandidates (#363 review: label-independent lane) --
+
+test('discoverReconcileCandidates includes an unlabeled issue with an active generation via the fleet-assignee lane, merged with labeled candidates (#363 review)', async () => {
+  // Issue #500: its last agent:* label was removed while the worker was
+  // still active (recorded only as control-evidence -- see #363's review),
+  // so it carries no agent:* label anymore, but claim-issue's assignment of
+  // the fleet login is durable and was never cleared. Issue #304 is the
+  // ordinary, still-labeled case.
+  const seenUrls = [];
+  const client = {
+    requestOk: async (url) => {
+      seenUrls.push(url);
+      if (url.includes('labels=agent%3Aclaude')) {
+        return [{ number: 304 }];
+      }
+      if (
+        url.includes('labels=agent%3Acodex') ||
+        url.includes('labels=agent%3Aopencode')
+      ) {
+        return [];
+      }
+      if (url.includes('assignee=jclaw-bot')) {
+        return [{ number: 500 }];
+      }
+      throw new Error(`Unexpected API path: ${url}`);
+    },
+  };
+  const candidates = await discoverReconcileCandidates(
+    client,
+    'jlapenna/agent-lcars',
+    'jclaw-bot',
+  );
+  assert.deepEqual(
+    candidates.map((issue) => issue.number),
+    [304, 500],
+  );
+  assert.ok(seenUrls.some((url) => url.includes('assignee=jclaw-bot')));
+});
+
+test('discoverReconcileCandidates dedupes an issue that is both labeled and fleet-assigned', async () => {
+  const client = {
+    requestOk: async (url) => {
+      if (url.includes('labels=agent%3Aclaude')) return [{ number: 304 }];
+      if (url.includes('labels=')) return [];
+      if (url.includes('assignee=')) return [{ number: 304 }];
+      throw new Error(`Unexpected API path: ${url}`);
+    },
+  };
+  const candidates = await discoverReconcileCandidates(
+    client,
+    'jlapenna/agent-lcars',
+    'jclaw-bot',
+  );
+  assert.deepEqual(
+    candidates.map((issue) => issue.number),
+    [304],
+  );
+});
+
+test('discoverReconcileCandidates skips the fleet-assignee lane entirely when no fleet login is configured', async () => {
+  const seenUrls = [];
+  const client = {
+    requestOk: async (url) => {
+      seenUrls.push(url);
+      if (url.includes('labels=')) return [];
+      throw new Error(
+        `Unexpected API path (assignee lane should be skipped): ${url}`,
+      );
+    },
+  };
+  const candidates = await discoverReconcileCandidates(
+    client,
+    'jlapenna/agent-lcars',
+    '',
+  );
+  assert.deepEqual(candidates, []);
+  assert.ok(seenUrls.every((url) => !url.includes('assignee=')));
+});
+
+// --- end-to-end: findRunsForGeneration truncation no longer false-parks --
+
+test('an old dispatch buried past 100 newer unrelated runs is found and bound, not falsely parked, once the scoped/paginated query is applied (#363 review)', async () => {
+  const { ledger, comment } = dispatchingLedger();
+  const generation = ledger.generations[0];
+  const marker = `[dispatch:g${generation.generation}:${generation.intentId}]`;
+  const targetRun = {
+    id: 777,
+    repository: { id: task.repositoryId },
+    event: 'workflow_dispatch',
+    path: '.github/workflows/codex.yml',
+    display_title: `#304: Codex ${marker}`,
+    status: 'in_progress',
+    conclusion: null,
+    updated_at: '2026-08-01T00:10:00.000Z',
+    url: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/777',
+    html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/777',
+  };
+  const unrelatedPage = Array.from({ length: 100 }, (_, index) => ({
+    id: index,
+    repository: { id: task.repositoryId },
+    event: 'workflow_dispatch',
+    path: '.github/workflows/codex.yml',
+    display_title: `#999: unrelated run ${index}`,
+  }));
+  const client = {
+    requestOk: async (path) => {
+      if (path.includes('/workflows/codex.yml/runs?')) {
+        const page = Number(
+          new URL(`https://x${path}`).searchParams.get('page'),
+        );
+        return { workflow_runs: page === 1 ? unrelatedPage : [targetRun] };
+      }
+      if (path.endsWith('/actions/runs/777')) return targetRun;
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const loaded = { ledger, comment };
+
+  // Reproduces broker()'s exact composition for a `reconcile` event: bind
+  // first via reconcileActive(), then reconcileLedger()'s missing-run
+  // tracking only ever sees a still-dispatching generation with no runId.
+  await reconcileActive(client, loaded);
+  assert.equal(ledger.generations[0].state, 'active');
+  assert.equal(ledger.generations[0].attempt.runId, 777);
+
+  const now = addMinutes(RECONCILE_T0, RECONCILE_MISSING_RUN_GRACE_MS / 60_000);
+  await reconcileLedger(client, loaded, now);
+  assert.equal(
+    ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-missing-run',
+    ).length,
+    0,
+    'a genuinely bound run must never be recorded as missing',
+  );
 });
 
 function supersedingClient(group, { holds = true } = {}) {

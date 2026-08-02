@@ -27,6 +27,7 @@ import {
   getWorkflowRun,
   GitHubApiError,
   listOpenAgentLabeledIssues,
+  listOpenIssuesAssignedTo,
   loadLedger,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
@@ -823,22 +824,49 @@ async function completionCallback() {
   validateDispatchResponse(response, task);
 }
 
+// Merges both discovery lanes (#305, broadened by the #363 review):
+// currently agent-labeled issues/PRs (the fast path -- covers everything
+// still mid-dispatch or freshly completed) union'd with issues/PRs assigned
+// to the agent fleet login (the label-independent path -- covers a ledger
+// left active after its last agent:* label was removed). Deduplicated by
+// issue number the same way listOpenAgentLabeledIssues dedupes across its
+// own per-label queries.
+async function discoverReconcileCandidates(client, repository, fleetLogin) {
+  const task = { repository };
+  const [labeled, assigned] = await Promise.all([
+    listOpenAgentLabeledIssues(client, task),
+    listOpenIssuesAssignedTo(client, task, fleetLogin),
+  ]);
+  const byNumber = new Map();
+  for (const issue of [...labeled, ...assigned]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number,
+  );
+}
+
 // dispatch-reconcile.yml's scan job (#305): read-only discovery of every
-// open agent-labeled issue/PR, then one `kind: reconcile` workflow_dispatch
-// call per candidate via dispatchReconcileScan(). A per-issue dispatch
-// failure never blocks the other candidates -- every candidate always gets
-// an attempt -- but the job itself still fails loud afterwards (unlike an
-// individual reconcile's own bounded-retry parking, which stays green by
-// design) so a systemic dispatch problem (e.g. a bad token) is visible.
+// open agent-labeled or fleet-assigned issue/PR (discoverReconcileCandidates),
+// then one `kind: reconcile` workflow_dispatch call per candidate via
+// dispatchReconcileScan(). A per-issue dispatch failure never blocks the
+// other candidates -- every candidate always gets an attempt -- but the job
+// itself still fails loud afterwards (unlike an individual reconcile's own
+// bounded-retry parking, which stays green by design) so a systemic
+// dispatch problem (e.g. a bad token) is visible.
 async function scanReconcile() {
   const client = api();
   const repository = env('GITHUB_REPOSITORY');
-  const candidates = await listOpenAgentLabeledIssues(client, { repository });
+  const candidates = await discoverReconcileCandidates(
+    client,
+    repository,
+    env('AGENT_FLEET_LOGIN', false),
+  );
   const issueNumbers = candidates.map((issue) => issue.number);
   const results = await dispatchReconcileScan(client, repository, issueNumbers);
   console.log(
     `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/` +
-      `${issueNumbers.length} open agent-labeled issue(s).`,
+      `${issueNumbers.length} open agent-labeled or fleet-assigned issue(s).`,
   );
   for (const failure of results.failed) {
     console.log(
@@ -872,6 +900,7 @@ export {
   completionMatches,
   contextFor,
   decode,
+  discoverReconcileCandidates,
   dispatchReconcileScan,
   encode,
   FRESH_INTENT_OUTCOMES,

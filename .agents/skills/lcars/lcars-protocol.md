@@ -77,8 +77,13 @@ jlapenna`), and use as the assignee in the parking recipe
 `.github/workflows/dispatch-reconcile.yml` runs every 30 minutes (offset
 from :00/:30, cron `7,37 * * * *`) and on manual `workflow_dispatch`. Its own
 job is read-only discovery: it lists every currently open issue/PR carrying
-an `agent:*` label and fires one `workflow_dispatch` `kind: reconcile` call
-at `agent-router.yml` per candidate (`main.mjs`'s `scanReconcile` /
+an `agent:*` label, unioned with every open issue/PR assigned to
+`vars.AGENT_FLEET_LOGIN` (`jclaw-bot`) — the durable, label-independent
+signal `claim-issue` already sets at the start of every worker dispatch and
+never clears, which is what still finds a ledger whose last `agent:*` label
+was removed while its generation was active (`main.mjs`'s
+`discoverReconcileCandidates`) — then fires one `workflow_dispatch`
+`kind: reconcile` call at `agent-router.yml` per candidate (`scanReconcile` /
 `dispatchReconcileScan`). It never touches a ledger comment itself — every
 actual repair happens inside the exact same per-issue serialized broker job
 every other trigger already goes through (the reserved

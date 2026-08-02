@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 
-import { createLedger, renderLedgerComment } from './broker.mjs';
+import {
+  acceptIntent,
+  beginDispatch,
+  createLedger,
+  renderLedgerComment,
+} from './broker.mjs';
 import {
   API_VERSION,
   brokerConcurrencyGroup,
@@ -9,9 +14,11 @@ import {
   createGitHubApi,
   ensureNeedsHumanParked,
   findConflictingRouterRun,
+  findRunsForGeneration,
   findSupersedingRouterRun,
   GitHubApiError,
   listOpenAgentLabeledIssues,
+  listOpenIssuesAssignedTo,
   loadLedger,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
@@ -810,6 +817,153 @@ test('listOpenAgentLabeledIssues paginates a single label past 100 results', asy
   const issues = await listOpenAgentLabeledIssues(api, task);
   assert.deepEqual(requestedPages, [1, 2]);
   assert.equal(issues.length, 101);
+});
+
+test('listOpenIssuesAssignedTo queries the exact assignee login and paginates (#363 review)', async () => {
+  const seen = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      assert.ok(url.includes('state=open'));
+      assert.ok(url.includes('assignee=jclaw-bot'));
+      return response(200, [{ number: 500 }]);
+    },
+  });
+  const issues = await listOpenIssuesAssignedTo(api, task, 'jclaw-bot');
+  assert.deepEqual(
+    issues.map((issue) => issue.number),
+    [500],
+  );
+  assert.equal(seen.length, 1);
+});
+
+test('listOpenIssuesAssignedTo is a no-op returning no requests when no login is configured', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => {
+      throw new Error('must not call the API without a configured login');
+    },
+  });
+  assert.deepEqual(await listOpenIssuesAssignedTo(api, task, ''), []);
+  assert.deepEqual(await listOpenIssuesAssignedTo(api, task, undefined), []);
+});
+
+function dispatchingGeneration({
+  dispatchStartedAt = '2026-08-01T00:00:00.000Z',
+} = {}) {
+  const ledger = createLedger(task);
+  acceptIntent(ledger, {
+    task,
+    intentId: 'intent-1',
+    sourceKind: 'manual',
+    sourceId: 'source-1',
+    transportRunId: 9001,
+    occurredAt: dispatchStartedAt,
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'abc',
+    authorization: { authorized: true },
+  });
+  beginDispatch(ledger, 1, 'dispatch_token_123456', dispatchStartedAt);
+  return ledger.generations[0];
+}
+
+test('findRunsForGeneration scopes the query to runs created at or after the generation was dispatched (#363 review)', async () => {
+  const generation = dispatchingGeneration({
+    dispatchStartedAt: '2026-08-01T12:00:00.000Z',
+  });
+  let requestedUrl;
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      requestedUrl = url;
+      return response(200, { workflow_runs: [] });
+    },
+  });
+  await findRunsForGeneration(api, task, generation);
+  const created = new URL(requestedUrl).searchParams.get('created');
+  assert.ok(created, 'expected a created= query parameter');
+  assert.match(created, /^>=2026-08-01T11:5\d:00\.000Z$/u);
+});
+
+test('findRunsForGeneration paginates within the scoped window and finds a run that an unscoped, unpaginated 100-result page would have truncated (#363 review)', async () => {
+  const generation = dispatchingGeneration();
+  const marker = `[dispatch:g${generation.generation}:${generation.intentId}]`;
+  const targetRun = {
+    id: 999,
+    display_title: `#304: Codex ${marker}`,
+  };
+  // Page 1 is entirely unrelated newer traffic (a full page -- signals more
+  // may exist); the actual match only appears on page 2. An unscoped,
+  // unpaginated per_page=100 call would see only page 1 and wrongly report
+  // "no matching run".
+  const pageOne = Array.from({ length: 100 }, (_, index) => ({
+    id: index,
+    display_title: `#999: unrelated run ${index}`,
+  }));
+  const requestedPages = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get('page'));
+      requestedPages.push(page);
+      if (page === 1) return response(200, { workflow_runs: pageOne });
+      return response(200, { workflow_runs: [targetRun] });
+    },
+  });
+  const matches = await findRunsForGeneration(api, task, generation);
+  assert.deepEqual(requestedPages, [1, 2]);
+  assert.deepEqual(
+    matches.map((run) => run.id),
+    [999],
+  );
+});
+
+test('findRunsForGeneration accumulates matches across pages rather than stopping at the first one, so a duplicate landing on a later page is still detected', async () => {
+  const generation = dispatchingGeneration();
+  const marker = `[dispatch:g${generation.generation}:${generation.intentId}]`;
+  const firstMatch = { id: 1, display_title: `#304: Codex ${marker}` };
+  const secondMatch = { id: 2, display_title: `#304: Codex ${marker}` };
+  const pageOne = [
+    firstMatch,
+    ...Array.from({ length: 99 }, (_, index) => ({
+      id: 100 + index,
+      display_title: `#999: unrelated run ${index}`,
+    })),
+  ];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get('page'));
+      if (page === 1) return response(200, { workflow_runs: pageOne });
+      if (page === 2) return response(200, { workflow_runs: [secondMatch] });
+      return response(200, { workflow_runs: [] });
+    },
+  });
+  const matches = await findRunsForGeneration(api, task, generation);
+  assert.deepEqual(matches.map((run) => run.id).sort(), [1, 2]);
+});
+
+test('findRunsForGeneration gives up after its bounded page limit rather than scanning forever', async () => {
+  const generation = dispatchingGeneration();
+  let requests = 0;
+  const fullPage = Array.from({ length: 100 }, (_, index) => ({
+    id: index,
+    display_title: `#999: unrelated run ${index}`,
+  }));
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => {
+      requests += 1;
+      return response(200, { workflow_runs: fullPage });
+    },
+  });
+  const matches = await findRunsForGeneration(api, task, generation);
+  assert.deepEqual(matches, []);
+  assert.equal(requests, 5); // FIND_RUNS_FOR_GENERATION_MAX_PAGES
 });
 
 test('ensureNeedsHumanParked applies the label and assignee on success, with no verification re-reads', async () => {

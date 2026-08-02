@@ -1,10 +1,12 @@
 name: Dispatch Ledger Reconciler
 
 # Scheduled AND manually runnable maintenance pass over every open,
-# agent-labeled issue/PR (#305, child of the dispatch-broker reliability
-# epic #301). This workflow's own job is read-only discovery plus firing one
-# workflow_dispatch `kind: reconcile` call at agent-router.yml per already-
-# discovered candidate -- it never touches a ledger comment itself.
+# agent-labeled OR agent-fleet-assigned issue/PR (#305, child of the
+# dispatch-broker reliability epic #301; the fleet-assigned lane closes a
+# #363 review gap -- see discoverReconcileCandidates in main.mjs). This
+# workflow's own job is read-only discovery plus firing one workflow_dispatch
+# `kind: reconcile` call at agent-router.yml per already-discovered
+# candidate -- it never touches a ledger comment itself.
 #
 # Every actual repair happens inside the SAME per-issue serialized broker
 # job agent-router.yml already runs for every other trigger (issue events,
@@ -66,9 +68,19 @@ jobs:
       - name: Checkout trusted broker revision
         uses: actions/checkout@v7
 
-      - name: Scan open agent-labeled issues and dispatch reconciliation
+      - name: Assert required repo variables are set
+        env:
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        run: |
+          if [ -z "$AGENT_FLEET_LOGIN" ]; then
+            echo "::error::Missing required repo variable: AGENT_FLEET_LOGIN"
+            exit 1
+          fi
+
+      - name: Scan open agent-labeled/fleet-assigned issues and dispatch reconciliation
         uses: ./.github/actions/dispatch-broker
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         with:
           operation: reconcile
