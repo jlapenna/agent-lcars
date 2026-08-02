@@ -1,0 +1,515 @@
+import {
+  type AgentPipeline,
+  type AgentRun,
+  attemptMarkerFromDisplayTitle,
+  type FleetSummary,
+} from './agent-activity';
+import {
+  type DispatchLedger,
+  LEDGER_ACTIVE_GENERATION_STATES,
+  type LedgerGeneration,
+  sourceKindForGeneration,
+} from './dispatch-ledger';
+import {
+  repoItemKey,
+  type TaskRef,
+  taskRefKey,
+  taskRefUrl,
+} from './watched-repo';
+
+/**
+ * The console's authoritative view models for #306 - see
+ * agent-lcars#306/agent-lcars#301 for the full design. Three concepts that
+ * used to be conflated into "a live run row":
+ *
+ * - `LogicalWork`: one canonical task (`TaskRef` - repo + issue number,
+ *   never a title or a run ID). What an operator actually wants to reason
+ *   about: "what is happening with issue #42."
+ * - `DispatchIntentView`: one ledger generation - a request to work the
+ *   task, and everything the broker recorded about how it was authorized
+ *   and what happened to it (see dispatch-ledger.ts).
+ * - `ExecutionAttempt`: one GitHub Actions workflow run. A generation may
+ *   have zero attempts (still pending/dispatching), one normal attempt, or
+ *   more than one (a genuine anomaly this model surfaces, never hides).
+ *
+ * `deriveLogicalWork` is the one pure join every page renders from - Command
+ * Deck, Agents, and a future task detail page all call it instead of each
+ * re-deriving their own notion of "what's happening with this issue."
+ */
+
+export type LogicalWorkState =
+  | 'pending'
+  | 'dispatching'
+  | 'active'
+  | 'human-needed'
+  | 'completed'
+  | 'anomaly'
+  | 'unknown';
+
+export type AttemptAttribution =
+  'ledger' | 'run-marker' | 'legacy-title' | 'unattributed';
+
+/** One GitHub Actions workflow run, enriched with whatever dispatch
+ * lineage could be attributed to it. Every field `AgentRun` already carries
+ * is still here (this is a superset, not a projection) - nothing about the
+ * underlying run is lost by wrapping it. */
+export interface ExecutionAttempt extends AgentRun {
+  generation?: number;
+  intentId?: string;
+  /** How confidently `generation`/`intentId` are known:
+   * - `ledger`: the run's `[dispatch:gN:intentId]` marker matched a real
+   *   generation in this task's ledger - the strongest evidence.
+   * - `run-marker`: the marker parsed, but no ledger was available to
+   *   corroborate it (older issue, ledger fetch failed/degraded).
+   * - `legacy-title`: only the leading `#N:` join key parsed - the run
+   *   predates the broker's marker rollout.
+   * - `unattributed`: no issue number parsed at all. */
+  attribution: AttemptAttribution;
+}
+
+export interface DispatchIntentView {
+  intentId: string;
+  generation: number;
+  /** From the ledger's own source evidence - why this generation exists
+   * (a label add, a maintainer reply, ...). Undefined when the backing
+   * source entry is missing (see `sourceKindForGeneration`). */
+  sourceKind?: string;
+  occurredAt: string;
+  pipeline: AgentPipeline;
+  mode?: string;
+  state: LedgerGeneration['state'];
+}
+
+export interface LogicalWorkAnomaly {
+  kind: 'duplicate-active-attempts' | 'attempt-ledger-mismatch';
+  detail: string;
+}
+
+export interface LogicalWork {
+  task: TaskRef;
+  title: string;
+  url: string;
+  selectedPipeline?: AgentPipeline;
+  state: LogicalWorkState;
+  ledgerRevision?: number;
+  /** Oldest generation first - reads as the task's history in order. */
+  intents: DispatchIntentView[];
+  /** Every workflow run attributed to this task, oldest first. Never
+   * shrunk by grouping - a duplicate/retry keeps every attempt visible. */
+  attempts: ExecutionAttempt[];
+  anomalies: LogicalWorkAnomaly[];
+  /** `ledger-v1` when a validated ledger backs this task's intent history;
+   * `legacy` when only run attempts (marker or bare title parse) are known. */
+  provenance: 'ledger-v1' | 'legacy';
+}
+
+/** Bare title/url metadata for a task, independent of whether it currently
+ * has any live or recent attempts - the open-item board (action-items.ts)
+ * is the usual source, but any caller with a title/url pair for a task can
+ * supply one (e.g. a future closed-item detail fetch). */
+export interface TaskMeta {
+  repo: TaskRef['repository'];
+  issueNumber: number;
+  title: string;
+  url: string;
+  /** Mirrors `ActionItem.actionTypes.includes('needs-human')` - a maintainer
+   * decision is blocking progress regardless of what the ledger/attempts
+   * say, so it outranks a merely-active/pending dispatch state (see
+   * `LOGICAL_STATE_PRIORITY`) but never masks a genuine attempt anomaly. */
+  humanNeeded?: boolean;
+}
+
+const LOGICAL_STATE_PRIORITY: Record<LogicalWorkState, number> = {
+  anomaly: 0,
+  'human-needed': 1,
+  active: 2,
+  dispatching: 3,
+  pending: 4,
+  completed: 5,
+  unknown: 6,
+};
+
+/** Maps a ledger generation's state onto the coarser `LogicalWorkState` the
+ * UI reasons about - see LEDGER_ACTIVE_GENERATION_STATES for which raw
+ * states count as "active" here. */
+function stateForGeneration(
+  state: LedgerGeneration['state'],
+): LogicalWorkState {
+  if (state === 'pending' || state === 'accepted') return 'pending';
+  if (state === 'dispatching' || state === 'dispatch-unknown') {
+    return 'dispatching';
+  }
+  if (LEDGER_ACTIVE_GENERATION_STATES.has(state)) return 'active';
+  if (state === 'completed' || state === 'dispatch-rejected') {
+    return 'completed';
+  }
+  // superseded / superseded-by-close: not the newest word on the task.
+  return 'unknown';
+}
+
+/** The ledger's own view of task state: the active generation wins over a
+ * merely-pending one, and the newest generation overall wins when nothing
+ * is active/pending (a task that finished its last generation reads as
+ * `completed`, not `unknown`). */
+function stateFromLedger(ledger: DispatchLedger): LogicalWorkState {
+  const active = ledger.generations.find((g) =>
+    LEDGER_ACTIVE_GENERATION_STATES.has(g.state),
+  );
+  if (active) return stateForGeneration(active.state);
+  const pending = ledger.generations.find((g) => g.state === 'pending');
+  if (pending) return 'pending';
+  const latest = ledger.generations.at(-1);
+  return latest ? stateForGeneration(latest.state) : 'unknown';
+}
+
+/** Fallback state when no ledger backs this task - derived from the raw
+ * attempts alone, matching what the console showed before the ledger
+ * existed (any running/queued attempt means work is in flight). */
+function stateFromAttempts(attempts: ExecutionAttempt[]): LogicalWorkState {
+  if (attempts.some((a) => a.status === 'running')) return 'active';
+  if (attempts.some((a) => a.status === 'queued')) return 'dispatching';
+  if (attempts.length > 0) return 'completed';
+  return 'unknown';
+}
+
+function toExecutionAttempt(run: AgentRun): ExecutionAttempt {
+  const marker = attemptMarkerFromDisplayTitle(run.displayTitle);
+  if (marker) {
+    return {
+      ...run,
+      generation: marker.generation,
+      intentId: marker.intentId,
+      attribution: 'run-marker',
+    };
+  }
+  return {
+    ...run,
+    attribution:
+      run.issueNumber === undefined ? 'unattributed' : 'legacy-title',
+  };
+}
+
+/** Attaches ledger-sourced generation/intent data to attempts already
+ * carrying a run-marker, upgrading their attribution to `ledger` once
+ * corroborated. An attempt whose marker names a generation absent from the
+ * ledger (out-of-order arrival, a stale/rotated ledger) keeps its
+ * `run-marker` attribution and raises a `attempt-ledger-mismatch` anomaly
+ * instead of silently trusting the marker or dropping the attempt. */
+function attributeAttemptsToLedger(
+  attempts: ExecutionAttempt[],
+  ledger: DispatchLedger | undefined,
+): { attempts: ExecutionAttempt[]; anomalies: LogicalWorkAnomaly[] } {
+  if (!ledger) return { attempts, anomalies: [] };
+  const anomalies: LogicalWorkAnomaly[] = [];
+  const byIntentId = new Map(ledger.generations.map((g) => [g.intentId, g]));
+  const attributed = attempts.map((attempt) => {
+    if (attempt.intentId === undefined) return attempt;
+    const generation = byIntentId.get(attempt.intentId);
+    if (!generation) {
+      anomalies.push({
+        kind: 'attempt-ledger-mismatch',
+        detail: `Run ${attempt.id} carries intent ${attempt.intentId}, which is not in this task's ledger.`,
+      });
+      return attempt;
+    }
+    if (generation.generation !== attempt.generation) {
+      anomalies.push({
+        kind: 'attempt-ledger-mismatch',
+        detail: `Run ${attempt.id}'s marker claims generation ${attempt.generation}, but intent ${attempt.intentId} is ledger generation ${generation.generation}.`,
+      });
+    }
+    return {
+      ...attempt,
+      generation: generation.generation,
+      attribution: 'ledger' as const,
+    };
+  });
+  return { attempts: attributed, anomalies };
+}
+
+/** Same-pipeline duplicates are the anomaly worth calling out explicitly -
+ * two different pipelines racing the same issue is already a distinct,
+ * intentional condition the UI shows separately (see
+ * agent-activity-panel.tsx's cross-pipeline grouping), not a dispatch bug. */
+function duplicateAttemptAnomalies(
+  attempts: ExecutionAttempt[],
+): LogicalWorkAnomaly[] {
+  const live = attempts.filter(
+    (a) => a.status === 'queued' || a.status === 'running',
+  );
+  const byPipeline = new Map<AgentPipeline, ExecutionAttempt[]>();
+  for (const attempt of live) {
+    const group = byPipeline.get(attempt.pipeline);
+    if (group) group.push(attempt);
+    else byPipeline.set(attempt.pipeline, [attempt]);
+  }
+  const anomalies: LogicalWorkAnomaly[] = [];
+  for (const [pipeline, group] of byPipeline) {
+    if (group.length > 1) {
+      anomalies.push({
+        kind: 'duplicate-active-attempts',
+        detail: `${group.length} ${pipeline} attempts are queued or running for the same task at once (run ${group.map((a) => a.id).join(', ')}).`,
+      });
+    }
+  }
+  return anomalies;
+}
+
+function intentsFromLedger(ledger: DispatchLedger): DispatchIntentView[] {
+  return ledger.generations
+    .slice()
+    .sort((a, b) => a.generation - b.generation)
+    .map((generation) => ({
+      intentId: generation.intentId,
+      generation: generation.generation,
+      sourceKind: sourceKindForGeneration(ledger, generation),
+      occurredAt: generation.occurredAt,
+      pipeline: generation.pipeline,
+      mode: generation.mode,
+      state: generation.state,
+    }));
+}
+
+/** The pipeline selected by the newest non-superseded generation, falling
+ * back to the pipeline of the newest attempt when no ledger is available -
+ * matches `selectedAgentPipeline`'s "no implicit precedence" spirit: this
+ * is presentation-only (which badge a card leads with), never a control
+ * decision. */
+function selectedPipeline(
+  ledger: DispatchLedger | undefined,
+  attempts: ExecutionAttempt[],
+): AgentPipeline | undefined {
+  if (ledger) {
+    const relevant = ledger.generations.filter(
+      (g) => g.state !== 'superseded' && g.state !== 'superseded-by-close',
+    );
+    const newest = relevant.at(-1) ?? ledger.generations.at(-1);
+    if (newest) return newest.pipeline;
+  }
+  return attempts.at(-1)?.pipeline;
+}
+
+export interface DeriveLogicalWorkInput {
+  /** Raw workflow runs (live and/or recent) for every watched repo -
+   * ungrouped, exactly as `agent-activity.ts` fetches them. */
+  attempts: AgentRun[];
+  /** Parsed, validated ledgers keyed by `repoItemKey(repo, issueNumber)`.
+   * Absent for a task with no ledger yet (pre-broker issue, or the comment
+   * scan hasn't found one) - `deriveLogicalWork` degrades that task to
+   * `legacy` provenance rather than failing. */
+  ledgers: Map<string, DispatchLedger>;
+  /** Title/url metadata keyed the same way - normally every open board item,
+   * so a task with attempts but no open-item metadata still renders (title
+   * falls back to the run's own display title). */
+  taskMeta: Map<string, TaskMeta>;
+}
+
+export interface DeriveLogicalWorkResult {
+  work: LogicalWork[];
+  /** Attempts whose issue number could not be parsed at all (predate the
+   * run-name rollout). These have no safe `TaskRef` to attach to, so they
+   * are never folded into a `LogicalWork` by guesswork (e.g. title
+   * matching) - callers render them in their own "unattributed" group. */
+  unattributedAttempts: ExecutionAttempt[];
+}
+
+/**
+ * The one pure join every page should render `LogicalWork` from. Combines
+ * raw execution attempts (liveness/status truth) with ledger data (intent
+ * lineage truth) without letting either source silently override or hide
+ * the other - see this module's own top-of-file doc comment.
+ */
+export function deriveLogicalWork(
+  input: DeriveLogicalWorkInput,
+): DeriveLogicalWorkResult {
+  const byKey = new Map<
+    string,
+    { task: TaskRef; attempts: ExecutionAttempt[] }
+  >();
+  const unattributedAttempts: ExecutionAttempt[] = [];
+
+  for (const run of input.attempts) {
+    const attempt = toExecutionAttempt(run);
+    if (run.issueNumber === undefined) {
+      unattributedAttempts.push(attempt);
+      continue;
+    }
+    const task: TaskRef = {
+      repository: run.repo,
+      issueNumber: run.issueNumber,
+    };
+    const key = taskRefKey(task);
+    const existing = byKey.get(key);
+    if (existing) existing.attempts.push(attempt);
+    else byKey.set(key, { task, attempts: [attempt] });
+  }
+
+  // A task can also exist purely because it has a ledger (pending/
+  // dispatching, zero attempts materialized yet) or purely because it has
+  // open-item metadata (idle work with no ledger and no attempts at all -
+  // included so a caller can still ask "what state is #42 in" uniformly).
+  for (const [key, ledger] of input.ledgers) {
+    if (!byKey.has(key)) {
+      byKey.set(key, { task: taskRefFromLedger(ledger), attempts: [] });
+    }
+  }
+  for (const [key, meta] of input.taskMeta) {
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        task: { repository: meta.repo, issueNumber: meta.issueNumber },
+        attempts: [],
+      });
+    }
+  }
+
+  const work: LogicalWork[] = [];
+  for (const [key, entry] of byKey) {
+    const task = entry.task;
+    const ledger = input.ledgers.get(key);
+    const meta = input.taskMeta.get(key);
+    const sortedAttempts = entry.attempts
+      .slice()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const { attempts, anomalies: mismatchAnomalies } =
+      attributeAttemptsToLedger(sortedAttempts, ledger);
+
+    const anomalies: LogicalWorkAnomaly[] = [
+      ...mismatchAnomalies,
+      ...duplicateAttemptAnomalies(attempts),
+    ];
+
+    const baseState = ledger
+      ? stateFromLedger(ledger)
+      : stateFromAttempts(attempts);
+    // `duplicateAttemptAnomalies` only ever fires on live (queued/running)
+    // attempts, so anomalies only ever coexist with an in-flight base
+    // state - safe to always promote to the distinct `anomaly` state
+    // rather than needing a case-by-case merge with `baseState`.
+    const state: LogicalWorkState =
+      anomalies.length > 0
+        ? 'anomaly'
+        : (meta?.humanNeeded ?? false)
+          ? 'human-needed'
+          : baseState;
+
+    const fallbackAttempt = attempts.at(-1);
+    work.push({
+      task,
+      title:
+        meta?.title ?? fallbackAttempt?.displayTitle ?? `#${task.issueNumber}`,
+      url: meta?.url ?? taskRefUrl(task),
+      selectedPipeline: selectedPipeline(ledger, attempts),
+      state,
+      ledgerRevision: ledger?.revision,
+      intents: ledger ? intentsFromLedger(ledger) : [],
+      attempts,
+      anomalies,
+      provenance: ledger ? 'ledger-v1' : 'legacy',
+    });
+  }
+
+  work.sort(
+    (a, b) => LOGICAL_STATE_PRIORITY[a.state] - LOGICAL_STATE_PRIORITY[b.state],
+  );
+
+  return { work, unattributedAttempts };
+}
+
+/** `ledger.task.repository` is broker.mjs's `"owner/name"` string form (see
+ * `assertTaskRef` in broker.mjs); this app's `TaskRef.repository` is the
+ * `{owner, name}` shape `RepositoryRef` declares. Only a task that exists
+ * purely because it has a ledger (no attempt, no open-item metadata) needs
+ * this conversion - every other path already has a real
+ * `WatchedRepo`/`RepositoryRef` object from the attempt or task-meta side. */
+function taskRefFromLedger(ledger: DispatchLedger): TaskRef {
+  const [owner, name] = ledger.task.repository.split('/');
+  return {
+    repository: { owner: owner ?? ledger.task.repository, name: name ?? '' },
+    issueNumber: ledger.task.issue,
+  };
+}
+
+export interface ActivityMetrics {
+  /** Distinct tasks with in-flight logical work - never a run count. */
+  logicalTaskCount: number;
+  /** Raw workflow attempts currently queued, across every task. */
+  queuedAttempts: number;
+  /** Raw workflow attempts currently running, across every task. */
+  runningAttempts: number;
+  /** From `listSelfHostedRunnersForRepo` - physical capacity, not work.
+   * Undefined when the runner API was unavailable (matches `FleetSummary`
+   * itself being optional). */
+  onlineRunners?: number;
+  busyRunners?: number;
+}
+
+const IN_FLIGHT_STATES = new Set<LogicalWorkState>([
+  'pending',
+  'dispatching',
+  'active',
+  'human-needed',
+  'anomaly',
+]);
+
+/**
+ * The three metrics #306 requires stay visibly distinct: how much logical
+ * work exists, how many physical attempts are consuming (or waiting for) a
+ * runner right now, and how many runners physically exist. None of these is
+ * a substitute for another - a queued attempt consumes no runner, and one
+ * logical task can have zero, one, or several attempts (see this module's
+ * own top comment).
+ */
+export function deriveActivityMetrics(
+  work: LogicalWork[],
+  attempts: ExecutionAttempt[],
+  fleet?: FleetSummary,
+): ActivityMetrics {
+  return {
+    logicalTaskCount: work.filter((w) => IN_FLIGHT_STATES.has(w.state)).length,
+    queuedAttempts: attempts.filter((a) => a.status === 'queued').length,
+    runningAttempts: attempts.filter((a) => a.status === 'running').length,
+    onlineRunners: fleet?.online,
+    busyRunners: fleet?.busy,
+  };
+}
+
+/** Builds the `ledgers`/`taskMeta` input maps `deriveLogicalWork` needs from
+ * the open-item board, keyed consistently with the attempt side via
+ * `repoItemKey`. Kept here (not in action-items.ts) so that module stays
+ * free of any dispatch-ledger-shaped type - it only ever hands back the raw
+ * `DispatchLedger` an item's enrichment already parsed. */
+export function ledgerMapFromItems(
+  items: {
+    repo: TaskRef['repository'];
+    number: number;
+    ledger?: DispatchLedger;
+  }[],
+): Map<string, DispatchLedger> {
+  const map = new Map<string, DispatchLedger>();
+  for (const item of items) {
+    if (item.ledger) map.set(repoItemKey(item.repo, item.number), item.ledger);
+  }
+  return map;
+}
+
+export function taskMetaFromItems(
+  items: {
+    repo: TaskRef['repository'];
+    number: number;
+    title: string;
+    url: string;
+    humanNeeded?: boolean;
+  }[],
+): Map<string, TaskMeta> {
+  const map = new Map<string, TaskMeta>();
+  for (const item of items) {
+    map.set(repoItemKey(item.repo, item.number), {
+      repo: item.repo,
+      issueNumber: item.number,
+      title: item.title,
+      url: item.url,
+      humanNeeded: item.humanNeeded,
+    });
+  }
+  return map;
+}

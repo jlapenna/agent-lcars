@@ -779,12 +779,15 @@ describe('getActionItems', () => {
     );
   });
 
-  it('does not request comments for a Claude-labeled issue nobody has claimed', async () => {
+  it('requests comments for a Claude-labeled issue nobody has claimed, but still finds no takeover command (#306)', async () => {
     // Dispatched-but-unclaimed (runner never started): there is no session
     // yet, so there is no takeover command to find - the claim assignee,
-    // not the dispatch label, is what says a session exists (#2783). The
-    // comment window is the expensive part of the query, so it must not be
-    // requested for items that will never read it.
+    // not the dispatch label, is what says a session exists (#2783). #306
+    // changed the OTHER reason the comment window matters, though: an
+    // agent-labeled item is exactly the kind that may carry a pinned
+    // dispatch-broker ledger comment (see item-enrichment.ts's `ledger`
+    // field), so the window is now requested for it - still one batched
+    // GraphQL query per repo, not a new per-item call.
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(44, { labels: ['agent:claude'], comments: 3 }),
@@ -797,7 +800,8 @@ describe('getActionItems', () => {
 
     expect(result.items.map((i) => i.number)).toEqual([44]);
     expect(result.items[0].takeoverCommand).toBeUndefined();
-    expect(graphql.queries[0]).not.toContain('comments(');
+    expect(result.items[0].ledger).toBeUndefined();
+    expect(graphql.queries[0]).toContain('comments(');
   });
 
   it('surfaces a dispatched-but-unclaimed OpenCode-labeled issue (#3012)', async () => {

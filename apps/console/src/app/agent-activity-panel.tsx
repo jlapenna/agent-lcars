@@ -376,13 +376,39 @@ export function LiveRunRow({
 }
 
 /**
+ * Every run in a `LiveRunGroupList` group is already live (queued/running -
+ * that's this whole panel's scope), so a pipeline appearing more than once
+ * in one group is unambiguously a duplicate dispatch, not a status-mix
+ * artifact. Returns e.g. `"2 claude"` per duplicated pipeline, undefined
+ * when the group's runs are each on a distinct pipeline (a genuine
+ * cross-pipeline race, not an anomaly - see #306's LogicalWork model, which
+ * treats these two cases distinctly for exactly this reason).
+ */
+function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
+  const counts = new Map<AgentPipeline, number>();
+  for (const run of runs) {
+    counts.set(run.pipeline, (counts.get(run.pipeline) ?? 0) + 1);
+  }
+  const duplicated = Array.from(counts.entries()).filter(
+    ([, count]) => count > 1,
+  );
+  if (duplicated.length === 0) return undefined;
+  return duplicated
+    .map(([pipeline, count]) => `${count} ${pipeline}`)
+    .join(', ');
+}
+
+/**
  * Renders `liveRuns` clustered by the issue/PR they're working
  * (`groupLiveRunsByIssue`), so two runs racing the same item - a second
- * pipeline dispatched onto it - show up visibly
- * together instead of scattered across the flat list (#239). A group of
- * one renders exactly as a bare `LiveRunRow` always has; only a group of
- * two or more gets the clustering chrome, so the overwhelmingly common
- * single-run case is unchanged.
+ * pipeline dispatched onto it, or a genuine duplicate dispatch on the same
+ * pipeline - show up visibly together instead of scattered across the flat
+ * list (#239) or, worse, silently reduced to one representative row (#306 -
+ * `getAgentActivity` no longer collapses duplicates before this renders, so
+ * every attempt this component receives is real evidence). A group of one
+ * renders exactly as a bare `LiveRunRow` always has; only a group of two or
+ * more gets the clustering chrome, so the overwhelmingly common single-run
+ * case is unchanged.
  */
 export function LiveRunGroupList({
   liveRuns,
@@ -408,20 +434,47 @@ export function LiveRunGroupList({
           return rows[0];
         }
         const item = itemsByRunId[group.runs[0].id];
+        const duplicateSummary = duplicatePipelineSummary(group.runs);
+        const repo = group.runs[0].repo;
         return (
           <Stack
             key={group.key}
             gap={6}
             data-testid={`live-run-group-${group.issueNumber}`}
             style={{
-              borderLeft: '2px solid var(--mantine-color-blue-4)',
+              borderLeft: `2px solid var(--mantine-color-${duplicateSummary ? 'red' : 'blue'}-4)`,
               paddingLeft: 8,
             }}
           >
-            <Text size="xs" c="dimmed" fw={600}>
-              {item ? `#${item.number} ${item.title}` : `#${group.issueNumber}`}{' '}
-              · {group.runs.length} runs
-            </Text>
+            <Group gap={6} wrap="wrap">
+              <Text size="xs" c="dimmed" fw={600}>
+                {item
+                  ? `#${item.number} ${item.title}`
+                  : `#${group.issueNumber}`}{' '}
+                · {group.runs.length} runs
+              </Text>
+              {group.issueNumber !== undefined && (
+                <Anchor
+                  href={`/task/${repo.owner}/${repo.name}/${group.issueNumber}`}
+                  size="xs"
+                  c="dimmed"
+                  data-testid={`live-run-group-${group.issueNumber}-history`}
+                >
+                  attempt history
+                </Anchor>
+              )}
+            </Group>
+            {duplicateSummary && (
+              <Alert
+                color="red"
+                variant="light"
+                py={4}
+                data-testid={`live-run-group-${group.issueNumber}-duplicate`}
+              >
+                Duplicate attempts: {duplicateSummary} queued/running for this
+                task at once.
+              </Alert>
+            )}
             <Stack gap="xs">{rows}</Stack>
           </Stack>
         );

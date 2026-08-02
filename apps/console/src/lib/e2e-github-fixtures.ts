@@ -1,4 +1,5 @@
 import { agentFleetLogin, maintainerLogin } from './deployment';
+import { type DispatchLedger, LEDGER_MARKER } from './dispatch-ledger';
 import {
   E2E_FIXTURE_BRANCH,
   E2E_FIXTURE_PR_NUMBER,
@@ -50,6 +51,14 @@ export const E2E_ITEM_NUMBERS = {
   silentError: 9005,
   readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
+  /** Carries a pinned dispatch-ledger comment AND two live workflow
+   * attempts of the same ledger generation (see `E2E_RUN_IDS.running` /
+   * `duplicateQueued`) - the #306 duplicate-attempt-anomaly scenario, with
+   * real ledger attribution behind it. Off the board on purpose (no
+   * board-qualifying label/assignee): the In Flight panel's "attempt
+   * history" link is what reaches its `/task/.../9008` detail page, not the
+   * board. */
+  ledgerDuplicateDispatch: 9008,
 } as const;
 
 export const E2E_RUN_IDS = {
@@ -77,6 +86,66 @@ const minutesAgo = (minutes: number) => secondsAgo(minutes * 60);
 
 const itemUrl = (number: number, kind: 'issues' | 'pull') =>
   `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/${kind}/${number}`;
+
+/** Shared by the ledger fixture below and the two duplicate live-attempt
+ * run-name markers in FIXTURE_RUNS - both attempts deliberately carry the
+ * SAME generation/intent, since that is exactly the anomaly #306's
+ * `deriveLogicalWork` exists to surface (two attempts genuinely bound to
+ * one dispatch, not two different generations racing). */
+export const E2E_LEDGER_INTENT_ID = 'e2e-fixture-intent-9008';
+
+/**
+ * A validated `agent-lcars.dispatch-ledger/v1` payload (see
+ * dispatch-ledger.ts), standing in for what the dispatch broker
+ * (`.github/actions/dispatch-broker/broker.mjs`) would have pinned to the
+ * issue. Only `E2E_RUN_IDS.running` is actually bound in the ledger's own
+ * `attempt` field - `duplicateQueued` shares its marker but was never the
+ * generation's recorded binding, mirroring a genuinely anomalous second
+ * dispatch rather than a normal retry.
+ */
+function ledgerFixture(): DispatchLedger {
+  const sourceId = 'e2e-fixture-source-9008';
+  return {
+    schema: 'agent-lcars.dispatch-ledger/v1',
+    revision: 2,
+    task: {
+      repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
+      issue: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
+    },
+    createdAt: minutesAgo(13),
+    updatedAt: minutesAgo(1),
+    control: { closed: false },
+    sources: [
+      {
+        sourceKind: 'labeled',
+        sourceId,
+        transportRunId: 500009008,
+        occurredAt: minutesAgo(13),
+      },
+    ],
+    generations: [
+      {
+        generation: 1,
+        intentId: E2E_LEDGER_INTENT_ID,
+        sourceId,
+        occurredAt: minutesAgo(13),
+        pipeline: 'claude',
+        mode: 'implement',
+        state: 'active',
+        attempt: { runId: E2E_RUN_IDS.running, status: 'in_progress' },
+      },
+    ],
+    anomalies: [],
+  };
+}
+
+/** Renders the same marker+JSON-block shape broker.mjs's own
+ * `renderLedgerComment` produces (see that function's doc comment) - only
+ * the human-readable summary line is simplified, since nothing here reads
+ * it. */
+function ledgerCommentBody(ledger: DispatchLedger): string {
+  return `${LEDGER_MARKER}\nDispatch broker: g1 claude is active.\n\n\`\`\`json\n${JSON.stringify(ledger)}\n\`\`\``;
+}
 
 interface FixtureItem {
   number: number;
@@ -226,6 +295,22 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     author: FLEET,
     updatedAt: minutesAgo(52),
   },
+  {
+    number: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
+    title: 'feat(console): repo filter chips',
+    body: '',
+    isPr: false,
+    // No board-qualifying label/assignee on purpose - see this number's own
+    // doc comment on E2E_ITEM_NUMBERS. Still enrichable (comments/ledger)
+    // via item-enrichment.ts and readable via GET /issues/{number}
+    // (task-detail.ts), both of which key off FIXTURE_ITEMS directly rather
+    // than the filtered board.
+    labels: [],
+    assignees: [],
+    author: MAINTAINER,
+    updatedAt: minutesAgo(1),
+    comments: [{ author: FLEET, body: ledgerCommentBody(ledgerFixture()) }],
+  },
 ];
 
 interface FixtureRun {
@@ -245,11 +330,13 @@ const FIXTURE_RUNS: FixtureRun[] = [
     workflow: 'claude.yml',
     status: 'in_progress',
     conclusion: null,
-    // Deliberately NOT one of the board's items: page.tsx drops any item
-    // with a live run from the board (it belongs to In Flight instead), so
+    // Board membership is intentionally NOT what makes this render in In
+    // Flight (see E2E_ITEM_NUMBERS.ledgerDuplicateDispatch's own comment) -
     // pointing a live run at, say, the run-failed fixture would hide the
-    // very card this fixture set exists to render.
-    displayTitle: '#9008: feat(console): repo filter chips',
+    // very card this fixture set exists to render. Carries the ledger's
+    // real generation/intent marker (E2E_LEDGER_INTENT_ID) so this attempt
+    // gets `ledger` attribution, not just a bare title-number parse.
+    displayTitle: `#${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_LEDGER_INTENT_ID}]`,
     createdAt: minutesAgo(13),
     startedAt: minutesAgo(12),
     updatedAt: minutesAgo(1),
@@ -269,12 +356,16 @@ const FIXTURE_RUNS: FixtureRun[] = [
     workflow: 'claude.yml',
     status: 'queued',
     conclusion: null,
-    // Same logical work as `running`: the GitHub API exposes both workflow
-    // attempts, while the console should render one active item.
-    displayTitle: '#9008: feat(console): repo filter chips',
-    // Past QUEUE_STALL_THRESHOLD_SECONDS (300). The logical row chooses the
-    // running attempt above, but queue health must still inspect this raw
-    // attempt and render the alert.
+    // #306: same logical work AND the same ledger generation/intent as
+    // `running` above - a genuine duplicate dispatch, not a second
+    // pipeline racing the item. The GitHub API really does expose both
+    // attempts; the console must render both, grouped with a visible
+    // duplicate-attempt anomaly, never silently pick one (see
+    // agent-activity-panel.tsx's `duplicatePipelineSummary`).
+    displayTitle: `#${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_LEDGER_INTENT_ID}]`,
+    // Past QUEUE_STALL_THRESHOLD_SECONDS (300), so queue health must still
+    // inspect this raw attempt and render the stall alert even though the
+    // group's other attempt is already running.
     createdAt: minutesAgo(11),
     startedAt: minutesAgo(11),
     updatedAt: minutesAgo(11),
