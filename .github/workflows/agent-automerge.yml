@@ -75,6 +75,13 @@ jobs:
     # antipattern sprinkles' own claude-automerge.yml was moved off of.
     runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 5
+    # `pull_request:[opened]` and `pull_request_review:[submitted]` for the
+    # same PR can both land here close together; without a per-PR group
+    # their `gh pr ready`/`gh pr merge --auto` calls race. Serialize per PR
+    # rather than dropping either invocation.
+    concurrency:
+      group: automerge-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     steps:
       # This job's own `if:` above also reads AGENT_BOT_LOGINS (fromJSON,
       # no fallback). A step can only run once the job has already started,
@@ -303,9 +310,24 @@ jobs:
             exit 1
           fi
 
+          # `read ... < <(gh ...)` (process substitution) runs the command
+          # in a subshell whose exit status `set -e`/`pipefail` cannot see,
+          # so a transient `gh` failure would leave CI_STATUS/CI_CONCLUSION
+          # holding the PREVIOUS iteration's values (or produce a ragged
+          # TSV from an empty conclusion) instead of failing loud. Capture
+          # the output into a variable first with an explicit check, and
+          # clear both vars every iteration so a failed attempt can't leak
+          # a stale "completed"/"success" into the comparison below.
+          CI_STATUS="" CI_CONCLUSION=""
           for _ in $(seq 1 180); do
-            read -r CI_STATUS CI_CONCLUSION < <(gh run view "$CI_RUN" --repo "$REPO" \
-              --json status,conclusion --jq '[.status, (.conclusion // "")] | @tsv')
+            CI_STATUS="" CI_CONCLUSION=""
+            if ! CI_VIEW=$(gh run view "$CI_RUN" --repo "$REPO" \
+              --json status,conclusion --jq '[.status, (.conclusion // "")] | @tsv'); then
+              echo "::warning::gh run view failed for run $CI_RUN; retrying."
+              sleep 5
+              continue
+            fi
+            read -r CI_STATUS CI_CONCLUSION <<<"$CI_VIEW"
             [ "$CI_STATUS" = completed ] && break
             sleep 5
           done
@@ -330,6 +352,14 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 10
+    # Runs on the shared lcars-default pool on both a */15 cron and
+    # workflow_dispatch with no group of its own; a static group serializes
+    # overlapping runs (defense in depth alongside the $RUNNER_TEMP fix
+    # below, which keeps a still-possible overlap from clobbering shared
+    # state).
+    concurrency:
+      group: agent-automerge-close-orphaned-anchors
+      cancel-in-progress: false
     steps:
       # This job's `if:` above does not consume AGENT_BOT_LOGINS, so unlike
       # the assert steps in the other two jobs in this file, this one is a
@@ -355,13 +385,19 @@ jobs:
           # long after its PR merged must not be re-closed forever by a cron.
           SINCE=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
 
+          # Belt-and-suspenders alongside the job-level concurrency group
+          # above: a fixed /tmp path let one overlapping run's write clobber
+          # another's read mid-sweep. $RUNNER_TEMP is unique per job run, so
+          # use that instead.
+          MERGED_JSON="$RUNNER_TEMP/agent-automerge-merged.json"
+
           # `gh pr list --json author` answers in the GRAPHQL shape
           # (`app/claude`) while AGENT_BOT_LOGINS is REST-shaped
           # (`claude[bot]`) - comparing them raw is exactly the silent
           # mismatch that broke #175, and docs/bot-identity-formats.md makes
           # REST canonical. Normalize before the membership test.
           gh pr list --repo "$REPO" --state merged --limit 50 \
-            --json number,author,mergedAt,closingIssuesReferences >/tmp/merged.json
+            --json number,author,mergedAt,closingIssuesReferences >"$MERGED_JSON"
 
           CANDIDATES=$(jq -r --argjson bots "$AGENT_BOT_LOGINS" --arg since "$SINCE" '
             .[]
@@ -372,7 +408,7 @@ jobs:
             | . as $pr
             | .closingIssuesReferences[]?
             | "\($pr.number) \(.number) \($pr.mergedAt)"
-          ' /tmp/merged.json)
+          ' "$MERGED_JSON")
 
           if [ -z "$CANDIDATES" ]; then
             echo "No agent PRs merged since $SINCE declared a closing issue."

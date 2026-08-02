@@ -314,23 +314,34 @@ async function handleCompletion(client, loaded, normalized) {
   await saveLedger(client, loaded);
 }
 
+function resolveTask(normalized) {
+  // Every normalized kind carries a canonical TaskRef, but intents nest
+  // theirs under `.intent.task` (see normalize.mjs's makeIntent) while
+  // completion/anchor-control/control-evidence carry `.task` at the top
+  // level. Resolve per kind so broker() reads one consistent value.
+  return normalized.kind === 'intent'
+    ? normalized.intent.task
+    : normalized.task;
+}
+
 async function broker() {
   const normalized = decode(env('BROKER_PAYLOAD'));
   if (normalized.kind === 'ignored') return;
+  const task = resolveTask(normalized);
   const client = api();
   await verifyBrokerConcurrency(
     client,
-    normalized.task,
+    task,
     Number(env('GITHUB_RUN_ID')),
     env('BROKER_GROUP'),
   );
   let loaded;
   try {
-    loaded = await loadLedger(client, normalized.task);
+    loaded = await loadLedger(client, task);
   } catch (error) {
     await failClosed(
       client,
-      normalized.task,
+      task,
       env('MAINTAINER_LOGIN', false),
       error.message,
     );
@@ -360,7 +371,7 @@ async function broker() {
   } catch (error) {
     await failClosed(
       client,
-      normalized.task,
+      task,
       env('MAINTAINER_LOGIN', false),
       error.message,
     );
@@ -454,4 +465,5 @@ export {
   handleCompletion,
   isDefiniteDispatchRejection,
   reconcileActive,
+  resolveTask,
 };
