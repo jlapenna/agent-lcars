@@ -153,15 +153,47 @@ async function dispatchRouterCanary(api, repository, issueNumber) {
   validateDispatchResponse(response, { repository });
 }
 
+// The canary issue is a public GitHub issue: any user (or a compromised
+// third-party integration) can comment on it before the real broker ever
+// writes its own ledger comment, including a fabricated-but-parseable
+// comment containing LEDGER_MARKER and a completed/successful canary
+// generation. Trusting "the first marker-bearing comment" the way an
+// earlier version of this file did would let that forged comment make the
+// orchestrator close the issue and report a false green even if the real
+// broker never ran or genuinely failed.
+//
+// This is exactly the trust boundary dispatch-broker/github-api.mjs's own
+// loadLedger already defends for every other ledger read in this
+// codebase: exactly one marker-bearing comment is ever trusted (more than
+// one is treated as an anomaly and fails closed, never "pick the first"),
+// and that one comment must be authored by the same workflow identity
+// (REST-shaped `github-actions[bot]` login + `type: 'Bot'` -- see
+// docs/bot-identity-formats.md) every ledger write in this repo already
+// uses. Do not weaken or duplicate that rule here.
+const LEDGER_WORKFLOW_IDENTITY = 'github-actions[bot]';
+
 // Shared by the live poll below and sweepStaleCanaries' one-shot read: find
 // this issue's ledger comment (if any) and the 'canary'-pipeline generation
 // within it. Returns undefined when no ledger comment exists yet, or none
-// of its generations is the canary pipeline.
+// of its generations is the canary pipeline. Throws (never silently
+// ignores) when more than one marker-bearing comment exists, or the sole
+// candidate was not authored by the trusted workflow identity -- see
+// LEDGER_WORKFLOW_IDENTITY above.
 function findCanaryGeneration(comments, task) {
-  const ledgerComment = comments.find((comment) =>
+  const candidates = comments.filter((comment) =>
     comment.body?.includes(LEDGER_MARKER),
   );
-  if (!ledgerComment) return undefined;
+  if (candidates.length > 1) {
+    throw new Error('Duplicate dispatch ledger comments');
+  }
+  if (candidates.length === 0) return undefined;
+  const [ledgerComment] = candidates;
+  if (
+    ledgerComment.user?.login !== LEDGER_WORKFLOW_IDENTITY ||
+    ledgerComment.user?.type !== 'Bot'
+  ) {
+    throw new Error('Dispatch ledger author is not the workflow identity');
+  }
   const ledger = parseLedgerComment(ledgerComment.body, task);
   const generation = ledger.generations.find(
     (candidate) => candidate.pipeline === 'canary',

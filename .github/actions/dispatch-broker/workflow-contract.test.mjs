@@ -173,6 +173,31 @@ test('the canary orchestrators (#307) never reference a self-hosted runner or a 
   }
 });
 
+test('post-deploy-smoke.yml gates only on conclusion, never on head_branch (#307 P2 fix)', async () => {
+  // deploy-console.yml has exactly one job, so its workflow-level
+  // conclusion is a direct, total function of that job's own conclusion:
+  // 'success' only when 'deploy' actually ran and succeeded, 'skipped'
+  // when its own `if:` was false -- verified against real production runs
+  // (see this file's header comment). A `head_branch == 'main'` filter on
+  // top of that would silently skip verifying a real production deploy
+  // triggered by workflow_dispatch from a non-main ref, since
+  // deploy-console.yml's own `deploy` job runs unconditionally for any
+  // workflow_dispatch regardless of ref.
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'post-deploy-smoke.yml'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /^\s+if:\s+github\.event\.workflow_run\.conclusion == 'success'\s*$/mu,
+  );
+  // Scoped to the actual job config (after `jobs:`), not this file's own
+  // explanatory header comment, which legitimately discusses head_branch
+  // as the filter this fix removed.
+  const jobsSection = source.slice(source.indexOf('\njobs:'));
+  assert.doesNotMatch(jobsSection, /head_branch/u);
+});
+
 let failures = 0;
 for (const { name, run } of tests) {
   try {

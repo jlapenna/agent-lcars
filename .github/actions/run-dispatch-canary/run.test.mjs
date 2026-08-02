@@ -44,6 +44,7 @@ function ledgerCommentWithGeneration({
   state = 'completed',
   conclusion = 'success',
   issue = task.issue,
+  user = { login: 'github-actions[bot]', type: 'Bot' },
 } = {}) {
   const ledger = createLedger({ ...task, issue }, '2026-08-01T00:00:00.000Z');
   const attempt = {
@@ -71,7 +72,7 @@ function ledgerCommentWithGeneration({
   return {
     id: 5,
     body: renderLedgerComment(ledger),
-    user: { login: 'github-actions[bot]', type: 'Bot' },
+    user,
   };
 }
 
@@ -195,6 +196,61 @@ test('pollCanaryLedger times out loudly rather than polling forever', async () =
         },
       }),
     /Timed out waiting/u,
+  );
+});
+
+test('pollCanaryLedger rejects a spoofed non-bot-authored comment claiming success, never accepting it as the real ledger (P1)', async () => {
+  const spoofed = ledgerCommentWithGeneration({
+    user: { login: 'attacker', type: 'User' },
+  });
+  const client = api(async () => response(200, [spoofed]));
+  let clock = 0;
+  await assert.rejects(
+    () =>
+      pollCanaryLedger(client, task, {
+        now: () => clock,
+        sleepImpl: async () => {
+          clock += 1_000;
+        },
+      }),
+    /Dispatch ledger author is not the workflow identity/u,
+  );
+});
+
+test('pollCanaryLedger rejects an App-bot-shaped but wrong-login spoofed comment too, not just non-bot users', async () => {
+  const spoofed = ledgerCommentWithGeneration({
+    user: { login: 'some-other-app[bot]', type: 'Bot' },
+  });
+  const client = api(async () => response(200, [spoofed]));
+  let clock = 0;
+  await assert.rejects(
+    () =>
+      pollCanaryLedger(client, task, {
+        now: () => clock,
+        sleepImpl: async () => {
+          clock += 1_000;
+        },
+      }),
+    /Dispatch ledger author is not the workflow identity/u,
+  );
+});
+
+test('pollCanaryLedger fails closed on duplicate marker-bearing comments rather than trusting the first', async () => {
+  const spoofed = ledgerCommentWithGeneration({
+    user: { login: 'attacker', type: 'User' },
+  });
+  const real = ledgerCommentWithGeneration();
+  const client = api(async () => response(200, [spoofed, real]));
+  let clock = 0;
+  await assert.rejects(
+    () =>
+      pollCanaryLedger(client, task, {
+        now: () => clock,
+        sleepImpl: async () => {
+          clock += 1_000;
+        },
+      }),
+    /Duplicate dispatch ledger comments/u,
   );
 });
 
@@ -556,6 +612,39 @@ test('sweepStaleCanaries records a per-issue failure without blocking the remain
   assert.equal(swept[0].outcome, 'error');
   assert.match(swept[0].error, /network blip/u);
   assert.deepEqual(swept[1], { issue: 956, outcome: 'parked' });
+});
+
+test('sweepStaleCanaries never closes a stale issue on the strength of a spoofed non-bot ledger comment (P1)', async () => {
+  const calls = [];
+  const issue = openIssue({ number: 957 });
+  const spoofed = ledgerCommentWithGeneration({
+    issue: 957,
+    user: { login: 'attacker', type: 'User' },
+  });
+  const client = api(async (url, options) => {
+    calls.push({ url, method: options.method ?? 'GET' });
+    if (url.includes('/issues?state=open')) return response(200, [issue]);
+    if (
+      url.endsWith('/issues/957/comments') &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, [spoofed]);
+    }
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.equal(swept.length, 1);
+  assert.equal(swept[0].issue, 957);
+  assert.equal(swept[0].outcome, 'error');
+  assert.match(swept[0].error, /workflow identity/u);
+  assert.equal(
+    calls.some((call) => call.method === 'PATCH'),
+    false,
+    'a spoofed ledger comment must never cause the janitor to close the issue',
+  );
 });
 
 test('the canary ledger comment marker matches the real broker ledger marker', () => {
