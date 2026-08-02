@@ -71,7 +71,7 @@ transient Firestore hiccup never takes the whole console down.
    that genuinely needs `docker build`/`docker run` gets its own separate,
    socket-enabled scale set.
 4. **Infrastructure** (`infra/terraform`) — the GCP project services, the
-   dedicated Firestore database and transcript/tool storage buckets, runtime
+   dedicated Firestore database and transcript storage bucket, runtime
    secret containers (values are never stored in Terraform state), service
    accounts, GitHub Workload Identity Federation, and a billing budget.
 

@@ -1,9 +1,9 @@
 # Agent LCARS infrastructure
 
-Terraform owns the project services, default Firestore database, transcript and
-tool buckets, runtime secret containers, service accounts, GitHub Workload
-Identity Federation, and the $5/month billing budget. Secret _values_ are never
-stored in Terraform state.
+Terraform owns the project services, default Firestore database, transcript
+bucket, runtime secret containers, service accounts, GitHub Workload Identity
+Federation, and the $5/month billing budget. Secret _values_ are never stored
+in Terraform state.
 
 Bootstrap state once with `gcloud storage buckets create
 gs://agent-lcars-terraform-state --project agent-lcars --location us`, then add
