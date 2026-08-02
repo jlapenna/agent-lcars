@@ -62,7 +62,7 @@ fleet:
   placement:
     readiness_metrics_url: http://metrics.internal:9100/metrics
     readiness_metric: host_ci_ready
-    readiness_max_age: 5m          # optional, strongly recommended
+    readiness_max_age: 5m # optional, strongly recommended
   hosts:
     - name: laptop
       docker: ssh://runner@laptop
@@ -79,14 +79,14 @@ host_ci_ready_timestamp_seconds 1785702249
 ```
 
 One endpoint serves the whole fleet rather than one per host, because the
-answer is frequently *about* a host as observed from somewhere else, and the
+answer is frequently _about_ a host as observed from somewhere else, and the
 host itself may be in no position to report it.
 
 `readiness_max_age` additionally requires the companion
 `<readiness_metric>_timestamp_seconds` gauge to be no older than the given
 duration. Setting it is strongly recommended: the gate is **fail-closed**, so
 a publisher that dies leaves its last reading served indefinitely, and a stale
-`1` would fail the gate *open* — the single outcome it exists to prevent.
+`1` would fail the gate _open_ — the single outcome it exists to prevent.
 
 Fail-closed means anything other than a fresh, positive reading withholds the
 host: a missing metric, an unreachable or erroring endpoint, a stale
