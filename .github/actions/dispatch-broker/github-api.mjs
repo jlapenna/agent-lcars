@@ -211,6 +211,19 @@ const DISPATCH_CONFLICT_CANDIDATE_LIMIT = 20;
 // It cannot detect two simultaneous dispatch-triggered runs racing each
 // other (neither would ever self-report), so that residual gap is a known,
 // accepted limitation rather than a silently assumed absence of risk.
+//
+// A candidate whose own listing request fails is NOT proof it is clean
+// (PR #349 review, P1): if the one candidate that actually holds the group
+// happens to be the one whose lookup times out or errors, silently
+// skipping it and returning "no conflict" would verify a genuinely
+// conflicting dispatch run by default -- fail-open on exactly the error
+// path this whole mechanism exists to guard. So an inspection failure
+// keeps scanning the remaining candidates (a later one might still show a
+// definite, stronger conflict signal that should win), but if the scan
+// ends without one, the run(s) that could never actually be inspected make
+// the whole attempt inconclusive rather than "clean": throw retryable so
+// the caller's retry loop re-scans from scratch, and only give up (fail
+// closed, never silently verified) once the retry budget is exhausted.
 async function findConflictingRouterRun(api, task, runId) {
   const expected = brokerConcurrencyGroup(task);
   const root = repositoryPath(task);
@@ -221,6 +234,7 @@ async function findConflictingRouterRun(api, task, runId) {
     .filter((run) => Number.isSafeInteger(run?.id) && run.id !== runId)
     .sort((left, right) => right.id - left.id)
     .slice(0, DISPATCH_CONFLICT_CANDIDATE_LIMIT);
+  const uninspectedIds = [];
   for (const candidate of candidates) {
     let response;
     try {
@@ -228,9 +242,7 @@ async function findConflictingRouterRun(api, task, runId) {
         `${root}/actions/runs/${candidate.id}/concurrency_groups?per_page=100`,
       );
     } catch {
-      // An unrelated fetch failure for one candidate doesn't prove the
-      // absence (or presence) of a conflict; keep checking the rest rather
-      // than failing the whole indirect verification on it.
+      uninspectedIds.push(candidate.id);
       continue;
     }
     const holdsExpectedGroup = (response?.concurrency_groups ?? []).some(
@@ -238,7 +250,17 @@ async function findConflictingRouterRun(api, task, runId) {
         typeof group?.group_name === 'string' &&
         group.group_name.toLowerCase() === expected.toLowerCase(),
     );
+    // A definite conflict is a stronger signal than "inconclusive" and
+    // wins immediately, even if an earlier candidate was uninspectable.
     if (holdsExpectedGroup) return candidate;
+  }
+  if (uninspectedIds.length > 0) {
+    throw new BrokerConcurrencyMismatchError(
+      'Could not inspect in-progress agent-router.yml run(s) ' +
+        `${uninspectedIds.join(', ')} for broker concurrency group ` +
+        `${expected}; cannot rule out a conflict`,
+      { retryable: true },
+    );
   }
   return undefined;
 }

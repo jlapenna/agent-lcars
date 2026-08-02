@@ -445,6 +445,129 @@ test('findConflictingRouterRun skips a candidate whose own fetch fails rather th
   assert.equal(conflicting.id, 9005);
 });
 
+// PR #349 review (P1): an inspection failure must never be silently
+// downgraded to "no conflict" -- that would fail-open on exactly the error
+// path this whole mechanism exists to guard.
+
+test('findConflictingRouterRun throws a retryable, inconclusive error naming the candidate that could not be inspected when nothing else resolves a definite conflict', async () => {
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            { id: 9010, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9010/concurrency_groups')) {
+        throw new Error('transient fetch failure');
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  await assert.rejects(
+    () => findConflictingRouterRun(api, task, 9001),
+    (error) =>
+      error.name === 'BrokerConcurrencyMismatchError' &&
+      error.retryable === true &&
+      /9010/u.test(error.message),
+  );
+});
+
+test('verifyBrokerConcurrency verifies a dispatch-triggered run after a candidate lookup fails once then succeeds showing no conflict (#349 review)', async () => {
+  const group = brokerConcurrencyGroup(task);
+  let inspectionAttempts = 0;
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            { id: 9010, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9010/concurrency_groups')) {
+        inspectionAttempts += 1;
+        if (inspectionAttempts === 1)
+          throw new Error('transient fetch failure');
+        return { concurrency_groups: [] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const sleeps = [];
+  const originalLog = console.log;
+  const logged = [];
+  console.log = (message) => logged.push(message);
+  let result;
+  try {
+    result = await verifyBrokerConcurrency(api, task, 9001, group, {
+      eventName: 'workflow_dispatch',
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(result.group_name, group);
+  assert.equal(inspectionAttempts, 2);
+  assert.deepEqual(sleeps, [CONCURRENCY_VERIFY_RETRY_DELAY_MS]);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /^::notice::/u);
+});
+
+test('verifyBrokerConcurrency throws after exhausting retries when a candidate lookup persistently fails to resolve (#349 review)', async () => {
+  const group = brokerConcurrencyGroup(task);
+  let listCalls = 0;
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        listCalls += 1;
+        return {
+          workflow_runs: [
+            { id: 9010, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9010/concurrency_groups')) {
+        throw new Error('persistent fetch failure');
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const sleeps = [];
+  await assert.rejects(
+    () =>
+      verifyBrokerConcurrency(api, task, 9001, group, {
+        eventName: 'workflow_dispatch',
+        sleepImpl: async (ms) => {
+          sleeps.push(ms);
+        },
+      }),
+    (error) =>
+      error.name === 'BrokerConcurrencyMismatchError' &&
+      error.retryable === true &&
+      /9010/u.test(error.message) &&
+      new RegExp(`after ${CONCURRENCY_VERIFY_MAX_ATTEMPTS} attempts`, 'u').test(
+        error.message,
+      ),
+  );
+  assert.equal(listCalls, CONCURRENCY_VERIFY_MAX_ATTEMPTS);
+  assert.deepEqual(
+    sleeps,
+    Array(CONCURRENCY_VERIFY_MAX_ATTEMPTS - 1).fill(
+      CONCURRENCY_VERIFY_RETRY_DELAY_MS,
+    ),
+  );
+});
+
 test('findSupersedingRouterRun finds a strictly newer run that already holds the expected group (#344)', async () => {
   const group = brokerConcurrencyGroup(task);
   const requests = [];
