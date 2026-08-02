@@ -65,6 +65,39 @@ test('queue max is paired with noncancelling serialized execution only', async (
   }
 });
 
+test('workers carry no per-issue concurrency group; the broker owns that dedup (#321)', async () => {
+  const sources = await workflowSources();
+  for (const worker of ['claude.yml', 'opencode.yml']) {
+    const source = sources.find(
+      (candidate) => candidate.name === worker,
+    )?.source;
+    assert.ok(source, `${worker} is missing`);
+    for (const group of concurrencyGroups(source)) {
+      assert.doesNotMatch(
+        group,
+        /-issue-/u,
+        `${worker} must not declare a per-issue concurrency group; GitHub ` +
+          'keeps only one pending run per group, which silently kills a ' +
+          'second queued run before its failure-report step can fire. ' +
+          'dispatch-broker/broker.mjs (beginDispatch/acceptIntent) now ' +
+          'owns dispatch dedup and serialization for one issue.',
+      );
+    }
+  }
+  const codexSource = sources.find(
+    (candidate) => candidate.name === 'codex.yml',
+  )?.source;
+  assert.ok(codexSource, 'codex.yml is missing');
+  assert.deepEqual(
+    concurrencyGroups(codexSource),
+    ['codex-subscription-auth'],
+    'codex.yml must keep its repository-wide credential-serialization ' +
+      'group even though the per-issue groups are gone: it guards a ' +
+      'shared subscription auth.json refresh, which the broker does not ' +
+      'cover',
+  );
+});
+
 test('workers are dispatch-only and cannot subscribe directly to issue events', async () => {
   const sources = await workflowSources();
   for (const worker of ['claude.yml', 'codex.yml', 'opencode.yml']) {

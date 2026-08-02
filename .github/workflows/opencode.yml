@@ -62,9 +62,18 @@ permissions:
   id-token: write
   actions: write
 
-concurrency:
-  group: opencode-issue-${{ github.event.inputs.issue }}
-  cancel-in-progress: false
+# No per-issue concurrency group here (deliberately - see #321). Dispatch
+# dedup/serialization is the broker's job now: agent-router.yml's own
+# job-level concurrency group (agent-lcars-dispatch-v1-<repoId>-<issue>)
+# already serializes every ledger write for one issue, and within that,
+# dispatch-broker/broker.mjs enforces at most one ACTIVE generation per
+# issue at a time - beginDispatch() throws "Another generation is active"
+# (broker.mjs) and acceptIntent()'s duplicate/pending handling means a
+# second router run for the same issue is either a no-op or queued in the
+# ledger, never a second worker dispatch. A workflow-level group here would
+# be actively harmful on top of that: GitHub keeps exactly ONE pending run
+# per group, so a second queued run for this group is silently killed
+# before any step - including the failure-report tail below - can fire.
 
 jobs:
   opencode:
