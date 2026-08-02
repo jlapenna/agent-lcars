@@ -65,26 +65,6 @@ resource "google_storage_bucket" "transcripts" {
   depends_on = [google_project_service.services]
 }
 
-resource "google_storage_bucket" "tools" {
-  name                        = "${var.project_id}-tools"
-  location                    = "US"
-  uniform_bucket_level_access = true
-  versioning { enabled = true }
-  depends_on = [google_project_service.services]
-}
-
-resource "google_storage_bucket_iam_member" "public_tools" {
-  bucket = google_storage_bucket.tools.name
-  role   = "roles/storage.objectViewer"
-  member = "allUsers"
-}
-
-resource "google_storage_bucket_iam_member" "deployer_tools" {
-  bucket = google_storage_bucket.tools.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.github_deployer.email}"
-}
-
 resource "google_service_account" "telemetry_writer" {
   account_id   = "telemetry-writer"
   display_name = "Agent LCARS telemetry writer"
