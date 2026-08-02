@@ -38,20 +38,26 @@ jlapenna`), and use as the assignee in the parking recipe
   (agent-protocol.md §4). The console reads this exact login as
   `MAINTAINER_LOGIN`.
 
-- **Dispatch:** pipeline labels are routed by `agent-router.yml` to exactly
-  one of `claude.yml`, `codex.yml`, or `opencode.yml`, with precedence
-  `claude` > `codex` > `opencode`.
-- **Reply triggers:** `@claude` (claude.yml) on an issue already carrying
-  the `agent:claude` label, or directly on a pull request; `/codex` (codex.yml)
-  on an issue carrying the `agent:codex` label; `/opencode` or `/oc`
-  (opencode.yml) on an issue carrying the `agent:opencode` label. A plain reply
-  with neither trigger is silently ignored — always end a parking comment
-  with the correct one for whichever pipeline dispatched you.
-
-- **Pipeline precedence:** `claude` > `codex` > `opencode`. Each workflow
-  stands down when a higher-precedence label is also present, so a
-  mistakenly dual-labeled issue never gets two workers racing on the same
-  problem.
+- **Dispatch:** the serialized dispatch broker
+  (`.github/actions/dispatch-broker/normalize.mjs`, invoked from
+  `agent-router.yml`) normalizes every trigger into an intent for exactly one
+  of `claude.yml`, `codex.yml`, or `opencode.yml`. There is no precedence
+  order and no pipeline "stands down": an issue carrying more than one
+  `agent:*` label makes the broker throw a contradictory-agent-labels error
+  instead of picking a winner, and a comment matching more than one
+  recognized command is rejected outright — not dispatched at all — rather
+  than resolved in favor of one pipeline (`parseExactCommand` in
+  `normalize.mjs`).
+- **Reply triggers:** `@claude`, `/codex`, or `/opencode`/`/oc`, but only
+  when the command is the sole first token of its own line (trailing text
+  after it is fine, e.g. `@claude please retry`); a command embedded
+  mid-prose, inside a fenced code block, or on a quoted (`>`) line does not
+  count (`parseExactCommand` in `normalize.mjs`). The command's pipeline
+  must match the issue's single selected `agent:*` label — except `@claude`
+  on a pull request, which dispatches regardless of label. A plain reply
+  with no recognized command, or a comment carrying more than one, is
+  silently ignored — always end a parking comment with the correct trigger
+  for whichever pipeline dispatched you.
 
 - **Bot login format:** `claude[bot]` (REST) / `app/claude` (GraphQL), and
   `agent-lcars[bot]` / `app/agent-lcars`, are the same App installations
