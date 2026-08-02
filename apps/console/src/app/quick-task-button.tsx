@@ -10,29 +10,56 @@ import {
   TextInput,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 
-import type { Pipeline } from '../lib/primary-action';
 import {
+  type AgentPipeline,
   repoDisplayName,
   repoKey,
   supportedAgentPipelines,
+  taskRefKey,
   type WatchedRepo,
 } from '../lib/watched-repo';
 import { createQuickTask } from './actions';
 
-const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
+const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'claude', label: 'claude' },
   { value: 'codex', label: 'codex' },
   { value: 'opencode', label: 'opencode' },
 ];
 
+function createRequestId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    try {
+      return cryptoApi.randomUUID();
+    } catch {
+      // randomUUID is restricted to secure contexts in some browsers. The
+      // older getRandomValues primitive remains available to HTTP LAN pages.
+    }
+  }
+  if (typeof cryptoApi?.getRandomValues !== 'function') {
+    throw new Error('Cryptographic randomness is unavailable');
+  }
+
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(
+    12,
+    16,
+  )}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /**
  * Files a new `intake:quick-task`-labeled issue from a free-text description and
- * hands it to the selected agent pipeline (that pipeline's own label is
- * added as a follow-up call so the centralized agent router receives the
- * label event - see createQuickTask in backend-actions.ts). No polling here: the new
- * issue shows up in the board / In Flight panel on the next refresh.
+ * hands it to the selected agent pipeline. The intake and pipeline labels
+ * are part of the issue-creation write so a successful issue is immediately
+ * dispatchable. No polling here: the new issue shows up in the board / In
+ * Flight panel on the next refresh.
  *
  * A centered Modal rather than a Popover: an autosizing Popover grows and
  * shifts position as its content grows, so pasting a long description made
@@ -41,14 +68,14 @@ const PIPELINE_OPTIONS: { value: Pipeline; label: string }[] = [
  * full-screen - see #267.
  */
 export function QuickTaskButton({
-  watchedRepos = [],
+  watchedRepos,
   initialRepoKey,
   size = 'compact-sm',
 }: {
   /** Passed down from the server component that already resolved
    * getWatchedRepos() - this is a client component, and AGENT_LCARS_
    * WATCHED_REPOS is a server-only env var, unreachable from browser code. */
-  watchedRepos?: WatchedRepo[];
+  watchedRepos: WatchedRepo[];
   /** Canonical owner/name identity for the repository already selected by
    * the surrounding page. The picker falls back to the first watched repo
    * only when that identity is absent or no longer configured. */
@@ -64,12 +91,14 @@ export function QuickTaskButton({
     );
     return String(index >= 0 ? index : 0);
   });
-  const [pipeline, setPipeline] = useState<Pipeline>('claude');
+  const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
   const [isPending, startTransition] = useTransition();
-  const selectedRepo = watchedRepos[Number(repoIndex)] ?? watchedRepos[0];
+  const requestIdRef = useRef<string | undefined>(undefined);
+  const submitInFlightRef = useRef(false);
+  const selectedRepo = watchedRepos[Number(repoIndex)];
   const supportedPipelines = selectedRepo
     ? supportedAgentPipelines(selectedRepo)
-    : (PIPELINE_OPTIONS.map((option) => option.value) as Pipeline[]);
+    : [];
   const pipelineOptions = PIPELINE_OPTIONS.filter((option) =>
     supportedPipelines.includes(option.value),
   );
@@ -78,37 +107,70 @@ export function QuickTaskButton({
     : supportedPipelines[0];
 
   const close = () => setOpened(false);
+  const changeIntent = () => {
+    requestIdRef.current = undefined;
+  };
 
   const handleCreate = () => {
     const trimmed = description.trim();
-    if (!trimmed || !effectivePipeline) return;
-    close();
-    startTransition(async () => {
-      const result = await createQuickTask(
-        trimmed,
-        title.trim(),
-        selectedRepo,
-        effectivePipeline,
-      );
-      if (!result.ok) {
-        notifications.show({ message: result.message, color: 'red' });
+    if (
+      !trimmed ||
+      !effectivePipeline ||
+      !selectedRepo ||
+      submitInFlightRef.current
+    ) {
+      return;
+    }
+    let requestId = requestIdRef.current;
+    if (!requestId) {
+      try {
+        requestId = createRequestId();
+      } catch {
+        notifications.show({
+          message: 'This browser cannot generate a Quick Task request ID',
+          color: 'red',
+        });
         return;
       }
-      setTitle('');
-      setDescription('');
-      notifications.show({
-        message: (
-          <Anchor
-            href={result.url}
-            target="_blank"
-            rel="noreferrer"
-            c="inherit"
-          >
-            Quick task filed as #{result.number}
-          </Anchor>
-        ),
-        color: 'green',
-      });
+      requestIdRef.current = requestId;
+    }
+    submitInFlightRef.current = true;
+    startTransition(async () => {
+      try {
+        const result = await createQuickTask({
+          requestId,
+          repository: {
+            owner: selectedRepo.owner,
+            name: selectedRepo.name,
+          },
+          pipeline: effectivePipeline,
+          title: title.trim(),
+          description: trimmed,
+        });
+        if (!result.ok) {
+          notifications.show({ message: result.message, color: 'red' });
+          return;
+        }
+        requestIdRef.current = undefined;
+        setTitle('');
+        setDescription('');
+        close();
+        notifications.show({
+          message: (
+            <Anchor
+              href={result.url}
+              target="_blank"
+              rel="noreferrer"
+              c="inherit"
+            >
+              Quick task filed as {taskRefKey(result.task)}
+            </Anchor>
+          ),
+          color: 'green',
+        });
+      } finally {
+        submitInFlightRef.current = false;
+      }
     });
   };
 
@@ -123,7 +185,14 @@ export function QuickTaskButton({
       >
         Quick task
       </Button>
-      <Modal opened={opened} onClose={close} title="File a quick task">
+      <Modal
+        opened={opened}
+        onClose={() => {
+          if (!isPending) close();
+        }}
+        closeOnClickOutside={!isPending}
+        title="File a quick task"
+      >
         <Stack gap="sm">
           {watchedRepos.length > 1 && (
             <Select
@@ -133,8 +202,12 @@ export function QuickTaskButton({
                 label: repoDisplayName(repo),
               }))}
               value={repoIndex}
-              onChange={(value) => setRepoIndex(value ?? '0')}
+              onChange={(value) => {
+                changeIntent();
+                setRepoIndex(value ?? '0');
+              }}
               allowDeselect={false}
+              disabled={isPending}
             />
           )}
           <Select
@@ -142,28 +215,42 @@ export function QuickTaskButton({
             description="Which pipeline picks up the task"
             data={pipelineOptions}
             value={effectivePipeline ?? null}
-            onChange={(value) => setPipeline((value as Pipeline) ?? 'claude')}
+            onChange={(value) => {
+              changeIntent();
+              setPipeline((value as AgentPipeline) ?? 'claude');
+            }}
             allowDeselect={false}
-            disabled={pipelineOptions.length === 0}
+            disabled={isPending || pipelineOptions.length === 0}
           />
           <TextInput
             label="Title"
             description="Optional — defaults to the first line of the description"
             value={title}
-            onChange={(e) => setTitle(e.currentTarget.value)}
+            onChange={(e) => {
+              changeIntent();
+              setTitle(e.currentTarget.value);
+            }}
             placeholder="Short summary for the issue title"
+            disabled={isPending}
           />
           <Textarea
             label="Description"
             value={description}
-            onChange={(e) => setDescription(e.currentTarget.value)}
+            onChange={(e) => {
+              changeIntent();
+              setDescription(e.currentTarget.value);
+            }}
             placeholder="Describe the task — this becomes the issue body"
             autosize
             minRows={12}
+            disabled={isPending}
           />
           <Button
             disabled={
-              isPending || !description.trim() || pipelineOptions.length === 0
+              isPending ||
+              !description.trim() ||
+              !selectedRepo ||
+              pipelineOptions.length === 0
             }
             onClick={handleCreate}
           >

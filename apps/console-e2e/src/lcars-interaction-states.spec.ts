@@ -170,4 +170,24 @@ test.describe('overlays inherit the LCARS theme', () => {
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
   });
+
+  test('Quick Task submits one complete repository-explicit issue write', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Quick task' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Description').fill('Verify Quick Task contract');
+    await dialog.getByRole('button', { name: 'File & dispatch' }).click();
+
+    const receipt = page.getByRole('link', {
+      name: 'Quick task filed as supersprinklesracing/sprinkles#9999',
+    });
+    await expect(receipt).toBeVisible();
+    await expect(receipt).toHaveAttribute(
+      'href',
+      'https://github.com/supersprinklesracing/sprinkles/issues/9999',
+    );
+    await expect(dialog).toBeHidden();
+  });
 });

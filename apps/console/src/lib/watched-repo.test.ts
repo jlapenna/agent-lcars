@@ -4,6 +4,8 @@ import {
   selectedAgentPipeline,
   supportedAgentLabels,
   supportedAgentPipelines,
+  taskRefKey,
+  taskRefUrl,
   type WatchedRepo,
 } from './watched-repo';
 
@@ -49,5 +51,19 @@ describe('watched repository agent capabilities', () => {
     expect(
       selectedAgentPipeline(standardRepo, ['agent:claude', 'agent:opencode']),
     ).toBeUndefined();
+  });
+});
+
+describe('TaskRef', () => {
+  const task = {
+    repository: { owner: 'example', name: 'console' },
+    issueNumber: 42,
+  };
+
+  it('uses the repository and issue number as its canonical identity', () => {
+    expect(taskRefKey(task)).toBe('example/console#42');
+    expect(taskRefUrl(task)).toBe(
+      'https://github.com/example/console/issues/42',
+    );
   });
 });

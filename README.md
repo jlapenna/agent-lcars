@@ -27,9 +27,10 @@ single-admin GitHub OAuth login) has three sections:
   `status:needs-human`, a failed run, a review request, a post-deploy check, or a
   run that reported success but whose own telemetry shows a silent-error
   signature (an error result or essentially zero recorded work). Each card
-  carries the right one-click action. **Quick task** files a new
-  `intake:quick-task`-labeled issue from free text and hands it straight to the
-  agent; **Run unstick-prs** dispatches a maintenance playbook that finds
+  carries the right one-click action. **Quick task** files an idempotent,
+  repository-explicit issue from free text with both `intake:quick-task` and
+  the selected agent label in the creation write; **Run unstick-prs**
+  dispatches a maintenance playbook that finds
   and un-sticks stalled PRs.
 - **Agents** (`/agents`) — a fleet-wide, agent-by-agent view: a snapshot bar
   of live/active counts per pipeline (Claude, OpenCode, Codex, interactive
