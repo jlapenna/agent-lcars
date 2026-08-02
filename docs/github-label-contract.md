@@ -15,7 +15,12 @@ pull-request state.
 - `agent:*` selects an executor. The serialized dispatch broker enforces that
   exactly one of `agent:claude`, `agent:codex`, or `agent:opencode` is present
   and dispatches that agent. Contradictory `agent:*` labels fail loudly instead
-  of being tolerated or resolved by precedence.
+  of being tolerated or resolved by precedence, with one narrow self-heal
+  exception: a manual GitHub UI relabel can momentarily leave two agent
+  labels on an issue (the new one added before the old one is removed), and
+  the broker resolves that transient window itself by honoring the newest
+  label and removing the other before dispatching, rather than failing the
+  run.
 - `agent-option:*` modifies an agent run without selecting the executor.
 - `intake:*` and `bot:*` record provenance, not execution state.
 - `automation:*` and `ci:*` are explicit workflow controls.

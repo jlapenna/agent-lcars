@@ -19,7 +19,9 @@ import {
   completionMatches,
   decode,
   encode,
+  FRESH_INTENT_OUTCOMES,
   handleCompletion,
+  healStaleAgentLabels,
   isDefiniteDispatchRejection,
   reconcileActive,
   resolveTask,
@@ -311,6 +313,272 @@ test('only unambiguous non-transient 4xx dispatch failures are definite rejectio
     );
   }
   assert.equal(isDefiniteDispatchRejection(new Error('timeout')), false);
+});
+
+function labelHealStubClient({ deleteStatus = 200, currentLabels } = {}) {
+  const deleteCalls = [];
+  const saveCalls = [];
+  return {
+    client: {
+      request: async (path, options) => {
+        deleteCalls.push({ path, method: options?.method });
+        return { status: deleteStatus, data: [] };
+      },
+      requestOk: async (path) => {
+        if (/\/issues\/comments\/9(\?.*)?$/u.test(path)) {
+          saveCalls.push(path);
+          return { id: 9 };
+        }
+        if (/\/issues\/304$/u.test(path)) {
+          if (!currentLabels) {
+            throw new Error(`Unexpected live-label lookup for path: ${path}`);
+          }
+          return { labels: currentLabels.map((name) => ({ name })) };
+        }
+        throw new Error(`Unexpected API path: ${path}`);
+      },
+    },
+    deleteCalls,
+    saveCalls,
+  };
+}
+
+test('FRESH_INTENT_OUTCOMES only admits the two acceptIntent outcomes that leave a non-superseded generation (#355 review)', () => {
+  assert.deepEqual([...FRESH_INTENT_OUTCOMES].sort(), ['dispatch', 'pending']);
+  for (const nonFresh of [
+    'duplicate',
+    'semantic-duplicate',
+    'stale',
+    'stale-control-state',
+    'closed',
+  ]) {
+    assert.equal(FRESH_INTENT_OUTCOMES.has(nonFresh), false);
+  }
+});
+
+test('healStaleAgentLabels removes the stale label via the API and records evidence before dispatching (#304)', async () => {
+  const ledger = createLedger(task);
+  const intent = {
+    sourceId: 'timeline:501',
+    transportRunId: 9001,
+    pipeline: 'claude',
+    staleAgentLabels: ['agent:codex'],
+  };
+  const { client, deleteCalls, saveCalls } = labelHealStubClient({
+    currentLabels: ['agent:claude', 'agent:codex'],
+  });
+  await healStaleAgentLabels(client, { ledger, comment: { id: 9 } }, intent);
+  assert.equal(deleteCalls.length, 1);
+  assert.match(deleteCalls[0].path, /\/issues\/304\/labels\/agent%3Acodex$/u);
+  assert.equal(deleteCalls[0].method, 'DELETE');
+  assert.equal(saveCalls.length, 1);
+  const evidence = ledger.sources.find(
+    (source) => source.sourceKind === 'label-self-heal',
+  );
+  assert.ok(evidence, 'expected label-self-heal evidence in ledger.sources');
+  assert.equal(evidence.sourceId, 'label-self-heal:timeline:501');
+  assert.deepEqual(evidence.labels, ['agent:codex']);
+});
+
+test('healStaleAgentLabels is a no-op for an intent without staleAgentLabels', async () => {
+  const ledger = createLedger(task);
+  const { client, deleteCalls, saveCalls } = labelHealStubClient();
+  await healStaleAgentLabels(
+    client,
+    { ledger, comment: { id: 9 } },
+    { sourceId: 'timeline:501', transportRunId: 9001, pipeline: 'claude' },
+  );
+  assert.equal(deleteCalls.length, 0);
+  assert.equal(saveCalls.length, 0);
+  assert.equal(ledger.sources.length, 0);
+});
+
+test('healStaleAgentLabels skips a stale label whose live state no longer matches the dual-label snapshot, and records nothing (#355 review)', async () => {
+  // The maintainer switched back: live GitHub state now shows only the
+  // label this payload calls "stale" (agent:codex), not the event's own
+  // label (agent:claude) alongside it. Deleting agent:codex here would
+  // strip the maintainer's actual current selection.
+  const ledger = createLedger(task);
+  const intent = {
+    sourceId: 'timeline:501',
+    transportRunId: 9001,
+    pipeline: 'claude',
+    staleAgentLabels: ['agent:codex'],
+  };
+  const { client, deleteCalls, saveCalls } = labelHealStubClient({
+    currentLabels: ['agent:codex'],
+  });
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(message);
+  try {
+    await healStaleAgentLabels(client, { ledger, comment: { id: 9 } }, intent);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(deleteCalls.length, 0);
+  assert.equal(saveCalls.length, 0);
+  assert.equal(ledger.sources.length, 0);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^::notice::/u);
+  assert.match(logs[0], /agent:codex/u);
+});
+
+test('healStaleAgentLabels skips a stale label that is simply gone (already healed), recording nothing on redelivery', async () => {
+  const ledger = createLedger(task);
+  const intent = {
+    sourceId: 'timeline:501',
+    transportRunId: 9001,
+    pipeline: 'claude',
+    staleAgentLabels: ['agent:codex'],
+  };
+  const { client, deleteCalls, saveCalls } = labelHealStubClient({
+    currentLabels: ['agent:claude'],
+  });
+  await healStaleAgentLabels(client, { ledger, comment: { id: 9 } }, intent);
+  assert.equal(deleteCalls.length, 0);
+  assert.equal(saveCalls.length, 0);
+  assert.equal(ledger.sources.length, 0);
+});
+
+test('broker()-style gating: a fresh intent heals, a redelivered/duplicate intent never reaches healStaleAgentLabels (#355 review)', async () => {
+  // Mirrors broker()'s exact sequence: acceptIntent(), then only call
+  // healStaleAgentLabels when the outcome is in FRESH_INTENT_OUTCOMES.
+  const ledger = createLedger(task);
+  const intent = {
+    task,
+    intentId: 'intent-501',
+    sourceKind: 'labeled',
+    sourceId: 'timeline:501',
+    transportRunId: 9001,
+    occurredAt: '2026-08-01T00:00:00.000Z',
+    pipeline: 'claude',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'abc',
+    authorization: { authorized: true },
+    staleAgentLabels: ['agent:codex'],
+  };
+
+  const first = acceptIntent(ledger, intent);
+  assert.equal(first.outcome, 'dispatch');
+  const firstClient = labelHealStubClient({
+    currentLabels: ['agent:claude', 'agent:codex'],
+  });
+  if (FRESH_INTENT_OUTCOMES.has(first.outcome)) {
+    await healStaleAgentLabels(
+      firstClient.client,
+      { ledger, comment: { id: 9 } },
+      intent,
+    );
+  }
+  assert.equal(firstClient.deleteCalls.length, 1);
+
+  // A redelivery/rerun of the exact same source: acceptIntent reports it
+  // as a duplicate no-op, so the gate must never call healStaleAgentLabels
+  // at all -- regardless of what live labels look like now.
+  const second = acceptIntent(ledger, intent);
+  assert.equal(second.outcome, 'duplicate');
+  const secondClient = labelHealStubClient();
+  if (FRESH_INTENT_OUTCOMES.has(second.outcome)) {
+    await healStaleAgentLabels(
+      secondClient.client,
+      { ledger, comment: { id: 9 } },
+      intent,
+    );
+  }
+  assert.equal(secondClient.deleteCalls.length, 0);
+});
+
+test('a self-healed dual-label intent produces only a benign follow-on unlabeled control-evidence event -- no loop (#304)', async () => {
+  // End-to-end regression using the real normalizeEvent() -- the exact
+  // shape main.mjs's broker() consumes. A manual relabel produces a
+  // self-heal intent carrying staleAgentLabels; healStaleAgentLabels
+  // removes the stale label via the API, which fires a genuine `unlabeled`
+  // webhook for that same label back through the router. Feeding that
+  // follow-on event through normalizeEvent + recordControlEvidence must
+  // never create a second generation, dispatch anything, or throw.
+  const context = {
+    repository: 'jlapenna/agent-lcars',
+    repositoryId: 123,
+    issue: 304,
+    runId: 9001,
+    actor: 'jlapenna',
+    now: '2026-08-01T00:00:01.000Z',
+  };
+  const dualLabelIssue = {
+    id: 3040,
+    number: 304,
+    title: 'Fix dispatch',
+    body: 'Do the work',
+    created_at: '2026-08-01T00:00:00.000Z',
+    updated_at: '2026-08-01T00:00:00.000Z',
+    labels: [{ name: 'agent:claude' }, { name: 'agent:codex' }],
+  };
+  const labeled = normalizeEvent({
+    eventName: 'issues',
+    event: {
+      action: 'labeled',
+      issue: dualLabelIssue,
+      label: { name: 'agent:claude' },
+      sender: { login: 'jlapenna' },
+    },
+    context,
+    timeline: [
+      {
+        id: 501,
+        event: 'labeled',
+        created_at: dualLabelIssue.updated_at,
+        actor: { login: 'jlapenna' },
+        label: { name: 'agent:claude' },
+      },
+    ],
+    maintainer: 'jlapenna',
+  });
+  assert.equal(labeled.kind, 'intent');
+  assert.deepEqual(labeled.intent.staleAgentLabels, ['agent:codex']);
+
+  const ledger = createLedger(task);
+  const accepted = acceptIntent(ledger, labeled.intent);
+  assert.equal(FRESH_INTENT_OUTCOMES.has(accepted.outcome), true);
+  const { client } = labelHealStubClient({
+    currentLabels: ['agent:claude', 'agent:codex'],
+  });
+  await healStaleAgentLabels(
+    client,
+    { ledger, comment: { id: 9 } },
+    labeled.intent,
+  );
+  assert.equal(ledger.generations.length, 1);
+
+  // GitHub's own unlabeled webhook for the label the broker just removed.
+  const unlabeled = normalizeEvent({
+    eventName: 'issues',
+    event: {
+      action: 'unlabeled',
+      issue: { ...dualLabelIssue, labels: [{ name: 'agent:claude' }] },
+      label: { name: 'agent:codex' },
+      sender: { login: 'github-actions[bot]' },
+    },
+    context: { ...context, runId: 9002 },
+    timeline: [
+      {
+        id: 502,
+        event: 'unlabeled',
+        created_at: dualLabelIssue.updated_at,
+        actor: { login: 'github-actions[bot]' },
+        label: { name: 'agent:codex' },
+      },
+    ],
+    maintainer: 'jlapenna',
+  });
+  assert.equal(unlabeled.kind, 'control-evidence');
+  const evidenceResult = recordControlEvidence(ledger, unlabeled.evidence);
+  assert.equal(evidenceResult.outcome, 'recorded');
+  // No new generation and no dispatch -- purely an audit-trail addition.
+  assert.equal(ledger.generations.length, 1);
+  assert.equal(ledger.generations[0].state, 'accepted');
 });
 
 test('reconciliation binds a run found after a crash left dispatching state', async () => {

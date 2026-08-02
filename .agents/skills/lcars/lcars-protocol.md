@@ -47,7 +47,12 @@ jlapenna`), and use as the assignee in the parking recipe
   instead of picking a winner, and a comment matching more than one
   recognized command is rejected outright — not dispatched at all — rather
   than resolved in favor of one pipeline (`parseExactCommand` in
-  `normalize.mjs`).
+  `normalize.mjs`). One narrow self-heal exception: a `labeled` event whose
+  own label disambiguates against exactly one other stale `agent:*` label
+  (the transient window a manual GitHub UI relabel opens) makes the newest
+  label win, removing the stale one via the API with ledger evidence before
+  dispatching — comment-path ambiguity, three or more coexisting labels, and
+  a label missing from the current issue snapshot still throw.
 - **Reply triggers:** `@claude`, `/codex`, or `/opencode`/`/oc`, but only
   when the command is the sole first token of its own line (trailing text
   after it is fine, e.g. `@claude please retry`); a command embedded

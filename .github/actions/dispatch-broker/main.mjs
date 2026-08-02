@@ -27,6 +27,7 @@ import {
   GitHubApiError,
   loadLedger,
   pinLedgerWhenUnoccupied,
+  removeIssueLabel,
   repositoryPath,
   saveLedger,
   validateDispatchResponse,
@@ -378,6 +379,84 @@ async function wasSupersededEviction(client, task, runId, group, kind, error) {
   return true;
 }
 
+// Only these two acceptIntent() outcomes leave the resulting generation in
+// a non-superseded state ('accepted' for 'dispatch', 'pending' for
+// 'pending') -- every other outcome ('duplicate', 'semantic-duplicate',
+// 'stale', 'stale-control-state', 'closed') means either nothing new was
+// recorded or the ledger has already judged this intent not to be the
+// current desired state. A self-heal must never act on the latter: an old
+// `labeled` webhook rerun/redelivered after the maintainer has since
+// switched back to the label this payload calls "stale" would otherwise
+// delete the maintainer's actual current selection (PR #355 review).
+const FRESH_INTENT_OUTCOMES = new Set(['dispatch', 'pending']);
+
+// Self-heals the transient manual-relabel dual-label window (#304 audit
+// item 4): normalize.mjs marks an intent's `staleAgentLabels` when a
+// `labeled` event's own label disambiguates against exactly one other
+// agent:* label still on the issue. Removing the stale label(s) here --
+// inside the serialized broker write path, the only place control-plane
+// writes are allowed -- restores the "exactly one agent:* label" contract
+// before the intent dispatches.
+//
+// Belt-and-braces beyond the FRESH_INTENT_OUTCOMES gate at the call site:
+// the payload's dual-label snapshot can still be stale by the time this
+// runs (e.g. a slow/retried run), so re-read the issue's live labels and
+// only remove a stale label that is STILL present TOGETHER WITH the
+// event's own (newer) label. If live state no longer matches -- most
+// notably, the maintainer switched back and only the "stale" label remains
+// -- skip that label with a `::notice::` and record no evidence for it.
+//
+// Idempotent by construction: `removeIssueLabel` tolerates 404 (label
+// already gone), and `recordControlEvidence`'s own sourceKind/sourceId
+// dedup (keyed off the triggering intent's sourceId, so a redelivery of the
+// same underlying event reuses the same evidence sourceId) means a
+// redelivered event only re-saves the ledger when it actually added new
+// evidence, matching the pattern `handleCompletion` already uses below.
+async function healStaleAgentLabels(client, loaded, intent) {
+  const staleLabels = intent.staleAgentLabels;
+  if (!staleLabels?.length) return;
+  const task = loaded.ledger.task;
+  const eventLabel = `agent:${intent.pipeline}`;
+  const issue = await client.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  const currentLabels = new Set(
+    (issue.labels ?? []).map((label) =>
+      typeof label === 'string' ? label : label.name,
+    ),
+  );
+  const removable = [];
+  const skipped = [];
+  for (const label of staleLabels) {
+    if (currentLabels.has(label) && currentLabels.has(eventLabel)) {
+      removable.push(label);
+    } else {
+      skipped.push(label);
+    }
+  }
+  if (skipped.length > 0) {
+    console.log(
+      `::notice::Skipping stale-label self-heal for ${skipped.join(', ')} ` +
+        `on issue #${task.issue}: live labels no longer match the ` +
+        `dual-label snapshot this intent was normalized from (current: ` +
+        `${[...currentLabels].join(', ') || 'none'}).`,
+    );
+  }
+  if (removable.length === 0) return;
+  for (const label of removable) {
+    await removeIssueLabel(client, task, label);
+  }
+  const evidence = recordControlEvidence(loaded.ledger, {
+    sourceKind: 'label-self-heal',
+    sourceId: `label-self-heal:${intent.sourceId}`,
+    transportRunId: intent.transportRunId,
+    occurredAt: new Date().toISOString(),
+    labels: removable,
+    authorization: { observed: true, actor: 'dispatch-broker' },
+  });
+  if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
+}
+
 async function broker() {
   const normalized = decode(env('BROKER_PAYLOAD'));
   if (normalized.kind === 'ignored') return;
@@ -427,8 +506,19 @@ async function broker() {
   try {
     await reconcileActive(client, loaded);
     if (normalized.kind === 'intent') {
-      acceptIntent(loaded.ledger, normalized.intent);
+      const accepted = acceptIntent(loaded.ledger, normalized.intent);
       await saveLedger(client, loaded);
+      // Before dispatching: remove any stale agent:* label a dual-label
+      // self-heal identified (#304 audit item 4) -- but only when this
+      // intent was accepted as the ledger's current desired state
+      // (FRESH_INTENT_OUTCOMES). A duplicate/superseded/closed outcome
+      // means an old or redelivered event, whose stale-label snapshot may
+      // no longer reflect live GitHub state; healStaleAgentLabels'
+      // is-it-actually-still-stale re-check is a second, independent
+      // safeguard on top of this (PR #355 review).
+      if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
+        await healStaleAgentLabels(client, loaded, normalized.intent);
+      }
     } else if (normalized.kind === 'anchor-control') {
       applyAnchorControl(loaded.ledger, normalized.control);
       await saveLedger(client, loaded);
@@ -535,7 +625,9 @@ export {
   contextFor,
   decode,
   encode,
+  FRESH_INTENT_OUTCOMES,
   handleCompletion,
+  healStaleAgentLabels,
   isDefiniteDispatchRejection,
   reconcileActive,
   resolveTask,
