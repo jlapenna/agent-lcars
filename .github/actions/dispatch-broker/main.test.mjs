@@ -11,6 +11,7 @@ import {
 import {
   BrokerConcurrencyMismatchError,
   GitHubApiError,
+  verifyBrokerConcurrency,
 } from './github-api.mjs';
 import {
   assertWorkerRun,
@@ -459,6 +460,82 @@ test('wasSupersededEviction never queries for a superseding run on a non-retryab
     await wasSupersededEviction(client, task, 9001, 'group', error),
     false,
   );
+});
+
+test('a queue-evicted dispatch-triggered run is still corroborated end-to-end via wasSupersededEviction (#348 + #344)', async () => {
+  // Drives the REAL verifyBrokerConcurrency (dispatch path) against a fake
+  // API where a genuinely newer router run (9002) holds this run's (9001)
+  // expected group -- indistinguishable, from the dispatch run's own
+  // perspective, from ordinary contention. Retries exhaust, then
+  // wasSupersededEviction must still corroborate it as an eviction (#344)
+  // and exit gracefully, proving #348's new indirect path composes
+  // correctly with #345's existing eviction handling rather than bypassing
+  // it.
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  let inProgressCalls = 0;
+  const client = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        inProgressCalls += 1;
+        return {
+          workflow_runs: [
+            { id: 9002, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/workflows/agent-router.yml/runs?per_page=100')) {
+        return {
+          workflow_runs: [
+            { id: 9002, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9002/concurrency_groups')) {
+        return { concurrency_groups: [{ group_name: group }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+
+  const sleeps = [];
+  let verifyError;
+  try {
+    await verifyBrokerConcurrency(client, task, 9001, group, {
+      eventName: 'workflow_dispatch',
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+    assert.fail('expected verifyBrokerConcurrency to throw');
+  } catch (error) {
+    verifyError = error;
+  }
+  assert.equal(verifyError.name, 'BrokerConcurrencyMismatchError');
+  assert.equal(verifyError.retryable, true);
+  assert.equal(inProgressCalls, 5);
+  assert.equal(sleeps.length, 4);
+
+  const originalLog = console.log;
+  const logged = [];
+  console.log = (message) => logged.push(message);
+  let handled;
+  try {
+    handled = await wasSupersededEviction(
+      client,
+      task,
+      9001,
+      group,
+      verifyError,
+    );
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(handled, true);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /^::notice::/u);
+  assert.match(logged[0], /9002/u);
 });
 
 test('wasSupersededEviction ignores errors that are not a retryable BrokerConcurrencyMismatchError', async () => {

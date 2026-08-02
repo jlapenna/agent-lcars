@@ -27,15 +27,19 @@ class GitHubApiError extends Error {
   }
 }
 
-// Thrown by `validateBrokerConcurrencyResponse`. `retryable` marks the one
-// failure mode that eventual consistency can explain on its own — the
-// expected group simply hasn't materialized in the listing yet. Every other
-// failure mode (config mismatch, malformed response, more than one match)
-// is a real anomaly and must never be retried.
+// Thrown by `validateBrokerConcurrencyResponse` (the event-triggered path)
+// and `checkDispatchBrokerConcurrency` (the workflow_dispatch-triggered
+// path, #348). `retryable` marks the failure modes that can resolve with
+// more time: the event-triggered path's expected group simply hasn't
+// materialized in its own listing yet; the dispatch-triggered path found
+// another in-progress run currently reporting the group, which may finish
+// imminently. Every other failure mode (config mismatch, malformed
+// response, more than one match) is a real anomaly and must never be
+// retried.
 //
 // A `retryable: true` error that survives verifyBrokerConcurrency's full
 // retry budget has two possible explanations that look identical from
-// here: ordinary listing lag that never resolved, or a `queue: max`
+// here: ordinary contention/lag that never resolved, or a `queue: max`
 // eviction (#344) where a newer run took this run's slot before the
 // listing ever caught up. `main.mjs`'s broker() disambiguates the two via
 // `findSupersedingRouterRun` before deciding whether to fail red or exit
@@ -44,6 +48,8 @@ class GitHubApiError extends Error {
 // (never recorded in the ledger) rather than retried further — the newer,
 // superseding run already carries the issue's dispatch state forward
 // correctly, so nothing is lost except this one event's audit trail entry.
+// This disambiguation applies identically regardless of which path
+// produced the retryable mismatch.
 class BrokerConcurrencyMismatchError extends Error {
   constructor(message, { retryable = false } = {}) {
     super(message);
@@ -167,6 +173,101 @@ function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
   return matching[0];
 }
 
+async function fetchAndValidateOwnListing(api, task, runId, suppliedGroup) {
+  const path = `${repositoryPath(task)}/actions/runs/${runId}/concurrency_groups?per_page=100`;
+  const data = await api.requestOk(path);
+  return validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup);
+}
+
+// Bounds how many other in-progress `agent-router.yml` runs are checked per
+// dispatch-run verification attempt. Realistically there are only ever a
+// handful of concurrently in-progress router runs; this just keeps API
+// usage bounded, mirroring SUPERSEDING_RUN_CANDIDATE_LIMIT below.
+const DISPATCH_CONFLICT_CANDIDATE_LIMIT = 20;
+
+// Empirically confirmed on issue #348: GitHub's own
+// `/actions/runs/{id}/concurrency_groups` listing never reports membership
+// for workflow_dispatch-triggered runs -- 5/5 sampled dispatch runs (some
+// hours old, ruling out ordinary listing lag) returned zero matches, while
+// every sampled issues-event run returned exactly one. Neither the run
+// object (`GET /actions/runs/{id}`) nor the jobs API carries any
+// concurrency field for any event type either, so there is no direct
+// source of truth for a dispatch run's own group membership to fall back
+// to. `fetchAndValidateOwnListing` above is therefore unusable for these
+// runs -- it would always see zero matches and fail every single time,
+// which is exactly #348's bug (a 100% failure rate for every
+// workflow_dispatch-triggered broker run).
+//
+// `findConflictingRouterRun` verifies an equivalent invariant indirectly
+// instead: it confirms no OTHER currently in-progress `agent-router.yml`
+// run reports (via ITS OWN listing, which is reliable for event-triggered
+// runs) holding this run's expected concurrency group. The broker job's
+// `concurrency: { group, cancel-in-progress: false, queue: max }` block
+// already guarantees GitHub itself never runs two broker jobs for the same
+// group at once; this indirect check confirms that guarantee is actually
+// holding for THIS run, the same thing the direct listing check confirms
+// for event-triggered runs -- it just can't observe this run's own
+// membership, only the absence of a conflicting one held by another run.
+// It cannot detect two simultaneous dispatch-triggered runs racing each
+// other (neither would ever self-report), so that residual gap is a known,
+// accepted limitation rather than a silently assumed absence of risk.
+async function findConflictingRouterRun(api, task, runId) {
+  const expected = brokerConcurrencyGroup(task);
+  const root = repositoryPath(task);
+  const data = await api.requestOk(
+    `${root}/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100`,
+  );
+  const candidates = (data.workflow_runs ?? [])
+    .filter((run) => Number.isSafeInteger(run?.id) && run.id !== runId)
+    .sort((left, right) => right.id - left.id)
+    .slice(0, DISPATCH_CONFLICT_CANDIDATE_LIMIT);
+  for (const candidate of candidates) {
+    let response;
+    try {
+      response = await api.requestOk(
+        `${root}/actions/runs/${candidate.id}/concurrency_groups?per_page=100`,
+      );
+    } catch {
+      // An unrelated fetch failure for one candidate doesn't prove the
+      // absence (or presence) of a conflict; keep checking the rest rather
+      // than failing the whole indirect verification on it.
+      continue;
+    }
+    const holdsExpectedGroup = (response?.concurrency_groups ?? []).some(
+      (group) =>
+        typeof group?.group_name === 'string' &&
+        group.group_name.toLowerCase() === expected.toLowerCase(),
+    );
+    if (holdsExpectedGroup) return candidate;
+  }
+  return undefined;
+}
+
+async function checkDispatchBrokerConcurrency(api, task, runId, suppliedGroup) {
+  const expected = brokerConcurrencyGroup(task);
+  if (suppliedGroup !== expected) {
+    // Same config-mismatch defense as the event-triggered path: never
+    // explained by eventual consistency, so never retryable.
+    throw new BrokerConcurrencyMismatchError(
+      'Broker concurrency output does not match its TaskRef',
+    );
+  }
+  const conflicting = await findConflictingRouterRun(api, task, runId);
+  if (conflicting) {
+    // Retryable: the conflicting run may simply be mid-flight (about to
+    // complete) or -- indistinguishably from here -- this dispatch run
+    // itself may be the one that got queue-evicted (#344/#345), in which
+    // case main.mjs's wasSupersededEviction disambiguates once retries are
+    // exhausted, exactly as it already does for the event-triggered path.
+    throw new BrokerConcurrencyMismatchError(
+      `Another in-progress agent-router.yml run (${conflicting.id}) ` +
+        `reports holding broker concurrency group ${expected}`,
+      { retryable: true },
+    );
+  }
+  return { group_name: expected, group_members: [] };
+}
+
 async function verifyBrokerConcurrency(
   api,
   task,
@@ -176,18 +277,26 @@ async function verifyBrokerConcurrency(
     maxAttempts = CONCURRENCY_VERIFY_MAX_ATTEMPTS,
     retryDelayMs = CONCURRENCY_VERIFY_RETRY_DELAY_MS,
     sleepImpl = sleep,
+    eventName,
   } = {},
 ) {
-  const path = `${repositoryPath(task)}/actions/runs/${runId}/concurrency_groups?per_page=100`;
+  const isDispatchTriggered = eventName === 'workflow_dispatch';
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const data = await api.requestOk(path);
     try {
-      return validateBrokerConcurrencyResponse(
-        data,
-        task,
-        runId,
-        suppliedGroup,
-      );
+      const result = isDispatchTriggered
+        ? await checkDispatchBrokerConcurrency(api, task, runId, suppliedGroup)
+        : await fetchAndValidateOwnListing(api, task, runId, suppliedGroup);
+      if (isDispatchTriggered) {
+        console.log(
+          '::notice::' +
+            `Dispatch-triggered broker run ${runId} verified concurrency ` +
+            `group ${suppliedGroup} indirectly (#348: GitHub never reports ` +
+            'concurrency-group membership for workflow_dispatch runs). No ' +
+            'other in-progress agent-router.yml run currently reports ' +
+            'holding it.',
+        );
+      }
+      return result;
     } catch (error) {
       const canRetry = error.retryable === true && attempt < maxAttempts;
       if (!canRetry) {
@@ -451,6 +560,7 @@ export {
   createGitHubApi,
   dispatchWorker,
   failClosed,
+  findConflictingRouterRun,
   findRunsForGeneration,
   findSupersedingRouterRun,
   getWorkflowRun,

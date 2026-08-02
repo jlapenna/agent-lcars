@@ -7,6 +7,7 @@ import {
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
+  findConflictingRouterRun,
   findSupersedingRouterRun,
   loadLedger,
   pinLedgerWhenUnoccupied,
@@ -225,6 +226,223 @@ test('verifyBrokerConcurrency throws immediately on a supplied-group/TaskRef mis
       error.retryable === false,
   );
   assert.equal(calls, 1);
+});
+
+// #348: GitHub's /actions/runs/{id}/concurrency_groups listing never
+// reports membership for workflow_dispatch-triggered runs (empirically
+// confirmed: 5/5 sampled dispatch runs, some hours old, returned zero
+// matches; every sampled issues-event run returned exactly one). Passing
+// eventName: 'workflow_dispatch' switches verifyBrokerConcurrency onto the
+// indirect path (findConflictingRouterRun / checkDispatchBrokerConcurrency)
+// instead of ever fetching this run's own (always-empty) listing.
+
+test('verifyBrokerConcurrency verifies a dispatch-triggered run indirectly and never fetches its own listing (#348)', async () => {
+  const group = brokerConcurrencyGroup(task);
+  const requests = [];
+  const api = {
+    requestOk: async (path) => {
+      requests.push(path);
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            { id: 8000, display_title: 'route #999: unrelated issue' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/8000/concurrency_groups')) {
+        return {
+          concurrency_groups: [{ group_name: 'a-totally-different-group' }],
+        };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const originalLog = console.log;
+  const logged = [];
+  console.log = (message) => logged.push(message);
+  let result;
+  try {
+    result = await verifyBrokerConcurrency(api, task, 9001, group, {
+      eventName: 'workflow_dispatch',
+      sleepImpl: async () => {
+        throw new Error('must not retry a clean pass');
+      },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(result.group_name, group);
+  assert.equal(
+    requests.some((path) =>
+      path.includes('/actions/runs/9001/concurrency_groups'),
+    ),
+    false,
+    'must never fetch its own run listing on the dispatch path',
+  );
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /^::notice::/u);
+  assert.match(logged[0], /indirectly/u);
+});
+
+test('verifyBrokerConcurrency retries a dispatch-triggered conflict and throws retryable after exhausting attempts (#348)', async () => {
+  const group = brokerConcurrencyGroup(task);
+  let calls = 0;
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        calls += 1;
+        return {
+          workflow_runs: [
+            { id: 9500, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9500/concurrency_groups')) {
+        return { concurrency_groups: [{ group_name: group }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const sleeps = [];
+  await assert.rejects(
+    () =>
+      verifyBrokerConcurrency(api, task, 9001, group, {
+        eventName: 'workflow_dispatch',
+        sleepImpl: async (ms) => {
+          sleeps.push(ms);
+        },
+      }),
+    (error) =>
+      error.name === 'BrokerConcurrencyMismatchError' &&
+      error.retryable === true &&
+      /9500/u.test(error.message) &&
+      new RegExp(`after ${CONCURRENCY_VERIFY_MAX_ATTEMPTS} attempts`, 'u').test(
+        error.message,
+      ),
+  );
+  assert.equal(calls, CONCURRENCY_VERIFY_MAX_ATTEMPTS);
+  assert.deepEqual(
+    sleeps,
+    Array(CONCURRENCY_VERIFY_MAX_ATTEMPTS - 1).fill(
+      CONCURRENCY_VERIFY_RETRY_DELAY_MS,
+    ),
+  );
+});
+
+test('verifyBrokerConcurrency still enforces the supplied-group/TaskRef mismatch on the dispatch path, without retrying (#348)', async () => {
+  const group = brokerConcurrencyGroup(task);
+  const api = {
+    requestOk: async () => {
+      throw new Error('must not query GitHub at all for a config mismatch');
+    },
+  };
+  await assert.rejects(
+    () =>
+      verifyBrokerConcurrency(api, task, 9001, `${group}-wrong`, {
+        eventName: 'workflow_dispatch',
+        sleepImpl: async () => {
+          throw new Error('must not retry a config mismatch');
+        },
+      }),
+    (error) =>
+      error.name === 'BrokerConcurrencyMismatchError' &&
+      error.retryable === false,
+  );
+});
+
+test('findConflictingRouterRun finds another in-progress run that already holds the expected group', async () => {
+  const group = brokerConcurrencyGroup(task);
+  const requests = [];
+  const api = {
+    requestOk: async (path) => {
+      requests.push(path);
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            // Excluded: this is our own run.
+            { id: 9001, display_title: 'route #304: manual' },
+            // Newest candidate, checked first, but does not hold the group.
+            { id: 9010, display_title: 'route #304: labeled agent:claude' },
+            // Older candidate that genuinely holds the group.
+            { id: 9005, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9010/concurrency_groups')) {
+        return { concurrency_groups: [] };
+      }
+      if (path.includes('/actions/runs/9005/concurrency_groups')) {
+        return { concurrency_groups: [{ group_name: group.toUpperCase() }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const conflicting = await findConflictingRouterRun(api, task, 9001);
+  assert.equal(conflicting.id, 9005);
+  // Never asked about run 9001 (itself) and checked the newer non-matching
+  // candidate (9010) before the real conflict (9005), proving it doesn't
+  // stop at the first candidate and correctly excludes itself.
+  assert.deepEqual(
+    requests.filter((path) => path.includes('/concurrency_groups')),
+    [
+      `/repos/jlapenna/agent-lcars/actions/runs/9010/concurrency_groups?per_page=100`,
+      `/repos/jlapenna/agent-lcars/actions/runs/9005/concurrency_groups?per_page=100`,
+    ],
+  );
+});
+
+test('findConflictingRouterRun returns undefined when no other in-progress run holds the expected group', async () => {
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            { id: 9005, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/concurrency_groups')) {
+        return { concurrency_groups: [] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
+});
+
+test('findConflictingRouterRun skips a candidate whose own fetch fails rather than aborting the search', async () => {
+  const group = brokerConcurrencyGroup(task);
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            { id: 9010, display_title: 'route #304: labeled agent:codex' },
+            { id: 9005, display_title: 'route #304: labeled agent:claude' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9010/concurrency_groups')) {
+        throw new Error('transient fetch failure');
+      }
+      if (path.includes('/actions/runs/9005/concurrency_groups')) {
+        return { concurrency_groups: [{ group_name: group }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const conflicting = await findConflictingRouterRun(api, task, 9001);
+  assert.equal(conflicting.id, 9005);
 });
 
 test('findSupersedingRouterRun finds a strictly newer run that already holds the expected group (#344)', async () => {
