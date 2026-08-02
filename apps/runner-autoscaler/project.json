@@ -18,6 +18,15 @@
         "cwd": "apps/runner-autoscaler"
       }
     },
+    "test-race": {
+      "executor": "@naxodev/gonx:test",
+      "cache": true,
+      "dependsOn": ["generate", "^build"],
+      "inputs": ["goSource", "^goSource"],
+      "options": {
+        "race": true
+      }
+    },
     "docker-build": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
