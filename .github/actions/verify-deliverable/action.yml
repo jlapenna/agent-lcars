@@ -1,0 +1,60 @@
+name: Verify deliverable
+description: >-
+  Fail the job unless durable GitHub-side evidence exists that this
+  dispatch produced a visible deliverable, distinguishing a failed lookup
+  from a genuine "no deliverable found" (see verify-deliverable.sh).
+
+inputs:
+  token:
+    description: Token used for the gh/API lookups.
+    required: true
+  agent:
+    description: Agent name used in messages (e.g. Claude, Codex, OpenCode).
+    required: true
+  issue:
+    description: Issue or pull request number that anchors the work.
+    required: true
+  started-at:
+    description: UTC timestamp (from agent-setup's started-at output) marking when this run started.
+    required: true
+  mode:
+    description: Dispatch mode. Only 'reply' allows a bare comment to count as evidence.
+    required: true
+  expected-comment-login:
+    description: Bot login whose comment counts as reply-mode evidence.
+    required: true
+  exclude-pr-author:
+    description: >-
+      Login whose PRs are ignored (guards against crediting a concurrently
+      dispatched sibling pipeline's PR). Only enforced when mode is not
+      'reply' - a reply dispatch's anchor is explicit, so a post-start
+      update to a PR referencing it is valid evidence regardless of author.
+    required: false
+    default: ''
+  exclude-comment-id:
+    description: Comment ID to ignore, e.g. a scripted pickup comment that precedes any real evidence.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # This composite is only safe to invoke via `uses:` BEFORE the agent
+    # step runs. Called after it, use the pre-agent snapshot of
+    # verify-deliverable.sh instead (see claude.yml/codex.yml/opencode.yml's
+    # "Snapshot post-agent enforcement scripts" step) - a local composite
+    # resolves from the current working tree, which the agent has
+    # unrestricted Bash access to modify.
+    - name: Verify a deliverable exists
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        AGENT: ${{ inputs.agent }}
+        REPO: ${{ github.repository }}
+        NUM: ${{ inputs.issue }}
+        STARTED_AT: ${{ inputs.started-at }}
+        MODE: ${{ inputs.mode }}
+        EXPECTED_COMMENT_LOGIN: ${{ inputs.expected-comment-login }}
+        EXCLUDE_PR_AUTHOR: ${{ inputs.exclude-pr-author }}
+        EXCLUDE_COMMENT_ID: ${{ inputs.exclude-comment-id }}
+      run: bash "$GITHUB_ACTION_PATH/verify-deliverable.sh"

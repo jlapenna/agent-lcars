@@ -1,0 +1,39 @@
+name: Finalize telemetry sidecar
+description: >-
+  Stop the telemetry sidecar and ship its final `ended` doc with the
+  archived transcript, when the runner image provides it.
+
+inputs:
+  credentials-file-path:
+    description: Telemetry-writer credentials file path, from the matching telemetry-start call's output.
+    required: true
+  issue:
+    description: Issue or pull request number this run worked, forwarded to the sidecar.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Runner container teardown loses everything not already durably
+    # shipped (issue #24) - this is that last chance: stop the long-running
+    # sidecar (it must not race a doc write against this step's own
+    # authoritative one) and ship a final `ended` doc with the transcript
+    # archived to GCS, since the container disappears the moment the job
+    # ends. if: always() (on the caller's step) so a failed/errored agent
+    # run still gets finalized; continue-on-error: true so a broken finalize
+    # can never turn a healthy agent run red.
+    #
+    # This composite is only safe to invoke via `uses:` BEFORE the agent
+    # step runs. Called after it, use the pre-agent snapshot of
+    # telemetry-finalize.sh instead (see claude.yml/codex.yml/opencode.yml's
+    # "Snapshot post-agent enforcement scripts" step) - a local composite
+    # resolves from the current working tree, which the agent has
+    # unrestricted Bash access to modify.
+    - name: Finalize telemetry sidecar
+      shell: bash
+      continue-on-error: true
+      env:
+        WRITER_CREDENTIALS_FILE: ${{ inputs.credentials-file-path }}
+        RUN_ID: ${{ github.run_id }}
+        NUM: ${{ inputs.issue }}
+      run: bash "$GITHUB_ACTION_PATH/telemetry-finalize.sh"
