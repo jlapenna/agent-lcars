@@ -21,13 +21,51 @@ if [ "$JOB_STATUS" = "cancelled" ]; then
 else
   MSG="failed"
 fi
+# Left strict (no verify-then-decide): unlike the label/assignee mutations
+# below, "did this comment land" evidence is fuzzy - matching a comment back
+# to this exact call means searching recent comments for one that mentions
+# $RUN_ID, which can multi-match (retried runs, concurrent pipelines) or
+# miss (gh's own paginated/`since` list has its own edge cases). Not worth
+# it for #346: a genuine post failure here should still fail red.
 gh issue comment "$ISSUE_NUM" \
   --repo "$REPO" \
   --body "${MESSAGE_PREFIX}${AGENT} agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
+
 # Failure is a machine-authored parking path. Keep blocked state and
 # the selected agent label intact while adding both durable human
 # signals. The issue REST endpoints also work for PR anchors.
-gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
-  -f 'labels[]=status:needs-human' --silent
-gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-  -f "assignees[]=$MAINTAINER" --silent
+#
+# gh occasionally exits non-zero on these `--silent` calls AFTER the
+# mutation already landed - a response-body parse hiccup ("unexpected end
+# of JSON input"), not an API failure (#346, seen twice in production:
+# codex runs 30749363701 and 30759760688). Rather than fail an otherwise-
+# successful park over a parse hiccup, verify-then-decide on failure: re-read
+# the issue and only fail if the mutation is genuinely absent. A real
+# permission/API failure still fails red, because the verification read then
+# shows it missing too; if the verification read itself fails, that's
+# inconclusive (not confirmed-present), so it also fails red.
+if ! gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
+  -f 'labels[]=status:needs-human' --silent; then
+  if ! issue_json=$(gh api "repos/$REPO/issues/$ISSUE_NUM" 2>&1); then
+    echo "::error::Adding status:needs-human to #$ISSUE_NUM failed, and the verification re-read also failed: $issue_json"
+    exit 1
+  fi
+  if ! jq -e '[.labels[].name] | index("status:needs-human") != null' <<<"$issue_json" >/dev/null; then
+    echo "::error::Adding status:needs-human to #$ISSUE_NUM failed and verification confirms the label is absent."
+    exit 1
+  fi
+  echo "::notice::gh api response-parse hiccup adding status:needs-human to #$ISSUE_NUM, but verification shows the label landed (see #346)."
+fi
+
+if ! gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
+  -f "assignees[]=$MAINTAINER" --silent; then
+  if ! issue_json=$(gh api "repos/$REPO/issues/$ISSUE_NUM" 2>&1); then
+    echo "::error::Assigning $MAINTAINER to #$ISSUE_NUM failed, and the verification re-read also failed: $issue_json"
+    exit 1
+  fi
+  if ! jq -e --arg m "$MAINTAINER" '[.assignees[].login] | index($m) != null' <<<"$issue_json" >/dev/null; then
+    echo "::error::Assigning $MAINTAINER to #$ISSUE_NUM failed and verification confirms the assignment is absent."
+    exit 1
+  fi
+  echo "::notice::gh api response-parse hiccup assigning $MAINTAINER to #$ISSUE_NUM, but verification shows the assignment landed (see #346)."
+fi
