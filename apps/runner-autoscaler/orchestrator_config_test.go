@@ -686,3 +686,69 @@ func TestOrchestratorConfigRejectsBadAllowlistWithoutAnyFileMounts(t *testing.T)
 		t.Fatalf("expected allowlist rejection, got %v", err)
 	}
 }
+
+// buildOrchestratorRuntimes -> buildScaleSetRuntime -> Scaler is the seam that
+// carries fleet.placement settings into the object that actually reads them.
+// It had no coverage, and a field that stopped at Config was silently dropped
+// there: the readiness gate parsed, validated, passed --check-config, and then
+// did nothing, because hostReady saw an empty URL and refused every host it
+// was asked about. Assert the whole copied block, not just one field, so the
+// next addition that forgets this line fails here instead of in production.
+func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      docker: local", "      docker: local\n      require_readiness: true", 1)
+	body = strings.Replace(body, "  placement: {}", `  placement:
+    host_metrics_url_template: http://%s.example.invalid:9100/metrics
+    spark_metrics_url: http://spark.example.invalid:8000/metrics
+    readiness_metrics_url: http://readiness.example.invalid/metrics
+    readiness_metric: host_ci_ready
+    readiness_max_age: 5m`, 1)
+
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// buildScaleSetRuntime runs Config.Validate, which insists on credentials.
+	// They are irrelevant to the wiring under test, so supply a placeholder
+	// token rather than reaching for real ones.
+	for i := range resolved.ScaleSets {
+		resolved.ScaleSets[i].Token = "placeholder-not-a-real-token"
+	}
+
+	hosts := []DockerHost{{Name: "janeway"}}
+	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.WorkDirSizeCaps, resolved.DockerSocketGID, resolved.Weights, nil)
+	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtimes) == 0 {
+		t.Fatal("expected at least one scale-set runtime")
+	}
+
+	for _, rt := range runtimes {
+		s := rt.scaler
+		if s.readinessMetricsURL != "http://readiness.example.invalid/metrics" {
+			t.Errorf("scale set %q: readinessMetricsURL = %q, want it carried through from fleet.placement", s.scaleSetName, s.readinessMetricsURL)
+		}
+		if s.readinessMetric != "host_ci_ready" {
+			t.Errorf("scale set %q: readinessMetric = %q, want host_ci_ready", s.scaleSetName, s.readinessMetric)
+		}
+		if s.readinessMaxAge != 5*time.Minute {
+			t.Errorf("scale set %q: readinessMaxAge = %v, want 5m", s.scaleSetName, s.readinessMaxAge)
+		}
+		// Neighbours in the same copied block, so this test guards the whole
+		// hand-off rather than only the field that broke.
+		if s.sparkMetricsURL != "http://spark.example.invalid:8000/metrics" {
+			t.Errorf("scale set %q: sparkMetricsURL = %q", s.scaleSetName, s.sparkMetricsURL)
+		}
+		if s.hostMetricsURLTemplate != "http://%s.example.invalid:9100/metrics" {
+			t.Errorf("scale set %q: hostMetricsURLTemplate = %q", s.scaleSetName, s.hostMetricsURLTemplate)
+		}
+	}
+
+	// And the per-host opt-in must reach the coordinator the gate consults.
+	configureFleet(fleet, resolved)
+	if !fleet.readinessRequired["janeway"] {
+		t.Errorf("readinessRequired not propagated to the coordinator: %#v", fleet.readinessRequired)
+	}
+}
