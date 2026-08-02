@@ -59,6 +59,26 @@ GitHub write path, not the deployed console's own server action writing to
 GitHub through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`); that
 remains a separately-scoped write-path E2E fixture effort in `apps/console`.
 
+Cleanup above runs inside the same orchestrator process as the rest of the
+lifecycle (a `try`/`catch` around create-dispatch-poll), so it cannot
+survive that process being killed outright -- a job-level `timeout-minutes`
+or a workflow/run cancellation tears down the runner before any further JS
+executes, identical to the failure mode the epic design audit (#301)
+describes for `deploy-console.yml`'s own job. Neither canary orchestrator
+embeds a real production deploy the way `deploy-console.yml` does, so
+there is no natural split into a separate same-workflow cleanup job here;
+instead, `dispatch-canary.yml`'s existing hourly run also sweeps stale
+canaries left behind by a previous run of either orchestrator
+(`run.mjs`'s `sweepStaleCanaries`, `sweep-stale-canaries: true` only on
+that caller): it lists open issues, filters to this canary's own title
+prefix and marker, and for every candidate more than 30 minutes old --
+comfortably past both orchestrators' `LEDGER_POLL_TIMEOUT_MS` and
+`timeout-minutes: 15` budgets -- closes it if its ledger already shows a
+successful completion or parks `status:needs-human` otherwise. This is the
+deterministic-rediscovery scheduled/manual janitor backstop layer the
+design audit calls for; a killed run's issue is still found and either
+closed or flagged within one hour at the very most, not indefinitely.
+
 The wrapper starts the Nx process with an empty environment, a temporary
 `HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit
 allowlist. That list contains the build-time Firebase/Auth dummy values,

@@ -8,6 +8,13 @@ name: Dispatch Canary
 # closes the issue automatically. A failure leaves the issue open and parks
 # status:needs-human on it with evidence instead of closing it -- see
 # .github/actions/run-dispatch-canary.
+#
+# This run also sweeps any stale canary issue left behind by a *prior*
+# run of either this workflow or post-deploy-smoke.yml whose own job was
+# killed by a timeout or cancellation before it reached its own cleanup
+# (run.mjs's sweepStaleCanaries) -- this hourly cadence is the backstop
+# that guarantees "canary artifacts are automatically cleaned up" even
+# when the primary in-process cleanup never runs.
 
 on:
   schedule:
@@ -55,3 +62,4 @@ jobs:
         with:
           maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
           source: scheduled
+          sweep-stale-canaries: 'true'

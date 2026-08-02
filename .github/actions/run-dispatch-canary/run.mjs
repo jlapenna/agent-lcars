@@ -23,11 +23,13 @@ import {
 import {
   createGitHubApi,
   ensureNeedsHumanParked,
+  listAll,
   repositoryPath,
   validateDispatchResponse,
 } from '../dispatch-broker/github-api.mjs';
 
 const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
+const CANARY_TITLE_PREFIX = '[dispatch-canary]';
 const LIVE_URL_PROBE_MAX_ATTEMPTS = 5;
 const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
 const LEDGER_POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -37,6 +39,29 @@ const TERMINAL_REJECTED_STATES = new Set([
   'superseded',
   'superseded-by-close',
 ]);
+// A same-process try/catch (parkCanaryFailure in runDispatchCanary's own
+// catch block) cannot survive the orchestrator's own job being killed --
+// a job-level `timeout-minutes` or an operator/workflow cancellation tears
+// down the whole runner process, including anything still awaiting inside
+// pollCanaryLedger, before that catch block ever runs. Neither
+// dispatch-canary.yml (timeout-minutes: 15) nor post-deploy-smoke.yml
+// (timeout-minutes: 15) has a separate cleanup job to survive that -- this
+// canary is a small, self-contained workflow, not embedded in
+// deploy-console.yml's own job, so there is no natural place to split
+// "verify" and "cleanup" into two jobs the way the epic design audit (#301)
+// recommends for a job that also owns the production deploy itself.
+//
+// sweepStaleCanaries below is the deterministic-rediscovery backstop that
+// design explicitly calls for instead: dispatch-canary.yml runs it, hourly,
+// unconditionally, before creating its own new canary, so a killed run's
+// issue is found and closed/parked within one hour at the very most --
+// still "automatically cleaned up" per #307's acceptance bar, just not
+// synchronously. The threshold is comfortably beyond
+// LEDGER_POLL_TIMEOUT_MS (10 min) plus both orchestrators' own
+// timeout-minutes: 15 job budget and ordinary API/network overhead: an
+// open, marked canary issue older than this can only mean its own
+// orchestrator run never reached its own cleanup path.
+const STALE_CANARY_AGE_MS = 30 * 60 * 1000;
 
 function env(name, required = true) {
   const value = process.env[name];
@@ -128,6 +153,22 @@ async function dispatchRouterCanary(api, repository, issueNumber) {
   validateDispatchResponse(response, { repository });
 }
 
+// Shared by the live poll below and sweepStaleCanaries' one-shot read: find
+// this issue's ledger comment (if any) and the 'canary'-pipeline generation
+// within it. Returns undefined when no ledger comment exists yet, or none
+// of its generations is the canary pipeline.
+function findCanaryGeneration(comments, task) {
+  const ledgerComment = comments.find((comment) =>
+    comment.body?.includes(LEDGER_MARKER),
+  );
+  if (!ledgerComment) return undefined;
+  const ledger = parseLedgerComment(ledgerComment.body, task);
+  const generation = ledger.generations.find(
+    (candidate) => candidate.pipeline === 'canary',
+  );
+  return generation ? { ledger, generation } : undefined;
+}
+
 async function pollCanaryLedger(
   api,
   task,
@@ -144,20 +185,12 @@ async function pollCanaryLedger(
     const comments = await api.requestOk(
       `${root}/issues/${task.issue}/comments`,
     );
-    const ledgerComment = comments.find((comment) =>
-      comment.body?.includes(LEDGER_MARKER),
-    );
-    if (ledgerComment) {
-      const ledger = parseLedgerComment(ledgerComment.body, task);
-      const generation = ledger.generations.find(
-        (candidate) => candidate.pipeline === 'canary',
-      );
-      if (generation?.state === 'completed') {
-        return { ledger, generation };
-      }
-      if (generation && TERMINAL_REJECTED_STATES.has(generation.state)) {
-        return { ledger, generation, rejected: true };
-      }
+    const found = findCanaryGeneration(comments, task);
+    if (found?.generation.state === 'completed') {
+      return found;
+    }
+    if (found && TERMINAL_REJECTED_STATES.has(found.generation.state)) {
+      return { ...found, rejected: true };
     }
     await sleepImpl(intervalMs);
   }
@@ -204,6 +237,94 @@ async function parkCanaryFailure(api, task, maintainer, reason) {
     // actually matters; a lost diagnostic comment must not mask it.
   }
   await ensureNeedsHumanParked(api, task, maintainer);
+}
+
+// Deterministic-rediscovery backstop for an orchestrator run that never
+// reached its own runDispatchCanary catch block (job timeout, workflow
+// cancellation, runner loss -- see STALE_CANARY_AGE_MS above). Lists every
+// currently open issue (a single paginated, fully-consistent listing --
+// deliberately not the Search API: github-api.mjs's own discovery comment
+// notes the epic design audit explicitly rejected full-text/marker search
+// as a discovery mechanism because of search-index replication lag),
+// filters to this canary's own title prefix plus marker, and for every
+// candidate older than the threshold that is not already parked:
+//   - closes it (with evidence) if its ledger already shows a successful
+//     canary completion -- the orchestrator verified success but never got
+//     to call closeCanaryIssue itself;
+//   - otherwise parks status:needs-human, identical to parkCanaryFailure.
+// A per-issue failure is recorded and reported but never blocks sweeping
+// the remaining candidates.
+async function sweepStaleCanaries(
+  api,
+  repository,
+  repositoryId,
+  maintainer,
+  { now = () => Date.now(), ageMs = STALE_CANARY_AGE_MS } = {},
+) {
+  const root = repositoryPath({ repository });
+  const openIssues = await listAll(api, `${root}/issues?state=open`);
+  const stale = openIssues.filter((issue) => {
+    if (issue.pull_request) return false;
+    if (!issue.title?.startsWith(CANARY_TITLE_PREFIX)) return false;
+    if (!issue.body?.includes(CANARY_MARKER)) return false;
+    const ageMsActual = now() - Date.parse(issue.created_at);
+    return Number.isFinite(ageMsActual) && ageMsActual >= ageMs;
+  });
+
+  const swept = [];
+  for (const issue of stale) {
+    const alreadyParked = (issue.labels ?? []).some(
+      (label) =>
+        (typeof label === 'string' ? label : label.name) ===
+        'status:needs-human',
+    );
+    if (alreadyParked) continue;
+
+    const task = { repositoryId, repository, issue: issue.number };
+    try {
+      const comments = await api.requestOk(
+        `${root}/issues/${issue.number}/comments`,
+      );
+      const found = findCanaryGeneration(comments, task);
+      const conclusion = found?.generation?.attempt?.conclusion;
+      if (found?.generation.state === 'completed' && conclusion === 'success') {
+        await api.requestOk(`${root}/issues/${issue.number}/comments`, {
+          method: 'POST',
+          body: {
+            body:
+              "🧹 Swept by the scheduled canary janitor: this canary's own " +
+              'orchestrator run never returned (job timeout or workflow ' +
+              'cancellation), but its dispatch broker ledger shows ' +
+              `generation g${found.generation.generation} completed ` +
+              'successfully. Closing.',
+          },
+        });
+        await api.requestOk(`${root}/issues/${issue.number}`, {
+          method: 'PATCH',
+          body: { state: 'closed', state_reason: 'completed' },
+        });
+        swept.push({ issue: issue.number, outcome: 'closed' });
+      } else {
+        await parkCanaryFailure(
+          api,
+          task,
+          maintainer,
+          "Swept by the scheduled canary janitor: this canary's own " +
+            'orchestrator run never returned (job timeout or workflow ' +
+            'cancellation) and its dispatch broker ledger never reached ' +
+            'a successful terminal state.',
+        );
+        swept.push({ issue: issue.number, outcome: 'parked' });
+      }
+    } catch (error) {
+      swept.push({
+        issue: issue.number,
+        outcome: 'error',
+        error: error.message,
+      });
+    }
+  }
+  return swept;
 }
 
 async function runDispatchCanary({
@@ -277,6 +398,44 @@ async function main() {
   const runUrl = `${env('GITHUB_SERVER_URL')}/${repository}/actions/runs/${env('GITHUB_RUN_ID')}`;
   const deployRunUrl = env('DEPLOY_RUN_URL', false);
   const liveUrl = env('LIVE_URL', false);
+  const sweepStale = env('SWEEP_STALE', false) === 'true';
+
+  // The sweep is entirely best-effort with respect to the primary canary
+  // below: a listing failure (e.g. a transient GitHub API error) is caught
+  // here, not just a per-issue failure inside sweepStaleCanaries itself, so
+  // an unhealthy janitor pass can never prevent this run's own primary
+  // canary from creating, dispatching, and verifying. Any sweep problem is
+  // still surfaced loudly -- just after the primary result, never instead
+  // of it.
+  let sweepError;
+  if (sweepStale) {
+    try {
+      const swept = await sweepStaleCanaries(
+        api,
+        repository,
+        repositoryId,
+        maintainer,
+      );
+      const sweepFailures = swept.filter((entry) => entry.outcome === 'error');
+      for (const entry of swept) {
+        const marker = entry.outcome === 'error' ? '::error::' : '::notice::';
+        const detail = entry.error ? ` (${entry.error})` : '';
+        console.log(
+          `${marker}canary janitor: #${entry.issue} ${entry.outcome}${detail}`,
+        );
+      }
+      if (sweepFailures.length > 0) {
+        sweepError = new Error(
+          `Canary janitor sweep failed for ${sweepFailures.length} issue(s): ` +
+            sweepFailures.map((entry) => `#${entry.issue}`).join(', '),
+        );
+      }
+    } catch (error) {
+      console.log(`::error::canary janitor sweep aborted: ${error.message}`);
+      sweepError = error;
+    }
+  }
+
   const result = await runDispatchCanary({
     api,
     repository,
@@ -288,6 +447,12 @@ async function main() {
     liveUrl,
   });
   await output('issue', String(result.issue));
+
+  // The primary canary lifecycle above always gets to run and report its
+  // own outcome first; a sweep failure still fails this job loud afterward
+  // rather than silently -- cleanup failure is itself a red required job,
+  // same convention as the primary canary's own parkCanaryFailure path.
+  if (sweepError) throw sweepError;
 }
 
 if (
@@ -306,4 +471,6 @@ export {
   pollCanaryLedger,
   probeLiveUrl,
   runDispatchCanary,
+  STALE_CANARY_AGE_MS,
+  sweepStaleCanaries,
 };

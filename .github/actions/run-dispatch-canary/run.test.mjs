@@ -15,7 +15,10 @@ import {
   pollCanaryLedger,
   probeLiveUrl,
   runDispatchCanary,
+  sweepStaleCanaries,
 } from './run.mjs';
+
+const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
 
 const tests = [];
 function test(name, run) {
@@ -70,6 +73,16 @@ function ledgerCommentWithGeneration({
     body: renderLedgerComment(ledger),
     user: { login: 'github-actions[bot]', type: 'Bot' },
   };
+}
+
+function openIssue({
+  number,
+  title = '[dispatch-canary] Production dispatch broker canary — x',
+  body = `stub\n\n${CANARY_MARKER}`,
+  createdAt = '2026-08-01T00:00:00.000Z',
+  labels = [],
+} = {}) {
+  return { number, title, body, created_at: createdAt, labels };
 }
 
 test('issueBody includes the canary marker, source, and both run links', () => {
@@ -393,6 +406,156 @@ test('runDispatchCanary skips the broker entirely and parks when the live URL pr
     true,
     'a live URL probe failure must still park status:needs-human on a created issue',
   );
+});
+
+test('sweepStaleCanaries closes a stale issue whose ledger already shows a successful canary completion', async () => {
+  const calls = [];
+  const issue = openIssue({ number: 950 });
+  const client = api(async (url, options) => {
+    calls.push({ url, method: options.method ?? 'GET' });
+    if (url.includes('/issues?state=open')) return response(200, [issue]);
+    if (
+      url.endsWith('/issues/950/comments') &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, [ledgerCommentWithGeneration({ issue: 950 })]);
+    }
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.deepEqual(swept, [{ issue: 950, outcome: 'closed' }]);
+  assert.ok(
+    calls.some((call) => call.method === 'PATCH'),
+    'expected the stale issue to be closed',
+  );
+  assert.equal(
+    calls.some(
+      (call) => call.method === 'POST' && call.url.includes('/labels'),
+    ),
+    false,
+    'a successfully-completed canary must never be parked',
+  );
+});
+
+test('sweepStaleCanaries parks status:needs-human for a stale issue whose ledger never completed', async () => {
+  const calls = [];
+  const issue = openIssue({ number: 951 });
+  const client = api(async (url, options) => {
+    calls.push({ url, method: options.method ?? 'GET' });
+    if (url.includes('/issues?state=open')) return response(200, [issue]);
+    if (
+      url.endsWith('/issues/951/comments') &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, []);
+    }
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.deepEqual(swept, [{ issue: 951, outcome: 'parked' }]);
+  assert.equal(
+    calls.some(
+      (call) => call.method === 'POST' && call.url.includes('/labels'),
+    ),
+    true,
+  );
+  assert.equal(
+    calls.some((call) => call.method === 'PATCH'),
+    false,
+    'an unverified stale canary must never be closed',
+  );
+});
+
+test('sweepStaleCanaries never touches an issue younger than the staleness threshold', async () => {
+  const issue = openIssue({
+    number: 952,
+    createdAt: '2026-08-01T00:50:00.000Z',
+  });
+  let touchedBeyondListing = false;
+  const client = api(async (url) => {
+    if (url.includes('/issues?state=open')) return response(200, [issue]);
+    touchedBeyondListing = true;
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z'); // 10 minutes old
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.deepEqual(swept, []);
+  assert.equal(touchedBeyondListing, false);
+});
+
+test('sweepStaleCanaries skips an already-parked stale issue without re-commenting', async () => {
+  const issue = openIssue({ number: 953, labels: ['status:needs-human'] });
+  let touchedBeyondListing = false;
+  const client = api(async (url) => {
+    if (url.includes('/issues?state=open')) return response(200, [issue]);
+    touchedBeyondListing = true;
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.deepEqual(swept, []);
+  assert.equal(touchedBeyondListing, false);
+});
+
+test('sweepStaleCanaries ignores open issues that are not its own marked canary', async () => {
+  const unrelated = openIssue({
+    number: 954,
+    title: 'Some unrelated bug report',
+    body: 'no canary marker in here',
+  });
+  let touchedBeyondListing = false;
+  const client = api(async (url) => {
+    if (url.includes('/issues?state=open')) return response(200, [unrelated]);
+    touchedBeyondListing = true;
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.deepEqual(swept, []);
+  assert.equal(touchedBeyondListing, false);
+});
+
+test('sweepStaleCanaries records a per-issue failure without blocking the remaining candidates', async () => {
+  const failing = openIssue({ number: 955 });
+  const healthy = openIssue({ number: 956 });
+  const client = api(async (url, options) => {
+    if (url.includes('/issues?state=open'))
+      return response(200, [failing, healthy]);
+    if (
+      url.endsWith('/issues/955/comments') &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      throw new Error('network blip');
+    }
+    if (
+      url.endsWith('/issues/956/comments') &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, []);
+    }
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.equal(swept.length, 2);
+  assert.equal(swept[0].issue, 955);
+  assert.equal(swept[0].outcome, 'error');
+  assert.match(swept[0].error, /network blip/u);
+  assert.deepEqual(swept[1], { issue: 956, outcome: 'parked' });
 });
 
 test('the canary ledger comment marker matches the real broker ledger marker', () => {

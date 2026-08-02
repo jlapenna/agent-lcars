@@ -24,6 +24,15 @@ inputs:
       canary, which has no specific deploy to validate).
     required: false
     default: ''
+  sweep-stale-canaries:
+    description: >-
+      When 'true', sweep and clean up open canary issues from a prior run
+      whose own orchestrator never returned (job timeout, workflow
+      cancellation, runner loss) before creating this run's own canary.
+      Set only on the hourly scheduled caller (dispatch-canary.yml) so the
+      backstop itself runs on a reliable, unconditional cadence.
+    required: false
+    default: 'false'
 
 outputs:
   issue:
@@ -45,4 +54,5 @@ runs:
         CANARY_SOURCE: ${{ inputs.source }}
         DEPLOY_RUN_URL: ${{ inputs.deploy-run-url }}
         LIVE_URL: ${{ inputs.live-url }}
+        SWEEP_STALE: ${{ inputs.sweep-stale-canaries }}
       run: node "$GITHUB_ACTION_PATH/run.mjs"
