@@ -7,12 +7,36 @@ import {
 
 const API_VERSION = '2026-03-10';
 
+// The concurrency-group listing is populated asynchronously by GitHub after
+// a run starts, so `verifyBrokerConcurrency` can observe the group as
+// "not yet present" even for a run that will report it moments later
+// (issue #340). Bound the wait instead of failing on the first miss.
+const CONCURRENCY_VERIFY_MAX_ATTEMPTS = 5;
+const CONCURRENCY_VERIFY_RETRY_DELAY_MS = 3_000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class GitHubApiError extends Error {
   constructor(message, status, data) {
     super(message);
     this.name = 'GitHubApiError';
     this.status = status;
     this.data = data;
+  }
+}
+
+// Thrown by `validateBrokerConcurrencyResponse`. `retryable` marks the one
+// failure mode that eventual consistency can explain on its own — the
+// expected group simply hasn't materialized in the listing yet. Every other
+// failure mode (config mismatch, malformed response, more than one match)
+// is a real anomaly and must never be retried.
+class BrokerConcurrencyMismatchError extends Error {
+  constructor(message, { retryable = false } = {}) {
+    super(message);
+    this.name = 'BrokerConcurrencyMismatchError';
+    this.retryable = retryable;
   }
 }
 
@@ -97,14 +121,21 @@ function brokerConcurrencyGroup(task) {
 function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
   const expected = brokerConcurrencyGroup(task);
   if (suppliedGroup !== expected) {
-    throw new Error('Broker concurrency output does not match its TaskRef');
+    // A config mismatch between the run's own group and its TaskRef is
+    // never explained by listing lag — it means the two disagree right now
+    // and will keep disagreeing on every retry.
+    throw new BrokerConcurrencyMismatchError(
+      'Broker concurrency output does not match its TaskRef',
+    );
   }
   if (
     !Number.isSafeInteger(runId) ||
     runId <= 0 ||
     !Array.isArray(data?.concurrency_groups)
   ) {
-    throw new Error('Malformed broker concurrency-group response');
+    throw new BrokerConcurrencyMismatchError(
+      'Malformed broker concurrency-group response',
+    );
   }
   const matching = data.concurrency_groups.filter(
     (group) =>
@@ -112,18 +143,54 @@ function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
       group.group_name.toLowerCase() === expected.toLowerCase(),
   );
   if (matching.length !== 1) {
-    throw new Error(
+    // Zero matches is the eventually-consistent case: the listing hasn't
+    // caught up with this run yet, and a later attempt can still succeed.
+    // More than one match is a real anomaly (e.g. a stale/duplicate group)
+    // that retrying cannot fix.
+    throw new BrokerConcurrencyMismatchError(
       'Broker run does not report the expected concurrency group',
+      { retryable: matching.length === 0 },
     );
   }
   return matching[0];
 }
 
-async function verifyBrokerConcurrency(api, task, runId, suppliedGroup) {
-  const data = await api.requestOk(
-    `${repositoryPath(task)}/actions/runs/${runId}/concurrency_groups?per_page=100`,
+async function verifyBrokerConcurrency(
+  api,
+  task,
+  runId,
+  suppliedGroup,
+  {
+    maxAttempts = CONCURRENCY_VERIFY_MAX_ATTEMPTS,
+    retryDelayMs = CONCURRENCY_VERIFY_RETRY_DELAY_MS,
+    sleepImpl = sleep,
+  } = {},
+) {
+  const path = `${repositoryPath(task)}/actions/runs/${runId}/concurrency_groups?per_page=100`;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const data = await api.requestOk(path);
+    try {
+      return validateBrokerConcurrencyResponse(
+        data,
+        task,
+        runId,
+        suppliedGroup,
+      );
+    } catch (error) {
+      const canRetry = error.retryable === true && attempt < maxAttempts;
+      if (!canRetry) {
+        if (attempt > 1) {
+          error.message = `${error.message} (after ${attempt} attempts)`;
+        }
+        throw error;
+      }
+      await sleepImpl(retryDelayMs);
+    }
+  }
+  // Unreachable: the loop always returns or throws on its final attempt.
+  throw new BrokerConcurrencyMismatchError(
+    'Broker run does not report the expected concurrency group',
   );
-  return validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup);
 }
 
 async function listAll(api, path) {
@@ -315,6 +382,9 @@ async function failClosed(api, task, maintainer, message) {
 export {
   API_VERSION,
   brokerConcurrencyGroup,
+  BrokerConcurrencyMismatchError,
+  CONCURRENCY_VERIFY_MAX_ATTEMPTS,
+  CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
   dispatchWorker,
   failClosed,
