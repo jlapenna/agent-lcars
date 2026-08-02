@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 201,
+    "labels": [{ "name": "agent:claude" }]
+  },
+  "comment": {
+    "body": "@claude please continue with this.",
+    "user": { "login": "maintainer-bot", "type": "User" },
+    "author_association": "OWNER"
+  }
+}

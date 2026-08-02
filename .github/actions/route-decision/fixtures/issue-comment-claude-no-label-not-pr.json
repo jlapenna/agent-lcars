@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 203,
+    "labels": []
+  },
+  "comment": {
+    "body": "@claude can you help?",
+    "user": { "login": "maintainer-bot", "type": "User" },
+    "author_association": "OWNER"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "action": "labeled",
+  "issue": {
+    "number": 103,
+    "labels": [{ "name": "agent:opencode" }]
+  },
+  "label": { "name": "agent:opencode" },
+  "sender": { "login": "maintainer-bot" }
+}

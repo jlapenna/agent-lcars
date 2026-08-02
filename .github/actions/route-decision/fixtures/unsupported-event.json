@@ -1,0 +1,5 @@
+{
+  "action": "opened",
+  "pull_request": { "number": 501 },
+  "sender": { "login": "maintainer-bot" }
+}

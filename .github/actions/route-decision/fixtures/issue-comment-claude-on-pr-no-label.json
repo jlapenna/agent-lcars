@@ -1,0 +1,15 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 202,
+    "labels": [],
+    "pull_request": {
+      "url": "https://api.github.com/repos/example/repo/pulls/202"
+    }
+  },
+  "comment": {
+    "body": "@claude fix the failing check.",
+    "user": { "login": "maintainer-bot", "type": "User" },
+    "author_association": "OWNER"
+  }
+}

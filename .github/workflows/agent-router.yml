@@ -41,36 +41,22 @@ permissions:
 
 jobs:
   route:
+    # Cheap coarse gate only - avoid spinning up a runner for obvious noise
+    # (an unsupported event, or the very common case of a bot commenting on
+    # an issue/PR). The full authorization/command matrix, including the
+    # MAINTAINER_LOGIN actor check and author_association check, lives
+    # entirely in .github/actions/route-decision/route-decision.sh (tested
+    # by route-decision.test.sh), which is the source of truth and
+    # re-validates everything below independently. Keep this permissive.
     if: >
-      (github.event_name == 'issues' && github.event.action == 'labeled' &&
-       github.actor == vars.MAINTAINER_LOGIN &&
-       startsWith(github.event.label.name, 'agent:')) ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.action == 'labeled') ||
       (github.event_name == 'issue_comment' &&
        github.event.action == 'created' &&
-       github.event.comment.user.type != 'Bot' &&
-       github.event.comment.author_association == 'OWNER' &&
-       ((contains(github.event.comment.body, '@claude') &&
-         (contains(github.event.issue.labels.*.name, 'agent:claude') ||
-          github.event.issue.pull_request != null)) ||
-        (contains(github.event.comment.body, '/codex') &&
-         contains(github.event.issue.labels.*.name, 'agent:codex')) ||
-        ((contains(github.event.comment.body, '/opencode') ||
-          contains(github.event.comment.body, '/oc')) &&
-         contains(github.event.issue.labels.*.name, 'agent:opencode')))) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.issue != '' && github.event.inputs.pipeline != '')
+       github.event.comment.user.type != 'Bot')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # This job's own `if:` above also reads MAINTAINER_LOGIN, but only on
-      # the `issues`/labeled branch of the OR - the issue_comment and
-      # workflow_dispatch branches don't touch it. A step can only run once
-      # the job has already started, so on a labeled-event run with an
-      # empty/unset MAINTAINER_LOGIN, `github.actor == ''` never matches and
-      # the `if:` skips the job before this assert can fire; this assert
-      # only guarantees the loud failure on runs that do reach this step
-      # (issue_comment and workflow_dispatch runs, and any labeled-event run
-      # where the actor check already passed).
       - name: Assert required repo variables are set
         env:
           MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
@@ -80,87 +66,66 @@ jobs:
             exit 1
           fi
 
-      - name: Dispatch the selected agent
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # route-decision.sh is a pure decision function with no network
+      # access, so the one live GitHub read it depends on - the current
+      # label snapshot, with a re-fetch fallback when the event payload's
+      # own snapshot is empty - is resolved here and passed in.
+      - name: Resolve current issue labels
+        id: labels
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE: ${{ github.event.issue.number }}
-          LABEL: ${{ github.event.label.name }}
-          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          COMMENT_USER_TYPE: ${{ github.event.comment.user.type }}
-          COMMENT_AUTHOR_ASSOC: ${{ github.event.comment.author_association }}
-          IS_PR_COMMENT: ${{ github.event.issue.pull_request != null }}
-          INPUT_ISSUE: ${{ github.event.inputs.issue }}
-          INPUT_PIPELINE: ${{ github.event.inputs.pipeline }}
-          INPUT_MODE: ${{ github.event.inputs.mode }}
-          INPUT_RUNBOOK: ${{ github.event.inputs.runbook }}
-          INPUT_CONTEXT: ${{ github.event.inputs.context }}
           REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          INPUT_ISSUE: ${{ github.event.inputs.issue }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
         run: |
           set -euo pipefail
-          ISSUE="${ISSUE:-$INPUT_ISSUE}"
-          LABEL="${LABEL:-agent:$INPUT_PIPELINE}"
-          MODE="${INPUT_MODE:-implement}"
-          if [[ -z "$LABELS" && -n "$ISSUE" ]]; then
-            LABELS=$(gh issue view "$ISSUE" --repo "$REPO" --json labels --jq '[.labels[].name] | join(",")')
+          issue="${ISSUE:-$INPUT_ISSUE}"
+          resolved_labels="$LABELS"
+          if [[ -z "$resolved_labels" && -n "$issue" ]]; then
+            resolved_labels=$(gh issue view "$issue" --repo "$REPO" --json labels --jq '[.labels[].name] | join(",")')
           fi
+          echo "labels=$resolved_labels" >> "$GITHUB_OUTPUT"
 
-          has_label() {
-            [[ ",${LABELS}," == *",$1,"* ]]
-          }
+      - name: Compute route decision
+        id: route
+        uses: ./.github/actions/route-decision
+        with:
+          maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
+          labels: ${{ steps.labels.outputs.labels }}
 
-          select_agent() {
-            local pipeline="$1"
-            local selected="agent:$pipeline"
-            for agent_label in agent:claude agent:codex agent:opencode; do
-              if [[ "$agent_label" != "$selected" ]] && has_label "$agent_label"; then
-                gh issue edit "$ISSUE" --repo "$REPO" --remove-label "$agent_label"
-              fi
-            done
-            for stale_status in status:ready-for-agent status:needs-human; do
-              if has_label "$stale_status"; then
-                gh issue edit "$ISSUE" --repo "$REPO" --remove-label "$stale_status"
-              fi
-            done
-            LABEL="$selected"
-          }
+      - name: Update issue labels for the routed agent
+        if: steps.route.outputs.dispatch == 'true' && steps.route.outputs['labels-to-remove'] != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ steps.route.outputs.issue }}
+          LABELS_TO_REMOVE: ${{ steps.route.outputs['labels-to-remove'] }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra labels <<< "$LABELS_TO_REMOVE"
+          for label in "${labels[@]}"; do
+            [[ -z "$label" ]] && continue
+            gh issue edit "$ISSUE" --repo "$REPO" --remove-label "$label"
+          done
 
-          if [[ "${GITHUB_EVENT_NAME:-}" == "issue_comment" ]]; then
-            if [[ "$COMMENT_USER_TYPE" == "Bot" || "$COMMENT_AUTHOR_ASSOC" != "OWNER" ]]; then
-              echo "No dispatch: comment is not from the repository owner."
-              exit 0
-            fi
-            if [[ "$COMMENT_BODY" == *"@claude"* ]] &&
-               { has_label agent:claude || [[ "$IS_PR_COMMENT" == "true" ]]; }; then
-              select_agent claude
-              MODE=reply
-            elif [[ "$COMMENT_BODY" == *"/codex"* ]] && has_label agent:codex; then
-              select_agent codex
-              MODE=reply
-            elif [[ ("$COMMENT_BODY" == *"/opencode"* || "$COMMENT_BODY" == *"/oc"*) ]] &&
-                 has_label agent:opencode; then
-              select_agent opencode
-              MODE=reply
-            else
-              echo "No dispatch: comment has no authorized agent command."
-              exit 0
-            fi
-          fi
-          if [[ "${GITHUB_EVENT_NAME:-}" == "issues" ]]; then
-            select_agent "${LABEL#agent:}"
-          fi
-
-          workflow=""
-          case "$LABEL" in
-            agent:claude) workflow=claude.yml ;;
-            agent:codex) workflow=codex.yml ;;
-            agent:opencode) workflow=opencode.yml ;;
-          esac
-          if [[ -z "$workflow" ]]; then
-            echo "No dispatch: unsupported agent label $LABEL."
-            exit 0
-          fi
-          echo "Dispatching $workflow for issue #$ISSUE."
-          gh workflow run "$workflow" --repo "$REPO" --ref main \
+      - name: Dispatch the selected agent
+        if: steps.route.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ steps.route.outputs.workflow }}
+          ISSUE: ${{ steps.route.outputs.issue }}
+          MODE: ${{ steps.route.outputs.mode }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          INPUT_RUNBOOK: ${{ github.event.inputs.runbook }}
+          INPUT_CONTEXT: ${{ github.event.inputs.context }}
+        run: |
+          set -euo pipefail
+          echo "Dispatching $WORKFLOW for issue #$ISSUE."
+          gh workflow run "$WORKFLOW" --repo "$REPO" --ref main \
             -f issue="$ISSUE" -f mode="$MODE" -f reply="$COMMENT_BODY" \
             -f runbook="$INPUT_RUNBOOK" -f context="$INPUT_CONTEXT"

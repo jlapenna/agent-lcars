@@ -1,0 +1,59 @@
+name: Route decision
+description: >-
+  Decide whether the agent router should dispatch a worker pipeline for the
+  triggering event, and to which one. This is the single, tested
+  implementation of the router's authorization/command matrix -- see
+  route-decision.sh for the full rules and route-decision.test.sh for
+  coverage.
+
+inputs:
+  maintainer-login:
+    description: >-
+      Login authorized to route issues by applying an agent:* label
+      (repo var MAINTAINER_LOGIN).
+    required: true
+  labels:
+    description: >-
+      Comma-joined labels currently on the anchor issue/PR. The caller
+      resolves this (including any live re-fetch fallback when the event
+      payload's label snapshot is empty) so this action stays a pure
+      decision function with no network access.
+    required: false
+    default: ''
+
+outputs:
+  dispatch:
+    description: "'true' when a worker pipeline should be dispatched, 'false' otherwise."
+    value: ${{ steps.decide.outputs.dispatch }}
+  pipeline:
+    description: Selected agent pipeline (claude, codex, opencode), or empty when dispatch is false.
+    value: ${{ steps.decide.outputs.pipeline }}
+  mode:
+    description: Dispatch mode (implement or reply) passed through to the worker.
+    value: ${{ steps.decide.outputs.mode }}
+  issue:
+    description: Issue or pull request number to route.
+    value: ${{ steps.decide.outputs.issue }}
+  workflow:
+    description: Worker workflow file to dispatch (claude.yml, codex.yml, opencode.yml).
+    value: ${{ steps.decide.outputs.workflow }}
+  labels-to-remove:
+    description: >-
+      Comma-joined labels to strip from the issue after routing (competing
+      agent:* labels and stale status:* labels), empty when there is
+      nothing to remove.
+    value: ${{ steps.decide.outputs['labels-to-remove'] }}
+  reason:
+    description: Human-readable reason for the decision, for logging only.
+    value: ${{ steps.decide.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Decide route
+      id: decide
+      shell: bash
+      env:
+        MAINTAINER_LOGIN: ${{ inputs.maintainer-login }}
+        LABELS: ${{ inputs.labels }}
+      run: bash "$GITHUB_ACTION_PATH/route-decision.sh"

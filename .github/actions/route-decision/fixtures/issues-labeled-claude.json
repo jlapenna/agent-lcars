@@ -1,0 +1,9 @@
+{
+  "action": "labeled",
+  "issue": {
+    "number": 101,
+    "labels": [{ "name": "agent:claude" }, { "name": "type:bug" }]
+  },
+  "label": { "name": "agent:claude" },
+  "sender": { "login": "maintainer-bot" }
+}

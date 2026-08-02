@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 210,
+    "labels": [{ "name": "agent:codex" }]
+  },
+  "comment": {
+    "body": "/codex please go ahead.",
+    "user": { "login": "maintainer-bot", "type": "User" },
+    "author_association": "OWNER"
+  }
+}

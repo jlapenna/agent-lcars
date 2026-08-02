@@ -1,0 +1,9 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 106,
+    "labels": [{ "name": "agent:claude" }]
+  },
+  "label": { "name": "agent:claude" },
+  "sender": { "login": "maintainer-bot" }
+}

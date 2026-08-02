@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 223,
+    "labels": [{ "name": "agent:opencode" }]
+  },
+  "comment": {
+    "body": "Can we use /octopus instead of the CLI here?",
+    "user": { "login": "maintainer-bot", "type": "User" },
+    "author_association": "OWNER"
+  }
+}

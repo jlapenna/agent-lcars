@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 232,
+    "labels": [{ "name": "agent:claude" }]
+  },
+  "comment": {
+    "body": "Just a regular comment with no agent command in it.",
+    "user": { "login": "maintainer-bot", "type": "User" },
+    "author_association": "OWNER"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "inputs": {
+    "issue": "",
+    "pipeline": "",
+    "mode": "",
+    "runbook": "",
+    "context": ""
+  },
+  "sender": { "login": "maintainer-bot" }
+}

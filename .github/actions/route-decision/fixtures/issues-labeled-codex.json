@@ -1,0 +1,9 @@
+{
+  "action": "labeled",
+  "issue": {
+    "number": 102,
+    "labels": [{ "name": "agent:codex" }, { "name": "app:runner-autoscaler" }]
+  },
+  "label": { "name": "agent:codex" },
+  "sender": { "login": "maintainer-bot" }
+}

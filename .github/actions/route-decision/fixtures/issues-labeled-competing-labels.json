@@ -1,0 +1,15 @@
+{
+  "action": "labeled",
+  "issue": {
+    "number": 105,
+    "labels": [
+      { "name": "agent:codex" },
+      { "name": "agent:claude" },
+      { "name": "status:needs-human" },
+      { "name": "status:ready-for-agent" },
+      { "name": "type:bug" }
+    ]
+  },
+  "label": { "name": "agent:codex" },
+  "sender": { "login": "maintainer-bot" }
+}

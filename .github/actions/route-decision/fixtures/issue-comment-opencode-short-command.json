@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 221,
+    "labels": [{ "name": "agent:opencode" }]
+  },
+  "comment": {
+    "body": "/oc",
+    "user": { "login": "maintainer-bot", "type": "User" },
+    "author_association": "OWNER"
+  }
+}

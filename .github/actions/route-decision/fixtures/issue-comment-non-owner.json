@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 231,
+    "labels": [{ "name": "agent:claude" }]
+  },
+  "comment": {
+    "body": "@claude please continue.",
+    "user": { "login": "some-contributor", "type": "User" },
+    "author_association": "CONTRIBUTOR"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 230,
+    "labels": [{ "name": "agent:claude" }]
+  },
+  "comment": {
+    "body": "@claude please continue.",
+    "user": { "login": "agent-lcars[bot]", "type": "Bot" },
+    "author_association": "OWNER"
+  }
+}

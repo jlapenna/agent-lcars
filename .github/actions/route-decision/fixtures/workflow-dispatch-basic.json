@@ -1,0 +1,10 @@
+{
+  "inputs": {
+    "issue": "401",
+    "pipeline": "codex",
+    "mode": "reply",
+    "runbook": "",
+    "context": "deployment sha abc123"
+  },
+  "sender": { "login": "maintainer-bot" }
+}
