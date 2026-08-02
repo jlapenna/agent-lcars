@@ -15,8 +15,19 @@ import { describe, expect, it } from 'vitest';
  * exist"/"Decision" sections).
  *
  * This is NOT a real parser - it is a line-window heuristic:
+ *  - Comment text is stripped first (see `stripComments`) so an
+ *    *explanatory* comment mentioning "app/" or "[bot]" - like the one
+ *    right above the real callsite this rule is modeled on, in
+ *    agent-automerge.yml's close-orphaned-anchors job - can never stand in
+ *    for the normalization it describes. Without this, a stale comment left
+ *    behind after someone deleted the real normalization code would keep
+ *    the check silently passing - the exact failure mode this whole test
+ *    exists to prevent, just one level removed. See the
+ *    "explanatory comment is not normalization" test below for the
+ *    regression this guards.
  *  - Detects a GraphQL-author signal line (`--json ...author...` or
- *    `.author.login`) via regex against each workflow file's raw text.
+ *    `.author.login`) via regex against each workflow file's comment-
+ *    stripped text.
  *  - Looks for a REST-shaped comparison signal (`AGENT_BOT_LOGINS`,
  *    `AGENT_FLEET_LOGIN`, a `[bot]` literal) within a fixed window of lines
  *    around it - a proxy for "the same step", chosen over parsing step
@@ -26,7 +37,7 @@ import { describe, expect, it } from 'vitest';
  *    or the equivalent jq conditional already in use in this repo
  *    (`startswith("app/")` swapped for `[bot]` - see agent-automerge.yml's
  *    close-orphaned-anchors job), detected as "app/" and "[bot]" both
- *    appearing somewhere in the window.
+ *    appearing somewhere in the (comment-stripped) window.
  *
  * Known limitations (why this stays a heuristic, not a real check):
  *  - The GraphQL-signal regex only looks within a single line, so a
@@ -38,6 +49,12 @@ import { describe, expect, it } from 'vitest';
  *    violation). In this repo's current handful of small workflow files
  *    that has not been observed; revisit with real step-boundary parsing if
  *    it ever produces a false negative in practice.
+ *  - `stripComments` tracks `'`/`"` quote state to avoid treating a `#`
+ *    inside a string as a comment marker, but it is a per-line heuristic,
+ *    not a real shell/YAML lexer - it does not understand escaped quotes
+ *    (`\"`) or a quote that spans multiple lines (e.g. inside a `jq '...'`
+ *    script broken across lines). Not observed to misfire on this repo's
+ *    current workflow files.
  *  - It only greps `.github/workflows/*.yml` (matching this contract's
  *    scope) - a violation inside a composite action under `.github/actions/`
  *    would not be caught.
@@ -70,7 +87,49 @@ interface Violation {
   seeDoc: 'docs/bot-identity-formats.md, section "Decision: standardize on REST shape"';
 }
 
-function findViolations(filePath: string, contents: string): Violation[] {
+/**
+ * Blanks out comment text so it can never satisfy a signal/normalization
+ * check on its own - a comment can describe the `app/`/`[bot]` shapes (or
+ * even literally show `--json author` as an example) without any of that
+ * code actually running. Preserves line count/position (comment-only lines
+ * become empty strings; inline trailing comments are truncated in place)
+ * so line numbers in reported violations stay accurate.
+ *
+ * A `#` only starts a comment when it is not inside a `'...'`/`"..."`
+ * string - tracked per-line via a simple left-to-right quote-state scan
+ * (see the "Known limitations" doc comment above this file's main comment
+ * block for what this does not handle).
+ */
+function stripComments(contents: string): string {
+  return contents
+    .split('\n')
+    .map((line) => {
+      let inSingle = false;
+      let inDouble = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === "'" && !inDouble) {
+          inSingle = !inSingle;
+        } else if (ch === '"' && !inSingle) {
+          inDouble = !inDouble;
+        } else if (ch === '#' && !inSingle && !inDouble) {
+          // A `#` at the very start of the line, or preceded by whitespace,
+          // is a comment marker (YAML/shell convention); a `#` glued to
+          // preceding text (e.g. a URL fragment or issue reference like
+          // `#175` used mid-sentence in code) is left alone since it is not
+          // reliably a comment start.
+          if (i === 0 || /\s/.test(line[i - 1])) {
+            return line.slice(0, i);
+          }
+        }
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+function findViolations(filePath: string, rawContents: string): Violation[] {
+  const contents = stripComments(rawContents);
   const lines = contents.split('\n');
   const violations: Violation[] = [];
 
@@ -124,4 +183,82 @@ describe('bot-identity shape contract (heuristic)', () => {
       expect(violations).toEqual([]);
     },
   );
+
+  // Fixtures below are hand-written, not read from the real workflow files -
+  // these prove the *heuristic itself* (comment-stripping in particular)
+  // behaves correctly, independent of what today's actual workflows happen
+  // to contain.
+  describe('comment-stripping (regression for a real review finding)', () => {
+    // Modeled on agent-automerge.yml's close-orphaned-anchors job: an
+    // explanatory comment describing the app/[bot] shapes, sitting directly
+    // above the real callsite. Before comment-stripping was added, this
+    // comment block alone was enough to satisfy the normalization check -
+    // so deleting the actual `startswith("app/")` transform below while
+    // leaving the comment in place went undetected.
+    const EXPLANATORY_COMMENT = [
+      '          # `gh pr list --json author` answers in the GRAPHQL shape',
+      '          # (`app/claude`) while AGENT_BOT_LOGINS is REST-shaped',
+      '          # (`claude[bot]`) - comparing them raw is exactly the silent',
+      '          # mismatch that broke #175, and docs/bot-identity-formats.md makes',
+      '          # REST canonical. Normalize before the membership test.',
+    ].join('\n');
+
+    it('flags a raw comparison when normalization code is missing but the explanatory comment remains', () => {
+      const fixture = [
+        '      - name: Close open anchors of recently-merged agent PRs',
+        '        env:',
+        "          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS || '[]' }}",
+        '        run: |',
+        EXPLANATORY_COMMENT,
+        '          gh pr list --repo "$REPO" --state merged --limit 50 \\',
+        '            --json number,author,mergedAt >/tmp/merged.json',
+        '',
+        // No `startswith("app/")` transform here - $raw (GraphQL-shaped) is
+        // compared directly against $bots (REST-shaped AGENT_BOT_LOGINS).
+        '          CANDIDATES=$(jq -r --argjson bots "$AGENT_BOT_LOGINS" \'',
+        '            .[] | .author.login as $raw',
+        '            | select($bots | index($raw) != null)',
+        "          ' /tmp/merged.json)",
+      ].join('\n');
+
+      const violations = findViolations('fixture.yml', fixture);
+
+      expect(violations.length).toBeGreaterThan(0);
+    });
+
+    it('does not flag the same shape when the real normalization code is present alongside the comment', () => {
+      const fixture = [
+        '      - name: Close open anchors of recently-merged agent PRs',
+        '        env:',
+        "          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS || '[]' }}",
+        '        run: |',
+        EXPLANATORY_COMMENT,
+        '          gh pr list --repo "$REPO" --state merged --limit 50 \\',
+        '            --json number,author,mergedAt >/tmp/merged.json',
+        '',
+        '          CANDIDATES=$(jq -r --argjson bots "$AGENT_BOT_LOGINS" \'',
+        '            .[] | .author.login as $raw',
+        '            | (if ($raw | startswith("app/")) then ($raw[4:] + "[bot]") else $raw end) as $login',
+        '            | select($bots | index($login) != null)',
+        "          ' /tmp/merged.json)",
+      ].join('\n');
+
+      const violations = findViolations('fixture.yml', fixture);
+
+      expect(violations).toEqual([]);
+    });
+
+    it('does not let a comment alone (with no real usage at all) trigger a false positive', () => {
+      const fixture = [
+        '      - name: Unrelated step',
+        '        run: |',
+        EXPLANATORY_COMMENT,
+        '          echo "just discussing the shapes, no gh call here"',
+      ].join('\n');
+
+      const violations = findViolations('fixture.yml', fixture);
+
+      expect(violations).toEqual([]);
+    });
+  });
 });
