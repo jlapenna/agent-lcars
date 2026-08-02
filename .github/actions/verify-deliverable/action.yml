@@ -24,7 +24,11 @@ inputs:
     description: Bot login whose comment counts as reply-mode evidence.
     required: true
   exclude-pr-author:
-    description: Login whose PRs are ignored (guards against crediting a concurrently dispatched sibling pipeline's PR).
+    description: >-
+      Login whose PRs are ignored (guards against crediting a concurrently
+      dispatched sibling pipeline's PR). Only enforced when mode is not
+      'reply' - a reply dispatch's anchor is explicit, so a post-start
+      update to a PR referencing it is valid evidence regardless of author.
     required: false
     default: ''
   exclude-comment-id:
@@ -35,6 +39,12 @@ inputs:
 runs:
   using: composite
   steps:
+    # This composite is only safe to invoke via `uses:` BEFORE the agent
+    # step runs. Called after it, use the pre-agent snapshot of
+    # verify-deliverable.sh instead (see claude.yml/codex.yml/opencode.yml's
+    # "Snapshot post-agent enforcement scripts" step) - a local composite
+    # resolves from the current working tree, which the agent has
+    # unrestricted Bash access to modify.
     - name: Verify a deliverable exists
       shell: bash
       env:

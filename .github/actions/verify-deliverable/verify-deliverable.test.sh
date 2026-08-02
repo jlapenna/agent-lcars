@@ -101,22 +101,44 @@ JSON
   esac
 )
 
-# --- Case 2: clause (a) excludes a sibling pipeline's PR by author ---
+# --- Case 2: clause (a) excludes a sibling pipeline's PR by author on an
+# implement dispatch (mode defaults to implement in base_env) ---
 (
   base_env
   export EXCLUDE_PR_AUTHOR="claude[bot]"
-  case_dir="$test_root/pr-excluded-author"
+  case_dir="$test_root/pr-excluded-author-implement"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
 [{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}}]
 JSON
-  run_case pr-excluded-author
-  test "$status" = 1 || fail "excluded-author PR must not satisfy clause (a)"
+  run_case pr-excluded-author-implement
+  test "$status" = 1 || fail "excluded-author PR must not satisfy clause (a) on an implement dispatch"
   case "$output" in
     *"no deliverable"*) ;;
     *) fail "excluded-author case should fall through to no-deliverable" ;;
   esac
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "excluded-author case should still be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 2b: clause (a) does NOT exclude by author on a reply dispatch -
+# the anchor is explicit, so an update to a PR referencing it is valid
+# evidence regardless of author (e.g. a @claude reply continuing a PR codex
+# originally opened must not be discarded as "not my PR") ---
+(
+  base_env
+  export MODE=reply
+  export EXCLUDE_PR_AUTHOR="claude[bot]"
+  case_dir="$test_root/pr-excluded-author-reply-bypass"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}}]
+JSON
+  run_case pr-excluded-author-reply-bypass
+  test "$status" = 0 || fail "an excluded-author PR must still satisfy clause (a) on a reply dispatch"
+  case "$output" in
+    *"Deliverable evidence: PR referencing #42"*) ;;
+    *) fail "reply-mode bypass message missing expected text" ;;
+  esac
 )
 
 # --- Case 3: clause (b) - issue closed since start ---

@@ -37,6 +37,13 @@ runs:
     # cover cancelled(): a timeout-minutes kill sets conclusion `cancelled`,
     # not `failure`, so the caller's `if: failure() || cancelled()` is
     # load-bearing, not this step's own condition.
+    #
+    # This composite is only safe to invoke via `uses:` BEFORE the agent
+    # step runs. Called after it, use the pre-agent snapshot of
+    # report-failure.sh instead (see claude.yml/codex.yml/opencode.yml's
+    # "Snapshot post-agent enforcement scripts" step) - a local composite
+    # resolves from the current working tree, which the agent has
+    # unrestricted Bash access to modify.
     - name: Report failure on the issue
       shell: bash
       env:
@@ -50,19 +57,4 @@ runs:
         REASON: ${{ inputs.reason }}
         JOB_STATUS: ${{ inputs.job-status }}
         MAINTAINER: ${{ inputs.maintainer }}
-      run: |
-        if [ "$JOB_STATUS" = "cancelled" ]; then
-          MSG="was cancelled (likely hit the 90-minute job timeout)"
-        else
-          MSG="failed"
-        fi
-        gh issue comment "$ISSUE_NUM" \
-          --repo "$REPO" \
-          --body "${MESSAGE_PREFIX}${AGENT} agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
-        # Failure is a machine-authored parking path. Keep blocked state and
-        # the selected agent label intact while adding both durable human
-        # signals. The issue REST endpoints also work for PR anchors.
-        gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
-          -f 'labels[]=status:needs-human' --silent
-        gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-          -f "assignees[]=$MAINTAINER" --silent
+      run: bash "$GITHUB_ACTION_PATH/report-failure.sh"

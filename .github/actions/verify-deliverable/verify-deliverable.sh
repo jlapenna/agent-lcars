@@ -4,7 +4,11 @@
 # job conclusion is never trusted on its own. A run passes if ANY of four
 # deliverable kinds exists:
 #   (a) an open/updated PR referencing #NUM, created or updated since
-#       STARTED_AT (covers new PRs AND pushes to existing ones);
+#       STARTED_AT (covers new PRs AND pushes to existing ones; on an
+#       implement dispatch, EXCLUDE_PR_AUTHOR keeps a concurrently
+#       dispatched sibling pipeline's PR from satisfying this clause, but
+#       that exclusion is skipped on a reply dispatch - see clause (a)
+#       below for why);
 #   (b) the issue was closed since STARTED_AT;
 #   (c) the status:needs-human label is present (the sanctioned blocked/
 #       clarifying-question ending); or
@@ -46,13 +50,18 @@ errors=()
 # EXCLUDE_PR_AUTHOR guards against crediting a different, concurrently
 # dispatched sibling pipeline's PR when two agents are testing against the
 # same issue - each workflow passes the OTHER pipelines' bot login here,
-# never its own.
+# never its own. Only applied on an implement dispatch, though: on a reply
+# dispatch the anchor (issue or PR) is explicit and dispatched deliberately
+# at that anchor, so an update to a PR referencing it is valid evidence
+# regardless of which pipeline authored the PR - excluding by author there
+# would discard a legitimate cross-agent takeover (e.g. this run is a
+# @claude reply continuing a PR codex originally opened).
 if [ -z "$found" ]; then
   if pr_json=$(gh api "repos/$REPO/pulls?state=all&sort=updated&direction=desc&per_page=50" 2>&1); then
     prs=$(jq -r \
-      --arg started "$STARTED_AT" --arg num "$NUM" --arg exclude "$EXCLUDE_PR_AUTHOR" \
+      --arg started "$STARTED_AT" --arg num "$NUM" --arg exclude "$EXCLUDE_PR_AUTHOR" --arg mode "$MODE" \
       '[.[] | select(.updated_at >= $started)
-             | select($exclude == "" or .user.login != $exclude)
+             | select($mode == "reply" or $exclude == "" or .user.login != $exclude)
              | select((.title + " " + (.body // "")) | test("#" + $num + "([^0-9]|$)"))]
        | length' <<<"$pr_json")
     if [ "${prs:-0}" -gt 0 ]; then
