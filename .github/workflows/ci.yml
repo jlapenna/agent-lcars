@@ -46,6 +46,9 @@ jobs:
       - name: Test deliverable verification
         run: bash .github/actions/verify-deliverable/verify-deliverable.test.sh
 
+      - name: Test failure reporting
+        run: bash .github/actions/report-failure/report-failure.test.sh
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
       - uses: pnpm/action-setup@v6
