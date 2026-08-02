@@ -40,15 +40,23 @@ vi.mock('@octokit/rest', async (importOriginal) => {
 
 describe('getGithubClient', () => {
   const TOKEN_ENV_KEY = 'AGENT_LCARS_GITHUB_TOKEN';
+  // Hoisted to beforeEach/afterEach (rather than set up and torn down
+  // inline in each test) so a failed assertion mid-test can never skip
+  // `mockRestore`/`unstubAllGlobals` and leak console.warn/fetch mock state
+  // into a later test.
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetModules();
     octokitConstructorSpy.mockClear();
     process.env[TOKEN_ENV_KEY] = 'test-token';
+    warnSpy = vi.spyOn(console, 'warn').mockReturnValue(undefined);
   });
 
   afterEach(() => {
     delete process.env[TOKEN_ENV_KEY];
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it('configures a bounded retry budget and rate-limit throttling', async () => {
@@ -74,7 +82,7 @@ describe('getGithubClient', () => {
     expect(octokitConstructorSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('retries a rate-limited request up to the bounded budget, then gives up', async () => {
+  it('retries a rate-limited request within the wait budget, up to the attempt budget, then gives up', async () => {
     const { getGithubClient } = await import('./github-client');
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
@@ -83,18 +91,40 @@ describe('getGithubClient', () => {
       url: 'https://api.github.com/repos/o/r',
     };
 
-    const warnSpy = vi.spyOn(console, 'warn').mockReturnValue(undefined);
-
-    expect(options.throttle.onRateLimit(30, fakeRequest, {}, 0)).toBe(true);
-    expect(options.throttle.onRateLimit(30, fakeRequest, {}, 1)).toBe(true);
-    expect(options.throttle.onRateLimit(30, fakeRequest, {}, 2)).toBe(false);
+    // retryAfter=5s is well within the 15s wait budget, so only the
+    // attempt-count budget (2) governs these.
+    expect(options.throttle.onRateLimit(5, fakeRequest, {}, 0)).toBe(true);
+    expect(options.throttle.onRateLimit(5, fakeRequest, {}, 1)).toBe(true);
+    expect(options.throttle.onRateLimit(5, fakeRequest, {}, 2)).toBe(false);
     expect(warnSpy).toHaveBeenCalledTimes(3);
-    expect(warnSpy.mock.calls[0][0]).toMatch(/^agent-lcars: GitHub rate limit/);
-
-    warnSpy.mockRestore();
+    expect(warnSpy.mock.calls[0][0]).toMatch(
+      /^agent-lcars: GitHub rate limit hit/,
+    );
+    // Last argument is the retrying/giving-up suffix.
+    expect(warnSpy.mock.calls[0].at(-1)).toMatch(/retrying/);
+    expect(warnSpy.mock.calls[2].at(-1)).toMatch(/giving up/);
   });
 
-  it('retries a secondary rate limit up to the bounded budget, then gives up', async () => {
+  it('declines a rate-limited retry whose retryAfter exceeds the wait budget, even on the first attempt', async () => {
+    const { getGithubClient } = await import('./github-client');
+    getGithubClient();
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    const fakeRequest = {
+      method: 'GET',
+      url: 'https://api.github.com/repos/o/r',
+    };
+
+    // GitHub's own retryAfter (120s) blows past the 15s wait budget - the
+    // throttling plugin would otherwise block its shared queue for the
+    // full 120s before timeoutFetch's own AbortSignal ever gets a turn.
+    expect(options.throttle.onRateLimit(120, fakeRequest, {}, 0)).toBe(false);
+    expect(warnSpy.mock.calls[0][0]).toMatch(
+      /^agent-lcars: GitHub rate limit hit/,
+    );
+    expect(warnSpy.mock.calls[0].at(-1)).toMatch(/giving up/);
+  });
+
+  it('retries a secondary rate limit within the wait budget, up to the attempt budget, then gives up', async () => {
     const { getGithubClient } = await import('./github-client');
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
@@ -103,20 +133,76 @@ describe('getGithubClient', () => {
       url: 'https://api.github.com/graphql',
     };
 
-    const warnSpy = vi.spyOn(console, 'warn').mockReturnValue(undefined);
-
-    expect(options.throttle.onSecondaryRateLimit(60, fakeRequest, {}, 0)).toBe(
+    expect(options.throttle.onSecondaryRateLimit(10, fakeRequest, {}, 0)).toBe(
       true,
     );
-    expect(options.throttle.onSecondaryRateLimit(60, fakeRequest, {}, 2)).toBe(
+    expect(options.throttle.onSecondaryRateLimit(10, fakeRequest, {}, 2)).toBe(
       false,
     );
     expect(warnSpy.mock.calls[0][0]).toMatch(
-      /^agent-lcars: GitHub secondary rate limit/,
+      /^agent-lcars: GitHub secondary rate limit hit/,
     );
-
-    warnSpy.mockRestore();
+    expect(warnSpy.mock.calls[0].at(-1)).toMatch(/retrying/);
+    expect(warnSpy.mock.calls[1].at(-1)).toMatch(/giving up/);
   });
+
+  it('declines a secondary-rate-limited retry whose retryAfter exceeds the wait budget', async () => {
+    const { getGithubClient } = await import('./github-client');
+    getGithubClient();
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    const fakeRequest = {
+      method: 'POST',
+      url: 'https://api.github.com/graphql',
+    };
+
+    expect(options.throttle.onSecondaryRateLimit(90, fakeRequest, {}, 0)).toBe(
+      false,
+    );
+    expect(warnSpy.mock.calls[0].at(-1)).toMatch(/giving up/);
+  });
+
+  it('retries a GET on a retryable 5xx but does not retry a mutating POST', async () => {
+    const { getGithubClient } = await import('./github-client');
+    const client = getGithubClient();
+
+    const jsonResponse = (body: unknown, status: number) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    // GET: a transient 500 on the first attempt is safe to retry - the
+    // request never mutated anything, so a second attempt cannot duplicate
+    // side effects.
+    fetchSpy
+      .mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }, 200));
+
+    await client.request('GET /repos/{owner}/{repo}', {
+      owner: 'o',
+      repo: 'r',
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    fetchSpy.mockClear();
+
+    // POST (a mutation, e.g. issues.createComment in backend-actions.ts): a
+    // 500 might mean the comment already landed and only the response was
+    // lost, so retrying here would risk posting a duplicate. Must reject
+    // after exactly one attempt, never a second.
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500));
+
+    await expect(
+      client.request(
+        'POST /repos/{owner}/{repo}/issues/{issue_number}/comments',
+        { owner: 'o', repo: 'r', issue_number: 1, body: 'hi' },
+      ),
+    ).rejects.toThrow();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  }, 10_000);
 
   it("adds a bounded timeout signal to requests that don't already have one", async () => {
     const { getGithubClient } = await import('./github-client');
@@ -131,8 +217,6 @@ describe('getGithubClient', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const init = fetchSpy.mock.calls[0][1];
     expect(init.signal).toBeInstanceOf(AbortSignal);
-
-    vi.unstubAllGlobals();
   });
 
   it('preserves a caller-supplied signal instead of overriding it', async () => {
@@ -150,8 +234,6 @@ describe('getGithubClient', () => {
 
     const init = fetchSpy.mock.calls[0][1];
     expect(init.signal).toBe(controller.signal);
-
-    vi.unstubAllGlobals();
   });
 });
 

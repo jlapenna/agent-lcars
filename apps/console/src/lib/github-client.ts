@@ -38,6 +38,16 @@ const MAX_RATE_LIMIT_RETRIES = 2;
 // indefinitely (the cache-populating fetch has no timeout of its own).
 const REQUEST_TIMEOUT_MS = 15_000;
 
+// A rate-limit retry only gets consent when GitHub's own `retryAfter` fits
+// inside REQUEST_TIMEOUT_MS. The throttling plugin blocks its shared queue
+// for the full `retryAfter` before issuing the retried fetch - only then
+// does timeoutFetch's AbortSignal start counting - so honoring a multi-
+// minute `retryAfter` would hold every other queued request hostage far
+// past the timeout this client otherwise promises. Sharing the same
+// constant (rather than a second bespoke budget) keeps that relationship
+// explicit.
+const MAX_RATE_LIMIT_RETRY_AFTER_SECONDS = REQUEST_TIMEOUT_MS / 1000;
+
 function timeoutFetch(
   ...[input, init]: Parameters<typeof fetch>
 ): ReturnType<typeof fetch> {
@@ -45,6 +55,59 @@ function timeoutFetch(
     ...init,
     signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+}
+
+const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD']);
+
+/**
+ * plugin-retry's automatic retries assume idempotency: retrying a POST/PATCH
+ * whose response was lost (network blip, or a retryable 5xx that actually
+ * landed) can duplicate a mutation - and this same singleton is what
+ * backend-actions.ts uses for `issues.createComment`, `pulls.createReview`,
+ * `actions.createWorkflowDispatch`, merges, etc. Reads are safe to retry;
+ * everything else gets its retry budget forced to zero, overriding the
+ * `retry.retries` default set in getGithubClient below.
+ *
+ * Registered on the constructed client (see getGithubClient below) rather
+ * than as a `.plugin()` itself, purely so this can stay typed against
+ * `@octokit/rest`'s own `Octokit` (this file's only octokit type import)
+ * instead of also reaching for `@octokit/core`'s narrower plugin-authoring
+ * types. Hook registration only matters relative to plugin-retry's and
+ * plugin-throttling's OWN hook registration, which already happened by the
+ * time the constructor returns - registering this `before` hook right
+ * after construction, before any request can possibly go out, still runs
+ * it ahead of plugin-retry's error handler, which reads
+ * `options.request.retries` fresh off this same shared `options` object on
+ * every failure. No need to touch the throttling plugin: it only retries
+ * requests that never reached GitHub's mutation logic in the first place
+ * (rate-limited requests are rejected up front).
+ */
+function disableRetryForMutations(octokit: Octokit): void {
+  octokit.hook.before('request', (options) => {
+    if (!SAFE_RETRY_METHODS.has(options.method)) {
+      options.request.retries = 0;
+    }
+  });
+}
+
+/**
+ * Shared by `onRateLimit`/`onSecondaryRateLimit` below: consents to a retry
+ * only when both the bounded attempt count AND the bounded wait budget
+ * allow it - see MAX_RATE_LIMIT_RETRY_AFTER_SECONDS's own comment for why
+ * the wait budget matters. Deliberately just the decision, not the
+ * logging - each call site keeps its own literal, greppable log message
+ * (`GitHub rate limit hit` vs. `GitHub secondary rate limit hit`) rather
+ * than reconstructing one from an interpolated %s, which would only show
+ * up correctly once formatted and defeat a plain-text log search.
+ */
+function withinRateLimitRetryBudget(
+  retryAfter: number,
+  retryCount: number,
+): boolean {
+  return (
+    retryCount < MAX_RATE_LIMIT_RETRIES &&
+    retryAfter <= MAX_RATE_LIMIT_RETRY_AFTER_SECONDS
+  );
 }
 
 const ThrottledOctokit = Octokit.plugin(retry, throttling);
@@ -59,34 +122,47 @@ export function getGithubClient(): Octokit {
         fetch: timeoutFetch,
       },
       // Layered with `throttle` below: this covers generic 5xx/network
-      // retries (plugin-retry), while `throttle` covers 429/secondary
-      // rate-limit responses specifically (plugin-throttling) - both
-      // capped at the same small retry budget.
+      // retries (plugin-retry) for safe (GET/HEAD) requests only -
+      // disableRetryForMutations above forces mutating requests to zero
+      // retries regardless of this default - while `throttle` covers
+      // 429/secondary rate-limit responses specifically
+      // (plugin-throttling), bounded by both attempt count and wait
+      // budget (see withinRateLimitRetryBudget above).
       retry: {
         retries: MAX_RATE_LIMIT_RETRIES,
       },
       throttle: {
         onRateLimit: (retryAfter, options, _octokit, retryCount) => {
+          const shouldRetry = withinRateLimitRetryBudget(
+            retryAfter,
+            retryCount,
+          );
           console.warn(
-            'agent-lcars: GitHub rate limit hit for %s %s, retrying after %ss (attempt %s/%s)',
+            'agent-lcars: GitHub rate limit hit for %s %s, retryAfter %ss (attempt %s/%s)%s',
             options.method,
             options.url,
             retryAfter,
             retryCount + 1,
             MAX_RATE_LIMIT_RETRIES,
+            shouldRetry ? ', retrying' : ', giving up (retry budget exceeded)',
           );
-          return retryCount < MAX_RATE_LIMIT_RETRIES;
+          return shouldRetry;
         },
         onSecondaryRateLimit: (retryAfter, options, _octokit, retryCount) => {
+          const shouldRetry = withinRateLimitRetryBudget(
+            retryAfter,
+            retryCount,
+          );
           console.warn(
-            'agent-lcars: GitHub secondary rate limit hit for %s %s, retrying after %ss (attempt %s/%s)',
+            'agent-lcars: GitHub secondary rate limit hit for %s %s, retryAfter %ss (attempt %s/%s)%s',
             options.method,
             options.url,
             retryAfter,
             retryCount + 1,
             MAX_RATE_LIMIT_RETRIES,
+            shouldRetry ? ', retrying' : ', giving up (retry budget exceeded)',
           );
-          return retryCount < MAX_RATE_LIMIT_RETRIES;
+          return shouldRetry;
         },
       },
       // Only ever set by the agent-lcars e2e suite, which has no real
@@ -99,6 +175,7 @@ export function getGithubClient(): Octokit {
         baseUrl: optional('AGENT_CONSOLE_GITHUB_API_BASE_URL'),
       }),
     });
+    disableRetryForMutations(client);
   }
   return client;
 }
