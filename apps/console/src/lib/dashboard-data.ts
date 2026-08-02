@@ -1,4 +1,4 @@
-import { cacheTag, unstable_cacheLife as cacheLife } from 'next/cache';
+import { cacheLife, cacheTag } from 'next/cache';
 
 import { type ActionItemsResult, getActionItems } from './action-items';
 import { type AgentActivity, getAgentActivity } from './agent-activity';
