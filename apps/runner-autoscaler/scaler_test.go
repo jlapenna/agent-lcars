@@ -263,14 +263,18 @@ func TestPickHostSparkLoadPenalty(t *testing.T) {
 
 	// Fake daemon rather than dockerclient.FromEnv -- see
 	// TestPickHostReachability for why FromEnv made these tests depend on
-	// the host having a live Docker socket.
-	localClient := newFakeDockerServer(t).client(t)
+	// the host having a live Docker socket. Each host gets its own
+	// *dockerclient.Client (both pointed at the same fake daemon): pickHost
+	// probes every host concurrently, and two hosts sharing a single
+	// *dockerclient.Client race on the docker SDK's lazy, unsynchronized
+	// API-version-negotiation state (github.com/jlapenna/agent-lcars#329).
+	fakeDaemon := newFakeDockerServer(t)
 
 	scaler := &Scaler{
 		sparkMetricsURL: server.URL,
 		dockerHosts: []DockerHost{
-			{Name: "spark", Client: localClient},
-			{Name: "pike", Client: localClient},
+			{Name: "spark", Client: fakeDaemon.client(t)},
+			{Name: "pike", Client: fakeDaemon.client(t)},
 		},
 		runners: runnerState{
 			idle: make(map[string]runnerRef),
@@ -350,11 +354,15 @@ func TestPickHostAvoidsOverloadedHost(t *testing.T) {
 
 	// Fake daemon rather than dockerclient.FromEnv -- see
 	// TestPickHostReachability for why FromEnv made these tests depend on
-	// the host having a live Docker socket.
-	localClient := newFakeDockerServer(t).client(t)
+	// the host having a live Docker socket. Each host gets its own
+	// *dockerclient.Client (both pointed at the same fake daemon): pickHost
+	// probes every host concurrently, and two hosts sharing a single
+	// *dockerclient.Client race on the docker SDK's lazy, unsynchronized
+	// API-version-negotiation state (github.com/jlapenna/agent-lcars#329).
+	fakeDaemon := newFakeDockerServer(t)
 	scaler := &Scaler{
 		hostMetricsURLTemplate: metrics.URL + "/%s/metrics",
-		dockerHosts:            []DockerHost{{Name: "pike", Client: localClient}, {Name: "laforge", Client: localClient}},
+		dockerHosts:            []DockerHost{{Name: "pike", Client: fakeDaemon.client(t)}, {Name: "laforge", Client: fakeDaemon.client(t)}},
 		runners:                runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
 		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

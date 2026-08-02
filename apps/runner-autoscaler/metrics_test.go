@@ -16,8 +16,15 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 	defer cancel()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	addr := "127.0.0.1:28080"
-	startMetricsServer(ctx, addr, logger)
+	// Bind an OS-assigned port rather than a fixed one: this test's process
+	// can run concurrently with another instance of itself (e.g. the `test`
+	// and `test-race` nx targets both exercise this test and can overlap --
+	// github.com/jlapenna/agent-lcars#329's follow-up), and a fixed port
+	// would flake or, worse, silently read the other process's server.
+	addr, err := startMetricsServer(ctx, "127.0.0.1:0", logger)
+	if err != nil {
+		t.Fatalf("startMetricsServer failed: %v", err)
+	}
 
 	// Record a test metric so label vector produces output
 	desiredRunnersGauge.WithLabelValues("test-scaleset").Set(2)

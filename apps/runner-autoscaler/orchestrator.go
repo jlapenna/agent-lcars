@@ -53,7 +53,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	orchestratorSchedulerReady.Store(true)
 	defer orchestratorSchedulerReady.Store(false)
 
-	startMetricsServer(ctx, resolved.Raw.Server.MetricsAddr, logger)
+	if _, err := startMetricsServer(ctx, resolved.Raw.Server.MetricsAddr, logger); err != nil {
+		return fmt.Errorf("starting metrics server: %w", err)
+	}
 
 	generation := startRuntimeGeneration(ctx, runtimes, logger)
 	drainSignals := make(chan os.Signal, 1)

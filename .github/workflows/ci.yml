@@ -81,7 +81,7 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
           NX_MAX_PARALLEL: 2
-        run: pnpm exec nx run-many -t test typecheck build --all --parallel=2
+        run: pnpm exec nx run-many -t test typecheck build test-race --all --parallel=2
 
   e2e:
     name: E2E
