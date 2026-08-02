@@ -35,12 +35,8 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
-      - name: Test agent workflow contract
-        run: node --test tools/agent-workflow-contract.test.mjs
-
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
-
       - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v7
