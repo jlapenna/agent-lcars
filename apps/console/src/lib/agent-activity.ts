@@ -91,13 +91,21 @@ export interface FleetSummary {
 }
 
 export interface AgentActivity {
-  /** Logical work rows shown by the console. Duplicate workflow attempts for
-   * one repo/issue/pipeline are collapsed; distinct pipelines are retained. */
+  /** Every live (queued or running) workflow attempt, exactly as GitHub
+   * reports them - no representative-attempt collapsing (see
+   * `collapseLogicalLiveRuns`'s doc comment for why #306 removed that from
+   * this path). Two attempts racing the same repo/issue/pipeline both
+   * appear here; `logical-work.ts`'s `deriveLogicalWork` is what groups them
+   * into one `LogicalWork` card with a visible "N attempts" disclosure -
+   * this field itself is the raw, ungrouped truth. Identical to
+   * `liveRunAttempts` today; kept as two field names only so existing
+   * callers built against either one keep working unchanged (#307 retires
+   * the duplicate name once every caller has migrated to the explicit view
+   * models). */
   liveRuns: AgentRun[];
-  /** Raw live workflow attempts before presentation collapse. Health checks
-   * use these so a stalled queued attempt cannot be hidden by a running or
-   * newer representative. Optional for callers constructing local fixtures;
-   * production fetches always populate it. */
+  /** Same raw list as `liveRuns` - see that field's doc comment. Optional
+   * for callers constructing local fixtures; production fetches always
+   * populate it. */
   liveRunAttempts?: AgentRun[];
   recentRuns: AgentRun[];
   /** undefined = runner API unavailable (e.g. token lacks admin:read).
@@ -123,6 +131,37 @@ export function issueNumberFromDisplayTitle(
 ): number | undefined {
   const match = displayTitle.match(DISPLAY_TITLE_NUMBER_RE);
   return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * claude.yml/codex.yml/opencode.yml's `run-name` templates all append
+ * `[dispatch:g<generation>:<intentId>]` after the `#<issue>:` join key -
+ * the serialized dispatch broker's own reconciliation marker
+ * (`.github/actions/dispatch-broker/broker.mjs` and `github-api.mjs` render
+ * the identical `[dispatch:g${generation}:${intentId}]` string when binding
+ * a run). Parsing it back out lets the console attribute a raw workflow run
+ * to the exact ledger generation/intent that dispatched it (see
+ * `logical-work.ts`'s `toExecutionAttempt`) instead of only knowing the
+ * issue it worked. Undefined for runs that predate the broker rollout, or
+ * any run dispatched by hand outside it (a manual `workflow_dispatch` leaves
+ * the input blank, which GitHub Actions renders as an empty
+ * `[dispatch:g:]`) - both cases fall back to title/issue-number attribution
+ * only.
+ */
+const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:-]+)\]/;
+
+export interface AttemptMarker {
+  generation: number;
+  intentId: string;
+}
+
+export function attemptMarkerFromDisplayTitle(
+  displayTitle: string,
+): AttemptMarker | undefined {
+  const match = displayTitle.match(DISPATCH_MARKER_RE);
+  return match
+    ? { generation: Number(match[1]), intentId: match[2] }
+    : undefined;
 }
 
 const PIPELINE_TITLE_PREFIX_RE = /^(?:codex|opencode)\s+/;
@@ -213,10 +252,21 @@ export function groupLiveRunsByIssue(liveRuns: AgentRun[]): LiveRunGroup[] {
 /**
  * GitHub can briefly expose more than one workflow attempt for the same
  * logical piece of work (the same repository, issue and agent pipeline),
- * most visibly as one running attempt beside one queued attempt. The console
- * reports work, not transport-level dispatch attempts, so retain one
- * representative row for that logical run. Different pipelines on the same
- * issue remain distinct: those really are separate agents racing the item.
+ * most visibly as one running attempt beside one queued attempt.
+ *
+ * This used to be how `getAgentActivity` built its authoritative `liveRuns`:
+ * pick one representative attempt per (issue, pipeline) key and silently
+ * drop the rest. #306 replaced that - a duplicate dispatch (or a genuine
+ * retry-in-flight) is exactly the kind of anomaly an operator needs to see,
+ * not a rendering inconvenience to smooth over - so `getAgentActivity` no
+ * longer calls this to build `liveRuns`; every raw attempt now survives into
+ * both `liveRuns` and `liveRunAttempts` (see that field's own doc comment),
+ * and `logical-work.ts`'s `deriveLogicalWork` groups duplicates explicitly
+ * instead of collapsing them. This function is kept - still pure, still
+ * covered by its own tests below - only for callers that still want a
+ * single representative row; production code no longer calls it. #307
+ * removes it once both repositories and the production canary prove the
+ * v1 ledger/run-marker join (see agent-lcars#301).
  *
  * Prefer an actively running attempt over a queued one, then the newest
  * attempt when statuses tie. Runs whose issue number cannot be parsed stay
@@ -414,8 +464,11 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       );
     }
   }
+  // No representative-attempt collapse here (#306) - every raw attempt
+  // survives into both fields the console reads (see AgentActivity's own
+  // doc comments). Duplicate/anomalous attempts are grouped explicitly by
+  // `logical-work.ts`'s `deriveLogicalWork`, never dropped by this fetch.
   const liveRunAttempts = liveRuns;
-  liveRuns = collapseLogicalLiveRuns(liveRunAttempts);
 
   let recentRuns: AgentRun[] = [];
   for (const [i, result] of recentResults.entries()) {

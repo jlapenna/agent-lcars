@@ -2,6 +2,7 @@ import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
   type AgentRun,
+  attemptMarkerFromDisplayTitle,
   collapseLogicalLiveRuns,
   displayRunTitle,
   findStalledQueuedRun,
@@ -82,6 +83,40 @@ describe('issueNumberFromDisplayTitle', () => {
 
   it('returns undefined for a pre-rollout title with no leading number', () => {
     expect(issueNumberFromDisplayTitle('Fix the thing')).toBeUndefined();
+  });
+});
+
+describe('attemptMarkerFromDisplayTitle', () => {
+  it('parses the generation and intent id off a claude run-name', () => {
+    expect(
+      attemptMarkerFromDisplayTitle(
+        '#42: Claude issue agent [dispatch:g3:intent-abc-123]',
+      ),
+    ).toEqual({ generation: 3, intentId: 'intent-abc-123' });
+  });
+
+  it('parses a codex run-name, which has no title text before the marker', () => {
+    expect(
+      attemptMarkerFromDisplayTitle('codex #7: [dispatch:g1:intent-xyz]'),
+    ).toEqual({ generation: 1, intentId: 'intent-xyz' });
+  });
+
+  it('parses an opencode run-name', () => {
+    expect(
+      attemptMarkerFromDisplayTitle(
+        'opencode #9: OpenCode [dispatch:g2:intent-oc]',
+      ),
+    ).toEqual({ generation: 2, intentId: 'intent-oc' });
+  });
+
+  it('returns undefined for a title with no marker (pre-broker run)', () => {
+    expect(attemptMarkerFromDisplayTitle('#42: Fix the thing')).toBeUndefined();
+  });
+
+  it('returns undefined for a manual dispatch with a blank generation/intent', () => {
+    expect(
+      attemptMarkerFromDisplayTitle('#42: Claude issue agent [dispatch:g:]'),
+    ).toBeUndefined();
   });
 });
 
@@ -273,7 +308,7 @@ describe('getAgentActivity', () => {
     expect(activity.liveRuns[0].pipeline).toBe('claude');
   });
 
-  it('returns one logical live run for duplicate attempts of the same agent item', async () => {
+  it('preserves every duplicate attempt of the same agent item instead of collapsing to one representative (#306)', async () => {
     const listWorkflowRuns = vi
       .fn()
       .mockImplementation(({ workflow_id, status }) => {
@@ -296,7 +331,12 @@ describe('getAgentActivity', () => {
 
     const activity = await getAgentActivity();
 
-    expect(activity.liveRuns.map((run) => run.id)).toEqual([2]);
+    // Both the queued and the running attempt survive into `liveRuns` -
+    // #306 removed the representative-attempt collapse that used to leave
+    // only the running one visible here. `liveRunAttempts` is no longer a
+    // separate "raw" copy revealing evidence `liveRuns` hid; the two are
+    // now the same evidence (see AgentActivity's own doc comments).
+    expect(activity.liveRuns.map((run) => run.id)).toEqual([1, 2]);
     expect(activity.liveRunAttempts?.map((run) => run.id)).toEqual([1, 2]);
   });
 

@@ -568,6 +568,66 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
     expect(screen.getAllByTestId('live-run-issue-link')).toHaveLength(2);
   });
 
+  it('flags two same-pipeline live attempts on one issue as a duplicate, never dropping either (#306)', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({
+          id: 70,
+          status: 'queued',
+          issueNumber: 70,
+          pipeline: 'claude',
+        }),
+        makeAgentRun({
+          id: 71,
+          status: 'running',
+          issueNumber: 70,
+          pipeline: 'claude',
+        }),
+      ],
+    });
+    const group = screen.getByTestId('live-run-group-70');
+    expect(within(group).getAllByTestId('live-run-issue-link')).toHaveLength(2);
+    const duplicateAlert = screen.getByTestId('live-run-group-70-duplicate');
+    expect(duplicateAlert.textContent).toContain('2 claude');
+  });
+
+  it('does not flag a cross-pipeline race on one issue as a duplicate', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({
+          id: 72,
+          status: 'running',
+          issueNumber: 72,
+          pipeline: 'claude',
+        }),
+        makeAgentRun({
+          id: 73,
+          status: 'running',
+          issueNumber: 72,
+          pipeline: 'codex',
+        }),
+      ],
+    });
+    expect(screen.getByTestId('live-run-group-72')).toBeTruthy();
+    expect(screen.queryByTestId('live-run-group-72-duplicate')).toBeNull();
+  });
+
+  it('links a grouped issue to its canonical task-history route', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({ id: 74, status: 'running', issueNumber: 74 }),
+        makeAgentRun({ id: 75, status: 'running', issueNumber: 74 }),
+      ],
+    });
+    const link = screen.getByTestId('live-run-group-74-history');
+    expect(link.getAttribute('href')).toBe(
+      '/task/supersprinklesracing/sprinkles/74',
+    );
+  });
+
   it('labels the group with the joined item title when one is known', () => {
     renderPanel(
       [],
