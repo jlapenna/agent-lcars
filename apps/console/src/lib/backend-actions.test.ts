@@ -875,6 +875,66 @@ describe('createQuickTask', () => {
     expect(createIssue).not.toHaveBeenCalled();
   });
 
+  it('returns the issue a claim winner creates after the initial scan', async () => {
+    let claimMessage = '';
+    let digest = '';
+    const getRef = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'commit', sha: 'base-commit-sha' } },
+      })
+      .mockResolvedValueOnce({
+        data: { object: { type: 'tag', sha: 'winner-tag-sha' } },
+      });
+    const createTag = vi.fn().mockImplementation(async (input) => {
+      const prefix = 'agent-lcars:quick-task-claim:v1 ';
+      const claim = JSON.parse(input.message.slice(prefix.length));
+      digest = claim.digest;
+      claimMessage = `${prefix}${JSON.stringify({
+        ...claim,
+        claimantId: '22222222-2222-4222-8222-222222222222',
+      })}`;
+      return { data: { sha: 'loser-tag-sha' } };
+    });
+    const createRef = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Reference already exists'), { status: 422 }),
+      );
+    const getTag = vi.fn().mockImplementation(async () => ({
+      data: { message: claimMessage },
+    }));
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [
+          {
+            number: 101,
+            body: `Winner\n\n<!-- agent-lcars:quick-task-request:v1 id=${request.requestId} digest=${digest} -->`,
+          },
+        ],
+      }));
+    const { createIssue } = mockOctokit({
+      getRef,
+      getTag,
+      createTag,
+      createRef,
+      listForRepo,
+    });
+
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 101 }),
+      }),
+    );
+    expect(listForRepo).toHaveBeenCalledTimes(2);
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
   it('retains ownership when GitHub loses the successful claim-ref response', async () => {
     let claimMessage = '';
     const getRef = vi

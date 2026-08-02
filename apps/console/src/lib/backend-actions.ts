@@ -734,9 +734,14 @@ async function createQuickTaskOnce(
 
   const claim = await createQuickTaskClaim(request, digest);
   if (claim === 'existing') {
+    // The winner may have created the issue after our initial marker scan but
+    // before our claim-ref write lost. Reconcile once more before failing
+    // closed so this overlapping request can return the canonical receipt.
+    const winner = await findExistingQuickTask(request, digest);
+    if (winner) return winner;
     // The other claimant may still be inside GitHub's issue-create request.
     // Never race it. The browser retains the request UUID, so a later retry
-    // will either discover its marker or return this same fail-closed result.
+    // will discover its marker or return this same fail-closed result.
     throw new ActionError(
       'Quick Task creation is already claimed but no issue is visible yet; retry to reconcile it',
       409,
