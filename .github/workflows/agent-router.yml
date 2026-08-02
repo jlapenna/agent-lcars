@@ -62,6 +62,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # This job's own `if:` above also reads MAINTAINER_LOGIN, but only on
+      # the `issues`/labeled branch of the OR - the issue_comment and
+      # workflow_dispatch branches don't touch it. A step can only run once
+      # the job has already started, so on a labeled-event run with an
+      # empty/unset MAINTAINER_LOGIN, `github.actor == ''` never matches and
+      # the `if:` skips the job before this assert can fire; this assert
+      # only guarantees the loud failure on runs that do reach this step
+      # (issue_comment and workflow_dispatch runs, and any labeled-event run
+      # where the actor check already passed).
+      - name: Assert required repo variables are set
+        env:
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        run: |
+          if [ -z "$MAINTAINER_LOGIN" ]; then
+            echo "::error::Missing required repo variable: MAINTAINER_LOGIN"
+            exit 1
+          fi
+
       - name: Dispatch the selected agent
         env:
           GH_TOKEN: ${{ github.token }}
