@@ -3,10 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -19,7 +16,32 @@ type nxProjectConfig struct {
 	} `json:"targets"`
 }
 
-func TestNxBuildWorksFromLinkedWorktree(t *testing.T) {
+// TestNxBuildConfigDisablesVCSStampingForLinkedWorktrees guards against a
+// regression where `go build`, run from a git linked worktree (a `.git` file
+// pointing at the primary checkout's `.git/worktrees/<name>` rather than a
+// `.git` directory), fails or stamps bogus VCS info because the Go toolchain
+// can't resolve the linked worktree's VCS metadata the way it expects to from
+// a normal checkout. The fix is `-buildvcs=false` in the Nx build target's
+// flags, which this test asserts is present.
+//
+// This test is intentionally config-assertion-only: it does not spawn git or
+// go subprocesses to reproduce the linked-worktree scenario end-to-end. An
+// earlier version of this test did exactly that (t.TempDir() git repo, `git
+// init`/`config`/`add`/`commit`/`worktree add`, then a real `go build`), and
+// it escaped its sandbox twice in the same session (see #328): once by
+// committing throwaway fixture content onto a real feature branch from
+// inside a pre-push hook, and separately by flipping the shared checkout's
+// `core.bare` and user identity via a leaked GIT_DIR/GIT_WORK_TREE inherited
+// from the invoking environment. Per maintainer policy (#328), unit tests
+// must not execute real git commands at all -- clearing GIT_* env vars only
+// narrows that escape, it doesn't remove the class of bug.
+//
+// The flag's runtime semantics (that -buildvcs=false actually makes `go
+// build` succeed from a linked worktree) are stable upstream Go toolchain
+// behavior, not something this repo needs to re-prove in a unit test -- and
+// every real CI build already exercises it for real, since CI checks out and
+// builds from linked worktrees using this exact Nx target.
+func TestNxBuildConfigDisablesVCSStampingForLinkedWorktrees(t *testing.T) {
 	projectJSON, err := os.ReadFile("project.json")
 	if err != nil {
 		t.Fatalf("read project.json: %v", err)
@@ -38,50 +60,5 @@ func TestNxBuildWorksFromLinkedWorktree(t *testing.T) {
 	}
 	if !slices.Contains(build.Options.Flags, "-buildvcs=false") {
 		t.Fatalf("Nx build flags %v do not disable unreliable linked-worktree VCS stamping", build.Options.Flags)
-	}
-
-	root := t.TempDir()
-	primary := filepath.Join(root, "primary")
-	linked := filepath.Join(root, "linked")
-	mustRun(t, root, "git", "init", "--initial-branch=main", primary)
-	mustRun(t, primary, "git", "config", "user.name", "Agent LCARS test")
-	mustRun(t, primary, "git", "config", "user.email", "agent-lcars-test@example.invalid")
-	mustWriteFile(t, filepath.Join(primary, "go.mod"), "module example.invalid/linked-worktree\n\ngo 1.26\n")
-	mustWriteFile(t, filepath.Join(primary, "main.go"), "package main\n\nfunc main() {}\n")
-	mustRun(t, primary, "git", "add", "go.mod", "main.go")
-	mustRun(t, primary, "git", "commit", "-m", "fixture")
-	mustRun(t, primary, "git", "worktree", "add", "-b", "fixture-linked", linked)
-
-	gitFile, err := os.Stat(filepath.Join(linked, ".git"))
-	if err != nil {
-		t.Fatalf("stat linked-worktree .git file: %v", err)
-	}
-	if !gitFile.Mode().IsRegular() {
-		t.Fatalf("expected linked-worktree .git to be a file, mode is %v", gitFile.Mode())
-	}
-
-	output := filepath.Join(root, "linked-worktree-binary")
-	args := append([]string{"build"}, build.Options.Flags...)
-	args = append(args, "-o", output, ".")
-	mustRun(t, linked, "go", args...)
-	if _, err := os.Stat(output); err != nil {
-		t.Fatalf("effective Nx build flags did not produce a binary: %v", err)
-	}
-}
-
-func mustWriteFile(t *testing.T, path, contents string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-func mustRun(t *testing.T, dir, name string, args ...string) {
-	t.Helper()
-	command := exec.Command(name, args...)
-	command.Dir = dir
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %s failed: %v\n%s", name, strings.Join(args, " "), err, output)
 	}
 }
