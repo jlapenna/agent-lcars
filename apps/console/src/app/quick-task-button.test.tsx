@@ -50,6 +50,7 @@ function submit() {
 describe('QuickTaskButton', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('opens a centered dialog rather than a full-screen one', async () => {
@@ -96,6 +97,25 @@ describe('QuickTaskButton', () => {
     }) as HTMLAnchorElement;
     expect(link.href).toBe(
       'https://github.com/supersprinklesracing/sprinkles/issues/99',
+    );
+  });
+
+  it('generates a request ID on an insecure HTTP context', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        return bytes;
+      },
+    });
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    renderButton();
+    await openDialog();
+    enterDescription();
+    submit();
+
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(1));
+    expect((createQuickTask as Mock).mock.calls[0][0].requestId).toBe(
+      '00010203-0405-4607-8809-0a0b0c0d0e0f',
     );
   });
 

@@ -28,6 +28,32 @@ const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'opencode', label: 'opencode' },
 ];
 
+function createRequestId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    try {
+      return cryptoApi.randomUUID();
+    } catch {
+      // randomUUID is restricted to secure contexts in some browsers. The
+      // older getRandomValues primitive remains available to HTTP LAN pages.
+    }
+  }
+  if (typeof cryptoApi?.getRandomValues !== 'function') {
+    throw new Error('Cryptographic randomness is unavailable');
+  }
+
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(
+    12,
+    16,
+  )}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /**
  * Files a new `intake:quick-task`-labeled issue from a free-text description and
  * hands it to the selected agent pipeline. The intake and pipeline labels
@@ -95,9 +121,20 @@ export function QuickTaskButton({
     ) {
       return;
     }
+    let requestId = requestIdRef.current;
+    if (!requestId) {
+      try {
+        requestId = createRequestId();
+      } catch {
+        notifications.show({
+          message: 'This browser cannot generate a Quick Task request ID',
+          color: 'red',
+        });
+        return;
+      }
+      requestIdRef.current = requestId;
+    }
     submitInFlightRef.current = true;
-    const requestId = requestIdRef.current ?? globalThis.crypto.randomUUID();
-    requestIdRef.current = requestId;
     startTransition(async () => {
       try {
         const result = await createQuickTask({
