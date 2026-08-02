@@ -55,7 +55,13 @@ if [ ! -s "$SIDECAR_BIN" ]; then
   exit 0
 fi
 if [ -z "${WRITER_CREDENTIALS_FILE:-}" ]; then
-  echo "No writer credentials file available (telemetry-auth step did not succeed); skipping telemetry $MODE."
+  # The one path that actually reproduces agent-lcars#352's motivating
+  # failure: a rejected WIF credential (or any other telemetry-auth step
+  # failure) never reaches sidecar.cjs at all, so a warn-annotation added
+  # only inside finalize.ts's own upload/upsert catch blocks would be dead
+  # code for it -- this guard, shared by both start and finalize, is the
+  # earliest common point where that failure is observable.
+  echo "::warning::agent-lcars-telemetry-watcher: no writer credentials file available (telemetry-auth step did not succeed); skipping telemetry $MODE, this run's telemetry is lost."
   exit 0
 fi
 if [ -z "${RUN_ID:-}" ]; then

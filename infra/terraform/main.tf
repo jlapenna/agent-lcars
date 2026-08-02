@@ -154,7 +154,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "google.subject"       = "assertion.sub"
     "attribute.repository" = "assertion.repository"
   }
-  attribute_condition = "assertion.repository in ['${var.github_owner}/${var.github_repository}', '${var.github_owner}/supersprinklesracing']"
+  attribute_condition = "assertion.repository in ['${var.github_owner}/${var.github_repository}', '${var.sprinkles_repository}']"
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
 
@@ -167,7 +167,7 @@ resource "google_service_account_iam_member" "github_impersonation" {
 resource "google_service_account_iam_member" "members_writer_impersonation" {
   service_account_id = google_service_account.telemetry_writer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/supersprinklesracing"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.sprinkles_repository}"
 }
 
 # This repo's own claude.yml now ships its issue-agent sessions' telemetry
