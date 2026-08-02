@@ -612,6 +612,17 @@ function githubStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
+function isRetryableGithubFailure(error: unknown): boolean {
+  const status = githubStatus(error);
+  return (
+    status === undefined ||
+    status === 408 ||
+    status === 409 ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
 async function readQuickTaskClaim(
   request: NormalizedQuickTaskRequest,
 ): Promise<QuickTaskClaim | undefined> {
@@ -713,12 +724,50 @@ async function createQuickTaskClaim(
 
 async function releaseQuickTaskClaim(
   request: NormalizedQuickTaskRequest,
+  digest: string,
 ): Promise<void> {
-  await getGithubClient().rest.git.deleteRef({
-    owner: request.repository.owner,
-    repo: request.repository.name,
-    ref: quickTaskClaimRef(request.requestId),
-  });
+  const attempts = 3;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let deleteError: unknown;
+    try {
+      await getGithubClient().rest.git.deleteRef({
+        owner: request.repository.owner,
+        repo: request.repository.name,
+        ref: quickTaskClaimRef(request.requestId),
+      });
+      return;
+    } catch (error) {
+      if (githubStatus(error) === 404) return;
+      deleteError = error;
+    }
+
+    // GitHub can commit the deletion and lose its response. Re-read the ref
+    // before retrying so that outcome remains a successful release.
+    let remaining: QuickTaskClaim | undefined;
+    try {
+      remaining = await readQuickTaskClaim(request);
+    } catch (reconciliationError) {
+      if (attempt < attempts && isRetryableGithubFailure(reconciliationError)) {
+        continue;
+      }
+      throw new ActionError(
+        'Quick Task issue creation failed and its claim could not be reconciled; manual reconciliation is required',
+        409,
+      );
+    }
+    if (!remaining) return;
+    // A mismatched claim is an invariant violation, not a transient read
+    // failure. Never retry a deletion against a claim we cannot identify.
+    assertMatchingQuickTaskClaim(request, digest, remaining);
+
+    if (attempt < attempts && isRetryableGithubFailure(deleteError)) {
+      continue;
+    }
+    throw new ActionError(
+      'Quick Task issue creation failed and its claim could not be released; manual reconciliation is required',
+      409,
+    );
+  }
 }
 
 async function createQuickTaskOnce(
@@ -763,7 +812,7 @@ async function createQuickTaskOnce(
       // A 4xx proves GitHub did not create the issue, so releasing the claim
       // is safe and lets the same browser intent retry after the validation,
       // permission, or label problem is corrected.
-      await releaseQuickTaskClaim(request);
+      await releaseQuickTaskClaim(request, digest);
       throw error;
     }
 

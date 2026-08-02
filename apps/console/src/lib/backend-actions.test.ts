@@ -1067,6 +1067,64 @@ describe('createQuickTask', () => {
     });
   });
 
+  it('retries a transient claim-release failure before returning the create error', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      )
+      .mockResolvedValueOnce({ data: { number: 99 } });
+    const { deleteRef, createRef } = mockOctokit({ createIssue });
+    deleteRef.mockRejectedValueOnce(
+      Object.assign(new Error('Bad Gateway'), { status: 502 }),
+    );
+
+    await expect(createQuickTask(request)).rejects.toThrow('Validation Failed');
+    expect(deleteRef).toHaveBeenCalledTimes(2);
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+    );
+    expect(createRef).toHaveBeenCalledTimes(2);
+    expect(createIssue).toHaveBeenCalledTimes(2);
+  });
+
+  it('reconciles a claim deletion whose successful response was lost', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const { deleteRef } = mockOctokit({ createIssue });
+    const deleteImplementation = deleteRef.getMockImplementation();
+    deleteRef.mockImplementationOnce(async (input) => {
+      await deleteImplementation?.(input);
+      throw new Error('delete response timed out');
+    });
+
+    await expect(createQuickTask(request)).rejects.toThrow('Validation Failed');
+    expect(deleteRef).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails explicitly when a definitive failure claim cannot be released', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const { deleteRef } = mockOctokit({ createIssue });
+    deleteRef.mockRejectedValue(
+      Object.assign(new Error('Bad Gateway'), { status: 502 }),
+    );
+
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'claim could not be released; manual reconciliation is required',
+    );
+    expect(deleteRef).toHaveBeenCalledTimes(3);
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the explicit title instead of deriving one when provided', async () => {
     const { createIssue } = mockOctokit({});
 
