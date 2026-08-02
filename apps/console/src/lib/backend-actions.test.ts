@@ -973,6 +973,51 @@ describe('createQuickTask', () => {
     expect(createIssue).toHaveBeenCalledTimes(1);
   });
 
+  it('retries reconciliation when a successful claim write is briefly invisible', async () => {
+    let claimMessage = '';
+    const getRef = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'commit', sha: 'base-commit-sha' } },
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Bad Gateway'), { status: 502 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'tag', sha: 'our-tag-sha' } },
+      });
+    const createTag = vi.fn().mockImplementation(async (input) => {
+      claimMessage = input.message;
+      return { data: { sha: 'our-tag-sha' } };
+    });
+    const createRef = vi
+      .fn()
+      .mockRejectedValue(new Error('claim response timed out'));
+    const getTag = vi.fn().mockImplementation(async () => ({
+      data: { message: claimMessage },
+    }));
+    const { createIssue } = mockOctokit({
+      getRef,
+      getTag,
+      createTag,
+      createRef,
+    });
+
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+    );
+    expect(getRef).toHaveBeenCalledTimes(5);
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
   it('recovers an issue created before a transport timeout', async () => {
     let persistedBody = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {
@@ -1102,6 +1147,54 @@ describe('createQuickTask', () => {
       await deleteImplementation?.(input);
       throw new Error('delete response timed out');
     });
+
+    await expect(createQuickTask(request)).rejects.toThrow('Validation Failed');
+    expect(deleteRef).toHaveBeenCalledTimes(1);
+  });
+
+  it('never deletes a replacement owner after losing a delete response', async () => {
+    let ourClaimMessage = '';
+    let replacementClaimMessage = '';
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const getRef = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'commit', sha: 'base-commit-sha' } },
+      })
+      .mockResolvedValueOnce({
+        data: { object: { type: 'tag', sha: 'our-tag-sha' } },
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Bad Gateway'), { status: 502 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'tag', sha: 'replacement-tag-sha' } },
+      });
+    const createTag = vi.fn().mockImplementation(async (input) => {
+      const prefix = 'agent-lcars:quick-task-claim:v1 ';
+      const claim = JSON.parse(input.message.slice(prefix.length));
+      ourClaimMessage = input.message;
+      replacementClaimMessage = `${prefix}${JSON.stringify({
+        ...claim,
+        claimantId: '22222222-2222-4222-8222-222222222222',
+      })}`;
+      return { data: { sha: 'our-tag-sha' } };
+    });
+    const getTag = vi.fn().mockImplementation(async ({ tag_sha }) => ({
+      data: {
+        message:
+          tag_sha === 'our-tag-sha' ? ourClaimMessage : replacementClaimMessage,
+      },
+    }));
+    const deleteRef = vi.fn().mockRejectedValue(new Error('response lost'));
+    mockOctokit({ createIssue, getRef, getTag, createTag, deleteRef });
 
     await expect(createQuickTask(request)).rejects.toThrow('Validation Failed');
     expect(deleteRef).toHaveBeenCalledTimes(1);

@@ -656,6 +656,34 @@ async function readQuickTaskClaim(
   return parseQuickTaskClaim(tag.message);
 }
 
+async function reconcileQuickTaskClaimAfterWrite(
+  request: NormalizedQuickTaskRequest,
+  { retryNotFound = true }: { retryNotFound?: boolean } = {},
+): Promise<QuickTaskClaim | undefined> {
+  // A successful ref write can briefly be absent from a following read, and
+  // either request can lose its response. Give GitHub a bounded propagation
+  // window before deciding that ownership cannot be established.
+  const delaysMs = [0, 100, 300, 700, 1500];
+  let successfulRead = false;
+  let lastError: unknown;
+  for (const delayMs of delaysMs) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      const claim = await readQuickTaskClaim(request);
+      successfulRead = true;
+      if (claim) return claim;
+      if (!retryNotFound) return undefined;
+    } catch (error) {
+      if (!isRetryableGithubFailure(error)) throw error;
+      lastError = error;
+    }
+  }
+  if (!successfulRead && lastError) throw lastError;
+  return undefined;
+}
+
 function assertMatchingQuickTaskClaim(
   request: NormalizedQuickTaskRequest,
   digest: string,
@@ -672,11 +700,11 @@ function assertMatchingQuickTaskClaim(
 async function createQuickTaskClaim(
   request: NormalizedQuickTaskRequest,
   digest: string,
-): Promise<'acquired' | 'existing'> {
+): Promise<{ state: 'acquired'; claimantId: string } | { state: 'existing' }> {
   const current = await readQuickTaskClaim(request);
   if (current) {
     assertMatchingQuickTaskClaim(request, digest, current);
-    return 'existing';
+    return { state: 'existing' };
   }
 
   const octokit = getGithubClient();
@@ -706,29 +734,51 @@ async function createQuickTaskClaim(
       ref: `refs/${quickTaskClaimRef(request.requestId)}`,
       sha: tag.sha,
     });
-    return 'acquired';
+    return { state: 'acquired', claimantId };
   } catch (error) {
     // Creating the annotated tag object is harmless; the reference is the
     // atomic uniqueness boundary. A competing revision may have won between
     // our initial read and this write, so always reconcile the canonical ref
     // before deciding whether the createRef failure is actionable.
-    const winner = await readQuickTaskClaim(request);
+    const winner = await reconcileQuickTaskClaimAfterWrite(request);
     if (!winner) throw error;
     assertMatchingQuickTaskClaim(request, digest, winner);
     // GitHub may commit our ref and then lose the response. The per-attempt
     // claimant UUID makes ownership unambiguous even if two annotated tag
     // objects would otherwise have identical content/SHA.
-    return winner.claimantId === claimantId ? 'acquired' : 'existing';
+    return winner.claimantId === claimantId
+      ? { state: 'acquired', claimantId }
+      : { state: 'existing' };
   }
 }
 
 async function releaseQuickTaskClaim(
   request: NormalizedQuickTaskRequest,
   digest: string,
+  claimantId: string,
 ): Promise<void> {
   const attempts = 3;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    let deleteError: unknown;
+    let current: QuickTaskClaim | undefined;
+    try {
+      current = await reconcileQuickTaskClaimAfterWrite(request, {
+        retryNotFound: false,
+      });
+    } catch {
+      throw new ActionError(
+        'Quick Task issue creation failed and its claim could not be reconciled; manual reconciliation is required',
+        409,
+      );
+    }
+    if (!current) return;
+    // A mismatched claim is an invariant violation, not a transient read
+    // failure. Never delete a claim we cannot identify.
+    assertMatchingQuickTaskClaim(request, digest, current);
+    // Verify ownership before every delete. Our previous deletion may have
+    // succeeded before its response was lost, followed by another invocation
+    // acquiring a replacement claim.
+    if (current.claimantId !== claimantId) return;
+
     try {
       await getGithubClient().rest.git.deleteRef({
         owner: request.repository.owner,
@@ -738,36 +788,34 @@ async function releaseQuickTaskClaim(
       return;
     } catch (error) {
       if (githubStatus(error) === 404) return;
-      deleteError = error;
-    }
-
-    // GitHub can commit the deletion and lose its response. Re-read the ref
-    // before retrying so that outcome remains a successful release.
-    let remaining: QuickTaskClaim | undefined;
-    try {
-      remaining = await readQuickTaskClaim(request);
-    } catch (reconciliationError) {
-      if (attempt < attempts && isRetryableGithubFailure(reconciliationError)) {
-        continue;
+      if (!isRetryableGithubFailure(error)) {
+        throw new ActionError(
+          'Quick Task issue creation failed and its claim could not be released; manual reconciliation is required',
+          409,
+        );
       }
-      throw new ActionError(
-        'Quick Task issue creation failed and its claim could not be reconciled; manual reconciliation is required',
-        409,
-      );
     }
-    if (!remaining) return;
-    // A mismatched claim is an invariant violation, not a transient read
-    // failure. Never retry a deletion against a claim we cannot identify.
-    assertMatchingQuickTaskClaim(request, digest, remaining);
+  }
 
-    if (attempt < attempts && isRetryableGithubFailure(deleteError)) {
-      continue;
-    }
+  // The final delete can also have committed before losing its response.
+  let remaining: QuickTaskClaim | undefined;
+  try {
+    remaining = await reconcileQuickTaskClaimAfterWrite(request, {
+      retryNotFound: false,
+    });
+  } catch {
     throw new ActionError(
-      'Quick Task issue creation failed and its claim could not be released; manual reconciliation is required',
+      'Quick Task issue creation failed and its claim could not be reconciled; manual reconciliation is required',
       409,
     );
   }
+  if (!remaining) return;
+  assertMatchingQuickTaskClaim(request, digest, remaining);
+  if (remaining.claimantId !== claimantId) return;
+  throw new ActionError(
+    'Quick Task issue creation failed and its claim could not be released; manual reconciliation is required',
+    409,
+  );
 }
 
 async function createQuickTaskOnce(
@@ -782,7 +830,7 @@ async function createQuickTaskOnce(
   if (existing) return existing;
 
   const claim = await createQuickTaskClaim(request, digest);
-  if (claim === 'existing') {
+  if (claim.state === 'existing') {
     // The winner may have created the issue after our initial marker scan but
     // before our claim-ref write lost. Reconcile once more before failing
     // closed so this overlapping request can return the canonical receipt.
@@ -812,7 +860,7 @@ async function createQuickTaskOnce(
       // A 4xx proves GitHub did not create the issue, so releasing the claim
       // is safe and lets the same browser intent retry after the validation,
       // permission, or label problem is corrected.
-      await releaseQuickTaskClaim(request, digest);
+      await releaseQuickTaskClaim(request, digest, claim.claimantId);
       throw error;
     }
 
