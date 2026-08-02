@@ -326,36 +326,6 @@ describe('getAgentActivity', () => {
     expect(activity.liveRuns[0].displayTitle).toBe('Fix the thing');
   });
 
-  it('ignores explicitly marked no-op pending workflow runs', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockImplementation(({ workflow_id, status }) => {
-        if (workflow_id === 'claude.yml' && status === undefined) {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [
-                makeRun({ id: 1, status: 'in_progress' }),
-                makeRun({
-                  id: 2,
-                  status: 'pending',
-                  display_title: 'noop #43: no-op',
-                }),
-              ],
-            },
-          });
-        }
-        return Promise.resolve({ data: { workflow_runs: [] } });
-      });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockResolvedValue({ data: { runners: [] } });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.liveRuns.map((run) => run.id)).toEqual([1]);
-  });
-
   it('keeps a valid pending follow-up even before its job is materialized', async () => {
     const listWorkflowRuns = vi
       .fn()

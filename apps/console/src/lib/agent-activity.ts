@@ -118,14 +118,6 @@ export interface AgentActivity {
 
 const DISPLAY_TITLE_NUMBER_RE = /^(?:(?:codex|opencode)\s+)?#(\d+):/;
 
-/** Workflow-level no-op runs are named explicitly by the workflow so they
- * can be distinguished from a valid follow-up waiting on issue concurrency.
- * Both can have no materialized job yet, but only the former should be hidden
- * from In Flight. */
-function isNoOpWorkflowRun(displayTitle: string): boolean {
-  return displayTitle.startsWith('noop #');
-}
-
 export function issueNumberFromDisplayTitle(
   displayTitle: string,
 ): number | undefined {
@@ -331,10 +323,7 @@ async function fetchLiveRuns(
     per_page: 30,
   });
   return response.data.workflow_runs
-    .filter(
-      (run) =>
-        run.status !== 'completed' && !isNoOpWorkflowRun(run.display_title),
-    )
+    .filter((run) => run.status !== 'completed')
     .map((run) => toAgentRun(run, repo, pipeline));
 }
 
