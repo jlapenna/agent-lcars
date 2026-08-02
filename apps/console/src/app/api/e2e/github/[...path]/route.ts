@@ -169,13 +169,22 @@ export async function POST(
         )
       : undefined;
     const claim = claimSha ? quickTaskTagObjects.get(claimSha) : undefined;
-    const hasMatchingClaim =
+    let hasMatchingClaim = false;
+    if (
       requestMarker &&
-      claim?.message ===
-        `agent-lcars:quick-task-claim:v1 ${JSON.stringify({
-          requestId: requestMarker[1],
-          digest: requestMarker[2],
-        })}`;
+      claim?.message.startsWith('agent-lcars:quick-task-claim:v1 ')
+    ) {
+      const persisted = JSON.parse(
+        claim.message.slice('agent-lcars:quick-task-claim:v1 '.length),
+      ) as Record<string, unknown>;
+      hasMatchingClaim =
+        persisted['requestId'] === requestMarker[1] &&
+        persisted['digest'] === requestMarker[2] &&
+        typeof persisted['claimantId'] === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+          persisted['claimantId'],
+        );
+    }
     if (
       !body.title?.trim() ||
       !hasMatchingClaim ||

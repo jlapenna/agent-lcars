@@ -702,7 +702,7 @@ describe('createQuickTask', () => {
       expect.objectContaining({
         tag: 'agent-lcars/quick-task/11111111-1111-4111-8111-111111111111',
         message: expect.stringMatching(
-          /^agent-lcars:quick-task-claim:v1 \{"requestId":"11111111-1111-4111-8111-111111111111","digest":"[0-9a-f]{64}"\}$/u,
+          /^agent-lcars:quick-task-claim:v1 \{"requestId":"11111111-1111-4111-8111-111111111111","digest":"[0-9a-f]{64}","claimantId":"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"\}$/u,
         ),
         object: 'base-commit-sha',
         type: 'commit',
@@ -842,7 +842,12 @@ describe('createQuickTask', () => {
         data: { object: { type: 'tag', sha: 'winner-tag-sha' } },
       });
     const createTag = vi.fn().mockImplementation(async (input) => {
-      claimMessage = input.message;
+      const prefix = 'agent-lcars:quick-task-claim:v1 ';
+      const claim = JSON.parse(input.message.slice(prefix.length));
+      claimMessage = `${prefix}${JSON.stringify({
+        ...claim,
+        claimantId: '22222222-2222-4222-8222-222222222222',
+      })}`;
       return { data: { sha: 'loser-tag-sha' } };
     });
     const createRef = vi
@@ -868,6 +873,44 @@ describe('createQuickTask', () => {
       expect.objectContaining({ tag_sha: 'winner-tag-sha' }),
     );
     expect(createIssue).not.toHaveBeenCalled();
+  });
+
+  it('retains ownership when GitHub loses the successful claim-ref response', async () => {
+    let claimMessage = '';
+    const getRef = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'commit', sha: 'base-commit-sha' } },
+      })
+      .mockResolvedValueOnce({
+        data: { object: { type: 'tag', sha: 'our-tag-sha' } },
+      });
+    const createTag = vi.fn().mockImplementation(async (input) => {
+      claimMessage = input.message;
+      return { data: { sha: 'our-tag-sha' } };
+    });
+    const createRef = vi
+      .fn()
+      .mockRejectedValue(new Error('claim response timed out'));
+    const getTag = vi.fn().mockImplementation(async () => ({
+      data: { message: claimMessage },
+    }));
+    const { createIssue } = mockOctokit({
+      getRef,
+      getTag,
+      createTag,
+      createRef,
+    });
+
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+    );
+    expect(createIssue).toHaveBeenCalledTimes(1);
   });
 
   it('recovers an issue created before a transport timeout', async () => {

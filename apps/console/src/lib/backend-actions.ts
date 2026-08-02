@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   getGithubClient,
@@ -429,6 +429,12 @@ interface ExistingQuickTaskIssue {
   body?: string | null;
 }
 
+interface QuickTaskClaim {
+  requestId: string;
+  digest: string;
+  claimantId: string;
+}
+
 function normalizeQuickTaskRequest(
   request: QuickTaskRequest & { repository: WatchedRepo },
 ): NormalizedQuickTaskRequest {
@@ -467,14 +473,15 @@ function quickTaskClaimRef(requestId: string): string {
   return `${QUICK_TASK_CLAIM_REF_PREFIX}${requestId}`;
 }
 
-function quickTaskClaimMessage(requestId: string, digest: string): string {
-  return `${QUICK_TASK_CLAIM_MESSAGE_PREFIX}${JSON.stringify({ requestId, digest })}`;
+function quickTaskClaimMessage(
+  requestId: string,
+  digest: string,
+  claimantId: string,
+): string {
+  return `${QUICK_TASK_CLAIM_MESSAGE_PREFIX}${JSON.stringify({ requestId, digest, claimantId })}`;
 }
 
-function parseQuickTaskClaim(message: string): {
-  requestId: string;
-  digest: string;
-} {
+function parseQuickTaskClaim(message: string): QuickTaskClaim {
   if (!message.startsWith(QUICK_TASK_CLAIM_MESSAGE_PREFIX)) {
     throw new ActionError(
       'Quick Task claim is malformed; manual reconciliation is required',
@@ -489,11 +496,17 @@ function parseQuickTaskClaim(message: string): {
       typeof value['requestId'] !== 'string' ||
       !QUICK_TASK_REQUEST_ID_PATTERN.test(value['requestId']) ||
       typeof value['digest'] !== 'string' ||
-      !/^[0-9a-f]{64}$/u.test(value['digest'])
+      !/^[0-9a-f]{64}$/u.test(value['digest']) ||
+      typeof value['claimantId'] !== 'string' ||
+      !QUICK_TASK_REQUEST_ID_PATTERN.test(value['claimantId'])
     ) {
       throw new Error('invalid claim fields');
     }
-    return { requestId: value['requestId'], digest: value['digest'] };
+    return {
+      requestId: value['requestId'],
+      digest: value['digest'],
+      claimantId: value['claimantId'],
+    };
   } catch (error) {
     if (error instanceof ActionError) throw error;
     throw new ActionError(
@@ -601,7 +614,7 @@ function githubStatus(error: unknown): number | undefined {
 
 async function readQuickTaskClaim(
   request: NormalizedQuickTaskRequest,
-): Promise<{ requestId: string; digest: string } | undefined> {
+): Promise<QuickTaskClaim | undefined> {
   const octokit = getGithubClient();
   const ref = await (async () => {
     try {
@@ -635,7 +648,7 @@ async function readQuickTaskClaim(
 function assertMatchingQuickTaskClaim(
   request: NormalizedQuickTaskRequest,
   digest: string,
-  claim: { requestId: string; digest: string },
+  claim: QuickTaskClaim,
 ): void {
   if (claim.requestId !== request.requestId || claim.digest !== digest) {
     throw new ActionError(
@@ -656,6 +669,7 @@ async function createQuickTaskClaim(
   }
 
   const octokit = getGithubClient();
+  const claimantId = randomUUID();
   const { data: repository } = await octokit.rest.repos.get({
     owner: request.repository.owner,
     repo: request.repository.name,
@@ -669,7 +683,7 @@ async function createQuickTaskClaim(
     owner: request.repository.owner,
     repo: request.repository.name,
     tag: `${QUICK_TASK_CLAIM_TAG_PREFIX}${request.requestId}`,
-    message: quickTaskClaimMessage(request.requestId, digest),
+    message: quickTaskClaimMessage(request.requestId, digest, claimantId),
     object: baseRef.object.sha,
     type: 'commit',
   });
@@ -690,7 +704,10 @@ async function createQuickTaskClaim(
     const winner = await readQuickTaskClaim(request);
     if (!winner) throw error;
     assertMatchingQuickTaskClaim(request, digest, winner);
-    return 'existing';
+    // GitHub may commit our ref and then lose the response. The per-attempt
+    // claimant UUID makes ownership unambiguous even if two annotated tag
+    // objects would otherwise have identical content/SHA.
+    return winner.claimantId === claimantId ? 'acquired' : 'existing';
   }
 }
 

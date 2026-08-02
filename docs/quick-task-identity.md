@@ -41,11 +41,14 @@ submissions in one process share one promise.
 
 Cross-process exclusion is a GitHub-native claim, not a deployment topology
 assumption or a second control plane. Before the issue write, the server creates
-an annotated tag containing the request ID and digest, then atomically creates
+an annotated tag containing the request ID, digest, and a server-generated
+claimant UUID, then atomically creates
 `refs/tags/agent-lcars/quick-task/<uuid>` in the selected repository. Only the
-winner may create the issue. A losing App Hosting instance rechecks the issue
-marker and otherwise fails closed; it never performs another create. Successful
-claims remain as the durable idempotency ledger.
+winner may create the issue. If the ref write succeeds but its response is lost,
+the claimant UUID lets that same invocation prove it owns the durable ref and
+continue safely. A different App Hosting instance rechecks the issue marker and
+otherwise fails closed; it never performs another create. Successful claims
+remain as the durable idempotency ledger.
 
 A definitive GitHub 4xx proves no issue was created, so its claim is released.
 After an ambiguous timeout the claim remains: a later retry either finds the
