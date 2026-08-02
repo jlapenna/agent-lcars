@@ -67,7 +67,11 @@ test('queue max is paired with noncancelling serialized execution only', async (
 
 test('workers carry no per-issue concurrency group; the broker owns that dedup (#321)', async () => {
   const sources = await workflowSources();
-  for (const worker of ['claude.yml', 'opencode.yml']) {
+  for (const worker of [
+    'claude.yml',
+    'opencode.yml',
+    'agent-dispatch-canary.yml',
+  ]) {
     const source = sources.find(
       (candidate) => candidate.name === worker,
     )?.source;
@@ -100,7 +104,12 @@ test('workers carry no per-issue concurrency group; the broker owns that dedup (
 
 test('workers are dispatch-only and cannot subscribe directly to issue events', async () => {
   const sources = await workflowSources();
-  for (const worker of ['claude.yml', 'codex.yml', 'opencode.yml']) {
+  for (const worker of [
+    'claude.yml',
+    'codex.yml',
+    'opencode.yml',
+    'agent-dispatch-canary.yml',
+  ]) {
     const source = sources.find(
       (candidate) => candidate.name === worker,
     )?.source;
@@ -121,6 +130,47 @@ test('router serializes issue and pull-request lifecycle through one normalized 
   );
   assert.match(source, /^\s+pull_request:\s*$/mu);
   assert.match(source, /^\s+types:\s+\[closed, reopened\]\s*$/mu);
+});
+
+test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-dispatch-canary.yml'),
+    'utf8',
+  );
+  // Only a GitHub-hosted runner, never the self-hosted/paid agent pool
+  // claude.yml/codex.yml/opencode.yml use.
+  assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
+  assert.doesNotMatch(source, /\$\{\{\s*vars\.AGENT_RUNNER_LABEL\s*\}\}/u);
+  // No secret of any kind -- no model credential, no GCP workload identity,
+  // no App token mint. The only credential in scope is GitHub's own
+  // ambient per-job token.
+  assert.doesNotMatch(source, /secrets\./u);
+  // Every worker calls the broker's completion-callback unconditionally so
+  // a crashed run still clears its ledger generation (#305's reconciler is
+  // only ever a backstop, never the primary path).
+  assert.match(source, /operation:\s*completion-callback/u);
+  const completionStepIndex = source.indexOf('operation: completion-callback');
+  const precedingSource = source.slice(0, completionStepIndex);
+  const lastAlwaysIndex = precedingSource.lastIndexOf('if: always()');
+  assert.ok(
+    lastAlwaysIndex >= 0 &&
+      precedingSource
+        .slice(lastAlwaysIndex)
+        .includes('uses: ./.github/actions/dispatch-broker'),
+    'the completion-callback step must run under if: always()',
+  );
+});
+
+test('the canary orchestrators (#307) never reference a self-hosted runner or a secret', async () => {
+  for (const workflow of ['dispatch-canary.yml', 'post-deploy-smoke.yml']) {
+    const source = await fs.readFile(
+      path.join(workflowsDirectory, workflow),
+      'utf8',
+    );
+    assert.doesNotMatch(source, /\$\{\{\s*vars\.AGENT_RUNNER_LABEL\s*\}\}/u);
+    assert.doesNotMatch(source, /secrets\./u);
+    assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
+  }
 });
 
 let failures = 0;

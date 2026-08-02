@@ -10,7 +10,16 @@ const ACTIVE_STATES = new Set([
   'completion-awaiting-terminal',
 ]);
 const TERMINAL_RUN_STATUSES = new Set(['completed']);
-const PIPELINES = new Set(['claude', 'codex', 'opencode']);
+// 'canary' (#307) is a dedicated, structurally-no-op fourth pipeline: it
+// exists purely to prove the broker's own claim/dispatch/completion-
+// callback path in production without ever invoking a paid model or a
+// self-hosted/privileged runner. It is never selectable through the
+// agent:* label contract (normalize.mjs's AGENT_LABELS/selectedPipeline
+// intentionally do not include it) or the Quick Task agent picker -- the
+// only way to produce a 'canary' intent is normalize.mjs's dedicated
+// workflow_dispatch `kind: 'canary'` branch, fired exclusively by this
+// repo's own trusted dispatch-canary.yml/post-deploy-smoke.yml.
+const PIPELINES = new Set(['claude', 'codex', 'opencode', 'canary']);
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;

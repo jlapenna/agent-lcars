@@ -1,0 +1,78 @@
+name: Post-Deploy Smoke
+
+# Production behavioral smoke (#307, final child of epic #301), chained off
+# deploy-console.yml's own completion. Firebase App Hosting here deploys via
+# the `firebase deploy` CLI invoked directly inside deploy-console.yml's own
+# job -- there is no GitHub-Deployments-API-integrated App Hosting
+# connection on this repo, so GitHub never emits a native `deployment_status`
+# event for it. `workflow_run` chained off "Deploy console" completing is
+# therefore the correct, already-available readiness signal, mirroring how
+# deploy-console.yml itself already chains off CI's own `workflow_run`
+# rather than a `push` trigger.
+#
+# deploy-console.yml's own `deploy` job only runs for workflow_dispatch or a
+# successful CI run on a `push` to main; every other completion of "Deploy
+# console" reports an overall `success` conclusion too (a workflow whose
+# only job was skipped still reports success), so this job's own condition
+# below re-checks `head_branch == 'main'` as a best-effort second filter.
+# A false-positive extra run here is harmless (it just creates, verifies,
+# and closes one more canary with no real deploy behind it); a missed
+# regression is the risk actually being guarded against, so this
+# deliberately errs toward extra runs rather than silently skipped ones.
+#
+# Behavioral check, in order: (1) the live URL answers with a 2xx response,
+# (2) a canary issue created after that round-trips through the real
+# dispatch broker + no-op worker (the same GitHub write/routing path a real
+# agent dispatch uses) within a bounded window. This proves the deployed
+# revision is reachable and that the broker's GitHub write path still works
+# in production. It deliberately does NOT exercise the deployed console's
+# own server action writing to GitHub through its runtime credential
+# (AGENT_LCARS_GITHUB_TOKEN) -- that is #307's separately-scoped write-path
+# E2E fixture work in apps/console, not this workflow. See
+# docs/e2e-security-boundary.md.
+
+on:
+  workflow_run:
+    workflows: [Deploy console]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: post-deploy-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Assert required repo variables are set
+        env:
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        run: |
+          if [ -z "$MAINTAINER_LOGIN" ]; then
+            echo "::error::Missing required repo variable: MAINTAINER_LOGIN"
+            exit 1
+          fi
+
+      # Needed to resolve the local composite action below.
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
+
+      - name: Run the dispatch broker canary lifecycle
+        uses: ./.github/actions/run-dispatch-canary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
+          source: post-deploy
+          deploy-run-url: ${{ github.event.workflow_run.html_url }}
+          # Matches deploy-console.yml's own hardcoded APP_URL.
+          live-url: https://agent-console.supersprinkles.racing

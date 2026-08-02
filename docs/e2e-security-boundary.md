@@ -17,9 +17,47 @@ The public and internal Nx targets support only the `emulator` execution path.
 They retain an explicit `live` tombstone because Nx silently falls back to the
 default configuration when a named configuration is absent. The tombstone
 exits before entering any test tooling and explains that real Firebase
-configuration conflicts with this dummy-only boundary. A future live
-write-path canary must use a separately validated design with explicit
-authorization (tracked by #307), never the direct `e2e-run` target.
+configuration conflicts with this dummy-only boundary. A live write-path
+canary must use a separately validated design with explicit authorization,
+never the direct `e2e-run` target.
+
+## Production dispatch-broker canary (#307)
+
+The dispatch broker's own GitHub write/routing path -- issue creation,
+label-driven dispatch, workflow-run binding, and the explicit worker
+completion callback -- is separately, continuously verified in production by
+`.github/workflows/dispatch-canary.yml` (hourly + `workflow_dispatch`) and
+`.github/workflows/post-deploy-smoke.yml` (chained off `deploy-console.yml`
+completing). Both share `.github/actions/run-dispatch-canary`, which creates
+a dedicated, clearly-marked issue, dispatches it through
+`agent-router.yml`'s real broker (`dispatch-broker/normalize.mjs`'s
+`kind: 'canary'` intent, a fourth pipeline alongside claude/codex/opencode --
+see `dispatch-broker/broker.mjs`), and drives it to a dedicated no-op worker,
+`agent-dispatch-canary.yml`.
+
+That worker is structurally incapable of invoking a paid model or a
+privileged/self-hosted runner: it runs on `ubuntu-latest` (never
+`vars.AGENT_RUNNER_LABEL`), holds no secret beyond GitHub's own ambient
+per-job token, performs no model invocation, GCP authentication, or
+repository checkout-and-write beyond claiming/commenting/closing the anchor
+issue, and unconditionally reports completion to the broker under
+`if: always()` -- see `workflow-contract.test.mjs`'s "#307" checks, which
+assert exactly these properties from the workflow source. `canary` is never
+selectable through the `agent:*` label contract or the Quick Task agent
+picker; the only way to produce that intent is the dedicated
+`kind: 'canary'` `workflow_dispatch` branch, fired exclusively by this
+repo's own two trusted canary workflows.
+
+The post-deploy smoke additionally probes the live console URL for a 2xx
+response before exercising the broker, so a broken deployed revision is
+caught even before the write-path check runs. Either workflow's failure
+parks `status:needs-human` (label + maintainer assignee) on the canary
+issue with evidence and leaves it open, rather than a silent log line; a
+successful run closes its issue automatically -- the acceptance bar for
+"canary artifacts are automatically cleaned up." This proves the broker's
+GitHub write path, not the deployed console's own server action writing to
+GitHub through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`); that
+remains a separately-scoped write-path E2E fixture effort in `apps/console`.
 
 The wrapper starts the Nx process with an empty environment, a temporary
 `HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit

@@ -1,0 +1,57 @@
+name: Dispatch Canary
+
+# Scheduled AND manually runnable production canary for the dispatch broker
+# (#307, final child of epic #301). Creates a dedicated, clearly-marked
+# issue, drives it through the real broker + a dedicated no-op worker
+# (agent-dispatch-canary.yml) that never invokes a paid model or a
+# self-hosted/privileged runner, verifies the resulting ledger state, and
+# closes the issue automatically. A failure leaves the issue open and parks
+# status:needs-human on it with evidence instead of closing it -- see
+# .github/actions/run-dispatch-canary.
+
+on:
+  schedule:
+    # Hourly, offset from :00 to avoid the scheduling stampede (see
+    # label-contract-audit.yml's '17 13 * * *' / dispatch-reconcile.yml's
+    # '7,37 * * * *' for the same convention).
+    - cron: '13 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  # Repo-wide, canary-only group: prevents two overlapping scheduled/manual
+  # runs from creating two canary issues at once. Harmless if it ever
+  # happened (each is independently verified and cleaned up), but no reason
+  # to pay for it.
+  group: dispatch-canary-run
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Assert required repo variables are set
+        env:
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        run: |
+          if [ -z "$MAINTAINER_LOGIN" ]; then
+            echo "::error::Missing required repo variable: MAINTAINER_LOGIN"
+            exit 1
+          fi
+
+      # Needed to resolve the local composite action below.
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
+
+      - name: Run the dispatch broker canary lifecycle
+        uses: ./.github/actions/run-dispatch-canary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
+          source: scheduled
