@@ -427,6 +427,7 @@ interface NormalizedQuickTaskRequest extends QuickTaskRequest {
 interface ExistingQuickTaskIssue {
   number: number;
   body?: string | null;
+  pull_request?: unknown;
 }
 
 interface QuickTaskClaim {
@@ -549,6 +550,9 @@ function resolveExistingQuickTask(
   issues: ExistingQuickTaskIssue[],
 ): QuickTaskReceipt | undefined {
   const matches = issues.flatMap((issue) => {
+    // GitHub's issues listing includes pull requests. A PR may quote/copy a
+    // Quick Task body, but it can never be the canonical intake issue.
+    if (issue.pull_request !== undefined) return [];
     const persistedDigest = markerDigest(issue.body, request.requestId);
     return persistedDigest ? [{ issue, persistedDigest }] : [];
   });

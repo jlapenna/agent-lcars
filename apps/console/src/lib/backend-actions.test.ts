@@ -754,6 +754,31 @@ describe('createQuickTask', () => {
     expect(createIssue).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores a pull request that copied the Quick Task marker', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      return { data: { number: 99 } };
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [
+          { number: 123, body: persistedBody, pull_request: { url: 'pr' } },
+          { number: 99, body: persistedBody },
+        ],
+      }));
+    mockOctokit({ createIssue, listForRepo });
+
+    const first = await createQuickTask(request);
+    const retry = await createQuickTask(request);
+
+    expect(first.task.issueNumber).toBe(99);
+    expect(retry).toEqual(first);
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
   it('searches beyond the recent issue window for an older retry', async () => {
     const recent = Array.from({ length: 100 }, (_, index) => ({
       number: index + 1000,
