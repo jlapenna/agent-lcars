@@ -2,12 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -102,51 +96,87 @@ func TestGitHubRunnerStatusClientListsRegistrationOnce(t *testing.T) {
 	}
 }
 
-func TestInstallationTokenSourceSignsAndCachesAppToken(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	privateKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	now := time.Now().UTC()
-	requests := 0
+func TestGitHubRunnerStatusClientListRunnerStatusesHonorsRetryAfter(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if r.Method != http.MethodPost || r.URL.Path != "/app/installations/42/access_tokens" {
-			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
-		}
-		rawJWT := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		parsed, err := jwt.ParseWithClaims(rawJWT, &jwt.RegisteredClaims{}, func(token *jwt.Token) (any, error) {
-			return &key.PublicKey, nil
-		})
-		if err != nil || !parsed.Valid {
-			t.Fatalf("invalid app JWT: %v", err)
-		}
-		claims := parsed.Claims.(*jwt.RegisteredClaims)
-		if claims.Issuer != "client-id" {
-			t.Fatalf("issuer = %q", claims.Issuer)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprintf(w, `{"token":"installation-token","expires_at":%q}`, now.Add(time.Hour).Format(time.RFC3339))
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"message":"You have exceeded a secondary rate limit"}`)
 	}))
 	defer server.Close()
 
-	source, err := newInstallationTokenSource("client-id", 42, string(privateKey), server.URL, server.Client())
-	if err != nil {
-		t.Fatal(err)
+	client := &githubRunnerStatusClient{
+		apiBaseURL:  server.URL,
+		runnersPath: "/repos/acme/widgets/actions/runners",
+		httpClient:  server.Client(),
+		tokenSource: staticBearerToken("test-token"),
 	}
-	source.now = func() time.Time { return now }
+	_, err := client.ListRunnerStatuses(context.Background(), map[string]struct{}{"runner-a": {}})
+	if err == nil {
+		t.Fatal("ListRunnerStatuses: want error, got nil")
+	}
+	var rateLimited *githubRateLimitError
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("error = %v, want *githubRateLimitError", err)
+	}
+	if rateLimited.retryAfter != 42*time.Second {
+		t.Fatalf("retryAfter = %s, want 42s", rateLimited.retryAfter)
+	}
+	if !strings.Contains(err.Error(), "secondary rate limit") {
+		t.Fatalf("error %q does not include response body snippet", err.Error())
+	}
+}
 
-	first, err := source.Token(context.Background())
-	if err != nil {
-		t.Fatal(err)
+func TestGitHubRunnerStatusClientListRunnerStatusesHonors403RateLimitHeaders(t *testing.T) {
+	reset := time.Now().Add(90 * time.Second)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"API rate limit exceeded"}`)
+	}))
+	defer server.Close()
+
+	client := &githubRunnerStatusClient{
+		apiBaseURL:  server.URL,
+		runnersPath: "/repos/acme/widgets/actions/runners",
+		httpClient:  server.Client(),
+		tokenSource: staticBearerToken("test-token"),
 	}
-	second, err := source.Token(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	_, err := client.ListRunnerStatuses(context.Background(), map[string]struct{}{"runner-a": {}})
+	var rateLimited *githubRateLimitError
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("error = %v, want *githubRateLimitError", err)
 	}
-	if first != "installation-token" || second != first || requests != 1 {
-		t.Fatalf("tokens/requests = %q/%q/%d", first, second, requests)
+	// Allow slack for wall-clock jitter between the server computing `reset`
+	// and githubRateLimited computing time.Now() inside ListRunnerStatuses.
+	if rateLimited.retryAfter < 85*time.Second || rateLimited.retryAfter > 95*time.Second {
+		t.Fatalf("retryAfter = %s, want ~90s", rateLimited.retryAfter)
+	}
+}
+
+func TestGitHubRunnerStatusClientListRunnerStatusesOrdinary403IsNotRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+	}))
+	defer server.Close()
+
+	client := &githubRunnerStatusClient{
+		apiBaseURL:  server.URL,
+		runnersPath: "/repos/acme/widgets/actions/runners",
+		httpClient:  server.Client(),
+		tokenSource: staticBearerToken("test-token"),
+	}
+	_, err := client.ListRunnerStatuses(context.Background(), map[string]struct{}{"runner-a": {}})
+	if err == nil {
+		t.Fatal("ListRunnerStatuses: want error, got nil")
+	}
+	var rateLimited *githubRateLimitError
+	if errors.As(err, &rateLimited) {
+		t.Fatalf("ordinary 403 misclassified as rate limit: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Resource not accessible by integration") {
+		t.Fatalf("error %q does not include response body snippet", err.Error())
 	}
 }
 
@@ -240,6 +270,72 @@ func TestRegistrationRunnerStatusMonitorPreservesCountsOnProbeFailure(t *testing
 	}
 	if got := testutil.ToFloat64(runnerStatusProbeUpGauge.WithLabelValues(registration)); got != 0 {
 		t.Fatalf("probe_up = %v, want 0", got)
+	}
+}
+
+// TestRegistrationRunnerStatusMonitorBacksOffOnRateLimit verifies reconcile
+// returns the rate limit's retry-after duration instead of the fixed
+// runnerStatusPollInterval (agent-lcars#321), while still preserving the
+// same probe-failure metrics semantics as an ordinary error (probe_up -> 0,
+// last-good unavailable-runner gauges untouched).
+func TestRegistrationRunnerStatusMonitorBacksOffOnRateLimit(t *testing.T) {
+	now := time.Now()
+	scaleSet := "status-monitor-ratelimit-test"
+	registration := "status-monitor-ratelimit-registration-test"
+	gauge := githubUnavailableRunnersGauge.WithLabelValues(scaleSet, "host-a", runnerUnavailableOffline)
+	gauge.Set(1)
+	wantDelay := 3 * time.Minute
+	source := &fakeRunnerStatusSource{err: &githubRateLimitError{
+		retryAfter: wantDelay,
+		err:        errors.New("listing GitHub runners: unexpected 429 Too Many Requests: rate limited"),
+	}}
+	scaler := &Scaler{
+		scaleSetName: scaleSet,
+		dockerHosts:  []DockerHost{{Name: "host-a"}},
+		runners: runnerState{
+			idle: map[string]runnerRef{"runner": {host: "host-a", startedAt: now.Add(-time.Hour)}},
+			busy: map[string]runnerRef{},
+		},
+	}
+	monitor := &registrationRunnerStatusMonitor{
+		registration: registration,
+		source:       source,
+		scalers:      []*Scaler{scaler},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:          func() time.Time { return now },
+	}
+
+	delay := monitor.reconcile(context.Background())
+
+	if delay != wantDelay {
+		t.Fatalf("reconcile delay = %s, want %s", delay, wantDelay)
+	}
+	if got := testutil.ToFloat64(gauge); got != 1 {
+		t.Fatalf("unavailable gauge changed on rate-limited probe: %v", got)
+	}
+	if got := testutil.ToFloat64(runnerStatusProbeUpGauge.WithLabelValues(registration)); got != 0 {
+		t.Fatalf("probe_up = %v, want 0", got)
+	}
+}
+
+// TestRegistrationRunnerStatusMonitorUsesPollIntervalOnSuccess pins down
+// reconcile's return value on the ordinary (no error) path, since run relies
+// on it to reset its timer back to the normal cadence after a prior
+// rate-limit backoff.
+func TestRegistrationRunnerStatusMonitorUsesPollIntervalOnSuccess(t *testing.T) {
+	now := time.Now()
+	source := &fakeRunnerStatusSource{statuses: map[string]string{}}
+	scaler := &Scaler{scaleSetName: "status-monitor-success-test"}
+	monitor := &registrationRunnerStatusMonitor{
+		registration: "status-monitor-success-registration-test",
+		source:       source,
+		scalers:      []*Scaler{scaler},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:          func() time.Time { return now },
+	}
+
+	if delay := monitor.reconcile(context.Background()); delay != runnerStatusPollInterval {
+		t.Fatalf("reconcile delay = %s, want %s", delay, runnerStatusPollInterval)
 	}
 }
 

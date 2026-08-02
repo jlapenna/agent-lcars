@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/golang-jwt/jwt/v4"
 )
 
 const (
@@ -30,16 +27,6 @@ const (
 
 type runnerStatusSource interface {
 	ListRunnerStatuses(context.Context, map[string]struct{}) (map[string]string, error)
-}
-
-type bearerTokenSource interface {
-	Token(context.Context) (string, error)
-}
-
-type staticBearerToken string
-
-func (t staticBearerToken) Token(context.Context) (string, error) {
-	return string(t), nil
 }
 
 type githubRunnerStatusClient struct {
@@ -156,8 +143,9 @@ func (c *githubRunnerStatusClient) ListRunnerStatuses(ctx context.Context, wante
 			return nil, fmt.Errorf("listing GitHub runners: %w", err)
 		}
 		if resp.StatusCode != http.StatusOK {
+			statusErr := newGitHubHTTPError("listing GitHub runners", resp, time.Now())
 			_ = resp.Body.Close()
-			return nil, fmt.Errorf("listing GitHub runners returned HTTP %d", resp.StatusCode)
+			return nil, statusErr
 		}
 		var pageResult githubRunnerStatusList
 		decodeErr := json.NewDecoder(resp.Body).Decode(&pageResult)
@@ -177,83 +165,9 @@ func (c *githubRunnerStatusClient) ListRunnerStatuses(ctx context.Context, wante
 	}
 }
 
-type installationTokenSource struct {
-	mu             sync.Mutex
-	clientID       string
-	installationID int64
-	signingKey     *rsa.PrivateKey
-	apiBaseURL     string
-	httpClient     *http.Client
-	now            func() time.Time
-	token          string
-	expiresAt      time.Time
-}
-
-func newInstallationTokenSource(clientID string, installationID int64, privateKey, apiBaseURL string, httpClient *http.Client) (*installationTokenSource, error) {
-	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKey))
-	if err != nil {
-		return nil, err
-	}
-	return &installationTokenSource{
-		clientID:       clientID,
-		installationID: installationID,
-		signingKey:     key,
-		apiBaseURL:     apiBaseURL,
-		httpClient:     httpClient,
-		now:            time.Now,
-	}, nil
-}
-
-func (s *installationTokenSource) Token(ctx context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := s.now()
-	if s.token != "" && now.Add(time.Minute).Before(s.expiresAt) {
-		return s.token, nil
-	}
-
-	claims := jwt.RegisteredClaims{
-		Issuer:    s.clientID,
-		IssuedAt:  jwt.NewNumericDate(now.Add(-time.Minute)),
-		ExpiresAt: jwt.NewNumericDate(now.Add(9 * time.Minute)),
-	}
-	appJWT, err := jwt.NewWithClaims(jwt.SigningMethodRS256, claims).SignedString(s.signingKey)
-	if err != nil {
-		return "", fmt.Errorf("signing GitHub App JWT: %w", err)
-	}
-
-	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", s.apiBaseURL, s.installationID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte("{}")))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Authorization", "Bearer "+appJWT)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("creating GitHub App installation token: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("creating GitHub App installation token returned HTTP %d", resp.StatusCode)
-	}
-	var result struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decoding GitHub App installation token: %w", err)
-	}
-	if result.Token == "" || result.ExpiresAt.IsZero() {
-		return "", fmt.Errorf("GitHub App installation token response was incomplete")
-	}
-	s.token, s.expiresAt = result.Token, result.ExpiresAt
-	return s.token, nil
-}
+// The GitHub App installation-token source (bearerTokenSource,
+// staticBearerToken, installationTokenSource) lives in github_app_token.go;
+// see that file for why it stays a single hand-rolled implementation.
 
 type trackedRunnerStatus struct {
 	name      string
@@ -283,7 +197,13 @@ type registrationRunnerStatusMonitor struct {
 	now          func() time.Time
 }
 
-func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) {
+// reconcile fetches the latest runner statuses and updates the
+// unavailable-runner gauges, returning how long run should wait before the
+// next reconciliation. It normally returns runnerStatusPollInterval; on a
+// GitHub rate limit (agent-lcars#321) it returns the capped, header-derived
+// backoff instead so run does not keep hammering GitHub every fixed 60s
+// while the limit is still in effect.
+func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) time.Duration {
 	snapshots := make(map[*Scaler][]trackedRunnerStatus, len(m.scalers))
 	wanted := map[string]struct{}{}
 	for _, scaler := range m.scalers {
@@ -297,8 +217,17 @@ func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) {
 	statuses, err := m.source.ListRunnerStatuses(ctx, wanted)
 	if err != nil {
 		runnerStatusProbeUpGauge.WithLabelValues(m.registration).Set(0)
+		var rateLimited *githubRateLimitError
+		if errors.As(err, &rateLimited) {
+			m.logger.Warn("GitHub runner-status reconciliation rate-limited; backing off before the next poll",
+				slog.String("registration", m.registration),
+				slog.String("error", err.Error()),
+				slog.Duration("retry_after", rateLimited.retryAfter),
+			)
+			return rateLimited.retryAfter
+		}
 		m.logger.Warn("GitHub runner-status reconciliation failed; preserving the previous unavailable-runner gauges", slog.String("registration", m.registration), slog.String("error", err.Error()))
-		return
+		return runnerStatusPollInterval
 	}
 	runnerStatusProbeUpGauge.WithLabelValues(m.registration).Set(1)
 
@@ -336,18 +265,24 @@ func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) {
 			}
 		}
 	}
+	return runnerStatusPollInterval
 }
 
+// run drives periodic reconciliation using a resettable timer rather than a
+// fixed-interval ticker, so a GitHub rate limit (agent-lcars#321) can push
+// the next attempt out past the normal runnerStatusPollInterval instead of
+// retrying every 60s regardless of what GitHub asked for.
 func (m *registrationRunnerStatusMonitor) run(ctx context.Context) {
-	m.reconcile(ctx)
-	ticker := time.NewTicker(runnerStatusPollInterval)
-	defer ticker.Stop()
+	delay := m.reconcile(ctx)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			m.reconcile(ctx)
+		case <-timer.C:
+			delay = m.reconcile(ctx)
+			timer.Reset(delay)
 		}
 	}
 }
