@@ -17,6 +17,30 @@ import {
   UploadTranscriptOptions,
 } from './transcript-upload';
 
+/**
+ * Emits a GitHub Actions `::warning::` workflow command so a failed
+ * transcript upload or session upsert surfaces in the Actions UI instead of
+ * requiring someone to open this step's raw log (agent-lcars#352 — a WIF
+ * grant silently rejected every sprinkles-repo telemetry write for months
+ * because the failure never showed up anywhere but plain step output).
+ * Only fires under `GITHUB_ACTIONS=true` (unset in local/test runs) and
+ * deliberately writes straight to stdout rather than through `logger.warn`
+ * — the structured/JSON logging mode `@repo/logging` can switch to would
+ * bury the `::warning::` prefix Actions parses for annotations. `%`/CR/LF
+ * are escaped per Actions' workflow-command format so a multi-line error
+ * message can't break the single-line annotation.
+ */
+function annotateWarning(message: string): void {
+  if (process.env['GITHUB_ACTIONS'] !== 'true') {
+    return;
+  }
+  const escaped = message
+    .replace(/%/g, '%25')
+    .replace(/\r/g, '%0D')
+    .replace(/\n/g, '%0A');
+  console.log(`::warning::${escaped}`);
+}
+
 /** Mirrors `runner.ts`'s `RUNNER_ALLOWLIST` — see that constant's doc
  * comment for why a runner container's single checkout needs no scoping. */
 const RUNNER_ALLOWLIST = ['*'];
@@ -161,10 +185,9 @@ async function finalizeSummary(
       });
       transcriptGcsUri = `gs://${config.transcriptsBucket}/${object}`;
     } catch (error) {
-      logger.warn(
-        `agent-lcars-telemetry-watcher: finalize failed to upload transcript for session ${summary.sessionId}, shipping doc without transcriptGcsUri`,
-        error,
-      );
+      const message = `agent-lcars-telemetry-watcher: finalize failed to upload transcript for session ${summary.sessionId}, shipping doc without transcriptGcsUri`;
+      logger.warn(message, error);
+      annotateWarning(`${message}: ${error}`);
     }
   }
 
@@ -187,9 +210,8 @@ async function finalizeSummary(
       }`,
     );
   } catch (error) {
-    logger.warn(
-      `agent-lcars-telemetry-watcher: finalize failed to upsert session ${summary.sessionId}`,
-      error,
-    );
+    const message = `agent-lcars-telemetry-watcher: finalize failed to upsert session ${summary.sessionId}`;
+    logger.warn(message, error);
+    annotateWarning(`${message}: ${error}`);
   }
 }
