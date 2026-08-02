@@ -170,9 +170,9 @@ export function getWatchedRepos(): WatchedRepo[] {
   return raw ? parseWatchedReposJson(raw) : DEFAULT_WATCHED_REPOS;
 }
 
-/** The repo global, ops-style actions (quick task, unstick-prs) target when
- * the UI doesn't offer a per-action repo picker - always the first watched
- * repo, matching today's single-repo behavior. */
+/** The repository targeted by truly global ops actions that do not have a
+ * task/repository context (currently only unstick-prs). Quick Task creation
+ * deliberately requires an explicit repository at every boundary. */
 export function primaryWatchedRepo(): WatchedRepo {
   return getWatchedRepos()[0];
 }

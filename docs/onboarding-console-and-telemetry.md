@@ -203,10 +203,13 @@ set in this repo's `apphosting.yaml`): a JSON array of
   read access to the new repo too — check its scope/installation covers
   it, since a token that only reached an existing repo won't automatically
   reach one in a different org or a personal account.
-- `primaryWatchedRepo()` — the repo global ops-style actions (quick task,
-  unstick-prs) target when the UI has no per-action repo picker — is
-  always `getWatchedRepos()[0]`. If the new repo should be the default
-  target for those, put it first in the array.
+- Quick Task always carries an explicit canonical `owner`/`name` repository
+  from the UI through the Server Action. A single configured repository hides
+  the picker but is still included in the mutation; there is no primary-repo
+  fallback.
+- `primaryWatchedRepo()` is reserved for truly global operations without a
+  task context (currently only `unstick-prs`) and returns
+  `getWatchedRepos()[0]`.
 
 ## Verifying it actually worked
 

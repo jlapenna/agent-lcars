@@ -106,7 +106,7 @@ export async function GET(
  * mid-suite (and 401, having no real token).
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
   if (!isE2eTesting()) {
@@ -115,6 +115,35 @@ export async function POST(
   const { path } = await params;
   if (path[0] === 'graphql') {
     return NextResponse.json({ data: enrichmentGraphql() });
+  }
+  if (path[0] === 'repos' && path.length === 4 && path[3] === 'issues') {
+    const body = (await req.json()) as {
+      body?: string;
+      labels?: string[];
+      title?: string;
+    };
+    const hasRequestMarker =
+      /<!-- agent-lcars:quick-task-request:v1 id=[0-9a-f-]{36} digest=[0-9a-f]{64} -->/u.test(
+        body.body ?? '',
+      );
+    if (
+      !body.title?.trim() ||
+      !hasRequestMarker ||
+      !body.labels?.includes('intake:quick-task') ||
+      !body.labels.includes('agent:claude')
+    ) {
+      return NextResponse.json(
+        { message: 'Invalid Quick Task fixture request' },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json({
+      number: 9999,
+      html_url: 'https://github.com/supersprinklesracing/sprinkles/issues/9999',
+      title: body.title,
+      body: body.body,
+      labels: body.labels.map((name) => ({ name })),
+    });
   }
   console.error(
     'agent-lcars: no e2e GitHub fixture for POST /%s',

@@ -26,6 +26,10 @@ import {
 import { GITHUB_DATA_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
+import type {
+  QuickTaskReceipt,
+  QuickTaskRequest,
+} from '../lib/quick-task-contract';
 
 // LAN preview goes through the shared test-session adapter inside auth()
 // (IMPERSONATE_AUTOMATIC_LOGIN), so no bypass is needed here.
@@ -66,7 +70,7 @@ function toUserErrorMessage(error: unknown): string {
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
 export type QuickTaskResult =
-  { ok: true; url: string; number: number } | { ok: false; message: string };
+  ({ ok: true } & QuickTaskReceipt) | { ok: false; message: string };
 
 export async function getActionItems(): Promise<ActionItemsResult> {
   await requireAdmin();
@@ -189,21 +193,19 @@ export async function dispatchUnstickPrs(
 }
 
 export async function createQuickTask(
-  description: string,
-  title?: string,
-  repo?: WatchedRepo,
-  pipeline?: Pipeline,
+  request: QuickTaskRequest,
 ): Promise<QuickTaskResult> {
   await requireAdmin();
   try {
-    const { url, number } = await createQuickTaskLib(
-      description,
-      title,
-      repo && resolveWatchedRepo(repo),
-      pipeline,
-    );
+    if (!request?.repository) {
+      throw new ActionError('Quick Task repository is required', 400);
+    }
+    const receipt = await createQuickTaskLib({
+      ...request,
+      repository: resolveWatchedRepo(request.repository),
+    });
     revalidateDashboard();
-    return { ok: true, url, number };
+    return { ok: true, ...receipt };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }

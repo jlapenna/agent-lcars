@@ -6,18 +6,28 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { createQuickTask } from './actions';
 import { QuickTaskButton } from './quick-task-button';
 
-vi.mock('./actions', () => ({
-  createQuickTask: vi.fn(),
-}));
-
+vi.mock('./actions', () => ({ createQuickTask: vi.fn() }));
 vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }));
 
+const REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+function receipt(repository = REPO, issueNumber = 99) {
+  return {
+    ok: true as const,
+    requestId: '11111111-1111-4111-8111-111111111111',
+    task: { repository, issueNumber },
+    url: `https://github.com/${repository.owner}/${repository.name}/issues/${issueNumber}`,
+  };
+}
+
 function renderButton() {
   render(
     <MantineProvider>
-      <QuickTaskButton />
+      <QuickTaskButton watchedRepos={[REPO]} />
     </MantineProvider>,
   );
 }
@@ -27,187 +37,100 @@ function openDialog() {
   return screen.findByRole('dialog');
 }
 
+function enterDescription(value = 'Fix the flaky test') {
+  fireEvent.change(screen.getByLabelText('Description'), {
+    target: { value },
+  });
+}
+
+function submit() {
+  fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+}
+
 describe('QuickTaskButton', () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('opens a centered dialog rather than a full-screen one or an inline dropdown', async () => {
+  it('opens a centered dialog rather than a full-screen one', async () => {
     renderButton();
-
     const dialog = await openDialog();
-
     expect(screen.getByText('File a quick task')).toBeTruthy();
     expect(dialog.getAttribute('data-full-screen')).toBeNull();
   });
 
-  it('disables File & dispatch until a description is entered', async () => {
+  it('disables submission until a description is entered', async () => {
     renderButton();
     await openDialog();
-
-    const dispatchButton = screen.getByRole('button', {
+    const button = screen.getByRole('button', {
       name: 'File & dispatch',
     }) as HTMLButtonElement;
-    expect(dispatchButton.disabled).toBe(true);
-
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix the flaky test' },
-    });
-
-    expect(dispatchButton.disabled).toBe(false);
+    expect(button.disabled).toBe(true);
+    enterDescription();
+    expect(button.disabled).toBe(false);
   });
 
-  it('files the task with a blank title, letting the backend derive one', async () => {
-    (createQuickTask as Mock).mockResolvedValue({
-      ok: true,
-      url: 'https://github.com/x/y/issues/99',
-      number: 99,
-    });
+  it('files a repository-explicit request and renders its canonical TaskRef', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
     renderButton();
     await openDialog();
-
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix the flaky test' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+    enterDescription();
+    submit();
 
     await waitFor(() =>
-      expect(createQuickTask).toHaveBeenCalledWith(
-        'Fix the flaky test',
-        '',
-        undefined,
-        'claude',
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'green' }),
       ),
     );
-    expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ color: 'green' }),
-    );
+    expect(createQuickTask).toHaveBeenCalledWith({
+      requestId: expect.stringMatching(UUID_PATTERN),
+      repository: REPO,
+      pipeline: 'claude',
+      title: '',
+      description: 'Fix the flaky test',
+    });
     const { message } = (notifications.show as Mock).mock.calls[0][0];
     render(<MantineProvider>{message}</MantineProvider>);
     const link = screen.getByRole('link', {
-      name: 'Quick task filed as #99',
+      name: 'Quick task filed as supersprinklesracing/sprinkles#99',
     }) as HTMLAnchorElement;
-    expect(link.href).toBe('https://github.com/x/y/issues/99');
+    expect(link.href).toBe(
+      'https://github.com/supersprinklesracing/sprinkles/issues/99',
+    );
   });
 
-  it('forwards an explicit title when one is entered', async () => {
-    (createQuickTask as Mock).mockResolvedValue({
-      ok: true,
-      url: 'https://github.com/x/y/issues/99',
-      number: 99,
-    });
+  it('forwards an explicit title and selected pipeline', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
     renderButton();
     await openDialog();
-
     fireEvent.change(screen.getByLabelText('Title'), {
       target: { value: 'Custom title' },
     });
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix the flaky test' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
-
-    await waitFor(() =>
-      expect(createQuickTask).toHaveBeenCalledWith(
-        'Fix the flaky test',
-        'Custom title',
-        undefined,
-        'claude',
-      ),
-    );
-  });
-
-  it('defaults the agent picker to claude', async () => {
-    renderButton();
-    await openDialog();
-
-    expect(
-      (screen.getByRole('combobox', { name: 'Agent' }) as HTMLInputElement)
-        .value,
-    ).toBe('claude');
-  });
-
-  it('forwards the selected agent pipeline', async () => {
-    (createQuickTask as Mock).mockResolvedValue({
-      ok: true,
-      url: 'https://github.com/x/y/issues/99',
-      number: 99,
-    });
-    renderButton();
-    await openDialog();
-
     fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
     fireEvent.click(await screen.findByText('opencode'));
-
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix the flaky test' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+    enterDescription();
+    submit();
 
     await waitFor(() =>
       expect(createQuickTask).toHaveBeenCalledWith(
-        'Fix the flaky test',
-        '',
-        undefined,
-        'opencode',
+        expect.objectContaining({
+          title: 'Custom title',
+          pipeline: 'opencode',
+        }),
       ),
     );
   });
 
-  it("offers no repo picker with a single watched repo (today's default)", async () => {
-    render(
-      <MantineProvider>
-        <QuickTaskButton
-          watchedRepos={[{ owner: 'supersprinklesracing', name: 'sprinkles' }]}
-        />
-      </MantineProvider>,
-    );
+  it('offers no repo picker with one watched repo', async () => {
+    renderButton();
     await openDialog();
-
     expect(screen.queryByLabelText('Repo')).toBeNull();
   });
 
-  it('offers a repo picker and forwards the selected repo when more than one is watched', async () => {
-    (createQuickTask as Mock).mockResolvedValue({
-      ok: true,
-      url: 'https://github.com/org-b/repo-b/issues/1',
-      number: 1,
-    });
+  it('uses the repo selected by the surrounding page', async () => {
     const repoA = { owner: 'org-a', name: 'repo-a' };
     const repoB = { owner: 'org-b', name: 'repo-b' };
-    render(
-      <MantineProvider>
-        <QuickTaskButton watchedRepos={[repoA, repoB]} />
-      </MantineProvider>,
-    );
-    await openDialog();
-
-    fireEvent.click(screen.getByRole('combobox', { name: 'Repo' }));
-    fireEvent.click(await screen.findByText('org-b/repo-b'));
-
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix the flaky test' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
-
-    await waitFor(() =>
-      expect(createQuickTask).toHaveBeenCalledWith(
-        'Fix the flaky test',
-        '',
-        repoB,
-        'claude',
-      ),
-    );
-  });
-
-  it('defaults to the repository selected by the surrounding page', async () => {
-    (createQuickTask as Mock).mockResolvedValue({
-      ok: true,
-      url: 'https://github.com/org-b/repo-b/issues/1',
-      number: 1,
-    });
-    const repoA = { owner: 'org-a', name: 'repo-a' };
-    const repoB = { owner: 'org-b', name: 'repo-b' };
+    (createQuickTask as Mock).mockResolvedValue(receipt(repoB, 1));
     render(
       <MantineProvider>
         <QuickTaskButton
@@ -217,99 +140,93 @@ describe('QuickTaskButton', () => {
       </MantineProvider>,
     );
     await openDialog();
-
     expect(
       (screen.getByRole('combobox', { name: 'Repo' }) as HTMLInputElement)
         .value,
     ).toBe('org-b/repo-b');
-
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix this repository' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+    enterDescription('Fix this repository');
+    submit();
 
     await waitFor(() =>
       expect(createQuickTask).toHaveBeenCalledWith(
-        'Fix this repository',
-        '',
-        repoB,
-        'claude',
+        expect.objectContaining({ repository: repoB }),
       ),
     );
   });
 
-  it('falls back to the first watched repo for an unknown page scope', async () => {
-    const repoA = { owner: 'org-a', name: 'repo-a' };
-    const repoB = { owner: 'org-b', name: 'repo-b' };
-    render(
-      <MantineProvider>
-        <QuickTaskButton
-          watchedRepos={[repoA, repoB]}
-          initialRepoKey="org-c/removed-repo"
-        />
-      </MantineProvider>,
-    );
-    await openDialog();
-
-    expect(
-      (screen.getByRole('combobox', { name: 'Repo' }) as HTMLInputElement)
-        .value,
-    ).toBe('org-a/repo-a');
-  });
-
-  it('shows the configured alias in the repo picker instead of owner/name', async () => {
-    (createQuickTask as Mock).mockResolvedValue({
-      ok: true,
-      url: 'https://github.com/org-b/repo-b/issues/1',
-      number: 1,
-    });
+  it('offers aliases while preserving canonical repo identity', async () => {
     const repoA = { owner: 'org-a', name: 'repo-a' };
     const repoB = { owner: 'org-b', name: 'repo-b', alias: 'Repo B' };
+    (createQuickTask as Mock).mockResolvedValue(receipt(repoB, 1));
     render(
       <MantineProvider>
         <QuickTaskButton watchedRepos={[repoA, repoB]} />
       </MantineProvider>,
     );
     await openDialog();
-
     fireEvent.click(screen.getByRole('combobox', { name: 'Repo' }));
     fireEvent.click(await screen.findByText('Repo B'));
-
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix the flaky test' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
+    enterDescription();
+    submit();
 
     await waitFor(() =>
       expect(createQuickTask).toHaveBeenCalledWith(
-        'Fix the flaky test',
-        '',
-        repoB,
-        'claude',
+        expect.objectContaining({
+          repository: { owner: 'org-b', name: 'repo-b' },
+        }),
       ),
     );
   });
 
-  it('surfaces a failed dispatch as a red notification', async () => {
-    (createQuickTask as Mock).mockResolvedValue({
-      ok: false,
-      message: 'Task description is required',
-    });
+  it('keeps the dialog open and reuses the request ID after failure', async () => {
+    (createQuickTask as Mock)
+      .mockResolvedValueOnce({ ok: false, message: 'socket timed out' })
+      .mockResolvedValueOnce(receipt());
     renderButton();
     await openDialog();
-
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Fix the flaky test' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'File & dispatch' }));
-
+    enterDescription();
+    submit();
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Task description is required',
-          color: 'red',
-        }),
-      ),
+      expect(notifications.show).toHaveBeenCalledWith({
+        message: 'socket timed out',
+        color: 'red',
+      }),
+    );
+    const firstRequest = (createQuickTask as Mock).mock.calls[0][0];
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole('button', {
+            name: 'File & dispatch',
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+
+    submit();
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(2));
+    expect((createQuickTask as Mock).mock.calls[1][0].requestId).toBe(
+      firstRequest.requestId,
+    );
+  });
+
+  it('creates a new request ID when the intent changes after failure', async () => {
+    (createQuickTask as Mock)
+      .mockResolvedValueOnce({ ok: false, message: 'try again' })
+      .mockResolvedValueOnce(receipt());
+    renderButton();
+    await openDialog();
+    enterDescription();
+    submit();
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(1));
+    const firstId = (createQuickTask as Mock).mock.calls[0][0].requestId;
+
+    enterDescription('A changed task');
+    submit();
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(2));
+    expect((createQuickTask as Mock).mock.calls[1][0].requestId).not.toBe(
+      firstId,
     );
   });
 });

@@ -569,87 +569,249 @@ describe('deriveQuickTaskTitle', () => {
 });
 
 describe('createQuickTask', () => {
-  function mockOctokit(overrides: { createIssue?: Mock; addLabels?: Mock }) {
+  const request = {
+    requestId: '11111111-1111-4111-8111-111111111111',
+    repository: DEFAULT_REPO,
+    pipeline: 'claude' as const,
+    description: '  Fix the flaky test\nmore context  ',
+  };
+
+  function mockOctokit(
+    overrides: {
+      createIssue?: Mock;
+      listForRepo?: Mock;
+      searchIssues?: Mock;
+    } = {},
+  ) {
     const createIssue =
       overrides.createIssue ??
       vi.fn().mockResolvedValue({
         data: { number: 99, html_url: 'https://github.com/x/y/issues/99' },
       });
-    const addLabels = overrides.addLabels ?? vi.fn().mockResolvedValue({});
+    const listForRepo =
+      overrides.listForRepo ?? vi.fn().mockResolvedValue({ data: [] });
+    const searchIssues =
+      overrides.searchIssues ??
+      vi.fn().mockResolvedValue({ data: { items: [] } });
     (getGithubClient as Mock).mockReturnValue({
       rest: {
-        issues: { create: createIssue, addLabels },
+        issues: { create: createIssue, listForRepo },
+        search: { issuesAndPullRequests: searchIssues },
       },
     });
-    return { createIssue, addLabels };
+    return { createIssue, listForRepo, searchIssues };
   }
 
   it('rejects a blank description without calling GitHub', async () => {
     const { createIssue } = mockOctokit({});
 
-    await expect(createQuickTask('   ')).rejects.toThrow(
+    expect(() => createQuickTask({ ...request, description: '   ' })).toThrow(
       'Task description is required',
     );
     expect(createIssue).not.toHaveBeenCalled();
   });
 
-  it('files the task and then adds Claude as a follow-up call', async () => {
-    const { createIssue, addLabels } = mockOctokit({});
+  it('rejects an invalid request ID without calling GitHub', async () => {
+    const { createIssue, listForRepo } = mockOctokit();
 
-    const result = await createQuickTask(
-      '  Fix the flaky test\nmore context  ',
-    );
+    expect(() =>
+      createQuickTask({ ...request, requestId: 'not-a-uuid' }),
+    ).toThrow('A valid Quick Task request ID is required');
+    expect(listForRepo).not.toHaveBeenCalled();
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
+  it('creates one immediately-dispatchable issue with a durable request marker', async () => {
+    const { createIssue } = mockOctokit();
+
+    const result = await createQuickTask(request);
 
     expect(createIssue).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
       repo: 'sprinkles',
       title: 'Fix the flaky test',
-      body: 'Fix the flaky test\nmore context',
-      labels: ['intake:quick-task'],
+      body: expect.stringMatching(
+        /^Fix the flaky test\nmore context\n\n<!-- agent-lcars:quick-task-request:v1 id=11111111-1111-4111-8111-111111111111 digest=[0-9a-f]{64} -->$/u,
+      ),
+      labels: ['intake:quick-task', 'agent:claude'],
     });
-    expect(addLabels).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      issue_number: 99,
-      labels: ['agent:claude'],
-    });
-    // The claude label must be added AFTER the issue is created, and via a
-    // separate call - not folded into the create() labels - or the
-    // `issues: labeled` webhook claude.yml listens for never fires.
-    expect(addLabels.mock.invocationCallOrder[0]).toBeGreaterThan(
-      createIssue.mock.invocationCallOrder[0],
-    );
     expect(result).toEqual({
-      url: 'https://github.com/x/y/issues/99',
-      number: 99,
+      requestId: request.requestId,
+      task: { repository: DEFAULT_REPO, issueNumber: 99 },
+      url: 'https://github.com/supersprinklesracing/sprinkles/issues/99',
     });
   });
 
-  it('adds the selected pipeline label instead of claude when one is given', async () => {
-    const { addLabels } = mockOctokit({});
+  it('puts the selected pipeline label in the same creation write', async () => {
+    const { createIssue } = mockOctokit();
 
-    await createQuickTask(
-      'Fix the flaky test',
-      undefined,
-      DEFAULT_REPO,
-      'opencode',
+    await createQuickTask({ ...request, pipeline: 'opencode' });
+
+    expect(createIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labels: ['intake:quick-task', 'agent:opencode'],
+      }),
     );
+  });
 
-    expect(addLabels).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      issue_number: 99,
-      labels: ['agent:opencode'],
+  it('returns the original issue when the same request is retried', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      return { data: { number: 99 } };
     });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [{ number: 99, body: persistedBody }],
+      }));
+    mockOctokit({ createIssue, listForRepo });
+
+    const first = await createQuickTask(request);
+    const retry = await createQuickTask(request);
+
+    expect(retry).toEqual(first);
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('searches beyond the recent issue window for an older retry', async () => {
+    const recent = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1000,
+      body: 'unrelated',
+    }));
+    const createIssue = vi.fn();
+    const searchIssues = vi.fn().mockResolvedValue({
+      data: {
+        items: [
+          {
+            number: 99,
+            body: expect.anything(),
+          },
+        ],
+      },
+    });
+    const { listForRepo } = mockOctokit({
+      createIssue,
+      listForRepo: vi.fn().mockResolvedValue({ data: recent }),
+      searchIssues,
+    });
+
+    // Obtain the exact digest marker from a normal create request, then use
+    // it as the old search result on the second request.
+    let body = '';
+    createIssue.mockImplementationOnce(async (input) => {
+      body = input.body;
+      return { data: { number: 99 } };
+    });
+    listForRepo.mockResolvedValueOnce({ data: [] });
+    await createQuickTask(request);
+    listForRepo.mockResolvedValue({ data: recent });
+    searchIssues.mockResolvedValue({
+      data: { items: [{ number: 99, body }] },
+    });
+
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+    );
+    expect(searchIssues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        q: expect.stringContaining(`repo:supersprinklesracing/sprinkles`),
+      }),
+    );
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('single-flights concurrent double submissions', async () => {
+    let resolveCreate!: (value: { data: { number: number } }) => void;
+    const createIssue = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    const { listForRepo } = mockOctokit({ createIssue });
+
+    const first = createQuickTask(request);
+    const second = createQuickTask(request);
+    resolveCreate({ data: { number: 99 } });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+    ]);
+    expect(listForRepo).toHaveBeenCalledTimes(1);
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers an issue created before a transport timeout', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      throw new Error('socket timed out');
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [{ number: 99, body: persistedBody }],
+      }));
+    mockOctokit({ createIssue, listForRepo });
+
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+    );
+    expect(createIssue).toHaveBeenCalledTimes(1);
+    expect(listForRepo).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects reuse of a request ID for different content', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      return { data: { number: 99 } };
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [{ number: 99, body: persistedBody }],
+      }));
+    mockOctokit({ createIssue, listForRepo });
+
+    await createQuickTask(request);
+    await expect(
+      createQuickTask({ ...request, description: 'Different task' }),
+    ).rejects.toThrow(
+      'Quick Task request ID was already used for different task content',
+    );
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a definitive label validation failure', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const { listForRepo } = mockOctokit({ createIssue });
+
+    await expect(createQuickTask(request)).rejects.toThrow('Validation Failed');
+    expect(createIssue).toHaveBeenCalledTimes(1);
+    expect(listForRepo).toHaveBeenCalledTimes(1);
   });
 
   it('uses the explicit title instead of deriving one when provided', async () => {
     const { createIssue } = mockOctokit({});
 
-    await createQuickTask(
-      'Fix the flaky test\nmore context',
-      '  Custom title  ',
-    );
+    await createQuickTask({ ...request, title: '  Custom title  ' });
 
     expect(createIssue).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Custom title' }),
@@ -659,7 +821,7 @@ describe('createQuickTask', () => {
   it('falls back to the derived title when the explicit title is blank', async () => {
     const { createIssue } = mockOctokit({});
 
-    await createQuickTask('Fix the flaky test\nmore context', '   ');
+    await createQuickTask({ ...request, title: '   ' });
 
     expect(createIssue).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Fix the flaky test' }),

@@ -89,6 +89,18 @@ const DEFAULT_REPO = {
   name: 'sprinkles',
   alias: 'sprinkles',
 };
+const QUICK_TASK_REQUEST = {
+  requestId: '11111111-1111-4111-8111-111111111111',
+  repository: DEFAULT_REPO,
+  pipeline: 'claude' as const,
+  description: 'Fix the flaky test',
+  title: 'Custom title',
+};
+const QUICK_TASK_RECEIPT = {
+  requestId: QUICK_TASK_REQUEST.requestId,
+  task: { repository: DEFAULT_REPO, issueNumber: 99 },
+  url: 'https://github.com/supersprinklesracing/sprinkles/issues/99',
+};
 
 describe('agent-lcars Server Actions', () => {
   beforeEach(() => {
@@ -205,7 +217,9 @@ describe('agent-lcars Server Actions', () => {
         new ActionError('Task description is required', 400),
       );
 
-      await expect(createQuickTask('')).resolves.toEqual({
+      await expect(
+        createQuickTask({ ...QUICK_TASK_REQUEST, description: '' }),
+      ).resolves.toEqual({
         ok: false,
         message: 'Task description is required',
       });
@@ -308,46 +322,27 @@ describe('agent-lcars Server Actions', () => {
       expect(dispatchUnstickPrsLib).toHaveBeenCalledWith('PR #123 stuck');
     });
 
-    it('createQuickTask returns { ok: true, url, number } and revalidates', async () => {
-      (createQuickTaskLib as Mock).mockResolvedValue({
-        url: 'https://github.com/x/y/issues/99',
-        number: 99,
-      });
+    it('createQuickTask returns the canonical receipt and revalidates', async () => {
+      (createQuickTaskLib as Mock).mockResolvedValue(QUICK_TASK_RECEIPT);
 
-      await expect(
-        createQuickTask('Fix the flaky test', 'Custom title'),
-      ).resolves.toEqual({
+      await expect(createQuickTask(QUICK_TASK_REQUEST)).resolves.toEqual({
         ok: true,
-        url: 'https://github.com/x/y/issues/99',
-        number: 99,
+        ...QUICK_TASK_RECEIPT,
       });
-      expect(createQuickTaskLib).toHaveBeenCalledWith(
-        'Fix the flaky test',
-        'Custom title',
-        undefined,
-        undefined,
-      );
+      expect(createQuickTaskLib).toHaveBeenCalledWith(QUICK_TASK_REQUEST);
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
     });
 
     it('createQuickTask forwards an explicit pipeline', async () => {
-      (createQuickTaskLib as Mock).mockResolvedValue({
-        url: 'https://github.com/x/y/issues/99',
-        number: 99,
+      (createQuickTaskLib as Mock).mockResolvedValue(QUICK_TASK_RECEIPT);
+
+      await createQuickTask({ ...QUICK_TASK_REQUEST, pipeline: 'opencode' });
+
+      expect(createQuickTaskLib).toHaveBeenCalledWith({
+        ...QUICK_TASK_REQUEST,
+        pipeline: 'opencode',
       });
-
-      await createQuickTask(
-        'Fix the flaky test',
-        'Custom title',
-        undefined,
-        'opencode',
-      );
-
-      expect(createQuickTaskLib).toHaveBeenCalledWith(
-        'Fix the flaky test',
-        'Custom title',
-        undefined,
-        'opencode',
-      );
     });
 
     it('closeIssue returns { ok: true } and revalidates', async () => {
@@ -439,12 +434,23 @@ describe('agent-lcars Server Actions', () => {
     });
 
     it('createQuickTask rejects an unwatched repo without calling createQuickTaskLib', async () => {
-      const result = await createQuickTask(
-        'Some task',
-        undefined,
-        UNWATCHED_REPO,
-      );
+      const result = await createQuickTask({
+        ...QUICK_TASK_REQUEST,
+        repository: UNWATCHED_REPO,
+      });
       expect(result.ok).toBe(false);
+      expect(createQuickTaskLib).not.toHaveBeenCalled();
+    });
+
+    it('createQuickTask rejects a missing repo without falling back', async () => {
+      const result = await createQuickTask({
+        ...QUICK_TASK_REQUEST,
+        repository: undefined,
+      } as unknown as Parameters<typeof createQuickTask>[0]);
+      expect(result).toEqual({
+        ok: false,
+        message: 'Quick Task repository is required',
+      });
       expect(createQuickTaskLib).not.toHaveBeenCalled();
     });
   });

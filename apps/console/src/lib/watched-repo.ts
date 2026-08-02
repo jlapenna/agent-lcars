@@ -44,9 +44,20 @@ export const DEFAULT_AGENT_INTEGRATIONS: Record<
   },
 };
 
-export interface WatchedRepo {
+/** Canonical GitHub repository identity. Cosmetic configuration and agent
+ * integration metadata never participate in identity. */
+export interface RepositoryRef {
   owner: string;
   name: string;
+}
+
+/** Stable identity for one logical GitHub task across watched repositories. */
+export interface TaskRef {
+  repository: RepositoryRef;
+  issueNumber: number;
+}
+
+export interface WatchedRepo extends RepositoryRef {
   /** Agent integrations available in this repository. Omit the whole map to
    * use the standard integrations; an empty map declares no agent support. */
   agents?: Partial<Record<AgentPipeline, AgentIntegration | null>>;
@@ -92,8 +103,16 @@ export function selectedAgentPipeline(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-export function repoKey(repo: { owner: string; name: string }): string {
+export function repoKey(repo: RepositoryRef): string {
   return `${repo.owner}/${repo.name}`;
+}
+
+export function taskRefKey(task: TaskRef): string {
+  return `${repoKey(task.repository)}#${task.issueNumber}`;
+}
+
+export function taskRefUrl(task: TaskRef): string {
+  return `https://github.com/${repoKey(task.repository)}/issues/${task.issueNumber}`;
 }
 
 /** The name to render in the UI for a repo: its configured `alias` when
@@ -111,9 +130,6 @@ export function repoDisplayName(repo: {
 /** Cross-repo-safe join/dedupe key for issue and PR numbers, which only
  * disambiguate within a single repo. GitHub Actions run ids are already
  * globally unique across repos and never need this. */
-export function repoItemKey(
-  repo: { owner: string; name: string },
-  number: number,
-): string {
-  return `${repoKey(repo)}#${number}`;
+export function repoItemKey(repo: RepositoryRef, number: number): string {
+  return taskRefKey({ repository: repo, issueNumber: number });
 }
