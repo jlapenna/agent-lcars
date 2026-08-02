@@ -187,6 +187,62 @@ describe('finalizeSidecar', () => {
     expect(upserts[0]).not.toHaveProperty('transcriptGcsUri');
   });
 
+  it('annotates a GitHub Actions ::warning:: when the upload fails and GITHUB_ACTIONS=true, but stays silent otherwise', async () => {
+    const { store } = createFakeStore();
+    const uploadTranscript = vi
+      .fn()
+      .mockRejectedValue(new Error('unauthorized_client'));
+    const files = {
+      '/home/runner/.claude/projects/proj/session-warn.jsonl':
+        ISSUE_AGENT_TRANSCRIPT('session-warn', '2026-07-19T10:00:00.000Z'),
+    };
+    const consoleLogSpy = vi
+      .spyOn(console, 'log')
+      .mockImplementation(() => undefined);
+    const originalGithubActions = process.env['GITHUB_ACTIONS'];
+
+    try {
+      delete process.env['GITHUB_ACTIONS'];
+      await finalizeSidecar({
+        config: baseConfig({
+          transcriptsBucket: 'agent-lcars-session-transcripts',
+        }),
+        store,
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
+        uploadTranscript,
+      });
+      expect(consoleLogSpy).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^::warning::/),
+      );
+
+      process.env['GITHUB_ACTIONS'] = 'true';
+      await finalizeSidecar({
+        config: baseConfig({
+          transcriptsBucket: 'agent-lcars-session-transcripts',
+        }),
+        store,
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
+        uploadTranscript,
+      });
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^::warning::.*unauthorized_client/),
+      );
+    } finally {
+      consoleLogSpy.mockRestore();
+      if (originalGithubActions === undefined) {
+        delete process.env['GITHUB_ACTIONS'];
+      } else {
+        process.env['GITHUB_ACTIONS'] = originalGithubActions;
+      }
+    }
+  });
+
   it('skips a file it fails to read, without throwing or blocking other files', async () => {
     const { store, upserts } = createFakeStore();
     const { uploadTranscript } = createFakeUploader();
