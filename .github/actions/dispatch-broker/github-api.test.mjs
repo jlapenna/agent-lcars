@@ -7,6 +7,7 @@ import {
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
+  findSupersedingRouterRun,
   loadLedger,
   pinLedgerWhenUnoccupied,
   validateBrokerConcurrencyResponse,
@@ -224,6 +225,98 @@ test('verifyBrokerConcurrency throws immediately on a supplied-group/TaskRef mis
       error.retryable === false,
   );
   assert.equal(calls, 1);
+});
+
+test('findSupersedingRouterRun finds a strictly newer run that already holds the expected group (#344)', async () => {
+  const group = brokerConcurrencyGroup(task);
+  const requests = [];
+  const api = {
+    requestOk: async (path) => {
+      requests.push(path);
+      if (path.includes('/workflows/agent-router.yml/runs?')) {
+        return {
+          workflow_runs: [
+            // Older than this run: not a candidate even though its title
+            // matches -- an evicting run must be newer.
+            { id: 8998, display_title: 'route #304: unlabeled agent:codex' },
+            // Different issue: must not match on a numeric prefix collision.
+            { id: 9005, display_title: 'route #3040: labeled agent:codex' },
+            // Newest, same issue, but does not itself hold the group (e.g.
+            // it is still mid-listing-lag too) -- checked first (highest
+            // ID) and must not short-circuit the search.
+            { id: 9004, display_title: 'route #304: labeled agent:claude' },
+            // Newer than this run but older than 9004; holds the group and
+            // is the real superseder.
+            { id: 9003, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9004/concurrency_groups')) {
+        return { concurrency_groups: [] };
+      }
+      if (path.includes('/actions/runs/9003/concurrency_groups')) {
+        return { concurrency_groups: [{ group_name: group.toUpperCase() }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const superseding = await findSupersedingRouterRun(api, task, 9001);
+  assert.equal(superseding.id, 9003);
+  // Checked the newer non-matching candidate (9004, sorted first
+  // descending) before finding 9003 -- proves it doesn't stop at the
+  // first candidate, and never asked about 8998 or 9005 (id <= 9001, or
+  // wrong issue) at all.
+  assert.deepEqual(
+    requests.filter((path) => path.includes('/concurrency_groups')),
+    [
+      `/repos/jlapenna/agent-lcars/actions/runs/9004/concurrency_groups?per_page=100`,
+      `/repos/jlapenna/agent-lcars/actions/runs/9003/concurrency_groups?per_page=100`,
+    ],
+  );
+});
+
+test('findSupersedingRouterRun returns undefined when no candidate run holds the expected group', async () => {
+  const api = {
+    requestOk: async (path) => {
+      if (path.includes('/workflows/agent-router.yml/runs?')) {
+        return {
+          workflow_runs: [
+            { id: 9003, display_title: 'route #304: labeled agent:codex' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9003/concurrency_groups')) {
+        return { concurrency_groups: [] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  assert.equal(await findSupersedingRouterRun(api, task, 9001), undefined);
+});
+
+test('findSupersedingRouterRun skips a candidate whose own fetch fails rather than aborting the search', async () => {
+  const group = brokerConcurrencyGroup(task);
+  const api = {
+    requestOk: async (path) => {
+      if (path.includes('/workflows/agent-router.yml/runs?')) {
+        return {
+          workflow_runs: [
+            { id: 9004, display_title: 'route #304: labeled agent:codex' },
+            { id: 9003, display_title: 'route #304: labeled agent:claude' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9004/concurrency_groups')) {
+        throw new Error('transient fetch failure');
+      }
+      if (path.includes('/actions/runs/9003/concurrency_groups')) {
+        return { concurrency_groups: [{ group_name: group }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const superseding = await findSupersedingRouterRun(api, task, 9001);
+  assert.equal(superseding.id, 9003);
 });
 
 test('ledger loading rejects duplicates and unexpected authors', async () => {

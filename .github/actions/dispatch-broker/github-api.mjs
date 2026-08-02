@@ -32,6 +32,18 @@ class GitHubApiError extends Error {
 // expected group simply hasn't materialized in the listing yet. Every other
 // failure mode (config mismatch, malformed response, more than one match)
 // is a real anomaly and must never be retried.
+//
+// A `retryable: true` error that survives verifyBrokerConcurrency's full
+// retry budget has two possible explanations that look identical from
+// here: ordinary listing lag that never resolved, or a `queue: max`
+// eviction (#344) where a newer run took this run's slot before the
+// listing ever caught up. `main.mjs`'s broker() disambiguates the two via
+// `findSupersedingRouterRun` before deciding whether to fail red or exit
+// gracefully; when it finds corroborating evidence of eviction, this run's
+// own control evidence for its triggering event is accepted as lost
+// (never recorded in the ledger) rather than retried further — the newer,
+// superseding run already carries the issue's dispatch state forward
+// correctly, so nothing is lost except this one event's audit trail entry.
 class BrokerConcurrencyMismatchError extends Error {
   constructor(message, { retryable = false } = {}) {
     super(message);
@@ -191,6 +203,57 @@ async function verifyBrokerConcurrency(
   throw new BrokerConcurrencyMismatchError(
     'Broker run does not report the expected concurrency group',
   );
+}
+
+// When `queue: max` evicts an older run from a concurrency group's
+// tracking table, the run still executes to completion but its own
+// `.../concurrency_groups` listing never comes to include the group
+// (issue #344). From inside the evicted run alone, that is
+// indistinguishable from ordinary listing lag (#340) -- both present as
+// "zero matches" once verifyBrokerConcurrency exhausts its retries.
+// Disambiguate by looking for positive, independent corroboration: a
+// strictly newer router run for the same issue that itself demonstrably
+// holds the expected group. Absence of such a run proves nothing either
+// way, so callers must treat "not found" as "still unexplained", not as
+// "not evicted".
+const SUPERSEDING_RUN_CANDIDATE_LIMIT = 5;
+
+async function findSupersedingRouterRun(api, task, runId) {
+  const expected = brokerConcurrencyGroup(task);
+  const root = repositoryPath(task);
+  const data = await api.requestOk(
+    `${root}/actions/workflows/agent-router.yml/runs?per_page=100`,
+  );
+  const marker = `route #${task.issue}:`;
+  const candidates = (data.workflow_runs ?? [])
+    .filter(
+      (run) =>
+        Number.isSafeInteger(run?.id) &&
+        run.id > runId &&
+        typeof run.display_title === 'string' &&
+        run.display_title.startsWith(marker),
+    )
+    .sort((left, right) => right.id - left.id)
+    .slice(0, SUPERSEDING_RUN_CANDIDATE_LIMIT);
+  for (const candidate of candidates) {
+    let response;
+    try {
+      response = await api.requestOk(
+        `${root}/actions/runs/${candidate.id}/concurrency_groups?per_page=100`,
+      );
+    } catch {
+      // An unrelated fetch failure for one candidate doesn't disprove
+      // eviction; keep looking rather than failing the whole check.
+      continue;
+    }
+    const holdsExpectedGroup = (response?.concurrency_groups ?? []).some(
+      (group) =>
+        typeof group?.group_name === 'string' &&
+        group.group_name.toLowerCase() === expected.toLowerCase(),
+    );
+    if (holdsExpectedGroup) return candidate;
+  }
+  return undefined;
 }
 
 async function listAll(api, path) {
@@ -389,6 +452,7 @@ export {
   dispatchWorker,
   failClosed,
   findRunsForGeneration,
+  findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
   listAll,
