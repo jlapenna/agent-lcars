@@ -388,9 +388,8 @@ test('a redelivered completion after terminal reconciliation is a no-op', async 
   assert.equal(writes, 0);
 });
 
-test('wasSupersededEviction exits gracefully when a corroborated eviction is found (#344)', async () => {
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const client = {
+function supersedingClient(group, { holds = true } = {}) {
+  return {
     requestOk: async (path) => {
       if (path.includes('/workflows/agent-router.yml/runs?')) {
         return {
@@ -400,11 +399,18 @@ test('wasSupersededEviction exits gracefully when a corroborated eviction is fou
         };
       }
       if (path.includes('/actions/runs/9002/concurrency_groups')) {
-        return { concurrency_groups: [{ group_name: group }] };
+        return {
+          concurrency_groups: holds ? [{ group_name: group }] : [],
+        };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
   };
+}
+
+test('wasSupersededEviction exits gracefully when evicted control-evidence has a corroborated superseding run (#344)', async () => {
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const client = supersedingClient(group);
   const error = new BrokerConcurrencyMismatchError(
     'Broker run does not report the expected concurrency group (after 5 attempts)',
     { retryable: true },
@@ -414,7 +420,14 @@ test('wasSupersededEviction exits gracefully when a corroborated eviction is fou
   console.log = (message) => logged.push(message);
   let handled;
   try {
-    handled = await wasSupersededEviction(client, task, 9001, group, error);
+    handled = await wasSupersededEviction(
+      client,
+      task,
+      9001,
+      group,
+      'control-evidence',
+      error,
+    );
   } finally {
     console.log = originalLog;
   }
@@ -440,7 +453,14 @@ test('wasSupersededEviction still fails a genuinely unexplained mismatch when no
     { retryable: true },
   );
   assert.equal(
-    await wasSupersededEviction(client, task, 9001, group, error),
+    await wasSupersededEviction(
+      client,
+      task,
+      9001,
+      group,
+      'control-evidence',
+      error,
+    ),
     false,
   );
 });
@@ -456,7 +476,14 @@ test('wasSupersededEviction never queries for a superseding run on a non-retryab
     { retryable: false },
   );
   assert.equal(
-    await wasSupersededEviction(client, task, 9001, 'group', error),
+    await wasSupersededEviction(
+      client,
+      task,
+      9001,
+      'group',
+      'control-evidence',
+      error,
+    ),
     false,
   );
 });
@@ -473,9 +500,59 @@ test('wasSupersededEviction ignores errors that are not a retryable BrokerConcur
       task,
       9001,
       'group',
+      'control-evidence',
       new GitHubApiError('boom', 500),
     ),
     false,
+  );
+});
+
+test('wasSupersededEviction still fails red for an evicted intent even with a corroborated superseding run -- an authorized intent must never be silently dropped (#344 follow-up)', async () => {
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const client = supersedingClient(group);
+  const error = new BrokerConcurrencyMismatchError(
+    'Broker run does not report the expected concurrency group (after 5 attempts)',
+    { retryable: true },
+  );
+  await assert.rejects(
+    () => wasSupersededEviction(client, task, 9001, group, 'intent', error),
+    (thrown) => {
+      assert.match(thrown.message, /intent/u);
+      assert.match(thrown.message, /9002/u);
+      assert.match(thrown.message, /manually re-dispatch/u);
+      assert.equal(thrown.cause, error);
+      return true;
+    },
+  );
+});
+
+test('wasSupersededEviction still fails red for an evicted completion even with a corroborated superseding run -- a stuck-active generation must never be silently accepted (#344 follow-up)', async () => {
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const client = supersedingClient(group);
+  const error = new BrokerConcurrencyMismatchError(
+    'Broker run does not report the expected concurrency group (after 5 attempts)',
+    { retryable: true },
+  );
+  await assert.rejects(
+    () => wasSupersededEviction(client, task, 9001, group, 'completion', error),
+    (thrown) => {
+      assert.match(thrown.message, /completion/u);
+      assert.match(thrown.message, /manually re-dispatch/u);
+      assert.equal(thrown.cause, error);
+      return true;
+    },
+  );
+});
+
+test('wasSupersededEviction still fails red for an evicted anchor-control even with a corroborated superseding run', async () => {
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const client = supersedingClient(group);
+  const error = new BrokerConcurrencyMismatchError(
+    'Broker run does not report the expected concurrency group (after 5 attempts)',
+    { retryable: true },
+  );
+  await assert.rejects(() =>
+    wasSupersededEviction(client, task, 9001, group, 'anchor-control', error),
   );
 });
 
