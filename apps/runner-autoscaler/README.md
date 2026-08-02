@@ -20,6 +20,15 @@ and affected-project detection all run through the workspace task graph.
 ./tools/nx typecheck @agent-lcars/runner-autoscaler
 ```
 
+The Nx `build` target explicitly passes `-buildvcs=false`. Go 1.26's
+automatic VCS stamping can resolve the wrong Git directory from a linked
+worktree and fail an otherwise valid build. The autoscaler does not inspect
+Go's embedded VCS settings at runtime, and the production Docker build already
+copies only the Go sources into its build stage (not `.git`), so it does not
+provide those settings either. Keeping the Nx artifact consistent with that
+production boundary makes builds deterministic without discarding runtime
+metadata that any consumer uses.
+
 ## Runner connectivity metrics
 
 The control plane reconciles its locally tracked containers against GitHub's

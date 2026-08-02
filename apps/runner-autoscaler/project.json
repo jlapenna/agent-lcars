@@ -5,6 +5,12 @@
   "projectType": "application",
   "tags": ["platform:server", "scope:console"],
   "targets": {
+    "build": {
+      "executor": "@naxodev/gonx:build",
+      "options": {
+        "flags": ["-buildvcs=false"]
+      }
+    },
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
