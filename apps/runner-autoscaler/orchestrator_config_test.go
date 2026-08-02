@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const validOrchestratorYAML = `
@@ -68,6 +69,69 @@ func TestLoadOrchestratorConfigResolvesSSHMetrics(t *testing.T) {
 	}
 	if !resolved.MetricsViaSSH["janeway"] {
 		t.Fatalf("metrics_via_ssh was not resolved for janeway: %#v", resolved.MetricsViaSSH)
+	}
+}
+
+func TestLoadOrchestratorConfigResolvesRequireReadiness(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      docker: local", "      docker: local\n      require_readiness: true", 1)
+	body = strings.Replace(body, "  placement: {}", "  placement:\n    readiness_metrics_url: http://example.invalid/metrics\n    readiness_metric: host_ci_ready\n    readiness_max_age: 5m", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.ReadinessRequired["janeway"] {
+		t.Fatalf("require_readiness was not resolved for janeway: %#v", resolved.ReadinessRequired)
+	}
+	if resolved.ReadinessMaxAge != 5*time.Minute {
+		t.Fatalf("readiness_max_age = %v, want 5m", resolved.ReadinessMaxAge)
+	}
+}
+
+// A host gated on a signal nobody publishes would pass config validation and
+// then silently never receive runners, because the gate is fail-closed. Fail
+// at load instead, where the operator can still see it.
+func TestOrchestratorConfigRejectsReadinessWithoutPublisher(t *testing.T) {
+	tests := []struct {
+		name      string
+		placement string
+		want      string
+	}{
+		{
+			name:      "no url or metric",
+			placement: "  placement: {}",
+			want:      "readiness_metrics_url is required",
+		},
+		{
+			name:      "url without metric",
+			placement: "  placement:\n    readiness_metrics_url: http://example.invalid/metrics",
+			want:      "readiness_metric is required",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Replace(validOrchestratorYAML, "      docker: local", "      docker: local\n      require_readiness: true", 1)
+			body = strings.Replace(body, "  placement: {}", tt.placement, 1)
+			_, err := loadOrchestratorConfig(writeConfig(t, body))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("loadOrchestratorConfig() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestOrchestratorConfigRejectsInvalidReadinessMaxAge(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    readiness_max_age: soon", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "readiness_max_age") {
+		t.Fatalf("loadOrchestratorConfig() error = %v, want a readiness_max_age complaint", err)
+	}
+}
+
+// The gate is opt-in: a fleet that never mentions readiness must not acquire
+// a new required-config burden.
+func TestOrchestratorConfigAllowsReadinessConfigWithoutOptIn(t *testing.T) {
+	if _, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML)); err != nil {
+		t.Fatalf("unmodified config should still load: %v", err)
 	}
 }
 

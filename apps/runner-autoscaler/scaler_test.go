@@ -986,3 +986,332 @@ func TestEnsureRunnerImageRejectsStreamedPullError(t *testing.T) {
 		t.Errorf("error should surface the daemon's message, got: %v", err)
 	}
 }
+
+// readinessScaler builds a two-host scaler where only "roamer" is gated on
+// the readiness signal served by the given handler. "anchor" is always
+// eligible, so a test can tell "the gate withheld roamer" apart from "nothing
+// was placeable at all".
+func readinessScaler(t *testing.T, metricName string, maxAge time.Duration, handler http.HandlerFunc) *Scaler {
+	t.Helper()
+	anchorDocker := newFakeDockerServer(t)
+	roamerDocker := newFakeDockerServer(t)
+	anchorDocker.setContainers([]container.Summary{})
+	roamerDocker.setContainers([]container.Summary{})
+
+	metrics := httptest.NewServer(handler)
+	t.Cleanup(metrics.Close)
+
+	fleet := newFleetCoordinator(4, nil, nil, nil, map[string]int{"set": 1}, []string{"set"})
+	fleet.readinessRequired = map[string]bool{"roamer": true}
+
+	return &Scaler{
+		scaleSetName: "set", maxRunners: 4,
+		dockerHosts: []DockerHost{
+			{Name: "roamer", Client: roamerDocker.client(t)},
+			{Name: "anchor", Client: anchorDocker.client(t)},
+		},
+		readinessMetricsURL: metrics.URL,
+		readinessMetric:     metricName,
+		readinessMaxAge:     maxAge,
+		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		runners:             runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		fleet:               fleet,
+	}
+}
+
+func servePlain(body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}
+}
+
+// A gated host is only placeable while the operator's signal says so. The
+// ungated peer stays placeable throughout, which is what proves the gate --
+// not some unrelated failure -- is what moved the verdict.
+func TestPickHostReadinessGateHonorsSignal(t *testing.T) {
+	fresh := fmt.Sprintf("host_ci_ready_timestamp_seconds %d\n", time.Now().Unix())
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "ready",
+			body: "# HELP host_ci_ready doc\nhost_ci_ready{host=\"roamer\"} 1\n" + fresh,
+			want: "roamer",
+		},
+		{
+			name: "not ready",
+			body: "host_ci_ready{host=\"roamer\"} 0\n" + fresh,
+			want: "anchor",
+		},
+		{
+			// Absent is not "ready by default" -- the gate is fail-closed.
+			name: "metric absent",
+			body: "some_other_metric 1\n" + fresh,
+			want: "anchor",
+		},
+		{
+			// Another host's reading must not answer for this one.
+			name: "only a different host is ready",
+			body: "host_ci_ready{host=\"somebody_else\"} 1\n" + fresh,
+			want: "anchor",
+		},
+		{
+			// A publisher that stopped updating leaves its last reading
+			// served forever; honoring it would fail the gate open.
+			name: "stale timestamp",
+			body: fmt.Sprintf("host_ci_ready{host=\"roamer\"} 1\nhost_ci_ready_timestamp_seconds %d\n", time.Now().Add(-time.Hour).Unix()),
+			want: "anchor",
+		},
+		{
+			name: "freshness metric missing entirely",
+			body: "host_ci_ready{host=\"roamer\"} 1\n",
+			want: "anchor",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scaler := readinessScaler(t, "host_ci_ready", 5*time.Minute, servePlain(tt.body))
+			host, err := scaler.pickHost(context.Background())
+			if err != nil {
+				t.Fatalf("pickHost() error = %v", err)
+			}
+			if host != tt.want {
+				t.Fatalf("placement host = %q, want %q", host, tt.want)
+			}
+		})
+	}
+}
+
+// Without a configured max age the freshness companion is not required, so
+// operators who publish through something with its own staleness handling are
+// not forced to invent one.
+func TestPickHostReadinessGateSkipsFreshnessWhenUnset(t *testing.T) {
+	scaler := readinessScaler(t, "host_ci_ready", 0, servePlain("host_ci_ready{host=\"roamer\"} 1\n"))
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if host != "roamer" {
+		t.Fatalf("placement host = %q, want roamer", host)
+	}
+}
+
+// A broken publisher must not read as "ready". This is the failure mode the
+// gate exists for, so it gets its own coverage rather than riding on the
+// absent-metric case.
+func TestPickHostReadinessGateFailsClosedOnPublisherErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(t *testing.T) *Scaler
+	}{
+		{
+			name: "http error status",
+			build: func(t *testing.T) *Scaler {
+				return readinessScaler(t, "host_ci_ready", 0, func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusInternalServerError)
+				})
+			},
+		},
+		{
+			name: "endpoint unreachable",
+			build: func(t *testing.T) *Scaler {
+				s := readinessScaler(t, "host_ci_ready", 0, servePlain(""))
+				s.readinessMetricsURL = "http://127.0.0.1:1/metrics"
+				return s
+			},
+		},
+		{
+			// Gate requested but never configured: refuse rather than
+			// quietly placing as though it had been satisfied.
+			name: "gate unconfigured",
+			build: func(t *testing.T) *Scaler {
+				s := readinessScaler(t, "host_ci_ready", 0, servePlain(""))
+				s.readinessMetricsURL, s.readinessMetric = "", ""
+				return s
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scaler := tt.build(t)
+			host, err := scaler.pickHost(context.Background())
+			if err != nil {
+				t.Fatalf("pickHost() error = %v", err)
+			}
+			if host != "anchor" {
+				t.Fatalf("placement host = %q, want anchor; a broken readiness publisher must not read as ready", host)
+			}
+		})
+	}
+}
+
+// Exhausting the fleet through the gate must not be reported as a network
+// problem: these hosts answered fine, the operator's signal withheld them.
+func TestPickHostReadinessExhaustionReportsItsOwnReason(t *testing.T) {
+	scaler := readinessScaler(t, "host_ci_ready", 0, servePlain("host_ci_ready{host=\"roamer\"} 0\n"))
+	// Drop the ungated peer so the gate is the only thing left deciding.
+	scaler.dockerHosts = scaler.dockerHosts[:1]
+
+	blocked := placementBlocked.WithLabelValues("set", placementReasonReadiness)
+	before := testutil.ToFloat64(blocked)
+
+	_, err := scaler.pickHost(context.Background())
+	if !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() error = %v, want one wrapping errFleetAtCapacity", err)
+	}
+	if strings.Contains(err.Error(), "unreachable") {
+		t.Errorf("a host withheld by its readiness gate must not be reported as unreachable, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "readiness") {
+		t.Errorf("error should name the readiness gate, got: %v", err)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 1 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonReadiness, got)
+	}
+}
+
+// Hosts that never opted in must be unaffected, including by a totally broken
+// readiness publisher.
+func TestPickHostReadinessGateIgnoresUngatedHosts(t *testing.T) {
+	scaler := readinessScaler(t, "host_ci_ready", 5*time.Minute, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	scaler.fleet.readinessRequired = map[string]bool{}
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if host != "roamer" && host != "anchor" {
+		t.Fatalf("placement host = %q, want either host", host)
+	}
+}
+
+// A label key that merely ends in "host" must not answer for "host". The
+// substring form of this check (`host="roamer"` is contained in
+// `target_host="roamer"`) let a mislabelled signal make a gated host
+// placeable -- the fail-OPEN direction, which is the one that matters.
+func TestPickHostReadinessGateRequiresExactHostLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "label key merely ends in host",
+			body: "host_ci_ready{target_host=\"roamer\"} 1\n",
+			want: "anchor",
+		},
+		{
+			name: "no labels at all",
+			body: "host_ci_ready 1\n",
+			want: "anchor",
+		},
+		{
+			name: "exact host label among several",
+			body: "host_ci_ready{target_host=\"elsewhere\",host=\"roamer\",region=\"a\"} 1\n",
+			want: "roamer",
+		},
+		{
+			// A label value may legitimately contain a comma, so pair
+			// splitting has to respect quoting.
+			name: "comma inside a quoted label value",
+			body: "host_ci_ready{note=\"a,b\",host=\"roamer\"} 1\n",
+			want: "roamer",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scaler := readinessScaler(t, "host_ci_ready", 0, servePlain(tt.body))
+			host, err := scaler.pickHost(context.Background())
+			if err != nil {
+				t.Fatalf("pickHost() error = %v", err)
+			}
+			if host != tt.want {
+				t.Fatalf("placement host = %q, want %q", host, tt.want)
+			}
+		})
+	}
+}
+
+// time.Since goes negative for a future timestamp, so the staleness test can
+// never fire and a publisher that later dies stays "fresh" until the local
+// clock catches up. Emitting milliseconds where seconds are expected lands
+// ~55000 years ahead and would disable the gate outright.
+func TestPickHostReadinessGateRejectsFutureTimestamps(t *testing.T) {
+	tests := []struct {
+		name  string
+		stamp int64
+		want  string
+	}{
+		{
+			name:  "milliseconds mistaken for seconds",
+			stamp: time.Now().UnixMilli(),
+			want:  "anchor",
+		},
+		{
+			name:  "far future",
+			stamp: time.Now().Add(24 * time.Hour).Unix(),
+			want:  "anchor",
+		},
+		{
+			// Ordinary NTP drift between publisher and reader must not
+			// start withholding hosts.
+			name:  "benign clock skew is tolerated",
+			stamp: time.Now().Add(30 * time.Second).Unix(),
+			want:  "roamer",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := fmt.Sprintf("host_ci_ready{host=\"roamer\"} 1\nhost_ci_ready_timestamp_seconds %d\n", tt.stamp)
+			scaler := readinessScaler(t, "host_ci_ready", 5*time.Minute, servePlain(body))
+			host, err := scaler.pickHost(context.Background())
+			if err != nil {
+				t.Fatalf("pickHost() error = %v", err)
+			}
+			if host != tt.want {
+				t.Fatalf("placement host = %q, want %q", host, tt.want)
+			}
+		})
+	}
+}
+
+func TestMetricLabelValue(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		label     string
+		want      string
+		wantFound bool
+	}{
+		{name: "simple", line: `m{host="a"} 1`, label: "host", want: "a", wantFound: true},
+		{name: "suffix key is not a match", line: `m{target_host="a"} 1`, label: "host", wantFound: false},
+		{name: "prefix key is not a match", line: `m{host_extra="a"} 1`, label: "host", wantFound: false},
+		{name: "second of several", line: `m{a="1",host="b"} 1`, label: "host", want: "b", wantFound: true},
+		{name: "comma in value", line: `m{a="x,y",host="b"} 1`, label: "host", want: "b", wantFound: true},
+		{name: "escaped quote in value", line: `m{a="x\"y",host="b"} 1`, label: "host", want: "b", wantFound: true},
+		{name: "no labels", line: `m 1`, label: "host", wantFound: false},
+		{name: "empty label set", line: `m{} 1`, label: "host", wantFound: false},
+		{name: "spaces around key", line: `m{ host = "a" } 1`, label: "host", want: "a", wantFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := metricLabelValue(tt.line, tt.label)
+			if found != tt.wantFound {
+				t.Fatalf("metricLabelValue(%q) found = %v, want %v", tt.line, found, tt.wantFound)
+			}
+			if found && got != tt.want {
+				t.Fatalf("metricLabelValue(%q) = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}

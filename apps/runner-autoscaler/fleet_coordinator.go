@@ -25,6 +25,7 @@ type FleetCoordinator struct {
 	hostRunnerLimits          map[string]int
 	mainsRequired             map[string]bool
 	metricsViaSSH             map[string]bool
+	readinessRequired         map[string]bool
 	gate                      *weightedPlacementGate
 
 	hostSampleMu     sync.Mutex
@@ -51,7 +52,7 @@ func newFleetCoordinator(maxRunners int, limits map[string]int, workCaps map[str
 	return &FleetCoordinator{
 		maxRunners:   maxRunners,
 		reservations: map[string]int{}, sharedWorkDirReservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
-		hostRunnerLimits: limits, workDirSizeCaps: workCaps, dockerSocketGIDs: socketGIDs, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{},
+		hostRunnerLimits: limits, workDirSizeCaps: workCaps, dockerSocketGIDs: socketGIDs, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
 		gate: newWeightedPlacementGate(weights, order),
 	}
