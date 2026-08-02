@@ -62,6 +62,9 @@ jobs:
       - name: Check dependency integrity
         run: pnpm check:dependencies
 
+      - name: Check contracts
+        run: pnpm check:contracts
+
       - name: Check formatting
         run: pnpm format:check
 

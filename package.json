@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "license": "Apache-2.0",
   "scripts": {
+    "check:contracts": "vitest run --config tools/contract-tests/vitest.config.mts",
     "check:dependencies": "./tools/check-dependencies.sh",
     "check:labels": "node ./tools/sync-github-labels.mjs",
     "format": "nx format:write --all",
@@ -105,6 +106,7 @@
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.8",
     "vite-tsconfig-paths": "^6.1.1",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.4",
+    "yaml": "^2.9.0"
   }
 }
