@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   checkRuns,
   enrichmentGraphql,
+  issue,
   issueComments,
   openIssues,
   openPulls,
@@ -89,6 +90,14 @@ export async function GET(
       return NextResponse.json(issueComments(Number(rest[1])));
     }
 
+    // GET /repos/{o}/{r}/issues/{number} - mutation precondition reads.
+    if (rest[0] === 'issues' && rest.length === 2) {
+      const fixtureIssue = issue(Number(rest[1]));
+      return fixtureIssue
+        ? NextResponse.json(fixtureIssue)
+        : NextResponse.json({ message: 'Not Found' }, { status: 404 });
+    }
+
     // GET /repos/{o}/{r}/issues - the action-item board's item universe
     // since #13. Page 2+ is empty so the app's pagination loop terminates.
     if (rest[0] === 'issues' && rest.length === 1) {
@@ -152,6 +161,37 @@ export async function POST(
   const { path } = await params;
   if (path[0] === 'graphql') {
     return NextResponse.json({ data: enrichmentGraphql() });
+  }
+  if (
+    path[0] === 'repos' &&
+    path.length === 7 &&
+    path[3] === 'actions' &&
+    path[4] === 'workflows' &&
+    path[5] === 'agent-router.yml' &&
+    path[6] === 'dispatches'
+  ) {
+    const body = (await req.json()) as {
+      inputs?: Record<string, string>;
+      ref?: string;
+    };
+    const callerId = body.inputs?.['caller_id'] ?? '';
+    if (
+      body.ref !== 'main' ||
+      body.inputs?.['mode'] !== 'implement' ||
+      !['claude', 'codex', 'opencode'].includes(
+        body.inputs?.['pipeline'] ?? '',
+      ) ||
+      !/^\d+$/u.test(body.inputs?.['issue'] ?? '') ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+        callerId,
+      )
+    ) {
+      return NextResponse.json(
+        { message: 'Invalid router dispatch fixture request' },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json({ workflow_run_id: 99001 });
   }
   if (path[0] === 'repos' && path.length === 4 && path[3] === 'issues') {
     const body = (await req.json()) as {
@@ -268,6 +308,82 @@ export async function POST(
   }
   console.error(
     'agent-lcars: no e2e GitHub fixture for POST /%s',
+    path.join('/'),
+  );
+  return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+}
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  if (!isE2eTesting()) {
+    return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+  }
+  const { path } = await params;
+  if (
+    path[0] === 'repos' &&
+    path.length === 6 &&
+    path[3] === 'issues' &&
+    path[5] === 'labels'
+  ) {
+    const fixtureIssue = issue(Number(path[4]));
+    const body = (await req.json()) as { labels?: string[] };
+    const originalNonControlLabels = (fixtureIssue?.labels ?? [])
+      .map((label) => label.name)
+      .filter(
+        (label) =>
+          !label.startsWith('agent:') && label !== 'status:needs-human',
+      );
+    const agentLabels = (body.labels ?? []).filter((label) =>
+      label.startsWith('agent:'),
+    );
+    const unrelatedLabels = (body.labels ?? []).filter(
+      (label) => !label.startsWith('agent:'),
+    );
+    if (
+      !fixtureIssue ||
+      agentLabels.length !== 1 ||
+      !['agent:claude', 'agent:codex', 'agent:opencode'].includes(
+        agentLabels[0],
+      ) ||
+      JSON.stringify(unrelatedLabels) !==
+        JSON.stringify(originalNonControlLabels)
+    ) {
+      return NextResponse.json(
+        { message: 'Invalid atomic label-set fixture request' },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json((body.labels ?? []).map((name) => ({ name })));
+  }
+  console.error(
+    'agent-lcars: no e2e GitHub fixture for PUT /%s',
+    path.join('/'),
+  );
+  return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  if (!isE2eTesting()) {
+    return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+  }
+  const { path } = await params;
+  if (
+    path[0] === 'repos' &&
+    path.length === 7 &&
+    path[3] === 'issues' &&
+    path[5] === 'labels' &&
+    path[6] === 'status:needs-human' &&
+    issue(Number(path[4]))
+  ) {
+    return new NextResponse(null, { status: 204 });
+  }
+  console.error(
+    'agent-lcars: no e2e GitHub fixture for DELETE /%s',
     path.join('/'),
   );
   return NextResponse.json({ message: 'Not Found' }, { status: 404 });

@@ -34,10 +34,21 @@ function containsReplyTrigger(
   body: string,
   integration: AgentIntegration,
 ): boolean {
-  const normalized = body.toLowerCase();
-  return replyTriggers(integration).some((trigger) =>
-    normalized.includes(trigger.toLowerCase()),
+  let fenced = false;
+  const triggers = replyTriggers(integration).map((trigger) =>
+    trigger.toLowerCase(),
   );
+  return body.split(/\r?\n/u).some((rawLine) => {
+    const line = rawLine.trim().toLowerCase();
+    if (line.startsWith('```')) {
+      fenced = !fenced;
+      return false;
+    }
+    if (fenced || line.startsWith('>')) return false;
+    return triggers.some(
+      (trigger) => line === trigger || line.startsWith(`${trigger} `),
+    );
+  });
 }
 
 // A console reply must carry the repository integration's declared trigger,
@@ -257,6 +268,8 @@ export async function cancelWorkflowRun(
 // Actions tab or `gh workflow run` — see playbook-unstick-prs.yml.
 const DEFAULT_BRANCH = 'main';
 const AGENT_ROUTER_WORKFLOW = 'agent-router.yml';
+const DISPATCH_CALLER_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 // dispatchUnstickPrs is a global console-level ops action, not scoped to any
 // one action item. Unlike createQuickTask below, it has neither a repo
@@ -280,9 +293,13 @@ export async function dispatchUnstickPrs(
 export async function retriggerIssue(
   repo: WatchedRepo,
   issueNumber: number,
+  callerId: string,
   note?: string,
   pipeline: Pipeline = 'claude',
 ): Promise<void> {
+  if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
+    throw new ActionError('A valid dispatch caller ID is required', 400);
+  }
   const octokit = getGithubClient();
   const integration = requireAgentIntegration(repo, pipeline);
   // Pipeline names intentionally match the dispatch router's choice inputs.
@@ -333,6 +350,7 @@ export async function retriggerIssue(
       issue: String(issueNumber),
       pipeline,
       mode: 'implement',
+      caller_id: callerId,
     },
   });
 }
@@ -375,27 +393,22 @@ export async function reassignPipeline(
     );
   }
 
-  await clearNeedsHumanLabel(repo, issueNumber);
+  const allAgentLabels = supportedAgentPipelines(repo)
+    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
+    .filter((label): label is string => Boolean(label));
+  const labels = currentLabels
+    .filter((label) => !allAgentLabels.includes(label))
+    .filter((label) => label !== 'status:needs-human')
+    .concat(targetIntegration.label);
 
-  // Drop every other agent label first. The router also enforces this
-  // invariant for direct GitHub label changes, so the console and GitHub
-  // paths cannot diverge.
-  for (const label of currentPipelineLabels) {
-    await octokit.rest.issues.removeLabel({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-      name: label,
-    });
-  }
-
-  // Adding the target label fires the centralized agent-router workflow;
-  // there is no pipeline-specific label listener anymore.
-  await octokit.rest.issues.addLabels({
+  // One set operation is the control-plane transition. It preserves every
+  // unrelated label while ensuring GitHub never exposes an intermediate
+  // zero-agent or contradictory multi-agent selection to the router.
+  await octokit.rest.issues.setLabels({
     owner: repo.owner,
     repo: repo.name,
     issue_number: issueNumber,
-    labels: [targetIntegration.label],
+    labels,
   });
 }
 

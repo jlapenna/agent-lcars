@@ -384,6 +384,14 @@ export function openIssues() {
   return FIXTURE_ITEMS.map(issueFor);
 }
 
+/** Individual issue read used by rendered mutation flows such as retrigger
+ * and atomic pipeline reassignment. */
+export function issue(number: number) {
+  if (!populatedFixturesEnabled()) return undefined;
+  const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
+  return item ? issueFor(item) : undefined;
+}
+
 /**
  * `GET /repos/{owner}/{repo}/pulls?state=open`. Two consumers read this now:
  * `requested_reviewers` answers the board predicate the issue listing can't

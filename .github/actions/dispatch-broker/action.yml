@@ -1,0 +1,74 @@
+name: Serialized dispatch broker
+description: Normalize, serialize, bind, and verify durable agent dispatch intents.
+
+inputs:
+  operation:
+    description: normalize, broker, or preflight
+    required: true
+  payload:
+    description: Base64url normalized intent emitted by the normalize operation
+    required: false
+    default: ''
+  group:
+    description: Canonical concurrency group emitted by normalization
+    required: false
+    default: ''
+  issue:
+    description: Canonical issue number for worker preflight
+    required: false
+    default: ''
+  generation:
+    description: Broker generation for worker preflight
+    required: false
+    default: ''
+  intent-id:
+    description: Broker intent ID for worker preflight
+    required: false
+    default: ''
+  dispatch-token:
+    description: Immutable broker dispatch token for worker preflight
+    required: false
+    default: ''
+  worker-workflow:
+    description: Worker workflow file sending the completion callback
+    required: false
+    default: ''
+
+outputs:
+  eligible:
+    description: Whether normalization produced a broker event
+    value: ${{ steps.run.outputs.eligible }}
+  issue:
+    description: Canonical issue number
+    value: ${{ steps.run.outputs.issue }}
+  repository-id:
+    description: Immutable numeric GitHub repository ID
+    value: ${{ steps.run.outputs.repository-id }}
+  group:
+    description: Repository-wide collision-safe broker concurrency group
+    value: ${{ steps.run.outputs.group }}
+  payload:
+    description: Base64url normalized broker event
+    value: ${{ steps.run.outputs.payload }}
+  reason:
+    description: Reason an event was ignored
+    value: ${{ steps.run.outputs.reason }}
+  authorized:
+    description: Whether worker preflight found an exact binding
+    value: ${{ steps.run.outputs.authorized }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run dispatch broker operation
+      id: run
+      shell: bash
+      env:
+        BROKER_PAYLOAD: ${{ inputs.payload }}
+        BROKER_GROUP: ${{ inputs.group }}
+        BROKER_ISSUE: ${{ inputs.issue }}
+        BROKER_GENERATION: ${{ inputs.generation }}
+        BROKER_INTENT_ID: ${{ inputs.intent-id }}
+        BROKER_DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
+        BROKER_WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
+      run: node "$GITHUB_ACTION_PATH/main.mjs" "${{ inputs.operation }}"

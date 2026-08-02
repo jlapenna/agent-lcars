@@ -29,6 +29,8 @@ import {
   retriggerIssue,
 } from './actions';
 
+const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
+
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
   updateTag: vi.fn(),
@@ -157,7 +159,9 @@ describe('agent-lcars Server Actions', () => {
         ),
       );
 
-      await expect(retriggerIssue(DEFAULT_REPO, 42)).resolves.toEqual({
+      await expect(
+        retriggerIssue(DEFAULT_REPO, 42, DISPATCH_ID),
+      ).resolves.toEqual({
         ok: false,
         message: 'Issue does not carry the claude label; nothing to retrigger',
       });
@@ -301,13 +305,14 @@ describe('agent-lcars Server Actions', () => {
       (retriggerIssueLib as Mock).mockResolvedValue(undefined);
 
       await expect(
-        retriggerIssue(DEFAULT_REPO, 42, undefined, 'opencode'),
+        retriggerIssue(DEFAULT_REPO, 42, DISPATCH_ID, undefined, 'opencode'),
       ).resolves.toEqual({
         ok: true,
       });
       expect(retriggerIssueLib).toHaveBeenCalledWith(
         DEFAULT_REPO,
         42,
+        DISPATCH_ID,
         undefined,
         'opencode',
       );
@@ -410,7 +415,7 @@ describe('agent-lcars Server Actions', () => {
     });
 
     it('retriggerIssue rejects without calling retriggerIssueLib', async () => {
-      const result = await retriggerIssue(UNWATCHED_REPO, 42);
+      const result = await retriggerIssue(UNWATCHED_REPO, 42, DISPATCH_ID);
       expect(result.ok).toBe(false);
       expect(retriggerIssueLib).not.toHaveBeenCalled();
     });

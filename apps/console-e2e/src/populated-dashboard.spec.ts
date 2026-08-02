@@ -104,6 +104,27 @@ test.describe('populated dashboard', () => {
     ).toBeVisible();
   });
 
+  test('retrigger and pipeline reassignment use broker-safe GitHub writes', async ({
+    page,
+  }) => {
+    await page.goto('/inbox');
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
+      .getByRole('link')
+      .click();
+    const detail = page.locator('.queue-workspace__detail');
+
+    await detail.getByRole('button', { name: 'Retrigger' }).click();
+    await page.getByRole('button', { name: 'Retrigger now' }).click();
+    await expect(page.getByText('#9001 retriggered')).toBeVisible();
+
+    await detail
+      .getByRole('button', { name: 'More actions for #9001' })
+      .click();
+    await page.getByRole('menuitem', { name: 'Reassign to codex' }).click();
+    await expect(page.getByText('#9001 reassigned to codex')).toBeVisible();
+  });
+
   test('renders live and finished run rows across the status palette', async ({
     page,
   }) => {
