@@ -1,5 +1,6 @@
 import {
   type DispatchLedger,
+  type ExpectedTask,
   findLedgerCommentBody,
   parseDispatchLedger,
 } from './dispatch-ledger';
@@ -239,7 +240,10 @@ interface EnrichmentOutcome {
   warning?: string;
 }
 
-function toEnrichment(item: RawItem, taskKey: string): EnrichmentOutcome {
+function toEnrichment(
+  item: RawItem,
+  expectedTask: ExpectedTask,
+): EnrichmentOutcome {
   const comments = (item.comments?.nodes ?? []).flatMap((node) =>
     node?.body
       ? [
@@ -255,12 +259,15 @@ function toEnrichment(item: RawItem, taskKey: string): EnrichmentOutcome {
   // Only ever set when this item's comment window was fetched at all (see
   // `wantsComments`) - an item that skipped the comments field has no
   // window to scan, so `ledger` stays undefined rather than reading as "no
-  // ledger comment exists."
+  // ledger comment exists." `expectedTask` is cross-checked against the
+  // parsed comment's own `task` field (see `parseDispatchLedger`'s doc
+  // comment) so a structurally valid ledger comment that actually names a
+  // different issue/repo is rejected rather than misattributed to this one.
   const ledgerCommentBody = findLedgerCommentBody(comments);
   let ledger: DispatchLedger | undefined;
   let warning: string | undefined;
   if (ledgerCommentBody) {
-    const parsed = parseDispatchLedger(ledgerCommentBody, taskKey);
+    const parsed = parseDispatchLedger(ledgerCommentBody, expectedTask);
     ledger = parsed.ledger;
     warning = parsed.warning;
   }
@@ -337,10 +344,10 @@ export async function enrichItems(
     for (const request of chunk) {
       const raw = repository[alias(request.number)];
       if (!raw) continue;
-      const { enrichment, warning } = toEnrichment(
-        raw,
-        `${repoKey(repo)}#${request.number}`,
-      );
+      const { enrichment, warning } = toEnrichment(raw, {
+        repository: repoKey(repo),
+        issue: request.number,
+      });
       byNumber.set(request.number, enrichment);
       if (warning) warnings.push(warning);
     }

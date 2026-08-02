@@ -272,6 +272,115 @@ describe('deriveLogicalWork - duplicate active attempts', () => {
   });
 });
 
+describe('deriveLogicalWork - ledger-recorded anomalies (#364 review)', () => {
+  it('surfaces a ledger-recorded duplicate-attempt anomaly even with no matching live runs', () => {
+    const ledger = makeLedger({
+      generations: [
+        {
+          generation: 1,
+          intentId: 'intent-abc123',
+          sourceId: 'src-1',
+          occurredAt: '2026-07-07T00:00:00Z',
+          pipeline: 'claude',
+          state: 'completed',
+          attempt: { runId: 555, status: 'completed', conclusion: 'success' },
+        },
+      ],
+      anomalies: [
+        {
+          kind: 'duplicate-attempt',
+          detail: { generation: 1, runIds: [555, 556] },
+          occurredAt: '2026-07-07T00:05:00Z',
+        },
+      ],
+    });
+
+    // Neither duplicate run is still visible - both completed and aged out
+    // of the recent-run window this render can see (or were never fetched
+    // at all). The ledger is the only surviving evidence.
+    const { work } = deriveLogicalWork({
+      attempts: [],
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work).toHaveLength(1);
+    expect(work[0].attempts).toEqual([]);
+    const ledgerAnomalies = work[0].anomalies.filter(
+      (a) => a.kind === 'ledger-recorded',
+    );
+    expect(ledgerAnomalies).toHaveLength(1);
+    expect(ledgerAnomalies[0].detail).toContain('duplicate-attempt');
+    expect(ledgerAnomalies[0].detail).toContain('555');
+    expect(ledgerAnomalies[0].detail).toContain('556');
+    expect(work[0].state).toBe('anomaly');
+  });
+
+  it('surfaces a ledger-recorded duplicate-attempt anomaly alongside genuinely live corroborating attempts too', () => {
+    const ledger = makeLedger({
+      anomalies: [
+        {
+          kind: 'duplicate-attempt',
+          detail: { generation: 1, runIds: [1, 2] },
+          occurredAt: '2026-07-07T00:05:00Z',
+        },
+      ],
+    });
+    const attempts = [
+      makeRun({ id: 1, status: 'running' }),
+      makeRun({ id: 2, status: 'queued' }),
+    ];
+
+    const { work } = deriveLogicalWork({
+      attempts,
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work[0].attempts).toHaveLength(2);
+    expect(
+      work[0].anomalies.some((a) => a.kind === 'duplicate-active-attempts'),
+    ).toBe(true);
+    expect(work[0].anomalies.some((a) => a.kind === 'ledger-recorded')).toBe(
+      true,
+    );
+  });
+
+  it('renders a generic message for a ledger anomaly kind this app does not specifically recognize', () => {
+    const ledger = makeLedger({
+      anomalies: [
+        {
+          kind: 'reconcile-missing-run',
+          detail: { generation: 1, attempt: 2, ageMs: 900000 },
+          occurredAt: '2026-07-07T00:05:00Z',
+        },
+      ],
+    });
+
+    const { work } = deriveLogicalWork({
+      attempts: [],
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    const ledgerAnomalies = work[0].anomalies.filter(
+      (a) => a.kind === 'ledger-recorded',
+    );
+    expect(ledgerAnomalies).toHaveLength(1);
+    expect(ledgerAnomalies[0].detail).toContain('reconcile-missing-run');
+  });
+
+  it('adds no ledger-recorded anomalies for a clean ledger with an empty anomalies array', () => {
+    const ledger = makeLedger({ anomalies: [] });
+    const { work } = deriveLogicalWork({
+      attempts: [makeRun()],
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+    expect(work[0].anomalies).toEqual([]);
+  });
+});
+
 describe('deriveLogicalWork - attribution and mismatch anomalies', () => {
   it('attributes a marker attempt to the ledger only when the intent actually exists there', () => {
     const attempts = [

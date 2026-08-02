@@ -7,6 +7,7 @@ import {
 import {
   type DispatchLedger,
   LEDGER_ACTIVE_GENERATION_STATES,
+  type LedgerAnomaly,
   type LedgerGeneration,
   sourceKindForGeneration,
 } from './dispatch-ledger';
@@ -81,7 +82,13 @@ export interface DispatchIntentView {
 }
 
 export interface LogicalWorkAnomaly {
-  kind: 'duplicate-active-attempts' | 'attempt-ledger-mismatch';
+  kind:
+    | 'duplicate-active-attempts'
+    | 'attempt-ledger-mismatch'
+    // Anything the ledger itself recorded into `ledger.anomalies` (the
+    // durable record - see `ledgerRecordedAnomalies`'s own doc comment),
+    // regardless of whether a corroborating live run still exists.
+    | 'ledger-recorded';
   detail: string;
 }
 
@@ -255,6 +262,55 @@ function duplicateAttemptAnomalies(
   return anomalies;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Turns one raw `ledger.anomalies` entry into readable text without
+ * assuming its `detail` shape - `detail` is broker-kind-specific and
+ * untyped (see `LedgerAnomaly`'s own doc comment). `duplicate-attempt` (the
+ * one kind that exists today - `main.mjs`'s `reconcileActive`, recorded
+ * when the reconciler finds more than one worker run bound to a single
+ * generation) gets a tailored message; anything else - including anomaly
+ * kinds a future broker change adds (e.g. #305's reconciler introduces
+ * `reconcile-missing-run`/`reconcile-parked`/`reconcile-invariant-violation`)
+ * - still renders instead of being silently dropped or crashing.
+ */
+function describeLedgerAnomaly(anomaly: LedgerAnomaly): string {
+  if (
+    anomaly.kind === 'duplicate-attempt' &&
+    isRecord(anomaly.detail) &&
+    Number.isSafeInteger(anomaly.detail.generation) &&
+    Array.isArray(anomaly.detail.runIds)
+  ) {
+    const runIds = anomaly.detail.runIds.join(', ');
+    return `The dispatch ledger recorded a duplicate-attempt anomaly for generation ${anomaly.detail.generation}: runs ${runIds} were both bound to it.`;
+  }
+  const detail =
+    isRecord(anomaly.detail) || Array.isArray(anomaly.detail)
+      ? ` ${JSON.stringify(anomaly.detail)}`
+      : '';
+  return `The dispatch ledger recorded a "${anomaly.kind}" anomaly at ${anomaly.occurredAt}.${detail}`;
+}
+
+/**
+ * Anomalies the ledger itself already recorded (broker.mjs's `addAnomaly`,
+ * e.g. the reconciler catching two worker runs bound to one generation -
+ * see `describeLedgerAnomaly`). These are the durable record: unlike
+ * `duplicateAttemptAnomalies` above (derived fresh from *currently live*
+ * attempts on every render), a ledger-recorded anomaly stays visible even
+ * after its duplicate run has completed or aged out of the recent-run
+ * window this app can still see - unconditionally surfaced, never
+ * re-derived or gated on a live run still existing.
+ */
+function ledgerRecordedAnomalies(ledger: DispatchLedger): LogicalWorkAnomaly[] {
+  return ledger.anomalies.map((anomaly) => ({
+    kind: 'ledger-recorded',
+    detail: describeLedgerAnomaly(anomaly),
+  }));
+}
+
 function intentsFromLedger(ledger: DispatchLedger): DispatchIntentView[] {
   return ledger.generations
     .slice()
@@ -376,15 +432,26 @@ export function deriveLogicalWork(
     const anomalies: LogicalWorkAnomaly[] = [
       ...mismatchAnomalies,
       ...duplicateAttemptAnomalies(attempts),
+      // Durable ledger-recorded anomalies (see that function's own doc
+      // comment) - included unconditionally, not just when a live run
+      // still corroborates them, so a duplicate the reconciler caught and
+      // has since resolved (completed run, or aged out of the recent-run
+      // window) is still explained rather than silently disappearing.
+      ...(ledger ? ledgerRecordedAnomalies(ledger) : []),
     ];
 
     const baseState = ledger
       ? stateFromLedger(ledger)
       : stateFromAttempts(attempts);
-    // `duplicateAttemptAnomalies` only ever fires on live (queued/running)
-    // attempts, so anomalies only ever coexist with an in-flight base
-    // state - safe to always promote to the distinct `anomaly` state
-    // rather than needing a case-by-case merge with `baseState`.
+    // Any anomaly - fresh (duplicate live attempts, a marker/ledger
+    // mismatch) or durable (a ledger-recorded anomaly, possibly from a
+    // duplicate that has since completed or aged out of the visible run
+    // window) - promotes the whole task to the distinct `anomaly` state.
+    // A ledger-recorded anomaly has no "resolved" signal in the schema
+    // (broker.mjs's `anomalies` array is append-only), so this stays true
+    // until the underlying issue itself closes - deliberately: an operator
+    // who hasn't looked at a flagged duplicate yet should keep seeing it
+    // flagged, not have it quietly stop being called out.
     const state: LogicalWorkState =
       anomalies.length > 0
         ? 'anomaly'

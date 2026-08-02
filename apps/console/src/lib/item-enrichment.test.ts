@@ -145,6 +145,73 @@ describe('enrichItems - dispatch ledger parsing', () => {
     expect(result.byNumber.get(42)?.ledger).toBeUndefined();
   });
 
+  // Codex review (#364, P2): a ledger comment whose own `task` field names
+  // a different issue than the one whose comment window produced it (e.g.
+  // copy-pasted, or a stray marker in an unrelated thread) must not be
+  // trusted and attributed to this item.
+  it('rejects and warns on a structurally valid ledger whose task field points at a different issue', async () => {
+    setupGraphql({
+      repository: {
+        i42: {
+          __typename: 'Issue',
+          comments: {
+            nodes: [
+              {
+                body: ledgerCommentBody(
+                  ledgerJson({
+                    task: {
+                      repository: 'supersprinklesracing/sprinkles',
+                      issue: 999,
+                    },
+                  }),
+                ),
+                url: 'https://x/1',
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await enrichItems(DEFAULT_REPO, [wantsComments]);
+
+    expect(result.byNumber.get(42)?.ledger).toBeUndefined();
+    expect(
+      result.warnings.some(
+        (w) => w.includes('sprinkles#42') && w.includes('999'),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects and warns on a structurally valid ledger whose task field points at a different repository', async () => {
+    setupGraphql({
+      repository: {
+        i42: {
+          __typename: 'Issue',
+          comments: {
+            nodes: [
+              {
+                body: ledgerCommentBody(
+                  ledgerJson({
+                    task: { repository: 'someone-else/other-repo', issue: 42 },
+                  }),
+                ),
+                url: 'https://x/1',
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await enrichItems(DEFAULT_REPO, [wantsComments]);
+
+    expect(result.byNumber.get(42)?.ledger).toBeUndefined();
+    expect(
+      result.warnings.some((w) => w.includes('someone-else/other-repo')),
+    ).toBe(true);
+  });
+
   it('attaches a ledger to a pull request item alongside its PR enrichment', async () => {
     setupGraphql({
       repository: {
