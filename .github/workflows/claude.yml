@@ -1,18 +1,16 @@
 name: Claude Issue Agent
 
-# Adding the `agent:claude` label to an issue runs Claude Code on a self-hosted
-# runner (this repo's agent runner) to work on that issue. Claude can ask
-# clarifying questions as issue comments; reply with `@claude ...` to
-# continue. See .agents/skills/agent-protocol/agent-protocol.md and
+# First issue-agent pipeline, alongside codex.yml and opencode.yml. This
+# workflow is workflow_dispatch-only: agent-router.yml owns every event
+# trigger (label added, an OWNER's `@claude` reply, etc.), authorizes the
+# request, and dispatches this workflow with the issue number as a plain
+# input - see that workflow for the trigger/authorization logic. See
+# .agents/skills/agent-protocol/agent-protocol.md and
 # .agents/skills/lcars/lcars-protocol.md for the conventions the agent
 # follows.
 
-# `github.event.issue` is populated for both the `issues` and `issue_comment`
-# triggers below (issue_comment fires on PR comments too, and still sets
-# `.issue`); the `||` fallback covers the third trigger, workflow_dispatch,
-# whose issue number arrives as a plain input instead. The agent console
-# joins a live run to its action-item card by parsing the leading "#<number>:"
-# back out of the run's display_title.
+# The agent console joins a live run to its action-item card by parsing the
+# leading "#<number>:" back out of the run's display_title.
 run-name: '#${{ github.event.inputs.issue }}: Claude issue agent'
 
 on:
@@ -60,24 +58,11 @@ concurrency:
 
 jobs:
   claude:
-    # Run only when:
-    #  - the maintainer (this repo is public — do not let any other Triage+
-    #    collaborator steer the agent by labeling an attacker-authored
-    #    issue; `github.event.sender`/the issues webhook payload has no
-    #    author_association-equivalent field to check here, unlike a
-    #    comment, so this compares github.actor directly against the
-    #    maintainer login, matching how this same login is already
-    #    hardcoded elsewhere in this workflow, e.g. the parking assignee)
-    #    just added the `agent:claude` label to an issue, OR
-    #  - the repo OWNER (same reasoning) posts a non-bot `@claude` reply on
-    #    an issue that already carries the `agent:claude` label, OR posts one
-    #    directly on a pull request (`issue_comment` fires for PR comments
-    #    too, distinguished by a non-null `github.event.issue.pull_request`;
-    #    PRs aren't gated on the label since the agent's own PRs never carry
-    #    it), OR
-    #  - a manual workflow_dispatch names an issue.
-    # Claude's own github-actions[bot] comments cannot re-trigger the
-    # workflow, so there is no comment loop.
+    # The centralized router (agent-router.yml) authorizes the request -
+    # maintainer-only label add, or an OWNER's non-bot `@claude` reply on an
+    # issue or PR - before dispatching this worker via workflow_dispatch.
+    # This job only checks that the dispatch actually carries an issue
+    # number.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
     # claude-agent-lcars is registered in jlapenna/homelab's
     # github-runner-autoscaler/orchestrator.yml as
@@ -98,6 +83,23 @@ jobs:
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
+      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
+      # asserted here - job placement onto a runner happens before any step
+      # runs, so an empty/unset value already fails the job loudly on its
+      # own before this step could ever fire.
+      - name: Assert required repo variables are set
+        env:
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        run: |
+          missing=""
+          [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing AGENT_FLEET_LOGIN"
+          [ -z "$MAINTAINER_LOGIN" ] && missing="$missing MAINTAINER_LOGIN"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required repo variable(s):$missing"
+            exit 1
+          fi
+
       # Claim the anchor issue/PR for the agent fleet the moment the run
       # starts, so ownership is visible at a glance (and filterable via
       # `gh issue list --assignee jclaw-bot`). The assignee must be
@@ -112,7 +114,7 @@ jobs:
       - name: Claim the issue as the agent fleet
         env:
           GH_TOKEN: ${{ github.token }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
           CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
           gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
@@ -148,14 +150,6 @@ jobs:
             mkdir -p /shared-cache/nx
             echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
           fi
-
-      # Node 24, a JRE, and an activated corepack shim are all baked into the
-      # shared runner image now (homelab#132) -- this step used to reinstall
-      # all three fresh on every single dispatch. Verified live via docker
-      # exec into the actual deployed image before removing this: node/java
-      # present, corepack activated. `pnpm ...` commands (including
-      # apps/console-e2e's Firestore-emulator-backed suite) resolve the
-      # version this repo's own package.json pins lazily on first use.
 
       # Mirrors supersprinklesracing/sprinkles's claude.yml (source of this
       # pattern) - authenticates via the same terraform-managed WIF pool
@@ -199,7 +193,7 @@ jobs:
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
           RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
         run: |
           SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
           if [ -x "$SCRIPT" ]; then
@@ -207,12 +201,6 @@ jobs:
           else
             echo "Sidecar tooling not found at $SCRIPT (runner image predates this bake-in, or this isn't the claude-agent-lcars fleet); skipping telemetry sidecar."
           fi
-
-      # Wall-clock anchor for the no-deliverable check below: only artifacts
-      # (PRs, issue closes, labels, comments) created/updated AFTER this
-      # moment count as this run's output.
-      # The shared setup action records the wall-clock anchor used by the
-      # deliverable check below.
 
       - name: Run Claude Code
         # SHA-pinned (not the v1.0.181 tag, and not floating @v1) deliberately:
@@ -305,7 +293,7 @@ jobs:
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
           RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
         run: |
           SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
           if [ -x "$SCRIPT" ]; then
@@ -320,6 +308,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           LOG="$(gh run view ${{ github.run_id }} --log 2>/dev/null || true)"
+          # GitHub often can't serve logs for a still-in-progress run (this
+          # step runs as part of the very run whose log it's fetching), so
+          # LOG can legitimately come back empty - make that visible instead
+          # of letting the checks below silently pass on no data.
+          if [ -z "$LOG" ]; then
+            echo "::warning::Could not fetch this run's log (often unavailable while the run is still in progress); the auth-crash check below was skipped."
+          fi
           # Detect if the run crashed during initialization (is_error: true and cost is 0,
           # or api_error_status is 401).
           if (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
@@ -353,7 +348,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
           IS_COMMENT_REPLY: ${{ github.event.inputs.mode == 'reply' }}
           REPO: ${{ github.repository }}
         run: |
@@ -426,7 +421,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
-          ISSUE_NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          ISSUE_NUM: ${{ github.event.inputs.issue }}
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           JOB_STATUS: ${{ job.status }}
@@ -434,6 +429,13 @@ jobs:
         run: |
           REASON=""
           LOG="$(gh run view "$RUN_ID" --log 2>/dev/null || true)"
+          # Same in-progress-run caveat as "Verify Claude run status" above:
+          # this step is itself part of the run whose log it's fetching, so
+          # GitHub can legitimately return nothing - say so instead of
+          # letting the log-based REASON checks below silently find nothing.
+          if [ -z "$LOG" ]; then
+            echo "::warning::Could not fetch this run's log (often unavailable while the run is still in progress); the log-based failure-reason checks below were skipped."
+          fi
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
             REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no status:needs-human label. All of its local work is lost. Re-dispatch by re-adding the `agent:claude` label or replying with `@claude`, and remind it to push early.'
           elif echo "$LOG" | grep -qi "Reached maximum number of turns"; then

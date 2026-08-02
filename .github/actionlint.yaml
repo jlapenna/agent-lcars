@@ -1,24 +1,26 @@
-# actionlint doesn't know about self-hosted runner labels by default, so it
-# flags `runs-on: [claude-agent-lcars]` (claude.yml, opencode.yml) as an
-# unknown label. Declare it here so CI's actionlint step (.github/workflows/
-# ci.yml) stays green - this label is registered in jlapenna/homelab's
-# github-runner-autoscaler/orchestrator.yml as
-# homelab-autoscale-claude-agent-lcars (homelab#97, see the workflow files'
-# own comments).
+# actionlint's self-hosted-runner allowlist only matters for LITERAL
+# `runs-on:` values - it has no way to resolve a `${{ vars.* }}` expression
+# at lint time, so it never actually checks a job whose `runs-on:` reads
+# `['${{ vars.AGENT_RUNNER_LABEL }}']` or `['${{ vars.DEFAULT_RUNNER_LABEL }}']`
+# against this list at all. That covers every claude-agent-lcars/
+# lcars-default job in this repo (claude.yml, opencode.yml, codex.yml,
+# agent-automerge.yml) - none of them are actually validated by this file.
+#
+# The one label this file genuinely protects is `lcars-build-client`:
+# publish-images.yml pins it as a literal `runs-on: lcars-build-client`
+# (agent-lcars#101, socketless BuildKit publish lane - see that workflow's
+# own comment for why it's deliberately NOT routed through a repo
+# variable), so actionlint's CI step (.github/workflows/ci.yml) genuinely
+# flags it as an unknown label without this entry.
+#
+# claude-agent-lcars and lcars-default stay listed anyway, for
+# documentation - their real registrations, matched to the `vars.*` names
+# above, live in jlapenna/homelab's github-runner-autoscaler/
+# orchestrator.yml as homelab-autoscale-claude-agent-lcars and
+# homelab-autoscale-lcars-default (homelab#97) - and in case a future
+# workflow ever pins one of them literally instead of through a variable.
 self-hosted-runner:
   labels:
     - claude-agent-lcars
-    # Socketless BuildKit publish lane (agent-lcars#101), registered in
-    # homelab's github-runner-autoscaler/orchestrator.yml as
-    # homelab-autoscale-lcars-build-client. Needed here because
-    # publish-images.yml now pins its `runs-on` literally
-    # instead of routing it through `fromJSON(vars.CI_RUNS_ON || ...)`,
-    # which actionlint could not analyse -- so the label is checkable now,
-    # which is the point.
-    - lcars-build-client
-    # General-purpose pool for small, fast glue jobs (agent-automerge.yml)
-    # that must not share runs-on with claude-agent-lcars above - see that
-    # workflow's own comment. Registered in homelab's
-    # github-runner-autoscaler/orchestrator.yml as
-    # homelab-autoscale-lcars-default.
     - lcars-default
+    - lcars-build-client

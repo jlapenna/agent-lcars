@@ -18,7 +18,13 @@ name: Codex Issue Agent
 # .agents/skills/lcars/lcars-protocol.md for the conventions this agent
 # follows.
 
-run-name: 'codex #${{ github.event.issue.number || github.event.inputs.issue }}: ${{ github.event.issue.title }}'
+# This workflow is workflow_dispatch-only (agent-router.yml owns the event
+# triggers), so github.event.issue is never populated here - the title
+# interpolation that used to appear after the colon always rendered empty.
+# Keep the leading "codex #<issue>:" shape: the console parses a leading
+# "#<number>" out of a run's display_title to join it to its action-item
+# card.
+run-name: 'codex #${{ github.event.inputs.issue }}: Codex issue agent'
 
 on:
   workflow_dispatch:
@@ -78,6 +84,23 @@ jobs:
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
+      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
+      # asserted here - job placement onto a runner happens before any step
+      # runs, so an empty/unset value already fails the job loudly on its
+      # own before this step could ever fire.
+      - name: Assert required repo variables are set
+        env:
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        run: |
+          missing=""
+          [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing AGENT_FLEET_LOGIN"
+          [ -z "$MAINTAINER_LOGIN" ] && missing="$missing MAINTAINER_LOGIN"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required repo variable(s):$missing"
+            exit 1
+          fi
+
       - name: Mint Agent LCARS installation token
         id: agent-lcars-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -89,7 +112,7 @@ jobs:
         id: claim
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
           CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
           if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
@@ -235,7 +258,7 @@ jobs:
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
           RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
         run: |
           SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
           if [ -x "$SCRIPT" ]; then
@@ -243,11 +266,6 @@ jobs:
           else
             echo "Sidecar tooling not found at $SCRIPT (runner image predates this bake-in, or this isn't the claude-agent-lcars fleet); skipping telemetry sidecar."
           fi
-
-      # Wall-clock anchor for the deliverable check below: only artifacts
-      # created/updated after this moment count as this run's output.
-      # The shared setup action records the wall-clock anchor used by the
-      # deliverable check below.
 
       - name: Run Codex
         id: agent
@@ -305,7 +323,7 @@ jobs:
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
           RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
         run: |
           SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
           if [ -x "$SCRIPT" ]; then
@@ -322,7 +340,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
@@ -366,7 +384,7 @@ jobs:
         if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          ISSUE_NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          ISSUE_NUM: ${{ github.event.inputs.issue }}
           REPO: ${{ github.repository }}
           JOB_STATUS: ${{ job.status }}
           MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
@@ -406,7 +424,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           REPO: ${{ github.repository }}
-          CURRENT: ${{ github.event.issue.number || github.event.inputs.issue }}
+          CURRENT: ${{ github.event.inputs.issue }}
           FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
           set -euo pipefail
