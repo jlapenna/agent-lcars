@@ -22,15 +22,16 @@ const repoRoot = path.resolve(
  * actually references, standing in for what GitHub Actions would
  * substitute at render time. Every one of these workflows' worker jobs only
  * ever runs via `workflow_dispatch` (see each file's job-level `if:` -
- * gated on `github.event_name == 'workflow_dispatch'`), so
- * `github.event.issue.*` is unset for the runs the console actually has to
- * join against; `github.event.inputs.issue` is the field that is always
- * populated.
+ * gated on `github.event_name == 'workflow_dispatch'`), dispatched by the
+ * serialized dispatch broker (#327, `.github/actions/dispatch-broker`):
+ * `issue` is the field the console joins on; `broker_generation` and
+ * `broker_intent_id` are the broker's own reconciliation markers, appended
+ * to the title after the join key and irrelevant to parsing it.
  */
 const EXPRESSION_VALUES: Record<string, string> = {
-  'github.event.inputs.issue': '123',
-  'github.event.issue.number': '',
-  'github.event.issue.title': 'Some issue title',
+  'inputs.issue': '123',
+  'inputs.broker_generation': '1',
+  'inputs.broker_intent_id': 'intent-test-abc123',
 };
 
 const EXPRESSION_RE = /\$\{\{\s*([^}]+?)\s*\}\}/g;
@@ -100,23 +101,23 @@ describe('run-name <-> console join contract', () => {
       const rendered = renderRunName(template);
 
       expect(issueNumberFromDisplayTitle(rendered)).toBe(
-        Number(EXPRESSION_VALUES['github.event.inputs.issue']),
+        Number(EXPRESSION_VALUES['inputs.issue']),
       );
     },
   );
 
   it('extracts different issue numbers for different dispatches (not a coincidental match)', () => {
-    const originalValue = EXPRESSION_VALUES['github.event.inputs.issue'];
+    const originalValue = EXPRESSION_VALUES['inputs.issue'];
     try {
       for (const issue of ['1', '42', '9999']) {
-        EXPRESSION_VALUES['github.event.inputs.issue'] = issue;
+        EXPRESSION_VALUES['inputs.issue'] = issue;
         for (const workflowRelativePath of WORKFLOWS) {
           const rendered = renderRunName(loadRunName(workflowRelativePath));
           expect(issueNumberFromDisplayTitle(rendered)).toBe(Number(issue));
         }
       }
     } finally {
-      EXPRESSION_VALUES['github.event.inputs.issue'] = originalValue;
+      EXPRESSION_VALUES['inputs.issue'] = originalValue;
     }
   });
 });
