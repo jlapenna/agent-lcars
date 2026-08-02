@@ -333,12 +333,40 @@ function resolveTask(normalized) {
 // of a corroborating superseding run must NOT be treated as proof of
 // eviction -- it just means this run's mismatch is still unexplained, so
 // the caller keeps failing red.
-async function wasSupersededEviction(client, task, runId, group, error) {
+//
+// Corroborated eviction is only safe to drop for `control-evidence`: it is
+// a pure observation (e.g. an `unlabeled` timeline event) that the
+// superseding run's own, separately-sourced evidence does not depend on --
+// losing it only shrinks the audit trail. `intent`, `completion`, and
+// `anchor-control` are not interchangeable with whatever the superseding
+// run happens to carry: the superseding run corresponds to a *different*
+// triggering event (its own distinct sourceId), so it offers no guarantee
+// of carrying this run's payload forward. An evicted `intent` is an
+// authorized dispatch request that would be silently lost forever; an
+// evicted `completion` would leave its generation active forever; an
+// evicted `anchor-control` would leave the issue's open/closed state
+// unresolved. Those must still fail red even when eviction is
+// corroborated (#344 follow-up), with an error naming what was lost so a
+// maintainer knows to manually re-dispatch it.
+async function wasSupersededEviction(client, task, runId, group, kind, error) {
   if (error?.name !== 'BrokerConcurrencyMismatchError' || !error.retryable) {
     return false;
   }
   const superseding = await findSupersedingRouterRun(client, task, runId);
   if (!superseding) return false;
+  if (kind !== 'control-evidence') {
+    throw new Error(
+      `Broker run ${runId} (group ${group}, issue #${task.issue}) was ` +
+        `evicted from its concurrency queue by newer run ${superseding.id}, ` +
+        `but this event carries a '${kind}' payload. Only observational ` +
+        'control-evidence may be dropped on a corroborated eviction (#344); ' +
+        `a superseding run does not carry this event's '${kind}' payload ` +
+        'forward, since it corresponds to a different triggering event. ' +
+        "This event's payload is presumed permanently lost -- a maintainer " +
+        'must manually re-dispatch it to recover.',
+      { cause: error },
+    );
+  }
   console.log(
     `::notice::Broker run ${runId} (group ${group}, issue #${task.issue}) ` +
       `was evicted from its concurrency queue by newer run ${superseding.id}, ` +
@@ -366,7 +394,18 @@ async function broker() {
   try {
     await verifyBrokerConcurrency(client, task, runId, group, { eventName });
   } catch (error) {
-    if (await wasSupersededEviction(client, task, runId, group, error)) return;
+    if (
+      await wasSupersededEviction(
+        client,
+        task,
+        runId,
+        group,
+        normalized.kind,
+        error,
+      )
+    ) {
+      return;
+    }
     throw error;
   }
   let loaded;
