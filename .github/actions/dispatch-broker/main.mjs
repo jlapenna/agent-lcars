@@ -20,11 +20,14 @@ import {
 import {
   createGitHubApi,
   dispatchWorker,
+  ensureNeedsHumanParked,
   failClosed,
   findRunsForGeneration,
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  listOpenAgentLabeledIssues,
+  listOpenIssuesAssignedTo,
   loadLedger,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
@@ -182,6 +185,208 @@ async function reconcileActive(client, loaded) {
   }
 }
 
+// The reconciler's (#305) grace period before a still-runless dispatching
+// generation is flagged at all -- `findRunsForGeneration` can legitimately
+// see zero matches for a few seconds/minutes right after a genuine dispatch
+// (ordinary eventual consistency, the same lag #340 documented for
+// concurrency-group listings), so the FIRST reconcile pass over a young
+// generation must stay a silent no-op.
+const RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1000;
+// Minimum gap between two COUNTED missing-run observations for the same
+// generation. This is what makes a reconcile pass idempotent against a
+// second, overlapping, or rapidly re-triggered pass (the acceptance
+// criterion): re-observing "still missing" inside this window records
+// nothing new and mutates nothing, rather than inflating the attempt
+// counter or re-writing the ledger. A genuinely new scheduled pass (30
+// minutes later, see dispatch-reconcile.yml) always clears it.
+const RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1000;
+// Bound on how many distinct, interval-separated "still missing" reconcile
+// observations a generation gets before it is parked needs-human. Mirrors
+// the repo's general bounded-retry posture (#343/#344) rather than
+// retrying forever.
+const RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
+
+function reconcileAnomaliesFor(ledger, generationNumber, kind) {
+  return ledger.anomalies.filter(
+    (anomaly) =>
+      anomaly.kind === kind && anomaly.detail?.generation === generationNumber,
+  );
+}
+
+// Repairs orphan classes 2 and 4 from #305's production audit: a dispatch
+// whose POST outcome was genuinely lost (queue-evicted per #345/#347, or a
+// worker that crashed before ever registering a matching run) leaves a
+// generation stuck `dispatching`/`dispatch-unknown` forever with no run ID
+// -- reconcileActive() above already binds it the instant exactly one
+// matching run appears, but does nothing when zero ever do. This is the one
+// gap reconcileActive() cannot safely close itself: a single event-driven
+// broker() call has no concept of "how many times has this now been
+// observed missing" and must not escalate straight to needs-human on one
+// possibly-premature zero-match observation -- reconcileActive() itself
+// runs unconditionally on every single event, so it cannot be the thing
+// that counts a bounded number of attempts over time.
+//
+// Every mutation here is recorded in the ledger's `anomalies` array before
+// (successful) escalation and is itself idempotent: the leading
+// 'reconcile-parked' check below short-circuits every later pass into a
+// true no-op once the bound is hit, and the age/interval gates prevent
+// double-counting a rapid re-run.
+async function trackMissingRun(client, loaded, generation, now) {
+  const ledger = loaded.ledger;
+  if (
+    reconcileAnomaliesFor(ledger, generation.generation, 'reconcile-parked')
+      .length > 0
+  ) {
+    return;
+  }
+  const startedAt = Date.parse(
+    generation.attempt?.dispatchStartedAt ?? generation.occurredAt,
+  );
+  const ageMs = Date.parse(now) - startedAt;
+  if (!(ageMs >= RECONCILE_MISSING_RUN_GRACE_MS)) return;
+
+  const priorObservations = reconcileAnomaliesFor(
+    ledger,
+    generation.generation,
+    'reconcile-missing-run',
+  );
+  const last = priorObservations.at(-1);
+  if (
+    last &&
+    Date.parse(now) - Date.parse(last.occurredAt) <
+      RECONCILE_MISSING_RUN_MIN_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  const attempt = priorObservations.length + 1;
+  const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  // Apply the (idempotent, verify-then-decide) GitHub-side park BEFORE
+  // recording it in the ledger: if the mutation throws, the ledger must
+  // stay exactly as it was so the next pass retries at the same attempt
+  // count, rather than claiming a park that never actually landed.
+  if (reachedBound) {
+    await ensureNeedsHumanParked(
+      client,
+      ledger.task,
+      env('MAINTAINER_LOGIN', false),
+    );
+  }
+  addAnomaly(
+    ledger,
+    'reconcile-missing-run',
+    {
+      generation: generation.generation,
+      intentId: generation.intentId,
+      pipeline: generation.pipeline,
+      state: generation.state,
+      attempt,
+      ageMs,
+    },
+    now,
+  );
+  if (reachedBound) {
+    addAnomaly(
+      ledger,
+      'reconcile-parked',
+      {
+        generation: generation.generation,
+        reason: 'missing-run-bound-exhausted',
+      },
+      now,
+    );
+  }
+  await saveLedger(client, loaded);
+}
+
+// The `reconcile` normalized kind's own repair (#305), invoked from
+// broker() after reconcileActive() has already had its normal chance to
+// bind/complete the current active generation. Everything reconcileActive()
+// already covers (bind an unambiguous run, complete a terminal bound run,
+// anomaly+fail-closed a genuine duplicate-run collision) is intentionally
+// NOT duplicated here -- this only closes reconcileActive()'s one remaining
+// gap (a persistently runless dispatch) and one defensive invariant check.
+async function reconcileLedger(client, loaded, now = new Date().toISOString()) {
+  const ledger = loaded.ledger;
+  const active = activeGeneration(ledger);
+  const pending = ledger.generations.find(
+    (candidate) => candidate.state === 'pending',
+  );
+  if (
+    pending &&
+    !active &&
+    reconcileAnomaliesFor(
+      ledger,
+      pending.generation,
+      'reconcile-invariant-violation',
+    ).length === 0
+  ) {
+    // Should be unreachable through broker.mjs's own transitions (a
+    // `pending` generation only ever exists alongside a contemporaneous
+    // active one, and every path that resolves the active generation also
+    // promotes pending -- see completeRun/markDispatchRejected). Surfacing
+    // it loudly rather than guessing/promoting is #305's "never silently
+    // discard evidence" requirement applied to ledger data that itself
+    // looks corrupted. Mutation-before-ledger-write (same ordering as
+    // trackMissingRun above) so a failed park never leaves the ledger
+    // falsely claiming one landed; the anomaly check above makes a repeat
+    // pass, once parked, a true no-op.
+    await ensureNeedsHumanParked(
+      client,
+      ledger.task,
+      env('MAINTAINER_LOGIN', false),
+    );
+    addAnomaly(
+      ledger,
+      'reconcile-invariant-violation',
+      {
+        detail: 'pending generation with no contemporaneous active generation',
+        generation: pending.generation,
+      },
+      now,
+    );
+    await saveLedger(client, loaded);
+    return;
+  }
+  if (!active || !['dispatching', 'dispatch-unknown'].includes(active.state)) {
+    return;
+  }
+  if (active.attempt?.runId) return;
+  await trackMissingRun(client, loaded, active, now);
+}
+
+// Fires one workflow_dispatch `kind: reconcile` call at agent-router.yml per
+// already-discovered candidate issue (#305's scan side). Each call reuses
+// agent-router.yml's own normalize -> broker jobs end to end: the same
+// per-issue `agent-lcars-dispatch-v1-<repositoryId>-<issue>` concurrency
+// group, and #349's already-hardened indirect concurrency corroboration for
+// workflow_dispatch-triggered runs. This function never touches a ledger
+// comment itself, so it needs no concurrency verification of its own --
+// only dispatch-reconcile.yml's single scan-wide concurrency group (to
+// avoid two overlapping scans firing duplicate dispatches) applies here.
+async function dispatchReconcileScan(client, repository, issueNumbers) {
+  const results = { dispatched: 0, failed: [] };
+  for (const issueNumber of issueNumbers) {
+    try {
+      const response = await client.request(
+        `${repositoryPath({ repository })}/actions/workflows/agent-router.yml/dispatches`,
+        {
+          method: 'POST',
+          body: {
+            ref: 'main',
+            inputs: { kind: 'reconcile', issue: String(issueNumber) },
+          },
+        },
+      );
+      validateDispatchResponse(response, { repository });
+      results.dispatched += 1;
+    } catch (error) {
+      results.failed.push({ issue: issueNumber, message: error.message });
+    }
+  }
+  return results;
+}
+
 function isDefiniteDispatchRejection(error) {
   return (
     error instanceof GitHubApiError &&
@@ -335,10 +540,14 @@ function resolveTask(normalized) {
 // eviction -- it just means this run's mismatch is still unexplained, so
 // the caller keeps failing red.
 //
-// Corroborated eviction is only safe to drop for `control-evidence`: it is
-// a pure observation (e.g. an `unlabeled` timeline event) that the
-// superseding run's own, separately-sourced evidence does not depend on --
-// losing it only shrinks the audit trail. `intent`, `completion`, and
+// Corroborated eviction is only safe to drop for `control-evidence` and
+// `reconcile`: both are non-authoritative pings the superseding run's own,
+// separately-sourced evidence does not depend on -- losing either only
+// shrinks the audit trail (`control-evidence`) or simply waits for the next
+// scheduled pass (`reconcile`, #305: dispatch-reconcile.yml re-fires the
+// identical idempotent `kind: reconcile` ping for this issue on its next
+// 30-minute cadence regardless, so an evicted one is never "permanently
+// lost" the way an evicted intent would be). `intent`, `completion`, and
 // `anchor-control` are not interchangeable with whatever the superseding
 // run happens to carry: the superseding run corresponds to a *different*
 // triggering event (its own distinct sourceId), so it offers no guarantee
@@ -349,22 +558,25 @@ function resolveTask(normalized) {
 // unresolved. Those must still fail red even when eviction is
 // corroborated (#344 follow-up), with an error naming what was lost so a
 // maintainer knows to manually re-dispatch it.
+const EVICTION_TOLERANT_KINDS = new Set(['control-evidence', 'reconcile']);
+
 async function wasSupersededEviction(client, task, runId, group, kind, error) {
   if (error?.name !== 'BrokerConcurrencyMismatchError' || !error.retryable) {
     return false;
   }
   const superseding = await findSupersedingRouterRun(client, task, runId);
   if (!superseding) return false;
-  if (kind !== 'control-evidence') {
+  if (!EVICTION_TOLERANT_KINDS.has(kind)) {
     throw new Error(
       `Broker run ${runId} (group ${group}, issue #${task.issue}) was ` +
         `evicted from its concurrency queue by newer run ${superseding.id}, ` +
         `but this event carries a '${kind}' payload. Only observational ` +
-        'control-evidence may be dropped on a corroborated eviction (#344); ' +
-        `a superseding run does not carry this event's '${kind}' payload ` +
-        'forward, since it corresponds to a different triggering event. ' +
-        "This event's payload is presumed permanently lost -- a maintainer " +
-        'must manually re-dispatch it to recover.',
+        'control-evidence/reconcile pings may be dropped on a corroborated ' +
+        `eviction (#344, #305); a superseding run does not carry this ` +
+        `event's '${kind}' payload forward, since it corresponds to a ` +
+        "different triggering event. This event's payload is presumed " +
+        'permanently lost -- a maintainer must manually re-dispatch it to ' +
+        'recover.',
       { cause: error },
     );
   }
@@ -372,8 +584,8 @@ async function wasSupersededEviction(client, task, runId, group, kind, error) {
     `::notice::Broker run ${runId} (group ${group}, issue #${task.issue}) ` +
       `was evicted from its concurrency queue by newer run ${superseding.id}, ` +
       'which now reports the expected group. Treating this run as ' +
-      "superseded rather than failing (#344): this run's own control " +
-      'evidence for its triggering event is not recorded in the ledger -- ' +
+      `superseded rather than failing (#344/#305): this run's own '${kind}' ` +
+      'payload for its triggering event is not recorded in the ledger -- ' +
       'the superseding run already carries the issue forward correctly.',
   );
   return true;
@@ -527,6 +739,8 @@ async function broker() {
       await saveLedger(client, loaded);
     } else if (normalized.kind === 'completion') {
       await handleCompletion(client, loaded, normalized);
+    } else if (normalized.kind === 'reconcile') {
+      await reconcileLedger(client, loaded);
     } else {
       throw new Error(`Unsupported normalized event kind: ${normalized.kind}`);
     }
@@ -610,12 +824,74 @@ async function completionCallback() {
   validateDispatchResponse(response, task);
 }
 
+// Merges both discovery lanes (#305, broadened by the #363 review):
+// currently agent-labeled issues/PRs (the fast path -- covers everything
+// still mid-dispatch or freshly completed) union'd with issues/PRs assigned
+// to the agent fleet login (the label-independent path -- covers a ledger
+// left active after its last agent:* label was removed). Deduplicated by
+// issue number the same way listOpenAgentLabeledIssues dedupes across its
+// own per-label queries.
+async function discoverReconcileCandidates(client, repository, fleetLogin) {
+  const task = { repository };
+  const [labeled, assigned] = await Promise.all([
+    listOpenAgentLabeledIssues(client, task),
+    listOpenIssuesAssignedTo(client, task, fleetLogin),
+  ]);
+  const byNumber = new Map();
+  for (const issue of [...labeled, ...assigned]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number,
+  );
+}
+
+// dispatch-reconcile.yml's scan job (#305): read-only discovery of every
+// open agent-labeled or fleet-assigned issue/PR (discoverReconcileCandidates),
+// then one `kind: reconcile` workflow_dispatch call per candidate via
+// dispatchReconcileScan(). A per-issue dispatch failure never blocks the
+// other candidates -- every candidate always gets an attempt -- but the job
+// itself still fails loud afterwards (unlike an individual reconcile's own
+// bounded-retry parking, which stays green by design) so a systemic
+// dispatch problem (e.g. a bad token) is visible.
+async function scanReconcile() {
+  const client = api();
+  const repository = env('GITHUB_REPOSITORY');
+  const candidates = await discoverReconcileCandidates(
+    client,
+    repository,
+    env('AGENT_FLEET_LOGIN', false),
+  );
+  const issueNumbers = candidates.map((issue) => issue.number);
+  const results = await dispatchReconcileScan(client, repository, issueNumbers);
+  console.log(
+    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/` +
+      `${issueNumbers.length} open agent-labeled or fleet-assigned issue(s).`,
+  );
+  for (const failure of results.failed) {
+    console.log(
+      `::error::dispatch-reconcile: failed to dispatch reconcile for ` +
+        `#${failure.issue}: ${failure.message}`,
+    );
+  }
+  await output('candidates', String(issueNumbers.length));
+  await output('dispatched', String(results.dispatched));
+  if (results.failed.length > 0) {
+    throw new Error(
+      `Reconcile scan failed to dispatch ${results.failed.length}/` +
+        `${issueNumbers.length} candidate(s): ` +
+        results.failed.map((failure) => `#${failure.issue}`).join(', '),
+    );
+  }
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const operation = process.argv[2];
   if (operation === 'normalize') await normalize();
   else if (operation === 'broker') await broker();
   else if (operation === 'preflight') await preflight();
   else if (operation === 'completion-callback') await completionCallback();
+  else if (operation === 'reconcile') await scanReconcile();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
 }
 
@@ -624,12 +900,18 @@ export {
   completionMatches,
   contextFor,
   decode,
+  discoverReconcileCandidates,
+  dispatchReconcileScan,
   encode,
   FRESH_INTENT_OUTCOMES,
   handleCompletion,
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
+  RECONCILE_MISSING_RUN_GRACE_MS,
+  RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
+  RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
   reconcileActive,
+  reconcileLedger,
   resolveTask,
   wasSupersededEviction,
 };

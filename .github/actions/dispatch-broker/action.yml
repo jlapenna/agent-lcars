@@ -3,7 +3,7 @@ description: Normalize, serialize, bind, and verify durable agent dispatch inten
 
 inputs:
   operation:
-    description: normalize, broker, or preflight
+    description: normalize, broker, preflight, completion-callback, or reconcile
     required: true
   payload:
     description: Base64url normalized intent emitted by the normalize operation
@@ -56,6 +56,12 @@ outputs:
   authorized:
     description: Whether worker preflight found an exact binding
     value: ${{ steps.run.outputs.authorized }}
+  candidates:
+    description: Number of open agent-labeled issues/PRs the reconcile scan discovered
+    value: ${{ steps.run.outputs.candidates }}
+  dispatched:
+    description: Number of candidates the reconcile scan successfully dispatched
+    value: ${{ steps.run.outputs.dispatched }}
 
 runs:
   using: composite

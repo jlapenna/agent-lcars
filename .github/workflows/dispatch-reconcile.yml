@@ -1,0 +1,86 @@
+name: Dispatch Ledger Reconciler
+
+# Scheduled AND manually runnable maintenance pass over every open,
+# agent-labeled OR agent-fleet-assigned issue/PR (#305, child of the
+# dispatch-broker reliability epic #301; the fleet-assigned lane closes a
+# #363 review gap -- see discoverReconcileCandidates in main.mjs). This
+# workflow's own job is read-only discovery plus firing one workflow_dispatch
+# `kind: reconcile` call at agent-router.yml per already-discovered
+# candidate -- it never touches a ledger comment itself.
+#
+# Every actual repair happens inside the SAME per-issue serialized broker
+# job agent-router.yml already runs for every other trigger (issue events,
+# comments, completion callbacks): the follow-on `kind: reconcile` run goes
+# through agent-router.yml's own normalize -> broker jobs, the reserved
+# per-issue `agent-lcars-dispatch-v1-<repositoryId>-<issue>` concurrency
+# group, and #349's already-hardened indirect concurrency corroboration for
+# workflow_dispatch-triggered runs (GitHub never reports concurrency-group
+# membership for a workflow_dispatch/schedule-triggered run's own listing --
+# only #349's positive-corroboration check works here). There is still
+# exactly one writer and one ordering domain per issue; this workflow adds
+# no new one.
+#
+# What it repairs (main.mjs's reconcileLedger/trackMissingRun): a dispatch
+# generation stuck `dispatching`/`dispatch-unknown` with no worker run ever
+# showing up (a crashed worker, or a queue-evicted intent #345/#347
+# deliberately failed red for) gets bounded-retried and, past the bound,
+# parked `status:needs-human`. A completed worker run whose completion
+# callback never landed (a red pre-#349 run, a timeout, a force-cancel) gets
+# finalized by the same reconcileActive() logic every ordinary event already
+# runs. A pending intent queued behind either of those gets promoted and
+# (re-)dispatched automatically once its blocking generation resolves -- no
+# separate "stale pending" mechanism is needed. A genuine concurrent
+# duplicate-run collision is surfaced as a `duplicate-attempt` anomaly and
+# parked, never silently resolved.
+
+on:
+  schedule:
+    # Every 30 minutes, offset from :00/:30 to avoid the scheduling
+    # stampede (see label-contract-audit.yml's '17 13 * * *' for the same
+    # convention at daily granularity).
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+
+concurrency:
+  # A single, repo-wide, reconciler-only group -- deliberately NOT the
+  # reserved `agent-lcars-dispatch-v1-*` per-issue namespace (workflow-
+  # contract.test.mjs enforces that no workflow but agent-router.yml's
+  # broker job ever declares that namespace). This only prevents two
+  # overlapping scheduled/manual scans from redundantly firing duplicate
+  # `kind: reconcile` dispatches; a redundant extra dispatch would be
+  # harmless (each downstream reconcile pass is independently idempotent),
+  # but there is no reason to pay for it. It has no bearing on per-issue
+  # ledger mutation safety, which is fully delegated to agent-router.yml's
+  # own concurrency group per candidate issue.
+  group: dispatch-reconcile-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
+
+      - name: Assert required repo variables are set
+        env:
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        run: |
+          if [ -z "$AGENT_FLEET_LOGIN" ]; then
+            echo "::error::Missing required repo variable: AGENT_FLEET_LOGIN"
+            exit 1
+          fi
+
+      - name: Scan open agent-labeled/fleet-assigned issues and dispatch reconciliation
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        with:
+          operation: reconcile
