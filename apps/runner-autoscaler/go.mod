@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/actions/scaleset v0.4.1-0.20260721134647-cb0405b2d874
 	github.com/containerd/errdefs v1.0.0
-	github.com/docker/cli v29.6.2+incompatible
+	github.com/docker/cli v29.7.1+incompatible
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-units v0.5.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
