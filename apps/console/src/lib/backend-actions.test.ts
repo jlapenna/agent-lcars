@@ -16,6 +16,7 @@ import {
 import { getGithubClient } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
+const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
 
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
@@ -205,7 +206,7 @@ describe('postComment (mention routing)', () => {
     );
   });
 
-  it('does not double-append @claude when the body already contains it', async () => {
+  it('appends an exact @claude command when prose merely mentions it', async () => {
     const { createComment } = mockOctokit();
 
     await postComment(DEFAULT_REPO, 2709, 'Ping @claude please', [
@@ -213,11 +214,11 @@ describe('postComment (mention routing)', () => {
     ]);
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Ping @claude please' }),
+      expect.objectContaining({ body: 'Ping @claude please\n\n@claude' }),
     );
   });
 
-  it('does not double-append /oc when the body already contains /opencode', async () => {
+  it('appends an exact /oc command when prose merely mentions /opencode', async () => {
     const { createComment } = mockOctokit();
 
     await postComment(DEFAULT_REPO, 2709, 'Please /opencode this', [
@@ -225,7 +226,7 @@ describe('postComment (mention routing)', () => {
     ]);
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Please /opencode this' }),
+      expect.objectContaining({ body: 'Please /opencode this\n\n/oc' }),
     );
   });
 
@@ -387,7 +388,7 @@ describe('retriggerIssue (pipeline routing)', () => {
       'agent:claude',
     ]);
 
-    await retriggerIssue(DEFAULT_REPO, 2709);
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
     expect(removeLabel).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'agent:claude' }),
@@ -396,7 +397,12 @@ describe('retriggerIssue (pipeline routing)', () => {
     expect(createWorkflowDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         workflow_id: 'agent-router.yml',
-        inputs: { issue: '2709', pipeline: 'claude', mode: 'implement' },
+        inputs: {
+          issue: '2709',
+          pipeline: 'claude',
+          mode: 'implement',
+          caller_id: DISPATCH_ID,
+        },
       }),
     );
   });
@@ -406,7 +412,13 @@ describe('retriggerIssue (pipeline routing)', () => {
       'agent:opencode',
     ]);
 
-    await retriggerIssue(DEFAULT_REPO, 2709, undefined, 'opencode');
+    await retriggerIssue(
+      DEFAULT_REPO,
+      2709,
+      DISPATCH_ID,
+      undefined,
+      'opencode',
+    );
 
     expect(removeLabel).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'agent:opencode' }),
@@ -414,7 +426,12 @@ describe('retriggerIssue (pipeline routing)', () => {
     expect(addLabels).not.toHaveBeenCalled();
     expect(createWorkflowDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        inputs: { issue: '2709', pipeline: 'opencode', mode: 'implement' },
+        inputs: {
+          issue: '2709',
+          pipeline: 'opencode',
+          mode: 'implement',
+          caller_id: DISPATCH_ID,
+        },
       }),
     );
   });
@@ -423,7 +440,7 @@ describe('retriggerIssue (pipeline routing)', () => {
     mockOctokit(['agent:claude']);
 
     await expect(
-      retriggerIssue(DEFAULT_REPO, 2709, undefined, 'opencode'),
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, undefined, 'opencode'),
     ).rejects.toThrow(
       'Issue does not carry the agent:opencode label; nothing to retrigger',
     );
@@ -436,6 +453,7 @@ describe('retriggerIssue (pipeline routing)', () => {
     await retriggerIssue(
       DEFAULT_REPO,
       2709,
+      DISPATCH_ID,
       'try a different approach',
       'opencode',
     );
@@ -457,12 +475,13 @@ describe('retriggerIssue (pipeline routing)', () => {
     await retriggerIssue(
       DEFAULT_REPO,
       2709,
-      'please /oc retry this',
+      DISPATCH_ID,
+      '/oc please retry this',
       'opencode',
     );
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'please /oc retry this' }),
+      expect.objectContaining({ body: '/oc please retry this' }),
     );
     // clearHumanNeededLabel legitimately calls removeLabel for the
     // needs-human label before the note check - the agent label itself is
@@ -479,7 +498,13 @@ describe('retriggerIssue (pipeline routing)', () => {
       'agent:claude',
     ]);
 
-    await retriggerIssue(DEFAULT_REPO, 2709, 'please /oc retry this', 'claude');
+    await retriggerIssue(
+      DEFAULT_REPO,
+      2709,
+      DISPATCH_ID,
+      'please /oc retry this',
+      'claude',
+    );
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),
@@ -492,43 +517,35 @@ describe('retriggerIssue (pipeline routing)', () => {
 describe('reassignPipeline', () => {
   function mockOctokit(labels: string[]) {
     const get = vi.fn().mockResolvedValue({ data: { labels } });
-    const removeLabel = vi.fn().mockResolvedValue({});
-    const addLabels = vi.fn().mockResolvedValue({});
+    const setLabels = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { get, removeLabel, addLabels } },
+      rest: { issues: { get, setLabels } },
     });
-    return { get, removeLabel, addLabels };
+    return { get, setLabels };
   }
 
   it('drops the current pipeline label and adds the target', async () => {
-    const { removeLabel, addLabels } = mockOctokit(['agent:codex']);
+    const { setLabels } = mockOctokit(['agent:codex', 'type:bug']);
 
     await reassignPipeline(DEFAULT_REPO, 2709, 'claude');
 
-    expect(removeLabel).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent:codex' }),
-    );
-    expect(addLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ['agent:claude'] }),
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['type:bug', 'agent:claude'] }),
     );
   });
 
   it('drops every pipeline label present, not just one', async () => {
-    const { removeLabel, addLabels } = mockOctokit([
+    const { setLabels } = mockOctokit([
       'agent:claude',
       'agent:opencode',
+      'status:needs-human',
+      'type:feature',
     ]);
 
     await reassignPipeline(DEFAULT_REPO, 2709, 'codex');
 
-    expect(removeLabel).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent:claude' }),
-    );
-    expect(removeLabel).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent:opencode' }),
-    );
-    expect(addLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ['agent:codex'] }),
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['type:feature', 'agent:codex'] }),
     );
   });
 

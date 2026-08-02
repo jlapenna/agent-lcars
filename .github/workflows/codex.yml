@@ -19,12 +19,9 @@ name: Codex Issue Agent
 # follows.
 
 # This workflow is workflow_dispatch-only (agent-router.yml owns the event
-# triggers), so github.event.issue is never populated here - the title
-# interpolation that used to appear after the colon always rendered empty.
-# Keep the leading "codex #<issue>:" shape: the console parses a leading
-# "#<number>" out of a run's display_title to join it to its action-item
-# card.
-run-name: 'codex #${{ github.event.inputs.issue }}: Codex issue agent'
+# triggers). Keep the console's leading issue-number join key and add the
+# immutable broker marker used for interrupted-bind reconciliation.
+run-name: 'codex #${{ inputs.issue }}: [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
 
 on:
   workflow_dispatch:
@@ -48,6 +45,15 @@ on:
         description: 'Optional deployment or router context'
         required: false
         default: ''
+      broker_intent_id:
+        description: 'Immutable broker intent ID'
+        required: true
+      broker_generation:
+        description: 'Monotonic broker generation'
+        required: true
+      broker_dispatch_token:
+        description: 'Immutable broker dispatch token'
+        required: true
 
 # Least privilege: enough to comment, push a feature branch, and open a PR.
 # id-token: write is what lets this job mint a WIF token for the GCP
@@ -73,6 +79,10 @@ jobs:
     concurrency:
       group: codex-subscription-auth
       cancel-in-progress: false
+      # This second queue is repository-global because every Codex task
+      # rotates the same subscription credential. The task broker prevents
+      # duplicate semantics; this queue prevents cross-task token races.
+      queue: max
     runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
     # 90, matching claude.yml/opencode.yml and the console's
     # RUN_TIMEOUT_MINUTES. The real bound is the per-step timeout on `Run
@@ -101,6 +111,20 @@ jobs:
             exit 1
           fi
 
+      - name: Bootstrap checkout for broker preflight
+        uses: actions/checkout@v7
+
+      - name: Verify broker binding
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: preflight
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+
       - name: Mint Agent LCARS installation token
         id: agent-lcars-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -123,7 +147,7 @@ jobs:
             echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
           fi
 
-      - name: Checkout
+      - name: Checkout with the authorized App credential
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -420,7 +444,10 @@ jobs:
       # construction: if a dispatched run is itself cancelled, its issue
       # simply stays unclaimed and the next completing run picks it up.
       - name: Dispatch the next queued Codex issue
-        if: always() && steps.claim.outputs.claimed == 'true'
+        # Temporary compatibility reading only: the v1 broker owns pending
+        # promotion now. #307 removes this disabled legacy handoff after the
+        # watched-repository rollout is proven.
+        if: ${{ false }}
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           REPO: ${{ github.repository }}
@@ -452,3 +479,17 @@ jobs:
 
           echo "Handing off to #$NEXT."
           gh workflow run codex.yml --repo "$REPO" -f issue="$NEXT"
+
+      - name: Return completion observation to the broker
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: completion-callback
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+          worker-workflow: codex.yml

@@ -9,9 +9,9 @@ name: Claude Issue Agent
 # .agents/skills/lcars/lcars-protocol.md for the conventions the agent
 # follows.
 
-# The agent console joins a live run to its action-item card by parsing the
-# leading "#<number>:" back out of the run's display_title.
-run-name: '#${{ github.event.inputs.issue }}: Claude issue agent'
+# Keep the console's leading issue-number join key and add the immutable
+# broker marker used to reconcile a dispatch after an interrupted bind.
+run-name: '#${{ inputs.issue }}: Claude issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
 
 on:
   workflow_dispatch:
@@ -35,6 +35,15 @@ on:
         description: 'Optional deployment or router context'
         required: false
         default: ''
+      broker_intent_id:
+        description: 'Immutable broker intent ID'
+        required: true
+      broker_generation:
+        description: 'Monotonic broker generation'
+        required: true
+      broker_dispatch_token:
+        description: 'Immutable broker dispatch token'
+        required: true
 
 # Least privilege: enough for Claude to comment on the issue, push a feature
 # branch, open a pull request, and read CI results on the PRs it opens.
@@ -100,31 +109,35 @@ jobs:
             exit 1
           fi
 
-      # Claim the anchor issue/PR for the agent fleet the moment the run
-      # starts, so ownership is visible at a glance (and filterable via
-      # `gh issue list --assignee jclaw-bot`). The assignee must be
-      # jclaw-bot: the agent itself acts as the claude[bot] GitHub App,
-      # which is NOT an assignable user - the assignees API silently drops
-      # it (see agent-protocol.md §10). The REST endpoint is used (not `gh
-      # issue edit`) because the anchor can also be a PR (issue_comment on a
-      # PR thread) and PRs share the issue number space. Additive and
-      # idempotent: this never removes a human assignee. Non-blocking: a
-      # failed claim must not cost the run. Runs before Checkout on purpose
-      # - the claim should land even if workspace setup fails.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The worker is untrusted until its own Actions run ID is durably bound
+      # to this exact task/generation/intent/token in the serialized ledger.
+      - name: Verify broker binding
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: preflight
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+
+      # Only a broker-authorized run may mutate the anchor or start the paid
+      # agent. The fleet login is assignable; the Claude App identity is not.
       - name: Claim the issue as the agent fleet
         env:
           GH_TOKEN: ${{ github.token }}
-          NUM: ${{ github.event.inputs.issue }}
+          NUM: ${{ inputs.issue }}
           CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
           gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
             -f "assignees[]=$CLAIM_LOGIN" --silent \
             || echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Shared agent setup
         id: agent-setup
@@ -459,3 +472,17 @@ jobs:
             -f 'labels[]=status:needs-human' --silent
           gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
             -f "assignees[]=$MAINTAINER" --silent
+
+      - name: Return completion observation to the broker
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: completion-callback
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+          worker-workflow: claude.yml

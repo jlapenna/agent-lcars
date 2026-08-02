@@ -153,12 +153,19 @@ export async function approveAndRebase(
 export async function retriggerIssue(
   repo: WatchedRepo,
   number: number,
+  callerId: string,
   note?: string,
   pipeline?: Pipeline,
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await retriggerIssueLib(resolveWatchedRepo(repo), number, note, pipeline);
+    await retriggerIssueLib(
+      resolveWatchedRepo(repo),
+      number,
+      callerId,
+      note,
+      pipeline,
+    );
     revalidateDashboard();
     return { ok: true };
   } catch (error) {

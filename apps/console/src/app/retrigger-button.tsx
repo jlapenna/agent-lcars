@@ -42,6 +42,7 @@ export function RetriggerButton({
       const result = await retriggerIssue(
         repo,
         issueNumber,
+        crypto.randomUUID(),
         note.trim() || undefined,
         pipeline,
       );

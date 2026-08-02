@@ -17,7 +17,7 @@ name: OpenCode Issue Agent
 # not trust a bare "success" conclusion and the prompt explicitly forbids
 # ending without a communicated `gh` action.
 
-run-name: 'opencode #${{ github.event.inputs.issue }}: OpenCode issue agent'
+run-name: 'opencode #${{ inputs.issue }}: OpenCode [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
 
 on:
   workflow_dispatch:
@@ -41,6 +41,15 @@ on:
         description: 'Optional deployment or router context'
         required: false
         default: ''
+      broker_intent_id:
+        description: 'Immutable broker intent ID'
+        required: true
+      broker_generation:
+        description: 'Monotonic broker generation'
+        required: true
+      broker_dispatch_token:
+        description: 'Immutable broker dispatch token'
+        required: true
 
 # Least privilege: enough to comment, push a feature branch, and open a PR.
 # actions:write lets the agent re-run failed CI on its own PRs via
@@ -96,6 +105,20 @@ jobs:
             exit 1
           fi
 
+      - name: Bootstrap checkout for broker preflight
+        uses: actions/checkout@v7
+
+      - name: Verify broker binding
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: preflight
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+
       - name: Mint Agent LCARS installation token
         id: agent-lcars-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -124,7 +147,7 @@ jobs:
           fi
           echo "pickup-comment-id=$pickup_comment_id" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout
+      - name: Checkout with the authorized App credential
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -322,3 +345,17 @@ jobs:
             -f 'labels[]=status:needs-human' --silent
           gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
             -f "assignees[]=$MAINTAINER" --silent
+
+      - name: Return completion observation to the broker
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: completion-callback
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+          worker-workflow: opencode.yml
