@@ -556,6 +556,10 @@ function workerWorkflow(pipeline) {
     claude: 'claude.yml',
     codex: 'codex.yml',
     opencode: 'opencode.yml',
+    // #307's no-op production canary pipeline -- see broker.mjs's PIPELINES
+    // comment and normalize.mjs's `kind: 'canary'` branch for why this is
+    // the only worker that pipeline can ever resolve to.
+    canary: 'agent-dispatch-canary.yml',
   }[pipeline];
   if (!workflow) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
   return workflow;

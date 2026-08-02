@@ -25,6 +25,7 @@ import {
   validateBrokerConcurrencyResponse,
   validateDispatchResponse,
   verifyBrokerConcurrency,
+  workerWorkflow,
 } from './github-api.mjs';
 
 const tests = [];
@@ -97,6 +98,17 @@ test('dispatch requires 200 with same-repository run details', () => {
   ]) {
     assert.throws(() => validateDispatchResponse(invalid, task));
   }
+});
+
+test('worker pipeline resolves to exactly one worker workflow file, including the #307 canary', () => {
+  assert.equal(workerWorkflow('claude'), 'claude.yml');
+  assert.equal(workerWorkflow('codex'), 'codex.yml');
+  assert.equal(workerWorkflow('opencode'), 'opencode.yml');
+  assert.equal(workerWorkflow('canary'), 'agent-dispatch-canary.yml');
+  assert.throws(
+    () => workerWorkflow('not-a-real-pipeline'),
+    /Unsupported worker pipeline/u,
+  );
 });
 
 test('broker concurrency must match the canonical task and reported run group', () => {

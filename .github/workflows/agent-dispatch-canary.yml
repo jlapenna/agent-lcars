@@ -1,0 +1,147 @@
+name: Dispatch Canary Worker
+
+# Fourth dispatch-broker pipeline (#307, final child of epic #301),
+# alongside claude.yml, codex.yml, and opencode.yml. Structurally incapable
+# of invoking a paid or privileged agent: no model invocation, no GCP
+# credential, and -- unlike those three -- no self-hosted runner (runs-on:
+# ubuntu-latest, never vars.AGENT_RUNNER_LABEL). Dispatched exclusively by
+# agent-router.yml's broker job for the dedicated `canary` pipeline
+# (dispatch-broker/normalize.mjs's `kind: 'canary'` workflow_dispatch
+# branch -- see dispatch-canary.yml/post-deploy-smoke.yml, which are the
+# only trusted callers that can ever produce that intent), never subscribed
+# to issue events directly -- see workflow-contract.test.mjs's "workers are
+# dispatch-only" check, which this file is included in.
+#
+# It exercises the same bound-run preflight and completion-callback
+# contract every real worker uses, proving claim -> comment ->
+# completion-callback without ever running real agent work. See
+# docs/e2e-security-boundary.md and #307.
+
+run-name: '#${{ inputs.issue }}: Dispatch canary worker [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to run against'
+        required: true
+      mode:
+        description: 'Unused by the canary; kept for a uniform dispatch contract'
+        required: false
+        default: 'implement'
+      reply:
+        description: 'Unused by the canary; kept for a uniform dispatch contract'
+        required: false
+        default: ''
+      runbook:
+        description: 'Unused by the canary; kept for a uniform dispatch contract'
+        required: false
+        default: ''
+      context:
+        description: 'Unused by the canary; kept for a uniform dispatch contract'
+        required: false
+        default: ''
+      broker_intent_id:
+        description: 'Immutable broker intent ID'
+        required: true
+      broker_generation:
+        description: 'Monotonic broker generation'
+        required: true
+      broker_dispatch_token:
+        description: 'Immutable broker dispatch token'
+        required: true
+
+# Least privilege: enough to comment on / claim the anchor issue and call
+# the broker's own composite action via this job's own ambient token.
+# actions:write is required for the completion-callback step's own
+# workflow_dispatch POST back to agent-router.yml -- the exact reason
+# claude.yml/codex.yml/opencode.yml all declare it too. Deliberately no
+# contents:write, pull-requests:write, id-token:write, and no secret at
+# all -- there is nothing here for the canary to authenticate to beyond
+# GitHub's own ambient per-job token.
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+# No per-issue concurrency group here, for the same reason claude.yml has
+# none (#321): agent-router.yml's own reserved concurrency group already
+# serializes dispatch per issue before this worker is ever started.
+jobs:
+  canary:
+    # agent-router.yml's broker job authorizes and dispatches this worker
+    # (dispatch-broker/normalize.mjs's `kind: 'canary'` branch, which never
+    # requires per-actor authorization the way a manual claude/codex/
+    # opencode dispatch does -- triggering that workflow_dispatch already
+    # requires repo write access, and this worker's own preflight step
+    # below independently verifies the exact broker binding). This job only
+    # checks that the dispatch actually carries an issue number.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Assert required repo variables are set
+        env:
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        run: |
+          if [ -z "$AGENT_FLEET_LOGIN" ]; then
+            echo "::error::Missing required repo variable: AGENT_FLEET_LOGIN"
+            exit 1
+          fi
+
+      # Checkout must run before the broker-binding/claim steps below: both
+      # are local composite actions (`uses: ./.github/actions/...`), and
+      # GitHub Actions can only resolve a local action once the repo
+      # containing it has been checked out.
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
+
+      # The worker is untrusted until its own Actions run ID is durably
+      # bound to this exact task/generation/intent/token in the serialized
+      # ledger -- identical to claude.yml/codex.yml/opencode.yml.
+      - name: Verify broker binding
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: preflight
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+
+      # Claiming the issue for the agent fleet also gives it free coverage
+      # under dispatch-reconcile.yml's fleet-assignee discovery lane (#363):
+      # if this worker's own run ever crashed before completion-callback, a
+      # scheduled reconcile pass would still find and repair its ledger
+      # generation the same way it does for claude/codex/opencode.
+      - name: Claim the issue as the agent fleet
+        uses: ./.github/actions/claim-issue
+        with:
+          token: ${{ github.token }}
+          issue: ${{ inputs.issue }}
+          claim-login: ${{ vars.AGENT_FLEET_LOGIN }}
+
+      - name: Record canary verification on the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$REPO" --body \
+            "🤖 Dispatch canary worker verified claim + broker preflight binding. No model, GCP credential, or self-hosted runner was used. Run: $RUN_URL"
+
+      - name: Return completion observation to the broker
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: completion-callback
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.broker_generation }}
+          intent-id: ${{ inputs.broker_intent_id }}
+          dispatch-token: ${{ inputs.broker_dispatch_token }}
+          worker-workflow: agent-dispatch-canary.yml
