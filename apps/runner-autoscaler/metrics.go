@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -258,9 +260,15 @@ func registerMetrics() {
 	})
 }
 
-func startMetricsServer(ctx context.Context, addr string, logger *slog.Logger) {
+// startMetricsServer binds addr and serves /metrics, /healthz, and /readyz
+// until ctx is done. It returns the actual bound address (which can differ
+// from addr when addr's port is "0", e.g. in tests that need a free port
+// rather than a fixed one) so callers -- and TestMetricsAndHealthzServer in
+// particular -- never have to guess or hard-code a port. An empty addr
+// disables the server (returns "", nil).
+func startMetricsServer(ctx context.Context, addr string, logger *slog.Logger) (string, error) {
 	if addr == "" {
-		return
+		return "", nil
 	}
 
 	registerMetrics()
@@ -288,14 +296,25 @@ func startMetricsServer(ctx context.Context, addr string, logger *slog.Logger) {
 		_, _ = w.Write([]byte("READY\n"))
 	})
 
+	// Listen synchronously (rather than inside srv.ListenAndServe(), which
+	// would hide both the bound address and any bind failure inside the
+	// goroutine below) so a caller can learn the real address -- including
+	// the OS-assigned port when addr ends in ":0" -- before this function
+	// returns, and so a bind failure surfaces here instead of only in a log
+	// line after the fact.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return "", fmt.Errorf("listening on %q: %w", addr, err)
+	}
+	boundAddr := ln.Addr().String()
+
 	srv := &http.Server{
-		Addr:    addr,
 		Handler: mux,
 	}
 
 	go func() {
-		logger.Info("Starting metrics and healthz HTTP server", slog.String("addr", addr))
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Info("Starting metrics and healthz HTTP server", slog.String("addr", boundAddr))
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("Metrics HTTP server error", slog.String("error", err.Error()))
 		}
 	}()
@@ -308,4 +327,6 @@ func startMetricsServer(ctx context.Context, addr string, logger *slog.Logger) {
 			logger.Error("Metrics HTTP server shutdown error", slog.String("error", err.Error()))
 		}
 	}()
+
+	return boundAddr, nil
 }
