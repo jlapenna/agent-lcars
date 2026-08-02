@@ -7,9 +7,11 @@ import {
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
+  ensureNeedsHumanParked,
   findConflictingRouterRun,
   findSupersedingRouterRun,
   GitHubApiError,
+  listOpenAgentLabeledIssues,
   loadLedger,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
@@ -756,6 +758,172 @@ test('removeIssueLabel propagates a genuine failure so the broker falls back to 
   });
   await assert.rejects(
     () => removeIssueLabel(api, task, 'agent:codex'),
+    (error) => error instanceof GitHubApiError && error.status === 403,
+  );
+});
+
+test('listOpenAgentLabeledIssues queries all three agent labels and dedupes by issue number (#305)', async () => {
+  const seen = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      if (url.includes('labels=agent%3Aclaude')) {
+        return response(200, [{ number: 10 }, { number: 5 }]);
+      }
+      if (url.includes('labels=agent%3Acodex')) {
+        // Same issue #5 reported under a second label -- a (invalid)
+        // contradictory-label issue must still only be scanned once.
+        return response(200, [{ number: 5 }]);
+      }
+      if (url.includes('labels=agent%3Aopencode')) {
+        return response(200, [{ number: 20 }]);
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const issues = await listOpenAgentLabeledIssues(api, task);
+  assert.deepEqual(
+    issues.map((issue) => issue.number),
+    [5, 10, 20],
+  );
+  assert.equal(seen.length, 3);
+  for (const url of seen) assert.match(url, /state=open/u);
+});
+
+test('listOpenAgentLabeledIssues paginates a single label past 100 results', async () => {
+  const pageOne = Array.from({ length: 100 }, (_, index) => ({
+    number: index + 1,
+  }));
+  const requestedPages = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      if (url.includes('labels=agent%3Aclaude')) {
+        const page = Number(new URL(url).searchParams.get('page'));
+        requestedPages.push(page);
+        return response(200, page === 1 ? pageOne : [{ number: 101 }]);
+      }
+      return response(200, []);
+    },
+  });
+  const issues = await listOpenAgentLabeledIssues(api, task);
+  assert.deepEqual(requestedPages, [1, 2]);
+  assert.equal(issues.length, 101);
+});
+
+test('ensureNeedsHumanParked applies the label and assignee on success, with no verification re-reads', async () => {
+  const calls = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, method: options.method });
+      return response(200, {});
+    },
+  });
+  await ensureNeedsHumanParked(api, task, 'jlapenna');
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /\/labels$/u);
+  assert.equal(calls[0].method, 'POST');
+  assert.match(calls[1].url, /\/assignees$/u);
+  assert.equal(calls[1].method, 'POST');
+});
+
+test('ensureNeedsHumanParked skips the assignee mutation entirely when no maintainer is configured', async () => {
+  const calls = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return response(200, {});
+    },
+  });
+  await ensureNeedsHumanParked(api, task, '');
+  assert.equal(calls.length, 1);
+});
+
+test('ensureNeedsHumanParked verify-then-decides a label POST failure that actually landed (#346 pattern)', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(422, { message: 'response-parse hiccup' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, {
+          labels: [{ name: 'status:needs-human' }],
+          assignees: [{ login: 'jlapenna' }],
+        });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.doesNotReject(() =>
+    ensureNeedsHumanParked(api, task, 'jlapenna'),
+  );
+});
+
+test('ensureNeedsHumanParked throws when a label mutation genuinely failed and verification confirms absence', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(403, { message: 'Forbidden' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, { labels: [], assignees: [] });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.rejects(
+    () => ensureNeedsHumanParked(api, task, 'jlapenna'),
+    (error) => error instanceof GitHubApiError && error.status === 403,
+  );
+});
+
+test('ensureNeedsHumanParked verify-then-decides an assignee POST failure that actually landed', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(200, {});
+      }
+      if (options.method === 'POST' && url.endsWith('/assignees')) {
+        return response(422, { message: 'response-parse hiccup' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, {
+          labels: [],
+          assignees: [{ login: 'jlapenna' }],
+        });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.doesNotReject(() =>
+    ensureNeedsHumanParked(api, task, 'jlapenna'),
+  );
+});
+
+test('ensureNeedsHumanParked throws when an assignee mutation genuinely failed and verification confirms absence', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(200, {});
+      }
+      if (options.method === 'POST' && url.endsWith('/assignees')) {
+        return response(403, { message: 'Forbidden' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, { labels: [], assignees: [] });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.rejects(
+    () => ensureNeedsHumanParked(api, task, 'jlapenna'),
     (error) => error instanceof GitHubApiError && error.status === 403,
   );
 });

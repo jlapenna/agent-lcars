@@ -402,6 +402,51 @@ async function listAll(api, path) {
   throw new Error('GitHub pagination exceeded safety bound');
 }
 
+// The three `agent:*` labels dispatch-capable issues/PRs carry (normalize.mjs
+// owns the authoritative AGENT_LABELS map keyed the other direction; this is
+// a small, stable literal duplication rather than a new cross-module export
+// for three constants). GitHub's issues-list-by-label filter is an AND
+// across a comma-separated `labels` value, so discovering "any agent:*
+// label" requires one query per label rather than one combined query --
+// each is independently cheap and reliably paginated (no search-index
+// replication lag), unlike a full-text search over the ledger's hidden
+// marker comment, which the epic design audit (#301) explicitly rejected as
+// a discovery mechanism.
+const RECONCILE_DISCOVERY_LABELS = [
+  'agent:claude',
+  'agent:codex',
+  'agent:opencode',
+];
+
+// Read-only discovery for dispatch-reconcile.yml's scan job (#305): every
+// currently open issue or pull request carrying any `agent:*` label (the
+// Issues API returns both; a PR item carries a `pull_request` key). Merges
+// and deduplicates by issue number across the per-label queries so an issue
+// with (invalidly) more than one agent:* label is still only scanned once.
+//
+// Cost: up to 3 paginated `state=open&labels=agent:<pipeline>` requests per
+// scan (almost always a single page each at this repo's scale -- a healthy
+// dispatch backlog is a handful of issues, not hundreds), well inside the
+// 1,000 requests/hour GITHUB_TOKEN budget even at a 30-minute cadence,
+// before adding one workflow_dispatch call per discovered candidate (see
+// dispatchReconcileScan in main.mjs).
+async function listOpenAgentLabeledIssues(api, task) {
+  const root = repositoryPath(task);
+  const byNumber = new Map();
+  for (const label of RECONCILE_DISCOVERY_LABELS) {
+    const items = await listAll(
+      api,
+      `${root}/issues?state=open&labels=${encodeURIComponent(label)}`,
+    );
+    for (const item of items) {
+      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
+    }
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number,
+  );
+}
+
 async function loadLedger(
   api,
   task,
@@ -597,6 +642,53 @@ async function failClosed(api, task, maintainer, message) {
   throw new Error(message);
 }
 
+async function issueHasLabel(api, task, label) {
+  const issue = await api.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  return (issue.labels ?? []).some(
+    (entry) => (typeof entry === 'string' ? entry : entry.name) === label,
+  );
+}
+
+async function issueHasAssignee(api, task, login) {
+  const issue = await api.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  return (issue.assignees ?? []).some((assignee) => assignee.login === login);
+}
+
+// The reconciler's bounded-retry parking path (#305's repair table:
+// "unrepairable -> status:needs-human + maintainer assignee"), reusing
+// report-failure.sh's verify-then-decide convention in JS: `gh`/the REST
+// API occasionally returns a non-2xx or a parse hiccup on a mutation that
+// actually landed (agent-lcars#346). Unlike failClosed (used for genuinely
+// unexpected errors, which always throws after parking so the triggering
+// job fails loudly), reaching the bounded-retry limit is an ANTICIPATED
+// terminal outcome, not a job failure -- callers of this function decide
+// separately whether to throw; this function itself only throws when the
+// mutation is genuinely, confirmably absent.
+async function ensureNeedsHumanParked(api, task, maintainer) {
+  const root = repositoryPath(task);
+  try {
+    await api.requestOk(`${root}/issues/${task.issue}/labels`, {
+      method: 'POST',
+      body: { labels: ['status:needs-human'] },
+    });
+  } catch (error) {
+    if (!(await issueHasLabel(api, task, 'status:needs-human'))) throw error;
+  }
+  if (!maintainer) return;
+  try {
+    await api.requestOk(`${root}/issues/${task.issue}/assignees`, {
+      method: 'POST',
+      body: { assignees: [maintainer] },
+    });
+  } catch (error) {
+    if (!(await issueHasAssignee(api, task, maintainer))) throw error;
+  }
+}
+
 export {
   API_VERSION,
   brokerConcurrencyGroup,
@@ -605,6 +697,7 @@ export {
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
   dispatchWorker,
+  ensureNeedsHumanParked,
   failClosed,
   findConflictingRouterRun,
   findRunsForGeneration,
@@ -612,6 +705,7 @@ export {
   getWorkflowRun,
   GitHubApiError,
   listAll,
+  listOpenAgentLabeledIssues,
   loadLedger,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,

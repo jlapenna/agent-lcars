@@ -72,6 +72,57 @@ jlapenna`), and use as the assignee in the parking recipe
   login straight against `AGENT_BOT_LOGINS` or `AGENT_FLEET_LOGIN` without
   normalizing it first.
 
+## Dispatch ledger reconciliation
+
+`.github/workflows/dispatch-reconcile.yml` runs every 30 minutes (offset
+from :00/:30, cron `7,37 * * * *`) and on manual `workflow_dispatch`. Its own
+job is read-only discovery: it lists every currently open issue/PR carrying
+an `agent:*` label and fires one `workflow_dispatch` `kind: reconcile` call
+at `agent-router.yml` per candidate (`main.mjs`'s `scanReconcile` /
+`dispatchReconcileScan`). It never touches a ledger comment itself — every
+actual repair happens inside the exact same per-issue serialized broker job
+every other trigger already goes through (the reserved
+`agent-lcars-dispatch-v1-<repositoryId>-<issue>` concurrency group, #349's
+indirect concurrency corroboration for workflow_dispatch-triggered runs, and
+the usual fail-closed → `status:needs-human` + maintainer parking path). See
+`.github/actions/dispatch-broker/main.mjs`'s `reconcileLedger` and
+`trackMissingRun` for the pure repair logic and
+`.github/actions/dispatch-broker/main.test.mjs` for its interruption/
+idempotency test coverage.
+
+What it repairs, reusing the broker's own existing machinery wherever
+possible:
+
+- **Completion observations lost to a red or crashed run** (a pre-#349 red
+  broker run, a worker timeout, or a force-cancel that skipped the
+  completion callback): `reconcileActive()` — already run on every event —
+  re-fetches the bound worker run's live status and applies the same
+  idempotent `completeRun` transition the callback would have, whenever it
+  finds the run is actually terminal.
+- **A dispatch whose outcome was genuinely lost** (a queue-evicted intent
+  #345/#347 deliberately failed red for, or a worker that crashed before any
+  run ever registered): a generation stuck `dispatching`/`dispatch-unknown`
+  with no matching run gets a bounded number of interval-separated
+  observations (`reconcile-missing-run` anomalies, evidence recorded in the
+  ledger every time) before parking `status:needs-human` at the bound
+  (`reconcile-parked`). A generation still within its grace period, or
+  re-observed sooner than the minimum interval, is a silent no-op — this is
+  what makes overlapping/duplicate scans idempotent.
+- **Stale pending intents**: queued behind either repair above, they are
+  promoted and (re-)dispatched automatically the moment their blocking
+  generation resolves (`completeRun`'s existing promotion, followed by
+  `dispatchAccepted()`) — there is no separate "stale pending" mechanism.
+- **Concurrent duplicate attempts**: `reconcileActive()` already records a
+  `duplicate-attempt` anomaly naming every matching run and fails closed
+  (parked, never silently resolved or auto-canceled) the moment more than
+  one worker run matches a single dispatch generation.
+
+Out of scope for this pass (documented, not silently dropped): closed/merged
+anchors, cross-repository discovery, and a run that is genuinely still
+in-progress well past its worker timeout — the worker's own
+`timeout-minutes` bound already forces those to a terminal GitHub Actions
+conclusion well inside any reasonable reconcile cadence.
+
 ## Auto-merge
 
 `.github/workflows/agent-automerge.yml` squash-auto-merges any PR whose

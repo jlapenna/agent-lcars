@@ -107,6 +107,36 @@ test('manual dispatch requires maintainer authorization and a stable caller UUID
   );
 });
 
+test('reconcile dispatch normalizes to a bare TaskRef ping, carrying no evidence and requiring no actor authorization (#305)', () => {
+  const normalized = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: {},
+    inputs: { kind: 'reconcile', issue: '304' },
+    context: { ...context, actor: 'github-actions[bot]' },
+    maintainer: 'jlapenna',
+  });
+  assert.deepEqual(normalized, {
+    kind: 'reconcile',
+    task: { repositoryId: 123, repository: 'jlapenna/agent-lcars', issue: 304 },
+  });
+
+  // Unlike the default (intent) kind, a `reconcile` ping never requires the
+  // triggering actor to be the configured maintainer -- dispatch-
+  // reconcile.yml's own scan job fires it as github-actions[bot], and a
+  // manual forensic run can legitimately come from any collaborator with
+  // repo write access (the same access workflow_dispatch itself already
+  // requires). It carries no claims to authorize: every repair it can
+  // trigger is a safe, idempotent, evidence-preserving re-observation.
+  const fromCollaborator = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: {},
+    inputs: { kind: 'reconcile', issue: '304' },
+    context: { ...context, actor: 'some-collaborator' },
+    maintainer: 'jlapenna',
+  });
+  assert.equal(fromCollaborator.kind, 'reconcile');
+});
+
 test('Actions-tab dispatch falls back to stable workflow run identity', () => {
   const normalized = normalizeEvent({
     eventName: 'workflow_dispatch',
