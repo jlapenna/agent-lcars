@@ -10,7 +10,9 @@ import {
 } from './broker.mjs';
 import {
   BrokerConcurrencyMismatchError,
+  CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   GitHubApiError,
+  verifyBrokerConcurrency,
 } from './github-api.mjs';
 import {
   assertWorkerRun,
@@ -408,6 +410,35 @@ function supersedingClient(group, { holds = true } = {}) {
   };
 }
 
+// Drives the REAL verifyBrokerConcurrency (dispatch path, #348) against a
+// fake API where a genuinely newer router run (9002) holds this run's
+// (9001) expected group -- indistinguishable, from the dispatch run's own
+// perspective, from ordinary contention. Retries exhaust into a retryable
+// BrokerConcurrencyMismatchError, proving #348's indirect verification path
+// feeds the exact same error shape #345/#347's eviction handling already
+// expects, regardless of which path (event-triggered listing vs.
+// dispatch-triggered indirect corroboration) produced it.
+async function exhaustedDispatchConflictError(group) {
+  const client = supersedingClient(group);
+  const sleeps = [];
+  let verifyError;
+  try {
+    await verifyBrokerConcurrency(client, task, 9001, group, {
+      eventName: 'workflow_dispatch',
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+    assert.fail('expected verifyBrokerConcurrency to throw');
+  } catch (error) {
+    verifyError = error;
+  }
+  assert.equal(verifyError.name, 'BrokerConcurrencyMismatchError');
+  assert.equal(verifyError.retryable, true);
+  assert.equal(sleeps.length, CONCURRENCY_VERIFY_MAX_ATTEMPTS - 1);
+  return { client, verifyError };
+}
+
 test('wasSupersededEviction exits gracefully when evicted control-evidence has a corroborated superseding run (#344)', async () => {
   const group = 'agent-lcars-dispatch-v1-123-304';
   const client = supersedingClient(group);
@@ -485,6 +516,59 @@ test('wasSupersededEviction never queries for a superseding run on a non-retryab
       error,
     ),
     false,
+  );
+});
+
+test('a queue-evicted dispatch-triggered run carrying control-evidence is still corroborated end-to-end and exits gracefully (#348 + #344 + #347)', async () => {
+  // Post-#347: only an evicted control-evidence payload may be dropped on
+  // a corroborated eviction. This proves #348's new dispatch-path
+  // verification composes correctly with that: the retryable error it
+  // produces still reaches wasSupersededEviction's graceful-skip branch
+  // for the one kind that's actually eligible for it.
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const { client, verifyError } = await exhaustedDispatchConflictError(group);
+
+  const originalLog = console.log;
+  const logged = [];
+  console.log = (message) => logged.push(message);
+  let handled;
+  try {
+    handled = await wasSupersededEviction(
+      client,
+      task,
+      9001,
+      group,
+      'control-evidence',
+      verifyError,
+    );
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(handled, true);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /^::notice::/u);
+  assert.match(logged[0], /9002/u);
+});
+
+test('a queue-evicted dispatch-triggered intent with a corroborated superseding run still fails red end-to-end -- an authorized intent must never be silently dropped (#348 + #347)', async () => {
+  // Same #348 dispatch-path exhaustion as above, but for an intent: #347
+  // restricted the graceful skip to control-evidence only, so this must
+  // still throw naming the superseding run rather than being silently
+  // accepted, proving #348's new path doesn't bypass #347's contract for
+  // non-evidence payload kinds.
+  const group = 'agent-lcars-dispatch-v1-123-304';
+  const { client, verifyError } = await exhaustedDispatchConflictError(group);
+
+  await assert.rejects(
+    () =>
+      wasSupersededEviction(client, task, 9001, group, 'intent', verifyError),
+    (thrown) => {
+      assert.match(thrown.message, /intent/u);
+      assert.match(thrown.message, /9002/u);
+      assert.match(thrown.message, /manually re-dispatch/u);
+      assert.equal(thrown.cause, verifyError);
+      return true;
+    },
   );
 });
 

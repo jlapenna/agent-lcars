@@ -385,8 +385,14 @@ async function broker() {
   const client = api();
   const runId = Number(env('GITHUB_RUN_ID'));
   const group = env('BROKER_GROUP');
+  // GITHUB_EVENT_NAME is a standard runner-provided variable (already
+  // relied on by normalize()), not something this action sets itself. It
+  // is intentionally optional here: if it is ever unset, verifyBrokerConcurrency
+  // falls back to the strict, direct listing-based check rather than the
+  // indirect one, which is the safer default (#348).
+  const eventName = env('GITHUB_EVENT_NAME', false);
   try {
-    await verifyBrokerConcurrency(client, task, runId, group);
+    await verifyBrokerConcurrency(client, task, runId, group, { eventName });
   } catch (error) {
     if (
       await wasSupersededEviction(
