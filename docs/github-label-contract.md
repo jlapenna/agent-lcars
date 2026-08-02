@@ -12,9 +12,10 @@ pull-request state.
 - `status:*` records durable workflow state. `status:needs-human` means a
   maintainer must take the next action; `status:blocked` means an external
   dependency or prerequisite is preventing progress. They are not aliases.
-- `agent:*` selects an executor. Exactly one may be present. Adding
-  `agent:claude`, `agent:codex`, or `agent:opencode` still dispatches that
-  specific agent through the repository's router.
+- `agent:*` selects an executor. The serialized dispatch broker enforces that
+  exactly one of `agent:claude`, `agent:codex`, or `agent:opencode` is present
+  and dispatches that agent. Contradictory `agent:*` labels fail loudly instead
+  of being tolerated or resolved by precedence.
 - `agent-option:*` modifies an agent run without selecting the executor.
 - `intake:*` and `bot:*` record provenance, not execution state.
 - `automation:*` and `ci:*` are explicit workflow controls.
