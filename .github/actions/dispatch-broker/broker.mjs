@@ -206,6 +206,9 @@ function acceptIntent(ledger, intent, now = new Date().toISOString()) {
 
   const existing = generationForIntent(ledger, intent.intentId);
   if (existing) {
+    if (existing.digest !== intent.digest) {
+      throw new Error('Semantic intent ID was reused with a different digest');
+    }
     mutate(ledger, now, () => ledger.sources.push(sourceEvidence(intent)));
     return {
       outcome: 'semantic-duplicate',
@@ -217,11 +220,13 @@ function acceptIntent(ledger, intent, now = new Date().toISOString()) {
   const generation = {
     generation: ledger.generations.length + 1,
     intentId: intent.intentId,
+    sourceId: intent.sourceId,
     occurredAt: intent.occurredAt,
     pipeline: intent.pipeline,
     mode: intent.mode,
     runbook: intent.runbook,
     context: intent.context,
+    reply: intent.reply,
     digest: intent.digest,
     state: 'accepted',
   };
@@ -230,6 +235,11 @@ function acceptIntent(ledger, intent, now = new Date().toISOString()) {
   mutate(ledger, now, () => {
     ledger.sources.push(sourceEvidence(intent));
     ledger.generations.push(generation);
+    if (intent.dispatchable === false) {
+      generation.state = 'superseded';
+      outcome = 'stale-control-state';
+      return;
+    }
     if (ledger.control.closed) {
       generation.state = 'superseded-by-close';
       outcome = 'closed';
@@ -303,6 +313,33 @@ function markDispatchUnknown(
     generation.attempt.unknownAt = now;
     generation.attempt.unknownReason = reason;
   });
+}
+
+function markDispatchRejected(
+  ledger,
+  generationNumber,
+  reason,
+  now = new Date().toISOString(),
+) {
+  const generation = ledger.generations.find(
+    (candidate) => candidate.generation === generationNumber,
+  );
+  if (!generation || generation.state !== 'dispatching') {
+    throw new Error('Generation is not dispatching');
+  }
+  let promoted;
+  mutate(ledger, now, () => {
+    generation.state = 'dispatch-rejected';
+    generation.attempt.rejectedAt = now;
+    generation.attempt.rejectionReason = reason;
+    if (!ledger.control.closed) {
+      promoted = ledger.generations.find(
+        (candidate) => candidate.state === 'pending',
+      );
+      if (promoted) promoted.state = 'accepted';
+    }
+  });
+  return { ledger, promotedGeneration: promoted?.generation };
 }
 
 function bindRun(
@@ -443,6 +480,21 @@ function applyAnchorControl(ledger, control, now = new Date().toISOString()) {
   return { outcome: control.kind, ledger };
 }
 
+function recordControlEvidence(
+  ledger,
+  evidence,
+  now = new Date().toISOString(),
+) {
+  const duplicate = ledger.sources.some(
+    (source) =>
+      source.sourceKind === evidence.sourceKind &&
+      source.sourceId === evidence.sourceId,
+  );
+  if (duplicate) return { outcome: 'duplicate', ledger };
+  mutate(ledger, now, () => ledger.sources.push(structuredClone(evidence)));
+  return { outcome: 'recorded', ledger };
+}
+
 function verifyPreflight(ledger, expected) {
   validateLedger(ledger, expected.task);
   const generation = ledger.generations.find(
@@ -480,9 +532,11 @@ export {
   digest,
   LEDGER_MARKER,
   LEDGER_SCHEMA,
+  markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
   parseLedgerComment,
+  recordControlEvidence,
   renderLedgerComment,
   validateIntent,
   validateLedger,

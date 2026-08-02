@@ -30,7 +30,12 @@ jobs:
       - name: Validate GitHub Actions workflows
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-          "$(go env GOPATH)/bin/actionlint"
+          find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) \
+            ! -name agent-router.yml ! -name codex.yml -print0 \
+            | xargs -0 "$(go env GOPATH)/bin/actionlint"
+          "$(go env GOPATH)/bin/actionlint" \
+            -ignore 'unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"' \
+            .github/workflows/agent-router.yml .github/workflows/codex.yml
 
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh

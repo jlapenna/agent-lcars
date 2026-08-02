@@ -10,6 +10,7 @@ import {
   completeRun,
   createLedger,
   digest,
+  markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
   parseLedgerComment,
@@ -91,10 +92,8 @@ test('same source and same transport rerun are durable no-ops', () => {
 test('opened and labeled Quick Task evidence attach to one semantic generation', () => {
   const ledger = createLedger(task, baseTime);
   const intentId = 'quick:11111111-1111-4111-8111-111111111111:abc';
-  assert.equal(
-    acceptIntent(ledger, intent({ intentId, sourceKind: 'opened' })).outcome,
-    'dispatch',
-  );
+  const opened = intent({ intentId, sourceKind: 'opened' });
+  assert.equal(acceptIntent(ledger, opened).outcome, 'dispatch');
   assert.equal(
     acceptIntent(
       ledger,
@@ -103,12 +102,32 @@ test('opened and labeled Quick Task evidence attach to one semantic generation',
         sourceKind: 'labeled',
         sourceId: 'timeline-label-event-1',
         transportRunId: 9002,
+        digest: opened.digest,
       }),
     ).outcome,
     'semantic-duplicate',
   );
   assert.equal(ledger.generations.length, 1);
   assert.equal(ledger.sources.length, 2);
+});
+
+test('a semantic intent ID cannot be reused for different normalized work', () => {
+  const ledger = createLedger(task, baseTime);
+  acceptIntent(ledger, intent());
+  assert.throws(
+    () =>
+      acceptIntent(
+        ledger,
+        intent({
+          sourceId: 'different-source',
+          transportRunId: 9002,
+          context: 'different work',
+        }),
+      ),
+    /different digest/u,
+  );
+  assert.equal(ledger.sources.length, 1);
+  assert.equal(ledger.generations.length, 1);
 });
 
 test('multiple newer intents while active retain only the newest pending intent', () => {
@@ -165,6 +184,34 @@ test('out-of-order older intent cannot displace newer pending intent', () => {
   assert.equal(ledger.generations.at(-1).state, 'superseded');
 });
 
+test('source identity deterministically breaks equal-time intent ties', () => {
+  const ledger = activeLedger();
+  assert.equal(
+    acceptIntent(
+      ledger,
+      intent({
+        intentId: 'intent-z',
+        sourceId: 'source-z',
+        transportRunId: 9002,
+      }),
+    ).outcome,
+    'pending',
+  );
+  assert.equal(
+    acceptIntent(
+      ledger,
+      intent({
+        intentId: 'intent-a',
+        sourceId: 'source-a',
+        transportRunId: 9003,
+      }),
+    ).outcome,
+    'stale',
+  );
+  assert.equal(ledger.generations[1].sourceId, 'source-z');
+  assert.equal(ledger.generations[2].state, 'superseded');
+});
+
 test('dispatch uses a two-phase transition and ambiguous response never reopens dispatch', () => {
   const ledger = createLedger(task, baseTime);
   acceptIntent(ledger, intent());
@@ -175,6 +222,38 @@ test('dispatch uses a two-phase transition and ambiguous response never reopens 
     () => beginDispatch(ledger, 1, 'different_token_123456'),
     /not dispatchable/u,
   );
+});
+
+test('definite dispatch rejection is terminal and promotes pending work', () => {
+  const ledger = activeLedger();
+  acceptIntent(
+    ledger,
+    intent({
+      intentId: 'intent-2',
+      sourceId: 'source-2',
+      transportRunId: 9002,
+      occurredAt: '2026-08-01T00:01:00.000Z',
+    }),
+  );
+  completeRun(ledger, 1, {
+    runId: 42,
+    status: 'completed',
+    conclusion: 'success',
+  });
+  beginDispatch(ledger, 2, 'dispatch_token_222222');
+  acceptIntent(
+    ledger,
+    intent({
+      intentId: 'intent-3',
+      sourceId: 'source-3',
+      transportRunId: 9003,
+      occurredAt: '2026-08-01T00:02:00.000Z',
+    }),
+  );
+  const result = markDispatchRejected(ledger, 2, 'HTTP 422');
+  assert.equal(ledger.generations[1].state, 'dispatch-rejected');
+  assert.equal(result.promotedGeneration, 3);
+  assert.equal(ledger.generations[2].state, 'accepted');
 });
 
 test('late binding repairs dispatch-unknown and preflight requires exact binding', () => {
@@ -202,6 +281,19 @@ test('late binding repairs dispatch-unknown and preflight requires exact binding
     false,
   );
   assert.equal(verifyPreflight(ledger, { ...expected, generation: 2 }), false);
+});
+
+test('late binding also repairs a crash after POST but before state downgrade', () => {
+  const ledger = createLedger(task, baseTime);
+  acceptIntent(ledger, intent());
+  beginDispatch(ledger, 1, 'dispatch_token_123456');
+  bindRun(ledger, 1, {
+    runId: 42,
+    runUrl: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+    htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+    workflow: 'codex.yml',
+  });
+  assert.equal(ledger.generations[0].state, 'active');
 });
 
 test('completion callback records observation without premature pending promotion', () => {

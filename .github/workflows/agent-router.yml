@@ -1,36 +1,57 @@
 name: Agent Issue Router
 
-# GitHub cannot filter issue labels or comment bodies at the trigger level.
-# Keep those broad subscriptions in one cheap router, then dispatch exactly
-# one agent workflow for the selected pipeline.
+# Every transport is normalized read-only before one job-level concurrency
+# queue serializes control-plane writes for the canonical repository/issue.
+# The ledger, not queue arrival, decides semantic ordering.
 run-name: >-
-  route #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+  route #${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}:
+  ${{ github.event.issue.title || github.event.pull_request.title || inputs.kind || 'manual' }}
 
 on:
   issues:
-    types: [labeled]
+    types: [opened, labeled, unlabeled, closed, reopened]
   issue_comment:
     types: [created]
+  pull_request:
+    types: [closed, reopened]
   workflow_dispatch:
     inputs:
+      kind:
+        description: Broker input kind
+        required: false
+        default: intent
+        type: choice
+        options: [intent, completion]
       issue:
-        description: 'Issue number to route'
+        description: Issue number to route
         required: true
       pipeline:
-        description: 'Agent pipeline to route to'
-        required: true
+        description: Agent pipeline for an intent
+        required: false
         type: choice
         options: [claude, codex, opencode]
       mode:
-        description: 'Dispatch mode'
+        description: Dispatch mode
         required: false
         default: implement
+      reply:
+        description: Original maintainer reply when explicitly routed
+        required: false
+        default: ''
       runbook:
-        description: 'Optional skill for a runbook dispatch'
+        description: Optional skill for a runbook dispatch
         required: false
         default: ''
       context:
-        description: 'Optional deployment or router context'
+        description: Optional deployment or router context
+        required: false
+        default: ''
+      caller_id:
+        description: Caller-generated UUID reused across HTTP retries
+        required: false
+        default: ''
+      completion_payload:
+        description: Base64url worker binding for a completion observation
         required: false
         default: ''
 
@@ -40,37 +61,19 @@ permissions:
   issues: write
 
 jobs:
-  route:
-    if: >
-      (github.event_name == 'issues' && github.event.action == 'labeled' &&
-       github.actor == vars.MAINTAINER_LOGIN &&
-       startsWith(github.event.label.name, 'agent:')) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.action == 'created' &&
-       github.event.comment.user.type != 'Bot' &&
-       github.event.comment.author_association == 'OWNER' &&
-       ((contains(github.event.comment.body, '@claude') &&
-         (contains(github.event.issue.labels.*.name, 'agent:claude') ||
-          github.event.issue.pull_request != null)) ||
-        (contains(github.event.comment.body, '/codex') &&
-         contains(github.event.issue.labels.*.name, 'agent:codex')) ||
-        ((contains(github.event.comment.body, '/opencode') ||
-          contains(github.event.comment.body, '/oc')) &&
-         contains(github.event.issue.labels.*.name, 'agent:opencode')))) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.issue != '' && github.event.inputs.pipeline != '')
+  normalize:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
+    outputs:
+      eligible: ${{ steps.normalize.outputs.eligible }}
+      issue: ${{ steps.normalize.outputs.issue }}
+      repository-id: ${{ steps.normalize.outputs.repository-id }}
+      group: ${{ steps.normalize.outputs.group }}
+      payload: ${{ steps.normalize.outputs.payload }}
     steps:
-      # This job's own `if:` above also reads MAINTAINER_LOGIN, but only on
-      # the `issues`/labeled branch of the OR - the issue_comment and
-      # workflow_dispatch branches don't touch it. A step can only run once
-      # the job has already started, so on a labeled-event run with an
-      # empty/unset MAINTAINER_LOGIN, `github.actor == ''` never matches and
-      # the `if:` skips the job before this assert can fire; this assert
-      # only guarantees the loud failure on runs that do reach this step
-      # (issue_comment and workflow_dispatch runs, and any labeled-event run
-      # where the actor check already passed).
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
+
       - name: Assert required repo variables are set
         env:
           MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
@@ -80,87 +83,37 @@ jobs:
             exit 1
           fi
 
-      - name: Dispatch the selected agent
+      - name: Normalize and authorize transport evidence
+        id: normalize
+        uses: ./.github/actions/dispatch-broker
         env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE: ${{ github.event.issue.number }}
-          LABEL: ${{ github.event.label.name }}
-          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          COMMENT_USER_TYPE: ${{ github.event.comment.user.type }}
-          COMMENT_AUTHOR_ASSOC: ${{ github.event.comment.author_association }}
-          IS_PR_COMMENT: ${{ github.event.issue.pull_request != null }}
-          INPUT_ISSUE: ${{ github.event.inputs.issue }}
-          INPUT_PIPELINE: ${{ github.event.inputs.pipeline }}
-          INPUT_MODE: ${{ github.event.inputs.mode }}
-          INPUT_RUNBOOK: ${{ github.event.inputs.runbook }}
-          INPUT_CONTEXT: ${{ github.event.inputs.context }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          ISSUE="${ISSUE:-$INPUT_ISSUE}"
-          LABEL="${LABEL:-agent:$INPUT_PIPELINE}"
-          MODE="${INPUT_MODE:-implement}"
-          if [[ -z "$LABELS" && -n "$ISSUE" ]]; then
-            LABELS=$(gh issue view "$ISSUE" --repo "$REPO" --json labels --jq '[.labels[].name] | join(",")')
-          fi
+          GITHUB_TOKEN: ${{ github.token }}
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        with:
+          operation: normalize
 
-          has_label() {
-            [[ ",${LABELS}," == *",$1,"* ]]
-          }
+  broker:
+    needs: normalize
+    if: needs.normalize.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      # Reserved repository-wide prefix; contract test proves no other job or
+      # workflow can case-fold into this broker namespace.
+      group: ${{ needs.normalize.outputs.group }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
 
-          select_agent() {
-            local pipeline="$1"
-            local selected="agent:$pipeline"
-            for agent_label in agent:claude agent:codex agent:opencode; do
-              if [[ "$agent_label" != "$selected" ]] && has_label "$agent_label"; then
-                gh issue edit "$ISSUE" --repo "$REPO" --remove-label "$agent_label"
-              fi
-            done
-            for stale_status in status:ready-for-agent status:needs-human; do
-              if has_label "$stale_status"; then
-                gh issue edit "$ISSUE" --repo "$REPO" --remove-label "$stale_status"
-              fi
-            done
-            LABEL="$selected"
-          }
-
-          if [[ "${GITHUB_EVENT_NAME:-}" == "issue_comment" ]]; then
-            if [[ "$COMMENT_USER_TYPE" == "Bot" || "$COMMENT_AUTHOR_ASSOC" != "OWNER" ]]; then
-              echo "No dispatch: comment is not from the repository owner."
-              exit 0
-            fi
-            if [[ "$COMMENT_BODY" == *"@claude"* ]] &&
-               { has_label agent:claude || [[ "$IS_PR_COMMENT" == "true" ]]; }; then
-              select_agent claude
-              MODE=reply
-            elif [[ "$COMMENT_BODY" == *"/codex"* ]] && has_label agent:codex; then
-              select_agent codex
-              MODE=reply
-            elif [[ ("$COMMENT_BODY" == *"/opencode"* || "$COMMENT_BODY" == *"/oc"*) ]] &&
-                 has_label agent:opencode; then
-              select_agent opencode
-              MODE=reply
-            else
-              echo "No dispatch: comment has no authorized agent command."
-              exit 0
-            fi
-          fi
-          if [[ "${GITHUB_EVENT_NAME:-}" == "issues" ]]; then
-            select_agent "${LABEL#agent:}"
-          fi
-
-          workflow=""
-          case "$LABEL" in
-            agent:claude) workflow=claude.yml ;;
-            agent:codex) workflow=codex.yml ;;
-            agent:opencode) workflow=opencode.yml ;;
-          esac
-          if [[ -z "$workflow" ]]; then
-            echo "No dispatch: unsupported agent label $LABEL."
-            exit 0
-          fi
-          echo "Dispatching $workflow for issue #$ISSUE."
-          gh workflow run "$workflow" --repo "$REPO" --ref main \
-            -f issue="$ISSUE" -f mode="$MODE" -f reply="$COMMENT_BODY" \
-            -f runbook="$INPUT_RUNBOOK" -f context="$INPUT_CONTEXT"
+      - name: Apply serialized broker transition
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+          ANCHOR_IS_PR: ${{ github.event.issue.pull_request != null || github.event.pull_request != null }}
+        with:
+          operation: broker
+          payload: ${{ needs.normalize.outputs.payload }}
+          group: ${{ needs.normalize.outputs.group }}
