@@ -82,15 +82,25 @@ One endpoint serves the whole fleet rather than one per host, because the
 answer is frequently _about_ a host as observed from somewhere else, and the
 host itself may be in no position to report it.
 
+The `host` label must be present and match exactly. A series carrying some
+other label that merely ends in `host` (`target_host`, `node_host`) does not
+count, so a mislabelled signal withholds the host rather than satisfying the
+gate.
+
 `readiness_max_age` additionally requires the companion
 `<readiness_metric>_timestamp_seconds` gauge to be no older than the given
 duration. Setting it is strongly recommended: the gate is **fail-closed**, so
 a publisher that dies leaves its last reading served indefinitely, and a stale
 `1` would fail the gate _open_ — the single outcome it exists to prevent.
 
+Timestamps materially in the future are rejected too (a couple of minutes of
+clock skew is tolerated). Publishing milliseconds where seconds are expected
+lands roughly 55,000 years ahead, which would otherwise make the signal
+permanently "fresh" and disable the freshness check entirely.
+
 Fail-closed means anything other than a fresh, positive reading withholds the
-host: a missing metric, an unreachable or erroring endpoint, a stale
-timestamp, or a reading for a different host. Hosts without
+host: a missing metric, an unreachable or erroring endpoint, a stale or
+future-dated timestamp, or a reading for a different host. Hosts without
 `require_readiness` are untouched, including when the publisher is broken.
 
 Observability: `github_runner_autoscaler_host_ready{host}` reports the current

@@ -1191,3 +1191,127 @@ func TestPickHostReadinessGateIgnoresUngatedHosts(t *testing.T) {
 		t.Fatalf("placement host = %q, want either host", host)
 	}
 }
+
+// A label key that merely ends in "host" must not answer for "host". The
+// substring form of this check (`host="roamer"` is contained in
+// `target_host="roamer"`) let a mislabelled signal make a gated host
+// placeable -- the fail-OPEN direction, which is the one that matters.
+func TestPickHostReadinessGateRequiresExactHostLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "label key merely ends in host",
+			body: "host_ci_ready{target_host=\"roamer\"} 1\n",
+			want: "anchor",
+		},
+		{
+			name: "no labels at all",
+			body: "host_ci_ready 1\n",
+			want: "anchor",
+		},
+		{
+			name: "exact host label among several",
+			body: "host_ci_ready{target_host=\"elsewhere\",host=\"roamer\",region=\"a\"} 1\n",
+			want: "roamer",
+		},
+		{
+			// A label value may legitimately contain a comma, so pair
+			// splitting has to respect quoting.
+			name: "comma inside a quoted label value",
+			body: "host_ci_ready{note=\"a,b\",host=\"roamer\"} 1\n",
+			want: "roamer",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scaler := readinessScaler(t, "host_ci_ready", 0, servePlain(tt.body))
+			host, err := scaler.pickHost(context.Background())
+			if err != nil {
+				t.Fatalf("pickHost() error = %v", err)
+			}
+			if host != tt.want {
+				t.Fatalf("placement host = %q, want %q", host, tt.want)
+			}
+		})
+	}
+}
+
+// time.Since goes negative for a future timestamp, so the staleness test can
+// never fire and a publisher that later dies stays "fresh" until the local
+// clock catches up. Emitting milliseconds where seconds are expected lands
+// ~55000 years ahead and would disable the gate outright.
+func TestPickHostReadinessGateRejectsFutureTimestamps(t *testing.T) {
+	tests := []struct {
+		name  string
+		stamp int64
+		want  string
+	}{
+		{
+			name:  "milliseconds mistaken for seconds",
+			stamp: time.Now().UnixMilli(),
+			want:  "anchor",
+		},
+		{
+			name:  "far future",
+			stamp: time.Now().Add(24 * time.Hour).Unix(),
+			want:  "anchor",
+		},
+		{
+			// Ordinary NTP drift between publisher and reader must not
+			// start withholding hosts.
+			name:  "benign clock skew is tolerated",
+			stamp: time.Now().Add(30 * time.Second).Unix(),
+			want:  "roamer",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := fmt.Sprintf("host_ci_ready{host=\"roamer\"} 1\nhost_ci_ready_timestamp_seconds %d\n", tt.stamp)
+			scaler := readinessScaler(t, "host_ci_ready", 5*time.Minute, servePlain(body))
+			host, err := scaler.pickHost(context.Background())
+			if err != nil {
+				t.Fatalf("pickHost() error = %v", err)
+			}
+			if host != tt.want {
+				t.Fatalf("placement host = %q, want %q", host, tt.want)
+			}
+		})
+	}
+}
+
+func TestMetricLabelValue(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		label     string
+		want      string
+		wantFound bool
+	}{
+		{name: "simple", line: `m{host="a"} 1`, label: "host", want: "a", wantFound: true},
+		{name: "suffix key is not a match", line: `m{target_host="a"} 1`, label: "host", wantFound: false},
+		{name: "prefix key is not a match", line: `m{host_extra="a"} 1`, label: "host", wantFound: false},
+		{name: "second of several", line: `m{a="1",host="b"} 1`, label: "host", want: "b", wantFound: true},
+		{name: "comma in value", line: `m{a="x,y",host="b"} 1`, label: "host", want: "b", wantFound: true},
+		{name: "escaped quote in value", line: `m{a="x\"y",host="b"} 1`, label: "host", want: "b", wantFound: true},
+		{name: "no labels", line: `m 1`, label: "host", wantFound: false},
+		{name: "empty label set", line: `m{} 1`, label: "host", wantFound: false},
+		{name: "spaces around key", line: `m{ host = "a" } 1`, label: "host", want: "a", wantFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := metricLabelValue(tt.line, tt.label)
+			if found != tt.wantFound {
+				t.Fatalf("metricLabelValue(%q) found = %v, want %v", tt.line, found, tt.wantFound)
+			}
+			if found && got != tt.want {
+				t.Fatalf("metricLabelValue(%q) = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}

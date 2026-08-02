@@ -1089,6 +1089,65 @@ func (a *Scaler) hostOnMains(ctx context.Context, host string) error {
 	return errors.New("host is on battery")
 }
 
+// readinessClockSkewTolerance is how far ahead of the reader a readiness
+// timestamp may sit before the signal is rejected as broken rather than
+// fresh. Generous enough for ordinary NTP drift between two machines, far
+// tighter than any plausible max-age.
+const readinessClockSkewTolerance = 2 * time.Minute
+
+// metricLabelValue returns the value of the named label in a Prometheus
+// exposition line, and whether that exact label was present.
+//
+// Deliberately parses the label set instead of substring-matching
+// `name="value"`: label keys are matched whole, so a series carrying
+// target_host or node_host cannot answer for a query about host.
+func metricLabelValue(line, label string) (string, bool) {
+	open := strings.Index(line, "{")
+	if open < 0 {
+		return "", false
+	}
+	close := strings.LastIndex(line, "}")
+	if close < open {
+		return "", false
+	}
+
+	body := line[open+1 : close]
+	inQuotes := false
+	escaped := false
+	start := 0
+	for i := 0; i <= len(body); i++ {
+		// Split on commas outside quotes -- a label VALUE may legitimately
+		// contain a comma, so a plain strings.Split would corrupt the pair.
+		if i < len(body) {
+			c := body[i]
+			switch {
+			case escaped:
+				escaped = false
+				continue
+			case c == '\\' && inQuotes:
+				escaped = true
+				continue
+			case c == '"':
+				inQuotes = !inQuotes
+				continue
+			case c != ',' || inQuotes:
+				continue
+			}
+		}
+		key, value, found := strings.Cut(body[start:i], "=")
+		start = i + 1
+		if !found || strings.TrimSpace(key) != label {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted, true
+		}
+		return strings.Trim(value, `"`), true
+	}
+	return "", false
+}
+
 // hostReady consults the operator-supplied readiness signal for a host that
 // set require_readiness, returning nil only when that host may take work.
 //
@@ -1121,10 +1180,7 @@ func (a *Scaler) hostReady(ctx context.Context, host string) error {
 		return fmt.Errorf("readiness metrics returned HTTP %d", resp.StatusCode)
 	}
 
-	// Match the exact series for this host, not merely the metric name: a
-	// prefix test would let one host's reading answer for another's.
 	wantPrefix := fmt.Sprintf("%s{", a.readinessMetric)
-	wantLabel := fmt.Sprintf("host=%q", host)
 	stampPrefix := a.readinessMetric + "_timestamp_seconds"
 
 	var (
@@ -1140,7 +1196,15 @@ func (a *Scaler) hostReady(ctx context.Context, host string) error {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(line, wantPrefix) && strings.Contains(line, wantLabel):
+		case strings.HasPrefix(line, wantPrefix):
+			// Require an exact `host` label rather than testing for the
+			// substring `host="..."`: a series carrying some other label
+			// that merely ends in "host" (target_host, node_host) would
+			// otherwise satisfy the gate, letting a mislabelled signal make
+			// the host placeable instead of failing closed.
+			if got, ok := metricLabelValue(line, "host"); !ok || got != host {
+				continue
+			}
 			seen = true
 			if value, ok := parseMetricValue(line); ok && value > 0 {
 				ready = true
@@ -1162,10 +1226,21 @@ func (a *Scaler) hostReady(ctx context.Context, host string) error {
 		if !stampSeen {
 			return fmt.Errorf("readiness freshness metric %q missing", stampPrefix)
 		}
+		age := time.Since(time.Unix(int64(stamp), 0))
+		// A timestamp materially in the future is not evidence of freshness:
+		// time.Since goes negative, so the staleness test below could never
+		// fire and a publisher that later died would stay "fresh" until the
+		// local clock caught up. Emitting milliseconds where seconds are
+		// expected lands ~55000 years ahead and would disable the gate
+		// outright, so treat it as a broken signal. The tolerance absorbs
+		// ordinary NTP skew between publisher and reader.
+		if age < -readinessClockSkewTolerance {
+			return fmt.Errorf("readiness signal timestamp is %s in the future", (-age).Round(time.Second))
+		}
 		// A publisher that stops updating leaves its last reading served
 		// indefinitely; without this the gate would keep honoring a verdict
 		// that stopped tracking reality.
-		if age := time.Since(time.Unix(int64(stamp), 0)); age > a.readinessMaxAge {
+		if age > a.readinessMaxAge {
 			return fmt.Errorf("readiness signal is stale by %s", age.Round(time.Second))
 		}
 	}
