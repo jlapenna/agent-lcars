@@ -4,11 +4,14 @@ import { createLedger, renderLedgerComment } from './broker.mjs';
 import {
   API_VERSION,
   brokerConcurrencyGroup,
+  CONCURRENCY_VERIFY_MAX_ATTEMPTS,
+  CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
   loadLedger,
   pinLedgerWhenUnoccupied,
   validateBrokerConcurrencyResponse,
   validateDispatchResponse,
+  verifyBrokerConcurrency,
 } from './github-api.mjs';
 
 const tests = [];
@@ -117,6 +120,110 @@ test('broker concurrency must match the canonical task and reported run group', 
       validateBrokerConcurrencyResponse(data, task, 9001, supplied),
     );
   }
+});
+
+test('verifyBrokerConcurrency retries a missing group until it materializes', async () => {
+  const group = brokerConcurrencyGroup(task);
+  let calls = 0;
+  const api = {
+    requestOk: async () => {
+      calls += 1;
+      // Absent on the first two fetches, then GitHub's listing catches up.
+      if (calls < 3) return { concurrency_groups: [] };
+      return { concurrency_groups: [{ group_name: group, group_members: [] }] };
+    },
+  };
+  const sleeps = [];
+  const result = await verifyBrokerConcurrency(api, task, 9001, group, {
+    sleepImpl: async (ms) => {
+      sleeps.push(ms);
+    },
+  });
+  assert.equal(result.group_name, group);
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [
+    CONCURRENCY_VERIFY_RETRY_DELAY_MS,
+    CONCURRENCY_VERIFY_RETRY_DELAY_MS,
+  ]);
+});
+
+test('verifyBrokerConcurrency throws after exhausting bounded retries when the group never appears', async () => {
+  const group = brokerConcurrencyGroup(task);
+  let calls = 0;
+  let sleepCount = 0;
+  const api = {
+    requestOk: async () => {
+      calls += 1;
+      return { concurrency_groups: [] };
+    },
+  };
+  await assert.rejects(
+    () =>
+      verifyBrokerConcurrency(api, task, 9001, group, {
+        sleepImpl: async () => {
+          sleepCount += 1;
+        },
+      }),
+    (error) =>
+      error.name === 'BrokerConcurrencyMismatchError' &&
+      error.retryable === true &&
+      new RegExp(`after ${CONCURRENCY_VERIFY_MAX_ATTEMPTS} attempts`, 'u').test(
+        error.message,
+      ),
+  );
+  assert.equal(calls, CONCURRENCY_VERIFY_MAX_ATTEMPTS);
+  assert.equal(sleepCount, CONCURRENCY_VERIFY_MAX_ATTEMPTS - 1);
+});
+
+test('verifyBrokerConcurrency throws immediately on more than one matching group, without retrying', async () => {
+  const group = brokerConcurrencyGroup(task);
+  let calls = 0;
+  const api = {
+    requestOk: async () => {
+      calls += 1;
+      return {
+        concurrency_groups: [
+          { group_name: group },
+          { group_name: group.toUpperCase() },
+        ],
+      };
+    },
+  };
+  await assert.rejects(
+    () =>
+      verifyBrokerConcurrency(api, task, 9001, group, {
+        sleepImpl: async () => {
+          throw new Error('must not retry a real anomaly');
+        },
+      }),
+    (error) =>
+      error.name === 'BrokerConcurrencyMismatchError' &&
+      error.retryable === false,
+  );
+  assert.equal(calls, 1);
+});
+
+test('verifyBrokerConcurrency throws immediately on a supplied-group/TaskRef mismatch, without retrying', async () => {
+  const group = brokerConcurrencyGroup(task);
+  let calls = 0;
+  const api = {
+    requestOk: async () => {
+      calls += 1;
+      return { concurrency_groups: [{ group_name: group }] };
+    },
+  };
+  await assert.rejects(
+    () =>
+      verifyBrokerConcurrency(api, task, 9001, `${group}-wrong`, {
+        sleepImpl: async () => {
+          throw new Error('must not retry a config mismatch');
+        },
+      }),
+    (error) =>
+      error.name === 'BrokerConcurrencyMismatchError' &&
+      error.retryable === false,
+  );
+  assert.equal(calls, 1);
 });
 
 test('ledger loading rejects duplicates and unexpected authors', async () => {
