@@ -87,7 +87,6 @@
       "inputs": ["production", "^production"]
     },
     "e2e": {
-      "dependsOn": ["^build"],
       "cache": false
     },
     "e2e-run": {

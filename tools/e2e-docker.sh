@@ -27,10 +27,10 @@
 #                       scoping this rewrites EVERY spec's baselines in the
 #                       suite -- prints a loud warning (and, interactively,
 #                       pauses 5s) when it detects that combination.
-#   -- <playwright args> forwarded verbatim to the underlying `nx e2e` run --
-#                        only takes effect if that project's `e2e` target
-#                        does NOT set `forwardAllArgs: false`. This repo's
-#                        console-e2e DOES set it (its `command` is a single
+#   -- <playwright args> forwarded verbatim to the underlying implementation
+#                        target -- only takes effect if that target does NOT
+#                        set `forwardAllArgs: false`. This repo's console-e2e
+#                        implementation DOES set it (its `command` is a single
 #                        shell string wrapping `firebase emulators:exec
 #                        "..."`, and forwardAllArgs:true would append CLI
 #                        args to the end of that outer string, landing them
@@ -50,22 +50,16 @@
 #   E2E_DOCKER_MEMORY=12g  E2E_DOCKER_MEMORY_SWAP=14g  E2E_DOCKER_PIDS=8192
 #   NX_MAX_PARALLEL=2      NODE_OPTIONS=--max-old-space-size=8192
 #
-# Most app config (AUTH_ENABLED, DEBUG, LOCAL, etc.) comes from .env.e2e,
-# which the `e2e` target's own command already loads via
-# `pnpm exec dotenv -e .env.e2e -e .env.e2e.local --optional`. This script
-# materializes .env.e2e from tools/e2e/ci.env's dummy values the first time
-# (never overwriting one you've customized locally, same as a fresh
-# checkout's first local e2e run) rather than passing them as `docker run -e`/
-# `--env-file` flags: ci.env's KEY="value" quoting is dotenv syntax, and
-# `docker --env-file` does NOT strip those quotes the way dotenv does, so the
-# values would arrive with literal quote characters baked in.
+# App config comes only from tools/e2e/ci.env. The implementation target reads
+# that file directly and points its optional local override at the container's
+# isolated HOME, where it does not exist. Host .env files are never loaded.
 #
 # NEXT_PUBLIC_FIREBASE_*/AUTH_SECRET are the one exception: they're passed as
 # real `docker run -e` flags below (sourced from ci.env via ci_env_value, not
-# hardcoded) rather than left to the .env.e2e file above. Next.js inlines
+# hardcoded) rather than left for dotenv to load later. Next.js inlines
 # NEXT_PUBLIC_* at `next build` time -- which runs as part of `nx run
-# <project>:e2e`'s dependsOn chain, BEFORE the dotenv-wrapped
-# `firebase emulators:exec "..."` command that actually loads .env.e2e ever
+# <project>:e2e-implementation`'s dependsOn chain, BEFORE the dotenv-wrapped
+# `firebase emulators:exec "..."` command that actually loads ci.env ever
 # starts -- and Auth.js reads AUTH_SECRET just as early, during the
 # production server's own initialization. Left to only .env.e2e, both would
 # silently bake in as empty/undefined.
@@ -128,9 +122,9 @@ if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
   # null/missing), so `.forwardAllArgs // true` would silently turn a real
   # `false` back into `true`, defeating this exact check. Test presence with
   # `has()` instead.
-  FORWARD_ALL_ARGS="$(printf '%s' "$NX_PROJECT_JSON" | jq -r '.targets.e2e.options | if has("forwardAllArgs") then (.forwardAllArgs | tostring) else "true" end' 2>/dev/null || echo "unknown")"
+  FORWARD_ALL_ARGS="$(printf '%s' "$NX_PROJECT_JSON" | jq -r '.targets["e2e-implementation"].options | if has("forwardAllArgs") then (.forwardAllArgs | tostring) else "true" end' 2>/dev/null || echo "unknown")"
   if [ "$FORWARD_ALL_ARGS" = "false" ]; then
-    echo "e2e-docker: ERROR — '${PROJECT}:e2e' sets forwardAllArgs:false, so" >&2
+    echo "e2e-docker: ERROR — '${PROJECT}:e2e-implementation' sets forwardAllArgs:false, so" >&2
     echo "the '-- ${PASSTHROUGH_ARGS[*]}' you passed would be silently dropped" >&2
     echo "and the WHOLE suite would run instead. Refusing to run." >&2
     echo >&2
@@ -142,7 +136,7 @@ if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
     echo "  E2E_GREP=\"<pattern>\" $0 $PROJECT${UPDATE_SUFFIX}" >&2
     exit 2
   elif [ "$FORWARD_ALL_ARGS" = "unknown" ]; then
-    echo "e2e-docker: warning: couldn't determine '${PROJECT}:e2e's forwardAllArgs" >&2
+    echo "e2e-docker: warning: couldn't determine '${PROJECT}:e2e-implementation's forwardAllArgs" >&2
     echo "via 'nx show project' (bad project name, or nx unavailable on the host)" >&2
     echo "— proceeding, but the passthrough args below may be silently dropped." >&2
   fi
@@ -261,7 +255,7 @@ MEM="${E2E_DOCKER_MEMORY:-12g}"
 MEM_SWAP="${E2E_DOCKER_MEMORY_SWAP:-14g}"
 PIDS="${E2E_DOCKER_PIDS:-8192}"
 
-echo ">> running ${PROJECT}:e2e in container (${UPDATE_ENV[*]:-no-update}; mem=$MEM) ..."
+echo ">> running ${PROJECT}:e2e-implementation in container (${UPDATE_ENV[*]:-no-update}; mem=$MEM) ..."
 
 QUOTED_PASSTHROUGH=""
 if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
@@ -304,6 +298,10 @@ exec docker run --rm -t \
   -e VISUAL_ONLY="${VISUAL_ONLY:-}" \
   -e SKIP_VISUAL="${SKIP_VISUAL:-}" \
   -e E2E_GREP="${E2E_GREP:-}" \
+  -e E2E_HERMETIC=1 \
+  -e NX_LOAD_DOT_ENV_FILES=false \
+  -e E2E_ENV_FILE=/work/tools/e2e/ci.env \
+  -e E2E_ENV_LOCAL_FILE=/e2e-cache/home/.env.e2e.local \
   -e AUTH_SECRET="$(ci_env_value AUTH_SECRET)" \
   -e NEXT_PUBLIC_FIREBASE_API_KEY="$(ci_env_value NEXT_PUBLIC_FIREBASE_API_KEY)" \
   -e NEXT_PUBLIC_FIREBASE_APP_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_APP_ID)" \
@@ -315,4 +313,4 @@ exec docker run --rm -t \
   "${UPDATE_ENV[@]}" \
   -w /work \
   "$IMAGE_TAG" \
-  bash -lc "[ -f .env.e2e ] || cp tools/e2e/ci.env .env.e2e && pnpm install --frozen-lockfile && pnpm exec nx run ${PROJECT}:e2e${QUOTED_PASSTHROUGH}"
+  bash -lc "pnpm install --frozen-lockfile && pnpm exec nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"

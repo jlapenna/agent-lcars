@@ -38,6 +38,9 @@ jobs:
       - name: Test agent workflow contract
         run: node --test tools/agent-workflow-contract.test.mjs
 
+      - name: Test hermetic E2E environment
+        run: node --test tools/e2e-hermetic-env.test.mjs
+
       - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v7
@@ -109,34 +112,8 @@ jobs:
       # environment -- revisit (run via that Dockerfile instead, matching
       # local dev) once one is added and screenshot-rendering consistency
       # actually matters.
-      - name: Prepare E2E environment
-        run: |
-          cp tools/e2e/ci.env .env.e2e
-
-          # NEXT_PUBLIC_FIREBASE_*/AUTH_SECRET must also land as real
-          # process env here, not just in .env.e2e: Next.js inlines
-          # NEXT_PUBLIC_* at `next build` time (part of the `e2e` target's
-          # own dependsOn chain), and Auth.js reads AUTH_SECRET just as
-          # early during the production server's init -- both run before
-          # the dotenv-wrapped `firebase emulators:exec "..."` command that
-          # actually loads .env.e2e ever starts. Same values as ci.env
-          # (non-secret, emulator-only placeholders), just made available
-          # sooner. See tools/e2e-docker.sh's matching comment/ci_env_value.
-          {
-            echo "AUTH_SECRET=dummy-secret"
-            echo "NEXT_PUBLIC_FIREBASE_API_KEY=demo-api-key"
-            echo "NEXT_PUBLIC_FIREBASE_APP_ID=demo-app-id"
-            echo "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-no-project.firebaseapp.com"
-            echo "NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://127.0.0.1:4003"
-            echo "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=000000000000"
-            echo "NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-no-project"
-            echo "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-no-project.appspot.com"
-          } >> "$GITHUB_ENV"
-
       - name: Run console e2e suite
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
-        run: pnpm exec nx run @agent-lcars/console-e2e:e2e
+        run: ./tools/e2e-local.sh
 
       # always(), not failure(): the populated-page captures
       # (populated-dashboard.spec.ts, #40) are attached to this report and
