@@ -1041,6 +1041,30 @@ describe('createQuickTask', () => {
     expect(listForRepo).toHaveBeenCalledTimes(2);
   });
 
+  it('reconciles an HTTP 408 instead of releasing the uniqueness claim', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      throw Object.assign(new Error('Request Timeout'), { status: 408 });
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [{ number: 99, body: persistedBody }],
+      }));
+    const { deleteRef } = mockOctokit({ createIssue, listForRepo });
+
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: expect.objectContaining({ issueNumber: 99 }),
+      }),
+    );
+    expect(createIssue).toHaveBeenCalledTimes(1);
+    expect(listForRepo).toHaveBeenCalledTimes(2);
+    expect(deleteRef).not.toHaveBeenCalled();
+  });
+
   it('keeps an ambiguous claim and blocks a second process from creating', async () => {
     const createIssue = vi
       .fn()

@@ -50,8 +50,10 @@ continue safely. A different App Hosting instance rechecks the issue marker and
 otherwise fails closed; it never performs another create. Successful claims
 remain as the durable idempotency ledger.
 
-A definitive GitHub 4xx proves no issue was created, so its claim is released.
-After an ambiguous timeout the claim remains: a later retry either finds the
+A definitive GitHub 4xx other than `408 Request Timeout` proves no issue was
+created, so its claim is released. A 408 is ambiguous just like a transport
+timeout: the upstream write may have committed before the response was lost.
+After an ambiguous timeout the claim remains; a later retry either finds the
 issue marker or continues to fail closed. If the remote create truly never
 committed, an operator must wait for the original create attempt to settle,
 confirm no matching issue exists, and delete that single claim tag before
@@ -66,12 +68,12 @@ Claim tags must not otherwise be deleted. This deliberate
 manual-reconciliation edge is what preserves the at-most-one invariant across
 two APIs that cannot share a transaction.
 
-A definitive GitHub 4xx response, including an invalid label, is returned
-without a recovery create. Multiple issues bearing the same request ID fail
-closed for manual reconciliation instead of choosing one silently. The console
-token therefore needs Issues write and Contents write access to every repository
-whose Quick Task integration is enabled; Contents write is used only for the
-claim tag ledger.
+A definitive GitHub 4xx response other than 408, including an invalid label, is
+returned without a recovery create. Multiple issues bearing the same request ID
+fail closed for manual reconciliation instead of choosing one silently. The
+console token therefore needs Issues write and Contents write access to every
+repository whose Quick Task integration is enabled; Contents write is used only
+for the claim tag ledger.
 
 ## Compatibility removal checkpoint
 

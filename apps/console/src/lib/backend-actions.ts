@@ -601,7 +601,15 @@ function isDefinitiveCreateFailure(error: unknown): boolean {
     return false;
   }
   const status = (error as { status?: unknown }).status;
-  return typeof status === 'number' && status >= 400 && status < 500;
+  // A 408 can be returned after the upstream request was accepted but before
+  // its response reached us. Releasing the claim in that case would reopen
+  // the duplicate-create race before the issue marker becomes visible.
+  return (
+    typeof status === 'number' &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 408
+  );
 }
 
 function githubStatus(error: unknown): number | undefined {
