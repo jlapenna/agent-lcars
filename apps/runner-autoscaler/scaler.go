@@ -92,7 +92,12 @@ type Scaler struct {
 	draining               atomic.Bool
 	hostLoadPolicy         hostLoadPolicy
 	hostMemoryExempt       map[string]bool
-	logger                 *slog.Logger
+	// readiness* configure the operator-defined placement gate applied to
+	// hosts that set require_readiness. See hostReady.
+	readinessMetricsURL string
+	readinessMetric     string
+	readinessMaxAge     time.Duration
+	logger              *slog.Logger
 	// fleet is shared by every scale-set listener in orchestrator mode. Tests
 	// and single-scaler construction paths get an equivalent private instance
 	// lazily through coordinator().
@@ -841,6 +846,10 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		loadErr              error
 		fleetRunners         int
 		sharedWorkDirRunners int
+		// readinessBlocked distinguishes "this host was withheld by its
+		// readiness gate" from "this host is unreachable", so exhausting the
+		// fleet reports the real cause instead of blaming the network.
+		readinessBlocked bool
 	}
 
 	ch := make(chan pingResult, len(a.dockerHosts))
@@ -882,7 +891,18 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					loadErr = errors.Join(loadErr, fmt.Errorf("mains power required: %w", mainsErr))
 				}
 			}
-			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners}
+			readinessBlocked := false
+			if eligible && fleet.readinessRequired[dh.Name] {
+				if readyErr := a.hostReady(ctx, dh.Name); readyErr != nil {
+					eligible = false
+					readinessBlocked = true
+					hostReadyGauge.WithLabelValues(dh.Name).Set(0)
+					loadErr = errors.Join(loadErr, fmt.Errorf("host readiness required: %w", readyErr))
+				} else {
+					hostReadyGauge.WithLabelValues(dh.Name).Set(1)
+				}
+			}
+			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners, readinessBlocked: readinessBlocked}
 		}(h)
 	}
 
@@ -944,6 +964,19 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	}
 
 	if len(reachableHosts) == 0 {
+		// A host withheld by its readiness gate is reachable and healthy, so
+		// reporting it as "unreachable" would send whoever reads this at the
+		// network instead of at the signal that actually withheld it.
+		readinessBlocked := 0
+		for _, res := range results {
+			if res.readinessBlocked {
+				readinessBlocked++
+			}
+		}
+		if readinessBlocked > 0 {
+			placementBlocked.WithLabelValues(scaleSet, placementReasonReadiness).Inc()
+			return "", fmt.Errorf("no docker host is eligible (%d withheld by their readiness gate): %w", readinessBlocked, errFleetAtCapacity)
+		}
 		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(placementHosts), errFleetAtCapacity)
 	}
 	actualTotal := 0
@@ -1054,6 +1087,92 @@ func (a *Scaler) hostOnMains(ctx context.Context, host string) error {
 		return errors.New("mains telemetry missing")
 	}
 	return errors.New("host is on battery")
+}
+
+// hostReady consults the operator-supplied readiness signal for a host that
+// set require_readiness, returning nil only when that host may take work.
+//
+// The autoscaler deliberately holds no opinion about what readiness means --
+// it reads a gauge the operator publishes and honors the verdict. Reachability
+// is not always enough to decide a host should run CI: a laptop reachable over
+// a mesh VPN may be reachable from anywhere, including places its owner would
+// rather it not be building.
+//
+// Fail-CLOSED, for the same reason as hostOnMains: an unreadable signal is not
+// evidence of readiness, and treating it as such defeats the gate precisely
+// when the machinery behind it is broken.
+func (a *Scaler) hostReady(ctx context.Context, host string) error {
+	if a.readinessMetricsURL == "" || a.readinessMetric == "" {
+		return errors.New("readiness gate is not configured")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, hostMetricsTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, a.readinessMetricsURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("read readiness metrics: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readiness metrics returned HTTP %d", resp.StatusCode)
+	}
+
+	// Match the exact series for this host, not merely the metric name: a
+	// prefix test would let one host's reading answer for another's.
+	wantPrefix := fmt.Sprintf("%s{", a.readinessMetric)
+	wantLabel := fmt.Sprintf("host=%q", host)
+	stampPrefix := a.readinessMetric + "_timestamp_seconds"
+
+	var (
+		ready     bool
+		seen      bool
+		stamp     float64
+		stampSeen bool
+		scanner   = bufio.NewScanner(resp.Body)
+	)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, wantPrefix) && strings.Contains(line, wantLabel):
+			seen = true
+			if value, ok := parseMetricValue(line); ok && value > 0 {
+				ready = true
+			}
+		case strings.HasPrefix(line, stampPrefix):
+			if value, ok := parseMetricValue(line); ok {
+				stamp, stampSeen = value, true
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	if !seen {
+		return fmt.Errorf("readiness metric %q missing for host %q", a.readinessMetric, host)
+	}
+	if a.readinessMaxAge > 0 {
+		if !stampSeen {
+			return fmt.Errorf("readiness freshness metric %q missing", stampPrefix)
+		}
+		// A publisher that stops updating leaves its last reading served
+		// indefinitely; without this the gate would keep honoring a verdict
+		// that stopped tracking reality.
+		if age := time.Since(time.Unix(int64(stamp), 0)); age > a.readinessMaxAge {
+			return fmt.Errorf("readiness signal is stale by %s", age.Round(time.Second))
+		}
+	}
+	if !ready {
+		return errors.New("host is not ready for placement")
+	}
+	return nil
 }
 
 // hostMetrics reads node-exporter through HTTP by default. WSL guests can opt

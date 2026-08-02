@@ -26,6 +26,10 @@ const (
 	// can exhaust placement while every host is reachable and under its
 	// own runner limit. Distinct from host_limits for that reason.
 	placementReasonSharedWorkDirExclusive = "shared_workdir_exclusive"
+	// Every eligible host was withheld by its operator-defined readiness
+	// gate. Distinct from unreachability: these hosts answered fine, the
+	// operator's own signal said not to use them.
+	placementReasonReadiness = "readiness"
 )
 
 var (
@@ -112,6 +116,13 @@ var (
 		},
 		[]string{"host"},
 	)
+	hostReadyGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_ready",
+			Help: "For hosts with require_readiness: 1 if the operator's readiness signal currently permits placement, 0 otherwise. Absent for hosts without the gate.",
+		},
+		[]string{"host"},
+	)
 	hostNormalizedLoadGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_host_normalized_load",
@@ -193,7 +204,7 @@ var (
 		Name: "github_runner_autoscaler_placement_blocked_total",
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
-			placementReasonSharedWorkDirExclusive + ".",
+			placementReasonSharedWorkDirExclusive + ", " + placementReasonReadiness + ".",
 	}, []string{"scale_set", "reason"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
@@ -235,6 +246,7 @@ func registerMetrics() {
 			runnerStartDuration,
 			runnerStartFailures,
 			hostReachableGauge,
+			hostReadyGauge,
 			hostNormalizedLoadGauge,
 			hostCPUUtilizationGauge,
 			hostPressureGauge,

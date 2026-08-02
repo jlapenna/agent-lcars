@@ -114,32 +114,54 @@ type OrchestratorFleet struct {
 }
 
 type FleetHostConfig struct {
-	Name              string `yaml:"name"`
-	Docker            string `yaml:"docker"`
-	RequireMains      bool   `yaml:"require_mains,omitempty"`
-	MetricsViaSSH     bool   `yaml:"metrics_via_ssh,omitempty"`
+	Name          string `yaml:"name"`
+	Docker        string `yaml:"docker"`
+	RequireMains  bool   `yaml:"require_mains,omitempty"`
+	MetricsViaSSH bool   `yaml:"metrics_via_ssh,omitempty"`
+	// RequireReadiness gates placement on an operator-supplied signal, read
+	// from fleet.placement.readiness_metrics_url. Reachability alone is not
+	// always sufficient to decide a host should take work: a machine can be
+	// perfectly reachable while it is somewhere, or in some state, the
+	// operator does not want CI running on. What "ready" means is entirely
+	// the operator's to define -- this only consumes the verdict.
+	RequireReadiness  bool   `yaml:"require_readiness,omitempty"`
 	RunnerLimit       *int   `yaml:"runner_limit,omitempty"`
 	WorkDirSizeCapRaw string `yaml:"workdir_size_cap,omitempty"`
 	DockerSocketGID   string `yaml:"docker_socket_gid,omitempty"`
 }
 
 type FleetPlacementFile struct {
-	HostMetricsURLTemplate string   `yaml:"host_metrics_url_template,omitempty"`
-	SparkMetricsURL        string   `yaml:"spark_metrics_url,omitempty"`
-	HostMemoryExempt       []string `yaml:"host_memory_exempt,omitempty"`
-	LoadSoft               float64  `yaml:"load_soft,omitempty"`
-	LoadBusy               float64  `yaml:"load_busy,omitempty"`
-	LoadHard               float64  `yaml:"load_hard,omitempty"`
-	CPUSoft                float64  `yaml:"cpu_soft,omitempty"`
-	CPUHard                float64  `yaml:"cpu_hard,omitempty"`
-	PSISoft                float64  `yaml:"psi_soft,omitempty"`
-	PSIHard                float64  `yaml:"psi_hard,omitempty"`
-	MemorySoft             float64  `yaml:"memory_soft,omitempty"`
-	MemoryHard             float64  `yaml:"memory_hard,omitempty"`
-	SwapSoft               float64  `yaml:"swap_soft,omitempty"`
-	SwapHard               float64  `yaml:"swap_hard,omitempty"`
-	OverloadCooldown       string   `yaml:"overload_cooldown,omitempty"`
-	TelemetryPenalty       int      `yaml:"telemetry_penalty,omitempty"`
+	HostMetricsURLTemplate string `yaml:"host_metrics_url_template,omitempty"`
+	SparkMetricsURL        string `yaml:"spark_metrics_url,omitempty"`
+	// ReadinessMetricsURL is a Prometheus-format endpoint published by the
+	// operator, serving ReadinessMetric for every host that sets
+	// require_readiness. One endpoint for the whole fleet rather than one
+	// per host: the answer is often about a host as seen from elsewhere, so
+	// the host itself is not necessarily able to report it.
+	ReadinessMetricsURL string `yaml:"readiness_metrics_url,omitempty"`
+	// ReadinessMetric is the gauge name to look up, matched with a
+	// host="<name>" label. A value greater than zero means ready.
+	ReadinessMetric string `yaml:"readiness_metric,omitempty"`
+	// ReadinessMaxAge, when set, additionally requires a companion
+	// "<ReadinessMetric>_timestamp_seconds" gauge that is no older than
+	// this. Strongly recommended: the gate is fail-closed, so a publisher
+	// that dies leaves its last reading served forever and a stale "ready"
+	// would fail the gate OPEN -- the one outcome it exists to prevent.
+	ReadinessMaxAge  string   `yaml:"readiness_max_age,omitempty"`
+	HostMemoryExempt []string `yaml:"host_memory_exempt,omitempty"`
+	LoadSoft         float64  `yaml:"load_soft,omitempty"`
+	LoadBusy         float64  `yaml:"load_busy,omitempty"`
+	LoadHard         float64  `yaml:"load_hard,omitempty"`
+	CPUSoft          float64  `yaml:"cpu_soft,omitempty"`
+	CPUHard          float64  `yaml:"cpu_hard,omitempty"`
+	PSISoft          float64  `yaml:"psi_soft,omitempty"`
+	PSIHard          float64  `yaml:"psi_hard,omitempty"`
+	MemorySoft       float64  `yaml:"memory_soft,omitempty"`
+	MemoryHard       float64  `yaml:"memory_hard,omitempty"`
+	SwapSoft         float64  `yaml:"swap_soft,omitempty"`
+	SwapHard         float64  `yaml:"swap_hard,omitempty"`
+	OverloadCooldown string   `yaml:"overload_cooldown,omitempty"`
+	TelemetryPenalty int      `yaml:"telemetry_penalty,omitempty"`
 }
 
 type ScaleSetConfigFile struct {
@@ -276,10 +298,14 @@ type resolvedOrchestratorConfig struct {
 	DockerSocketGID map[string]string
 	MainsRequired   map[string]bool
 	MetricsViaSSH   map[string]bool
-	Placement       hostLoadPolicy
-	Cooldown        time.Duration
-	ScaleSets       []Config
-	Weights         map[string]int
+	// ReadinessRequired names the hosts whose placement is gated on the
+	// operator-supplied readiness signal. Nil when no host opts in.
+	ReadinessRequired map[string]bool
+	ReadinessMaxAge   time.Duration
+	Placement         hostLoadPolicy
+	Cooldown          time.Duration
+	ScaleSets         []Config
+	Weights           map[string]int
 }
 
 func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
@@ -350,6 +376,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			}
 			r.MetricsViaSSH[h.Name] = true
 		}
+		if h.RequireReadiness {
+			if r.ReadinessRequired == nil {
+				r.ReadinessRequired = map[string]bool{}
+			}
+			r.ReadinessRequired[h.Name] = true
+		}
 		r.DockerHosts = append(r.DockerHosts, h.Name+"="+h.Docker)
 		if h.RunnerLimit != nil {
 			if *h.RunnerLimit < 1 {
@@ -375,6 +407,25 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 
 	if err := validateFileMountAllowlist(c.Fleet.FileMountAllowlist); err != nil {
 		return err
+	}
+
+	// Fail at load rather than at placement: a host asking to be gated on a
+	// signal nobody publishes would otherwise pass --check-config and then
+	// silently never receive runners, since the gate is fail-closed.
+	if len(r.ReadinessRequired) > 0 {
+		if strings.TrimSpace(c.Fleet.Placement.ReadinessMetricsURL) == "" {
+			return fmt.Errorf("fleet.placement.readiness_metrics_url is required when any host sets require_readiness")
+		}
+		if strings.TrimSpace(c.Fleet.Placement.ReadinessMetric) == "" {
+			return fmt.Errorf("fleet.placement.readiness_metric is required when any host sets require_readiness")
+		}
+	}
+	if raw := strings.TrimSpace(c.Fleet.Placement.ReadinessMaxAge); raw != "" {
+		age, err := time.ParseDuration(raw)
+		if err != nil || age <= 0 {
+			return fmt.Errorf("fleet.placement.readiness_max_age %q is not a positive duration", c.Fleet.Placement.ReadinessMaxAge)
+		}
+		r.ReadinessMaxAge = age
 	}
 
 	p := &c.Fleet.Placement
