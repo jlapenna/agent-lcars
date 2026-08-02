@@ -1,0 +1,31 @@
+name: Mint agent token
+description: >-
+  Mint a short-lived Agent LCARS GitHub App installation token, used for the
+  agent fleet's claim/comment/label gh operations and, where a workflow
+  passes it to checkout, its push credential.
+
+inputs:
+  client-id:
+    description: GitHub App client ID (repo variable AGENT_LCARS_CLIENT_ID).
+    required: true
+  private-key:
+    description: GitHub App private key (repo secret AGENT_LCARS_PRIVATE_KEY).
+    required: true
+
+outputs:
+  token:
+    description: Minted installation token.
+    value: ${{ steps.mint.outputs.token }}
+  app-slug:
+    description: App slug the token was minted for.
+    value: ${{ steps.mint.outputs.app-slug }}
+
+runs:
+  using: composite
+  steps:
+    - name: Mint Agent LCARS installation token
+      id: mint
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}

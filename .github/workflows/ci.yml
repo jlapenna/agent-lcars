@@ -43,6 +43,9 @@ jobs:
       - name: Test dispatch broker contracts
         run: node --test .github/actions/dispatch-broker/*.test.mjs
 
+      - name: Test deliverable verification
+        run: bash .github/actions/verify-deliverable/verify-deliverable.test.sh
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
       - uses: pnpm/action-setup@v6

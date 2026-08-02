@@ -105,9 +105,16 @@ jobs:
             exit 1
           fi
 
+      # A minimal checkout, before broker verification and the minted-token
+      # checkout below: "Verify broker binding" is now a local composite
+      # action (`uses: ./.github/actions/...`), and GitHub Actions can only
+      # resolve a local action once the repo containing it has been checked
+      # out - a platform constraint, not a preference.
       - name: Bootstrap checkout for broker preflight
         uses: actions/checkout@v7
 
+      # The worker is untrusted until its own Actions run ID is durably bound
+      # to this exact task/generation/intent/token in the serialized ledger.
       - name: Verify broker binding
         uses: ./.github/actions/dispatch-broker
         env:
@@ -119,57 +126,47 @@ jobs:
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
 
-      - name: Mint Agent LCARS installation token
+      - name: Mint agent token
         id: agent-lcars-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: ./.github/actions/mint-agent-token
         with:
           client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 
       - name: Claim the issue as the agent fleet
         id: claim
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          NUM: ${{ github.event.inputs.issue }}
-          CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-        run: |
-          pickup_comment_id=""
-          if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-            -f "assignees[]=$CLAIM_LOGIN" --silent; then
-            pickup_comment_id=$(gh api "repos/${{ github.repository }}/issues/$NUM/comments" \
-              -f "body=🤖 OpenCode agent run started — working on this issue: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-              --jq '.id' 2>/dev/null || true)
-            if [ -z "$pickup_comment_id" ]; then
-              echo "::warning::Could not post OpenCode pickup comment on #$NUM"
-            fi
-          else
-            echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
-          fi
-          echo "pickup-comment-id=$pickup_comment_id" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/claim-issue
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          issue: ${{ github.event.inputs.issue }}
+          claim-login: ${{ vars.AGENT_FLEET_LOGIN }}
+          post-pickup-comment: 'true'
+          agent: OpenCode
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+      # The real checkout, now that the App token exists: this one carries
+      # fetch-depth: 0 and the minted token, so OpenCode's eventual raw
+      # `git push` authenticates as agent-lcars[bot] (not the bootstrap
+      # checkout's default workflow token).
       - name: Checkout with the authorized App credential
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ steps.agent-lcars-token.outputs.token }}
-          # OpenCode finalizes a completed change with a raw `git push`,
-          # so retain this job-scoped workflow credential through that step.
           persist-credentials: true
-
-      - name: Verify OpenCode can authenticate its final push
-        # Do not let the agent spend up to an hour implementing a change only
-        # to discover during its finalization that checkout discarded the
-        # workflow credential. Avoid printing the header: it contains the
-        # token in base64 form.
-        run: |
-          git config --includes --get 'http.https://github.com/.extraheader' >/dev/null \
-            || { echo '::error::Checkout did not retain a GitHub credential for OpenCode finalization.'; exit 1; }
 
       - name: Shared agent setup
         id: agent-setup
         uses: ./.github/actions/agent-setup
         with:
           agent-login: agent-lcars[bot]
+
+      - name: Verify agent identity
+        uses: ./.github/actions/verify-agent-identity
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: OpenCode
+          app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
 
       - name: Prepare dispatch context
         uses: ./.github/actions/prepare-agent-dispatch
@@ -181,13 +178,6 @@ jobs:
           runbook: ${{ github.event.inputs.runbook }}
           context: ${{ github.event.inputs.context }}
 
-      - name: Point Nx at the shared host cache when present
-        run: |
-          if [ -d /shared-cache ]; then
-            mkdir -p /shared-cache/nx
-            echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
-          fi
-
       # Avoid the official composite action's unauthenticated release lookup:
       # anonymous GitHub API traffic is shared across runners and can exhaust
       # its per-IP budget before OpenCode starts. This local reusable action
@@ -198,20 +188,17 @@ jobs:
         with:
           github-token: ${{ steps.agent-lcars-token.outputs.token }}
 
-      - name: Verify OpenCode GitHub identity
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          APP_SLUG: ${{ steps.agent-lcars-token.outputs.app-slug }}
-        run: |
-          if [ "$APP_SLUG" != "agent-lcars" ]; then
-            echo "::error::OpenCode token was minted for $APP_SLUG; expected the Agent LCARS App."
-            exit 1
-          fi
-          actual_login="$(gh api "/users/${APP_SLUG}[bot]" --jq '.login')"
-          if [ "$actual_login" != "agent-lcars[bot]" ]; then
-            echo "::error::OpenCode App bot resolved as $actual_login; expected agent-lcars[bot]."
-            exit 1
-          fi
+      # New for opencode.yml (it previously had no telemetry at all) - mirrors
+      # claude.yml/codex.yml exactly, including export_environment_variables:
+      # false. The WIF provider var and telemetry-writer SA are repo-level,
+      # shared with the other two pipelines.
+      - name: Start telemetry sidecar
+        id: telemetry-start
+        uses: ./.github/actions/telemetry-start
+        with:
+          workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
+          issue: ${{ github.event.inputs.issue }}
 
       - name: Run OpenCode
         # #51: two dispatches against #44 retried a persistent LiteLLM 429
@@ -249,102 +236,65 @@ jobs:
             parking, and visible-deliverable requirements exactly.
         run: opencode github run
 
-      # Adapted from claude.yml's deliverable gate (agent-protocol.md §5),
-      # tuned for opencode's lighter prompt contract. A bare comment counts
-      # as evidence here (unlike claude.yml, which excludes it on the issue
-      # path) because the specific failure mode this pipeline guards
-      # against is "said nothing at all" - an Agent LCARS App comment after
-      # the shared setup action's start anchor proves the loop actually
-      # closed. GitHub's `since` filter uses updated_at, so the pickup comment
-      # is also excluded by ID in case OpenCode edits that pre-anchor comment
-      # during the run.
+      # New for opencode.yml - mirrors claude.yml/codex.yml's finalize.
+      - name: Finalize telemetry sidecar
+        if: always()
+        uses: ./.github/actions/telemetry-finalize
+        with:
+          credentials-file-path: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
+          issue: ${{ github.event.inputs.issue }}
+
+      # Same gate claude.yml/codex.yml use (agent-protocol.md §5): an agent
+      # can reason to a genuine conclusion and stop without ever posting it,
+      # so a bare "success" conclusion is not trusted. NOTE: this run's
+      # comment clause is now mode-gated (reply only), matching claude.yml -
+      # previously any bot comment counted regardless of mode, including
+      # this pipeline's own early takeover/plan comment, which proves
+      # nothing about a completed implement dispatch. exclude-comment-id
+      # still drops the scripted pickup comment from the claim step.
       - name: Verify a deliverable exists
         if: success()
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
-          PICKUP_COMMENT_ID: ${{ steps.claim.outputs['pickup-comment-id'] }}
-          AGENT_LOGIN: agent-lcars[bot]
-          NUM: ${{ github.event.inputs.issue }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -uo pipefail
-          found=""
+        uses: ./.github/actions/verify-deliverable
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: OpenCode
+          issue: ${{ github.event.inputs.issue }}
+          started-at: ${{ steps.agent-setup.outputs['started-at'] }}
+          mode: ${{ github.event.inputs.mode }}
+          expected-comment-login: agent-lcars[bot]
+          # Guards against crediting a concurrently dispatched claude run's
+          # PR on the same issue (a testing artifact, not normal usage - the
+          # router enforces exactly one agent label per issue). Cannot also
+          # distinguish a codex PR: codex and opencode share the same
+          # agent-lcars[bot] push identity, an existing, accepted limitation
+          # unrelated to this dedup.
+          exclude-pr-author: claude[bot]
+          exclude-comment-id: ${{ steps.claim.outputs['pickup-comment-id'] }}
 
-          # Excludes canonical claude[bot] explicitly so this check can't
-          # credit opencode with a DIFFERENT pipeline's pre-existing PR just
-          # because its updated_at happened to fall after this run's start.
-          # The REST pulls endpoint keeps bot logins in the repo's canonical
-          # login[bot] shape; see docs/bot-identity-formats.md.
-          # Only matters when both pipelines are dispatched against
-          # overlapping issues (a testing artifact, not normal usage), but
-          # cheap to guard against.
-          # test(...) boundary, not contains(): an unanchored substring
-          # match on "#4" also hits "#42"/"#400" in any PR title/body.
-          # sort=updated&direction=desc ensures a push to an OLDER existing
-          # PR isn't missed once >50 PRs exist (default sort is by creation date).
-          prs=$(gh api "repos/$REPO/pulls?state=all&sort=updated&direction=desc&per_page=50" \
-            --jq "[.[] | select(.updated_at >= \"$STARTED_AT\")
-                       | select(.user.login != \"claude[bot]\")
-                       | select((.title + \" \" + (.body // \"\")) | test(\"#$NUM([^0-9]|\$)\"))]
-                  | length" 2>/dev/null || echo 0)
-          if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM created/updated since $STARTED_AT"; fi
-
-          # closedAt, not just current state==CLOSED: a pre-existing
-          # closure (e.g. from the other pipeline moments earlier) must not
-          # count as THIS run's deliverable.
-          if [ -z "$found" ]; then
-            closed_at=$(gh issue view "$NUM" --repo "$REPO" --json state,closedAt \
-              --jq 'if .state == "CLOSED" then .closedAt else "" end' 2>/dev/null || echo "")
-            if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then found="issue #$NUM closed at $closed_at (after $STARTED_AT)"; fi
-          fi
-
-          if [ -z "$found" ]; then
-            labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
-              --jq '[.labels[].name] | contains(["status:needs-human"])' 2>/dev/null || echo false)
-            if [ "$labeled" = "true" ]; then found="status:needs-human label applied on #$NUM"; fi
-          fi
-
-          if [ -z "$found" ]; then
-            botcomments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT&per_page=100" \
-              --jq "[.[] | select(.user.login == \"$AGENT_LOGIN\")
-                           | select((.id | tostring) != \"$PICKUP_COMMENT_ID\")]
-                    | length" 2>/dev/null || echo 0)
-            if [ "${botcomments:-0}" -ge 1 ]; then found="Agent LCARS App posted a follow-up comment on #$NUM"; fi
-          fi
-
-          if [ -n "$found" ]; then
-            echo "Deliverable evidence: $found"
-          else
-            echo "NO_DELIVERABLE=1" >> "$GITHUB_ENV"
-            echo "::error::Run completed 'successfully' but produced no deliverable (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no status:needs-human label, no Agent LCARS App comment after the run anchor). Its conclusion, if any, was never communicated."
-            exit 1
-          fi
-
-      - name: Report failure on the issue
+      - name: Determine failure reason
+        id: failure-reason
         if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          RUN_ID: ${{ github.run_id }}
-          ISSUE_NUM: ${{ github.event.inputs.issue }}
-          REPO: ${{ github.repository }}
-          SERVER_URL: ${{ github.server_url }}
-          JOB_STATUS: ${{ job.status }}
-          MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
         run: |
-          MSG="failed"
           REASON=""
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
             REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `/opencode`, and consider whether the prompt needs to be even more explicit for this issue.'
           fi
-          if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 90-minute job timeout)"; fi
-          gh issue comment "$ISSUE_NUM" \
-            --repo "$REPO" \
-            --body "OpenCode agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
-          gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
-            -f 'labels[]=status:needs-human' --silent
-          gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-            -f "assignees[]=$MAINTAINER" --silent
+          {
+            echo "reason<<REASON_EOF"
+            echo "$REASON"
+            echo "REASON_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report failure on the issue
+        if: failure() || cancelled()
+        uses: ./.github/actions/report-failure
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: OpenCode
+          issue: ${{ github.event.inputs.issue }}
+          reason: ${{ steps.failure-reason.outputs.reason }}
+          job-status: ${{ job.status }}
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}
 
       - name: Return completion observation to the broker
         if: always()

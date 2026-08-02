@@ -111,9 +111,16 @@ jobs:
             exit 1
           fi
 
+      # A minimal checkout, before broker verification and the minted-token
+      # checkout below: "Verify broker binding" is now a local composite
+      # action (`uses: ./.github/actions/...`), and GitHub Actions can only
+      # resolve a local action once the repo containing it has been checked
+      # out - a platform constraint, not a preference.
       - name: Bootstrap checkout for broker preflight
         uses: actions/checkout@v7
 
+      # The worker is untrusted until its own Actions run ID is durably bound
+      # to this exact task/generation/intent/token in the serialized ledger.
       - name: Verify broker binding
         uses: ./.github/actions/dispatch-broker
         env:
@@ -125,28 +132,25 @@ jobs:
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
 
-      - name: Mint Agent LCARS installation token
+      - name: Mint agent token
         id: agent-lcars-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: ./.github/actions/mint-agent-token
         with:
           client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 
       - name: Claim the issue as the agent fleet
         id: claim
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          NUM: ${{ github.event.inputs.issue }}
-          CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-        run: |
-          if gh api "repos/${{ github.repository }}/issues/$NUM/assignees" \
-               -f "assignees[]=$CLAIM_LOGIN" --silent; then
-            echo "claimed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "claimed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
-          fi
+        uses: ./.github/actions/claim-issue
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          issue: ${{ github.event.inputs.issue }}
+          claim-login: ${{ vars.AGENT_FLEET_LOGIN }}
 
+      # The real checkout, now that the App token exists: this one carries
+      # fetch-depth: 0 and the minted token, so the eventual `git push`
+      # authenticates as agent-lcars[bot] (not the bootstrap checkout's
+      # default workflow token).
       - name: Checkout with the authorized App credential
         uses: actions/checkout@v7
         with:
@@ -160,22 +164,12 @@ jobs:
         with:
           agent-login: agent-lcars[bot]
 
-      - name: Verify Codex GitHub identity and push credential
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          APP_SLUG: ${{ steps.agent-lcars-token.outputs.app-slug }}
-        run: |
-          if [ "$APP_SLUG" != "agent-lcars" ]; then
-            echo "::error::Codex token was minted for $APP_SLUG; expected the Agent LCARS App."
-            exit 1
-          fi
-          actual_login="$(gh api "/users/${APP_SLUG}[bot]" --jq '.login')"
-          if [ "$actual_login" != "agent-lcars[bot]" ]; then
-            echo "::error::Codex App bot resolved as $actual_login; expected agent-lcars[bot]."
-            exit 1
-          fi
-          git config --includes --get 'http.https://github.com/.extraheader' >/dev/null \
-            || { echo '::error::Checkout did not retain a GitHub credential for Codex finalization.'; exit 1; }
+      - name: Verify agent identity
+        uses: ./.github/actions/verify-agent-identity
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: Codex
+          app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
 
       - name: Prepare dispatch context
         uses: ./.github/actions/prepare-agent-dispatch
@@ -186,13 +180,6 @@ jobs:
           reply: ${{ github.event.inputs.reply }}
           runbook: ${{ github.event.inputs.runbook }}
           context: ${{ github.event.inputs.context }}
-
-      - name: Point Nx at the shared host cache when present
-        run: |
-          if [ -d /shared-cache ]; then
-            mkdir -p /shared-cache/nx
-            echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
-          fi
 
       # Two distinct GCP identities are used by this job, deliberately kept
       # separate:
@@ -217,18 +204,23 @@ jobs:
       # Separate WIF identity for telemetry, mirroring claude.yml exactly —
       # including export_environment_variables: false, which keeps the
       # storage-scoped writer credential out of the agent's ambient
-      # environment. if: always() + continue-on-error so a rotated/broken
-      # telemetry config can never turn a healthy agent run red.
-      - name: Authenticate telemetry writer
-        id: telemetry-auth
-        if: always()
-        continue-on-error: true
-        uses: google-github-actions/auth@v3
+      # environment. The sidecar watches ~/.codex/sessions as well as
+      # ~/.claude/projects (see apps/telemetry-watcher/src/lib/runner.ts)
+      # and forces source: 'issue-agent', so this run's turns/tokens/cost
+      # show up in the console the same way a Claude run's do. Bundles auth
+      # + sidecar start (telemetry-start also covers the "if: always() +
+      # continue-on-error" resilience), so the sidecar now starts here
+      # rather than immediately before "Run Codex" - a deliberate, harmless
+      # reordering: it's a best-effort, non-blocking watcher either way, and
+      # starting earlier just widens its window to also cover Install Codex
+      # CLI/Restore subscription authentication below.
+      - name: Start telemetry sidecar
+        id: telemetry-start
+        uses: ./.github/actions/telemetry-start
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
-          token_format: access_token
-          export_environment_variables: false
+          workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
+          issue: ${{ github.event.inputs.issue }}
 
       - name: Install Codex CLI
         # npm's prefix in the runner image is /usr, so a bare `npm install
@@ -271,25 +263,6 @@ jobs:
             --secret=CODEX_AUTH_JSON > "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
           codex login status
-
-      # Best-effort mid-run telemetry, identical to claude.yml's. The
-      # sidecar watches ~/.codex/sessions as well as ~/.claude/projects (see
-      # apps/telemetry-watcher/src/lib/runner.ts) and forces
-      # source: 'issue-agent', so this run's turns/tokens/cost show up in
-      # the console the same way a Claude run's do.
-      - name: Start telemetry sidecar
-        continue-on-error: true
-        env:
-          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-          RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.inputs.issue }}
-        run: |
-          SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-          if [ -x "$SCRIPT" ]; then
-            "$SCRIPT" start
-          else
-            echo "Sidecar tooling not found at $SCRIPT (runner image predates this bake-in, or this isn't the claude-agent-lcars fleet); skipping telemetry sidecar."
-          fi
 
       - name: Run Codex
         id: agent
@@ -343,83 +316,45 @@ jobs:
       # the authoritative `ended` doc with the archived transcript URI.
       - name: Finalize telemetry sidecar
         if: always()
-        continue-on-error: true
-        env:
-          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-          RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.inputs.issue }}
-        run: |
-          SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-          if [ -x "$SCRIPT" ]; then
-            "$SCRIPT" finalize
-          else
-            echo "Sidecar tooling not found at $SCRIPT; skipping telemetry finalize."
-          fi
+        uses: ./.github/actions/telemetry-finalize
+        with:
+          credentials-file-path: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
+          issue: ${{ github.event.inputs.issue }}
 
       # Same gate claude.yml/opencode.yml use (agent-protocol.md §5): an
       # agent can reason to a genuine conclusion and stop without ever
       # posting it, so a bare "success" conclusion is not trusted.
       - name: Verify a deliverable exists
         if: success()
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
-          NUM: ${{ github.event.inputs.issue }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -uo pipefail
-          found=""
-          # The numeric boundary prevents "#4" from matching "#42"/"#400";
-          # updated-desc keeps older PRs with fresh pushes in the 50 results.
-          prs=$(gh pr list --repo "$REPO" --state all --limit 50 -S "sort:updated-desc" \
-            --json title,body,updatedAt \
-            --jq "[.[] | select(.updatedAt >= \"$STARTED_AT\") | select((.title + \" \" + (.body // \"\")) | test(\"#$NUM([^0-9]|\$)\"))] | length" \
-            2>/dev/null || echo 0)
-          if [ "${prs:-0}" -gt 0 ]; then found="PR referencing #$NUM"; fi
-
-          if [ -z "$found" ]; then
-            closed_at=$(gh issue view "$NUM" --repo "$REPO" --json state,closedAt \
-              --jq 'if .state == "CLOSED" then .closedAt else "" end' 2>/dev/null || echo "")
-            if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then found="issue closed"; fi
-          fi
-
-          if [ -z "$found" ]; then
-            labeled=$(gh issue view "$NUM" --repo "$REPO" --json labels \
-              --jq '[.labels[].name] | contains(["status:needs-human"])' 2>/dev/null || echo false)
-            if [ "$labeled" = "true" ]; then found="status:needs-human applied"; fi
-          fi
-
-          if [ -z "$found" ]; then
-            comments=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT" \
-              --jq '[.[] | select(.user.type == "Bot")] | length' 2>/dev/null || echo 0)
-            if [ "${comments:-0}" -gt 0 ]; then found="bot comment posted"; fi
-          fi
-
-          if [ -z "$found" ]; then
-            echo "::error::Codex ended without a visible deliverable on #$NUM"
-            exit 1
-          fi
-          echo "Deliverable verified: $found"
+        uses: ./.github/actions/verify-deliverable
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: Codex
+          issue: ${{ github.event.inputs.issue }}
+          started-at: ${{ steps.agent-setup.outputs['started-at'] }}
+          mode: ${{ github.event.inputs.mode }}
+          expected-comment-login: agent-lcars[bot]
+          # Guards against crediting a concurrently dispatched claude run's
+          # PR on the same issue (a testing artifact, not normal usage - the
+          # router enforces exactly one agent label per issue). Cannot also
+          # distinguish an opencode PR: codex and opencode share the same
+          # agent-lcars[bot] push identity, an existing, accepted limitation
+          # unrelated to this dedup.
+          exclude-pr-author: claude[bot]
 
       # MUST cover cancelled(): a job-level timeout-minutes kill sets the
       # conclusion to `cancelled`, not `failure`, so `if: failure()` alone
       # would miss it (same carve-out as claude.yml/opencode.yml).
       - name: Report failure on the issue
         if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          ISSUE_NUM: ${{ github.event.inputs.issue }}
-          REPO: ${{ github.repository }}
-          JOB_STATUS: ${{ job.status }}
-          MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
-        run: |
-          MSG="failed"
-          if [ "$JOB_STATUS" = "cancelled" ]; then MSG="was cancelled (likely hit the 90-minute job timeout)"; fi
-          gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "⚠️ Codex agent run $MSG: ${{ github.server_url }}/$REPO/actions/runs/${{ github.run_id }}"
-          gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
-            -f 'labels[]=status:needs-human' --silent
-          gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-            -f "assignees[]=$MAINTAINER" --silent
+        uses: ./.github/actions/report-failure
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: Codex
+          message-prefix: '⚠️ '
+          issue: ${{ github.event.inputs.issue }}
+          job-status: ${{ job.status }}
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}
 
       # Hand the concurrency group off to the next queued issue.
       #

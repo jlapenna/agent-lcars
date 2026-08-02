@@ -1,0 +1,75 @@
+name: Verify agent identity
+description: >-
+  Confirm a minted GitHub App token resolves to the expected bot identity,
+  and that checkout persisted a git credential the agent can push with.
+
+inputs:
+  token:
+    description: Minted GitHub App installation token to verify.
+    required: true
+  agent:
+    description: Agent name used in error messages (e.g. Claude, Codex, OpenCode).
+    required: true
+  app-slug:
+    description: App slug reported by the token-minting step's app-slug output.
+    required: true
+  expected-app-slug:
+    description: App slug the token is expected to belong to.
+    required: false
+    default: agent-lcars
+  expected-login:
+    description: Bot login the app slug is expected to resolve to.
+    required: false
+    default: agent-lcars[bot]
+
+runs:
+  using: composite
+  steps:
+    # A transient failure of the identity lookup used to read as
+    # `resolved as ""`, which names nothing about what actually went wrong
+    # (network blip vs. genuinely the wrong identity). Retry once before
+    # failing, and say plainly that the lookup itself failed.
+    - name: Verify App token identity
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        AGENT: ${{ inputs.agent }}
+        APP_SLUG: ${{ inputs.app-slug }}
+        EXPECTED_APP_SLUG: ${{ inputs.expected-app-slug }}
+        EXPECTED_LOGIN: ${{ inputs.expected-login }}
+      run: |
+        set -uo pipefail
+
+        if [ "$APP_SLUG" != "$EXPECTED_APP_SLUG" ]; then
+          echo "::error::$AGENT token was minted for app slug '$APP_SLUG'; expected '$EXPECTED_APP_SLUG'."
+          exit 1
+        fi
+
+        actual_login=""
+        for attempt in 1 2; do
+          if actual_login="$(gh api "/users/${APP_SLUG}[bot]" --jq '.login' 2>/dev/null)" && [ -n "$actual_login" ]; then
+            break
+          fi
+          actual_login=""
+          if [ "$attempt" -eq 1 ]; then
+            echo "::warning::$AGENT identity lookup for '${APP_SLUG}[bot]' failed on the first attempt; retrying once."
+            sleep 2
+          fi
+        done
+
+        if [ -z "$actual_login" ]; then
+          echo "::error::$AGENT identity lookup failed: 'gh api /users/${APP_SLUG}[bot]' did not return a login after retrying (not a mismatch - the lookup itself did not succeed)."
+          exit 1
+        fi
+        if [ "$actual_login" != "$EXPECTED_LOGIN" ]; then
+          echo "::error::$AGENT App bot resolved as '$actual_login'; expected '$EXPECTED_LOGIN'."
+          exit 1
+        fi
+
+    - name: Verify git push credential is present
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+      run: |
+        git config --includes --get 'http.https://github.com/.extraheader' >/dev/null \
+          || { echo "::error::Checkout did not retain a GitHub credential for $AGENT finalization."; exit 1; }

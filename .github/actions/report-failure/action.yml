@@ -1,0 +1,68 @@
+name: Report failure on the issue
+description: >-
+  Post the visible failure on the anchor issue/PR, add status:needs-human,
+  and assign the maintainer. Shared tail of every worker's failure path;
+  each workflow computes its own `reason` text inline before calling this.
+
+inputs:
+  token:
+    description: Token used to comment, label, and assign.
+    required: true
+  agent:
+    description: Agent name used in the comment text (e.g. Claude, Codex, OpenCode).
+    required: true
+  message-prefix:
+    description: Optional literal prefix for the comment body (e.g. an emoji).
+    required: false
+    default: ''
+  issue:
+    description: Issue or pull request number to report on.
+    required: true
+  reason:
+    description: Optional extra explanation appended after the run link (already newline-prefixed by the caller).
+    required: false
+    default: ''
+  job-status:
+    description: The job's status context value (job.status), used to distinguish a timeout cancellation from an ordinary failure.
+    required: true
+  maintainer:
+    description: Login to assign as the human maintainer.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Failed agent runs were previously silent - no comment, no PR, nothing
+    # on the issue. Surface them where the work was requested. MUST also
+    # cover cancelled(): a timeout-minutes kill sets conclusion `cancelled`,
+    # not `failure`, so the caller's `if: failure() || cancelled()` is
+    # load-bearing, not this step's own condition.
+    - name: Report failure on the issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        AGENT: ${{ inputs.agent }}
+        MESSAGE_PREFIX: ${{ inputs.message-prefix }}
+        REPO: ${{ github.repository }}
+        SERVER_URL: ${{ github.server_url }}
+        RUN_ID: ${{ github.run_id }}
+        ISSUE_NUM: ${{ inputs.issue }}
+        REASON: ${{ inputs.reason }}
+        JOB_STATUS: ${{ inputs.job-status }}
+        MAINTAINER: ${{ inputs.maintainer }}
+      run: |
+        if [ "$JOB_STATUS" = "cancelled" ]; then
+          MSG="was cancelled (likely hit the 90-minute job timeout)"
+        else
+          MSG="failed"
+        fi
+        gh issue comment "$ISSUE_NUM" \
+          --repo "$REPO" \
+          --body "${MESSAGE_PREFIX}${AGENT} agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
+        # Failure is a machine-authored parking path. Keep blocked state and
+        # the selected agent label intact while adding both durable human
+        # signals. The issue REST endpoints also work for PR anchors.
+        gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
+          -f 'labels[]=status:needs-human' --silent
+        gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
+          -f "assignees[]=$MAINTAINER" --silent
