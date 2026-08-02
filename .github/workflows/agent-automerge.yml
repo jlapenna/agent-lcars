@@ -66,7 +66,7 @@ jobs:
     # this job must never look like it could fire off the cron added above.
     if: >
       (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') &&
-      contains(fromJSON(vars.AGENT_BOT_LOGINS || '[]'), github.event.pull_request.user.login) &&
+      contains(fromJSON(vars.AGENT_BOT_LOGINS), github.event.pull_request.user.login) &&
       (github.event_name != 'pull_request_review' ||
        github.event.review.state == 'approved')
     # Self-hosted, the general-purpose lcars-default pool - NOT
@@ -76,6 +76,24 @@ jobs:
     runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 5
     steps:
+      # This job's own `if:` above also reads AGENT_BOT_LOGINS (fromJSON,
+      # no fallback). A step can only run once the job has already started,
+      # so this assert cannot make an empty/unset AGENT_BOT_LOGINS loud on a
+      # run the `if:` itself would otherwise skip - it only guarantees the
+      # loud failure on runs that do reach this step.
+      - name: Assert required repo variables are set
+        env:
+          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+        run: |
+          missing=""
+          [ -z "$AGENT_BOT_LOGINS" ] && missing="$missing AGENT_BOT_LOGINS"
+          [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing AGENT_FLEET_LOGIN"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required repo variable(s):$missing"
+            exit 1
+          fi
+
       # Ownership spine, matching claude.yml/opencode.yml's own "Claim the
       # issue as jclaw-bot" step: agent-authored PRs carry the fleet's
       # assignee just like the anchor issues they came from. Additive and
@@ -106,13 +124,29 @@ jobs:
     if: >
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'pull_request' &&
-       contains(fromJSON(vars.AGENT_BOT_LOGINS || '[]'), github.event.pull_request.user.login))
+       contains(fromJSON(vars.AGENT_BOT_LOGINS), github.event.pull_request.user.login))
     runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 45
     concurrency:
       group: agent-postmerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
       cancel-in-progress: false
     steps:
+      # This job's own `if:` above also reads AGENT_BOT_LOGINS (fromJSON,
+      # no fallback). A step can only run once the job has already started,
+      # so this assert cannot make an empty/unset AGENT_BOT_LOGINS loud on a
+      # run the `if:` itself would otherwise skip - it only guarantees the
+      # loud failure on runs that do reach this step (every workflow_run
+      # invocation, plus any pull_request invocation whose event-name check
+      # already passed).
+      - name: Assert required repo variables are set
+        env:
+          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
+        run: |
+          if [ -z "$AGENT_BOT_LOGINS" ]; then
+            echo "::error::Missing required repo variable: AGENT_BOT_LOGINS"
+            exit 1
+          fi
+
       - name: Dispatch missing post-merge CI/deploy runs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,7 +154,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS || '[]' }}
+          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
         run: |
           set -euo pipefail
 
@@ -297,11 +331,23 @@ jobs:
     runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 10
     steps:
+      # This job's `if:` above does not consume AGENT_BOT_LOGINS, so unlike
+      # the assert steps in the other two jobs in this file, this one is a
+      # full guarantee: every run of this job reaches this step.
+      - name: Assert required repo variables are set
+        env:
+          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
+        run: |
+          if [ -z "$AGENT_BOT_LOGINS" ]; then
+            echo "::error::Missing required repo variable: AGENT_BOT_LOGINS"
+            exit 1
+          fi
+
       - name: Close open anchors of recently-merged agent PRs
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS || '[]' }}
+          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
         run: |
           set -euo pipefail
 

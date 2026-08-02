@@ -76,7 +76,26 @@ jobs:
     timeout-minutes: 90
     env:
       npm_config_store_dir: /tmp/runner/pnpm-store
+      NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
+      NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
+      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
+      # asserted here - job placement onto a runner happens before any step
+      # runs, so an empty/unset value already fails the job loudly on its
+      # own before this step could ever fire.
+      - name: Assert required repo variables are set
+        env:
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        run: |
+          missing=""
+          [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing AGENT_FLEET_LOGIN"
+          [ -z "$MAINTAINER_LOGIN" ] && missing="$missing MAINTAINER_LOGIN"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required repo variable(s):$missing"
+            exit 1
+          fi
+
       - name: Mint Agent LCARS installation token
         id: agent-lcars-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -88,7 +107,7 @@ jobs:
         id: claim
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
           CLAIM_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         run: |
           pickup_comment_id=""
@@ -145,13 +164,6 @@ jobs:
             mkdir -p /shared-cache/nx
             echo "NX_CACHE_DIRECTORY=/shared-cache/nx" >> "$GITHUB_ENV"
           fi
-
-      # Node 24, a JRE, and an activated corepack shim are all baked into the
-      # shared runner image now (homelab#132) -- see claude.yml's identical
-      # comment for the full rationale and verification.
-
-      # The shared setup action records the wall-clock anchor used by the
-      # deliverable check below.
 
       # Avoid the official composite action's unauthenticated release lookup:
       # anonymous GitHub API traffic is shared across runners and can exhaust
@@ -230,7 +242,7 @@ jobs:
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
           PICKUP_COMMENT_ID: ${{ steps.claim.outputs['pickup-comment-id'] }}
           AGENT_LOGIN: agent-lcars[bot]
-          NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          NUM: ${{ github.event.inputs.issue }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
@@ -291,7 +303,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           RUN_ID: ${{ github.run_id }}
-          ISSUE_NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
+          ISSUE_NUM: ${{ github.event.inputs.issue }}
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           JOB_STATUS: ${{ job.status }}
