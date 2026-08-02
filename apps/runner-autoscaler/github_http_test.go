@@ -34,14 +34,39 @@ func TestGitHubRateLimitedOn429UsesRetryAfter(t *testing.T) {
 	}
 }
 
-func TestGitHubRateLimitedOn429WithoutHeadersUsesFloor(t *testing.T) {
+// TestGitHubRateLimitedOn429WithoutHeadersUsesPollIntervalFloor pins down
+// that a headerless rate limit -- no Retry-After, no usable
+// X-RateLimit-Reset -- waits at least runnerStatusPollInterval (60s), per
+// GitHub's secondary-rate-limit guidance to wait at least one minute in that
+// case. Regressing this to the 5s header-derived floor would hammer GitHub
+// far more aggressively than the fixed-60s-poll behavior this feature
+// replaced.
+func TestGitHubRateLimitedOn429WithoutHeadersUsesPollIntervalFloor(t *testing.T) {
 	resp := newTestResponse(t, http.StatusTooManyRequests, nil, "")
 	wait, limited := githubRateLimited(resp, time.Now())
 	if !limited {
 		t.Fatal("429 not detected as rate limited")
 	}
-	if wait != runnerStatusRateLimitMinBackoff {
-		t.Fatalf("wait = %s, want floor %s", wait, runnerStatusRateLimitMinBackoff)
+	if wait < runnerStatusPollInterval {
+		t.Fatalf("wait = %s, want >= %s (GitHub's documented secondary-rate-limit minimum)", wait, runnerStatusPollInterval)
+	}
+	if wait != runnerStatusRateLimitFallbackBackoff {
+		t.Fatalf("wait = %s, want exactly the fallback constant %s", wait, runnerStatusRateLimitFallbackBackoff)
+	}
+}
+
+// TestGitHubRateLimitedOn403WithRateLimitRemainingZeroWithoutResetUsesPollIntervalFloor
+// covers the other headerless path: X-RateLimit-Remaining: 0 signals a rate
+// limit but there is no (or an unparseable) X-RateLimit-Reset to size the
+// wait from.
+func TestGitHubRateLimitedOn403WithRateLimitRemainingZeroWithoutResetUsesPollIntervalFloor(t *testing.T) {
+	resp := newTestResponse(t, http.StatusForbidden, map[string]string{"X-RateLimit-Remaining": "0"}, "")
+	wait, limited := githubRateLimited(resp, time.Now())
+	if !limited {
+		t.Fatal("403 with exhausted rate limit not detected")
+	}
+	if wait < runnerStatusPollInterval {
+		t.Fatalf("wait = %s, want >= %s", wait, runnerStatusPollInterval)
 	}
 }
 

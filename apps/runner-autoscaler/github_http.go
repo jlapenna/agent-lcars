@@ -18,10 +18,24 @@ const githubErrorBodySnippetLimit = 2 << 10 // 2 KiB
 // runnerStatusRateLimitMinBackoff/MaxBackoff bound the wait this process
 // honors when GitHub signals a rate limit (agent-lcars#321): never busy-loop
 // on a Retry-After of 0, and never let a single bad/huge value from GitHub
-// (or a misbehaving proxy) stall reconciliation indefinitely.
+// (or a misbehaving proxy) stall reconciliation indefinitely. This floor
+// applies ONLY to header-derived waits (Retry-After, X-RateLimit-Reset) --
+// see runnerStatusRateLimitFallbackBackoff for the no-header case, which
+// has a different, higher floor.
 const (
 	runnerStatusRateLimitMinBackoff = 5 * time.Second
 	runnerStatusRateLimitMaxBackoff = 30 * time.Minute
+	// runnerStatusRateLimitFallbackBackoff is the wait used when GitHub
+	// signals a rate limit (429, or 403 with X-RateLimit-Remaining: 0) but
+	// supplies neither Retry-After nor a usable X-RateLimit-Reset to size
+	// the wait from. GitHub's secondary-rate-limit guidance is to wait at
+	// least one minute in that case
+	// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits),
+	// and the pre-agent-lcars#321 code effectively already waited that long
+	// (the fixed 60s poll) -- so this floor must never regress below
+	// runnerStatusPollInterval, unlike the 5s floor used for header-derived
+	// waits above.
+	runnerStatusRateLimitFallbackBackoff = runnerStatusPollInterval
 )
 
 // githubRateLimitError decorates a GitHub REST API error with how long the
@@ -72,8 +86,9 @@ func readBoundedBody(resp *http.Response, limit int) string {
 // X-RateLimit-Remaining: 0 header -- as opposed to an ordinary permission
 // error, which also uses 403 but carries neither header. When limited, it
 // returns how long to wait before the next attempt, preferring Retry-After,
-// then X-RateLimit-Reset, then a floor default; the result is always capped
-// between runnerStatusRateLimitMinBackoff and runnerStatusRateLimitMaxBackoff.
+// then X-RateLimit-Reset (each clamped between runnerStatusRateLimitMinBackoff
+// and runnerStatusRateLimitMaxBackoff), then runnerStatusRateLimitFallbackBackoff
+// when neither header supplies a usable value.
 //
 // See https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
 func githubRateLimited(resp *http.Response, now time.Time) (wait time.Duration, limited bool) {
@@ -95,7 +110,7 @@ func githubRateLimited(resp *http.Response, now time.Time) (wait time.Duration, 
 			return capRateLimitBackoff(time.Unix(epoch, 0).Sub(now)), true
 		}
 	}
-	return runnerStatusRateLimitMinBackoff, true
+	return runnerStatusRateLimitFallbackBackoff, true
 }
 
 func capRateLimitBackoff(d time.Duration) time.Duration {
