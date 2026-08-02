@@ -17,7 +17,9 @@ import {
   handleCompletion,
   isDefiniteDispatchRejection,
   reconcileActive,
+  resolveTask,
 } from './main.mjs';
+import { normalizeEvent } from './normalize.mjs';
 
 const tests = [];
 function test(name, run) {
@@ -100,6 +102,137 @@ function workerRun(status = 'in_progress') {
 test('normalized payload encoding round-trips without shell quoting', () => {
   const value = { body: "apostrophe ' newline\n and unicode ✅" };
   assert.deepEqual(decode(encode(value)), value);
+});
+
+test('resolveTask recovers a canonical TaskRef from real normalize() output for every payload kind (#337)', () => {
+  // Regression test for #337: broker() used to read `normalized.task`
+  // unconditionally, but normalize()'s intent emitter (makeIntent) nests
+  // the TaskRef at `.intent.task` while completion/anchor-control/
+  // control-evidence carry `.task` at the top level. Every actual agent
+  // dispatch is an intent, so this crashed broker() on every intent.
+  //
+  // This drives the REAL normalizeEvent() -- not a hand-built broker
+  // input -- so it exercises the exact shape normalize() produces.
+  const context = {
+    repository: 'jlapenna/agent-lcars',
+    repositoryId: 123,
+    issue: 337,
+    runId: 9001,
+    actor: 'jlapenna',
+    now: '2026-08-01T00:00:01.000Z',
+  };
+  const expectedTask = {
+    repositoryId: 123,
+    repository: 'jlapenna/agent-lcars',
+    issue: 337,
+  };
+  const baseIssue = {
+    id: 3370,
+    number: 337,
+    title: 'Fix dispatch',
+    body: 'Do the work',
+    created_at: '2026-08-01T00:00:00.000Z',
+    updated_at: '2026-08-01T00:00:00.000Z',
+    labels: [{ name: 'agent:codex' }],
+  };
+
+  // intent -- an issues:labeled event with an agent:* label and a
+  // maintainer actor: the exact shape of the live event that crashed
+  // broker() on main (see #337 / #334 / #335 / #336).
+  const labeled = normalizeEvent({
+    eventName: 'issues',
+    event: {
+      action: 'labeled',
+      issue: baseIssue,
+      label: { name: 'agent:codex' },
+      sender: { login: 'jlapenna' },
+    },
+    context,
+    timeline: [
+      {
+        id: 77,
+        event: 'labeled',
+        created_at: baseIssue.updated_at,
+        actor: { login: 'jlapenna' },
+        label: { name: 'agent:codex' },
+      },
+    ],
+    maintainer: 'jlapenna',
+  });
+  assert.equal(labeled.kind, 'intent');
+  assert.equal(labeled.task, undefined);
+  assert.deepEqual(resolveTask(labeled), expectedTask);
+
+  // control-evidence -- unlabeled already carries `.task` at the top level.
+  const unlabeled = normalizeEvent({
+    eventName: 'issues',
+    event: {
+      action: 'unlabeled',
+      issue: baseIssue,
+      label: { name: 'agent:codex' },
+      sender: { login: 'jlapenna' },
+    },
+    context,
+    timeline: [
+      {
+        id: 78,
+        event: 'unlabeled',
+        created_at: baseIssue.updated_at,
+        actor: { login: 'jlapenna' },
+        label: { name: 'agent:codex' },
+      },
+    ],
+    maintainer: 'jlapenna',
+  });
+  assert.equal(unlabeled.kind, 'control-evidence');
+  assert.deepEqual(resolveTask(unlabeled), expectedTask);
+
+  // anchor-control -- a closed issue.
+  const closed = normalizeEvent({
+    eventName: 'issues',
+    event: {
+      action: 'closed',
+      issue: baseIssue,
+      sender: { login: 'automation[bot]' },
+    },
+    context,
+    timeline: [
+      {
+        id: 79,
+        event: 'closed',
+        created_at: baseIssue.updated_at,
+        actor: { login: 'automation[bot]' },
+      },
+    ],
+    maintainer: 'jlapenna',
+  });
+  assert.equal(closed.kind, 'anchor-control');
+  assert.deepEqual(resolveTask(closed), expectedTask);
+
+  // completion -- a worker callback payload also carries `.task` at the
+  // top level.
+  const completionPayload = Buffer.from(
+    JSON.stringify({
+      workerRunId: 42,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workflow: 'codex.yml',
+    }),
+  ).toString('base64url');
+  const completion = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: {},
+    inputs: {
+      kind: 'completion',
+      issue: '337',
+      completion_payload: completionPayload,
+    },
+    context: { ...context, actor: 'github-actions[bot]' },
+    maintainer: 'jlapenna',
+  });
+  assert.equal(completion.kind, 'completion');
+  assert.deepEqual(resolveTask(completion), expectedTask);
 });
 
 test('worker run identity requires repository, event, workflow, and immutable marker', () => {
