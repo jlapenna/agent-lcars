@@ -163,6 +163,27 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     );
     const firstHref = await firstReceipt.getAttribute('href');
 
+    // Idempotent retry resolves to the SAME TaskRef, so the second
+    // submission's notification is byte-identical (same accessible name,
+    // same href) to this one - and Mantine's notification stack
+    // (AppProviders renders an unconfigured `<Notifications />`, so its
+    // defaults apply: `limit: 5`, `autoClose: 4000`) genuinely keeps both
+    // mounted at once rather than swapping one for the other. Re-querying
+    // `taskRefNotification(page)` after the second submit would then match
+    // TWO elements with an identical name/href and fail Playwright's strict
+    // mode. Dismissing this one via its own close button - a real, ordinary
+    // user action, not a test-only escape hatch - keeps exactly one match
+    // live at a time without racing the 4s autoClose timer. Unlike scoping
+    // the second assertion to `.last()`, this also still proves a NEW
+    // notification actually appeared for the retry rather than vacuously
+    // re-matching this one if it happened to still be visible.
+    await page
+      .getByRole('alert')
+      .filter({ has: firstReceipt })
+      .getByRole('button')
+      .click();
+    await expect(firstReceipt).toBeHidden();
+
     // A second, independent modal open/submit cycle with byte-identical
     // content. crypto.randomUUID is still stubbed to the same value, so the
     // real server action receives the exact same requestId + digest as the
