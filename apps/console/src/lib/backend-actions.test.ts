@@ -1135,6 +1135,49 @@ describe('createQuickTask', () => {
     expect(createIssue).toHaveBeenCalledTimes(2);
   });
 
+  it('waits for a just-created claim to become visible before releasing it', async () => {
+    let claimMessage = '';
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const getRef = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'commit', sha: 'base-commit-sha' } },
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Not Found'), { status: 404 }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Bad Gateway'), { status: 502 }),
+      )
+      .mockResolvedValueOnce({
+        data: { object: { type: 'tag', sha: 'our-tag-sha' } },
+      });
+    const createTag = vi.fn().mockImplementation(async (input) => {
+      claimMessage = input.message;
+      return { data: { sha: 'our-tag-sha' } };
+    });
+    const getTag = vi.fn().mockImplementation(async () => ({
+      data: { message: claimMessage },
+    }));
+    const { deleteRef } = mockOctokit({
+      createIssue,
+      getRef,
+      getTag,
+      createTag,
+    });
+
+    await expect(createQuickTask(request)).rejects.toThrow('Validation Failed');
+    expect(getRef).toHaveBeenCalledTimes(5);
+    expect(deleteRef).toHaveBeenCalledTimes(1);
+  });
+
   it('reconciles a claim deletion whose successful response was lost', async () => {
     const createIssue = vi
       .fn()

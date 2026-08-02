@@ -758,11 +758,15 @@ async function releaseQuickTaskClaim(
   claimantId: string,
 ): Promise<void> {
   const attempts = 3;
+  let claimWasObserved = false;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let current: QuickTaskClaim | undefined;
     try {
       current = await reconcileQuickTaskClaimAfterWrite(request, {
-        retryNotFound: false,
+        // Before the first successful read, a 404 can still be propagation
+        // lag from the just-created ref. After ownership has been observed,
+        // a 404 following a failed delete proves our claim is gone.
+        retryNotFound: !claimWasObserved,
       });
     } catch {
       throw new ActionError(
@@ -771,6 +775,7 @@ async function releaseQuickTaskClaim(
       );
     }
     if (!current) return;
+    claimWasObserved = true;
     // A mismatched claim is an invariant violation, not a transient read
     // failure. Never delete a claim we cannot identify.
     assertMatchingQuickTaskClaim(request, digest, current);
@@ -801,6 +806,7 @@ async function releaseQuickTaskClaim(
   let remaining: QuickTaskClaim | undefined;
   try {
     remaining = await reconcileQuickTaskClaimAfterWrite(request, {
+      // Every path to this final check has already observed our claim.
       retryNotFound: false,
     });
   } catch {
