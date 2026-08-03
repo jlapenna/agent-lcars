@@ -41,10 +41,10 @@ describe('isProcessAliveForCwd', () => {
   }
 
   it('is true when a process has a matching cwd', () => {
-    fakeProcess(123, '/home/jlapenna/p/members');
+    fakeProcess(123, '/home/developer/p/members');
     fakeProcess(456, '/tmp/unrelated');
 
-    expect(isProcessAliveForCwd('/home/jlapenna/p/members', procRoot)).toBe(
+    expect(isProcessAliveForCwd('/home/developer/p/members', procRoot)).toBe(
       true,
     );
   });
@@ -52,23 +52,26 @@ describe('isProcessAliveForCwd', () => {
   it('is false when no process matches', () => {
     fakeProcess(456, '/tmp/unrelated');
 
-    expect(isProcessAliveForCwd('/home/jlapenna/p/members', procRoot)).toBe(
+    expect(isProcessAliveForCwd('/home/developer/p/members', procRoot)).toBe(
       false,
     );
   });
 
   it('matches a repository-root process for a nested transcript cwd', () => {
-    fakeProcess(123, '/home/jlapenna/p/members');
+    fakeProcess(123, '/home/developer/p/members');
 
     expect(
-      isProcessAliveForCwd('/home/jlapenna/p/members/.agents/skills', procRoot),
+      isProcessAliveForCwd(
+        '/home/developer/p/members/.agents/skills',
+        procRoot,
+      ),
     ).toBe(true);
   });
 
   it('does not let a process at filesystem root match every cwd', () => {
     fakeProcess(123, '/');
 
-    expect(isProcessAliveForCwd('/home/jlapenna/p/members', procRoot)).toBe(
+    expect(isProcessAliveForCwd('/home/developer/p/members', procRoot)).toBe(
       false,
     );
   });
@@ -76,14 +79,14 @@ describe('isProcessAliveForCwd', () => {
   it('matches a resumed process by session id without matching sibling sessions', () => {
     fakeIdentifiedProcess(
       123,
-      '/home/jlapenna/p/members',
+      '/home/developer/p/members',
       ['codex', 'resume', 'current-session'],
       500,
     );
 
     expect(
       isProcessAliveForCwd(
-        '/home/jlapenna/p/members',
+        '/home/developer/p/members',
         procRoot,
         'current-session',
         '1970-01-01T00:00:00.000Z',
@@ -91,7 +94,7 @@ describe('isProcessAliveForCwd', () => {
     ).toBe(true);
     expect(
       isProcessAliveForCwd(
-        '/home/jlapenna/p/members',
+        '/home/developer/p/members',
         procRoot,
         'historical-session',
         '1970-01-01T00:16:45.000Z',
@@ -103,14 +106,14 @@ describe('isProcessAliveForCwd', () => {
   it('matches a new process by transcript and process start time', () => {
     fakeIdentifiedProcess(
       123,
-      '/home/jlapenna/p/members',
+      '/home/developer/p/members',
       ['claude', '--dangerously-skip-permissions'],
       500,
     );
 
     expect(
       isProcessAliveForCwd(
-        '/home/jlapenna/p/members/.agents/skills',
+        '/home/developer/p/members/.agents/skills',
         procRoot,
         'new-session',
         '1970-01-01T00:16:45.000Z',
@@ -122,14 +125,14 @@ describe('isProcessAliveForCwd', () => {
   it('does not correlate an agent session with a non-agent process', () => {
     fakeIdentifiedProcess(
       123,
-      '/home/jlapenna/p/members',
+      '/home/developer/p/members',
       ['node', 'nx-daemon.js'],
       500,
     );
 
     expect(
       isProcessAliveForCwd(
-        '/home/jlapenna/p/members',
+        '/home/developer/p/members',
         procRoot,
         'historical-session',
         '1970-01-01T00:16:45.000Z',
@@ -144,14 +147,14 @@ describe('isProcessAliveForCwd', () => {
     fs.mkdirSync(pidDir);
     fs.symlinkSync('/does/not/exist/but/is/fine', path.join(pidDir, 'gone'));
 
-    expect(isProcessAliveForCwd('/home/jlapenna/p/members', procRoot)).toBe(
+    expect(isProcessAliveForCwd('/home/developer/p/members', procRoot)).toBe(
       false,
     );
   });
 
   it('fails soft when the proc root does not exist', () => {
     expect(
-      isProcessAliveForCwd('/home/jlapenna/p/members', '/no/such/proc'),
+      isProcessAliveForCwd('/home/developer/p/members', '/no/such/proc'),
     ).toBe(false);
   });
 });

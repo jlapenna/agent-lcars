@@ -104,6 +104,73 @@ describe('WatcherDaemon', () => {
     });
   });
 
+  it('publishes completed-tick and successful active-upsert metrics', async () => {
+    const { store } = createFakeStore();
+    const timestamp = '2026-07-12T10:00:01.000Z';
+    const files = {
+      '/root/proj/session-metrics.jsonl': TRANSCRIPT(
+        'session-metrics',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    const metrics = {
+      recordCompletedTick: vi.fn(),
+      recordSuccessfulSessionUpsert: vi.fn(),
+    };
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => timestamp,
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      metrics,
+    });
+
+    await daemon.tick();
+
+    expect(metrics.recordSuccessfulSessionUpsert).toHaveBeenCalledWith(
+      timestamp,
+      'live',
+    );
+    expect(metrics.recordCompletedTick).toHaveBeenCalledWith(timestamp, 1);
+  });
+
+  it('reports a completed zero-session tick without fabricating an upsert', async () => {
+    const { store } = createFakeStore();
+    const timestamp = '2026-07-12T10:00:01.000Z';
+    const metrics = {
+      recordCompletedTick: vi.fn(),
+      recordSuccessfulSessionUpsert: vi.fn(),
+    };
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => timestamp,
+      discover: () => [],
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      metrics,
+    });
+
+    await daemon.tick();
+
+    expect(metrics.recordSuccessfulSessionUpsert).not.toHaveBeenCalled();
+    expect(metrics.recordCompletedTick).toHaveBeenCalledWith(timestamp, 0);
+  });
+
   it('produces an upsert for a new transcript discovered on a later tick', async () => {
     const { store, upserts } = createFakeStore();
     let files: Record<string, string> = {};
@@ -787,7 +854,7 @@ describe('WatcherDaemon', () => {
       sessionId: 'convo-antigravity-1',
       source: 'cli',
       agent: 'antigravity',
-      cwd: '/home/jlapenna/p/members',
+      cwd: '/home/developer/p/members',
       startedAt: '2026-07-12T09:00:00.000Z',
       lastActivityAt: '2026-07-12T09:55:00.000Z',
       turns: 12,
@@ -818,7 +885,7 @@ describe('WatcherDaemon', () => {
         resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
-          workspacePrefixes: ['/home/jlapenna/p/members'],
+          workspacePrefixes: ['/home/developer/p/members'],
         },
         pollAntigravitySummaries: () => [ANTIGRAVITY_SUMMARY],
       });
@@ -877,7 +944,7 @@ describe('WatcherDaemon', () => {
         resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
-          workspacePrefixes: ['/home/jlapenna/p/members'],
+          workspacePrefixes: ['/home/developer/p/members'],
         },
         pollAntigravitySummaries: poll,
       });
@@ -908,7 +975,7 @@ describe('WatcherDaemon', () => {
         resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
-          workspacePrefixes: ['/home/jlapenna/p/members'],
+          workspacePrefixes: ['/home/developer/p/members'],
         },
         pollAntigravitySummaries: () => [summary],
       });
@@ -950,7 +1017,7 @@ describe('WatcherDaemon', () => {
         resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
-          workspacePrefixes: ['/home/jlapenna/p/members'],
+          workspacePrefixes: ['/home/developer/p/members'],
         },
         pollAntigravitySummaries: () => [ANTIGRAVITY_SUMMARY],
       });
@@ -996,7 +1063,7 @@ describe('WatcherDaemon', () => {
         resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
-          workspacePrefixes: ['/home/jlapenna/p/members'],
+          workspacePrefixes: ['/home/developer/p/members'],
         },
         pollAntigravitySummaries: poll,
       });
@@ -1039,7 +1106,7 @@ describe('WatcherDaemon', () => {
         resolveGitBranch: async () => undefined,
         antigravitySummaryDb: {
           path: '/fake/conversation_summaries.db',
-          workspacePrefixes: ['/home/jlapenna/p/members'],
+          workspacePrefixes: ['/home/developer/p/members'],
         },
         pollAntigravitySummaries: () => [ANTIGRAVITY_SUMMARY],
       });

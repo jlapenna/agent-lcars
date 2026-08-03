@@ -8,30 +8,30 @@ import {
   AntigravitySummaryDbConfig,
   defaultAntigravityWorkspacePrefixes,
 } from './antigravity-summary-source';
-import { checkoutRoot } from './default-checkout';
+import { checkoutRoots } from './default-checkout';
 import { WatchRootConfig } from './watch-roots';
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 const DEFAULT_STALENESS_MULTIPLIER = 5;
+export const DEFAULT_METRICS_HOST = '0.0.0.0';
+export const DEFAULT_METRICS_PORT = 9464;
 
-export interface WatcherConfig {
-  watchRoots: WatchRootConfig[];
+export interface SharedWatcherConfig {
   host: string;
   heartbeatIntervalMs: number;
   stalenessWindowMs: number;
-  shareDir: string;
   firestoreProjectId?: string;
   firestoreWriterKeyJson?: string;
   firestoreEmulatorHost?: string;
-  /** `gs://` bucket (name only, no scheme) that `runner finalize` (issue #24)
-   * archives a session's raw transcript to before shipping its final `ended`
-   * doc — see `finalize.ts`. Defaults to `${firestoreProjectId}-session-transcripts`,
-   * matching the bucket name literal in infra/terraform/main.tf's
-   * `google_storage_bucket.transcripts` (`AGENT_TELEMETRY_TRANSCRIPTS_BUCKET`
-   * overrides it, e.g. for local testing against a different bucket).
-   * `undefined` when `firestoreProjectId` is also unset, since there is no
-   * project to derive a bucket name from. */
+  /** `gs://` bucket (name only, no scheme) used by runner finalize. */
   transcriptsBucket?: string;
+}
+
+export interface WatcherConfig extends SharedWatcherConfig {
+  watchRoots: WatchRootConfig[];
+  shareDir: string;
+  metricsHost: string;
+  metricsPort: number;
   /** Optional Antigravity summary-DB poller config (#3123 phase 3) —
    * default-enabled (see `defaultAntigravitySummaryDbPath` below), so this is
    * only ever `undefined` when `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` is
@@ -111,7 +111,7 @@ function defaultCodexWatchRoot(): WatchRootConfig {
     recursive: true,
     cwdAllowlist: cwdAllowlistRaw
       ? parseAllowlistCsv(cwdAllowlistRaw)
-      : [`${checkoutRoot()}*`],
+      : checkoutRoots().map((root) => `${root}*`),
   };
 }
 
@@ -212,8 +212,8 @@ function parseWatchRootsJson(raw: string): WatchRootConfig[] {
   return parsed.map((entry, index) => validateWatchRoot(entry, index));
 }
 
-/** Reads and validates the daemon's configuration from the environment. */
-export function loadConfig(): WatcherConfig {
+/** Shared host/runner settings that do not evaluate host privacy scope. */
+export function loadSharedConfig(): SharedWatcherConfig {
   const heartbeatIntervalMs = Number(
     optional('AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS') ??
       DEFAULT_HEARTBEAT_INTERVAL_MS,
@@ -223,24 +223,6 @@ export function loadConfig(): WatcherConfig {
       heartbeatIntervalMs * DEFAULT_STALENESS_MULTIPLIER,
   );
 
-  const watchRootsRaw = optional('AGENT_TELEMETRY_WATCH_ROOTS');
-  const watchRoots = watchRootsRaw
-    ? parseWatchRootsJson(watchRootsRaw)
-    : [defaultWatchRoot(), defaultCodexWatchRoot()];
-
-  // Default-enabled: unset means "use the default path", an explicit empty
-  // string means "disable entirely" (e.g. a host with no Antigravity CLI) -
-  // distinct from `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`'s override-only
-  // semantics above since this source has no equivalent opt-in trigger.
-  const antigravityDbRaw = optional('AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB');
-  const antigravitySummaryDb: AntigravitySummaryDbConfig | undefined =
-    antigravityDbRaw === ''
-      ? undefined
-      : {
-          path: antigravityDbRaw ?? defaultAntigravitySummaryDbPath(),
-          workspacePrefixes: defaultAntigravityWorkspacePrefixes(),
-        };
-
   const firestoreProjectId = optional('AGENT_TELEMETRY_PROJECT_ID');
   const transcriptsBucket =
     optional('AGENT_TELEMETRY_TRANSCRIPTS_BUCKET') ??
@@ -249,16 +231,55 @@ export function loadConfig(): WatcherConfig {
       : undefined);
 
   return {
-    watchRoots,
     host: optional('AGENT_TELEMETRY_HOST') ?? os.hostname(),
     heartbeatIntervalMs,
     stalenessWindowMs,
-    shareDir:
-      optional('AGENT_TELEMETRY_SHARE_DIR') ?? path.join(os.homedir(), 'share'),
     firestoreProjectId,
     firestoreWriterKeyJson: optional('AGENT_TELEMETRY_WRITER_KEY_JSON'),
     firestoreEmulatorHost: optional('FIRESTORE_EMULATOR_HOST'),
     ...(transcriptsBucket && { transcriptsBucket }),
+  };
+}
+
+/** Reads and validates the long-lived host daemon's configuration. */
+export function loadConfig(): WatcherConfig {
+  const shared = loadSharedConfig();
+  const watchRootsRaw = optional('AGENT_TELEMETRY_WATCH_ROOTS');
+  const watchRoots = watchRootsRaw
+    ? parseWatchRootsJson(watchRootsRaw)
+    : [defaultWatchRoot(), defaultCodexWatchRoot()];
+
+  // Default-enabled: unset means "use the default path", an explicit empty
+  // string means "disable entirely" (e.g. a host with no Antigravity CLI).
+  const antigravityDbRaw = optional('AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB');
+  const antigravitySummaryDb: AntigravitySummaryDbConfig | undefined =
+    antigravityDbRaw === ''
+      ? undefined
+      : {
+          path: antigravityDbRaw ?? defaultAntigravitySummaryDbPath(),
+          workspacePrefixes: defaultAntigravityWorkspacePrefixes(),
+        };
+  const metricsPort = Number(
+    optional('AGENT_TELEMETRY_METRICS_PORT') ?? DEFAULT_METRICS_PORT,
+  );
+  if (
+    !Number.isInteger(metricsPort) ||
+    metricsPort < 1 ||
+    metricsPort > 65535
+  ) {
+    throw new Error(
+      'AGENT_TELEMETRY_METRICS_PORT must be an integer from 1 to 65535',
+    );
+  }
+
+  return {
+    ...shared,
+    watchRoots,
+    shareDir:
+      optional('AGENT_TELEMETRY_SHARE_DIR') ?? path.join(os.homedir(), 'share'),
+    metricsHost:
+      optional('AGENT_TELEMETRY_METRICS_HOST') ?? DEFAULT_METRICS_HOST,
+    metricsPort,
     ...(antigravitySummaryDb && { antigravitySummaryDb }),
   };
 }

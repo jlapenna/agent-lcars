@@ -18,6 +18,7 @@ import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { applyGitContext } from './git-context';
 import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
+import { WatcherMetricsSink } from './metrics';
 import {
   isProcessAliveForCwd as defaultIsProcessAliveForCwd,
   scanProcCwds,
@@ -83,6 +84,8 @@ export interface WatcherDaemonOptions {
    * no equivalent (an ephemeral CI container never has the Antigravity CLI
    * installed). */
   antigravitySummaryDb?: AntigravitySummaryDbConfig;
+  /** Host-watcher Prometheus observer. Runner mode deliberately omits it. */
+  metrics?: WatcherMetricsSink;
   now?: () => string;
   readFile?: (filePath: string) => string;
   statFile?: (filePath: string) => FileStat;
@@ -358,6 +361,7 @@ export class WatcherDaemon {
       try {
         await this.options.store.upsertSession(doc);
         this.lastWrittenDocs.set(sessionId, serializedDoc);
+        this.options.metrics?.recordSuccessfulSessionUpsert(now, liveness);
       } catch (error) {
         logger.warn(
           `agent-lcars-telemetry-watcher: failed to upsert session ${sessionId}, will retry next tick`,
@@ -367,6 +371,7 @@ export class WatcherDaemon {
     }
 
     await this.tickAntigravitySummaries(now);
+    this.options.metrics?.recordCompletedTick(now, this.sessions.size);
   }
 
   /**
@@ -428,6 +433,7 @@ export class WatcherDaemon {
 
       try {
         await this.options.store.upsertSession(doc);
+        this.options.metrics?.recordSuccessfulSessionUpsert(now, liveness);
         this.antigravityLastModified.set(
           summary.sessionId,
           summary.lastActivityAt,

@@ -68,10 +68,13 @@ export interface EnvVars {
   // Agent telemetry host watcher (issue #2540). See
   // infra/terraform/main.tf for the dedicated Firestore database + writer
   // SA this daemon authenticates as.
-  /** The checkout this watcher is scoped to. Every source's default
-   * allowlist derives from it - see `default-checkout.ts`. Deployment
-   * config; the fallback is this deployment's own checkout. */
+  /** Legacy single-root compatibility alias for
+   * `AGENT_TELEMETRY_CHECKOUT_ROOTS`. */
   AGENT_TELEMETRY_CHECKOUT_ROOT?: string;
+  /** Required comma-separated checkout roots this host watcher may ship.
+   * Every source's default privacy allowlist derives from this one value;
+   * host mode deliberately has no built-in path fallback. */
+  AGENT_TELEMETRY_CHECKOUT_ROOTS?: string;
   /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts.
    * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
@@ -104,6 +107,10 @@ export interface EnvVars {
   AGENT_TELEMETRY_STALENESS_WINDOW_MS?: string;
   /** Root of `~/share` (share-media skill convention) to scan for session artifacts; defaults to `~/share`. */
   AGENT_TELEMETRY_SHARE_DIR?: string;
+  /** Address for the host watcher's Prometheus endpoint; defaults to `0.0.0.0`. */
+  AGENT_TELEMETRY_METRICS_HOST?: string;
+  /** Port for the host watcher's Prometheus endpoint; defaults to `9464`. */
+  AGENT_TELEMETRY_METRICS_PORT?: string;
   /** Absolute path to Antigravity's global summary-tier SQLite DB
    * (`conversation_summaries.db`) - default-enabled at
    * `~/.gemini/antigravity-cli/conversation_summaries.db` when unset; an

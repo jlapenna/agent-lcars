@@ -15,7 +15,7 @@ describe('codexAdapter', () => {
         sessionId: 'codex-session-1',
         source: 'cli',
         agent: 'codex',
-        cwd: '/home/jlapenna/p/members',
+        cwd: '/home/developer/p/members',
         model: 'gpt-5.6',
         permissionMode: 'on-request',
         title: 'Fix telemetry support',
