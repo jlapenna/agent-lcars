@@ -19,13 +19,18 @@ jobs:
   verify:
     name: Verify
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    # Self-hosted for everything trusted (push to main, merge_group,
-    # workflow_dispatch, and a same-repo PR branch -- opening one already
-    # requires write access to this repo). Only a pull_request whose head is
-    # a fork -- the one case where this public repo would be building and
-    # running someone else's arbitrary code -- falls back to ubuntu-latest,
-    # since a fork PR needs no repo permissions at all to open.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
+    # Still ubuntu-latest, not self-hosted, for now: this job's `nx run-many`
+    # includes @agent-lcars/runner-autoscaler:test-race (`go test -race`),
+    # which requires cgo. The self-hosted runner image has no C toolchain,
+    # and the `runner` user it executes as has no sudo to install one at
+    # runtime (only the image build's earlier `USER root` phase could).
+    # test-race is the *only* test target this Go app has in CI and it
+    # caught a real data race the day before this comment was written
+    # (#338) -- not something to drop to unblock this migration. Move this
+    # job once the runner image bakes in a C toolchain (see follow-up
+    # issue); ci.yml's `e2e` job, codeql.yml, and agent-router.yml already
+    # don't have this dependency and are self-hosted below/elsewhere.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -110,7 +115,13 @@ jobs:
   e2e:
     name: E2E
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    # See the `verify` job above for the fork-safety rationale.
+    # Self-hosted for everything trusted (push to main, merge_group,
+    # workflow_dispatch, and a same-repo PR branch); ubuntu-latest only for
+    # a pull_request whose head is a fork -- the one case where this public
+    # repo would be building/running someone else's arbitrary code (see
+    # codeql.yml's `analyze` job for the same rationale in more detail).
+    # No cgo dependency here (that's the `verify` job's problem), so this
+    # job doesn't need the ubuntu-latest carve-out `verify` currently has.
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 20
 

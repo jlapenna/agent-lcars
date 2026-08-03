@@ -19,8 +19,13 @@ concurrency:
 jobs:
   analyze:
     name: Analyze JavaScript and TypeScript
-    # See ci.yml's `verify` job for the fork-safety rationale: self-hosted
-    # for everything trusted, ubuntu-latest only for a fork's pull_request.
+    # Self-hosted for everything trusted (push to main, workflow_dispatch,
+    # scheduled, and a same-repo PR branch -- opening one already requires
+    # write access to this repo); ubuntu-latest only for a pull_request
+    # whose head is a fork -- the one case where this public repo would be
+    # analyzing someone else's arbitrary code, since a fork PR needs no
+    # repo permissions at all to open. See ci.yml's `e2e` job for the same
+    # rationale.
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 30
     permissions:
