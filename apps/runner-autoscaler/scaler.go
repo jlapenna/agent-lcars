@@ -71,10 +71,11 @@ type Scaler struct {
 	// socketless build-client lane uses these and nothing else.
 	fileMounts []FileMount
 	// workDirSizeCapBytes: size ceiling for the shared /home/runner/_work
-	// directory bind-mounted into every runner when MountDockerSocket is
+	// directory bind-mounted into every runner when ShareWorkDir is
 	// set -- that shared dir has no per-container lifecycle to clean it up,
 	// unlike a normal container's writable layer. Only enforced by
-	// RunWorkDirSweeper, which is only started when mountDockerSocket is true.
+	// RunWorkDirSweeper, which is only started when ShareWorkDir is true
+	// (split from MountDockerSocket in agent-lcars#101/#136).
 	workDirSizeCapBytes int64
 	workDirSizeCaps     map[string]int64
 	hostRunnerLimits    map[string]int
@@ -554,11 +555,19 @@ func (a *Scaler) pruneDeadIdleRunners(ctx context.Context) {
 			continue
 		}
 		reason := "container no longer exists"
+		metricReason := runnerDeadReasonNotFound
 		if inspectErr == nil {
 			reason = fmt.Sprintf("container state is %q, not running", info.State.Status)
+			metricReason = runnerDeadReasonNotRunning
 		}
 		a.logger.Warn("Pruning idle runner whose container is not actually running",
 			slog.String("name", e.name), slog.String("host", e.ref.host), slog.String("reason", reason))
+		// Distinguishes "died before ever completing a job" (e.g. a
+		// crash-looping image, such as entrypoint.sh's node24 preflight
+		// failing on every boot) from ordinary job-completion churn, which
+		// only ever shows up here as a slog.Warn otherwise -- see
+		// agent-lcars#393.
+		runnerDiedIdleTotal.WithLabelValues(a.scaleSetLabel(), e.ref.host, metricReason).Inc()
 		a.runners.markDone(e.name)
 		a.deregisterRunner(ctx, e.name)
 	}
@@ -1907,6 +1916,20 @@ const sweepStaleMinutes = 60
 // 2026-07-18: this shared dir has no per-container lifecycle, so without this
 // nothing else ever reclaims it.
 func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
+	// A scheduled prune reclaiming disk on an idle host (this fleet's
+	// documented maintenance) can remove a.runnerImage from it entirely
+	// between real placements -- exactly the idle hosts this externals
+	// health check exists to catch. Without this, ContainerCreate below
+	// fails outright on such a host, and the health check silently never
+	// runs there until a real job happens to place a runner (which itself
+	// calls ensureRunnerImage first) -- the exact reactive gap agent-lcars#392
+	// exists to close. startRunner already does the same before creating a
+	// real runner container; this is that same guard for the maintenance
+	// helper container.
+	if err := a.ensureRunnerImage(ctx, client, host); err != nil {
+		return fmt.Errorf("ensuring runner image before workdir sweep on host %q: %w", host, err)
+	}
+
 	capBytes := a.workDirSizeCapBytes
 	if override, ok := a.workDirSizeCaps[host]; ok {
 		capBytes = override
@@ -1941,6 +1964,20 @@ if [ "$before" -gt "$cap" ]; then
 fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
+
+# Proactively verify (and repair) the shared externals/node24 runtime as
+# part of this same idle-host maintenance pass (agent-lcars#392), using the
+# identical self-heal logic and lock file entrypoint.sh uses (baked into
+# this same image), so a broken host is caught between real jobs instead of
+# only when one happens to hit it, and this can never race a booting
+# runner's own repair attempt.
+. /usr/local/lib/agent-lcars/externals-health.sh
+repair_externals_if_needed
+if node24_runs; then
+  echo "EXTERNALS_HEALTHY=1"
+else
+  echo "EXTERNALS_HEALTHY=0"
+fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
 
 	resp, err := client.ContainerCreate(ctx,
@@ -1952,7 +1989,10 @@ echo "SWEEP before=$before after=$after cap=$cap"
 			Tty:        true,
 		},
 		&container.HostConfig{
-			Binds: []string{"/home/runner/_work:/home/runner/_work"},
+			Binds: []string{
+				"/home/runner/_work:/home/runner/_work",
+				"/home/runner/externals:/home/runner/externals",
+			},
 		},
 		nil, nil, "",
 	)
@@ -1997,7 +2037,29 @@ echo "SWEEP before=$before after=$after cap=$cap"
 		workdirSweptBytesTotal.WithLabelValues(host).Add(float64(reclaimed))
 		a.logger.Info("Swept shared workdir", slog.String("host", host), slog.Int64("before_bytes", before), slog.Int64("after_bytes", after), slog.Int64("reclaimed_bytes", reclaimed))
 	}
+
+	healthy, healthOK := parseExternalsHealthOutput(string(out))
+	if !healthOK {
+		a.logger.Warn("Could not parse externals-health output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
+		return nil
+	}
+	if healthy {
+		hostExternalsHealthyGauge.WithLabelValues(host).Set(1)
+	} else {
+		hostExternalsHealthyGauge.WithLabelValues(host).Set(0)
+		a.logger.Warn("Shared externals/node24 runtime is still unhealthy after a repair attempt", slog.String("host", host))
+	}
 	return nil
+}
+
+var externalsHealthRe = regexp.MustCompile(`EXTERNALS_HEALTHY=([01])`)
+
+func parseExternalsHealthOutput(out string) (healthy, ok bool) {
+	m := externalsHealthRe.FindStringSubmatch(out)
+	if m == nil {
+		return false, false
+	}
+	return m[1] == "1", true
 }
 
 var sweepOutputRe = regexp.MustCompile(`SWEEP before=(\d+) after=(\d+)`)
