@@ -12,6 +12,7 @@ import {
 import { displayRunTitle, issueUrlForRun } from '../../lib/agent-activity';
 import type {
   AttemptAttribution,
+  ExecutionAttempt,
   LogicalWork,
   LogicalWorkState,
 } from '../../lib/logical-work';
@@ -51,6 +52,34 @@ const ATTRIBUTION_LABELS: Record<AttemptAttribution, string> = {
   'legacy-title': 'legacy title',
   unattributed: 'unattributed',
 };
+
+/**
+ * `classifyAgentRun`/`classifyRunStatus` treats every non-completed run
+ * status as `running` - it only exists to distinguish a *finished* run's
+ * outcome (see run-status-classifier.ts's own doc comment), and has no
+ * notion of "queued" at all. That's fine once an attempt is actually
+ * running, but running a queued attempt through it would relabel "queued"
+ * as "running" - claiming work is actively executing when it may still be
+ * waiting for a runner (Codex review on #375). Handle queued explicitly
+ * with the same gray "queued" badge agent-activity-panel.tsx's `LiveRunRow`
+ * already uses for a live run's own queued state, and only run the
+ * classifier for running/completed attempts - where its "running" mapping
+ * is already correct and its completed-outcome classification is exactly
+ * what this badge exists to show.
+ */
+function attemptStatusBadge(attempt: ExecutionAttempt): {
+  label: string;
+  color: string;
+} {
+  if (attempt.status === 'queued') {
+    return { label: 'queued', color: 'gray' };
+  }
+  const classification = classifyAgentRun(attempt);
+  return {
+    label: STATUS_LABELS[classification.status],
+    color: STATUS_COLORS[classification.status],
+  };
+}
 
 /**
  * The canonical logical-task card (#306): task identity, current state, the
@@ -166,14 +195,7 @@ export function LogicalWorkCard({
             </Text>
           )}
           {work.attempts.map((attempt) => {
-            // Same classifier FinishedRunRow uses (agent-activity-panel.tsx)
-            // - a completed attempt's badge distinguishes failed/timed-out/
-            // cancelled/silent-error from a genuine success instead of
-            // rendering every completed attempt as the same gray badge (no
-            // session doc is joined here, so `diagnosis` is never shown -
-            // see classifyAgentRun's own doc comment for that graceful
-            // degradation).
-            const classification = classifyAgentRun(attempt);
+            const badge = attemptStatusBadge(attempt);
             return (
               <Group
                 key={attempt.id}
@@ -181,12 +203,8 @@ export function LogicalWorkCard({
                 wrap="wrap"
                 data-testid={`logical-work-attempt-${attempt.id}`}
               >
-                <Badge
-                  variant="filled"
-                  color={STATUS_COLORS[classification.status]}
-                  size="xs"
-                >
-                  {STATUS_LABELS[classification.status]}
+                <Badge variant="filled" color={badge.color} size="xs">
+                  {badge.label}
                 </Badge>
                 <PipelineBadge pipeline={attempt.pipeline} />
                 {attempt.generation !== undefined && (

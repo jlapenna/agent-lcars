@@ -2,7 +2,12 @@ import { cacheLife, cacheTag } from 'next/cache';
 
 import { isNotFound } from './backend-actions';
 import { GITHUB_DATA_TAG } from './cache-tags';
-import { DASHBOARD_CACHE_LIFE, getCachedAgentActivity } from './dashboard-data';
+import {
+  DASHBOARD_CACHE_LIFE,
+  type Fetched,
+  getCachedAgentActivity,
+  oldestFetchedAt,
+} from './dashboard-data';
 import {
   getGithubClient,
   repoItemKey,
@@ -20,6 +25,12 @@ export type TaskDetailResult =
       work: LogicalWork;
       repo: WatchedRepo;
       anchorState: 'open' | 'closed';
+      /** The oldest `fetchedAt` of every cached source this result was
+       * built from (see `dashboard-data.ts`'s `oldestFetchedAt`) - the page
+       * component's "Updated ..." label reads this instead of the render
+       * time, so a cache hit up to `DASHBOARD_CACHE_LIFE` old doesn't
+       * misreport itself as "just now". */
+      generatedAt: string;
     }
   | { status: 'not-found' }
   | { status: 'error'; warning: string };
@@ -48,11 +59,19 @@ interface GithubIssueLike {
  * the cached `getCachedAgentActivity()`, so a click could leave the
  * attempts list showing up to `DASHBOARD_CACHE_LIFE`-stale data with no way
  * to force it current.
+ *
+ * Returns the same `Fetched<T>` shape `getCachedActionItems`/
+ * `getCachedAgentActivity` do, timestamped INSIDE the cached function so the
+ * timestamp is cached alongside the data it describes (see `Fetched`'s own
+ * doc comment) - a cache hit must report the data's real age, not the
+ * render time.
  */
 async function getCachedTaskSource(
   repo: WatchedRepo,
   issueNumber: number,
-): Promise<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }> {
+): Promise<
+  Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
+> {
   'use cache';
   cacheTag(GITHUB_DATA_TAG);
   cacheLife(DASHBOARD_CACHE_LIFE);
@@ -72,7 +91,10 @@ async function getCachedTaskSource(
     { number: issueNumber, isPr, wantsComments: true },
   ]);
 
-  return { issue, itemEnrichment: enrichment.byNumber.get(issueNumber) };
+  return {
+    data: { issue, itemEnrichment: enrichment.byNumber.get(issueNumber) },
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -108,10 +130,12 @@ export async function getTaskDetail(
 
   let issue: GithubIssueLike;
   let itemEnrichment: ItemEnrichment | undefined;
+  let sourceFetchedAt: string;
   try {
     const source = await getCachedTaskSource(repo, issueNumber);
-    issue = source.issue;
-    itemEnrichment = source.itemEnrichment;
+    issue = source.data.issue;
+    itemEnrichment = source.data.itemEnrichment;
+    sourceFetchedAt = source.fetchedAt;
   } catch (error) {
     if (isNotFound(error)) return { status: 'not-found' };
     console.error(
@@ -130,7 +154,8 @@ export async function getTaskDetail(
     typeof label === 'string' ? label : (label.name ?? ''),
   );
 
-  const { data: activity } = await getCachedAgentActivity();
+  const { data: activity, fetchedAt: activityFetchedAt } =
+    await getCachedAgentActivity();
   const attempts = activity.liveRunAttempts ?? activity.liveRuns;
   const allAttempts = [...attempts, ...activity.recentRuns];
 
@@ -164,5 +189,9 @@ export async function getTaskDetail(
     work: task,
     repo,
     anchorState: issue.state === 'closed' ? 'closed' : 'open',
+    // Both cached sources this result was built from - the older of the
+    // two is the honest staleness figure (see `oldestFetchedAt`'s own doc
+    // comment).
+    generatedAt: oldestFetchedAt(sourceFetchedAt, activityFetchedAt),
   };
 }

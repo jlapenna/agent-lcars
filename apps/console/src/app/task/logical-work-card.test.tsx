@@ -119,6 +119,17 @@ describe('LogicalWorkCard', () => {
     expect(within(attempts).getByTestId('logical-work-attempt-2')).toBeTruthy();
   });
 
+  it('shows a queued attempt as queued, not running (Codex review on #375)', () => {
+    renderCard(
+      makeWork({
+        attempts: [makeAttempt({ id: 1, status: 'queued' })],
+      }),
+    );
+    const attempt = screen.getByTestId('logical-work-attempt-1');
+    expect(within(attempt).getByText('queued')).toBeTruthy();
+    expect(within(attempt).queryByText('running')).toBeNull();
+  });
+
   it('distinguishes a failed completed attempt from a successful one, not just "completed"', () => {
     renderCard(
       makeWork({

@@ -43,7 +43,12 @@ async function TaskDetailPageContent({ params }: PageProps) {
     notFound();
   }
 
-  const generatedAt = new Date().toISOString();
+  // `detail.status === 'ok'` reports the real age of the cached sources it
+  // was built from (see `getTaskDetail`'s own doc comment on `generatedAt`)
+  // - only the 'error' case (nothing was fetched at all) falls back to the
+  // render time.
+  const generatedAt =
+    detail.status === 'ok' ? detail.generatedAt : new Date().toISOString();
 
   return (
     <Container size="xl" py="xl">
