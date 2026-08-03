@@ -19,14 +19,15 @@ concurrency:
 jobs:
   analyze:
     name: Analyze JavaScript and TypeScript
-    # Self-hosted for everything trusted (push to main, workflow_dispatch,
-    # scheduled, and a same-repo PR branch -- opening one already requires
-    # write access to this repo); ubuntu-latest only for a pull_request
-    # whose head is a fork -- the one case where this public repo would be
-    # analyzing someone else's arbitrary code, since a fork PR needs no
-    # repo permissions at all to open. See ci.yml's `e2e` job for the same
-    # rationale.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
+    # ubuntu-latest unconditionally, not just for fork PRs: GitHub's CodeQL
+    # CLI has no linux/arm64 build at all (confirmed on this PR's own CI --
+    # "The CodeQL CLI does not support the platform/architecture
+    # combination of linux/arm64"), and this repo's self-hosted fleet
+    # includes arm64 hosts. A same-repo/trusted trigger landing on one of
+    # those would fail outright, not just be unsafe -- this is a hard
+    # platform incompatibility, not a trust-boundary question, so it gets
+    # no fork-safety ternary at all.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
