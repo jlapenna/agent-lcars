@@ -23,8 +23,25 @@ node24_runs() {
 # Serializes against every other caller on the same host (a concurrently
 # booting runner's own entrypoint.sh, or another maintenance sweep) via the
 # same lock file, so two racing repairs can never tear each other's copy.
+#
+# The maintenance sweep runs this as root (scaler.go:sweepHostWorkDir), while
+# a real runner's entrypoint.sh runs it as the unprivileged `runner` user. If
+# root's sweep is ever the FIRST caller to touch this lock on a given host
+# (e.g. a newly onboarded host, or the fleet-wide sweep's initial pass on
+# control-plane startup racing ahead of any real runner there), opening it
+# for write creates it root-owned at the default umask -- not writable by
+# `runner` -- and every subsequent real runner's own `exec 9>` on this same
+# file would then fail permission-denied before it ever reaches the
+# node24 check at all. touch+chmod unconditionally, before opening: root's
+# own chmod always succeeds regardless of the file's prior owner (root
+# bypasses the owner check), self-healing this the same way node24 itself
+# gets self-healed below; a non-root caller's chmod attempt on a file it
+# doesn't already own harmlessly fails and is ignored -- the mode root
+# already set stands.
 repair_externals_if_needed() {
   mkdir -p /home/runner/_work
+  touch /home/runner/_work/.externals-populate.lock 2>/dev/null || true
+  chmod 0666 /home/runner/_work/.externals-populate.lock 2>/dev/null || true
   exec 9>/home/runner/_work/.externals-populate.lock
   flock 9
   if ! node24_runs; then

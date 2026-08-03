@@ -1916,6 +1916,20 @@ const sweepStaleMinutes = 60
 // 2026-07-18: this shared dir has no per-container lifecycle, so without this
 // nothing else ever reclaims it.
 func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
+	// A scheduled prune reclaiming disk on an idle host (this fleet's
+	// documented maintenance) can remove a.runnerImage from it entirely
+	// between real placements -- exactly the idle hosts this externals
+	// health check exists to catch. Without this, ContainerCreate below
+	// fails outright on such a host, and the health check silently never
+	// runs there until a real job happens to place a runner (which itself
+	// calls ensureRunnerImage first) -- the exact reactive gap agent-lcars#392
+	// exists to close. startRunner already does the same before creating a
+	// real runner container; this is that same guard for the maintenance
+	// helper container.
+	if err := a.ensureRunnerImage(ctx, client, host); err != nil {
+		return fmt.Errorf("ensuring runner image before workdir sweep on host %q: %w", host, err)
+	}
+
 	capBytes := a.workDirSizeCapBytes
 	if override, ok := a.workDirSizeCaps[host]; ok {
 		capBytes = override
