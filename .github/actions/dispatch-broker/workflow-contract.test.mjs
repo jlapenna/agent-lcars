@@ -102,6 +102,21 @@ test('workers carry no per-issue concurrency group; the broker owns that dedup (
   );
 });
 
+test('codex.yml has no disabled legacy queue hand-off step (#307)', async () => {
+  // The v1 broker's dispatchAccepted() (main.mjs) now owns promoting and
+  // re-dispatching a queued generation once the active one completes -- see
+  // broker.mjs's completeRun/markDispatchRejected. The old in-workflow
+  // "dispatch the next unclaimed codex issue" step this repo carried as a
+  // permanently `if: false` compatibility placeholder is gone; guard against
+  // it quietly coming back.
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'codex.yml'),
+    'utf8',
+  );
+  assert.doesNotMatch(source, /Dispatch the next queued Codex issue/u);
+  assert.doesNotMatch(source, /if:\s*\$\{\{\s*false\s*\}\}/u);
+});
+
 test('workers are dispatch-only and cannot subscribe directly to issue events', async () => {
   const sources = await workflowSources();
   for (const worker of [
