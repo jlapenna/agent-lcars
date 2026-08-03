@@ -208,7 +208,7 @@ jobs:
 
           smoke="$(mktemp -d)"
           cp dist/apps/telemetry-watcher/sidecar.cjs "$smoke/"
-          mkdir -p "$smoke/projects" "$smoke/codex"
+          mkdir -p "$smoke/projects" "$smoke/codex" "$smoke/checkout"
 
           # No credentials configured, so it falls back to the log-only
           # store by design and writes nothing to Firestore. It is a daemon
@@ -218,6 +218,7 @@ jobs:
           ( cd "$smoke" \
             && AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR="$smoke/projects" \
                AGENT_TELEMETRY_CODEX_SESSIONS_DIR="$smoke/codex" \
+               AGENT_TELEMETRY_CHECKOUT_ROOTS="$smoke/checkout" \
                AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB='' \
                timeout 30s node sidecar.cjs ) > "$smoke/out.log" 2>&1 || true
 
