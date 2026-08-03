@@ -19,18 +19,15 @@ jobs:
   verify:
     name: Verify
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    # Still ubuntu-latest, not self-hosted, for now: this job's `nx run-many`
-    # includes @agent-lcars/runner-autoscaler:test-race (`go test -race`),
-    # which requires cgo. The self-hosted runner image has no C toolchain,
-    # and the `runner` user it executes as has no sudo to install one at
-    # runtime (only the image build's earlier `USER root` phase could).
-    # test-race is the *only* test target this Go app has in CI and it
-    # caught a real data race the day before this comment was written
-    # (#338) -- not something to drop to unblock this migration. Move this
-    # job once the runner image bakes in a C toolchain (see follow-up
-    # issue); ci.yml's `e2e` job, codeql.yml, and agent-router.yml already
-    # don't have this dependency and are self-hosted below/elsewhere.
-    runs-on: ubuntu-latest
+    # Self-hosted for everything trusted (push to main, merge_group,
+    # workflow_dispatch, and a same-repo PR branch -- opening one already
+    # requires write access to this repo); ubuntu-latest only for a
+    # pull_request whose head is a fork (#408's rationale). This job's `nx
+    # run-many` includes @agent-lcars/runner-autoscaler:test-race (`go test
+    # -race`), which needs cgo -- the runner image now bakes in a C
+    # toolchain (gcc/libc6-dev, #410) via EXTRA_APT_PACKAGES, so this no
+    # longer needs the ubuntu-latest carve-out it had between #408 and #410.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 30
 
     steps:
