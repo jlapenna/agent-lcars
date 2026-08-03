@@ -274,6 +274,8 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	go func() { defer wg.Done(); runtimes[0].scaler.RunHostSampler(ctx) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); runFleetOrphanSweeper(ctx, runtimes) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); runFleetDrainWatchdog(ctx, runtimes) }()
 	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)
 	for _, runtime := range runtimes {
 		if runtime.config.ShareWorkDir {
@@ -456,6 +458,28 @@ func runFleetOrphanSweeper(ctx context.Context, runtimes []*scaleSetRuntime) {
 				if initialized {
 					runtime.scaler.cleanupOrphans(ctx, false)
 				}
+			}
+		}
+	}
+}
+
+// runFleetDrainWatchdog polls every scale set for a stuck drain (see
+// (*Scaler).checkDrainWatchdog / drainStuckTimeout) and self-heals it. Runs
+// unconditionally, independent of runtime.initialized: a scale set can be
+// left draining before its GitHub registration ever completes, since
+// runOrchestrator's SIGUSR1 handler calls BeginDrain on every runtime
+// regardless of initialization state.
+func runFleetDrainWatchdog(ctx context.Context, runtimes []*scaleSetRuntime) {
+	ticker := time.NewTicker(drainWatchdogInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			for _, runtime := range runtimes {
+				runtime.scaler.checkDrainWatchdog(now)
 			}
 		}
 	}

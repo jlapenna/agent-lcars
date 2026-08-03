@@ -91,8 +91,12 @@ type Scaler struct {
 	// of treating runner count as a sufficient proxy for host saturation.
 	hostMetricsURLTemplate string
 	draining               atomic.Bool
-	hostLoadPolicy         hostLoadPolicy
-	hostMemoryExempt       map[string]bool
+	// drainZeroSince is the UnixNano timestamp (0 = unset) at which this
+	// scale set was first observed draining with zero tracked runners. Read
+	// and written only by checkDrainWatchdog; see its doc comment.
+	drainZeroSince   atomic.Int64
+	hostLoadPolicy   hostLoadPolicy
+	hostMemoryExempt map[string]bool
 	// readiness* configure the operator-defined placement gate applied to
 	// hosts that set require_readiness. See hostReady.
 	readinessMetricsURL string
@@ -2210,6 +2214,62 @@ func (a *Scaler) BeginDrain(ctx context.Context) {
 	drainingGauge.WithLabelValues(scaleSet).Set(1)
 	a.logger.Info("Drain started; refusing new runner placements")
 	a.removeIdleRunners(ctx)
+}
+
+// drainWatchdogInterval is how often runFleetDrainWatchdog polls every scale
+// set for a stuck drain (see drainStuckTimeout).
+const drainWatchdogInterval = time.Minute
+
+// drainStuckTimeout is how long a scale set may sit draining with zero
+// tracked runners before checkDrainWatchdog concludes the operator's
+// drain-and-restart cycle was interrupted before its recreate step
+// (homelab#321: Ctrl-C, an SSH drop, or the unreachable-host refusal
+// drain-and-restart.sh used to hit before homelab#320 all leave BeginDrain's
+// effects in place forever otherwise) and self-heals by clearing drain mode.
+// BeginDrain refuses new placements once draining, so a scale set that has
+// reached zero runners under drain can never go non-zero again on its own --
+// the only legitimate zero-runner window is the few seconds between reaching
+// zero and the recreate that follows it, so this sits comfortably above that
+// and well below RunnerAutoscalerDrainStuck's 30-minute alert threshold,
+// restoring CI placement well before a human would need to notice the
+// ticket.
+//
+// This only clears the affected Scaler's own draining flag/metric. It does
+// not touch runOrchestrator's separate top-level `draining` bool (which only
+// governs whether a later SIGHUP config reload re-arms drain on the next
+// generation) -- reconciling that is left to the reload path, since the
+// combination of a stuck SIGUSR1 drain followed by a SIGHUP reload with no
+// intervening restart is a narrower, deliberate double-operation rather than
+// the interrupted-deploy.sh case this guards against.
+const drainStuckTimeout = 5 * time.Minute
+
+// checkDrainWatchdog self-heals a scale set left draining by an interrupted
+// drain-and-restart cycle. now is passed in (rather than read via time.Now)
+// so tests can drive it without a live ticker; runFleetDrainWatchdog is the
+// only production caller and always passes time.Now().
+func (a *Scaler) checkDrainWatchdog(now time.Time) {
+	if !a.draining.Load() || a.runners.count() > 0 {
+		a.drainZeroSince.Store(0)
+		return
+	}
+	since := a.drainZeroSince.Load()
+	if since == 0 {
+		a.drainZeroSince.Store(now.UnixNano())
+		return
+	}
+	stuckFor := now.Sub(time.Unix(0, since))
+	if stuckFor < drainStuckTimeout {
+		return
+	}
+	if !a.draining.CompareAndSwap(true, false) {
+		return
+	}
+	a.drainZeroSince.Store(0)
+	scaleSet := a.scaleSetLabel()
+	drainingGauge.WithLabelValues(scaleSet).Set(0)
+	drainAutoClearedTotal.WithLabelValues(scaleSet).Inc()
+	a.logger.Warn("Drain mode self-healed after sitting at zero runners past the stuck timeout; a deploy was likely interrupted before its recreate step",
+		slog.Duration("stuck_for", stuckFor))
 }
 
 func (a *Scaler) shutdown(ctx context.Context) {
