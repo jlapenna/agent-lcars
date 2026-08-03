@@ -5,9 +5,8 @@ import type { DispatchLedger } from './dispatch-ledger';
 import {
   deriveActivityMetrics,
   deriveLogicalWork,
-  ledgerMapFromItems,
+  ledgerAndTaskMetaFromItems,
   type TaskMeta,
-  taskMetaFromItems,
 } from './logical-work';
 
 const REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
@@ -89,7 +88,7 @@ describe('deriveLogicalWork - one task, one attempt', () => {
     expect(task.task).toEqual({ repository: REPO, issueNumber: 42 });
     expect(task.title).toBe('Fix the thing');
     expect(task.state).toBe('active');
-    expect(task.provenance).toBe('ledger-v1');
+    expect(task.provenance).toEqual({ kind: 'ledger-v1', revision: 1 });
     expect(task.attempts).toHaveLength(1);
     expect(task.attempts[0].attribution).toBe('ledger');
     expect(task.attempts[0].generation).toBe(1);
@@ -141,7 +140,7 @@ describe('deriveLogicalWork - pending, zero attempts', () => {
 
     expect(work).toHaveLength(1);
     expect(work[0].state).toBe('unknown');
-    expect(work[0].provenance).toBe('legacy');
+    expect(work[0].provenance).toEqual({ kind: 'legacy' });
   });
 });
 
@@ -411,7 +410,7 @@ describe('deriveLogicalWork - attribution and mismatch anomalies', () => {
     });
 
     expect(work[0].attempts[0].attribution).toBe('legacy-title');
-    expect(work[0].provenance).toBe('legacy');
+    expect(work[0].provenance).toEqual({ kind: 'legacy' });
   });
 
   it('keeps a run with no parseable issue number out of any LogicalWork', () => {
@@ -461,8 +460,8 @@ describe('deriveLogicalWork - human-needed', () => {
   });
 });
 
-describe('ledgerMapFromItems / taskMetaFromItems', () => {
-  it('keys both maps by repoItemKey, skipping items with no ledger', () => {
+describe('ledgerAndTaskMetaFromItems', () => {
+  it('keys both maps by repoItemKey in one pass, skipping the ledger map for items with no ledger', () => {
     const items = [
       {
         repo: REPO,
@@ -473,13 +472,12 @@ describe('ledgerMapFromItems / taskMetaFromItems', () => {
       },
       { repo: REPO, number: 43, title: 'B', url: 'https://y' },
     ];
-    const ledgers = ledgerMapFromItems(items);
-    const metas = taskMetaFromItems(items);
+    const { ledgers, taskMeta } = ledgerAndTaskMetaFromItems(items);
 
     expect(ledgers.size).toBe(1);
     expect(ledgers.has(KEY)).toBe(true);
-    expect(metas.size).toBe(2);
-    expect(metas.get('supersprinklesracing/sprinkles#43')?.title).toBe('B');
+    expect(taskMeta.size).toBe(2);
+    expect(taskMeta.get('supersprinklesracing/sprinkles#43')?.title).toBe('B');
   });
 });
 

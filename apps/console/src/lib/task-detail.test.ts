@@ -5,6 +5,16 @@ import { getGithubClient, getWatchedRepos } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
+// `getCachedTaskSource` (task-detail.ts) is a real `"use cache"` function
+// exercised directly by these tests (unlike `getCachedAgentActivity`,
+// mocked away below) - `cacheTag`/`cacheLife` throw outside a build with
+// `cacheComponents` actually enabled, which this Vite/Vitest run isn't.
+// Same no-op pattern as actions.test.ts's `next/cache` mock.
+vi.mock('next/cache', () => ({
+  cacheTag: vi.fn(),
+  cacheLife: vi.fn(),
+}));
+
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
   return {
@@ -24,6 +34,7 @@ const EMPTY_ACTIVITY = {
 
 let cachedActivity = EMPTY_ACTIVITY;
 vi.mock('./dashboard-data', () => ({
+  DASHBOARD_CACHE_LIFE: { stale: 30, revalidate: 30, expire: 60 },
   getCachedAgentActivity: vi.fn(async () => ({
     data: cachedActivity,
     fetchedAt: '2026-07-07T00:00:00Z',
@@ -138,7 +149,7 @@ describe('getTaskDetail', () => {
     if (result.status !== 'ok') return;
     expect(result.anchorState).toBe('open');
     expect(result.work.title).toBe('Fix the thing');
-    expect(result.work.provenance).toBe('legacy');
+    expect(result.work.provenance).toEqual({ kind: 'legacy' });
     expect(result.work.attempts).toEqual([]);
   });
 
@@ -207,7 +218,7 @@ describe('getTaskDetail', () => {
     );
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
-    expect(result.work.provenance).toBe('ledger-v1');
+    expect(result.work.provenance).toEqual({ kind: 'ledger-v1', revision: 1 });
     expect(result.work.attempts).toHaveLength(1);
     expect(result.work.attempts[0].attribution).toBe('ledger');
     expect(result.work.intents).toHaveLength(1);

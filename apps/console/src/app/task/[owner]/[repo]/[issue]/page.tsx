@@ -59,6 +59,7 @@ async function TaskDetailPageContent({ params }: PageProps) {
         <RefreshButton
           generatedAt={generatedAt}
           initialLabel={formatRelativeTime(generatedAt)}
+          bustsGithubCache
         />
       </Group>
 

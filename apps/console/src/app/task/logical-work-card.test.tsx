@@ -10,8 +10,11 @@ import { LogicalWorkCard } from './logical-work-card';
 // in the server-only GitHub client at import time (assertNotBrowser()),
 // which fails immediately under jsdom - see that file's identical comment.
 // agent-activity.test.ts is the source of truth for the real behavior of
-// these two pure helpers; kept in sync by hand.
+// these pure helpers/constants; kept in sync by hand. `RUN_TIMEOUT_MINUTES`
+// is needed transitively - run-classification.ts's `classifyAgentRun` (used
+// by this card's per-attempt badge) reads it from this module.
 vi.mock('../../lib/agent-activity', () => ({
+  RUN_TIMEOUT_MINUTES: 90,
   displayRunTitle: (run: AgentRun) =>
     run.pipeline === 'opencode'
       ? run.displayTitle.replace(/^opencode\s+/, '')
@@ -53,7 +56,6 @@ function makeWork(overrides: Partial<LogicalWork> = {}): LogicalWork {
     url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
     selectedPipeline: 'claude',
     state: 'active',
-    ledgerRevision: 3,
     intents: [
       {
         intentId: 'intent-abc',
@@ -67,7 +69,7 @@ function makeWork(overrides: Partial<LogicalWork> = {}): LogicalWork {
     ],
     attempts: [makeAttempt()],
     anomalies: [],
-    provenance: 'ledger-v1',
+    provenance: { kind: 'ledger-v1', revision: 3 },
     ...overrides,
   };
 }
@@ -115,6 +117,44 @@ describe('LogicalWorkCard', () => {
     const attempts = screen.getByTestId('logical-work-attempts');
     expect(within(attempts).getByTestId('logical-work-attempt-1')).toBeTruthy();
     expect(within(attempts).getByTestId('logical-work-attempt-2')).toBeTruthy();
+  });
+
+  it('distinguishes a failed completed attempt from a successful one, not just "completed"', () => {
+    renderCard(
+      makeWork({
+        attempts: [
+          makeAttempt({
+            id: 1,
+            status: 'completed',
+            conclusion: 'failure',
+            elapsedSeconds: 120,
+          }),
+        ],
+      }),
+    );
+    const attempt = screen.getByTestId('logical-work-attempt-1');
+    expect(within(attempt).getByText('failed')).toBeTruthy();
+    expect(within(attempt).queryByText('completed')).toBeNull();
+  });
+
+  it('distinguishes a timed-out completed attempt from an ordinary cancel', () => {
+    renderCard(
+      makeWork({
+        attempts: [
+          makeAttempt({
+            id: 1,
+            status: 'completed',
+            conclusion: 'cancelled',
+            // >=95% of the 90-minute claude.yml/opencode.yml wall-clock
+            // budget - classifyAgentRun's own "almost certainly a timeout
+            // kill" heuristic (see run-status-classifier.ts).
+            elapsedSeconds: 90 * 60,
+          }),
+        ],
+      }),
+    );
+    const attempt = screen.getByTestId('logical-work-attempt-1');
+    expect(within(attempt).getByText('timeout')).toBeTruthy();
   });
 
   it('renders each dispatch intent with its generation and source kind', () => {
@@ -167,8 +207,7 @@ describe('LogicalWorkCard', () => {
   it('shows a legacy-provenance note when no ledger backs the task', () => {
     renderCard(
       makeWork({
-        provenance: 'legacy',
-        ledgerRevision: undefined,
+        provenance: { kind: 'legacy' },
         intents: [],
       }),
     );
