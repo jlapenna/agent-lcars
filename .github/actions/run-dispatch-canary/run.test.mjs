@@ -333,7 +333,7 @@ test('runDispatchCanary end to end: create, dispatch, poll to success, close', a
         html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/7',
       });
     }
-    if (url.endsWith('/issues/901/comments') && options.method === 'GET') {
+    if (url.includes('/issues/901/comments') && options.method === 'GET') {
       pollCall += 1;
       return response(
         200,
@@ -384,7 +384,7 @@ test('runDispatchCanary parks status:needs-human and rethrows when the ledger ne
         html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/7',
       });
     }
-    if (url.endsWith('/issues/902/comments') && options.method === 'GET') {
+    if (url.includes('/issues/902/comments') && options.method === 'GET') {
       return response(200, []);
     }
     return response(200, {});
@@ -471,7 +471,7 @@ test('sweepStaleCanaries closes a stale issue whose ledger already shows a succe
     calls.push({ url, method: options.method ?? 'GET' });
     if (url.includes('/issues?state=open')) return response(200, [issue]);
     if (
-      url.endsWith('/issues/950/comments') &&
+      url.includes('/issues/950/comments') &&
       (options.method ?? 'GET') === 'GET'
     ) {
       return response(200, [ledgerCommentWithGeneration({ issue: 950 })]);
@@ -503,7 +503,7 @@ test('sweepStaleCanaries parks status:needs-human for a stale issue whose ledger
     calls.push({ url, method: options.method ?? 'GET' });
     if (url.includes('/issues?state=open')) return response(200, [issue]);
     if (
-      url.endsWith('/issues/951/comments') &&
+      url.includes('/issues/951/comments') &&
       (options.method ?? 'GET') === 'GET'
     ) {
       return response(200, []);
@@ -590,13 +590,13 @@ test('sweepStaleCanaries records a per-issue failure without blocking the remain
     if (url.includes('/issues?state=open'))
       return response(200, [failing, healthy]);
     if (
-      url.endsWith('/issues/955/comments') &&
+      url.includes('/issues/955/comments') &&
       (options.method ?? 'GET') === 'GET'
     ) {
       throw new Error('network blip');
     }
     if (
-      url.endsWith('/issues/956/comments') &&
+      url.includes('/issues/956/comments') &&
       (options.method ?? 'GET') === 'GET'
     ) {
       return response(200, []);
@@ -625,7 +625,7 @@ test('sweepStaleCanaries never closes a stale issue on the strength of a spoofed
     calls.push({ url, method: options.method ?? 'GET' });
     if (url.includes('/issues?state=open')) return response(200, [issue]);
     if (
-      url.endsWith('/issues/957/comments') &&
+      url.includes('/issues/957/comments') &&
       (options.method ?? 'GET') === 'GET'
     ) {
       return response(200, [spoofed]);

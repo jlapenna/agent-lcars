@@ -19,6 +19,7 @@ import {
 } from './broker.mjs';
 import {
   createGitHubApi,
+  dispatchRouterEvent,
   dispatchWorker,
   ensureNeedsHumanParked,
   failClosed,
@@ -33,7 +34,6 @@ import {
   removeIssueLabel,
   repositoryPath,
   saveLedger,
-  validateDispatchResponse,
   verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api.mjs';
@@ -365,25 +365,30 @@ async function reconcileLedger(client, loaded, now = new Date().toISOString()) {
 // only dispatch-reconcile.yml's single scan-wide concurrency group (to
 // avoid two overlapping scans firing duplicate dispatches) applies here.
 async function dispatchReconcileScan(client, repository, issueNumbers) {
+  const task = { repository };
+  // Every candidate's dispatch is independent -- no ordering dependency
+  // between them -- so fire them all concurrently. Promise.allSettled
+  // preserves the original per-candidate try/catch semantics: one
+  // candidate's failure is recorded without ever blocking the others.
+  const outcomes = await Promise.allSettled(
+    issueNumbers.map((issueNumber) =>
+      dispatchRouterEvent(client, task, {
+        kind: 'reconcile',
+        issue: String(issueNumber),
+      }),
+    ),
+  );
   const results = { dispatched: 0, failed: [] };
-  for (const issueNumber of issueNumbers) {
-    try {
-      const response = await client.request(
-        `${repositoryPath({ repository })}/actions/workflows/agent-router.yml/dispatches`,
-        {
-          method: 'POST',
-          body: {
-            ref: 'main',
-            inputs: { kind: 'reconcile', issue: String(issueNumber) },
-          },
-        },
-      );
-      validateDispatchResponse(response, { repository });
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === 'fulfilled') {
       results.dispatched += 1;
-    } catch (error) {
-      results.failed.push({ issue: issueNumber, message: error.message });
+    } else {
+      results.failed.push({
+        issue: issueNumbers[index],
+        message: outcome.reason.message,
+      });
     }
-  }
+  });
   return results;
 }
 
@@ -807,21 +812,11 @@ async function completionCallback() {
     token: env('BROKER_DISPATCH_TOKEN'),
     workflow: env('BROKER_WORKER_WORKFLOW'),
   });
-  const response = await client.request(
-    `${repositoryPath(task)}/actions/workflows/agent-router.yml/dispatches`,
-    {
-      method: 'POST',
-      body: {
-        ref: 'main',
-        inputs: {
-          kind: 'completion',
-          issue: String(task.issue),
-          completion_payload: completionPayload,
-        },
-      },
-    },
-  );
-  validateDispatchResponse(response, task);
+  await dispatchRouterEvent(client, task, {
+    kind: 'completion',
+    issue: String(task.issue),
+    completion_payload: completionPayload,
+  });
 }
 
 // Merges both discovery lanes (#305, broadened by the #363 review):
