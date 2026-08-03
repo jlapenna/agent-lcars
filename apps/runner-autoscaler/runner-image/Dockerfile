@@ -136,9 +136,12 @@ USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Forward-looking hook (homelab#97): lets a future registration-specific
-# build add extra tooling (e.g. a language toolchain only agent-lcars jobs
-# need) without forking this Dockerfile. Empty by default -- neither members
-# nor agent-lcars needs anything here today.
+# build add extra tooling without forking this Dockerfile. Empty by
+# default; publish-images.yml is what actually sets a real value today --
+# `gcc libc6-dev`, so `go test -race` (cgo) can run for
+# apps/runner-autoscaler's own test-race target (agent-lcars#410 --
+# self-hosting ci.yml's `verify` job surfaced that the image had no C
+# toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
 
 RUN set -eux; \

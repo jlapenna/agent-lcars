@@ -357,6 +357,11 @@ jobs:
             # `git fetch origin <sha>` in the Dockerfile supports a detached
             # commit as well as the local-build fallback of `main`.
             AGENT_LCARS_REF=${{ github.sha }}
+            # cgo needs a C compiler; the runner image otherwise has none
+            # (it's built for the Node/pnpm toolchain). apps/runner-autoscaler:test-race
+            # (`go test -race`) is this Go app's only test target, and it
+            # fails outright without this (agent-lcars#410).
+            EXTRA_APT_PACKAGES=gcc libc6-dev
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache,mode=max
           provenance: true
