@@ -377,6 +377,13 @@ func (a *Scaler) RunHostSampler(ctx context.Context) {
 	}
 }
 
+// applyOverloadCooldown is the single authority that arms or extends a
+// host's cooldown window: callers must pass a load whose .overloaded bit
+// reflects a FRESH, raw scoreHostLoad result, measured right now, not a
+// value that has already been through this function (directly or via the
+// hostLoadCache). It is the arm/extend side of the state machine --
+// refreshOverloadCooldown is the read-only side placement uses to re-check
+// an existing window against the current time.
 func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
 	fleet := a.coordinator()
 	fleet.overloadMu.Lock()
@@ -392,6 +399,48 @@ func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time
 		load.penalty = 100
 		load.overloaded = true
 	}
+	return load
+}
+
+// refreshOverloadCooldown re-evaluates whether host should still be treated
+// as overloaded for placement, against the live cooldown expiry, WITHOUT
+// ever arming or extending it. currentHostLoad's cache can be up to
+// 2*hostSampleInterval (30s) stale, and a cached entry's .overloaded bit is
+// not necessarily a fresh raw reading -- probeHostLoad sets it via
+// applyOverloadCooldown's check-only branch whenever a host's raw signal has
+// already recovered but its cooldown window has not yet elapsed, and that
+// cooldown-derived true then gets cached exactly like a genuine raw breach
+// would.
+//
+// pickHostLocked used to feed that cached value straight back into
+// applyOverloadCooldown to keep the cooldown check live against wall-clock
+// time between probes. Because applyOverloadCooldown cannot distinguish "a
+// fresh raw breach" from "an echo of my own prior cooldown-forcing," every
+// such re-read re-armed the timer to now+cooldown -- so as long as placement
+// kept retrying faster than the cooldown duration (guaranteed whenever
+// there is pending demand), a host that had genuinely recovered could never
+// actually exit cooldown (agent-lcars#259 follow-up).
+//
+// This performs only the read side: an .overloaded=false cached sample is
+// left untouched (it can only have been produced when no cooldown was
+// active, and cooldown windows never restart on their own, so it stays
+// correct at any later time). An .overloaded=true sample is re-derived
+// purely from whether `now` is still before the cooldown recorded by the
+// last FRESH probe -- letting a window that has genuinely elapsed since the
+// cached read expire on schedule, without ever writing overloadedUntil.
+func (a *Scaler) refreshOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
+	if !load.overloaded {
+		return load
+	}
+	fleet := a.coordinator()
+	fleet.overloadMu.Lock()
+	until := fleet.overloadedUntil[host]
+	fleet.overloadMu.Unlock()
+	if now.Before(until) {
+		return load
+	}
+	load.overloaded = false
+	load.penalty = 0
 	return load
 }
 
@@ -812,6 +861,26 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 // swap pressure), a virtual load penalty (+100) is applied to spark so other
 // idle fleet hosts are preferred over it.
 //
+// Hard overload is different from a soft penalty: a host scoreHostLoad marks
+// hard-overloaded (load/CPU/PSI/memory/swap pressure past its *Hard
+// threshold), or one still inside applyOverloadCooldown's post-overload
+// window, is removed from the candidate set entirely rather than merely
+// deprioritized -- a virtual penalty only changes which candidate wins a
+// tie, so with a soft penalty alone a lowest-effective-count comparison
+// among a fully pressured fleet still placed a runner on whichever
+// overloaded host looked (barely) least bad (agent-lcars#259). If that
+// leaves zero candidates, pickHost reports fleet-at-capacity
+// (placementReasonOverload) and leaves demand pending rather than placing
+// anyway; the caller's reconciliation is level-triggered, so it retries once
+// a host's pressure or cooldown clears.
+//
+// This is intentionally separate from missing telemetry: a host whose probe
+// fails outright only gets hostLoadPolicy.telemetryPenalty, a small
+// deprioritization, and stays a candidate -- see probeHostLoad's "fails
+// open" comment. Confirmed overload (we HAVE pressure data and it is bad) is
+// the opposite of absent data, and conflating the two would turn a telemetry
+// outage into a fleet outage.
+//
 // When mountDockerSocket is set, reachable hosts that already have >=1
 // runner from this scale set placed on them are excluded outright rather
 // than just deprioritized: socket-mounted runners share the placement
@@ -945,7 +1014,14 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 				hostTelemetryGauge.WithLabelValues(res.host.Name).Set(0)
 				a.logger.Warn("Host load metrics unavailable; applying uncertainty penalty", slog.String("host", res.host.Name), slog.Int("penalty", res.load.penalty), slog.String("error", res.loadErr.Error()))
 			} else {
-				res.load = a.applyOverloadCooldown(res.host.Name, res.load, time.Now())
+				// Read-only re-check against wall-clock time, NOT
+				// applyOverloadCooldown: res.load may be a cache read up to
+				// 2*hostSampleInterval stale, and its .overloaded bit may
+				// already be cooldown-derived rather than a fresh raw
+				// reading. Feeding that back into applyOverloadCooldown
+				// would re-arm the cooldown from an echo of itself every
+				// time placement re-reads it -- see refreshOverloadCooldown.
+				res.load = a.refreshOverloadCooldown(res.host.Name, res.load, time.Now())
 				hostLoads[res.host.Name] = res.load
 				a.recordHostLoadMetrics(res.host.Name, res.load, true)
 				log := a.logger.Debug
@@ -1020,6 +1096,26 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		placementBlocked.WithLabelValues(scaleSet, placementReasonHostLimits).Inc()
 		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
+
+	// Hard-overloaded hosts (and hosts still inside their post-overload
+	// cooldown -- see applyOverloadCooldown) are excluded outright, not just
+	// deprioritized by their virtual penalty. Without this, "lowest
+	// effective count wins" still placed a runner on the least-bad-looking
+	// overloaded host once every candidate was pressured (agent-lcars#259).
+	// A host with merely MISSING telemetry is not touched here: it only
+	// carries hostLoadPolicy.telemetryPenalty and stays a candidate, per
+	// probeHostLoad's fail-open policy.
+	var notOverloaded []DockerHost
+	for _, h := range withinHostLimits {
+		if !hostLoads[h.Name].overloaded {
+			notOverloaded = append(notOverloaded, h)
+		}
+	}
+	if len(notOverloaded) == 0 {
+		placementBlocked.WithLabelValues(scaleSet, placementReasonOverload).Inc()
+		return "", fmt.Errorf("every reachable docker host within its runner limit is hard-overloaded or in overload cooldown: %w", errFleetAtCapacity)
+	}
+	withinHostLimits = notOverloaded
 
 	candidates := withinHostLimits
 	if a.shareWorkDir {
