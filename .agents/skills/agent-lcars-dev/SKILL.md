@@ -44,13 +44,22 @@ These override any default behavior:
   used by another session; if it is unsafe to update, fetch and report that
   it remains behind rather than stashing, resetting, or switching branches.
 
-- **Push early, don't wait on the slow local suite**: before publishing,
-  run the affected Nx test, typecheck, and build targets. Once those fast
-  checks pass, push and let CI start immediately — don't wait on a slow
-  local suite (e.g. `tools/e2e-local.sh`'s hermetic build + Firebase
-  emulator startup) to finish first. Let it run concurrently with CI as an
-  independent second confirmation instead of serializing after it; report
-  the pushed SHA right away and the local suite's result in a follow-up.
+- **Push early — the heavy gate runs on CI, not your workstation.** The
+  pre-push hook only runs the fast layer (`format:check`, affected
+  `lint`/`typecheck`) locally; it deliberately does **not** run `test` or
+  `build` — those are the expensive, whole-tree-scanning steps, and
+  `.github/workflows/ci.yml`'s `Verify` job (a required check gating every
+  merge) already re-runs the full `test typecheck build test-race --all`
+  gate on its own GitHub-hosted runner the moment you push. Running that
+  same gate again locally first just serializes your own workstation in
+  front of a check that's going to happen anyway — push once the fast
+  layer passes and let CI do the rest. See
+  [references/verify.md](references/verify.md#ci-delegation) for the full
+  reasoning. Don't wait on the slow local E2E suite
+  (`tools/e2e-local.sh`'s hermetic build + Firebase emulator startup)
+  either — let it run concurrently with CI as an independent second
+  confirmation instead of serializing after it; report the pushed SHA
+  right away and the local suite's result in a follow-up.
 
 - **Never commit credentials.** Runtime secrets belong in GCP Secret
   Manager and the host writer credential belongs in the encrypted homelab
