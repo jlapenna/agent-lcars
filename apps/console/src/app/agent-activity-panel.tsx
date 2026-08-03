@@ -24,6 +24,7 @@ import type {
 } from '../lib/agent-activity';
 import {
   displayRunTitle,
+  duplicateLivePipelineGroups,
   findStalledQueuedRun,
   groupLiveRunsByIssue,
   issueUrlForRun,
@@ -47,7 +48,10 @@ import { TakeoverCommand } from './takeover-command';
 // where the old "cancelled at ~the timeout budget -> show 'timeout'
 // instead" special case now lives, moved into the classifier itself so
 // there's one source of truth instead of a UI-local re-derivation.
-const STATUS_LABELS: Record<RunStatusClassification, string> = {
+// Exported (mirroring PipelineBadge/FleetChip's #3024 precedent) so
+// task/logical-work-card.tsx's per-attempt badge reuses the identical
+// mapping instead of a second hand-rolled status->color ternary.
+export const STATUS_LABELS: Record<RunStatusClassification, string> = {
   running: 'running',
   succeeded: 'success',
   failed: 'failed',
@@ -56,7 +60,7 @@ const STATUS_LABELS: Record<RunStatusClassification, string> = {
   'silent-error': 'silent error',
 };
 
-const STATUS_COLORS: Record<RunStatusClassification, string> = {
+export const STATUS_COLORS: Record<RunStatusClassification, string> = {
   running: 'blue',
   succeeded: 'green',
   failed: 'red',
@@ -385,16 +389,10 @@ export function LiveRunRow({
  * treats these two cases distinctly for exactly this reason).
  */
 function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
-  const counts = new Map<AgentPipeline, number>();
-  for (const run of runs) {
-    counts.set(run.pipeline, (counts.get(run.pipeline) ?? 0) + 1);
-  }
-  const duplicated = Array.from(counts.entries()).filter(
-    ([, count]) => count > 1,
-  );
-  if (duplicated.length === 0) return undefined;
-  return duplicated
-    .map(([pipeline, count]) => `${count} ${pipeline}`)
+  const duplicated = duplicateLivePipelineGroups(runs);
+  if (duplicated.size === 0) return undefined;
+  return Array.from(duplicated.entries())
+    .map(([pipeline, group]) => `${group.length} ${pipeline}`)
     .join(', ');
 }
 

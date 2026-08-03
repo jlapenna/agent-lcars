@@ -10,8 +10,19 @@ import {
 } from '@mantine/core';
 
 import { displayRunTitle, issueUrlForRun } from '../../lib/agent-activity';
-import type { LogicalWork, LogicalWorkState } from '../../lib/logical-work';
-import { PipelineBadge, RepoBadge } from '../agent-activity-panel';
+import type {
+  AttemptAttribution,
+  ExecutionAttempt,
+  LogicalWork,
+  LogicalWorkState,
+} from '../../lib/logical-work';
+import { classifyAgentRun } from '../../lib/run-classification';
+import {
+  PipelineBadge,
+  RepoBadge,
+  STATUS_COLORS,
+  STATUS_LABELS,
+} from '../agent-activity-panel';
 import { formatDuration, formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
 
@@ -35,12 +46,40 @@ const STATE_COLORS: Record<LogicalWorkState, string> = {
   unknown: 'gray',
 };
 
-const ATTRIBUTION_LABELS: Record<string, string> = {
+const ATTRIBUTION_LABELS: Record<AttemptAttribution, string> = {
   ledger: 'ledger',
   'run-marker': 'run marker',
   'legacy-title': 'legacy title',
   unattributed: 'unattributed',
 };
+
+/**
+ * `classifyAgentRun`/`classifyRunStatus` treats every non-completed run
+ * status as `running` - it only exists to distinguish a *finished* run's
+ * outcome (see run-status-classifier.ts's own doc comment), and has no
+ * notion of "queued" at all. That's fine once an attempt is actually
+ * running, but running a queued attempt through it would relabel "queued"
+ * as "running" - claiming work is actively executing when it may still be
+ * waiting for a runner (Codex review on #375). Handle queued explicitly
+ * with the same gray "queued" badge agent-activity-panel.tsx's `LiveRunRow`
+ * already uses for a live run's own queued state, and only run the
+ * classifier for running/completed attempts - where its "running" mapping
+ * is already correct and its completed-outcome classification is exactly
+ * what this badge exists to show.
+ */
+function attemptStatusBadge(attempt: ExecutionAttempt): {
+  label: string;
+  color: string;
+} {
+  if (attempt.status === 'queued') {
+    return { label: 'queued', color: 'gray' };
+  }
+  const classification = classifyAgentRun(attempt);
+  return {
+    label: STATUS_LABELS[classification.status],
+    color: STATUS_COLORS[classification.status],
+  };
+}
 
 /**
  * The canonical logical-task card (#306): task identity, current state, the
@@ -98,8 +137,8 @@ export function LogicalWorkCard({
             </Title>
           </Stack>
           <Text size="xs" c="dimmed">
-            {work.provenance === 'ledger-v1'
-              ? `dispatch ledger rev ${work.ledgerRevision ?? '?'}`
+            {work.provenance.kind === 'ledger-v1'
+              ? `dispatch ledger rev ${work.provenance.revision}`
               : 'no dispatch ledger (legacy attribution only)'}
           </Text>
         </Group>
@@ -155,52 +194,51 @@ export function LogicalWorkCard({
               No workflow runs attributed to this task yet.
             </Text>
           )}
-          {work.attempts.map((attempt) => (
-            <Group
-              key={attempt.id}
-              gap="xs"
-              wrap="wrap"
-              data-testid={`logical-work-attempt-${attempt.id}`}
-            >
-              <Badge
-                variant="filled"
-                color={attempt.status === 'running' ? 'blue' : 'gray'}
-                size="xs"
+          {work.attempts.map((attempt) => {
+            const badge = attemptStatusBadge(attempt);
+            return (
+              <Group
+                key={attempt.id}
+                gap="xs"
+                wrap="wrap"
+                data-testid={`logical-work-attempt-${attempt.id}`}
               >
-                {attempt.status}
-              </Badge>
-              <PipelineBadge pipeline={attempt.pipeline} />
-              {attempt.generation !== undefined && (
-                <Badge variant="outline" size="xs" color="gray">
-                  g{attempt.generation}
+                <Badge variant="filled" color={badge.color} size="xs">
+                  {badge.label}
                 </Badge>
-              )}
-              <Badge variant="outline" size="xs" color="gray">
-                {ATTRIBUTION_LABELS[attempt.attribution]}
-              </Badge>
-              <Anchor
-                href={issueUrlForRun(attempt) ?? attempt.url}
-                target="_blank"
-                rel="noreferrer"
-                size="xs"
-                truncate
-              >
-                {displayRunTitle(attempt)}
-              </Anchor>
-              <Text size="xs" c="dimmed">
-                {formatDuration(attempt.elapsedSeconds)}
-              </Text>
-              <Anchor
-                href={attempt.url}
-                target="_blank"
-                rel="noreferrer"
-                size="xs"
-                c="dimmed"
-              >
-                View run ↗
-              </Anchor>
-            </Group>
-          ))}
+                <PipelineBadge pipeline={attempt.pipeline} />
+                {attempt.generation !== undefined && (
+                  <Badge variant="outline" size="xs" color="gray">
+                    g{attempt.generation}
+                  </Badge>
+                )}
+                <Badge variant="outline" size="xs" color="gray">
+                  {ATTRIBUTION_LABELS[attempt.attribution]}
+                </Badge>
+                <Anchor
+                  href={issueUrlForRun(attempt) ?? attempt.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="xs"
+                  truncate
+                >
+                  {displayRunTitle(attempt)}
+                </Anchor>
+                <Text size="xs" c="dimmed">
+                  {formatDuration(attempt.elapsedSeconds)}
+                </Text>
+                <Anchor
+                  href={attempt.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="xs"
+                  c="dimmed"
+                >
+                  View run ↗
+                </Anchor>
+              </Group>
+            );
+          })}
         </Stack>
       </Stack>
     </Card>

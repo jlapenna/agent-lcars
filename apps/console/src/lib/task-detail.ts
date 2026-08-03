@@ -1,4 +1,13 @@
-import { getCachedAgentActivity } from './dashboard-data';
+import { cacheLife, cacheTag } from 'next/cache';
+
+import { isNotFound } from './backend-actions';
+import { GITHUB_DATA_TAG } from './cache-tags';
+import {
+  DASHBOARD_CACHE_LIFE,
+  type Fetched,
+  getCachedAgentActivity,
+  oldestFetchedAt,
+} from './dashboard-data';
 import {
   getGithubClient,
   repoItemKey,
@@ -6,7 +15,7 @@ import {
   UnwatchedRepoError,
   type WatchedRepo,
 } from './github-client';
-import { enrichItems } from './item-enrichment';
+import { enrichItems, type ItemEnrichment } from './item-enrichment';
 import { deriveLogicalWork, type LogicalWork } from './logical-work';
 import { taskRefKey } from './watched-repo';
 
@@ -16,6 +25,12 @@ export type TaskDetailResult =
       work: LogicalWork;
       repo: WatchedRepo;
       anchorState: 'open' | 'closed';
+      /** The oldest `fetchedAt` of every cached source this result was
+       * built from (see `dashboard-data.ts`'s `oldestFetchedAt`) - the page
+       * component's "Updated ..." label reads this instead of the render
+       * time, so a cache hit up to `DASHBOARD_CACHE_LIFE` old doesn't
+       * misreport itself as "just now". */
+      generatedAt: string;
     }
   | { status: 'not-found' }
   | { status: 'error'; warning: string };
@@ -29,13 +44,57 @@ interface GithubIssueLike {
   labels: (string | { name?: string })[];
 }
 
-function hasStatus(error: unknown, status: number): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'status' in error &&
-    (error as { status?: unknown }).status === status
-  );
+/**
+ * Fetches the exact issue/PR plus its comment-window enrichment (ledger
+ * included), cached under the same `GITHUB_DATA_TAG`/`DASHBOARD_CACHE_LIFE`
+ * window as the rest of the dashboard's GitHub reads (see
+ * `dashboard-data.ts`'s `getCachedActionItems`/`getCachedAgentActivity`).
+ * Scoped to a single task lookup rather than widening the open-items-only
+ * `getCachedActionItems` - a closed/merged task this route must still
+ * resolve was never on that board to begin with.
+ *
+ * Without this boundary the page's Refresh button (which busts
+ * `GITHUB_DATA_TAG`) had nothing of this page's own to bust: the issue/PR
+ * half of the page was always fresh (uncached), but attempts still came from
+ * the cached `getCachedAgentActivity()`, so a click could leave the
+ * attempts list showing up to `DASHBOARD_CACHE_LIFE`-stale data with no way
+ * to force it current.
+ *
+ * Returns the same `Fetched<T>` shape `getCachedActionItems`/
+ * `getCachedAgentActivity` do, timestamped INSIDE the cached function so the
+ * timestamp is cached alongside the data it describes (see `Fetched`'s own
+ * doc comment) - a cache hit must report the data's real age, not the
+ * render time.
+ */
+async function getCachedTaskSource(
+  repo: WatchedRepo,
+  issueNumber: number,
+): Promise<
+  Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
+> {
+  'use cache';
+  cacheTag(GITHUB_DATA_TAG);
+  cacheLife(DASHBOARD_CACHE_LIFE);
+
+  const octokit = getGithubClient();
+  const { data: issue } = await octokit.rest.issues.get({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+  });
+
+  const isPr = Boolean(issue.pull_request);
+  // Reuses the same batched GraphQL enrichment the dashboard's board uses
+  // (item-enrichment.ts) rather than a bespoke comment fetch, so ledger
+  // parsing stays the one code path (see toEnrichment's `ledger` field).
+  const enrichment = await enrichItems(repo, [
+    { number: issueNumber, isPr, wantsComments: true },
+  ]);
+
+  return {
+    data: { issue, itemEnrichment: enrichment.byNumber.get(issueNumber) },
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -69,17 +128,16 @@ export async function getTaskDetail(
     throw error;
   }
 
-  const octokit = getGithubClient();
   let issue: GithubIssueLike;
+  let itemEnrichment: ItemEnrichment | undefined;
+  let sourceFetchedAt: string;
   try {
-    const response = await octokit.rest.issues.get({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-    });
-    issue = response.data;
+    const source = await getCachedTaskSource(repo, issueNumber);
+    issue = source.data.issue;
+    itemEnrichment = source.data.itemEnrichment;
+    sourceFetchedAt = source.fetchedAt;
   } catch (error) {
-    if (hasStatus(error, 404)) return { status: 'not-found' };
+    if (isNotFound(error)) return { status: 'not-found' };
     console.error(
       'agent-lcars: failed to load task detail (%s#%s):',
       `${repo.owner}/${repo.name}`,
@@ -92,20 +150,12 @@ export async function getTaskDetail(
     };
   }
 
-  const isPr = Boolean(issue.pull_request);
   const labels = issue.labels.map((label) =>
     typeof label === 'string' ? label : (label.name ?? ''),
   );
 
-  // Reuses the same batched GraphQL enrichment the dashboard's board uses
-  // (item-enrichment.ts) rather than a bespoke comment fetch, so ledger
-  // parsing stays the one code path (see toEnrichment's `ledger` field).
-  const enrichment = await enrichItems(repo, [
-    { number: issueNumber, isPr, wantsComments: true },
-  ]);
-  const itemEnrichment = enrichment.byNumber.get(issueNumber);
-
-  const { data: activity } = await getCachedAgentActivity();
+  const { data: activity, fetchedAt: activityFetchedAt } =
+    await getCachedAgentActivity();
   const attempts = activity.liveRunAttempts ?? activity.liveRuns;
   const allAttempts = [...attempts, ...activity.recentRuns];
 
@@ -139,5 +189,9 @@ export async function getTaskDetail(
     work: task,
     repo,
     anchorState: issue.state === 'closed' ? 'closed' : 'open',
+    // Both cached sources this result was built from - the older of the
+    // two is the honest staleness figure (see `oldestFetchedAt`'s own doc
+    // comment).
+    generatedAt: oldestFetchedAt(sourceFetchedAt, activityFetchedAt),
   };
 }

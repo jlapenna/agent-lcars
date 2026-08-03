@@ -3,8 +3,8 @@ import { describe, expect, it, type Mock, vi } from 'vitest';
 import {
   type AgentRun,
   attemptMarkerFromDisplayTitle,
-  collapseLogicalLiveRuns,
   displayRunTitle,
+  duplicateLivePipelineGroups,
   findStalledQueuedRun,
   getAgentActivity,
   groupLiveRunsByIssue,
@@ -222,45 +222,38 @@ describe('groupLiveRunsByIssue', () => {
   });
 });
 
-describe('collapseLogicalLiveRuns', () => {
-  it('represents queued and running attempts for one agent item as one run', () => {
-    const queued = makeAgentRun({
-      id: 1,
-      status: 'queued',
-      createdAt: '2026-07-07T00:01:00Z',
-    });
-    const running = makeAgentRun({
-      id: 2,
-      status: 'running',
-      createdAt: '2026-07-07T00:00:00Z',
-    });
+describe('duplicateLivePipelineGroups', () => {
+  // The shared counting rule both logical-work.ts's
+  // `duplicateAttemptAnomalies` (task-detail anomaly list) and
+  // agent-activity-panel.tsx's `duplicatePipelineSummary` (In Flight
+  // duplicate badge) build their own formatting on top of.
+  it('groups queued/running runs by pipeline, keeping only pipelines with more than one live run', () => {
+    const groups = duplicateLivePipelineGroups([
+      makeAgentRun({ id: 1, status: 'queued', pipeline: 'claude' }),
+      makeAgentRun({ id: 2, status: 'running', pipeline: 'claude' }),
+      makeAgentRun({ id: 3, status: 'running', pipeline: 'codex' }),
+    ]);
 
-    expect(
-      collapseLogicalLiveRuns([queued, running]).map((run) => run.id),
-    ).toEqual([2]);
+    expect(Array.from(groups.keys())).toEqual(['claude']);
+    expect(groups.get('claude')?.map((run) => run.id)).toEqual([1, 2]);
   });
 
-  it('keeps different pipelines on the same issue visible', () => {
-    const runs = collapseLogicalLiveRuns([
+  it('excludes completed runs from the live grouping entirely', () => {
+    const groups = duplicateLivePipelineGroups([
+      makeAgentRun({ id: 1, status: 'running', pipeline: 'claude' }),
+      makeAgentRun({ id: 2, status: 'completed', pipeline: 'claude' }),
+    ]);
+
+    expect(groups.size).toBe(0);
+  });
+
+  it('returns an empty map when no pipeline has more than one live run', () => {
+    const groups = duplicateLivePipelineGroups([
       makeAgentRun({ id: 1, status: 'running', pipeline: 'claude' }),
       makeAgentRun({ id: 2, status: 'queued', pipeline: 'codex' }),
     ]);
 
-    expect(runs.map((run) => run.id)).toEqual([1, 2]);
-  });
-
-  it('never collapses unparsed or cross-repository runs', () => {
-    const runs = collapseLogicalLiveRuns([
-      makeAgentRun({ id: 1, issueNumber: undefined }),
-      makeAgentRun({ id: 2, issueNumber: undefined }),
-      makeAgentRun({ id: 3 }),
-      makeAgentRun({
-        id: 4,
-        repo: { owner: 'elsewhere', name: 'sprinkles' },
-      }),
-    ]);
-
-    expect(runs.map((run) => run.id)).toEqual([1, 2, 3, 4]);
+    expect(groups.size).toBe(0);
   });
 });
 
