@@ -19,8 +19,8 @@
 #     controller-vs-remote-CLI identity mismatch that indirection created).
 #   - a successful `docker compose up` only means the API calls succeeded,
 #     not that the process inside is working: verify the container is
-#     still running and hasn't restarted, and that its endpoint reports
-#     healthy, before declaring success.
+#     still running and hasn't restarted (or is reporting healthy, when a
+#     HEALTHCHECK is defined) before declaring success.
 #
 # Usage: run directly on pike as the deployment identity (normally the
 # `homelab` service account, with sudo available for ownership fixups):

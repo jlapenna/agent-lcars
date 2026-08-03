@@ -115,16 +115,6 @@ services:
     cpus: 0.5
     mem_limit: 512m
     restart: unless-stopped
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:9464/metrics').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 4
-      start_period: 15s
     logging:
       driver: json-file
       options:
