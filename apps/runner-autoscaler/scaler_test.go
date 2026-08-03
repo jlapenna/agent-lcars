@@ -302,11 +302,15 @@ func TestScoreHostLoadPressureSignals(t *testing.T) {
 		wantPenalty    int
 		wantOverloaded bool
 	}{
+		{"load hard", "pike", hostLoad{memoryAvailable: 1, normalizedLoad: 2}, 100, true},
 		{"cpu hard", "pike", hostLoad{memoryAvailable: 1, cpuUtilization: .97}, 100, true},
 		{"cpu psi soft", "pike", hostLoad{memoryAvailable: 1, cpuPressure: .12}, 10, false},
+		{"cpu psi hard", "pike", hostLoad{memoryAvailable: 1, cpuPressure: .30}, 100, true},
+		{"memory psi hard", "pike", hostLoad{memoryAvailable: 1, memoryPressure: .30}, 100, true},
 		{"memory hard", "pike", hostLoad{memoryAvailable: .05}, 100, true},
 		{"spark memory exempt", "spark", hostLoad{memoryAvailable: .01}, 0, false},
 		{"active swap", "pike", hostLoad{memoryAvailable: 1, swapPagesPerSec: 20}, 10, false},
+		{"swap hard", "pike", hostLoad{memoryAvailable: 1, swapPagesPerSec: 150}, 100, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -389,6 +393,193 @@ func TestHostLoadMetricsFailureFailsOpen(t *testing.T) {
 	picked, err := scaler.pickHost(context.Background())
 	if err != nil || picked != "pike" {
 		t.Fatalf("pickHost() = (%q, %v), want (pike, nil)", picked, err)
+	}
+}
+
+// seedHostLoad injects a pre-scored hostLoad straight into the fleet's
+// placement cache so a test can drive pickHost's overload-exclusion logic
+// deterministically -- without a real metrics endpoint or the multi-sample,
+// multi-second real-time deltas probeHostLoad needs to derive CPU/PSI/swap
+// rates. currentHostLoad treats any cache entry younger than
+// 2*hostSampleInterval as authoritative, so this value flows straight
+// through to pickHostLocked exactly as a real probe's result would.
+func seedHostLoad(fleet *FleetCoordinator, host string, load hostLoad) {
+	load.observedAt = time.Now()
+	fleet.hostLoadCache[host] = load
+}
+
+// TestPickHostMixedFleetPrefersHealthyHost pins agent-lcars#259's first
+// acceptance criterion: a fleet with both a healthy and a hard-overloaded
+// host must always place on the healthy one, and must not count that as a
+// placement_blocked_total -- the fleet had capacity, it just wasn't on the
+// bad host.
+func TestPickHostMixedFleetPrefersHealthyHost(t *testing.T) {
+	overloadedDocker := newFakeDockerServer(t)
+	healthyDocker := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "set",
+		dockerHosts: []DockerHost{
+			{Name: "pike", Client: overloadedDocker.client(t)},
+			{Name: "laforge", Client: healthyDocker.client(t)},
+		},
+		runners: runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	seedHostLoad(fleet, "pike", scaler.scoreHostLoad("pike", hostLoad{memoryAvailable: 1, normalizedLoad: 2}))
+
+	blocked := placementBlocked.WithLabelValues("set", placementReasonOverload)
+	before := testutil.ToFloat64(blocked)
+
+	picked, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost returned error: %v", err)
+	}
+	if picked != "laforge" {
+		t.Fatalf("picked %q, want laforge (pike is hard-overloaded)", picked)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 0 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 0: the fleet had a healthy candidate", placementReasonOverload, got)
+	}
+}
+
+// TestPickHostAllOverloadedFleetReportsCapacityBlocked pins agent-lcars#259's
+// second acceptance criterion: when every reachable, within-limit host is
+// hard-overloaded, pickHost must fail closed to fleet-at-capacity -- not
+// place on the least-bad overloaded host -- and the cause must be visible in
+// Prometheus under its own reason, distinct from host_limits.
+func TestPickHostAllOverloadedFleetReportsCapacityBlocked(t *testing.T) {
+	dockerA := newFakeDockerServer(t)
+	dockerB := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "set",
+		dockerHosts: []DockerHost{
+			{Name: "pike", Client: dockerA.client(t)},
+			{Name: "laforge", Client: dockerB.client(t)},
+		},
+		runners: runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	for _, host := range []string{"pike", "laforge"} {
+		seedHostLoad(fleet, host, scaler.scoreHostLoad(host, hostLoad{memoryAvailable: 1, normalizedLoad: 2}))
+	}
+
+	blocked := placementBlocked.WithLabelValues("set", placementReasonOverload)
+	hostLimits := placementBlocked.WithLabelValues("set", placementReasonHostLimits)
+	beforeBlocked := testutil.ToFloat64(blocked)
+	beforeHostLimits := testutil.ToFloat64(hostLimits)
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want (\"\", errFleetAtCapacity)", host, err)
+	}
+	if got := testutil.ToFloat64(blocked) - beforeBlocked; got != 1 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonOverload, got)
+	}
+	// A saturation cause distinct from host_limits: without its own reason,
+	// this looks identical in Prometheus to hosts merely being busy with
+	// other work, not pressured.
+	if got := testutil.ToFloat64(hostLimits) - beforeHostLimits; got != 0 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 0", placementReasonHostLimits, got)
+	}
+}
+
+// TestPickHostOverloadCooldownGatesUntilExpiry pins agent-lcars#259's third
+// acceptance criterion: a host stays ineligible for the whole configured
+// cooldown window even after its raw signal recovers, then becomes eligible
+// again once the window elapses. It drives applyOverloadCooldown through the
+// real pickHost path by manipulating the fleet's cooldown/cache state
+// directly (the same state probeHostLoad would have produced), which avoids
+// a real-time sleep spanning the (2-minute default) cooldown window.
+func TestPickHostOverloadCooldownGatesUntilExpiry(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "set",
+		dockerHosts:  []DockerHost{{Name: "pike", Client: fake.client(t)}},
+		runners:      runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	now := time.Now()
+
+	// A prior probe measured hard overload: seed the cache and the cooldown
+	// expiry exactly as probeHostLoad -> applyOverloadCooldown would have.
+	seedHostLoad(fleet, "pike", hostLoad{overloaded: true, penalty: 100})
+	fleet.overloadedUntil["pike"] = now.Add(time.Minute)
+
+	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("during hard overload: pickHost() = (%q, %v), want (\"\", errFleetAtCapacity)", host, err)
+	}
+
+	// The underlying signal recovers, but the cooldown window has not
+	// elapsed -- the host must remain excluded. This is the point of
+	// cooldown: a flapping or just-recovered host does not immediately
+	// re-enter rotation.
+	seedHostLoad(fleet, "pike", hostLoad{overloaded: false})
+	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("mid-cooldown recovery: pickHost() = (%q, %v), want (\"\", errFleetAtCapacity)", host, err)
+	}
+
+	// The cooldown window has elapsed: the host becomes eligible again.
+	fleet.overloadedUntil["pike"] = now.Add(-time.Minute)
+	seedHostLoad(fleet, "pike", hostLoad{overloaded: false})
+	picked, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("after cooldown expiry: pickHost returned error: %v", err)
+	}
+	if picked != "pike" {
+		t.Fatalf("picked %q, want pike", picked)
+	}
+}
+
+// TestPickHostExcludesEachHardOverloadSignal pins agent-lcars#259's
+// requirement that load, CPU/PSI, memory, and swap hard thresholds each
+// independently exclude a host from placement, by feeding scoreHostLoad's
+// real output for each signal through the real pickHost path (see
+// seedHostLoad). TestScoreHostLoadPressureSignals already covers scoring in
+// isolation; this covers that a hard-overloaded reading, from whichever
+// signal produced it, actually removes the host from candidates and reports
+// fleet-at-capacity instead of placing on it.
+func TestPickHostExcludesEachHardOverloadSignal(t *testing.T) {
+	cases := []struct {
+		name string
+		load hostLoad
+	}{
+		{"load hard", hostLoad{memoryAvailable: 1, normalizedLoad: 2}},
+		{"cpu utilization hard", hostLoad{memoryAvailable: 1, cpuUtilization: .97}},
+		{"cpu psi hard", hostLoad{memoryAvailable: 1, cpuPressure: .30}},
+		{"memory psi hard", hostLoad{memoryAvailable: 1, memoryPressure: .30}},
+		{"memory available hard", hostLoad{memoryAvailable: .05}},
+		{"swap hard", hostLoad{memoryAvailable: 1, swapPagesPerSec: 150}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeDockerServer(t)
+			scaler := &Scaler{
+				scaleSetName: "set",
+				dockerHosts:  []DockerHost{{Name: "pike", Client: fake.client(t)}},
+				runners:      runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
+				logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			scored := scaler.scoreHostLoad("pike", tc.load)
+			if !scored.overloaded {
+				t.Fatalf("fixture %q must itself score hard-overloaded (penalty=%d)", tc.name, scored.penalty)
+			}
+			fleet := scaler.coordinator()
+			seedHostLoad(fleet, "pike", scored)
+
+			blocked := placementBlocked.WithLabelValues("set", placementReasonOverload)
+			before := testutil.ToFloat64(blocked)
+
+			host, err := scaler.pickHost(context.Background())
+			if host != "" || !errors.Is(err, errFleetAtCapacity) {
+				t.Fatalf("pickHost() = (%q, %v), want (\"\", errFleetAtCapacity)", host, err)
+			}
+			if got := testutil.ToFloat64(blocked) - before; got != 1 {
+				t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonOverload, got)
+			}
+		})
 	}
 }
 
@@ -635,9 +826,15 @@ func TestPickHostE2EPreservesFleetWideHostRunnerLimit(t *testing.T) {
 	}})
 	empty := newFakeDockerServer(t)
 	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// laforge gets a nonzero-but-healthy load, just to differentiate it
+		// from janeway's "0" -- this test is about host-limit filtering, not
+		// load-based tie-breaking, so the value only needs to stay well
+		// under loadHard (agent-lcars#259 made a hard-overloaded host
+		// ineligible outright, and 32/16=2.0 used to cross that threshold
+		// here incidentally).
 		load := "0"
 		if strings.Contains(r.URL.Path, "laforge") {
-			load = "32"
+			load = "4"
 		}
 		if _, err := fmt.Fprintf(w, "node_load1 %s\n", load); err != nil {
 			t.Errorf("write load metric: %v", err)

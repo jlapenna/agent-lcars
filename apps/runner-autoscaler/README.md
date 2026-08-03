@@ -108,6 +108,44 @@ verdict per gated host, and exhausting the fleet through the gate increments
 `github_runner_autoscaler_placement_blocked_total{reason="readiness"}` rather
 than reporting those hosts as unreachable.
 
+## Host load / overload admission
+
+Every placement scores each candidate host's load, CPU utilization, CPU/memory
+PSI (pressure-stall) ratios, available memory, and swap-in/out rate against
+`fleet.placement` thresholds (`load_soft`/`load_busy`/`load_hard`,
+`cpu_soft`/`cpu_hard`, `psi_soft`/`psi_hard`, `memory_soft`/`memory_hard`,
+`swap_soft`/`swap_hard`). Crossing a _soft_ threshold only adds a virtual
+runner-count penalty, which nudges the round-robin comparison toward less
+busy hosts without ruling anything out.
+
+Crossing a **hard** threshold on any single signal is different: the host is
+marked hard-overloaded and, once it is, stays that way for
+`fleet.placement.overload_cooldown` (default 2 minutes) even after the
+underlying signal recovers, so a flapping host doesn't bounce in and out of
+rotation. A hard-overloaded (or still-cooling-down) host is **excluded from
+the candidate set entirely** rather than merely deprioritized. If that leaves
+zero placeable hosts, the placement attempt fails closed to fleet-at-capacity
+and leaves demand pending instead of placing on the least-bad overloaded host
+— the caller's reconciliation loop is level-triggered and retries once
+pressure clears.
+
+This is deliberately different from a host with **no telemetry at all**: a
+failed or unconfigured load probe fails _open_, adding only
+`fleet.placement.telemetry_penalty` (a small deprioritization, default `1`)
+and leaving the host eligible. Confirmed overload (pressure data that says
+the host is bad) and absent data are opposite situations, and a telemetry
+outage must never be treated as a fleet outage.
+
+Observability:
+`github_runner_autoscaler_host_cooldown{host}` is `1` while a host is
+hard-overloaded or cooling down;
+`github_runner_autoscaler_host_load_penalty{host}` reports its current
+virtual penalty; and exhausting the fleet because every reachable,
+within-limit host is hard-overloaded or cooling down increments
+`github_runner_autoscaler_placement_blocked_total{reason="overload"}`,
+distinct from `host_limits` (hosts busy with other work, not pressured) and
+from `readiness` (hosts withheld by an operator signal, not their own load).
+
 ## Deployment
 
 The actual runtime config (`orchestrator.yml`: fleet host inventory, GitHub

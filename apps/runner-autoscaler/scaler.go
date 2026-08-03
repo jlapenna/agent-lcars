@@ -803,6 +803,26 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 // swap pressure), a virtual load penalty (+100) is applied to spark so other
 // idle fleet hosts are preferred over it.
 //
+// Hard overload is different from a soft penalty: a host scoreHostLoad marks
+// hard-overloaded (load/CPU/PSI/memory/swap pressure past its *Hard
+// threshold), or one still inside applyOverloadCooldown's post-overload
+// window, is removed from the candidate set entirely rather than merely
+// deprioritized -- a virtual penalty only changes which candidate wins a
+// tie, so with a soft penalty alone a lowest-effective-count comparison
+// among a fully pressured fleet still placed a runner on whichever
+// overloaded host looked (barely) least bad (agent-lcars#259). If that
+// leaves zero candidates, pickHost reports fleet-at-capacity
+// (placementReasonOverload) and leaves demand pending rather than placing
+// anyway; the caller's reconciliation is level-triggered, so it retries once
+// a host's pressure or cooldown clears.
+//
+// This is intentionally separate from missing telemetry: a host whose probe
+// fails outright only gets hostLoadPolicy.telemetryPenalty, a small
+// deprioritization, and stays a candidate -- see probeHostLoad's "fails
+// open" comment. Confirmed overload (we HAVE pressure data and it is bad) is
+// the opposite of absent data, and conflating the two would turn a telemetry
+// outage into a fleet outage.
+//
 // When mountDockerSocket is set, reachable hosts that already have >=1
 // runner from this scale set placed on them are excluded outright rather
 // than just deprioritized: socket-mounted runners share the placement
@@ -1011,6 +1031,26 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		placementBlocked.WithLabelValues(scaleSet, placementReasonHostLimits).Inc()
 		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
+
+	// Hard-overloaded hosts (and hosts still inside their post-overload
+	// cooldown -- see applyOverloadCooldown) are excluded outright, not just
+	// deprioritized by their virtual penalty. Without this, "lowest
+	// effective count wins" still placed a runner on the least-bad-looking
+	// overloaded host once every candidate was pressured (agent-lcars#259).
+	// A host with merely MISSING telemetry is not touched here: it only
+	// carries hostLoadPolicy.telemetryPenalty and stays a candidate, per
+	// probeHostLoad's fail-open policy.
+	var notOverloaded []DockerHost
+	for _, h := range withinHostLimits {
+		if !hostLoads[h.Name].overloaded {
+			notOverloaded = append(notOverloaded, h)
+		}
+	}
+	if len(notOverloaded) == 0 {
+		placementBlocked.WithLabelValues(scaleSet, placementReasonOverload).Inc()
+		return "", fmt.Errorf("every reachable docker host within its runner limit is hard-overloaded or in overload cooldown: %w", errFleetAtCapacity)
+	}
+	withinHostLimits = notOverloaded
 
 	candidates := withinHostLimits
 	if a.shareWorkDir {
