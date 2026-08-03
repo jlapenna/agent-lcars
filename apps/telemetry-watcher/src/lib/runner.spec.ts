@@ -285,7 +285,7 @@ describe('startSidecar', () => {
     await daemon.tick();
 
     // A runner checkout lives at /home/runner/_work/..., which would never
-    // match the host default of `/home/jlapenna/p/members*`.
+    // match the host default of `/home/developer/p/members*`.
     expect(codexAllowlist).toEqual(['*']);
     expect(upserts).toHaveLength(1);
   });

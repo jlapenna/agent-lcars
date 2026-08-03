@@ -120,7 +120,7 @@ describe('parseGoTimestamp', () => {
 });
 
 describe('pollAntigravitySummaries', () => {
-  const CHECKOUT_PREFIX = '/home/jlapenna/p/sprinkles';
+  const CHECKOUT_PREFIX = '/home/developer/p/sprinkles';
 
   it('ships a row whose workspace_uris matches the allowlist', () => {
     const dbPath = trackedFixtureDb([
@@ -176,7 +176,7 @@ describe('pollAntigravitySummaries', () => {
       {
         conversation_id: 'convo-other-project',
         last_modified_time: '2026-07-01 00:42:40.565799365+00:00',
-        workspace_uris: JSON.stringify(['file:///home/jlapenna/p/other']),
+        workspace_uris: JSON.stringify(['file:///home/developer/p/other']),
       },
     ]);
 
@@ -299,7 +299,7 @@ describe('pollAntigravitySummaries', () => {
       {
         conversation_id: 'convo-b',
         last_modified_time: '2026-06-22 21:40:35+00:00',
-        workspace_uris: JSON.stringify(['file:///home/jlapenna/p/onecake']),
+        workspace_uris: JSON.stringify(['file:///home/developer/p/onecake']),
       },
     ]);
 
@@ -350,7 +350,18 @@ describe('pollAntigravitySummaries', () => {
       },
     ]);
 
-    const summaries = pollAntigravitySummaries(dbPath);
+    const previousRoots = process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'];
+    process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'] = CHECKOUT_PREFIX;
+    let summaries;
+    try {
+      summaries = pollAntigravitySummaries(dbPath);
+    } finally {
+      if (previousRoots === undefined) {
+        delete process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'];
+      } else {
+        process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'] = previousRoots;
+      }
+    }
 
     expect(summaries).toHaveLength(1);
   });

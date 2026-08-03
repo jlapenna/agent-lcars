@@ -1,4 +1,4 @@
-import { checkoutSlugGlob } from './default-checkout';
+import { checkoutSlugGlobs } from './default-checkout';
 
 /**
  * The watcher only ever ships CLI telemetry for project dirs matching this
@@ -7,7 +7,7 @@ import { checkoutSlugGlob } from './default-checkout';
  * amendment 2026-07-10, decision 3.
  */
 export function defaultProjectDirAllowlist(): string[] {
-  return [checkoutSlugGlob()];
+  return checkoutSlugGlobs();
 }
 
 const GLOB_SPECIAL_CHARS = /[.+^${}()|[\]\\]/g;

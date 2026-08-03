@@ -1,75 +1,92 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { isAllowedProjectDir } from './allowlist';
-import { checkoutRoot, checkoutSlugGlob } from './default-checkout';
+import {
+  checkoutRoot,
+  checkoutRoots,
+  checkoutSlugGlob,
+  checkoutSlugGlobs,
+} from './default-checkout';
 
-const VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOT';
+const ROOTS_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOTS';
+const LEGACY_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOT';
 
 afterEach(() => {
-  delete process.env[VAR];
+  delete process.env[ROOTS_VAR];
+  delete process.env[LEGACY_VAR];
 });
 
-describe('checkout root', () => {
-  it('reads the root from the environment', () => {
-    process.env[VAR] = '/srv/checkouts/thing';
+describe('checkout roots', () => {
+  it('reads and normalizes multiple explicit roots', () => {
+    process.env[ROOTS_VAR] = '/srv/checkouts/thing/, /srv/checkouts/another//';
+
+    expect(checkoutRoots()).toEqual([
+      '/srv/checkouts/thing',
+      '/srv/checkouts/another',
+    ]);
+    expect(checkoutSlugGlobs()).toEqual([
+      '-srv-checkouts-thing*',
+      '-srv-checkouts-another*',
+    ]);
     expect(checkoutRoot()).toBe('/srv/checkouts/thing');
     expect(checkoutSlugGlob()).toBe('-srv-checkouts-thing*');
   });
 
-  it('falls back to this deployment when unset', () => {
-    expect(checkoutRoot()).toBe('/home/jlapenna/p/sprinkles');
-    expect(checkoutSlugGlob()).toBe('-home-jlapenna-p-sprinkles*');
+  it('keeps the legacy single-root variable compatible', () => {
+    process.env[LEGACY_VAR] = '/srv/checkouts/legacy';
+
+    expect(checkoutRoots()).toEqual(['/srv/checkouts/legacy']);
   });
 
-  // The regression this replaced: the fallback still named `members` after
-  // the repo was renamed to `sprinkles`. Because the allowlist is an
-  // exact-prefix glob, the live checkout's project dir never matched, so a
-  // watcher on the default silently recorded nothing from the repo it
-  // exists to watch.
-  it('admits the live checkout, which the pre-rename default excluded', () => {
-    expect(isAllowedProjectDir('-home-jlapenna-p-sprinkles')).toBe(true);
-    expect(
-      isAllowedProjectDir('-home-jlapenna-p-sprinkles-claude-worktrees-x'),
-    ).toBe(true);
-    // The stale root is not a prefix of the live one in either direction,
-    // which is exactly why the rename was silent rather than degraded.
-    expect(isAllowedProjectDir('-home-jlapenna-p-members')).toBe(false);
+  it('deduplicates roots after normalization', () => {
+    process.env[ROOTS_VAR] = '/srv/checkouts/thing,/srv/checkouts/thing/';
+
+    expect(checkoutRoots()).toEqual(['/srv/checkouts/thing']);
   });
 
-  // A set-but-empty variable is what an unresolved interpolation produces,
-  // and this value can only ever WIDEN scope when it degrades: an empty
-  // root makes the Claude glob `*`, the Codex glob `/*`, and the
-  // Antigravity prefix empty (which `startsWith` then matches for every
-  // absolute path). Falling back is the fail-closed choice.
   it.each([
+    ['unset', undefined],
     ['empty', ''],
     ['whitespace', '   '],
-    ['root alone', '/'],
-    ['root with extra separators', '///'],
-  ])('ignores a %s override instead of widening scope', (_label, value) => {
-    process.env[VAR] = value;
-    expect(checkoutRoot()).toBe('/home/jlapenna/p/sprinkles');
-    expect(checkoutSlugGlob()).toBe('-home-jlapenna-p-sprinkles*');
-    // The blast radius if this ever regressed: everything.
-    expect(isAllowedProjectDir('-home-someone-else-p-secrets')).toBe(false);
+  ])('fails closed when the plural variable is %s', (_label, value) => {
+    if (value !== undefined) process.env[ROOTS_VAR] = value;
+
+    expect(() => checkoutRoots()).toThrow(/must explicitly name/);
   });
 
   it.each([
-    ['/srv/checkouts/thing/', '/srv/checkouts/thing'],
-    ['/srv/checkouts/thing//', '/srv/checkouts/thing'],
-    ['  /srv/checkouts/thing  ', '/srv/checkouts/thing'],
-  ])('normalizes %s so the checkout itself stays in scope', (given, want) => {
-    process.env[VAR] = given;
-    expect(checkoutRoot()).toBe(want);
-    // Without normalization this glob would be `-srv-checkouts-thing-*`,
-    // which excludes the checkout root it is supposed to admit.
-    expect(checkoutSlugGlob()).toBe('-srv-checkouts-thing*');
-    expect(isAllowedProjectDir('-srv-checkouts-thing')).toBe(true);
+    ['root alone', '/'],
+    ['root with extra separators', '///'],
+    ['relative path', 'checkouts/thing'],
+  ])('rejects %s instead of widening scope', (_label, value) => {
+    process.env[ROOTS_VAR] = value;
+
+    expect(() => checkoutRoots()).toThrow(/absolute checkout paths/);
+  });
+
+  it('rejects an empty entry in a root list', () => {
+    process.env[ROOTS_VAR] = '/srv/checkouts/thing,,/srv/checkouts/another';
+
+    expect(() => checkoutRoots()).toThrow(/empty checkout path/);
+  });
+
+  it('admits only configured checkout slugs', () => {
+    process.env[ROOTS_VAR] =
+      '/srv/checkouts/sprinkles,/srv/checkouts/agent-lcars';
+
+    expect(isAllowedProjectDir('-srv-checkouts-sprinkles')).toBe(true);
+    expect(
+      isAllowedProjectDir(
+        '-srv-checkouts-agent-lcars-claude-worktrees-feature',
+      ),
+    ).toBe(true);
+    expect(isAllowedProjectDir('-srv/checkouts/private')).toBe(false);
   });
 
   it('re-reads the environment per call rather than freezing at import', () => {
-    expect(checkoutRoot()).toBe('/home/jlapenna/p/sprinkles');
-    process.env[VAR] = '/tmp/other';
-    expect(checkoutRoot()).toBe('/tmp/other');
+    process.env[ROOTS_VAR] = '/srv/checkouts/one';
+    expect(checkoutRoot()).toBe('/srv/checkouts/one');
+    process.env[ROOTS_VAR] = '/srv/checkouts/two';
+    expect(checkoutRoot()).toBe('/srv/checkouts/two');
   });
 });

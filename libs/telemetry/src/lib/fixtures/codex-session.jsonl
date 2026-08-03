@@ -1,5 +1,5 @@
-{"timestamp":"2026-07-20T10:00:00.000Z","type":"session_meta","payload":{"id":"codex-session-1","session_id":"codex-session-1","cwd":"/home/jlapenna/p/members","originator":"codex-tui","source":"cli","model_provider":"openai"}}
-{"timestamp":"2026-07-20T10:00:01.000Z","type":"turn_context","payload":{"cwd":"/home/jlapenna/p/members","model":"gpt-5.6","approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}
+{"timestamp":"2026-07-20T10:00:00.000Z","type":"session_meta","payload":{"id":"codex-session-1","session_id":"codex-session-1","cwd":"/home/developer/p/members","originator":"codex-tui","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-07-20T10:00:01.000Z","type":"turn_context","payload":{"cwd":"/home/developer/p/members","model":"gpt-5.6","approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}
 {"timestamp":"2026-07-20T10:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Fix telemetry support"}}
 {"timestamp":"2026-07-20T10:00:03.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
 {"timestamp":"2026-07-20T10:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call-1"}}

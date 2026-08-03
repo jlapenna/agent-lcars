@@ -5,6 +5,7 @@ import { loadConfig } from './lib/config';
 import { createStoreFromConfig } from './lib/create-store';
 import { WatcherDaemon } from './lib/daemon';
 import { finalizeSidecar } from './lib/finalize';
+import { createWatcherMetricsServer, WatcherMetrics } from './lib/metrics';
 import { startSidecar } from './lib/runner';
 import { loadRunnerConfig } from './lib/runner-config';
 
@@ -15,6 +16,8 @@ import { loadRunnerConfig } from './lib/runner-config';
 function runHostWatcher(): void {
   const config = loadConfig();
   const store = createStoreFromConfig(config);
+  const metrics = new WatcherMetrics();
+  const metricsServer = createWatcherMetricsServer(metrics);
 
   const rootsDescription = config.watchRoots
     .map(
@@ -40,6 +43,13 @@ function runHostWatcher(): void {
     stalenessWindowMs: config.stalenessWindowMs,
     shareDir: config.shareDir,
     antigravitySummaryDb: config.antigravitySummaryDb,
+    metrics,
+  });
+
+  metricsServer.listen(config.metricsPort, config.metricsHost, () => {
+    logger.info(
+      `agent-lcars-telemetry-watcher: metrics listening on ${config.metricsHost}:${config.metricsPort}`,
+    );
   });
 
   // Real-time nudge on file changes; the periodic tick (started below) is
@@ -61,7 +71,12 @@ function runHostWatcher(): void {
       `agent-lcars-telemetry-watcher: received ${signal}, shutting down`,
     );
     daemon.stop();
-    await watcher.close();
+    await Promise.all([
+      watcher.close(),
+      new Promise<void>((resolve, reject) => {
+        metricsServer.close((error) => (error ? reject(error) : resolve()));
+      }),
+    ]);
     process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
