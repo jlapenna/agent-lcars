@@ -251,13 +251,19 @@ accurately rather than treating "no resume tooling" as identical for both:
 
 - **Codex:** there is no live-resume command, but the run's transcript IS
   archived to GCS once the job ends (`codex.yml`'s telemetry sidecar +
-  `libs/telemetry/src/lib/codex-transcript-adapter.ts`) and shows up on the
-  session's console page as "Archived transcript" — the console itself
-  notes "No resume command yet for codex sessions" there
-  (`apps/console/src/app/sessions/[id]/session-header.tsx`). Fine to
-  mention the transcript is archived and viewable in the console; do not
-  imply it can be resumed or restored today — no `resume-archive`
-  equivalent exists for Codex.
+  `libs/telemetry/src/lib/codex-transcript-adapter.ts`), and the session's
+  console page does show an "Archived transcript" note naming that
+  `gs://` URI (`apps/console/src/app/sessions/[id]/session-header.tsx`) —
+  but the console does not render the transcript's _contents_ there.
+  `getSessionDetail` (`apps/console/src/lib/session-detail.ts`) only
+  fetches and parses a transcript when `sessionAgent(doc) === 'claude-code'`,
+  so a Codex session's page shows where the archive lives, never the
+  transcript itself. Say the transcript is archived to GCS, not that it's
+  "viewable in the console." If you want to hand the maintainer a real way
+  to read it, `gcloud storage cat` on that `gs://` URI prints the raw
+  JSONL directly — the same `gcloud storage` tool
+  `tools/claude-agent-session.sh`'s own `resume-archive` uses to download
+  it. No `resume-archive` equivalent exists for Codex today.
 - **OpenCode:** nothing is archived at all. The telemetry sidecar's watch
   roots are `~/.claude/projects` and `~/.codex/sessions`
   (`apps/telemetry-watcher/src/lib/runner.ts`'s `startSidecar`) — OpenCode
