@@ -11,7 +11,7 @@ permissions:
 jobs:
   audit:
     name: Audit ${{ matrix.full_name }}
-    runs-on: ubuntu-latest
+    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     strategy:
       fail-fast: false
       matrix:

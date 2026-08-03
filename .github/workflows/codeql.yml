@@ -19,6 +19,14 @@ concurrency:
 jobs:
   analyze:
     name: Analyze JavaScript and TypeScript
+    # ubuntu-latest unconditionally, not just for fork PRs: GitHub's CodeQL
+    # CLI has no linux/arm64 build at all (confirmed on this PR's own CI --
+    # "The CodeQL CLI does not support the platform/architecture
+    # combination of linux/arm64"), and this repo's self-hosted fleet
+    # includes arm64 hosts. A same-repo/trusted trigger landing on one of
+    # those would fail outright, not just be unsafe -- this is a hard
+    # platform incompatibility, not a trust-boundary question, so it gets
+    # no fork-safety ternary at all.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

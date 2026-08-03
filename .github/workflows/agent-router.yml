@@ -62,7 +62,13 @@ permissions:
 
 jobs:
   normalize:
-    runs-on: ubuntu-latest
+    # Self-hosted for everything trusted (issues/issue_comment/workflow_dispatch,
+    # and a same-repo PR branch). The "Checkout trusted broker revision" step
+    # below only lives up to that name for those triggers -- for this
+    # workflow's other trigger, `pull_request: [closed, reopened]`, the
+    # default checkout ref is the PR's own merge commit, which for a fork PR
+    # means untrusted code. Fall back to ubuntu-latest for exactly that case.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 2
     outputs:
       eligible: ${{ steps.normalize.outputs.eligible }}
@@ -95,7 +101,8 @@ jobs:
   broker:
     needs: normalize
     if: needs.normalize.outputs.eligible == 'true'
-    runs-on: ubuntu-latest
+    # See the `normalize` job above for the fork-safety rationale.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 5
     concurrency:
       # Reserved repository-wide prefix; contract test proves no other job or
