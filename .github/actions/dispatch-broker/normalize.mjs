@@ -119,6 +119,19 @@ function timelineSource(timeline, eventName, event) {
   };
 }
 
+// Shared by the `canary` and manual-dispatch workflow_dispatch branches
+// below: both accept an optional caller-supplied `caller_id` for a stable
+// sourceId (falling back to the actions run identity), and both must
+// validate it as a UUID when present -- differing only in the error
+// message's label.
+function resolveCallerSourceId(inputs, context, label) {
+  const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
+  if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
+    throw new Error(`${label} caller ID must be a UUID`);
+  }
+  return sourceId;
+}
+
 function taskRef(context, issue) {
   const repository = context.repository;
   const repositoryId = Number(context.repositoryId);
@@ -219,10 +232,7 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
     // dispatch. broker.mjs's PIPELINES gate and normalize.mjs's own
     // WORKER_WORKFLOWS gate independently pin this to the dedicated no-op
     // agent-dispatch-canary.yml worker.
-    const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
-    if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
-      throw new Error('Canary dispatch caller ID must be a UUID');
-    }
+    const sourceId = resolveCallerSourceId(inputs, context, 'Canary dispatch');
     return {
       kind: 'intent',
       intent: makeIntent({
@@ -245,10 +255,7 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
       }),
     };
   }
-  const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
-  if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
-    throw new Error('Manual dispatch caller ID must be a UUID');
-  }
+  const sourceId = resolveCallerSourceId(inputs, context, 'Manual dispatch');
   const auth = authorization(context.actor, maintainer, 'manual-maintainer');
   if (!auth.authorized) throw new Error('Unauthorized manual dispatch');
   if (!AGENT_LABELS.has(`agent:${inputs.pipeline}`)) {

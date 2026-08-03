@@ -26,6 +26,7 @@ import {
   handleCompletion,
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
+  RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
@@ -1054,6 +1055,54 @@ test('dispatchReconcileScan continues past a per-candidate dispatch failure and 
   assert.equal(results.dispatched, 2);
   assert.equal(results.failed.length, 1);
   assert.equal(results.failed[0].issue, 305);
+});
+
+// PR #374 review (P2): an unbounded Promise.allSettled over a large
+// fleet-assignee discovery backlog fired one workflow_dispatch POST per
+// candidate simultaneously, risking GitHub's secondary rate limits.
+test('dispatchReconcileScan bounds concurrent workflow_dispatch POSTs to RECONCILE_DISPATCH_CONCURRENCY while still dispatching every candidate', async () => {
+  let active = 0;
+  let maxActive = 0;
+  let calls = 0;
+  const client = {
+    request: async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      calls += 1;
+      const runId = 700 + calls;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return {
+        status: 200,
+        data: {
+          workflow_run_id: runId,
+          run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+          html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+        },
+      };
+    },
+  };
+  const issueNumbers = Array.from(
+    { length: RECONCILE_DISPATCH_CONCURRENCY * 3 + 1 },
+    (_, index) => 400 + index,
+  );
+  const results = await dispatchReconcileScan(
+    client,
+    'jlapenna/agent-lcars',
+    issueNumbers,
+  );
+  assert.equal(results.dispatched, issueNumbers.length);
+  assert.equal(results.failed.length, 0);
+  assert.equal(active, 0);
+  assert.ok(
+    maxActive <= RECONCILE_DISPATCH_CONCURRENCY,
+    `expected at most ${RECONCILE_DISPATCH_CONCURRENCY} concurrent dispatches, saw ${maxActive}`,
+  );
+  assert.equal(
+    maxActive,
+    RECONCILE_DISPATCH_CONCURRENCY,
+    'expected the pool to actually reach its concurrency limit given a backlog larger than it',
+  );
 });
 
 // --- discoverReconcileCandidates (#363 review: label-independent lane) --
