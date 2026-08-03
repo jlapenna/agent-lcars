@@ -17,15 +17,13 @@ import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import {
-  LEDGER_MARKER,
-  parseLedgerComment,
-} from '../dispatch-broker/broker.mjs';
-import {
   createGitHubApi,
+  dispatchRouterEvent,
   ensureNeedsHumanParked,
   listAll,
+  loadLedger,
+  mapWithConcurrency,
   repositoryPath,
-  validateDispatchResponse,
 } from '../dispatch-broker/github-api.mjs';
 
 const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
@@ -33,7 +31,12 @@ const CANARY_TITLE_PREFIX = '[dispatch-canary]';
 const LIVE_URL_PROBE_MAX_ATTEMPTS = 5;
 const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
 const LEDGER_POLL_TIMEOUT_MS = 10 * 60 * 1000;
-const LEDGER_POLL_INTERVAL_MS = 10_000;
+// Mirrors dispatch-broker/main.mjs's handleCompletion poll-until-terminal
+// backoff (same start/cap/doubling shape) rather than a flat interval: start
+// small so a fast-completing canary is detected quickly, double each
+// attempt, and cap growth so a long wait doesn't hammer the API.
+const LEDGER_POLL_BACKOFF_START_MS = 2_000;
+const LEDGER_POLL_BACKOFF_MAX_MS = 15_000;
 const TERMINAL_REJECTED_STATES = new Set([
   'dispatch-rejected',
   'superseded',
@@ -139,18 +142,11 @@ async function createCanaryIssue(api, repository, context) {
 }
 
 async function dispatchRouterCanary(api, repository, issueNumber) {
-  const root = repositoryPath({ repository });
-  const response = await api.request(
-    `${root}/actions/workflows/agent-router.yml/dispatches`,
-    {
-      method: 'POST',
-      body: {
-        ref: 'main',
-        inputs: { kind: 'canary', issue: String(issueNumber) },
-      },
-    },
+  await dispatchRouterEvent(
+    api,
+    { repository },
+    { kind: 'canary', issue: String(issueNumber) },
   );
-  validateDispatchResponse(response, { repository });
 }
 
 // The canary issue is a public GitHub issue: any user (or a compromised
@@ -175,30 +171,28 @@ const LEDGER_WORKFLOW_IDENTITY = 'github-actions[bot]';
 // Shared by the live poll below and sweepStaleCanaries' one-shot read: find
 // this issue's ledger comment (if any) and the 'canary'-pipeline generation
 // within it. Returns undefined when no ledger comment exists yet, or none
-// of its generations is the canary pipeline. Throws (never silently
-// ignores) when more than one marker-bearing comment exists, or the sole
-// candidate was not authored by the trusted workflow identity -- see
-// LEDGER_WORKFLOW_IDENTITY above.
-function findCanaryGeneration(comments, task) {
-  const candidates = comments.filter((comment) =>
-    comment.body?.includes(LEDGER_MARKER),
-  );
-  if (candidates.length > 1) {
-    throw new Error('Duplicate dispatch ledger comments');
-  }
-  if (candidates.length === 0) return undefined;
-  const [ledgerComment] = candidates;
-  if (
-    ledgerComment.user?.login !== LEDGER_WORKFLOW_IDENTITY ||
-    ledgerComment.user?.type !== 'Bot'
-  ) {
-    throw new Error('Dispatch ledger author is not the workflow identity');
-  }
-  const ledger = parseLedgerComment(ledgerComment.body, task);
-  const generation = ledger.generations.find(
+// of its generations is the canary pipeline.
+//
+// Reuses dispatch-broker/github-api.mjs's own loadLedger rather than
+// re-deriving its trust rule locally: exactly one marker-bearing comment is
+// ever trusted (more than one is treated as an anomaly and fails closed,
+// never "pick the first"), and that one comment must be authored by the
+// same workflow identity (REST-shaped `github-actions[bot]` login + `type:
+// 'Bot'` -- see docs/bot-identity-formats.md) every ledger write in this
+// repo already uses. loadLedger also paginates its comment listing
+// (listAll), unlike a raw, unpaginated `GET .../comments` call -- on a
+// canary issue with more than 30 comments (GitHub's default page size), an
+// unpaginated read could miss the real ledger comment entirely and silently
+// defeat this trust check. Do not weaken or duplicate that rule here.
+async function findCanaryGeneration(api, task) {
+  const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
+    createIfMissing: false,
+  });
+  if (!loaded) return undefined;
+  const generation = loaded.ledger.generations.find(
     (candidate) => candidate.pipeline === 'canary',
   );
-  return generation ? { ledger, generation } : undefined;
+  return generation ? { ledger: loaded.ledger, generation } : undefined;
 }
 
 async function pollCanaryLedger(
@@ -206,41 +200,41 @@ async function pollCanaryLedger(
   task,
   {
     timeoutMs = LEDGER_POLL_TIMEOUT_MS,
-    intervalMs = LEDGER_POLL_INTERVAL_MS,
     sleepImpl = sleep,
     now = () => Date.now(),
   } = {},
 ) {
-  const root = repositoryPath(task);
   const deadline = now() + timeoutMs;
+  let delay = LEDGER_POLL_BACKOFF_START_MS;
   while (now() < deadline) {
-    const comments = await api.requestOk(
-      `${root}/issues/${task.issue}/comments`,
-    );
-    const found = findCanaryGeneration(comments, task);
+    const found = await findCanaryGeneration(api, task);
     if (found?.generation.state === 'completed') {
       return found;
     }
     if (found && TERMINAL_REJECTED_STATES.has(found.generation.state)) {
       return { ...found, rejected: true };
     }
-    await sleepImpl(intervalMs);
+    await sleepImpl(delay);
+    delay = Math.min(delay * 2, LEDGER_POLL_BACKOFF_MAX_MS);
   }
   throw new Error(
     'Timed out waiting for the canary dispatch ledger to reach a terminal state',
   );
 }
 
-async function closeCanaryIssue(api, task, { generation, runUrl }) {
+// `message` lets a caller (sweepStaleCanaries below) supply its own success
+// comment instead of the default runUrl-templated one below, while still
+// sharing the same comment-then-close sequence.
+async function closeCanaryIssue(api, task, { generation, runUrl, message }) {
   const root = repositoryPath(task);
+  const body =
+    message ??
+    `✅ Canary verified: dispatch broker generation g${generation.generation} ` +
+      `completed successfully (worker run ${generation.attempt?.htmlUrl ?? 'n/a'}). ` +
+      `Closing automatically. Orchestrator run: ${runUrl}`;
   await api.requestOk(`${root}/issues/${task.issue}/comments`, {
     method: 'POST',
-    body: {
-      body:
-        `✅ Canary verified: dispatch broker generation g${generation.generation} ` +
-        `completed successfully (worker run ${generation.attempt?.htmlUrl ?? 'n/a'}). ` +
-        `Closing automatically. Orchestrator run: ${runUrl}`,
-    },
+    body: { body },
   });
   await api.requestOk(`${root}/issues/${task.issue}`, {
     method: 'PATCH',
@@ -285,7 +279,43 @@ async function parkCanaryFailure(api, task, maintainer, reason) {
 //     to call closeCanaryIssue itself;
 //   - otherwise parks status:needs-human, identical to parkCanaryFailure.
 // A per-issue failure is recorded and reported but never blocks sweeping
-// the remaining candidates.
+// the remaining candidates -- each candidate's cleanup is independent, so
+// they run concurrently rather than one at a time, bounded by
+// CANARY_SWEEP_CONCURRENCY below (a "list every open issue" discovery pass
+// can turn up a large stale backlog; an unbounded burst of simultaneous
+// GitHub writes risks tripping secondary rate limits, per the same PR #374
+// review finding dispatch-broker/main.mjs's dispatchReconcileScan already
+// applies this bound for).
+async function sweepOneStaleCanary(api, task, maintainer) {
+  const found = await findCanaryGeneration(api, task);
+  const conclusion = found?.generation?.attempt?.conclusion;
+  if (found?.generation.state === 'completed' && conclusion === 'success') {
+    await closeCanaryIssue(api, task, {
+      generation: found.generation,
+      message:
+        "🧹 Swept by the scheduled canary janitor: this canary's own " +
+        'orchestrator run never returned (job timeout or workflow ' +
+        'cancellation), but its dispatch broker ledger shows ' +
+        `generation g${found.generation.generation} completed ` +
+        'successfully. Closing.',
+    });
+    return { issue: task.issue, outcome: 'closed' };
+  }
+  await parkCanaryFailure(
+    api,
+    task,
+    maintainer,
+    "Swept by the scheduled canary janitor: this canary's own " +
+      'orchestrator run never returned (job timeout or workflow ' +
+      'cancellation) and its dispatch broker ledger never reached ' +
+      'a successful terminal state.',
+  );
+  return { issue: task.issue, outcome: 'parked' };
+}
+
+// See the comment above sweepOneStaleCanary for why this is bounded.
+const CANARY_SWEEP_CONCURRENCY = 5;
+
 async function sweepStaleCanaries(
   api,
   repository,
@@ -302,61 +332,34 @@ async function sweepStaleCanaries(
     const ageMsActual = now() - Date.parse(issue.created_at);
     return Number.isFinite(ageMsActual) && ageMsActual >= ageMs;
   });
+  const toSweep = stale.filter(
+    (issue) =>
+      !(issue.labels ?? []).some(
+        (label) =>
+          (typeof label === 'string' ? label : label.name) ===
+          'status:needs-human',
+      ),
+  );
 
-  const swept = [];
-  for (const issue of stale) {
-    const alreadyParked = (issue.labels ?? []).some(
-      (label) =>
-        (typeof label === 'string' ? label : label.name) ===
-        'status:needs-human',
-    );
-    if (alreadyParked) continue;
-
-    const task = { repositoryId, repository, issue: issue.number };
-    try {
-      const comments = await api.requestOk(
-        `${root}/issues/${issue.number}/comments`,
-      );
-      const found = findCanaryGeneration(comments, task);
-      const conclusion = found?.generation?.attempt?.conclusion;
-      if (found?.generation.state === 'completed' && conclusion === 'success') {
-        await api.requestOk(`${root}/issues/${issue.number}/comments`, {
-          method: 'POST',
-          body: {
-            body:
-              "🧹 Swept by the scheduled canary janitor: this canary's own " +
-              'orchestrator run never returned (job timeout or workflow ' +
-              'cancellation), but its dispatch broker ledger shows ' +
-              `generation g${found.generation.generation} completed ` +
-              'successfully. Closing.',
-          },
-        });
-        await api.requestOk(`${root}/issues/${issue.number}`, {
-          method: 'PATCH',
-          body: { state: 'closed', state_reason: 'completed' },
-        });
-        swept.push({ issue: issue.number, outcome: 'closed' });
-      } else {
-        await parkCanaryFailure(
-          api,
-          task,
-          maintainer,
-          "Swept by the scheduled canary janitor: this canary's own " +
-            'orchestrator run never returned (job timeout or workflow ' +
-            'cancellation) and its dispatch broker ledger never reached ' +
-            'a successful terminal state.',
-        );
-        swept.push({ issue: issue.number, outcome: 'parked' });
-      }
-    } catch (error) {
-      swept.push({
-        issue: issue.number,
-        outcome: 'error',
-        error: error.message,
-      });
-    }
-  }
-  return swept;
+  const outcomes = await mapWithConcurrency(
+    toSweep,
+    CANARY_SWEEP_CONCURRENCY,
+    (issue) =>
+      sweepOneStaleCanary(
+        api,
+        { repositoryId, repository, issue: issue.number },
+        maintainer,
+      ),
+  );
+  return outcomes.map((outcome, index) =>
+    outcome.status === 'fulfilled'
+      ? outcome.value
+      : {
+          issue: toSweep[index].number,
+          outcome: 'error',
+          error: outcome.reason.message,
+        },
+  );
 }
 
 async function runDispatchCanary({
@@ -495,6 +498,7 @@ if (
 }
 
 export {
+  CANARY_SWEEP_CONCURRENCY,
   closeCanaryIssue,
   createCanaryIssue,
   dispatchRouterCanary,

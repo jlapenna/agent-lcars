@@ -44,28 +44,29 @@ gh issue comment "$ISSUE_NUM" \
 # permission/API failure still fails red, because the verification read then
 # shows it missing too; if the verification read itself fails, that's
 # inconclusive (not confirmed-present), so it also fails red.
-if ! gh api "repos/$REPO/issues/$ISSUE_NUM/labels" \
-  -f 'labels[]=status:needs-human' --silent; then
+#
+# The JS-side equivalent of this same verify-then-decide pattern is
+# dispatch-broker/github-api.mjs's ensureNeedsHumanParked -- look there
+# before re-deriving it a third time.
+mutate_or_verify() {
+  local endpoint="$1" field_json="$2" jq_path="$3" value="$4" what="$5"
+  if gh api "repos/$REPO/issues/$ISSUE_NUM/$endpoint" -f "$field_json" --silent; then
+    return 0
+  fi
+  local issue_json
   if ! issue_json=$(gh api "repos/$REPO/issues/$ISSUE_NUM" 2>&1); then
-    echo "::error::Adding status:needs-human to #$ISSUE_NUM failed, and the verification re-read also failed: $issue_json"
+    echo "::error::$what for #$ISSUE_NUM failed, and the verification re-read also failed: $issue_json"
     exit 1
   fi
-  if ! jq -e '[.labels[].name] | index("status:needs-human") != null' <<<"$issue_json" >/dev/null; then
-    echo "::error::Adding status:needs-human to #$ISSUE_NUM failed and verification confirms the label is absent."
+  if ! jq -e --arg v "$value" "[$jq_path] | index(\$v) != null" <<<"$issue_json" >/dev/null; then
+    echo "::error::$what for #$ISSUE_NUM failed and verification confirms it is absent."
     exit 1
   fi
-  echo "::notice::gh api response-parse hiccup adding status:needs-human to #$ISSUE_NUM, but verification shows the label landed (see #346)."
-fi
+  echo "::notice::gh api response-parse hiccup applying $what to #$ISSUE_NUM, but verification shows it landed (see #346)."
+}
 
-if ! gh api "repos/$REPO/issues/$ISSUE_NUM/assignees" \
-  -f "assignees[]=$MAINTAINER" --silent; then
-  if ! issue_json=$(gh api "repos/$REPO/issues/$ISSUE_NUM" 2>&1); then
-    echo "::error::Assigning $MAINTAINER to #$ISSUE_NUM failed, and the verification re-read also failed: $issue_json"
-    exit 1
-  fi
-  if ! jq -e --arg m "$MAINTAINER" '[.assignees[].login] | index($m) != null' <<<"$issue_json" >/dev/null; then
-    echo "::error::Assigning $MAINTAINER to #$ISSUE_NUM failed and verification confirms the assignment is absent."
-    exit 1
-  fi
-  echo "::notice::gh api response-parse hiccup assigning $MAINTAINER to #$ISSUE_NUM, but verification shows the assignment landed (see #346)."
-fi
+mutate_or_verify labels 'labels[]=status:needs-human' \
+  '.labels[].name' 'status:needs-human' 'status:needs-human'
+
+mutate_or_verify assignees "assignees[]=$MAINTAINER" \
+  '.assignees[].login' "$MAINTAINER" "$MAINTAINER"

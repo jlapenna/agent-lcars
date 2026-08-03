@@ -136,16 +136,44 @@ function brokerConcurrencyGroup(task) {
   return `agent-lcars-dispatch-v1-${task.repositoryId}-${task.issue}`;
 }
 
-function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
-  const expected = brokerConcurrencyGroup(task);
+// Shared by validateBrokerConcurrencyResponse (the event-triggered path) and
+// checkDispatchBrokerConcurrency (the workflow_dispatch-triggered path,
+// #348): a config mismatch between a run's own supplied group and its
+// TaskRef-derived expected group is never explained by listing lag — it
+// means the two disagree right now and will keep disagreeing on every
+// retry.
+function assertSuppliedGroupMatches(suppliedGroup, expected) {
   if (suppliedGroup !== expected) {
-    // A config mismatch between the run's own group and its TaskRef is
-    // never explained by listing lag — it means the two disagree right now
-    // and will keep disagreeing on every retry.
     throw new BrokerConcurrencyMismatchError(
       'Broker concurrency output does not match its TaskRef',
     );
   }
+}
+
+// Shared by validateBrokerConcurrencyResponse, findConflictingRouterRun, and
+// findSupersedingRouterRun: which entries of a `.../concurrency_groups`
+// listing response (if any) name the expected group, matched
+// case-insensitively. Returns the full matching array (not just a boolean)
+// so validateBrokerConcurrencyResponse can still distinguish "zero matches"
+// (retryable) from "more than one match" (a real anomaly); the two scan
+// loops only ever care whether the array is non-empty.
+function groupMembershipHolds(response, expected) {
+  return (response?.concurrency_groups ?? []).filter(
+    (group) =>
+      typeof group?.group_name === 'string' &&
+      group.group_name.toLowerCase() === expected.toLowerCase(),
+  );
+}
+
+// Shared URL builder for the three call sites below that fetch a specific
+// run's own concurrency-group listing.
+function concurrencyGroupsPath(root, runId) {
+  return `${root}/actions/runs/${runId}/concurrency_groups?per_page=100`;
+}
+
+function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
+  const expected = brokerConcurrencyGroup(task);
+  assertSuppliedGroupMatches(suppliedGroup, expected);
   if (
     !Number.isSafeInteger(runId) ||
     runId <= 0 ||
@@ -155,11 +183,7 @@ function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
       'Malformed broker concurrency-group response',
     );
   }
-  const matching = data.concurrency_groups.filter(
-    (group) =>
-      typeof group?.group_name === 'string' &&
-      group.group_name.toLowerCase() === expected.toLowerCase(),
-  );
+  const matching = groupMembershipHolds(data, expected);
   if (matching.length !== 1) {
     // Zero matches is the eventually-consistent case: the listing hasn't
     // caught up with this run yet, and a later attempt can still succeed.
@@ -174,7 +198,7 @@ function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
 }
 
 async function fetchAndValidateOwnListing(api, task, runId, suppliedGroup) {
-  const path = `${repositoryPath(task)}/actions/runs/${runId}/concurrency_groups?per_page=100`;
+  const path = concurrencyGroupsPath(repositoryPath(task), runId);
   const data = await api.requestOk(path);
   return validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup);
 }
@@ -234,26 +258,33 @@ async function findConflictingRouterRun(api, task, runId) {
     .filter((run) => Number.isSafeInteger(run?.id) && run.id !== runId)
     .sort((left, right) => right.id - left.id)
     .slice(0, DISPATCH_CONFLICT_CANDIDATE_LIMIT);
-  const uninspectedIds = [];
-  for (const candidate of candidates) {
-    let response;
-    try {
-      response = await api.requestOk(
-        `${root}/actions/runs/${candidate.id}/concurrency_groups?per_page=100`,
-      );
-    } catch {
-      uninspectedIds.push(candidate.id);
-      continue;
-    }
-    const holdsExpectedGroup = (response?.concurrency_groups ?? []).some(
-      (group) =>
-        typeof group?.group_name === 'string' &&
-        group.group_name.toLowerCase() === expected.toLowerCase(),
-    );
-    // A definite conflict is a stronger signal than "inconclusive" and
-    // wins immediately, even if an earlier candidate was uninspectable.
-    if (holdsExpectedGroup) return candidate;
-  }
+  // Independent per-candidate lookups with no ordering dependency between
+  // them -- fetch them all concurrently rather than one at a time.
+  const inspections = await Promise.all(
+    candidates.map(async (candidate) => {
+      try {
+        const response = await api.requestOk(
+          concurrencyGroupsPath(root, candidate.id),
+        );
+        return {
+          candidate,
+          holdsExpectedGroup:
+            groupMembershipHolds(response, expected).length > 0,
+        };
+      } catch {
+        return { candidate, uninspectable: true };
+      }
+    }),
+  );
+  // A definite conflict is a stronger signal than "inconclusive" and wins,
+  // even if some other candidate was uninspectable.
+  const conflicting = inspections.find(
+    (inspection) => inspection.holdsExpectedGroup,
+  );
+  if (conflicting) return conflicting.candidate;
+  const uninspectedIds = inspections
+    .filter((inspection) => inspection.uninspectable)
+    .map((inspection) => inspection.candidate.id);
   if (uninspectedIds.length > 0) {
     throw new BrokerConcurrencyMismatchError(
       'Could not inspect in-progress agent-router.yml run(s) ' +
@@ -267,13 +298,9 @@ async function findConflictingRouterRun(api, task, runId) {
 
 async function checkDispatchBrokerConcurrency(api, task, runId, suppliedGroup) {
   const expected = brokerConcurrencyGroup(task);
-  if (suppliedGroup !== expected) {
-    // Same config-mismatch defense as the event-triggered path: never
-    // explained by eventual consistency, so never retryable.
-    throw new BrokerConcurrencyMismatchError(
-      'Broker concurrency output does not match its TaskRef',
-    );
-  }
+  // Same config-mismatch defense as the event-triggered path: never
+  // explained by eventual consistency, so never retryable.
+  assertSuppliedGroupMatches(suppliedGroup, expected);
   const conflicting = await findConflictingRouterRun(api, task, runId);
   if (conflicting) {
     // Retryable: the conflicting run may simply be mid-flight (about to
@@ -366,25 +393,26 @@ async function findSupersedingRouterRun(api, task, runId) {
     )
     .sort((left, right) => right.id - left.id)
     .slice(0, SUPERSEDING_RUN_CANDIDATE_LIMIT);
-  for (const candidate of candidates) {
-    let response;
-    try {
-      response = await api.requestOk(
-        `${root}/actions/runs/${candidate.id}/concurrency_groups?per_page=100`,
-      );
-    } catch {
-      // An unrelated fetch failure for one candidate doesn't disprove
-      // eviction; keep looking rather than failing the whole check.
-      continue;
-    }
-    const holdsExpectedGroup = (response?.concurrency_groups ?? []).some(
-      (group) =>
-        typeof group?.group_name === 'string' &&
-        group.group_name.toLowerCase() === expected.toLowerCase(),
-    );
-    if (holdsExpectedGroup) return candidate;
-  }
-  return undefined;
+  // Independent per-candidate lookups with no ordering dependency between
+  // them -- fetch them all concurrently rather than one at a time.
+  const inspections = await Promise.all(
+    candidates.map(async (candidate) => {
+      try {
+        const response = await api.requestOk(
+          concurrencyGroupsPath(root, candidate.id),
+        );
+        // An unrelated fetch failure for one candidate doesn't disprove
+        // eviction; treat it as "keep looking" rather than failing the
+        // whole check.
+        return groupMembershipHolds(response, expected).length > 0
+          ? candidate
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  return inspections.find(Boolean);
 }
 
 async function listAll(api, path) {
@@ -400,6 +428,47 @@ async function listAll(api, path) {
     if (data.length < 100) return all;
   }
   throw new Error('GitHub pagination exceeded safety bound');
+}
+
+// Shared by main.mjs's dispatchReconcileScan and run-dispatch-canary/
+// run.mjs's sweepStaleCanaries: both fire one independent GitHub write (or
+// small sequence of writes) per discovered candidate, and both discovery
+// lanes can legitimately return a large backlog (a scheduled reconcile scan
+// over every agent-labeled/fleet-assigned issue; a canary janitor sweep over
+// every stale marked issue). Firing all of them at once via a bare
+// Promise.all(Settled) would burst one request per candidate simultaneously
+// and risk tripping GitHub's secondary rate limits -- the resulting
+// rejections would just become per-candidate failures, silently skipping
+// otherwise-healthy candidates for the rest of that pass. This bounds how
+// many `worker` calls are in flight at once (a small fixed-size pool that
+// refills as each slot frees up) while still attempting every item and
+// keeping each item's success/failure fully independent, mirroring
+// Promise.allSettled's per-item `{status, value}` / `{status, reason}`
+// result shape (in the same order as `items`) so callers built around that
+// shape don't need to change.
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function runNext() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        results[index] = {
+          status: 'fulfilled',
+          value: await worker(items[index], index),
+        };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < Math.min(limit, items.length); i += 1) {
+    workers.push(runNext());
+  }
+  await Promise.all(workers);
+  return results;
 }
 
 // The three `agent:*` labels dispatch-capable issues/PRs carry (normalize.mjs
@@ -596,6 +665,23 @@ function validateDispatchResponse(response, task) {
   return { runId, runUrl, htmlUrl };
 }
 
+// Shared by main.mjs's completionCallback/dispatchReconcileScan and
+// run-dispatch-canary/run.mjs's dispatchRouterCanary: every caller posts
+// the same workflow_dispatch shape at this repo's own agent-router.yml
+// (ref: 'main', a caller-supplied `inputs` object naming the `kind`) and
+// then validates the same response contract via validateDispatchResponse.
+// Only the `inputs` payload differs per caller.
+async function dispatchRouterEvent(api, task, inputs) {
+  const response = await api.request(
+    `${repositoryPath(task)}/actions/workflows/agent-router.yml/dispatches`,
+    {
+      method: 'POST',
+      body: { ref: 'main', inputs },
+    },
+  );
+  return validateDispatchResponse(response, task);
+}
+
 async function dispatchWorker(api, generation, task) {
   const workflow = workerWorkflow(generation.pipeline);
   const root = repositoryPath(task);
@@ -748,25 +834,38 @@ async function issueHasAssignee(api, task, login) {
 // terminal outcome, not a job failure -- callers of this function decide
 // separately whether to throw; this function itself only throws when the
 // mutation is genuinely, confirmably absent.
+// Shared by the label and assignee mutations below: attempt the mutation,
+// and only surface its error if `verify` confirms the mutation genuinely
+// did not land (see the ensureNeedsHumanParked comment above for why a
+// failure here can still mean success). The bash equivalent of this same
+// pattern is report-failure.sh's `mutate_or_verify`.
+async function mutateOrVerify(mutate, verify) {
+  try {
+    await mutate();
+  } catch (error) {
+    if (!(await verify())) throw error;
+  }
+}
+
 async function ensureNeedsHumanParked(api, task, maintainer) {
   const root = repositoryPath(task);
-  try {
-    await api.requestOk(`${root}/issues/${task.issue}/labels`, {
-      method: 'POST',
-      body: { labels: ['status:needs-human'] },
-    });
-  } catch (error) {
-    if (!(await issueHasLabel(api, task, 'status:needs-human'))) throw error;
-  }
+  await mutateOrVerify(
+    () =>
+      api.requestOk(`${root}/issues/${task.issue}/labels`, {
+        method: 'POST',
+        body: { labels: ['status:needs-human'] },
+      }),
+    () => issueHasLabel(api, task, 'status:needs-human'),
+  );
   if (!maintainer) return;
-  try {
-    await api.requestOk(`${root}/issues/${task.issue}/assignees`, {
-      method: 'POST',
-      body: { assignees: [maintainer] },
-    });
-  } catch (error) {
-    if (!(await issueHasAssignee(api, task, maintainer))) throw error;
-  }
+  await mutateOrVerify(
+    () =>
+      api.requestOk(`${root}/issues/${task.issue}/assignees`, {
+        method: 'POST',
+        body: { assignees: [maintainer] },
+      }),
+    () => issueHasAssignee(api, task, maintainer),
+  );
 }
 
 export {
@@ -776,6 +875,7 @@ export {
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
+  dispatchRouterEvent,
   dispatchWorker,
   ensureNeedsHumanParked,
   failClosed,
@@ -788,6 +888,7 @@ export {
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   loadLedger,
+  mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
   repositoryPath,

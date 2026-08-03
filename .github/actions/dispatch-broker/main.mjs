@@ -19,6 +19,7 @@ import {
 } from './broker.mjs';
 import {
   createGitHubApi,
+  dispatchRouterEvent,
   dispatchWorker,
   ensureNeedsHumanParked,
   failClosed,
@@ -29,11 +30,11 @@ import {
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   loadLedger,
+  mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
   repositoryPath,
   saveLedger,
-  validateDispatchResponse,
   verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api.mjs';
@@ -364,26 +365,39 @@ async function reconcileLedger(client, loaded, now = new Date().toISOString()) {
 // comment itself, so it needs no concurrency verification of its own --
 // only dispatch-reconcile.yml's single scan-wide concurrency group (to
 // avoid two overlapping scans firing duplicate dispatches) applies here.
+// Bounds how many workflow_dispatch POSTs dispatchReconcileScan fires at
+// once. Every candidate's dispatch is independent -- no ordering dependency
+// between them -- but the fleet-assignee discovery lane (#363 review) can
+// legitimately return a large historical backlog, and an unbounded burst of
+// simultaneous POSTs risks tripping GitHub's secondary rate limits (a PR
+// #374 review finding): the resulting rejections would just become
+// per-candidate failures, silently skipping otherwise-healthy candidates
+// for this pass. A small worker pool (mapWithConcurrency) still attempts
+// every candidate and keeps per-candidate failure isolation, just bounded.
+const RECONCILE_DISPATCH_CONCURRENCY = 5;
+
 async function dispatchReconcileScan(client, repository, issueNumbers) {
+  const task = { repository };
+  const outcomes = await mapWithConcurrency(
+    issueNumbers,
+    RECONCILE_DISPATCH_CONCURRENCY,
+    (issueNumber) =>
+      dispatchRouterEvent(client, task, {
+        kind: 'reconcile',
+        issue: String(issueNumber),
+      }),
+  );
   const results = { dispatched: 0, failed: [] };
-  for (const issueNumber of issueNumbers) {
-    try {
-      const response = await client.request(
-        `${repositoryPath({ repository })}/actions/workflows/agent-router.yml/dispatches`,
-        {
-          method: 'POST',
-          body: {
-            ref: 'main',
-            inputs: { kind: 'reconcile', issue: String(issueNumber) },
-          },
-        },
-      );
-      validateDispatchResponse(response, { repository });
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === 'fulfilled') {
       results.dispatched += 1;
-    } catch (error) {
-      results.failed.push({ issue: issueNumber, message: error.message });
+    } else {
+      results.failed.push({
+        issue: issueNumbers[index],
+        message: outcome.reason.message,
+      });
     }
-  }
+  });
   return results;
 }
 
@@ -807,21 +821,11 @@ async function completionCallback() {
     token: env('BROKER_DISPATCH_TOKEN'),
     workflow: env('BROKER_WORKER_WORKFLOW'),
   });
-  const response = await client.request(
-    `${repositoryPath(task)}/actions/workflows/agent-router.yml/dispatches`,
-    {
-      method: 'POST',
-      body: {
-        ref: 'main',
-        inputs: {
-          kind: 'completion',
-          issue: String(task.issue),
-          completion_payload: completionPayload,
-        },
-      },
-    },
-  );
-  validateDispatchResponse(response, task);
+  await dispatchRouterEvent(client, task, {
+    kind: 'completion',
+    issue: String(task.issue),
+    completion_payload: completionPayload,
+  });
 }
 
 // Merges both discovery lanes (#305, broadened by the #363 review):
@@ -907,6 +911,7 @@ export {
   handleCompletion,
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
+  RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
