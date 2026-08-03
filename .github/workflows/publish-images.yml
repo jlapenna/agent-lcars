@@ -115,9 +115,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # This repo's only Go module lives at apps/runner-autoscaler/go.mod,
+      # not the repo root. setup-go's default dependency-cache lookup only
+      # checks the root, so without cache-dependency-path every run logs a
+      # "Restore cache failed: Dependencies file is not found" warning and
+      # never actually caches the module/build cache (agent-lcars#318).
       - uses: actions/setup-go@v7
         with:
           go-version-file: apps/runner-autoscaler/go.mod
+          cache-dependency-path: apps/runner-autoscaler/go.mod
 
       - uses: pnpm/action-setup@v6
 
