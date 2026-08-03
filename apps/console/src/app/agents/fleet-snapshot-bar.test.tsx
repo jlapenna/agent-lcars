@@ -51,12 +51,20 @@ const EMPTY_ACTIVITY: AgentActivity = {
 function renderBar(
   activity: AgentActivity = EMPTY_ACTIVITY,
   activeCliSessionCount = 0,
+  metrics?: {
+    logicalTaskCount: number;
+    queuedAttempts: number;
+    runningAttempts: number;
+    onlineRunners?: number;
+    busyRunners?: number;
+  },
 ) {
   render(
     <MantineProvider>
       <FleetSnapshotBar
         activity={activity}
         activeCliSessionCount={activeCliSessionCount}
+        metrics={metrics}
       />
     </MantineProvider>,
   );
@@ -111,5 +119,42 @@ describe('FleetSnapshotBar', () => {
   it('renders no queue alert when nothing is stalled', () => {
     renderBar(EMPTY_ACTIVITY);
     expect(screen.queryByTestId('queue-alert')).toBeNull();
+  });
+
+  it('renders no metrics row at all when no metrics are supplied (back-compat)', () => {
+    renderBar(EMPTY_ACTIVITY);
+    expect(screen.queryByTestId('activity-metrics-row')).toBeNull();
+  });
+
+  it('renders logical-task, queued-attempt, and running-attempt counts as visibly distinct numbers (#306)', () => {
+    renderBar(EMPTY_ACTIVITY, 0, {
+      logicalTaskCount: 2,
+      queuedAttempts: 1,
+      runningAttempts: 3,
+      onlineRunners: 5,
+      busyRunners: 2,
+    });
+
+    expect(screen.getByTestId('metric-logical-tasks').textContent).toBe(
+      '2 logical tasks',
+    );
+    expect(screen.getByTestId('metric-queued-attempts').textContent).toBe(
+      '1 queued attempt',
+    );
+    expect(screen.getByTestId('metric-running-attempts').textContent).toBe(
+      '3 running attempts',
+    );
+    expect(screen.getByTestId('metric-runner-occupancy').textContent).toBe(
+      '2/5 runners busy',
+    );
+  });
+
+  it('omits the runner-occupancy metric when the runner API was unavailable', () => {
+    renderBar(EMPTY_ACTIVITY, 0, {
+      logicalTaskCount: 0,
+      queuedAttempts: 0,
+      runningAttempts: 0,
+    });
+    expect(screen.queryByTestId('metric-runner-occupancy')).toBeNull();
   });
 });

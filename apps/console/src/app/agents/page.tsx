@@ -20,6 +20,12 @@ import {
   repoKey,
   type WatchedRepo,
 } from '../../lib/github-client';
+import {
+  deriveActivityMetrics,
+  deriveLogicalWork,
+  ledgerMapFromItems,
+  taskMetaFromItems,
+} from '../../lib/logical-work';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
@@ -150,6 +156,32 @@ async function AgentsPageBody({
     matchesFilter(item.repo),
   );
 
+  // #306: logical-task/execution-attempt/runner-occupancy as three
+  // deliberately distinct numbers (see deriveActivityMetrics's own doc
+  // comment). Ledger data comes from each item's already-fetched comment
+  // enrichment (see action-items.ts's `wantsComments` and `ActionItem.ledger`)
+  // - no new per-item API call. Attempts include both live and recently
+  // finished runs so a task whose only visible attempt just completed still
+  // counts as logical work if its ledger says so; live/queued attempts are
+  // what actually feed the queued/running counts below.
+  const logicalWorkItems = filteredItems.map((item) => ({
+    ...item,
+    humanNeeded: item.actionTypes.includes('needs-human'),
+  }));
+  const { work: logicalWork, unattributedAttempts } = deriveLogicalWork({
+    attempts: [
+      ...(filteredActivity.liveRunAttempts ?? filteredActivity.liveRuns),
+      ...filteredActivity.recentRuns,
+    ],
+    ledgers: ledgerMapFromItems(logicalWorkItems),
+    taskMeta: taskMetaFromItems(logicalWorkItems),
+  });
+  const activityMetrics = deriveActivityMetrics(
+    logicalWork,
+    [...logicalWork.flatMap((task) => task.attempts), ...unattributedAttempts],
+    filteredActivity.fleet,
+  );
+
   return (
     <AgentsWorkspace
       warnings={
@@ -159,6 +191,7 @@ async function AgentsPageBody({
         <FleetSnapshotBar
           activity={filteredActivity}
           activeCliSessionCount={filteredActiveSessions.length}
+          metrics={activityMetrics}
         />
       }
       active={

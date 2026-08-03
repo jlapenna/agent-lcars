@@ -1,19 +1,32 @@
 import assert from 'node:assert/strict';
 
-import { createLedger, renderLedgerComment } from './broker.mjs';
+import {
+  acceptIntent,
+  beginDispatch,
+  createLedger,
+  renderLedgerComment,
+} from './broker.mjs';
 import {
   API_VERSION,
   brokerConcurrencyGroup,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
+  ensureNeedsHumanParked,
   findConflictingRouterRun,
+  findRunsForGeneration,
   findSupersedingRouterRun,
+  GitHubApiError,
+  listOpenAgentLabeledIssues,
+  listOpenIssuesAssignedTo,
   loadLedger,
+  mapWithConcurrency,
   pinLedgerWhenUnoccupied,
+  removeIssueLabel,
   validateBrokerConcurrencyResponse,
   validateDispatchResponse,
   verifyBrokerConcurrency,
+  workerWorkflow,
 } from './github-api.mjs';
 
 const tests = [];
@@ -86,6 +99,17 @@ test('dispatch requires 200 with same-repository run details', () => {
   ]) {
     assert.throws(() => validateDispatchResponse(invalid, task));
   }
+});
+
+test('worker pipeline resolves to exactly one worker workflow file, including the #307 canary', () => {
+  assert.equal(workerWorkflow('claude'), 'claude.yml');
+  assert.equal(workerWorkflow('codex'), 'codex.yml');
+  assert.equal(workerWorkflow('opencode'), 'opencode.yml');
+  assert.equal(workerWorkflow('canary'), 'agent-dispatch-canary.yml');
+  assert.throws(
+    () => workerWorkflow('not-a-real-pipeline'),
+    /Unsupported worker pipeline/u,
+  );
 });
 
 test('broker concurrency must match the canonical task and reported run group', () => {
@@ -720,6 +744,357 @@ test('missing ledger is created once and pinned only with an unoccupied issue pi
   );
 });
 
+test('removeIssueLabel DELETEs the exact encoded label path and reports success on 200', async () => {
+  let request;
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return response(200, [{ name: 'agent:claude' }]);
+    },
+  });
+  const result = await removeIssueLabel(api, task, 'agent:codex');
+  assert.equal(
+    request.url,
+    'https://api.github.com/repos/jlapenna/agent-lcars/issues/304/labels/agent%3Acodex',
+  );
+  assert.equal(request.options.method, 'DELETE');
+  assert.deepEqual(result, { removed: true });
+});
+
+test('removeIssueLabel treats an already-absent label (404) as benign, not an error (#304 self-heal idempotency)', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => response(404, { message: 'Label does not exist' }),
+  });
+  const result = await removeIssueLabel(api, task, 'agent:codex');
+  assert.deepEqual(result, { removed: false });
+});
+
+test('removeIssueLabel propagates a genuine failure so the broker falls back to fail-closed', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => response(403, { message: 'Forbidden' }),
+  });
+  await assert.rejects(
+    () => removeIssueLabel(api, task, 'agent:codex'),
+    (error) => error instanceof GitHubApiError && error.status === 403,
+  );
+});
+
+test('listOpenAgentLabeledIssues queries all three agent labels and dedupes by issue number (#305)', async () => {
+  const seen = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      if (url.includes('labels=agent%3Aclaude')) {
+        return response(200, [{ number: 10 }, { number: 5 }]);
+      }
+      if (url.includes('labels=agent%3Acodex')) {
+        // Same issue #5 reported under a second label -- a (invalid)
+        // contradictory-label issue must still only be scanned once.
+        return response(200, [{ number: 5 }]);
+      }
+      if (url.includes('labels=agent%3Aopencode')) {
+        return response(200, [{ number: 20 }]);
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const issues = await listOpenAgentLabeledIssues(api, task);
+  assert.deepEqual(
+    issues.map((issue) => issue.number),
+    [5, 10, 20],
+  );
+  assert.equal(seen.length, 3);
+  for (const url of seen) assert.match(url, /state=open/u);
+});
+
+test('listOpenAgentLabeledIssues paginates a single label past 100 results', async () => {
+  const pageOne = Array.from({ length: 100 }, (_, index) => ({
+    number: index + 1,
+  }));
+  const requestedPages = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      if (url.includes('labels=agent%3Aclaude')) {
+        const page = Number(new URL(url).searchParams.get('page'));
+        requestedPages.push(page);
+        return response(200, page === 1 ? pageOne : [{ number: 101 }]);
+      }
+      return response(200, []);
+    },
+  });
+  const issues = await listOpenAgentLabeledIssues(api, task);
+  assert.deepEqual(requestedPages, [1, 2]);
+  assert.equal(issues.length, 101);
+});
+
+test('listOpenIssuesAssignedTo queries the exact assignee login and paginates (#363 review)', async () => {
+  const seen = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      assert.ok(url.includes('state=open'));
+      assert.ok(url.includes('assignee=jclaw-bot'));
+      return response(200, [{ number: 500 }]);
+    },
+  });
+  const issues = await listOpenIssuesAssignedTo(api, task, 'jclaw-bot');
+  assert.deepEqual(
+    issues.map((issue) => issue.number),
+    [500],
+  );
+  assert.equal(seen.length, 1);
+});
+
+test('listOpenIssuesAssignedTo is a no-op returning no requests when no login is configured', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => {
+      throw new Error('must not call the API without a configured login');
+    },
+  });
+  assert.deepEqual(await listOpenIssuesAssignedTo(api, task, ''), []);
+  assert.deepEqual(await listOpenIssuesAssignedTo(api, task, undefined), []);
+});
+
+function dispatchingGeneration({
+  dispatchStartedAt = '2026-08-01T00:00:00.000Z',
+} = {}) {
+  const ledger = createLedger(task);
+  acceptIntent(ledger, {
+    task,
+    intentId: 'intent-1',
+    sourceKind: 'manual',
+    sourceId: 'source-1',
+    transportRunId: 9001,
+    occurredAt: dispatchStartedAt,
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'abc',
+    authorization: { authorized: true },
+  });
+  beginDispatch(ledger, 1, 'dispatch_token_123456', dispatchStartedAt);
+  return ledger.generations[0];
+}
+
+test('findRunsForGeneration scopes the query to runs created at or after the generation was dispatched (#363 review)', async () => {
+  const generation = dispatchingGeneration({
+    dispatchStartedAt: '2026-08-01T12:00:00.000Z',
+  });
+  let requestedUrl;
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      requestedUrl = url;
+      return response(200, { workflow_runs: [] });
+    },
+  });
+  await findRunsForGeneration(api, task, generation);
+  const created = new URL(requestedUrl).searchParams.get('created');
+  assert.ok(created, 'expected a created= query parameter');
+  assert.match(created, /^>=2026-08-01T11:5\d:00\.000Z$/u);
+});
+
+test('findRunsForGeneration paginates within the scoped window and finds a run that an unscoped, unpaginated 100-result page would have truncated (#363 review)', async () => {
+  const generation = dispatchingGeneration();
+  const marker = `[dispatch:g${generation.generation}:${generation.intentId}]`;
+  const targetRun = {
+    id: 999,
+    display_title: `#304: Codex ${marker}`,
+  };
+  // Page 1 is entirely unrelated newer traffic (a full page -- signals more
+  // may exist); the actual match only appears on page 2. An unscoped,
+  // unpaginated per_page=100 call would see only page 1 and wrongly report
+  // "no matching run".
+  const pageOne = Array.from({ length: 100 }, (_, index) => ({
+    id: index,
+    display_title: `#999: unrelated run ${index}`,
+  }));
+  const requestedPages = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get('page'));
+      requestedPages.push(page);
+      if (page === 1) return response(200, { workflow_runs: pageOne });
+      return response(200, { workflow_runs: [targetRun] });
+    },
+  });
+  const matches = await findRunsForGeneration(api, task, generation);
+  assert.deepEqual(requestedPages, [1, 2]);
+  assert.deepEqual(
+    matches.map((run) => run.id),
+    [999],
+  );
+});
+
+test('findRunsForGeneration accumulates matches across pages rather than stopping at the first one, so a duplicate landing on a later page is still detected', async () => {
+  const generation = dispatchingGeneration();
+  const marker = `[dispatch:g${generation.generation}:${generation.intentId}]`;
+  const firstMatch = { id: 1, display_title: `#304: Codex ${marker}` };
+  const secondMatch = { id: 2, display_title: `#304: Codex ${marker}` };
+  const pageOne = [
+    firstMatch,
+    ...Array.from({ length: 99 }, (_, index) => ({
+      id: 100 + index,
+      display_title: `#999: unrelated run ${index}`,
+    })),
+  ];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get('page'));
+      if (page === 1) return response(200, { workflow_runs: pageOne });
+      if (page === 2) return response(200, { workflow_runs: [secondMatch] });
+      return response(200, { workflow_runs: [] });
+    },
+  });
+  const matches = await findRunsForGeneration(api, task, generation);
+  assert.deepEqual(matches.map((run) => run.id).sort(), [1, 2]);
+});
+
+test('findRunsForGeneration gives up after its bounded page limit rather than scanning forever', async () => {
+  const generation = dispatchingGeneration();
+  let requests = 0;
+  const fullPage = Array.from({ length: 100 }, (_, index) => ({
+    id: index,
+    display_title: `#999: unrelated run ${index}`,
+  }));
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => {
+      requests += 1;
+      return response(200, { workflow_runs: fullPage });
+    },
+  });
+  const matches = await findRunsForGeneration(api, task, generation);
+  assert.deepEqual(matches, []);
+  assert.equal(requests, 5); // FIND_RUNS_FOR_GENERATION_MAX_PAGES
+});
+
+test('ensureNeedsHumanParked applies the label and assignee on success, with no verification re-reads', async () => {
+  const calls = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, method: options.method });
+      return response(200, {});
+    },
+  });
+  await ensureNeedsHumanParked(api, task, 'jlapenna');
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /\/labels$/u);
+  assert.equal(calls[0].method, 'POST');
+  assert.match(calls[1].url, /\/assignees$/u);
+  assert.equal(calls[1].method, 'POST');
+});
+
+test('ensureNeedsHumanParked skips the assignee mutation entirely when no maintainer is configured', async () => {
+  const calls = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return response(200, {});
+    },
+  });
+  await ensureNeedsHumanParked(api, task, '');
+  assert.equal(calls.length, 1);
+});
+
+test('ensureNeedsHumanParked verify-then-decides a label POST failure that actually landed (#346 pattern)', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(422, { message: 'response-parse hiccup' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, {
+          labels: [{ name: 'status:needs-human' }],
+          assignees: [{ login: 'jlapenna' }],
+        });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.doesNotReject(() =>
+    ensureNeedsHumanParked(api, task, 'jlapenna'),
+  );
+});
+
+test('ensureNeedsHumanParked throws when a label mutation genuinely failed and verification confirms absence', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(403, { message: 'Forbidden' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, { labels: [], assignees: [] });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.rejects(
+    () => ensureNeedsHumanParked(api, task, 'jlapenna'),
+    (error) => error instanceof GitHubApiError && error.status === 403,
+  );
+});
+
+test('ensureNeedsHumanParked verify-then-decides an assignee POST failure that actually landed', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(200, {});
+      }
+      if (options.method === 'POST' && url.endsWith('/assignees')) {
+        return response(422, { message: 'response-parse hiccup' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, {
+          labels: [],
+          assignees: [{ login: 'jlapenna' }],
+        });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.doesNotReject(() =>
+    ensureNeedsHumanParked(api, task, 'jlapenna'),
+  );
+});
+
+test('ensureNeedsHumanParked throws when an assignee mutation genuinely failed and verification confirms absence', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(200, {});
+      }
+      if (options.method === 'POST' && url.endsWith('/assignees')) {
+        return response(403, { message: 'Forbidden' });
+      }
+      if (url.endsWith(`/issues/${task.issue}`)) {
+        return response(200, { labels: [], assignees: [] });
+      }
+      return response(200, {});
+    },
+  });
+  await assert.rejects(
+    () => ensureNeedsHumanParked(api, task, 'jlapenna'),
+    (error) => error instanceof GitHubApiError && error.status === 403,
+  );
+});
+
 test('transport loss is distinguishable from a definite HTTP rejection', async () => {
   const api = createGitHubApi({
     token: 'token',
@@ -731,6 +1106,62 @@ test('transport loss is distinguishable from a definite HTTP rejection', async (
     () => api.request('/dispatch', { method: 'POST' }),
     (error) =>
       error.status === undefined && /transport failure/u.test(error.message),
+  );
+});
+
+// PR #374 review (P2): a bare Promise.all(Settled) over a large discovered
+// backlog fires one request per candidate simultaneously and risks
+// tripping GitHub's secondary rate limits -- mapWithConcurrency is the
+// bounded-pool replacement dispatchReconcileScan and sweepStaleCanaries
+// both use. Assert it (a) never lets more than `limit` workers run at
+// once, (b) still attempts every item, and (c) preserves per-item success
+// or failure -- and their original order -- exactly like
+// Promise.allSettled would.
+test('mapWithConcurrency bounds in-flight work to the given limit while still processing every item', async () => {
+  const limit = 3;
+  let active = 0;
+  let maxActive = 0;
+  const items = Array.from({ length: 11 }, (_, index) => index);
+  const results = await mapWithConcurrency(items, limit, async (item) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+    if (item === 4) throw new Error(`boom-${item}`);
+    return item * 2;
+  });
+  assert.equal(active, 0, 'every worker must have finished');
+  assert.ok(
+    maxActive <= limit,
+    `expected at most ${limit} concurrent workers, saw ${maxActive}`,
+  );
+  assert.equal(
+    maxActive,
+    limit,
+    'expected the pool to actually reach its concurrency limit given more items than the limit',
+  );
+  assert.equal(results.length, items.length);
+  results.forEach((result, index) => {
+    if (index === 4) {
+      assert.equal(result.status, 'rejected');
+      assert.match(result.reason.message, /boom-4/u);
+    } else {
+      assert.equal(result.status, 'fulfilled');
+      assert.equal(result.value, index * 2);
+    }
+  });
+});
+
+test('mapWithConcurrency never starts more workers than there are items', async () => {
+  let concurrentCalls = 0;
+  const results = await mapWithConcurrency([1, 2], 5, async (item) => {
+    concurrentCalls += 1;
+    return item;
+  });
+  assert.equal(concurrentCalls, 2);
+  assert.deepEqual(
+    results.map((result) => result.value),
+    [1, 2],
   );
 });
 

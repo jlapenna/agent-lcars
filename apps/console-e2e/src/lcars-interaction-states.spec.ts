@@ -180,13 +180,16 @@ test.describe('overlays inherit the LCARS theme', () => {
     await dialog.getByLabel('Description').fill('Verify Quick Task contract');
     await dialog.getByRole('button', { name: 'File & dispatch' }).click();
 
+    // The fixture assigns a real-looking, incrementing issue number rather
+    // than a fixed one (agent-lcars#307) - shared server process, so a
+    // number depends on how many Quick Tasks earlier specs already filed.
     const receipt = page.getByRole('link', {
-      name: 'Quick task filed as supersprinklesracing/sprinkles#9999',
+      name: /^Quick task filed as supersprinklesracing\/sprinkles#\d+$/,
     });
     await expect(receipt).toBeVisible();
     await expect(receipt).toHaveAttribute(
       'href',
-      'https://github.com/supersprinklesracing/sprinkles/issues/9999',
+      /^https:\/\/github\.com\/supersprinklesracing\/sprinkles\/issues\/\d+$/,
     );
     await expect(dialog).toBeHidden();
   });

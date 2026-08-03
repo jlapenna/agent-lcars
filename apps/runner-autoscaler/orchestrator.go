@@ -145,6 +145,9 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 		c.HostMetricsURLTemplate = resolved.Raw.Fleet.Placement.HostMetricsURLTemplate
 		c.HostLoadPolicy = resolved.Placement
 		c.HostMemoryExempt = append([]string(nil), resolved.Raw.Fleet.Placement.HostMemoryExempt...)
+		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
+		c.ReadinessMetric = resolved.Raw.Fleet.Placement.ReadinessMetric
+		c.ReadinessMaxAge = resolved.ReadinessMaxAge
 		runtime, err := buildScaleSetRuntime(c, dockerHosts, placementHosts, fleet)
 		if err != nil {
 			return nil, fmt.Errorf("initializing scale set %q: %w", c.ScaleSetName, err)
@@ -213,6 +216,7 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.dockerSocketGIDs = resolved.DockerSocketGID
 	fleet.mainsRequired = resolved.MainsRequired
 	fleet.metricsViaSSH = resolved.MetricsViaSSH
+	fleet.readinessRequired = resolved.ReadinessRequired
 	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
 	fleet.mu.Unlock()
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
@@ -316,6 +320,9 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMemoryExempt:    stringSet(c.HostMemoryExempt),
+		readinessMetricsURL: c.ReadinessMetricsURL,
+		readinessMetric:     c.ReadinessMetric,
+		readinessMaxAge:     c.ReadinessMaxAge,
 		workDirSizeCapBytes: defaultWorkDirSizeCapBytes,
 		workDirSizeCaps:     fleet.workDirSizeCaps, hostRunnerLimits: fleet.hostRunnerLimits,
 		fleet: fleet,

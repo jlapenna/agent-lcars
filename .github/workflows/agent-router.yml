@@ -21,7 +21,7 @@ on:
         required: false
         default: intent
         type: choice
-        options: [intent, completion]
+        options: [intent, completion, reconcile, canary]
       issue:
         description: Issue number to route
         required: true

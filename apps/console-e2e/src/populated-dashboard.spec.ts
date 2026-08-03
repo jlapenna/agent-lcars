@@ -133,12 +133,25 @@ test.describe('populated dashboard', () => {
     // Live: a running row (with its elapsed/turn gauges) and a queued row
     // stalled past the threshold, which is what drives the queue alert.
     await expect(page.getByTestId('queue-health-alert')).toBeVisible();
-    // The fixture API returns a third raw live attempt, queued behind the
-    // running Claude attempt for the same issue. It collapses into the same
-    // logical work item, so the fleet still reports two active runs.
     await expect(page.getByTestId('fleet-chip')).toHaveText(
       '2 runners active (1 busy)',
     );
+
+    // #306: the fixture's duplicate live attempt on the same issue/pipeline
+    // is no longer collapsed away - both rows render, grouped under one
+    // visible duplicate-attempt anomaly, never silently reduced to one.
+    const duplicateGroup = page.getByTestId(
+      `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}`,
+    );
+    await expect(duplicateGroup).toBeVisible();
+    await expect(duplicateGroup.getByTestId('live-run-issue-link')).toHaveCount(
+      2,
+    );
+    const duplicateAlert = page.getByTestId(
+      `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}-duplicate`,
+    );
+    await expect(duplicateAlert).toBeVisible();
+    await expect(duplicateAlert).toContainText('2 claude');
 
     // Finished runs live behind a collapsed <details> — which is itself
     // why these badges had never been looked at.
@@ -152,6 +165,46 @@ test.describe('populated dashboard', () => {
     await expect(recent.getByText('timeout').first()).toBeVisible();
     // And the non-claude pipeline tag.
     await expect(recent.getByText('opencode').first()).toBeVisible();
+  });
+
+  test('the attempt-history link reaches the canonical task page with the ledger-backed anomaly (#306)', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    const duplicateGroup = page.getByTestId(
+      `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}`,
+    );
+    await duplicateGroup
+      .getByTestId(
+        `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}-history`,
+      )
+      .click();
+
+    await expect(page).toHaveURL(
+      new RegExp(
+        `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}$`,
+      ),
+    );
+
+    const card = page.getByTestId('logical-work-card');
+    await expect(card).toBeVisible();
+    await expect(card.getByTestId('logical-work-state')).toHaveText('anomaly');
+
+    // Both attempts remain visible on the canonical task page too - the
+    // ledger explains WHY they exist (one generation, one intent), the
+    // anomaly banner explains why there are two of them.
+    const attempts = card.getByTestId('logical-work-attempts');
+    await expect(attempts.getByText(/queued/).first()).toBeVisible();
+    await expect(attempts.getByText(/running/).first()).toBeVisible();
+
+    const anomalies = card.getByTestId('logical-work-anomalies');
+    await expect(anomalies).toContainText('2 claude attempts');
+
+    const intents = card.getByTestId('logical-work-intents');
+    await expect(intents).toBeVisible();
+    await expect(intents).toContainText('g1');
+    await expect(intents).toContainText('via labeled');
   });
 
   test('renders the sessions archive and an issue-agent detail page', async ({

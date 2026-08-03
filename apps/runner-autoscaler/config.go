@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/actions/scaleset"
 )
@@ -116,6 +117,13 @@ type Config struct {
 	// verbatim in runOrchestrator).
 	HostLoadPolicy   hostLoadPolicy
 	HostMemoryExempt []string
+	// ReadinessMetricsURL, ReadinessMetric and ReadinessMaxAge configure the
+	// per-host readiness gate consulted for hosts that set
+	// require_readiness. See FleetPlacementFile for the semantics and
+	// hostReady for the check itself. Empty URL/metric disables the gate.
+	ReadinessMetricsURL string
+	ReadinessMetric     string
+	ReadinessMaxAge     time.Duration
 }
 
 func stringSet(values []string) map[string]bool {

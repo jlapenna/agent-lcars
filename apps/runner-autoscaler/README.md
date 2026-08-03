@@ -46,6 +46,68 @@ The deployment-owned alert can page on unavailable runners persisting for ten
 minutes without mistaking the brief registration window during startup for a
 dead broker connection.
 
+## Host readiness gate
+
+Reachability is not always enough to decide a host should run CI. A machine
+can answer perfectly well while being somewhere, or in some state, you would
+rather it not be building — a laptop reachable over a mesh VPN is reachable
+from anywhere, including away from home.
+
+A host can therefore be gated on a signal you publish yourself. The
+orchestrator holds no opinion about what "ready" means; it reads a gauge and
+honors the verdict.
+
+```yaml
+fleet:
+  placement:
+    readiness_metrics_url: http://metrics.internal:9100/metrics
+    readiness_metric: host_ci_ready
+    readiness_max_age: 5m # optional, strongly recommended
+  hosts:
+    - name: laptop
+      docker: ssh://runner@laptop
+      require_readiness: true
+```
+
+The endpoint is scraped in Prometheus text format and must serve, for each
+gated host, a gauge labelled with that host's name. Greater than zero means
+placeable:
+
+```
+host_ci_ready{host="laptop"} 1
+host_ci_ready_timestamp_seconds 1785702249
+```
+
+One endpoint serves the whole fleet rather than one per host, because the
+answer is frequently _about_ a host as observed from somewhere else, and the
+host itself may be in no position to report it.
+
+The `host` label must be present and match exactly. A series carrying some
+other label that merely ends in `host` (`target_host`, `node_host`) does not
+count, so a mislabelled signal withholds the host rather than satisfying the
+gate.
+
+`readiness_max_age` additionally requires the companion
+`<readiness_metric>_timestamp_seconds` gauge to be no older than the given
+duration. Setting it is strongly recommended: the gate is **fail-closed**, so
+a publisher that dies leaves its last reading served indefinitely, and a stale
+`1` would fail the gate _open_ — the single outcome it exists to prevent.
+
+Timestamps materially in the future are rejected too (a couple of minutes of
+clock skew is tolerated). Publishing milliseconds where seconds are expected
+lands roughly 55,000 years ahead, which would otherwise make the signal
+permanently "fresh" and disable the freshness check entirely.
+
+Fail-closed means anything other than a fresh, positive reading withholds the
+host: a missing metric, an unreachable or erroring endpoint, a stale or
+future-dated timestamp, or a reading for a different host. Hosts without
+`require_readiness` are untouched, including when the publisher is broken.
+
+Observability: `github_runner_autoscaler_host_ready{host}` reports the current
+verdict per gated host, and exhausting the fleet through the gate increments
+`github_runner_autoscaler_placement_blocked_total{reason="readiness"}` rather
+than reporting those hosts as unreachable.
+
 ## Deployment
 
 The actual runtime config (`orchestrator.yml`: fleet host inventory, GitHub

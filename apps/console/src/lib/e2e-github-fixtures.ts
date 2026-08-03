@@ -1,10 +1,12 @@
 import { agentFleetLogin, maintainerLogin } from './deployment';
+import { type DispatchLedger, LEDGER_MARKER } from './dispatch-ledger';
 import {
   E2E_FIXTURE_BRANCH,
   E2E_FIXTURE_PR_NUMBER,
   E2E_FIXTURE_PR_TITLE,
   E2E_FIXTURE_PR_URL,
 } from './e2e-fixtures';
+import { type AgentPipeline, DEFAULT_AGENT_INTEGRATIONS } from './watched-repo';
 
 /**
  * Canned GitHub API responses for the e2e suite's *populated* mode, added
@@ -50,6 +52,14 @@ export const E2E_ITEM_NUMBERS = {
   silentError: 9005,
   readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
+  /** Carries a pinned dispatch-ledger comment AND two live workflow
+   * attempts of the same ledger generation (see `E2E_RUN_IDS.running` /
+   * `duplicateQueued`) - the #306 duplicate-attempt-anomaly scenario, with
+   * real ledger attribution behind it. Off the board on purpose (no
+   * board-qualifying label/assignee): the In Flight panel's "attempt
+   * history" link is what reaches its `/task/.../9008` detail page, not the
+   * board. */
+  ledgerDuplicateDispatch: 9008,
 } as const;
 
 export const E2E_RUN_IDS = {
@@ -77,6 +87,66 @@ const minutesAgo = (minutes: number) => secondsAgo(minutes * 60);
 
 const itemUrl = (number: number, kind: 'issues' | 'pull') =>
   `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/${kind}/${number}`;
+
+/** Shared by the ledger fixture below and the two duplicate live-attempt
+ * run-name markers in FIXTURE_RUNS - both attempts deliberately carry the
+ * SAME generation/intent, since that is exactly the anomaly #306's
+ * `deriveLogicalWork` exists to surface (two attempts genuinely bound to
+ * one dispatch, not two different generations racing). */
+export const E2E_LEDGER_INTENT_ID = 'e2e-fixture-intent-9008';
+
+/**
+ * A validated `agent-lcars.dispatch-ledger/v1` payload (see
+ * dispatch-ledger.ts), standing in for what the dispatch broker
+ * (`.github/actions/dispatch-broker/broker.mjs`) would have pinned to the
+ * issue. Only `E2E_RUN_IDS.running` is actually bound in the ledger's own
+ * `attempt` field - `duplicateQueued` shares its marker but was never the
+ * generation's recorded binding, mirroring a genuinely anomalous second
+ * dispatch rather than a normal retry.
+ */
+function ledgerFixture(): DispatchLedger {
+  const sourceId = 'e2e-fixture-source-9008';
+  return {
+    schema: 'agent-lcars.dispatch-ledger/v1',
+    revision: 2,
+    task: {
+      repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
+      issue: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
+    },
+    createdAt: minutesAgo(13),
+    updatedAt: minutesAgo(1),
+    control: { closed: false },
+    sources: [
+      {
+        sourceKind: 'labeled',
+        sourceId,
+        transportRunId: 500009008,
+        occurredAt: minutesAgo(13),
+      },
+    ],
+    generations: [
+      {
+        generation: 1,
+        intentId: E2E_LEDGER_INTENT_ID,
+        sourceId,
+        occurredAt: minutesAgo(13),
+        pipeline: 'claude',
+        mode: 'implement',
+        state: 'active',
+        attempt: { runId: E2E_RUN_IDS.running, status: 'in_progress' },
+      },
+    ],
+    anomalies: [],
+  };
+}
+
+/** Renders the same marker+JSON-block shape broker.mjs's own
+ * `renderLedgerComment` produces (see that function's doc comment) - only
+ * the human-readable summary line is simplified, since nothing here reads
+ * it. */
+function ledgerCommentBody(ledger: DispatchLedger): string {
+  return `${LEDGER_MARKER}\nDispatch broker: g1 claude is active.\n\n\`\`\`json\n${JSON.stringify(ledger)}\n\`\`\``;
+}
 
 interface FixtureItem {
   number: number;
@@ -226,6 +296,22 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     author: FLEET,
     updatedAt: minutesAgo(52),
   },
+  {
+    number: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
+    title: 'feat(console): repo filter chips',
+    body: '',
+    isPr: false,
+    // No board-qualifying label/assignee on purpose - see this number's own
+    // doc comment on E2E_ITEM_NUMBERS. Still enrichable (comments/ledger)
+    // via item-enrichment.ts and readable via GET /issues/{number}
+    // (task-detail.ts), both of which key off FIXTURE_ITEMS directly rather
+    // than the filtered board.
+    labels: [],
+    assignees: [],
+    author: MAINTAINER,
+    updatedAt: minutesAgo(1),
+    comments: [{ author: FLEET, body: ledgerCommentBody(ledgerFixture()) }],
+  },
 ];
 
 interface FixtureRun {
@@ -245,11 +331,13 @@ const FIXTURE_RUNS: FixtureRun[] = [
     workflow: 'claude.yml',
     status: 'in_progress',
     conclusion: null,
-    // Deliberately NOT one of the board's items: page.tsx drops any item
-    // with a live run from the board (it belongs to In Flight instead), so
+    // Board membership is intentionally NOT what makes this render in In
+    // Flight (see E2E_ITEM_NUMBERS.ledgerDuplicateDispatch's own comment) -
     // pointing a live run at, say, the run-failed fixture would hide the
-    // very card this fixture set exists to render.
-    displayTitle: '#9008: feat(console): repo filter chips',
+    // very card this fixture set exists to render. Carries the ledger's
+    // real generation/intent marker (E2E_LEDGER_INTENT_ID) so this attempt
+    // gets `ledger` attribution, not just a bare title-number parse.
+    displayTitle: `#${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_LEDGER_INTENT_ID}]`,
     createdAt: minutesAgo(13),
     startedAt: minutesAgo(12),
     updatedAt: minutesAgo(1),
@@ -269,12 +357,16 @@ const FIXTURE_RUNS: FixtureRun[] = [
     workflow: 'claude.yml',
     status: 'queued',
     conclusion: null,
-    // Same logical work as `running`: the GitHub API exposes both workflow
-    // attempts, while the console should render one active item.
-    displayTitle: '#9008: feat(console): repo filter chips',
-    // Past QUEUE_STALL_THRESHOLD_SECONDS (300). The logical row chooses the
-    // running attempt above, but queue health must still inspect this raw
-    // attempt and render the alert.
+    // #306: same logical work AND the same ledger generation/intent as
+    // `running` above - a genuine duplicate dispatch, not a second
+    // pipeline racing the item. The GitHub API really does expose both
+    // attempts; the console must render both, grouped with a visible
+    // duplicate-attempt anomaly, never silently pick one (see
+    // agent-activity-panel.tsx's `duplicatePipelineSummary`).
+    displayTitle: `#${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_LEDGER_INTENT_ID}]`,
+    // Past QUEUE_STALL_THRESHOLD_SECONDS (300), so queue health must still
+    // inspect this raw attempt and render the stall alert even though the
+    // group's other attempt is already running.
     createdAt: minutesAgo(11),
     startedAt: minutesAgo(11),
     updatedAt: minutesAgo(11),
@@ -355,6 +447,308 @@ export function populatedFixturesEnabled(): boolean {
   return (globalThis as Record<string, unknown>)[POPULATED_KEY] === true;
 }
 
+/**
+ * Stateful Quick Task write-path fixture (agent-lcars#307 part A). Everything
+ * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually
+ * writes through `AGENT_CONSOLE_GITHUB_API_BASE_URL` - the claim tag/ref
+ * ledger, the issue itself, and (standing in for the dispatch broker this
+ * suite never runs for real - see docs/e2e-security-boundary.md) the pinned
+ * `agent-lcars.dispatch-ledger/v1` comment and bound workflow run a
+ * successful create+label write would eventually produce.
+ *
+ * Lives on `globalThis` for the same reason `POPULATED_KEY` does: Next
+ * bundles `/api/e2e/github/*` and `/api/e2e/seed` as separate route modules
+ * that only share a JS realm, not a module instance, and the seed route
+ * needs to reset this between specs (see `resetQuickTaskFixtures`).
+ */
+const QUICK_TASK_STATE_KEY = '__agentLcarsE2eQuickTaskState';
+
+interface QuickTaskFixtureRun {
+  id: number;
+  workflow: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: string | null;
+  displayTitle: string;
+  createdAt: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
+interface QuickTaskFixtureIssue {
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+  createdAt: string;
+  comments: { author: string; body: string }[];
+}
+
+interface QuickTaskFixtureState {
+  issues: QuickTaskFixtureIssue[];
+  runs: QuickTaskFixtureRun[];
+  /** Annotated tag objects keyed by SHA - `git.createTag` / `git.getTag`. */
+  claimTags: Map<string, { message: string; tag: string }>;
+  /** Claim ref SHAs keyed by `tags/agent-lcars/quick-task/<id>` -
+   * `git.createRef` / `git.getRef` / `git.deleteRef`. */
+  claimRefs: Map<string, string>;
+  /** Numbered well clear of both the curated `E2E_ITEM_NUMBERS` (9001-9010)
+   * and `E2E_RUN_IDS` ranges, and incrementing per created issue/run so a
+   * fixture leak or an accidental duplicate create is immediately visible
+   * as two different numbers rather than a silently-reused one. */
+  nextIssueNumber: number;
+  nextRunId: number;
+  tagSequence: number;
+}
+
+function freshQuickTaskState(): QuickTaskFixtureState {
+  return {
+    issues: [],
+    runs: [],
+    claimTags: new Map(),
+    claimRefs: new Map(),
+    nextIssueNumber: 20001,
+    nextRunId: 480001,
+    tagSequence: 0,
+  };
+}
+
+function quickTaskState(): QuickTaskFixtureState {
+  const bag = globalThis as Record<string, unknown>;
+  if (!bag[QUICK_TASK_STATE_KEY]) {
+    bag[QUICK_TASK_STATE_KEY] = freshQuickTaskState();
+  }
+  return bag[QUICK_TASK_STATE_KEY] as QuickTaskFixtureState;
+}
+
+/** Called from `/api/e2e/seed`'s `reset` action so a Quick Task issue/claim
+ * created by one spec never leaks into a later spec sharing the same
+ * single-worker server process (see playwright.config.ts's `workers: 1`). */
+export function resetQuickTaskFixtures(): void {
+  (globalThis as Record<string, unknown>)[QUICK_TASK_STATE_KEY] =
+    freshQuickTaskState();
+}
+
+/** Title sentinel a spec can type into the real "Title" field to make the
+ * fixture's issue-create endpoint fail closed with a definitive 4xx - the
+ * only way to deterministically exercise that path through the real UI,
+ * since every other field it controls (description, pipeline, repo) is
+ * otherwise always valid. Never a value a real task would use. */
+export const E2E_QUICK_TASK_FORCE_4XX_TITLE = 'E2E_QUICK_TASK_FORCE_4XX';
+
+export function createQuickTaskClaimTag(
+  message: string,
+  tag: string,
+): { sha: string } {
+  const state = quickTaskState();
+  state.tagSequence += 1;
+  const sha = String(state.tagSequence).padStart(40, 'a');
+  state.claimTags.set(sha, { message, tag });
+  return { sha };
+}
+
+export function getQuickTaskClaimTag(
+  sha: string,
+): { message: string; tag: string } | undefined {
+  return quickTaskState().claimTags.get(sha);
+}
+
+/** Returns `false` without mutating state when the ref already exists -
+ * mirrors GitHub's real atomic-create semantics (`422 Reference already
+ * exists`), which is the whole uniqueness boundary the claim-tag protocol in
+ * docs/quick-task-identity.md depends on. */
+export function createQuickTaskClaimRef(ref: string, sha: string): boolean {
+  const state = quickTaskState();
+  if (state.claimRefs.has(ref)) return false;
+  state.claimRefs.set(ref, sha);
+  return true;
+}
+
+export function getQuickTaskClaimRefSha(ref: string): string | undefined {
+  return quickTaskState().claimRefs.get(ref);
+}
+
+/** Backs `DELETE /git/refs/{ref}` - the release half of the claim protocol
+ * (`releaseQuickTaskClaim` in backend-actions.ts), exercised by a definitive
+ * 4xx create failure. Returns whether a ref was actually removed so the
+ * route can answer 204/404 like the real API. */
+export function deleteQuickTaskClaimRef(ref: string): boolean {
+  return quickTaskState().claimRefs.delete(ref);
+}
+
+/**
+ * Creates the issue AND immediately synthesizes what a real deployment's
+ * router + dispatch broker + worker would eventually produce from that
+ * same create+label write: one accepted, dispatched, and bound generation
+ * (`agent-lcars.dispatch-ledger/v1`) pinned as a comment, plus the workflow
+ * run it bound to. This suite never runs the actual broker action (see
+ * docs/e2e-security-boundary.md) - the point is that everything downstream
+ * of this write (the console's own GET/GraphQL polling and
+ * `deriveLogicalWork` rendering) still runs for real against a plausible,
+ * internally-consistent end state.
+ */
+export function recordQuickTaskIssue(params: {
+  title: string;
+  body: string;
+  labels: string[];
+  pipeline: AgentPipeline;
+}): {
+  number: number;
+  html_url: string;
+  title: string;
+  body: string;
+  labels: { name: string }[];
+} {
+  const state = quickTaskState();
+  const number = state.nextIssueNumber++;
+  const runId = state.nextRunId++;
+  const now = new Date().toISOString();
+
+  const intentId = `e2e-quick-task-intent-${number}`;
+  const sourceId = `e2e-quick-task-source-${number}`;
+  const ledger: DispatchLedger = {
+    schema: 'agent-lcars.dispatch-ledger/v1',
+    revision: 1,
+    task: {
+      repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
+      issue: number,
+    },
+    createdAt: now,
+    updatedAt: now,
+    control: { closed: false },
+    sources: [
+      {
+        sourceKind: 'labeled',
+        sourceId,
+        transportRunId: runId,
+        occurredAt: now,
+      },
+    ],
+    generations: [
+      {
+        generation: 1,
+        intentId,
+        sourceId,
+        occurredAt: now,
+        pipeline: params.pipeline,
+        mode: 'implement',
+        state: 'active',
+        attempt: { runId, status: 'in_progress' },
+      },
+    ],
+    anomalies: [],
+  };
+
+  // Mirrors claude.yml/codex.yml/opencode.yml's real run-name templates:
+  // claude has no pipeline prefix, codex/opencode repeat their own name
+  // ahead of the `#N:` join key (see agent-activity.ts's
+  // DISPLAY_TITLE_NUMBER_RE / PIPELINE_TITLE_PREFIX_RE, and FIXTURE_RUNS'
+  // own opencode entry above).
+  const titlePrefix = params.pipeline === 'claude' ? '' : `${params.pipeline} `;
+  state.runs.push({
+    id: runId,
+    workflow: DEFAULT_AGENT_INTEGRATIONS[params.pipeline].workflowFile,
+    status: 'in_progress',
+    conclusion: null,
+    displayTitle: `${titlePrefix}#${number}: ${params.title} [dispatch:g1:${intentId}]`,
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+  });
+
+  state.issues.push({
+    number,
+    title: params.title,
+    body: params.body,
+    labels: params.labels,
+    createdAt: now,
+    comments: [{ author: FLEET, body: ledgerCommentBody(ledger) }],
+  });
+
+  return {
+    number,
+    html_url: itemUrl(number, 'issues'),
+    title: params.title,
+    body: params.body,
+    labels: params.labels.map((name) => ({ name })),
+  };
+}
+
+function quickTaskIssueRestShape(item: QuickTaskFixtureIssue) {
+  return {
+    number: item.number,
+    title: item.title,
+    body: item.body,
+    html_url: itemUrl(item.number, 'issues'),
+    user: { login: MAINTAINER },
+    state: 'open',
+    updated_at: item.createdAt,
+    labels: item.labels.map((name) => ({ name })),
+    assignees: [],
+    comments: item.comments.length,
+  };
+}
+
+export function quickTaskIssue(number: number) {
+  const found = quickTaskState().issues.find(
+    (candidate) => candidate.number === number,
+  );
+  return found ? quickTaskIssueRestShape(found) : undefined;
+}
+
+/**
+ * `GET /repos/{o}/{r}/issues?state=all` - what
+ * `backend-actions.ts`'s `findExistingQuickTask` scans for the request-ID
+ * marker before ever attempting a create, which is the entire idempotency
+ * mechanism under test. Deliberately does NOT merge in the curated
+ * `FIXTURE_ITEMS` (unlike `openIssues()`'s `state=open` board listing):
+ * none of them ever carry a `quick-task-request` marker, so including them
+ * would only add noise, never change which issue a retry resolves to.
+ */
+export function quickTaskListingIssues() {
+  return quickTaskState().issues.map(quickTaskIssueRestShape);
+}
+
+function quickTaskGraphqlEntries(): Record<string, unknown> {
+  const repository: Record<string, unknown> = {};
+  for (const item of quickTaskState().issues) {
+    repository[`i${item.number}`] = {
+      __typename: 'Issue',
+      comments: {
+        nodes: item.comments.map((comment, index) => ({
+          body: comment.body,
+          url: `${itemUrl(item.number, 'issues')}#issuecomment-${item.number}${index}`,
+          author: { login: comment.author },
+        })),
+      },
+    };
+  }
+  return repository;
+}
+
+function quickTaskDynamicRuns(workflowFile: string, status?: string) {
+  return quickTaskState().runs.filter(
+    (run) =>
+      run.workflow === workflowFile &&
+      (status === undefined ||
+        status === run.conclusion ||
+        status === run.status),
+  );
+}
+
+function quickTaskIssueComments(number: number) {
+  const item = quickTaskState().issues.find(
+    (candidate) => candidate.number === number,
+  );
+  if (!item) return undefined;
+  return item.comments.map((comment, index) => ({
+    id: number * 1000 + index,
+    user: { login: comment.author },
+    body: comment.body,
+    html_url: `${itemUrl(number, 'issues')}#issuecomment-${number}${index}`,
+    created_at: item.createdAt,
+  }));
+}
+
 /** The `issues.listForRepo` row shape - which serves issues and PRs alike,
  * with a PR carrying a `pull_request` key. */
 function issueFor(item: FixtureItem) {
@@ -385,8 +779,13 @@ export function openIssues() {
 }
 
 /** Individual issue read used by rendered mutation flows such as retrigger
- * and atomic pipeline reassignment. */
+ * and atomic pipeline reassignment, and by the canonical `/task/<owner>/
+ * <repo>/<issue>` detail page (task-detail.ts) - which is why a Quick
+ * Task-created issue is checked first and unconditionally: that page must
+ * resolve a freshly filed task regardless of whether populated mode is on. */
 export function issue(number: number) {
+  const quickTask = quickTaskIssue(number);
+  if (quickTask) return quickTask;
   if (!populatedFixturesEnabled()) return undefined;
   const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
   return item ? issueFor(item) : undefined;
@@ -443,7 +842,11 @@ export function openPulls() {
  * than being bypassed by a conveniently pre-lowercased fixture.
  */
 export function enrichmentGraphql() {
-  const repository: Record<string, unknown> = {};
+  // Quick Task-created issues are merged in unconditionally (unlike the
+  // FIXTURE_ITEMS loop below): `getTaskDetail`'s ledger/comment read must
+  // work regardless of whether populated mode is on, the same as `issue()`
+  // above.
+  const repository: Record<string, unknown> = quickTaskGraphqlEntries();
   if (!populatedFixturesEnabled()) return { repository };
 
   for (const item of FIXTURE_ITEMS) {
@@ -498,6 +901,8 @@ export function enrichmentGraphql() {
 
 /** `GET /repos/{owner}/{repo}/issues/{number}/comments` */
 export function issueComments(number: number) {
+  const quickTask = quickTaskIssueComments(number);
+  if (quickTask) return quickTask;
   const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
   return (item?.comments ?? []).map((comment, index) => ({
     id: number * 100 + index,
@@ -540,16 +945,22 @@ export function checkRuns(ref: string) {
 /** `GET /repos/{owner}/{repo}/actions/workflows/{file}/runs`. `status` is
  * how `fetchRecentRuns` asks for one conclusion at a time. */
 export function workflowRuns(workflowFile: string, status?: string) {
-  if (!populatedFixturesEnabled()) {
-    return { total_count: 0, workflow_runs: [] };
-  }
-  const runs = FIXTURE_RUNS.filter(
-    (run) =>
-      run.workflow === workflowFile &&
-      (status === undefined ||
-        status === run.conclusion ||
-        status === run.status),
-  ).map((run) => ({
+  // Quick Task's bound run is merged in unconditionally, same as issue()/
+  // enrichmentGraphql() above: the console's live/recent run fetch
+  // (agent-activity.ts) must see it whether or not populated mode is on.
+  const populated = populatedFixturesEnabled()
+    ? FIXTURE_RUNS.filter(
+        (run) =>
+          run.workflow === workflowFile &&
+          (status === undefined ||
+            status === run.conclusion ||
+            status === run.status),
+      )
+    : [];
+  const runs = [
+    ...populated,
+    ...quickTaskDynamicRuns(workflowFile, status),
+  ].map((run) => ({
     id: run.id,
     status: run.status,
     conclusion: run.conclusion,

@@ -10,7 +10,10 @@ import { parse as parseYaml } from 'yaml';
 // in agent-activity.ts). Importing it - rather than copying/re-deriving the
 // regex here - means an edit to the console's parsing logic is exercised by
 // this test automatically instead of silently drifting from it.
-import { issueNumberFromDisplayTitle } from '../../apps/console/src/lib/agent-activity';
+import {
+  attemptMarkerFromDisplayTitle,
+  issueNumberFromDisplayTitle,
+} from '../../apps/console/src/lib/agent-activity';
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -103,6 +106,19 @@ describe('run-name <-> console join contract', () => {
       expect(issueNumberFromDisplayTitle(rendered)).toBe(
         Number(EXPRESSION_VALUES['inputs.issue']),
       );
+    },
+  );
+
+  it.each(WORKFLOWS)(
+    '%s renders a run-name the console can parse back to the broker generation/intent that dispatched it',
+    (workflowRelativePath) => {
+      const template = loadRunName(workflowRelativePath);
+      const rendered = renderRunName(template);
+
+      expect(attemptMarkerFromDisplayTitle(rendered)).toEqual({
+        generation: Number(EXPRESSION_VALUES['inputs.broker_generation']),
+        intentId: EXPRESSION_VALUES['inputs.broker_intent_id'],
+      });
     },
   );
 

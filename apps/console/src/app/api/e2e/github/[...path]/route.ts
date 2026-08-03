@@ -3,20 +3,31 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import {
   checkRuns,
+  createQuickTaskClaimRef,
+  createQuickTaskClaimTag,
+  deleteQuickTaskClaimRef,
+  E2E_QUICK_TASK_FORCE_4XX_TITLE,
   enrichmentGraphql,
+  getQuickTaskClaimRefSha,
+  getQuickTaskClaimTag,
   issue,
   issueComments,
   openIssues,
   openPulls,
   pullRequest,
+  quickTaskListingIssues,
+  recordQuickTaskIssue,
   selfHostedRunners,
   workflowRuns,
 } from '../../../../../lib/e2e-github-fixtures';
 
 const E2E_BASE_COMMIT_SHA = '1111111111111111111111111111111111111111';
-const quickTaskTagObjects = new Map<string, { message: string; tag: string }>();
-const quickTaskClaimRefs = new Map<string, string>();
-let quickTaskTagSequence = 0;
+const QUICK_TASK_LABEL = 'intake:quick-task';
+const QUICK_TASK_AGENT_LABELS = [
+  'agent:claude',
+  'agent:codex',
+  'agent:opencode',
+];
 
 /**
  * Stands in for the whole GitHub REST surface the dashboard reads when
@@ -68,7 +79,7 @@ export async function GET(
           object: { type: 'commit', sha: E2E_BASE_COMMIT_SHA },
         });
       }
-      const tagSha = quickTaskClaimRefs.get(ref);
+      const tagSha = getQuickTaskClaimRefSha(ref);
       return tagSha
         ? NextResponse.json({
             ref: `refs/${ref}`,
@@ -79,7 +90,7 @@ export async function GET(
 
     // GET /repos/{o}/{r}/git/tags/{sha}
     if (rest[0] === 'git' && rest[1] === 'tags' && rest[2]) {
-      const tag = quickTaskTagObjects.get(rest[2]);
+      const tag = getQuickTaskClaimTag(rest[2]);
       return tag
         ? NextResponse.json({ ...tag, sha: rest[2] })
         : NextResponse.json({ message: 'Not Found' }, { status: 404 });
@@ -100,9 +111,18 @@ export async function GET(
 
     // GET /repos/{o}/{r}/issues - the action-item board's item universe
     // since #13. Page 2+ is empty so the app's pagination loop terminates.
+    //
+    // `state=all` is a distinct caller: `findExistingQuickTask` in
+    // backend-actions.ts asks for it specifically to scan for its
+    // request-ID marker across every issue regardless of open/closed state
+    // - the `state=open` board listing (openIssues(), unchanged) never
+    // needs to see a Quick Task issue at all.
     if (rest[0] === 'issues' && rest.length === 1) {
       const page = Number(query.get('page') ?? '1');
-      return NextResponse.json(page > 1 ? [] : openIssues());
+      if (page > 1) return NextResponse.json([]);
+      return NextResponse.json(
+        query.get('state') === 'all' ? quickTaskListingIssues() : openIssues(),
+      );
     }
 
     // GET /repos/{o}/{r}/pulls - supplies the review-requested predicate.
@@ -204,11 +224,11 @@ export async function POST(
         body.body ?? '',
       );
     const claimSha = requestMarker
-      ? quickTaskClaimRefs.get(
+      ? getQuickTaskClaimRefSha(
           `tags/agent-lcars/quick-task/${requestMarker[1]}`,
         )
       : undefined;
-    const claim = claimSha ? quickTaskTagObjects.get(claimSha) : undefined;
+    const claim = claimSha ? getQuickTaskClaimTag(claimSha) : undefined;
     let hasMatchingClaim = false;
     if (
       requestMarker &&
@@ -225,24 +245,44 @@ export async function POST(
           persisted['claimantId'],
         );
     }
+    // Exactly `intake:quick-task` plus one `agent:*` label - the one-write
+    // contract in docs/quick-task-identity.md (no extra labels, no more
+    // than one agent selected, matching real backend-actions.ts's
+    // `labels: [QUICK_TASK_LABEL, integration.label]`).
+    const agentLabels = (body.labels ?? []).filter((label) =>
+      QUICK_TASK_AGENT_LABELS.includes(label),
+    );
     if (
       !body.title?.trim() ||
       !hasMatchingClaim ||
-      !body.labels?.includes('intake:quick-task') ||
-      !body.labels.includes('agent:claude')
+      body.labels?.length !== 2 ||
+      !body.labels.includes(QUICK_TASK_LABEL) ||
+      agentLabels.length !== 1
     ) {
       return NextResponse.json(
         { message: 'Invalid Quick Task fixture request' },
         { status: 422 },
       );
     }
-    return NextResponse.json({
-      number: 9999,
-      html_url: 'https://github.com/supersprinklesracing/sprinkles/issues/9999',
+    // Deliberate failure-injection sentinel (see this constant's own doc
+    // comment) - lets a spec drive a definitive, claim-releasing 4xx
+    // through the real "Title" field rather than needing an out-of-band
+    // control channel the real UI has no way to exercise.
+    if (body.title === E2E_QUICK_TASK_FORCE_4XX_TITLE) {
+      return NextResponse.json(
+        { message: 'E2E fixture: forced definitive Quick Task failure' },
+        { status: 422 },
+      );
+    }
+    const pipeline = agentLabels[0].slice('agent:'.length) as
+      'claude' | 'codex' | 'opencode';
+    const created = recordQuickTaskIssue({
       title: body.title,
-      body: body.body,
-      labels: body.labels.map((name) => ({ name })),
+      body: body.body ?? '',
+      labels: body.labels,
+      pipeline,
     });
+    return NextResponse.json(created);
   }
   if (
     path[0] === 'repos' &&
@@ -267,8 +307,7 @@ export async function POST(
         { status: 422 },
       );
     }
-    const sha = `${String(++quickTaskTagSequence).padStart(40, 'a')}`;
-    quickTaskTagObjects.set(sha, { message: body.message, tag: body.tag });
+    const { sha } = createQuickTaskClaimTag(body.message, body.tag);
     return NextResponse.json({
       sha,
       tag: body.tag,
@@ -287,20 +326,19 @@ export async function POST(
     if (
       !ref?.startsWith('tags/agent-lcars/quick-task/') ||
       !body.sha ||
-      !quickTaskTagObjects.has(body.sha)
+      !getQuickTaskClaimTag(body.sha)
     ) {
       return NextResponse.json(
         { message: 'Invalid Quick Task claim ref' },
         { status: 422 },
       );
     }
-    if (quickTaskClaimRefs.has(ref)) {
+    if (!createQuickTaskClaimRef(ref, body.sha)) {
       return NextResponse.json(
         { message: 'Reference already exists' },
         { status: 422 },
       );
     }
-    quickTaskClaimRefs.set(ref, body.sha);
     return NextResponse.json({
       ref: body.ref,
       object: { type: 'tag', sha: body.sha },
@@ -381,6 +419,17 @@ export async function DELETE(
     issue(Number(path[4]))
   ) {
     return new NextResponse(null, { status: 204 });
+  }
+  // DELETE /repos/{o}/{r}/git/refs/{ref} - releaseQuickTaskClaim's half of
+  // the claim-tag protocol (docs/quick-task-identity.md), reached after a
+  // definitive 4xx create failure. Octokit's `ref` path param already
+  // excludes the leading `refs/`, matching the GET .../git/ref/{ref} and
+  // POST .../git/refs handlers above.
+  if (path[0] === 'repos' && path[3] === 'git' && path[4] === 'refs') {
+    const ref = path.slice(5).join('/');
+    return deleteQuickTaskClaimRef(ref)
+      ? new NextResponse(null, { status: 204 })
+      : NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
   console.error(
     'agent-lcars: no e2e GitHub fixture for DELETE /%s',

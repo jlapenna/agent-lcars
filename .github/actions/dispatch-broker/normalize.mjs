@@ -13,7 +13,12 @@ const COMMANDS = new Map([
   ['/opencode', 'opencode'],
   ['/oc', 'opencode'],
 ]);
-const WORKER_WORKFLOWS = new Set(['claude.yml', 'codex.yml', 'opencode.yml']);
+const WORKER_WORKFLOWS = new Set([
+  'claude.yml',
+  'codex.yml',
+  'opencode.yml',
+  'agent-dispatch-canary.yml',
+]);
 const QUICK_TASK_MARKER =
   /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) digest=([0-9a-f]{64}) -->/gu;
 const UUID =
@@ -114,6 +119,19 @@ function timelineSource(timeline, eventName, event) {
   };
 }
 
+// Shared by the `canary` and manual-dispatch workflow_dispatch branches
+// below: both accept an optional caller-supplied `caller_id` for a stable
+// sourceId (falling back to the actions run identity), and both must
+// validate it as a UUID when present -- differing only in the error
+// message's label.
+function resolveCallerSourceId(inputs, context, label) {
+  const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
+  if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
+    throw new Error(`${label} caller ID must be a UUID`);
+  }
+  return sourceId;
+}
+
 function taskRef(context, issue) {
   const repository = context.repository;
   const repositoryId = Number(context.repositoryId);
@@ -152,6 +170,22 @@ function makeIntent(base) {
 
 function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
   const task = taskRef(context, undefined);
+  // Fired by dispatch-reconcile.yml's scan job (#305), one workflow_dispatch
+  // call per already-discovered open agent-labeled issue/PR -- see
+  // main.mjs's dispatchReconcileScan(). Carries no claims about ledger
+  // state (unlike `completion`, which binds a specific run/generation/token
+  // that must be validated to prevent a forged completion), so there is
+  // nothing here to authorize or validate beyond the issue identity itself:
+  // it is a maintenance ping meaning "re-observe this issue's ledger against
+  // live GitHub state", and every repair broker()'s `reconcile` branch can
+  // perform is already a safe, idempotent, evidence-preserving observation
+  // (never a blind trust of caller-supplied state). workflow_dispatch itself
+  // already requires repo write access to trigger manually, and the
+  // scheduled trigger only ever comes from this repo's own trusted
+  // dispatch-reconcile.yml job.
+  if (inputs.kind === 'reconcile') {
+    return { kind: 'reconcile', task };
+  }
   if (inputs.kind === 'completion') {
     let completion;
     try {
@@ -185,10 +219,43 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
       workflow: completion.workflow,
     };
   }
-  const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
-  if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
-    throw new Error('Manual dispatch caller ID must be a UUID');
+  if (inputs.kind === 'canary') {
+    // Fired exclusively by this repo's own trusted dispatch-canary.yml
+    // (hourly + workflow_dispatch) or post-deploy-smoke.yml (#307), which
+    // created `task.issue` moments earlier via GITHUB_TOKEN specifically so
+    // it could dispatch this. Like `reconcile` above, this bypasses
+    // per-actor authorization: triggering a workflow_dispatch already
+    // requires repo write access (the caller's own `actions: write`
+    // permission), and unlike the manual `intent` path below, `pipeline`
+    // is hardcoded to 'canary' here rather than caller-supplied, so this
+    // can never be used to smuggle an unauthorized claude/codex/opencode
+    // dispatch. broker.mjs's PIPELINES gate and normalize.mjs's own
+    // WORKER_WORKFLOWS gate independently pin this to the dedicated no-op
+    // agent-dispatch-canary.yml worker.
+    const sourceId = resolveCallerSourceId(inputs, context, 'Canary dispatch');
+    return {
+      kind: 'intent',
+      intent: makeIntent({
+        task,
+        sourceKind: 'canary',
+        sourceId,
+        transportRunId: context.runId,
+        occurredAt: context.now,
+        pipeline: 'canary',
+        mode: 'implement',
+        reply: '',
+        runbook: '',
+        context: '',
+        authorization: {
+          authorized: true,
+          actor: context.actor,
+          configuredMaintainer: maintainer,
+          rule: 'canary-scheduled-dispatch',
+        },
+      }),
+    };
   }
+  const sourceId = resolveCallerSourceId(inputs, context, 'Manual dispatch');
   const auth = authorization(context.actor, maintainer, 'manual-maintainer');
   if (!auth.authorized) throw new Error('Unauthorized manual dispatch');
   if (!AGENT_LABELS.has(`agent:${inputs.pipeline}`)) {
@@ -365,10 +432,38 @@ function normalizeEvent({
     const selectedAgentLabels = labelsOf(issue).filter((label) =>
       AGENT_LABELS.has(label),
     );
+    // A manual GitHub UI relabel adds the new agent:* label before removing
+    // the old one, so this `labeled` event can fire inside a transient
+    // dual-label window (the old pre-broker router self-healed this; #304's
+    // audit found the broker did not). When this event's own label
+    // disambiguates against exactly one other agent:* label already on the
+    // issue, self-heal: honor the newest explicit maintainer action (the
+    // event's own label) as authoritative and mark the other as stale so
+    // main.mjs can remove it before dispatching. Anything less clear-cut --
+    // the event's label missing from the current snapshot, or two or more
+    // other labels present -- stays genuinely ambiguous and fails closed,
+    // same as a comment/dispatch arriving with no event label to
+    // disambiguate.
+    let effectivePipeline = pipeline;
+    let staleAgentLabels;
     if (selectedAgentLabels.length > 1) {
-      throw new Error('Issue has contradictory agent labels');
+      const otherAgentLabels = selectedAgentLabels.filter(
+        (label) => label !== event.label.name,
+      );
+      if (
+        !selectedAgentLabels.includes(event.label.name) ||
+        otherAgentLabels.length !== 1
+      ) {
+        throw new Error('Issue has contradictory agent labels');
+      }
+      staleAgentLabels = otherAgentLabels;
+      effectivePipeline = eventPipeline;
     }
-    const quickTask = quickTaskRequest(issue, context.repository, pipeline);
+    const quickTask = quickTaskRequest(
+      issue,
+      context.repository,
+      effectivePipeline,
+    );
     return {
       kind: 'intent',
       intent: makeIntent({
@@ -384,7 +479,8 @@ function normalizeEvent({
         reply: '',
         runbook: '',
         context: '',
-        dispatchable: pipeline === eventPipeline,
+        dispatchable: effectivePipeline === eventPipeline,
+        ...(staleAgentLabels && { staleAgentLabels }),
         authorization: auth,
       }),
     };

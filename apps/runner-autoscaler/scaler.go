@@ -92,7 +92,12 @@ type Scaler struct {
 	draining               atomic.Bool
 	hostLoadPolicy         hostLoadPolicy
 	hostMemoryExempt       map[string]bool
-	logger                 *slog.Logger
+	// readiness* configure the operator-defined placement gate applied to
+	// hosts that set require_readiness. See hostReady.
+	readinessMetricsURL string
+	readinessMetric     string
+	readinessMaxAge     time.Duration
+	logger              *slog.Logger
 	// fleet is shared by every scale-set listener in orchestrator mode. Tests
 	// and single-scaler construction paths get an equivalent private instance
 	// lazily through coordinator().
@@ -841,6 +846,10 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		loadErr              error
 		fleetRunners         int
 		sharedWorkDirRunners int
+		// readinessBlocked distinguishes "this host was withheld by its
+		// readiness gate" from "this host is unreachable", so exhausting the
+		// fleet reports the real cause instead of blaming the network.
+		readinessBlocked bool
 	}
 
 	ch := make(chan pingResult, len(a.dockerHosts))
@@ -882,7 +891,18 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					loadErr = errors.Join(loadErr, fmt.Errorf("mains power required: %w", mainsErr))
 				}
 			}
-			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners}
+			readinessBlocked := false
+			if eligible && fleet.readinessRequired[dh.Name] {
+				if readyErr := a.hostReady(ctx, dh.Name); readyErr != nil {
+					eligible = false
+					readinessBlocked = true
+					hostReadyGauge.WithLabelValues(dh.Name).Set(0)
+					loadErr = errors.Join(loadErr, fmt.Errorf("host readiness required: %w", readyErr))
+				} else {
+					hostReadyGauge.WithLabelValues(dh.Name).Set(1)
+				}
+			}
+			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners, readinessBlocked: readinessBlocked}
 		}(h)
 	}
 
@@ -944,6 +964,19 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	}
 
 	if len(reachableHosts) == 0 {
+		// A host withheld by its readiness gate is reachable and healthy, so
+		// reporting it as "unreachable" would send whoever reads this at the
+		// network instead of at the signal that actually withheld it.
+		readinessBlocked := 0
+		for _, res := range results {
+			if res.readinessBlocked {
+				readinessBlocked++
+			}
+		}
+		if readinessBlocked > 0 {
+			placementBlocked.WithLabelValues(scaleSet, placementReasonReadiness).Inc()
+			return "", fmt.Errorf("no docker host is eligible (%d withheld by their readiness gate): %w", readinessBlocked, errFleetAtCapacity)
+		}
 		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(placementHosts), errFleetAtCapacity)
 	}
 	actualTotal := 0
@@ -1054,6 +1087,167 @@ func (a *Scaler) hostOnMains(ctx context.Context, host string) error {
 		return errors.New("mains telemetry missing")
 	}
 	return errors.New("host is on battery")
+}
+
+// readinessClockSkewTolerance is how far ahead of the reader a readiness
+// timestamp may sit before the signal is rejected as broken rather than
+// fresh. Generous enough for ordinary NTP drift between two machines, far
+// tighter than any plausible max-age.
+const readinessClockSkewTolerance = 2 * time.Minute
+
+// metricLabelValue returns the value of the named label in a Prometheus
+// exposition line, and whether that exact label was present.
+//
+// Deliberately parses the label set instead of substring-matching
+// `name="value"`: label keys are matched whole, so a series carrying
+// target_host or node_host cannot answer for a query about host.
+func metricLabelValue(line, label string) (string, bool) {
+	open := strings.Index(line, "{")
+	if open < 0 {
+		return "", false
+	}
+	close := strings.LastIndex(line, "}")
+	if close < open {
+		return "", false
+	}
+
+	body := line[open+1 : close]
+	inQuotes := false
+	escaped := false
+	start := 0
+	for i := 0; i <= len(body); i++ {
+		// Split on commas outside quotes -- a label VALUE may legitimately
+		// contain a comma, so a plain strings.Split would corrupt the pair.
+		if i < len(body) {
+			c := body[i]
+			switch {
+			case escaped:
+				escaped = false
+				continue
+			case c == '\\' && inQuotes:
+				escaped = true
+				continue
+			case c == '"':
+				inQuotes = !inQuotes
+				continue
+			case c != ',' || inQuotes:
+				continue
+			}
+		}
+		key, value, found := strings.Cut(body[start:i], "=")
+		start = i + 1
+		if !found || strings.TrimSpace(key) != label {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted, true
+		}
+		return strings.Trim(value, `"`), true
+	}
+	return "", false
+}
+
+// hostReady consults the operator-supplied readiness signal for a host that
+// set require_readiness, returning nil only when that host may take work.
+//
+// The autoscaler deliberately holds no opinion about what readiness means --
+// it reads a gauge the operator publishes and honors the verdict. Reachability
+// is not always enough to decide a host should run CI: a laptop reachable over
+// a mesh VPN may be reachable from anywhere, including places its owner would
+// rather it not be building.
+//
+// Fail-CLOSED, for the same reason as hostOnMains: an unreadable signal is not
+// evidence of readiness, and treating it as such defeats the gate precisely
+// when the machinery behind it is broken.
+func (a *Scaler) hostReady(ctx context.Context, host string) error {
+	if a.readinessMetricsURL == "" || a.readinessMetric == "" {
+		return errors.New("readiness gate is not configured")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, hostMetricsTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, a.readinessMetricsURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("read readiness metrics: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readiness metrics returned HTTP %d", resp.StatusCode)
+	}
+
+	wantPrefix := fmt.Sprintf("%s{", a.readinessMetric)
+	stampPrefix := a.readinessMetric + "_timestamp_seconds"
+
+	var (
+		ready     bool
+		seen      bool
+		stamp     float64
+		stampSeen bool
+		scanner   = bufio.NewScanner(resp.Body)
+	)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, wantPrefix):
+			// Require an exact `host` label rather than testing for the
+			// substring `host="..."`: a series carrying some other label
+			// that merely ends in "host" (target_host, node_host) would
+			// otherwise satisfy the gate, letting a mislabelled signal make
+			// the host placeable instead of failing closed.
+			if got, ok := metricLabelValue(line, "host"); !ok || got != host {
+				continue
+			}
+			seen = true
+			if value, ok := parseMetricValue(line); ok && value > 0 {
+				ready = true
+			}
+		case strings.HasPrefix(line, stampPrefix):
+			if value, ok := parseMetricValue(line); ok {
+				stamp, stampSeen = value, true
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	if !seen {
+		return fmt.Errorf("readiness metric %q missing for host %q", a.readinessMetric, host)
+	}
+	if a.readinessMaxAge > 0 {
+		if !stampSeen {
+			return fmt.Errorf("readiness freshness metric %q missing", stampPrefix)
+		}
+		age := time.Since(time.Unix(int64(stamp), 0))
+		// A timestamp materially in the future is not evidence of freshness:
+		// time.Since goes negative, so the staleness test below could never
+		// fire and a publisher that later died would stay "fresh" until the
+		// local clock caught up. Emitting milliseconds where seconds are
+		// expected lands ~55000 years ahead and would disable the gate
+		// outright, so treat it as a broken signal. The tolerance absorbs
+		// ordinary NTP skew between publisher and reader.
+		if age < -readinessClockSkewTolerance {
+			return fmt.Errorf("readiness signal timestamp is %s in the future", (-age).Round(time.Second))
+		}
+		// A publisher that stops updating leaves its last reading served
+		// indefinitely; without this the gate would keep honoring a verdict
+		// that stopped tracking reality.
+		if age > a.readinessMaxAge {
+			return fmt.Errorf("readiness signal is stale by %s", age.Round(time.Second))
+		}
+	}
+	if !ready {
+		return errors.New("host is not ready for placement")
+	}
+	return nil
 }
 
 // hostMetrics reads node-exporter through HTTP by default. WSL guests can opt
