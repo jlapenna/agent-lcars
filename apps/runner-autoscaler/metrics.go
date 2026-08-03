@@ -32,6 +32,16 @@ const (
 	placementReasonReadiness = "readiness"
 )
 
+// The complete set of `reason` label values runnerDiedIdleTotal is ever
+// incremented with, for the same bounded-cardinality reason as the
+// placementReason* constants above: pruneDeadIdleRunners' own log message
+// embeds a free-form container status string that must never reach a metric
+// label directly.
+const (
+	runnerDeadReasonNotRunning = "not_running"
+	runnerDeadReasonNotFound   = "not_found"
+)
+
 var (
 	metricsOnce                   sync.Once
 	orchestratorSchedulerReady    atomic.Bool
@@ -109,10 +119,25 @@ var (
 		},
 		[]string{"scale_set", "host"},
 	)
+	runnerDiedIdleTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_runner_died_idle_total",
+			Help: "Idle runner containers found dead before ever completing a job (crashed, exited, or vanished before GitHub sent a completion), by host and reason: " +
+				runnerDeadReasonNotRunning + ", " + runnerDeadReasonNotFound + ".",
+		},
+		[]string{"scale_set", "host", "reason"},
+	)
 	hostReachableGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_host_reachable",
 			Help: "1 if placement docker host ping succeeded, 0 otherwise.",
+		},
+		[]string{"host"},
+	)
+	hostExternalsHealthyGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_externals_healthy",
+			Help: "1 when the shared externals/node24 runtime last verified healthy (and self-healed if needed) on a ShareWorkDir host's periodic idle-maintenance sweep, 0 when it was still broken after a repair attempt.",
 		},
 		[]string{"host"},
 	)
@@ -245,7 +270,9 @@ func registerMetrics() {
 			jobsCompletedCounter,
 			runnerStartDuration,
 			runnerStartFailures,
+			runnerDiedIdleTotal,
 			hostReachableGauge,
+			hostExternalsHealthyGauge,
 			hostReadyGauge,
 			hostNormalizedLoadGauge,
 			hostCPUUtilizationGauge,
