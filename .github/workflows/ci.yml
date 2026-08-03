@@ -107,6 +107,14 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
           NX_MAX_PARALLEL: 2
+          # actions/setup-go's cache key (OS/arch/go-version/dependency-file
+          # hash) has no notion of "does this environment have a C
+          # compiler" -- a self-hosted run cached before the runner image
+          # had gcc (#410) persists `go env`'s CGO_ENABLED=0 default
+          # indefinitely (confirmed: `go env` reports CC='gcc' but
+          # CGO_ENABLED='0' even now that gcc is actually installed).
+          # Force it rather than trust the cached auto-detection.
+          CGO_ENABLED: '1'
         run: pnpm exec nx run-many -t test typecheck build test-race --all --parallel=2
 
   e2e:
