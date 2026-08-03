@@ -1,0 +1,90 @@
+name: Post-Deploy Smoke
+
+# Production behavioral smoke (#307, final child of epic #301), chained off
+# deploy-console.yml's own completion. Firebase App Hosting here deploys via
+# the `firebase deploy` CLI invoked directly inside deploy-console.yml's own
+# job -- there is no GitHub-Deployments-API-integrated App Hosting
+# connection on this repo, so GitHub never emits a native `deployment_status`
+# event for it. `workflow_run` chained off "Deploy console" completing is
+# therefore the correct, already-available readiness signal, mirroring how
+# deploy-console.yml itself already chains off CI's own `workflow_run`
+# rather than a `push` trigger.
+#
+# deploy-console.yml has exactly one job (`deploy`), so its workflow-level
+# conclusion is a direct, total function of that single job's own
+# conclusion -- verified against real production runs, not assumed: a
+# "Deploy console" run whose `deploy` job was skipped (its own `if:`
+# evaluated false) reports workflow-level `conclusion: skipped`
+# (jlapenna/agent-lcars run 30772166464, job "deploy" conclusion
+# "skipped"), and a run whose `deploy` job actually succeeded reports
+# `conclusion: success` (run 30771172156, job "deploy" conclusion
+# "success"). A prior version of this file assumed the opposite -- "a
+# workflow whose only job was skipped still reports success" -- and added
+# `head_branch == 'main'` as a compensating filter for that assumption.
+# That assumption was wrong, and the compensating filter was actively
+# harmful: deploy-console.yml's own `deploy` job runs unconditionally for
+# ANY `workflow_dispatch` regardless of ref (deploy-console.yml:20-24), so
+# a manually-triggered production deploy from a non-main ref was a real
+# production deploy with `conclusion: success` that this workflow's own
+# `head_branch == 'main'` check silently skipped verifying. `conclusion ==
+# 'success'` alone is already the correct, sufficient signal for "the
+# deploy job actually ran and succeeded" for both of deploy-console.yml's
+# real production-deploy paths (workflow_dispatch on any ref, or a
+# successful CI push-to-main run) -- there is no other job whose outcome
+# could make the workflow-level conclusion diverge from the deploy job's
+# own.
+#
+# Behavioral check, in order: (1) the live URL answers with a 2xx response,
+# (2) a canary issue created after that round-trips through the real
+# dispatch broker + no-op worker (the same GitHub write/routing path a real
+# agent dispatch uses) within a bounded window. This proves the deployed
+# revision is reachable and that the broker's GitHub write path still works
+# in production. It deliberately does NOT exercise the deployed console's
+# own server action writing to GitHub through its runtime credential
+# (AGENT_LCARS_GITHUB_TOKEN) -- that is #307's separately-scoped write-path
+# E2E fixture work in apps/console, not this workflow. See
+# docs/e2e-security-boundary.md.
+
+on:
+  workflow_run:
+    workflows: [Deploy console]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: post-deploy-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Assert required repo variables are set
+        env:
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        run: |
+          if [ -z "$MAINTAINER_LOGIN" ]; then
+            echo "::error::Missing required repo variable: MAINTAINER_LOGIN"
+            exit 1
+          fi
+
+      # Needed to resolve the local composite action below.
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
+
+      - name: Run the dispatch broker canary lifecycle
+        uses: ./.github/actions/run-dispatch-canary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
+          source: post-deploy
+          deploy-run-url: ${{ github.event.workflow_run.html_url }}
+          # Matches deploy-console.yml's own hardcoded APP_URL.
+          live-url: https://agent-console.supersprinkles.racing

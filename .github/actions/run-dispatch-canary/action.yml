@@ -1,0 +1,58 @@
+name: Run dispatch broker canary
+description: >-
+  Create a dedicated, clearly-marked canary issue, dispatch it through the
+  real dispatch broker and a no-op worker, verify the resulting ledger
+  state, and clean up: close the issue on success, or park
+  status:needs-human on it with failure evidence and fail the job. Never
+  invokes a paid model or a self-hosted/privileged runner (#307).
+
+inputs:
+  maintainer-login:
+    description: Repo var MAINTAINER_LOGIN, parked as assignee on failure
+    required: true
+  source:
+    description: Free-text provenance recorded in the issue body (e.g. scheduled, post-deploy)
+    required: true
+  deploy-run-url:
+    description: Optional link to the deploy run that triggered this smoke, recorded in the issue body
+    required: false
+    default: ''
+  live-url:
+    description: >-
+      Optional URL probed for a 2xx response before the canary dispatch is
+      attempted. Empty skips the probe (used by the hourly scheduled
+      canary, which has no specific deploy to validate).
+    required: false
+    default: ''
+  sweep-stale-canaries:
+    description: >-
+      When 'true', sweep and clean up open canary issues from a prior run
+      whose own orchestrator never returned (job timeout, workflow
+      cancellation, runner loss) before creating this run's own canary.
+      Set only on the hourly scheduled caller (dispatch-canary.yml) so the
+      backstop itself runs on a reliable, unconditional cadence.
+    required: false
+    default: 'false'
+
+outputs:
+  issue:
+    description: The created canary issue number
+    value: ${{ steps.run.outputs.issue }}
+
+runs:
+  using: composite
+  steps:
+    # GITHUB_TOKEN is deliberately not set here -- the calling workflow
+    # step's own `env: GITHUB_TOKEN: ${{ github.token }}` is what this
+    # composite action's steps actually run with, the same convention
+    # dispatch-broker/action.yml uses.
+    - name: Run dispatch broker canary lifecycle
+      id: run
+      shell: bash
+      env:
+        MAINTAINER_LOGIN: ${{ inputs.maintainer-login }}
+        CANARY_SOURCE: ${{ inputs.source }}
+        DEPLOY_RUN_URL: ${{ inputs.deploy-run-url }}
+        LIVE_URL: ${{ inputs.live-url }}
+        SWEEP_STALE: ${{ inputs.sweep-stale-canaries }}
+      run: node "$GITHUB_ACTION_PATH/run.mjs"

@@ -78,6 +78,48 @@ test('ledger comments round-trip and reject a canonical identity mismatch', () =
   );
 });
 
+test('the canary pipeline (#307) is accepted end to end like any other, and unknown pipelines are still rejected', () => {
+  const ledger = createLedger(task, baseTime);
+  const accepted = acceptIntent(
+    ledger,
+    intent({ pipeline: 'canary' }),
+    baseTime,
+  );
+  assert.equal(accepted.outcome, 'dispatch');
+  assert.equal(ledger.generations[0].pipeline, 'canary');
+  beginDispatch(ledger, 1, 'dispatch_token_123456', baseTime);
+  bindRun(
+    ledger,
+    1,
+    {
+      runId: 42,
+      runUrl:
+        'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+      htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+      workflow: 'agent-dispatch-canary.yml',
+    },
+    baseTime,
+  );
+  const { promotedGeneration } = completeRun(
+    ledger,
+    1,
+    { runId: 42, status: 'completed', conclusion: 'success' },
+    baseTime,
+  );
+  assert.equal(promotedGeneration, undefined);
+  assert.equal(ledger.generations[0].state, 'completed');
+
+  assert.throws(
+    () =>
+      acceptIntent(
+        createLedger(task, baseTime),
+        intent({ pipeline: 'not-a-real-pipeline' }),
+        baseTime,
+      ),
+    /Unsupported pipeline/u,
+  );
+});
+
 test('same source and same transport rerun are durable no-ops', () => {
   const ledger = createLedger(task, baseTime);
   assert.equal(acceptIntent(ledger, intent()).outcome, 'dispatch');

@@ -13,7 +13,12 @@ const COMMANDS = new Map([
   ['/opencode', 'opencode'],
   ['/oc', 'opencode'],
 ]);
-const WORKER_WORKFLOWS = new Set(['claude.yml', 'codex.yml', 'opencode.yml']);
+const WORKER_WORKFLOWS = new Set([
+  'claude.yml',
+  'codex.yml',
+  'opencode.yml',
+  'agent-dispatch-canary.yml',
+]);
 const QUICK_TASK_MARKER =
   /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) digest=([0-9a-f]{64}) -->/gu;
 const UUID =
@@ -199,6 +204,45 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
       intentId: completion.intentId,
       token: completion.token,
       workflow: completion.workflow,
+    };
+  }
+  if (inputs.kind === 'canary') {
+    // Fired exclusively by this repo's own trusted dispatch-canary.yml
+    // (hourly + workflow_dispatch) or post-deploy-smoke.yml (#307), which
+    // created `task.issue` moments earlier via GITHUB_TOKEN specifically so
+    // it could dispatch this. Like `reconcile` above, this bypasses
+    // per-actor authorization: triggering a workflow_dispatch already
+    // requires repo write access (the caller's own `actions: write`
+    // permission), and unlike the manual `intent` path below, `pipeline`
+    // is hardcoded to 'canary' here rather than caller-supplied, so this
+    // can never be used to smuggle an unauthorized claude/codex/opencode
+    // dispatch. broker.mjs's PIPELINES gate and normalize.mjs's own
+    // WORKER_WORKFLOWS gate independently pin this to the dedicated no-op
+    // agent-dispatch-canary.yml worker.
+    const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
+    if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
+      throw new Error('Canary dispatch caller ID must be a UUID');
+    }
+    return {
+      kind: 'intent',
+      intent: makeIntent({
+        task,
+        sourceKind: 'canary',
+        sourceId,
+        transportRunId: context.runId,
+        occurredAt: context.now,
+        pipeline: 'canary',
+        mode: 'implement',
+        reply: '',
+        runbook: '',
+        context: '',
+        authorization: {
+          authorized: true,
+          actor: context.actor,
+          configuredMaintainer: maintainer,
+          rule: 'canary-scheduled-dispatch',
+        },
+      }),
     };
   }
   const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
