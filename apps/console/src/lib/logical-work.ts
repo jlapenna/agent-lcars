@@ -2,14 +2,15 @@ import {
   type AgentPipeline,
   type AgentRun,
   attemptMarkerFromDisplayTitle,
+  duplicateLivePipelineGroups,
   type FleetSummary,
 } from './agent-activity';
 import {
   type DispatchLedger,
+  isPlainObject,
   LEDGER_ACTIVE_GENERATION_STATES,
   type LedgerAnomaly,
   type LedgerGeneration,
-  sourceKindForGeneration,
 } from './dispatch-ledger';
 import {
   repoItemKey,
@@ -92,22 +93,29 @@ export interface LogicalWorkAnomaly {
   detail: string;
 }
 
+/** `ledger-v1` when a validated ledger backs this task's intent history
+ * (carrying its `revision`); `legacy` when only run attempts (marker or bare
+ * title parse) are known. A discriminated union rather than two
+ * independently-optional fields (`ledgerRevision?`/`provenance:`) - the two
+ * were always set together (see `deriveLogicalWork`'s construction below),
+ * so this lets a `kind === 'ledger-v1'` consumer read `revision` without a
+ * defensive fallback for a case that could never actually happen. */
+export type LogicalWorkProvenance =
+  { kind: 'ledger-v1'; revision: number } | { kind: 'legacy' };
+
 export interface LogicalWork {
   task: TaskRef;
   title: string;
   url: string;
   selectedPipeline?: AgentPipeline;
   state: LogicalWorkState;
-  ledgerRevision?: number;
   /** Oldest generation first - reads as the task's history in order. */
   intents: DispatchIntentView[];
   /** Every workflow run attributed to this task, oldest first. Never
    * shrunk by grouping - a duplicate/retry keeps every attempt visible. */
   attempts: ExecutionAttempt[];
   anomalies: LogicalWorkAnomaly[];
-  /** `ledger-v1` when a validated ledger backs this task's intent history;
-   * `legacy` when only run attempts (marker or bare title parse) are known. */
-  provenance: 'ledger-v1' | 'legacy';
+  provenance: LogicalWorkProvenance;
 }
 
 /** Bare title/url metadata for a task, independent of whether it currently
@@ -241,29 +249,14 @@ function attributeAttemptsToLedger(
 function duplicateAttemptAnomalies(
   attempts: ExecutionAttempt[],
 ): LogicalWorkAnomaly[] {
-  const live = attempts.filter(
-    (a) => a.status === 'queued' || a.status === 'running',
-  );
-  const byPipeline = new Map<AgentPipeline, ExecutionAttempt[]>();
-  for (const attempt of live) {
-    const group = byPipeline.get(attempt.pipeline);
-    if (group) group.push(attempt);
-    else byPipeline.set(attempt.pipeline, [attempt]);
-  }
   const anomalies: LogicalWorkAnomaly[] = [];
-  for (const [pipeline, group] of byPipeline) {
-    if (group.length > 1) {
-      anomalies.push({
-        kind: 'duplicate-active-attempts',
-        detail: `${group.length} ${pipeline} attempts are queued or running for the same task at once (run ${group.map((a) => a.id).join(', ')}).`,
-      });
-    }
+  for (const [pipeline, group] of duplicateLivePipelineGroups(attempts)) {
+    anomalies.push({
+      kind: 'duplicate-active-attempts',
+      detail: `${group.length} ${pipeline} attempts are queued or running for the same task at once (run ${group.map((a) => a.id).join(', ')}).`,
+    });
   }
   return anomalies;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -280,7 +273,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function describeLedgerAnomaly(anomaly: LedgerAnomaly): string {
   if (
     anomaly.kind === 'duplicate-attempt' &&
-    isRecord(anomaly.detail) &&
+    isPlainObject(anomaly.detail) &&
     Number.isSafeInteger(anomaly.detail.generation) &&
     Array.isArray(anomaly.detail.runIds)
   ) {
@@ -288,7 +281,7 @@ function describeLedgerAnomaly(anomaly: LedgerAnomaly): string {
     return `The dispatch ledger recorded a duplicate-attempt anomaly for generation ${anomaly.detail.generation}: runs ${runIds} were both bound to it.`;
   }
   const detail =
-    isRecord(anomaly.detail) || Array.isArray(anomaly.detail)
+    isPlainObject(anomaly.detail) || Array.isArray(anomaly.detail)
       ? ` ${JSON.stringify(anomaly.detail)}`
       : '';
   return `The dispatch ledger recorded a "${anomaly.kind}" anomaly at ${anomaly.occurredAt}.${detail}`;
@@ -312,13 +305,20 @@ function ledgerRecordedAnomalies(ledger: DispatchLedger): LogicalWorkAnomaly[] {
 }
 
 function intentsFromLedger(ledger: DispatchLedger): DispatchIntentView[] {
+  // Built once rather than calling `sourceKindForGeneration` (an O(sources)
+  // `.find()`) per generation - same "build a Map once, look up per
+  // element" pattern `attributeAttemptsToLedger` above already establishes
+  // for the same shape of problem.
+  const bySourceId = new Map(
+    ledger.sources.map((source) => [source.sourceId, source]),
+  );
   return ledger.generations
     .slice()
     .sort((a, b) => a.generation - b.generation)
     .map((generation) => ({
       intentId: generation.intentId,
       generation: generation.generation,
-      sourceKind: sourceKindForGeneration(ledger, generation),
+      sourceKind: bySourceId.get(generation.sourceId)?.sourceKind,
       occurredAt: generation.occurredAt,
       pipeline: generation.pipeline,
       mode: generation.mode,
@@ -336,10 +336,12 @@ function selectedPipeline(
   attempts: ExecutionAttempt[],
 ): AgentPipeline | undefined {
   if (ledger) {
-    const relevant = ledger.generations.filter(
-      (g) => g.state !== 'superseded' && g.state !== 'superseded-by-close',
-    );
-    const newest = relevant.at(-1) ?? ledger.generations.at(-1);
+    // `findLast` reads the newest non-superseded generation without
+    // allocating a throwaway filtered array just to read its last element.
+    const newest =
+      ledger.generations.findLast(
+        (g) => g.state !== 'superseded' && g.state !== 'superseded-by-close',
+      ) ?? ledger.generations.at(-1);
     if (newest) return newest.pipeline;
   }
   return attempts.at(-1)?.pipeline;
@@ -467,11 +469,12 @@ export function deriveLogicalWork(
       url: meta?.url ?? taskRefUrl(task),
       selectedPipeline: selectedPipeline(ledger, attempts),
       state,
-      ledgerRevision: ledger?.revision,
       intents: ledger ? intentsFromLedger(ledger) : [],
       attempts,
       anomalies,
-      provenance: ledger ? 'ledger-v1' : 'legacy',
+      provenance: ledger
+        ? { kind: 'ledger-v1', revision: ledger.revision }
+        : { kind: 'legacy' },
     });
   }
 
@@ -531,46 +534,49 @@ export function deriveActivityMetrics(
   attempts: ExecutionAttempt[],
   fleet?: FleetSummary,
 ): ActivityMetrics {
+  // One pass rather than two separate `.filter(...).length` calls - this
+  // runs on every /agents page render over the full flattened attempt list
+  // across every watched repo, so it's worth counting both statuses
+  // together instead of scanning `attempts` twice.
+  let queuedAttempts = 0;
+  let runningAttempts = 0;
+  for (const attempt of attempts) {
+    if (attempt.status === 'queued') queuedAttempts++;
+    else if (attempt.status === 'running') runningAttempts++;
+  }
   return {
     logicalTaskCount: work.filter((w) => IN_FLIGHT_STATES.has(w.state)).length,
-    queuedAttempts: attempts.filter((a) => a.status === 'queued').length,
-    runningAttempts: attempts.filter((a) => a.status === 'running').length,
+    queuedAttempts,
+    runningAttempts,
     onlineRunners: fleet?.online,
     busyRunners: fleet?.busy,
   };
 }
 
-/** Builds the `ledgers`/`taskMeta` input maps `deriveLogicalWork` needs from
+/** Builds both `ledgers`/`taskMeta` input maps `deriveLogicalWork` needs from
  * the open-item board, keyed consistently with the attempt side via
- * `repoItemKey`. Kept here (not in action-items.ts) so that module stays
- * free of any dispatch-ledger-shaped type - it only ever hands back the raw
- * `DispatchLedger` an item's enrichment already parsed. */
-export function ledgerMapFromItems(
-  items: {
-    repo: TaskRef['repository'];
-    number: number;
-    ledger?: DispatchLedger;
-  }[],
-): Map<string, DispatchLedger> {
-  const map = new Map<string, DispatchLedger>();
-  for (const item of items) {
-    if (item.ledger) map.set(repoItemKey(item.repo, item.number), item.ledger);
-  }
-  return map;
-}
-
-export function taskMetaFromItems(
+ * `repoItemKey` - one pass over `items` rather than two independent loops
+ * (a caller building both used to call a `ledgerMapFromItems` and a
+ * `taskMetaFromItems` that each re-walked the same list). Kept here (not in
+ * action-items.ts) so that module stays free of any dispatch-ledger-shaped
+ * type - it only ever hands back the raw `DispatchLedger` an item's
+ * enrichment already parsed. */
+export function ledgerAndTaskMetaFromItems(
   items: {
     repo: TaskRef['repository'];
     number: number;
     title: string;
     url: string;
     humanNeeded?: boolean;
+    ledger?: DispatchLedger;
   }[],
-): Map<string, TaskMeta> {
-  const map = new Map<string, TaskMeta>();
+): { ledgers: Map<string, DispatchLedger>; taskMeta: Map<string, TaskMeta> } {
+  const ledgers = new Map<string, DispatchLedger>();
+  const taskMeta = new Map<string, TaskMeta>();
   for (const item of items) {
-    map.set(repoItemKey(item.repo, item.number), {
+    const key = repoItemKey(item.repo, item.number);
+    if (item.ledger) ledgers.set(key, item.ledger);
+    taskMeta.set(key, {
       repo: item.repo,
       issueNumber: item.number,
       title: item.title,
@@ -578,5 +584,5 @@ export function taskMetaFromItems(
       humanNeeded: item.humanNeeded,
     });
   }
-  return map;
+  return { ledgers, taskMeta };
 }

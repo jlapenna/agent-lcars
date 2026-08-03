@@ -598,13 +598,23 @@ export async function getActionItems(): Promise<ActionItemsResult> {
   // repo because the query is repo-scoped.
   const byRepo = new Map<
     string,
-    { repo: WatchedRepo; requests: EnrichmentRequest[] }
+    {
+      repo: WatchedRepo;
+      requests: EnrichmentRequest[];
+      // Depends only on `repo`, not the individual issue - computed once
+      // per repo-grouped batch instead of once per issue.
+      agentLabels: string[];
+    }
   >();
   for (const issue of issuesToClassify) {
     const key = repoKey(issue.repo);
     let group = byRepo.get(key);
     if (!group) {
-      group = { repo: issue.repo, requests: [] };
+      group = {
+        repo: issue.repo,
+        requests: [],
+        agentLabels: supportedAgentLabels(issue.repo),
+      };
       byRepo.set(key, group);
     }
     const labels = issue.labels.map((label) =>
@@ -624,9 +634,7 @@ export async function getActionItems(): Promise<ActionItemsResult> {
         labels.includes('status:needs-human') ||
         labels.includes('status:post-deploy-action') ||
         assignees.includes(agentFleetLogin()) ||
-        supportedAgentLabels(issue.repo).some((label) =>
-          labels.includes(label),
-        ),
+        group.agentLabels.some((label) => labels.includes(label)),
     });
   }
 

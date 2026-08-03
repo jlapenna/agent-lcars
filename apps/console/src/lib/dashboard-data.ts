@@ -48,7 +48,7 @@ import { GITHUB_DATA_TAG } from './cache-tags';
  * client router's own window. None of this weakens correctness after a
  * mutation - every writer invalidates the tag rather than waiting this out.
  */
-const DASHBOARD_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
+export const DASHBOARD_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
 
 /** Wall-clock time the underlying fetch actually ran.
  *

@@ -23,8 +23,7 @@ import {
 import {
   deriveActivityMetrics,
   deriveLogicalWork,
-  ledgerMapFromItems,
-  taskMetaFromItems,
+  ledgerAndTaskMetaFromItems,
 } from '../../lib/logical-work';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
@@ -168,13 +167,14 @@ async function AgentsPageBody({
     ...item,
     humanNeeded: item.actionTypes.includes('needs-human'),
   }));
+  const { ledgers, taskMeta } = ledgerAndTaskMetaFromItems(logicalWorkItems);
   const { work: logicalWork, unattributedAttempts } = deriveLogicalWork({
     attempts: [
       ...(filteredActivity.liveRunAttempts ?? filteredActivity.liveRuns),
       ...filteredActivity.recentRuns,
     ],
-    ledgers: ledgerMapFromItems(logicalWorkItems),
-    taskMeta: taskMetaFromItems(logicalWorkItems),
+    ledgers,
+    taskMeta,
   });
   const activityMetrics = deriveActivityMetrics(
     logicalWork,
