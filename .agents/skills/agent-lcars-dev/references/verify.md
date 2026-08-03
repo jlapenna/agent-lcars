@@ -1,6 +1,8 @@
 # Verify — Definition of Done
 
-Before ending your turn with a PR open (or updated):
+The full gate — this is what `.github/workflows/ci.yml`'s `Verify` job
+(a required check gating every merge) authoritatively runs on its own
+GitHub-hosted runner:
 
 ```bash
 pnpm check:dependencies    # lockfile / workspace-mandate integrity
@@ -11,9 +13,25 @@ pnpm exec nx run-many -t test typecheck build --all
 ```
 
 Or run the composite `pnpm verify`, which chains the above (minus
-`check:dependencies`). These are the same checks CI runs in
-`.github/workflows/ci.yml` — match them locally before pushing so your own
-push doesn't just trade a slow feedback loop for CI's.
+`check:dependencies`).
+
+## CI delegation
+
+Don't run the full gate above locally before every push — see "Push early"
+in [SKILL.md](../SKILL.md#hard-guardrails). The pre-push hook only runs the
+fast slice (`format:check`, affected `lint`/`typecheck`); `test` and
+`build` — the two steps that scan/compile the whole affected set and take
+the longest — are deliberately left out, because CI's `Verify` job re-runs
+them anyway the moment you push, on its own runner rather than your
+workstation. The gate still runs exactly once as far as the merge
+requirement is concerned; running it a second time locally first only adds
+a serialized wait in front of a check that was going to happen regardless.
+
+Run the full local gate only when you have a specific reason not to trust
+CI's answer for it — e.g. iterating on a change to the Nx config or task
+graph itself, where you want to see the affected-project computation
+directly. Otherwise: fast layer locally, push, let CI's `Verify` job carry
+the rest.
 
 ## Console e2e
 
