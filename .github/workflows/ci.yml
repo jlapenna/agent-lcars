@@ -33,6 +33,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Moved ahead of "Validate GitHub Actions workflows": that step's
+      # `go install` needs a `go` binary on PATH, which GitHub-hosted
+      # ubuntu-latest ships preinstalled but this repo's self-hosted runner
+      # image does not (it's built for the Node/pnpm toolchain, not Go) --
+      # setup-go must run first here, not merely somewhere in the job.
+      #
+      # This repo's only Go module lives at apps/runner-autoscaler/go.mod,
+      # not the repo root. setup-go's default dependency-cache lookup only
+      # checks the root, so without cache-dependency-path every run logs a
+      # "Restore cache failed: Dependencies file is not found" warning and
+      # never actually caches the module/build cache (agent-lcars#318).
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/runner-autoscaler/go.mod
+          cache-dependency-path: apps/runner-autoscaler/go.mod
+
       - name: Validate GitHub Actions workflows
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
@@ -66,16 +82,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-
-      # This repo's only Go module lives at apps/runner-autoscaler/go.mod,
-      # not the repo root. setup-go's default dependency-cache lookup only
-      # checks the root, so without cache-dependency-path every run logs a
-      # "Restore cache failed: Dependencies file is not found" warning and
-      # never actually caches the module/build cache (agent-lcars#318).
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: apps/runner-autoscaler/go.mod
-          cache-dependency-path: apps/runner-autoscaler/go.mod
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
