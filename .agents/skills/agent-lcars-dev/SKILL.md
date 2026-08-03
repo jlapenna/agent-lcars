@@ -84,6 +84,39 @@ These override any default behavior:
   (`apps/runner-autoscaler/runner-image/Dockerfile`), not a source-level
   dependency.
 
+- **Issue ownership — the assignee field**: the assignee records whose
+  court the ball is in, so agents and humans don't collide. `jclaw-bot` is
+  this fleet's claim identity across every repo it works, not specific to
+  `agent-lcars` (see the [lcars](../lcars/SKILL.md) skill).
+  - A **human assignee** owns the issue — do not start work on it unless
+    that human explicitly hands it off (adding an `agent:*` label or a
+    recognized reply trigger IS that handoff).
+  - **`jclaw-bot` assigned** means the agent fleet has claimed it. Before
+    touching such an issue, check for a live `claude.yml`/`codex.yml`/
+    `opencode.yml` run or a recent agent session comment; if neither
+    exists the claim is stale — take over and say so in an issue comment.
+  - **Claim before you start**: when beginning work on an issue from an
+    interactive session, run `gh issue edit <N> --add-assignee jclaw-bot`
+    AND post a session takeover comment on the issue (name the resume
+    command if your CLI supports one, mirroring the format the
+    [lcars](../lcars/SKILL.md) skill's headless delta uses) — the claim
+    says _the fleet_ has it; the comment says _which session_ owns the
+    claim. Never `--add-assignee @me`: interactively that assigns the
+    maintainer (you act under their login), and in CI the bot app
+    identity is not assignable — GitHub silently drops it.
+  - **Blocked on the maintainer?** Add them alongside the label:
+    `gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna`.
+  - Agents only ever **add** assignees; removing one is a human act.
+
+- **Interactive session tmux title**: on a workstation, the moment a
+  session's first action identifies which issue it's working (e.g.
+  running `gh issue view`, or resuming one), pin the tmux window title so
+  concurrently-running sessions are distinguishable at a glance:
+  `tmux set-window-option -t "$TMUX_PANE" @user_title "<title>"`. Format:
+  `1234 Description` — always show the root issue number, bare, no `#`.
+  Update again if the active issue changes mid-session. Not applicable to
+  CI-dispatched runs (no tmux pane).
+
 ## Workflows
 
 Read the reference before starting the corresponding task:

@@ -1,0 +1,18 @@
+{
+  "description": "Repository workflow reminders for Codex sessions.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -c '(.tool_input.command // \"\") as $c | if ($c | test(\"gh issue (view|edit)( |$)\")) then {systemMessage:\"agent-lcars-dev SKILL.md Hard Guardrails: if this is the start of hands-on work on this issue (not just browsing/triage), before continuing (1) claim it via gh issue edit --add-assignee jclaw-bot plus a session takeover comment, unless already assigned to you/jclaw-bot; (2) pin this tmux window title per the Interactive session tmux title guardrail. See SKILL.md for exact command syntax.\"} else empty end'",
+            "timeout": 5,
+            "statusMessage": "Checking for issue-workflow guardrail reminder"
+          }
+        ]
+      }
+    ]
+  }
+}
