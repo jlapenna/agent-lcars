@@ -33,6 +33,30 @@ name: Publish images
 # encrypted homelab secret store -- NOT from GitHub Actions secrets. The
 # control plane runs locally, so the whole BuildKit PKI shares one storage
 # and rotation path (homelab's ansible/deploy_buildkit.yml).
+#
+# Every build attests provenance and an SBOM (docker/build-push-action's
+# `provenance`/`sbom` inputs) and is scanned via the local `scan-image`
+# composite action before it becomes the tag the fleet actually pulls
+# (agent-lcars#224). The scan targets the just-pushed REGISTRY reference,
+# not a local image -- this runner has no Docker socket to hold one
+# (agent-lcars#101), so there is nothing local to scan. See
+# scan-image/action.yml for the severity bar and how authentication is
+# reused from the registry login step below.
+#
+# Each image is pushed to a STAGING tag (`:<github.sha>`) first, scanned
+# there, and only then promoted -- via `docker buildx imagetools create`,
+# a registry-side manifest copy, not a rebuild -- to the mutable tag the
+# fleet consumes (`:latest` / `:jit-node24`). Scanning the mutable tag
+# itself would be too late to matter: the autoscaler's `ensureRunnerImage`
+# treats a moving tag as immediately consumable the moment it's pushed, so
+# a scan that only runs (and fails) AFTER that push would just turn this
+# CI run red without having stopped anything from reaching the fleet.
+#
+# Each multi-platform image is scanned once PER PLATFORM (see
+# scan-image/action.yml's `platform` input) -- Trivy has no notion of
+# "scan every platform in this manifest list"; given one it resolves and
+# scans an arbitrary single manifest, so scanning a multi-arch reference
+# only once would silently leave the other architecture never scanned.
 
 on:
   push:
@@ -40,6 +64,11 @@ on:
     paths:
       - apps/runner-autoscaler/**
       - .github/workflows/publish-images.yml
+      # Changing how an image is scanned/attested/promoted is as much a
+      # reason to republish-and-exercise as changing what's IN the image --
+      # a scan-image regression is invisible until the next real publish
+      # run otherwise. See agent-lcars#224.
+      - .github/actions/scan-image/**
       # A telemetry change rebuilds TWO images, for two different reasons:
       #
       #   - The JIT worker image's Dockerfile clones this repo's own `main`
@@ -79,6 +108,10 @@ on:
 
 permissions:
   contents: read
+  # Lets scan-image's SARIF upload step (github/codeql-action/upload-sarif)
+  # publish Trivy's results to this repo's code-scanning UI. Public repo,
+  # so code scanning is free -- no GitHub Advanced Security license needed.
+  security-events: write
 
 concurrency:
   group: publish-images
@@ -248,29 +281,72 @@ jobs:
           }
           docker login docker-registry.lan.jlapenna.net \
             --username publisher --password-stdin < /secrets/registry-password
-      - name: Build and push control-plane image
+      # Pushed to the staging tag (:<sha>) first -- see this workflow's own
+      # header comment for why :latest is only promoted below, after both
+      # platform scans pass.
+      - name: Build and push control-plane image (staging)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: apps/runner-autoscaler
           file: apps/runner-autoscaler/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:latest
+          tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:buildcache,mode=max
+          # Attestations require BuildKit >= 0.11 and Buildx >= 0.10 on the
+          # builder oldbook runs, and are only supported by the
+          # docker-container/kubernetes/remote drivers (never the default
+          # `docker` driver) -- both conditions this remote builder already
+          # needs to meet for the multi-platform push above to work at
+          # all. See agent-lcars#224.
+          provenance: true
+          sbom: true
 
-      # Keeps the existing tag name: every consuming workflow across members
-      # and agent-lcars already hardcodes
+      - name: Scan control-plane image (linux/amd64)
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
+          platform: linux/amd64
+          category: runner-autoscaler-linux-amd64
+
+      - name: Scan control-plane image (linux/arm64)
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
+          platform: linux/arm64
+          category: runner-autoscaler-linux-arm64
+
+      # Only reached once both scans above have passed. A single-source
+      # `imagetools create` against an existing manifest list is a
+      # documented "carbon copy" (docker/buildx's own reference docs) --
+      # including the attestation manifests the build above attached, so
+      # promoting this way doesn't lose the provenance/SBOM data by
+      # re-deriving a fresh manifest list. This is the same tool this
+      # repo's own runner-image/Dockerfile already uses to mirror its
+      # upstream base image, and it works via the registry API against
+      # whatever the currently logged-in credential can read/write -- it
+      # does not dispatch a build, so it needs no BuildKit compute.
+      - name: Promote control-plane image to :latest
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:latest \
+            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
+
+      # Pushed to the staging tag (:<sha>) first, same reason as the
+      # control-plane image above. The FINAL tag name is unaffected and
+      # still keeps existing consumers working: every consuming workflow
+      # across members and agent-lcars already hardcodes
       # ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24 --
       # renaming it is out of scope for this migration.
-      - name: Build and push JIT worker runner image
+      - name: Build and push JIT worker runner image (staging)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: apps/runner-autoscaler/runner-image
           file: apps/runner-autoscaler/runner-image/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24
+          tags: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:${{ github.sha }}
           # Busts the Dockerfile's internal `git clone` layer on every real
           # publish -- see that Dockerfile's own comment. Without this, the
           # registry-backed cache below could restore a stale clone of
@@ -283,9 +359,35 @@ jobs:
             AGENT_LCARS_REF=${{ github.sha }}
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache,mode=max
+          provenance: true
+          sbom: true
 
-      # The standalone per-host daemon image (agent-lcars#231). Three things
-      # differ from the two steps above, all deliberate:
+      - name: Scan JIT worker runner image (linux/amd64)
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:${{ github.sha }}
+          platform: linux/amd64
+          category: homelab-runner-linux-amd64
+
+      - name: Scan JIT worker runner image (linux/arm64)
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:${{ github.sha }}
+          platform: linux/arm64
+          category: homelab-runner-linux-arm64
+
+      # Only reached once both scans above have passed -- see the
+      # control-plane image's promotion step above for why `imagetools
+      # create` is safe to use here (registry-side carbon copy, preserves
+      # attestations, no BuildKit compute needed).
+      - name: Promote JIT worker runner image to :jit-node24
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24 \
+            ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:${{ github.sha }}
+
+      # The standalone per-host daemon image (agent-lcars#231). Two things
+      # differ from the two steps above, both deliberate:
       #
       #   context: .    -- this Dockerfile does `COPY . .` from the REPO
       #     ROOT and runs pnpm install + `nx bundle` inside the build, unlike
@@ -299,27 +401,50 @@ jobs:
       #     lane, for a platform nothing pulls. Revisit if the watcher ever
       #     runs on an arm host.
       #
-      #   two tags      -- homelab pins this image as tag@digest
-      #     deliberately (its compose is under docker:pinDigests), so a
-      #     moving-only tag would not serve that consumer. The immutable
-      #     sha tag is what a pin can point at; :latest gives a stable pull
-      #     target and matches the other two images here. Note Renovate
-      #     cannot bump that pin -- it is disabled for
-      #     docker-registry.lan.jlapenna.net/** in homelab, since its
-      #     runner cannot reach a LAN registry -- so publishing guarantees
-      #     the artifact EXISTS but a human still moves the pin.
-      - name: Build and push telemetry-watcher daemon image
+      # Only ONE tag is pushed here now (the sha tag) -- :latest is
+      # promoted separately below, after the scan passes, same staging
+      # pattern as the other two images. Before agent-lcars#224 both tags
+      # were pushed atomically in this one step, which is exactly the gap
+      # that made scanning-after-push meaningless: by the time any scan
+      # ran, :latest -- the tag homelab pulls -- was already live.
+      - name: Build and push telemetry-watcher daemon image (staging)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: apps/telemetry-watcher/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: |
-            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:latest
-            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
+          tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:buildcache,mode=max
+          provenance: true
+          sbom: true
+
+      # Single-platform (amd64 only, see above) -- image-ref is already
+      # unambiguous, so no `platform` input is needed here (contrast with
+      # the two multi-arch images above, each scanned once per platform).
+      - name: Scan telemetry-watcher daemon image
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
+          category: telemetry-watcher
+
+      # Only reached once the scan above has passed. homelab pins this
+      # image as tag@digest deliberately (its compose is under
+      # docker:pinDigests), so a moving-only tag would not serve that
+      # consumer -- the sha tag pushed above already covers it. :latest is
+      # promoted here purely for a stable pull target, matching the other
+      # two images; see the control-plane image's promotion step above for
+      # why `imagetools create` is safe to use for this. Note Renovate
+      # cannot bump homelab's pin -- it is disabled for
+      # docker-registry.lan.jlapenna.net/** there, since its runner cannot
+      # reach a LAN registry -- so publishing guarantees the artifact
+      # EXISTS but a human still moves the pin.
+      - name: Promote telemetry-watcher daemon image to :latest
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:latest \
+            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
 
       - name: Log out of the registry
         if: always()
