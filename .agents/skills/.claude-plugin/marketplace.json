@@ -1,0 +1,19 @@
+{
+  "name": "agent-lcars-repo-skills",
+  "owner": {
+    "name": "Joe LaPenna"
+  },
+  "metadata": {
+    "description": "agent-lcars repo-specific dev skills, mirrored from .agents/skills for Codex.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "agent-lcars-skills",
+      "description": "Project-specific developer toolkit and headless-agent-dispatch skills for the agent-lcars repo, mirrored from this repo's .agents/skills directory.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./agent-lcars-dev", "./agent-protocol", "./lcars"]
+    }
+  ]
+}
