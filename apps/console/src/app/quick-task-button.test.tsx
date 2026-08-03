@@ -262,6 +262,92 @@ describe('QuickTaskButton', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('submits via ctrl+enter in the description field, same as clicking the button', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    renderButton();
+    await openDialog();
+    enterDescription();
+    fireEvent.keyDown(screen.getByLabelText('Description'), {
+      key: 'Enter',
+      ctrlKey: true,
+    });
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'green' }),
+      ),
+    );
+    expect(createQuickTask).toHaveBeenCalledWith({
+      requestId: expect.stringMatching(UUID_PATTERN),
+      repository: REPO,
+      pipeline: 'claude',
+      title: '',
+      description: 'Fix the flaky test',
+    });
+  });
+
+  it('submits via cmd+enter (metaKey) in the title field', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    renderButton();
+    await openDialog();
+    enterDescription();
+    fireEvent.keyDown(screen.getByLabelText('Title'), {
+      key: 'Enter',
+      metaKey: true,
+    });
+
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(1));
+  });
+
+  it('ignores plain enter (no modifier) in the description field', async () => {
+    renderButton();
+    await openDialog();
+    enterDescription();
+    fireEvent.keyDown(screen.getByLabelText('Description'), {
+      key: 'Enter',
+    });
+
+    expect(createQuickTask).not.toHaveBeenCalled();
+  });
+
+  it('ignores ctrl+enter while the form is invalid, reusing the button guard', async () => {
+    renderButton();
+    await openDialog();
+    fireEvent.keyDown(screen.getByLabelText('Description'), {
+      key: 'Enter',
+      ctrlKey: true,
+    });
+
+    expect(createQuickTask).not.toHaveBeenCalled();
+  });
+
+  it('ignores ctrl+enter while a submission is already in flight', async () => {
+    let resolveRequest!: (value: ReturnType<typeof receipt>) => void;
+    (createQuickTask as Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+    renderButton();
+    await openDialog();
+    enterDescription();
+    submit();
+
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText('Description') as HTMLTextAreaElement).disabled,
+      ).toBe(true),
+    );
+    fireEvent.keyDown(screen.getByLabelText('Description'), {
+      key: 'Enter',
+      ctrlKey: true,
+    });
+    expect(createQuickTask).toHaveBeenCalledTimes(1);
+
+    resolveRequest(receipt());
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
   it('creates a new request ID when the intent changes after failure', async () => {
     (createQuickTask as Mock)
       .mockResolvedValueOnce({ ok: false, message: 'try again' })
