@@ -1,12 +1,12 @@
 import {
   defaultClaudeProjectsDir,
   defaultCodexSessionsDir,
-  loadConfig,
-  WatcherConfig,
+  loadSharedConfig,
+  SharedWatcherConfig,
 } from './config';
 
 export interface RunnerConfig extends Pick<
-  WatcherConfig,
+  SharedWatcherConfig,
   | 'host'
   | 'heartbeatIntervalMs'
   | 'stalenessWindowMs'
@@ -114,13 +114,16 @@ function parseOwnerRepo(
  * Parses the runner-mode sidecar's configuration: its own CLI flags
  * (`argv`, everything after `runner sidecar` on the command line) for
  * `runId`/`issueNumber`/`claudeProjectsDir`, layered on top of
- * `loadConfig()`'s environment-driven knobs (heartbeat interval, Firestore
- * target, etc.) — the same env vars a host watcher reads, so local-testing
- * overrides (e.g. `FIRESTORE_EMULATOR_HOST`) work identically in runner
- * mode.
+ * `loadSharedConfig()`'s environment-driven knobs (heartbeat interval,
+ * Firestore target, etc.) — the same non-privacy env vars a host watcher
+ * reads, so local-testing overrides (e.g.
+ * `FIRESTORE_EMULATOR_HOST`) work identically in runner mode without
+ * requiring a host checkout allowlist inside a single-purpose CI container.
  */
 export function loadRunnerConfig(argv: string[]): RunnerConfig {
-  const base = loadConfig();
+  // Runner mode has no privacy allowlist: its container is single-purpose.
+  // Load only shared settings so host-mode checkout roots are not required.
+  const base = loadSharedConfig();
   const flags = parseRunnerFlags(argv);
   const issueNumber =
     flags.issueNumber !== undefined ? Number(flags.issueNumber) : undefined;

@@ -8,6 +8,8 @@ import { loadConfig } from './config';
 
 const ENV_KEYS = [
   'AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR',
+  'AGENT_TELEMETRY_CHECKOUT_ROOT',
+  'AGENT_TELEMETRY_CHECKOUT_ROOTS',
   'AGENT_TELEMETRY_CODEX_SESSIONS_DIR',
   'AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST',
   'AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST',
@@ -19,6 +21,8 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS',
   'AGENT_TELEMETRY_STALENESS_WINDOW_MS',
   'AGENT_TELEMETRY_SHARE_DIR',
+  'AGENT_TELEMETRY_METRICS_HOST',
+  'AGENT_TELEMETRY_METRICS_PORT',
   'AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB',
   'FIRESTORE_EMULATOR_HOST',
 ] as const;
@@ -31,6 +35,8 @@ describe('loadConfig', () => {
       originalEnv[key] = process.env[key];
       delete process.env[key];
     }
+    process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'] =
+      '/srv/checkouts/sprinkles,/srv/checkouts/agent-lcars';
   });
 
   afterEach(() => {
@@ -56,12 +62,39 @@ describe('loadConfig', () => {
         path: path.join(os.homedir(), '.codex', 'sessions'),
         adapter: 'codex',
         recursive: true,
-        cwdAllowlist: ['/home/jlapenna/p/sprinkles*'],
+        cwdAllowlist: [
+          '/srv/checkouts/sprinkles*',
+          '/srv/checkouts/agent-lcars*',
+        ],
       },
     ]);
     expect(config.heartbeatIntervalMs).toBe(10_000);
     expect(config.stalenessWindowMs).toBe(50_000);
     expect(config.shareDir).toBe(path.join(os.homedir(), 'share'));
+    expect(config.metricsHost).toBe('0.0.0.0');
+    expect(config.metricsPort).toBe(9464);
+  });
+
+  it('fails closed when checkout scope is not configured', () => {
+    delete process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'];
+
+    expect(() => loadConfig()).toThrow(/must explicitly name/);
+  });
+
+  it('respects metrics listener overrides', () => {
+    process.env['AGENT_TELEMETRY_METRICS_HOST'] = '127.0.0.1';
+    process.env['AGENT_TELEMETRY_METRICS_PORT'] = '9876';
+
+    const config = loadConfig();
+
+    expect(config.metricsHost).toBe('127.0.0.1');
+    expect(config.metricsPort).toBe(9876);
+  });
+
+  it('rejects an invalid metrics port', () => {
+    process.env['AGENT_TELEMETRY_METRICS_PORT'] = '70000';
+
+    expect(() => loadConfig()).toThrow(/integer from 1 to 65535/);
   });
 
   it('respects a share dir override', () => {

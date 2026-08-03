@@ -16,20 +16,18 @@ name: agent-lcars-telemetry-watcher
 # on), deployed to pike via deploy.sh in this same directory. See
 # deploy/README.md for how secrets (writer-key.json, .env) reach pike.
 #
-# jlapenna/homelab keeps only the Prometheus alert that watches this
-# container via cAdvisor metrics (observability/prometheus/rules.yml,
-# AgentLcarsTelemetryWatcherCrashLooping) -- that's homelab's own
-# cadvisor/Prometheus stack, not something this repo can own.
+# jlapenna/homelab owns the Prometheus scrape and alert rules for this
+# service; this repo owns the endpoint and published port they consume.
 #
 # Read-only bind mounts, at the SAME absolute paths as the host: the daemon
 # resolves `git -C <cwd>` against paths recorded in transcripts verbatim
-# (e.g. /home/jlapenna/p/sprinkles or a .claude/worktrees/<name> subdir), so
+# (e.g. ${WATCHER_HOME}/p/sprinkles or a worktree beneath it), so
 # there's no path-translation option here — the container has to see the
 # real filesystem at the real paths.
 #
-# Runs as uid:gid 1000 (jlapenna), not the image's default "watcher" user —
-# ~/.claude/projects is 0700, owned by jlapenna, so a different uid can't
-# read it even read-only.
+# deploy.sh derives WATCHER_HOME/UID/GID from the host account instead of
+# hard-coding a personal home. The transcript directories are mode 0700, so
+# a different uid cannot read them even through read-only mounts.
 services:
   agent-lcars-telemetry-watcher:
     # agent-lcars 5bb8ac6. The previous pin (b456a8c) predated the
@@ -40,7 +38,7 @@ services:
     # restarted. Both symptoms trace to that one stale pin.
     image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:5bb8ac6@sha256:8356a37da287f512008196953d412801a191507d28fb4616acb551353128fe44
     container_name: agent-lcars-telemetry-watcher
-    user: '1000:1000'
+    user: '${WATCHER_UID:?deploy.sh must export WATCHER_UID}:${WATCHER_GID:?deploy.sh must export WATCHER_GID}'
     # Shares the host PID namespace so isProcessAliveForCwd's /proc/<pid>/cwd
     # scan sees real host processes (Claude CLI sessions), not just this
     # container's own PID 1 — without this, liveness computation always sees
@@ -71,62 +69,62 @@ services:
       # module rather than doing anything visible.
       - 'AGENT_TELEMETRY_WRITER_KEY_JSON="$(cat /secrets/writer-key.json)" exec node sidecar.cjs'
     environment:
-      - AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR=/home/jlapenna/.claude/projects
-      - AGENT_TELEMETRY_CODEX_SESSIONS_DIR=/home/jlapenna/.codex/sessions
+      - AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR=${WATCHER_HOME:?deploy.sh must export WATCHER_HOME}/.claude/projects
+      - AGENT_TELEMETRY_CODEX_SESSIONS_DIR=${WATCHER_HOME}/.codex/sessions
       - AGENT_TELEMETRY_HOST=pike
-      # Both checkouts this host actually runs agents against, set explicitly
-      # rather than left to the image's built-in default. That default is a
-      # single checkout (AGENT_TELEMETRY_CHECKOUT_ROOT, one root by design),
-      # so it cannot express the two-checkout reality of pike — and when it
-      # silently went stale across the members -> sprinkles rename, every
-      # session on this host was dropped and Agent LCARS showed 0 active for
-      # weeks. Naming the roots here means a future rename breaks loudly, in
-      # a file that lives next to the deploy, instead of failing closed to
-      # whatever the image happened to be built with.
+      # One source-of-truth list derives Claude project slugs, Codex cwd globs,
+      # and Antigravity workspace prefixes inside the watcher. There is no
+      # built-in checkout fallback: a missing value fails startup closed.
       #
-      # These are a privacy boundary, not just a filter: ~/.claude/projects
-      # holds transcripts for every project on this workstation, and only
-      # what matches ships. Keep both lists narrow, and keep them in sync
-      # with each other.
-      - AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST=-home-jlapenna-p-sprinkles*,-home-jlapenna-p-agent-lcars*
-      - AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST=/home/jlapenna/p/sprinkles*,/home/jlapenna/p/agent-lcars*
+      # These roots are a privacy boundary, not just a filter: the transcript
+      # directories contain other projects too, and only these roots ship.
+      - AGENT_TELEMETRY_CHECKOUT_ROOTS=${WATCHER_HOME}/p/sprinkles,${WATCHER_HOME}/p/agent-lcars
       - AGENT_TELEMETRY_PROJECT_ID=${AGENT_TELEMETRY_PROJECT_ID}
       - AGENT_TELEMETRY_DATABASE_ID=(default)
       # share-media skill convention (members#2631) — artifact discovery
       # no-ops soft on a missing dir, so leaving this unset wouldn't crash
       # anything, it'd just silently never find artifacts.
-      - AGENT_TELEMETRY_SHARE_DIR=/home/jlapenna/share
+      - AGENT_TELEMETRY_SHARE_DIR=${WATCHER_HOME}/share
       # Antigravity summary-DB poller (members#3123 phase 3). Antigravity's
       # per-conversation transcripts are opaque (SQLite BLOBs / binary .pb),
       # but its own conversation_summaries.db carries authoritative
       # per-conversation workspace attribution, step counts, and activity
       # timestamps — enough for summary-tier docs without decoding anything.
-      # Only conversations attributed to the checkout root ship; the poller
-      # no-ops soft when this file is absent (other hosts). Note this one
-      # source has no env override — its workspace prefixes derive from the
-      # image's single built-in checkout root, so unlike the two allowlists
-      # above it stays scoped to sprinkles only.
-      - AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB=/home/jlapenna/.gemini/antigravity-cli/conversation_summaries.db
+      # Only conversations attributed to a configured checkout root ship;
+      # the poller no-ops soft when this file is absent.
+      - AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB=${WATCHER_HOME}/.gemini/antigravity-cli/conversation_summaries.db
       # firebase-admin pulls in gRPC/protobuf, which has a real baseline
       # footprint — 256m OOM-crash-looped on startup before this was added.
       # Explicit --max-old-space-size avoids V8 sizing its heap against the
       # host's total memory instead of the container's cgroup limit.
       - NODE_OPTIONS=--max-old-space-size=384
+    ports:
+      - '9464:9464'
     volumes:
-      - /home/jlapenna/.claude/projects:/home/jlapenna/.claude/projects:ro
-      - /home/jlapenna/.codex/sessions:/home/jlapenna/.codex/sessions:ro
-      - /home/jlapenna/p:/home/jlapenna/p:ro
-      - /home/jlapenna/share:/home/jlapenna/share:ro
+      - ${WATCHER_HOME}/.claude/projects:${WATCHER_HOME}/.claude/projects:ro
+      - ${WATCHER_HOME}/.codex/sessions:${WATCHER_HOME}/.codex/sessions:ro
+      - ${WATCHER_HOME}/p:${WATCHER_HOME}/p:ro
+      - ${WATCHER_HOME}/share:${WATCHER_HOME}/share:ro
       # Read-only: the live Antigravity CLI writes this DB; the poller opens
       # it read-only every tick and fails soft if it's locked or missing.
-      - /home/jlapenna/.gemini/antigravity-cli:/home/jlapenna/.gemini/antigravity-cli:ro
-      - /home/homelab/agent-lcars-telemetry-watcher/writer-key.json:/secrets/writer-key.json:ro
+      - ${WATCHER_HOME}/.gemini/antigravity-cli:${WATCHER_HOME}/.gemini/antigravity-cli:ro
+      - ${DEPLOY_DIR:?deploy.sh must export DEPLOY_DIR}/writer-key.json:/secrets/writer-key.json:ro
     # Just fs-watching + small periodic writes — nothing like the runner
     # fleet's build load. 512m (not the original 256m — see NODE_OPTIONS
     # comment above) still leaves this negligible next to the runner fleet.
     cpus: 0.5
     mem_limit: 512m
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:9464/metrics').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
     logging:
       driver: json-file
       options:

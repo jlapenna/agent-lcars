@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { SessionSummary } from '@agent-lcars/telemetry';
 
-import { checkoutRoot } from './default-checkout';
+import { checkoutRoots } from './default-checkout';
 
 /**
  * Antigravity CLI's global summary-tier SQLite DB
@@ -238,7 +238,7 @@ function toSessionSummary(
 
 /** Default privacy allowlist — see `default-checkout.ts`'s doc comment. */
 export function defaultAntigravityWorkspacePrefixes(): string[] {
-  return [checkoutRoot()];
+  return checkoutRoots();
 }
 
 /** One open connection per distinct `dbPath`, reused across polls for the

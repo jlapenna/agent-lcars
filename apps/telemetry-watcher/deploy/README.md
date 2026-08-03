@@ -82,10 +82,9 @@ ownership fixups above):
 
 ## Monitoring
 
-`jlapenna/homelab` keeps the Prometheus alert rule that watches this
-container — `AgentLcarsTelemetryWatcherCrashLooping` in that repo's
-`observability/prometheus/rules.yml`. It's cAdvisor-metric based (container
-restart count / presence), i.e. it belongs to homelab's own
-cadvisor/Prometheus monitoring stack, not this repo. Only the _deployment_
-config moved here in homelab#218 Phase 6 — the _monitoring_ of the deployed
-container stays in homelab.
+The watcher publishes Prometheus text on host port `9464`; its Compose
+healthcheck exercises that exact endpoint. `jlapenna/homelab` owns the scrape
+and alert rules: cAdvisor still detects crash loops, while the watcher metrics
+distinguish a healthy tick loop from a watcher that has stopped shipping
+active sessions. Only the deployment config moved here in homelab#218 Phase
+6—the monitoring of the deployed container stays in homelab.

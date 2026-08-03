@@ -4,13 +4,13 @@
 # Converted from jlapenna/homelab's
 # ansible/deploy_agent_lcars_telemetry_watcher.yml when the deployment
 # config moved into this repo (homelab#218 Phase 6). See docker-compose.yml
-# in this same directory for the full design rationale (why uid 1000, why
+# in this same directory for the full design rationale (why the watched uid, why
 # pid: host + apparmor=unconfined, why the allowlists are pinned
 # explicitly) and deploy/README.md for how secrets reach pike.
 #
 # Preserves the operational lessons the original playbook encoded
 # (jlapenna/homelab#204, docs/incidents.md 2026-07-29 in that repo):
-#   - the writer key must exist and be owned 1000:1000 -- that's the uid
+#   - the writer key must exist and be owned by the watched uid/gid -- those are
 #     the CONTAINER reads it as, not the identity running this script.
 #   - .env must exist and be readable by the identity that actually runs
 #     `docker compose` -- this script asserts against its OWN invoking
@@ -19,21 +19,29 @@
 #     controller-vs-remote-CLI identity mismatch that indirection created).
 #   - a successful `docker compose up` only means the API calls succeeded,
 #     not that the process inside is working: verify the container is
-#     still running and hasn't restarted (or is reporting healthy, if a
-#     HEALTHCHECK is ever added) before declaring success.
+#     still running and hasn't restarted, and that its endpoint reports
+#     healthy, before declaring success.
 #
-# Usage: run directly on pike, as the identity that owns
-# /home/homelab/agent-lcars-telemetry-watcher (normally the `homelab`
-# service account, with sudo available for the ownership fixups below):
+# Usage: run directly on pike as the deployment identity (normally the
+# `homelab` service account, with sudo available for ownership fixups):
 #   ./deploy.sh
 set -euo pipefail
 
-DEPLOY_DIR=/home/homelab/agent-lcars-telemetry-watcher
+DEPLOY_DIR="${AGENT_TELEMETRY_DEPLOY_DIR:-${HOME}/agent-lcars-telemetry-watcher}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRITER_KEY="$DEPLOY_DIR/writer-key.json"
 ENV_FILE="$DEPLOY_DIR/.env"
 CONTAINER_NAME=agent-lcars-telemetry-watcher
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
+WATCHER_UID="${AGENT_TELEMETRY_WATCHER_UID:-1000}"
+WATCHER_GID="${AGENT_TELEMETRY_WATCHER_GID:-$WATCHER_UID}"
+WATCHER_HOME="$(getent passwd "$WATCHER_UID" | cut -d: -f6 || true)"
+
+if [[ -z "$WATCHER_HOME" || "$WATCHER_HOME" != /* ]]; then
+  echo "Cannot derive an absolute home directory for watcher uid $WATCHER_UID" >&2
+  exit 1
+fi
+export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME
 
 mkdir -p "$DEPLOY_DIR"
 
@@ -55,7 +63,7 @@ github-runner RUNNER_TOKEN .env):
 EOF
   exit 1
 fi
-sudo chown 1000:1000 "$WRITER_KEY"
+sudo chown "$WATCHER_UID:$WATCHER_GID" "$WRITER_KEY"
 sudo chmod 0600 "$WRITER_KEY"
 
 # --- .env: must exist; never managed by this script -------------------------
