@@ -336,6 +336,26 @@ build session; the builder does not store it. Log out in an `always()`
 cleanup step. See jlapenna/homelab `docs/registry.md` for credential
 rotation and policy verification.
 
+### Scanning and attesting a new published image
+
+Every image `publish-images.yml` builds and pushes gets provenance/SBOM
+attestation and a post-push vulnerability scan (agent-lcars#224) — do the
+same for a new image rather than treating it as optional:
+
+- Add `provenance: true` and `sbom: true` to the `docker/build-push-action`
+  step. This needs the same remote-driver BuildKit builder already in use
+  here; the default `docker` driver does not support attestations.
+- Scan the just-pushed **registry** reference with the local
+  `.github/actions/scan-image` composite action, immediately after the
+  push step, reusing the `docker login` credential already established
+  above — never a local tag or image ID. This runner has no Docker socket
+  (§2 above / agent-lcars#101), so there is no local image to scan even if
+  one were preferable. Give each image its own `category` input so its
+  SARIF results don't overwrite another image's in the code-scanning UI.
+
+See `scan-image/action.yml` for the CRITICAL + fixable-only severity bar
+and why it was chosen.
+
 ## Verifying it actually worked
 
 Same principle as the console/telemetry onboarding doc: confirm live, not

@@ -33,6 +33,14 @@ name: Publish images
 # encrypted homelab secret store -- NOT from GitHub Actions secrets. The
 # control plane runs locally, so the whole BuildKit PKI shares one storage
 # and rotation path (homelab's ansible/deploy_buildkit.yml).
+#
+# Every build attests provenance and an SBOM (docker/build-push-action's
+# `provenance`/`sbom` inputs), and every push is scanned afterward via the
+# local `scan-image` composite action (agent-lcars#224). The scan targets
+# the just-pushed REGISTRY reference, not a local image -- this runner has
+# no Docker socket to hold one (agent-lcars#101), so there is nothing local
+# to scan. See scan-image/action.yml for the severity bar and how
+# authentication is reused from the registry login step below.
 
 on:
   push:
@@ -79,6 +87,10 @@ on:
 
 permissions:
   contents: read
+  # Lets scan-image's SARIF upload step (github/codeql-action/upload-sarif)
+  # publish Trivy's results to this repo's code-scanning UI. Public repo,
+  # so code scanning is free -- no GitHub Advanced Security license needed.
+  security-events: write
 
 concurrency:
   group: publish-images
@@ -258,6 +270,19 @@ jobs:
           tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:latest
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:buildcache,mode=max
+          # Attestations require BuildKit >= 0.11 on the builder oldbook
+          # runs and are only supported by the docker-container/kubernetes/
+          # remote drivers (never the default `docker` driver) -- both
+          # conditions this remote builder already needs to meet for the
+          # multi-platform push above to work at all. See agent-lcars#224.
+          provenance: true
+          sbom: true
+
+      - name: Scan control-plane image
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:latest
+          category: runner-autoscaler
 
       # Keeps the existing tag name: every consuming workflow across members
       # and agent-lcars already hardcodes
@@ -283,6 +308,14 @@ jobs:
             AGENT_LCARS_REF=${{ github.sha }}
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/homelab-runner:buildcache,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Scan JIT worker runner image
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24
+          category: homelab-runner
 
       # The standalone per-host daemon image (agent-lcars#231). Three things
       # differ from the two steps above, all deliberate:
@@ -320,6 +353,17 @@ jobs:
             ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
           cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:buildcache
           cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:buildcache,mode=max
+          provenance: true
+          sbom: true
+
+      # Scans the sha tag, not :latest -- both point at the same digest
+      # immediately after this step, but the sha tag is the one this
+      # workflow itself just minted and is guaranteed unique to this run.
+      - name: Scan telemetry-watcher daemon image
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
+          category: telemetry-watcher
 
       - name: Log out of the registry
         if: always()

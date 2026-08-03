@@ -1,0 +1,71 @@
+name: Scan published image
+description: >-
+  Scan a just-pushed registry reference for vulnerabilities with Trivy and
+  surface the result as a real CI check: upload SARIF to the repo's code
+  scanning UI, then fail the job on fixable CRITICAL CVEs (agent-lcars#224).
+
+inputs:
+  image-ref:
+    description: >-
+      Registry reference to scan, e.g.
+      docker-registry.lan.jlapenna.net/agent-lcars/runner-autoscaler:latest.
+      Must be the just-pushed reference, not a local tag or image ID --
+      publish-images.yml's runner holds no Docker socket (agent-lcars#101),
+      so there is no local image for Trivy to inspect. Trivy pulls the
+      manifest over the registry API instead, reusing the `docker login`
+      credential the earlier push step already established for this job
+      (Trivy reads the same `~/.docker/config.json` credential store Docker
+      does -- no separate TRIVY_USERNAME/TRIVY_PASSWORD is needed here).
+    required: true
+  category:
+    description: >-
+      Unique slug for this image (e.g. "runner-autoscaler"). Distinguishes
+      this image's SARIF results from the other images this workflow scans
+      in the same run -- without it, each upload would overwrite the
+      previous one's results for the same commit in the code-scanning UI.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # SARIF first, unconditionally: this is what shows up in the repo's
+    # Security tab (and as PR annotations on any future PR touching this
+    # SHA), independent of whether the fail-fast step below trips. Scoped
+    # to CRITICAL + ignore-unfixed to match the gate step exactly -- see
+    # that step's comment for why this threshold was chosen.
+    - name: 'Trivy scan (SARIF): ${{ inputs.category }}'
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: sarif
+        output: trivy-results-${{ inputs.category }}.sarif
+        severity: CRITICAL
+        ignore-unfixed: true
+
+    - name: 'Upload scan results to code scanning: ${{ inputs.category }}'
+      if: always()
+      uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+      with:
+        sarif_file: trivy-results-${{ inputs.category }}.sarif
+        category: ${{ inputs.category }}
+
+    # The actual gate. CRITICAL + ignore-unfixed: true (fail only on
+    # vulnerabilities a rebuild could actually resolve) is a defensible
+    # default chosen in the absence of a reachable definition of the
+    # homelab `ImageVulnerabilities` alert's own threshold -- that alert
+    # (bin/scan-vulns.sh) lives in the separate jlapenna/homelab repo and
+    # was not reachable from here. See agent-lcars#224.
+    #
+    # `skip-setup-trivy: true` re-uses the Trivy binary and vuln DB the
+    # SARIF step above already fetched, rather than reinstalling -- see
+    # aquasecurity/trivy-action's README ("Skipping Setup when Calling
+    # Trivy Action multiple times").
+    - name: 'Fail on fixable CRITICAL CVEs: ${{ inputs.category }}'
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: table
+        severity: CRITICAL
+        ignore-unfixed: true
+        exit-code: '1'
+        skip-setup-trivy: true
