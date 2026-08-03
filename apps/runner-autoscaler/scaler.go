@@ -71,10 +71,11 @@ type Scaler struct {
 	// socketless build-client lane uses these and nothing else.
 	fileMounts []FileMount
 	// workDirSizeCapBytes: size ceiling for the shared /home/runner/_work
-	// directory bind-mounted into every runner when MountDockerSocket is
+	// directory bind-mounted into every runner when ShareWorkDir is
 	// set -- that shared dir has no per-container lifecycle to clean it up,
 	// unlike a normal container's writable layer. Only enforced by
-	// RunWorkDirSweeper, which is only started when mountDockerSocket is true.
+	// RunWorkDirSweeper, which is only started when ShareWorkDir is true
+	// (split from MountDockerSocket in agent-lcars#101/#136).
 	workDirSizeCapBytes int64
 	workDirSizeCaps     map[string]int64
 	hostRunnerLimits    map[string]int
@@ -376,6 +377,13 @@ func (a *Scaler) RunHostSampler(ctx context.Context) {
 	}
 }
 
+// applyOverloadCooldown is the single authority that arms or extends a
+// host's cooldown window: callers must pass a load whose .overloaded bit
+// reflects a FRESH, raw scoreHostLoad result, measured right now, not a
+// value that has already been through this function (directly or via the
+// hostLoadCache). It is the arm/extend side of the state machine --
+// refreshOverloadCooldown is the read-only side placement uses to re-check
+// an existing window against the current time.
 func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
 	fleet := a.coordinator()
 	fleet.overloadMu.Lock()
@@ -391,6 +399,48 @@ func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time
 		load.penalty = 100
 		load.overloaded = true
 	}
+	return load
+}
+
+// refreshOverloadCooldown re-evaluates whether host should still be treated
+// as overloaded for placement, against the live cooldown expiry, WITHOUT
+// ever arming or extending it. currentHostLoad's cache can be up to
+// 2*hostSampleInterval (30s) stale, and a cached entry's .overloaded bit is
+// not necessarily a fresh raw reading -- probeHostLoad sets it via
+// applyOverloadCooldown's check-only branch whenever a host's raw signal has
+// already recovered but its cooldown window has not yet elapsed, and that
+// cooldown-derived true then gets cached exactly like a genuine raw breach
+// would.
+//
+// pickHostLocked used to feed that cached value straight back into
+// applyOverloadCooldown to keep the cooldown check live against wall-clock
+// time between probes. Because applyOverloadCooldown cannot distinguish "a
+// fresh raw breach" from "an echo of my own prior cooldown-forcing," every
+// such re-read re-armed the timer to now+cooldown -- so as long as placement
+// kept retrying faster than the cooldown duration (guaranteed whenever
+// there is pending demand), a host that had genuinely recovered could never
+// actually exit cooldown (agent-lcars#259 follow-up).
+//
+// This performs only the read side: an .overloaded=false cached sample is
+// left untouched (it can only have been produced when no cooldown was
+// active, and cooldown windows never restart on their own, so it stays
+// correct at any later time). An .overloaded=true sample is re-derived
+// purely from whether `now` is still before the cooldown recorded by the
+// last FRESH probe -- letting a window that has genuinely elapsed since the
+// cached read expire on schedule, without ever writing overloadedUntil.
+func (a *Scaler) refreshOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
+	if !load.overloaded {
+		return load
+	}
+	fleet := a.coordinator()
+	fleet.overloadMu.Lock()
+	until := fleet.overloadedUntil[host]
+	fleet.overloadMu.Unlock()
+	if now.Before(until) {
+		return load
+	}
+	load.overloaded = false
+	load.penalty = 0
 	return load
 }
 
@@ -554,11 +604,19 @@ func (a *Scaler) pruneDeadIdleRunners(ctx context.Context) {
 			continue
 		}
 		reason := "container no longer exists"
+		metricReason := runnerDeadReasonNotFound
 		if inspectErr == nil {
 			reason = fmt.Sprintf("container state is %q, not running", info.State.Status)
+			metricReason = runnerDeadReasonNotRunning
 		}
 		a.logger.Warn("Pruning idle runner whose container is not actually running",
 			slog.String("name", e.name), slog.String("host", e.ref.host), slog.String("reason", reason))
+		// Distinguishes "died before ever completing a job" (e.g. a
+		// crash-looping image, such as entrypoint.sh's node24 preflight
+		// failing on every boot) from ordinary job-completion churn, which
+		// only ever shows up here as a slog.Warn otherwise -- see
+		// agent-lcars#393.
+		runnerDiedIdleTotal.WithLabelValues(a.scaleSetLabel(), e.ref.host, metricReason).Inc()
 		a.runners.markDone(e.name)
 		a.deregisterRunner(ctx, e.name)
 	}
@@ -803,6 +861,26 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 // swap pressure), a virtual load penalty (+100) is applied to spark so other
 // idle fleet hosts are preferred over it.
 //
+// Hard overload is different from a soft penalty: a host scoreHostLoad marks
+// hard-overloaded (load/CPU/PSI/memory/swap pressure past its *Hard
+// threshold), or one still inside applyOverloadCooldown's post-overload
+// window, is removed from the candidate set entirely rather than merely
+// deprioritized -- a virtual penalty only changes which candidate wins a
+// tie, so with a soft penalty alone a lowest-effective-count comparison
+// among a fully pressured fleet still placed a runner on whichever
+// overloaded host looked (barely) least bad (agent-lcars#259). If that
+// leaves zero candidates, pickHost reports fleet-at-capacity
+// (placementReasonOverload) and leaves demand pending rather than placing
+// anyway; the caller's reconciliation is level-triggered, so it retries once
+// a host's pressure or cooldown clears.
+//
+// This is intentionally separate from missing telemetry: a host whose probe
+// fails outright only gets hostLoadPolicy.telemetryPenalty, a small
+// deprioritization, and stays a candidate -- see probeHostLoad's "fails
+// open" comment. Confirmed overload (we HAVE pressure data and it is bad) is
+// the opposite of absent data, and conflating the two would turn a telemetry
+// outage into a fleet outage.
+//
 // When mountDockerSocket is set, reachable hosts that already have >=1
 // runner from this scale set placed on them are excluded outright rather
 // than just deprioritized: socket-mounted runners share the placement
@@ -936,7 +1014,14 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 				hostTelemetryGauge.WithLabelValues(res.host.Name).Set(0)
 				a.logger.Warn("Host load metrics unavailable; applying uncertainty penalty", slog.String("host", res.host.Name), slog.Int("penalty", res.load.penalty), slog.String("error", res.loadErr.Error()))
 			} else {
-				res.load = a.applyOverloadCooldown(res.host.Name, res.load, time.Now())
+				// Read-only re-check against wall-clock time, NOT
+				// applyOverloadCooldown: res.load may be a cache read up to
+				// 2*hostSampleInterval stale, and its .overloaded bit may
+				// already be cooldown-derived rather than a fresh raw
+				// reading. Feeding that back into applyOverloadCooldown
+				// would re-arm the cooldown from an echo of itself every
+				// time placement re-reads it -- see refreshOverloadCooldown.
+				res.load = a.refreshOverloadCooldown(res.host.Name, res.load, time.Now())
 				hostLoads[res.host.Name] = res.load
 				a.recordHostLoadMetrics(res.host.Name, res.load, true)
 				log := a.logger.Debug
@@ -1011,6 +1096,26 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		placementBlocked.WithLabelValues(scaleSet, placementReasonHostLimits).Inc()
 		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
+
+	// Hard-overloaded hosts (and hosts still inside their post-overload
+	// cooldown -- see applyOverloadCooldown) are excluded outright, not just
+	// deprioritized by their virtual penalty. Without this, "lowest
+	// effective count wins" still placed a runner on the least-bad-looking
+	// overloaded host once every candidate was pressured (agent-lcars#259).
+	// A host with merely MISSING telemetry is not touched here: it only
+	// carries hostLoadPolicy.telemetryPenalty and stays a candidate, per
+	// probeHostLoad's fail-open policy.
+	var notOverloaded []DockerHost
+	for _, h := range withinHostLimits {
+		if !hostLoads[h.Name].overloaded {
+			notOverloaded = append(notOverloaded, h)
+		}
+	}
+	if len(notOverloaded) == 0 {
+		placementBlocked.WithLabelValues(scaleSet, placementReasonOverload).Inc()
+		return "", fmt.Errorf("every reachable docker host within its runner limit is hard-overloaded or in overload cooldown: %w", errFleetAtCapacity)
+	}
+	withinHostLimits = notOverloaded
 
 	candidates := withinHostLimits
 	if a.shareWorkDir {
@@ -1907,6 +2012,20 @@ const sweepStaleMinutes = 60
 // 2026-07-18: this shared dir has no per-container lifecycle, so without this
 // nothing else ever reclaims it.
 func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
+	// A scheduled prune reclaiming disk on an idle host (this fleet's
+	// documented maintenance) can remove a.runnerImage from it entirely
+	// between real placements -- exactly the idle hosts this externals
+	// health check exists to catch. Without this, ContainerCreate below
+	// fails outright on such a host, and the health check silently never
+	// runs there until a real job happens to place a runner (which itself
+	// calls ensureRunnerImage first) -- the exact reactive gap agent-lcars#392
+	// exists to close. startRunner already does the same before creating a
+	// real runner container; this is that same guard for the maintenance
+	// helper container.
+	if err := a.ensureRunnerImage(ctx, client, host); err != nil {
+		return fmt.Errorf("ensuring runner image before workdir sweep on host %q: %w", host, err)
+	}
+
 	capBytes := a.workDirSizeCapBytes
 	if override, ok := a.workDirSizeCaps[host]; ok {
 		capBytes = override
@@ -1941,6 +2060,20 @@ if [ "$before" -gt "$cap" ]; then
 fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
+
+# Proactively verify (and repair) the shared externals/node24 runtime as
+# part of this same idle-host maintenance pass (agent-lcars#392), using the
+# identical self-heal logic and lock file entrypoint.sh uses (baked into
+# this same image), so a broken host is caught between real jobs instead of
+# only when one happens to hit it, and this can never race a booting
+# runner's own repair attempt.
+. /usr/local/lib/agent-lcars/externals-health.sh
+repair_externals_if_needed
+if node24_runs; then
+  echo "EXTERNALS_HEALTHY=1"
+else
+  echo "EXTERNALS_HEALTHY=0"
+fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
 
 	resp, err := client.ContainerCreate(ctx,
@@ -1952,7 +2085,10 @@ echo "SWEEP before=$before after=$after cap=$cap"
 			Tty:        true,
 		},
 		&container.HostConfig{
-			Binds: []string{"/home/runner/_work:/home/runner/_work"},
+			Binds: []string{
+				"/home/runner/_work:/home/runner/_work",
+				"/home/runner/externals:/home/runner/externals",
+			},
 		},
 		nil, nil, "",
 	)
@@ -1997,7 +2133,29 @@ echo "SWEEP before=$before after=$after cap=$cap"
 		workdirSweptBytesTotal.WithLabelValues(host).Add(float64(reclaimed))
 		a.logger.Info("Swept shared workdir", slog.String("host", host), slog.Int64("before_bytes", before), slog.Int64("after_bytes", after), slog.Int64("reclaimed_bytes", reclaimed))
 	}
+
+	healthy, healthOK := parseExternalsHealthOutput(string(out))
+	if !healthOK {
+		a.logger.Warn("Could not parse externals-health output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
+		return nil
+	}
+	if healthy {
+		hostExternalsHealthyGauge.WithLabelValues(host).Set(1)
+	} else {
+		hostExternalsHealthyGauge.WithLabelValues(host).Set(0)
+		a.logger.Warn("Shared externals/node24 runtime is still unhealthy after a repair attempt", slog.String("host", host))
+	}
 	return nil
+}
+
+var externalsHealthRe = regexp.MustCompile(`EXTERNALS_HEALTHY=([01])`)
+
+func parseExternalsHealthOutput(out string) (healthy, ok bool) {
+	m := externalsHealthRe.FindStringSubmatch(out)
+	if m == nil {
+		return false, false
+	}
+	return m[1] == "1", true
 }
 
 var sweepOutputRe = regexp.MustCompile(`SWEEP before=(\d+) after=(\d+)`)

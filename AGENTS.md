@@ -1,5 +1,35 @@
 # Agent LCARS contributor notes
 
+## CRITICAL: Initialization
+
+Project-specific workflows and guardrails (worktree/git safety, PRs,
+verification) are defined by the **agent-lcars-dev** skill — it is the
+single source of truth; do not duplicate its guardrail text elsewhere in
+this file. Headless-CI-dispatch conventions (takeover comment, parking,
+identity, dispatch ledger) are defined by the **agent-protocol** and
+**lcars** skills instead — read those when dispatched as a headless agent.
+
+The project skills live in `.agents/skills/`. Depending on your agent
+runtime:
+
+- **Claude Code**: these skills are exposed via symlinks under
+  `.claude/skills/`. Invoke them with the `Skill` tool (e.g.
+  `agent-lcars-dev`) — they are auto-discovered from their `description:`
+  frontmatter, which is written to match broadly for this repo (including
+  generic-seeming tasks), so no explicit forced load is needed here. There
+  is no `activate_skill` tool.
+- **Codex**: repository skills are catalogued by the local plugin
+  marketplace manifest in `.agents/skills/.claude-plugin/marketplace.json`.
+
+If a skill is not discoverable, read its `SKILL.md` and `references/`
+files directly from `.agents/skills/<name>/`.
+
+> [!IMPORTANT]
+> Git and deployment guardrails (worktrees mandatory, no `--no-verify`,
+> never deploy or touch Terraform/Firestore directly) live in
+> [`.agents/skills/agent-lcars-dev/SKILL.md`](.agents/skills/agent-lcars-dev/SKILL.md#hard-guardrails).
+> Read them there — this section intentionally does not restate them.
+
 Keep this repository independent from the supersprinklesracing source tree.
 Shared telemetry integration is delivered by baking
 `apps/telemetry-watcher`'s bundle into the shared runner image at
@@ -15,34 +45,6 @@ Never commit credentials. Runtime secrets belong in GCP Secret Manager and the
 host writer credential belongs in the encrypted homelab secret store. Terraform
 owns secret containers but not secret values.
 
-## Checkout safety
-
-The primary checkout is shared state and is reserved for a clean `main`.
-All implementation work — by people and agents alike — must happen in a
-dedicated feature worktree. Before editing files or running a git-mutating
-command (`branch`, `commit`, `push`, `checkout`, `stash`, `reset`, or a merge),
-create one from the current remote base:
-
-```bash
-git fetch origin
-git worktree add ../agent-lcars-<task> -b <branch> origin/main
-cd ../agent-lcars-<task>
-./tools/setup-worktree.sh
-```
-
-Apart from fetching, creating a worktree, and a fast-forward-only
-synchronization of its clean `main` after a merge, only read-only inspection is
-allowed in the primary checkout. Never switch the primary checkout to a feature
-branch, and never use `--no-verify` to bypass commit or push hooks.
-
-The hooks reject commits and pushes from `main` and from the primary checkout;
-the policy above prevents edits from accumulating there in the first place.
-
-Before publishing, run the affected Nx test, typecheck, and build targets.
-
-After merging and safely removing the feature worktree, sync the primary
-checkout to the latest remote base with a fast-forward-only pull. First confirm
-that the primary checkout is clean, on the base branch, and not being used by
-another session. If it is unsafe to update, fetch the remote and explicitly
-report that the checkout remains behind and why; never stash, reset, switch
-branches, or force the update.
+Checkout safety, worktree mandate, and the full hard-limits list live in
+[agent-lcars-dev's SKILL.md](.agents/skills/agent-lcars-dev/SKILL.md#hard-guardrails)
+— read it before editing files or running any git-mutating command.

@@ -1,25 +1,26 @@
 #!/bin/bash
 set -e
 
-# Serialize the externals populate across concurrently starting runners on the
-# same host: externals is a shared bind mount on socket-mounted scale sets, and
-# two first-boot runners racing the copy can tear each other's files. The lock
-# lives in _work (shared whenever externals is; container-local otherwise, where
-# the lock is uncontended and harmless). Dotfile: the workdir sweep's top-level
-# glob only matches directories.
-mkdir -p /home/runner/_work
-exec 9>/home/runner/_work/.externals-populate.lock
-flock 9
+# See externals-health.sh for node24_runs/repair_externals_if_needed and why
+# the populate/repair check must actually invoke node24 rather than just
+# stat it. Shared with the control plane's periodic idle-host maintenance
+# sweep (scaler.go:sweepHostWorkDir, agent-lcars#392) so both call sites use
+# identical logic instead of two copies that can drift apart.
+source /usr/local/lib/agent-lcars/externals-health.sh
 
-# If /home/runner/externals is empty or missing, populate it from backup
-if [ ! -d "/home/runner/externals" ] || [ -z "$(ls -A /home/runner/externals)" ]; then
-  echo "Populating /home/runner/externals from backup..."
-  mkdir -p /home/runner/externals
-  cp -r /home/runner/externals_backup/. /home/runner/externals/
+repair_externals_if_needed
+
+# Preflight: fail the boot loudly if node24 STILL doesn't run after that
+# repair attempt (e.g. externals_backup itself is broken), rather than
+# silently proceeding to run.sh, which registers with GitHub and can accept
+# a real job doomed to fail before checkout even starts. A container that
+# exits here without registering is swept by the scaler's existing
+# crash-loop/orphan cleanup (see deregisterRunner), the same path already
+# used for a dead host or a crash-looping image.
+if ! node24_runs; then
+  echo "FATAL: /home/runner/externals/node24/bin/node failed a preflight invocation" >&2
+  exit 1
 fi
-
-flock -u 9
-exec 9>&-
 
 # Execute the runner's standard run script with passed arguments
 exec /home/runner/run.sh "$@"

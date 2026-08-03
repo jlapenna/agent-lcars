@@ -30,6 +30,25 @@ const (
 	// gate. Distinct from unreachability: these hosts answered fine, the
 	// operator's own signal said not to use them.
 	placementReasonReadiness = "readiness"
+	// Every reachable, within-limit host was excluded because scoreHostLoad
+	// found it hard-overloaded (load/CPU/PSI/memory/swap pressure past the
+	// *Hard threshold) or still inside its post-overload cooldown window --
+	// see hostLoad.overloaded and applyOverloadCooldown. Deliberately
+	// distinct from a host with no telemetry at all: missing telemetry only
+	// adds hostLoadPolicy.telemetryPenalty (a small deprioritization) and
+	// never excludes the host, because telemetry trouble must fail open, not
+	// closed (see probeHostLoad).
+	placementReasonOverload = "overload"
+)
+
+// The complete set of `reason` label values runnerDiedIdleTotal is ever
+// incremented with, for the same bounded-cardinality reason as the
+// placementReason* constants above: pruneDeadIdleRunners' own log message
+// embeds a free-form container status string that must never reach a metric
+// label directly.
+const (
+	runnerDeadReasonNotRunning = "not_running"
+	runnerDeadReasonNotFound   = "not_found"
 )
 
 var (
@@ -109,10 +128,25 @@ var (
 		},
 		[]string{"scale_set", "host"},
 	)
+	runnerDiedIdleTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_runner_died_idle_total",
+			Help: "Idle runner containers found dead before ever completing a job (crashed, exited, or vanished before GitHub sent a completion), by host and reason: " +
+				runnerDeadReasonNotRunning + ", " + runnerDeadReasonNotFound + ".",
+		},
+		[]string{"scale_set", "host", "reason"},
+	)
 	hostReachableGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_host_reachable",
 			Help: "1 if placement docker host ping succeeded, 0 otherwise.",
+		},
+		[]string{"host"},
+	)
+	hostExternalsHealthyGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_externals_healthy",
+			Help: "1 when the shared externals/node24 runtime last verified healthy (and self-healed if needed) on a ShareWorkDir host's periodic idle-maintenance sweep, 0 when it was still broken after a repair attempt.",
 		},
 		[]string{"host"},
 	)
@@ -204,7 +238,8 @@ var (
 		Name: "github_runner_autoscaler_placement_blocked_total",
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
-			placementReasonSharedWorkDirExclusive + ", " + placementReasonReadiness + ".",
+			placementReasonSharedWorkDirExclusive + ", " + placementReasonReadiness + ", " +
+			placementReasonOverload + ".",
 	}, []string{"scale_set", "reason"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
@@ -245,7 +280,9 @@ func registerMetrics() {
 			jobsCompletedCounter,
 			runnerStartDuration,
 			runnerStartFailures,
+			runnerDiedIdleTotal,
 			hostReachableGauge,
+			hostExternalsHealthyGauge,
 			hostReadyGauge,
 			hostNormalizedLoadGauge,
 			hostCPUUtilizationGauge,

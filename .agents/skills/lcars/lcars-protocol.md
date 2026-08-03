@@ -146,72 +146,23 @@ gh variable set AGENT_BOT_LOGINS --repo jlapenna/agent-lcars \
 
 ## Verify before opening (or updating) a PR
 
-This is an Nx/pnpm monorepo (Node 24, pnpm 10). Before ending your turn with
-a PR open:
-
-```bash
-pnpm check:dependencies    # lockfile / workspace-mandate integrity
-pnpm format:check          # prettier, nx format:check --all
-pnpm lint                  # nx run-many -t lint --all
-pnpm lint:circular          # madge circular-dependency check
-pnpm exec nx run-many -t test typecheck build --all
-```
-
-Or run the composite `pnpm verify`, which chains the above (minus
-`check:dependencies`). These are the same checks CI runs in
-`.github/workflows/ci.yml` — match them locally before pushing so your own
-push doesn't just trade a slow feedback loop for CI's.
-
-`pnpm verify` does **not** run the console e2e suite. When a change touches
-anything the dashboard renders or fetches — `apps/console/src/lib`, a Server
-Action, the e2e GitHub fixture — run it too:
-
-```bash
-pnpm exec nx run @agent-lcars/console-e2e:e2e-local
-```
-
-Use that target, not `:e2e` directly. It sets up the same environment CI's
-"Prepare E2E environment" step does (materializing `.env.e2e` from
-`tools/e2e/ci.env` without clobbering a customized one, and exporting the
-`NEXT_PUBLIC_*`/`AUTH_SECRET` values that must exist _before_ the
-`dependsOn` build inlines them). Run bare, `:e2e` fails on a fresh checkout
-with `AGENT_LCARS_GITHUB_TOKEN not defined`, which names neither cause.
-
-It also passes `--skip-nx-cache`, deliberately: an e2e result replayed from
-the Nx cache reports a green suite that never ran, which is worse than
-useless when the suite is the thing you are trying to trust. For screenshot
-work use `:e2e-docker` instead, which pins the rendering environment.
-
-To scope a run, drive Playwright directly — `:e2e` sets
-`forwardAllArgs: false`, so trailing args passed to it are silently dropped
-and the whole suite runs anyway:
-
-```bash
-pnpm exec nx run @agent-lcars/console-e2e:e2e-run --grep @smoke
-```
+No lcars delta — general dev guardrails (worktrees, hard limits) and the PR
+and verify workflows now live once in the
+[agent-lcars-dev](../agent-lcars-dev/SKILL.md) skill; read
+[references/verify.md](../agent-lcars-dev/references/verify.md) before
+ending your turn with a PR open.
 
 ## Hard limits specific to this repo
 
-These are additive to agent-protocol.md §11, not a relaxation of it:
-
-- **Never touch `infra/terraform`.** Per `AGENTS.md`: Terraform owns secret
-  _containers_ here, never secret _values_ — do not add, remove, or
-  restructure Terraform-managed resources, and never put a real secret
-  value in a file Terraform touches.
-- **Never run `firebase deploy` (or any other direct deploy command)
-  yourself.** Deployment is `.github/workflows/deploy-console.yml`'s job —
-  it fires automatically off a green `CI` run on `main`. Getting your PR
-  merged is as far as your responsibility goes; do not try to push a
-  deploy to make a change "live" faster.
-- **Keep this repo independent from the `supersprinklesracing` source
-  tree** (per `AGENTS.md`): no cross-repository source imports or shared
-  build contexts. Shared telemetry integration goes through the runner
-  image's build-time bake-in of `apps/telemetry-watcher`'s bundle
-  (`apps/runner-autoscaler/runner-image/Dockerfile`), not a source-level
-  dependency — the earlier versioned-standalone-bundle-on-GCS scheme this
-  used to describe was retired for good in #66.
-- Never write to this repo's Firestore database directly from an agent
-  run; go through the application code paths the console itself uses.
+The universal limits (never `--no-verify`, never force-push without
+`--force-with-lease`, never edit `.github/workflows/*`, never deploy, never
+touch IAM) are agent-protocol.md §11; the canonical statement of this
+repo's own additions (never touch `infra/terraform`, never run `firebase
+deploy` yourself, keep this repo independent from the
+`supersprinklesracing` source tree, never write to Firestore directly) is
+[agent-lcars-dev/SKILL.md](../agent-lcars-dev/SKILL.md#hard-guardrails),
+restated there so headless runbooks and prompts have one place to point to
+without loading the full skill.
 
 ## Session-resume script
 
@@ -232,14 +183,45 @@ tools/claude-agent-session.sh resume <session-id>
 Find `<session-id>` the way agent-protocol.md §1 describes (the basename of
 the newest `~/.claude/projects/<slugified-repo-path>/*.jsonl`).
 
-**Dispatched by `codex.yml` or `opencode.yml`:** this script cannot resume
-your session, and `opencode.yml` archives no transcript at all. Say plainly
-that no resume tooling exists for your pipeline rather than pasting a
-command that will fail for the maintainer — and do not substitute a
-differently-named script, since agent-protocol.md §1's scanner matches the
-literal `claude-agent-session.sh` and does not generalize per agent. That
-gap is real and unclosed; naming it in your comment is the honest
-deliverable here.
+**Dispatched by `codex.yml` or `opencode.yml`:** `tools/claude-agent-session.sh`
+cannot resume either pipeline's session — it only knows Claude's transcript
+format and authenticates with Claude's own OAuth token. Do not substitute a
+differently-named script (agent-protocol.md §1's scanner matches the
+literal `claude-agent-session.sh` and does not generalize per agent, so an
+invented one would just be a dead command), and do not name
+`claude-agent-session.sh`, or any other script, in the comment itself: it's
+a Claude-only tool, and citing it from a Codex or OpenCode comment reads as
+if that pipeline is confused about its own tooling, not as an honest gap
+disclosure. Say plainly, in your own words, that no resume tooling exists
+for your pipeline, then point the maintainer at the PR branch. That gap is
+real and unclosed — naming the gap is the honest deliverable, not naming a
+Claude script that doesn't apply to you.
+
+The two pipelines' actual situations differ, and the comment should say so
+accurately rather than treating "no resume tooling" as identical for both:
+
+- **Codex:** there is no live-resume command, but the run's transcript IS
+  archived to GCS once the job ends (`codex.yml`'s telemetry sidecar +
+  `libs/telemetry/src/lib/codex-transcript-adapter.ts`), and the session's
+  console page does show an "Archived transcript" note naming that
+  `gs://` URI (`apps/console/src/app/sessions/[id]/session-header.tsx`) —
+  but the console does not render the transcript's _contents_ there.
+  `getSessionDetail` (`apps/console/src/lib/session-detail.ts`) only
+  fetches and parses a transcript when `sessionAgent(doc) === 'claude-code'`,
+  so a Codex session's page shows where the archive lives, never the
+  transcript itself. Say the transcript is archived to GCS, not that it's
+  "viewable in the console." If you want to hand the maintainer a real way
+  to read it, `gcloud storage cat` on that `gs://` URI prints the raw
+  JSONL directly — the same `gcloud storage` tool
+  `tools/claude-agent-session.sh`'s own `resume-archive` uses to download
+  it. No `resume-archive` equivalent exists for Codex today.
+- **OpenCode:** nothing is archived at all. The telemetry sidecar's watch
+  roots are `~/.claude/projects` and `~/.codex/sessions`
+  (`apps/telemetry-watcher/src/lib/runner.ts`'s `startSidecar`) — OpenCode
+  writes to neither, and no OpenCode transcript adapter exists
+  (`libs/telemetry/src/lib/transcript-adapter.ts`'s `TRANSCRIPT_ADAPTERS`),
+  so an OpenCode run ships no transcript and no session doc at all. There
+  is nothing to point at beyond the PR branch.
 
 This section used to say the script did not exist here at all, and stayed
 that way long after it landed. Every pipeline's agents read it and posted

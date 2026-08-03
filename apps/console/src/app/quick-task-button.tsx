@@ -111,6 +111,18 @@ export function QuickTaskButton({
     requestIdRef.current = undefined;
   };
 
+  /** Ctrl+Enter (Cmd+Enter on Mac) submits from either text field, mirroring
+   * the "File & dispatch" button click. `handleCreate` already guards
+   * against an empty description, a missing repo/pipeline, and a submission
+   * already in flight, so this reuses that same guard rather than
+   * duplicating the button's `disabled` logic. */
+  const handleSubmitShortcut = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      handleCreate();
+    }
+  };
+
   const handleCreate = () => {
     const trimmed = description.trim();
     if (
@@ -230,6 +242,7 @@ export function QuickTaskButton({
               changeIntent();
               setTitle(e.currentTarget.value);
             }}
+            onKeyDown={handleSubmitShortcut}
             placeholder="Short summary for the issue title"
             disabled={isPending}
           />
@@ -240,6 +253,7 @@ export function QuickTaskButton({
               changeIntent();
               setDescription(e.currentTarget.value);
             }}
+            onKeyDown={handleSubmitShortcut}
             placeholder="Describe the task — this becomes the issue body"
             autosize
             minRows={12}

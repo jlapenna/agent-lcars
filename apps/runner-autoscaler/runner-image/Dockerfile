@@ -178,6 +178,13 @@ RUN cp -r /home/runner/externals /home/runner/externals_backup
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Externals self-heal/health-check functions, shared between entrypoint.sh
+# (above) and the control plane's periodic idle-host maintenance sweep
+# (scaler.go:sweepHostWorkDir, agent-lcars#392) -- see that file's own
+# comment for why both call sites must share one copy of this logic.
+COPY externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
+RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
+
 # agent-lcars#30: baked-in telemetry sidecar/finalize tool (built above).
 # Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 # start|finalize — a thin process-management wrapper (background+PID-file

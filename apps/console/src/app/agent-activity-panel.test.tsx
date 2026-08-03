@@ -24,9 +24,9 @@ vi.mock('./cancel-run-button', () => ({
 // agent-activity.ts pulls in the server-only (ESM) GitHub client - stub the
 // runtime values this panel actually uses so the module never loads (and
 // its assertNotBrowser() guard never fires) at test time. Every other
-// import from it is type-only. The two pure helpers are reimplemented here
+// import from it is type-only. The pure helpers are reimplemented here
 // rather than imported for real - agent-activity.test.ts is the source of
-// truth for their actual behavior; keep these two in sync with it.
+// truth for their actual behavior; keep these in sync with it.
 vi.mock('../lib/agent-activity', () => ({
   RUN_TIMEOUT_MINUTES: 90,
   MAX_TURNS_BUDGET: 200,
@@ -61,6 +61,21 @@ vi.mock('../lib/agent-activity', () => ({
       }
     }
     return Array.from(groups.values());
+  },
+  duplicateLivePipelineGroups: (runs: AgentRun[]) => {
+    const live = runs.filter(
+      (run) => run.status === 'queued' || run.status === 'running',
+    );
+    const byPipeline = new Map<string, AgentRun[]>();
+    for (const run of live) {
+      const group = byPipeline.get(run.pipeline);
+      if (group) group.push(run);
+      else byPipeline.set(run.pipeline, [run]);
+    }
+    for (const [pipeline, group] of byPipeline) {
+      if (group.length <= 1) byPipeline.delete(pipeline);
+    }
+    return byPipeline;
   },
 }));
 

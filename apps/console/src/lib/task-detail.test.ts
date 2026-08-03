@@ -5,6 +5,16 @@ import { getGithubClient, getWatchedRepos } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
+// `getCachedTaskSource` (task-detail.ts) is a real `"use cache"` function
+// exercised directly by these tests (unlike `getCachedAgentActivity`,
+// mocked away below) - `cacheTag`/`cacheLife` throw outside a build with
+// `cacheComponents` actually enabled, which this Vite/Vitest run isn't.
+// Same no-op pattern as actions.test.ts's `next/cache` mock.
+vi.mock('next/cache', () => ({
+  cacheTag: vi.fn(),
+  cacheLife: vi.fn(),
+}));
+
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
   return {
@@ -24,10 +34,16 @@ const EMPTY_ACTIVITY = {
 
 let cachedActivity = EMPTY_ACTIVITY;
 vi.mock('./dashboard-data', () => ({
+  DASHBOARD_CACHE_LIFE: { stale: 30, revalidate: 30, expire: 60 },
   getCachedAgentActivity: vi.fn(async () => ({
     data: cachedActivity,
     fetchedAt: '2026-07-07T00:00:00Z',
   })),
+  // Pure - reimplemented rather than pulling in the real dashboard-data.ts
+  // (which would drag in its own transitive imports); mirrors its actual
+  // body exactly (see dashboard-data.ts's own definition).
+  oldestFetchedAt: (...fetchedAt: string[]) =>
+    [...fetchedAt].sort()[0] ?? new Date().toISOString(),
 }));
 
 // Imported after the mocks above so it picks up the mocked modules.
@@ -138,8 +154,35 @@ describe('getTaskDetail', () => {
     if (result.status !== 'ok') return;
     expect(result.anchorState).toBe('open');
     expect(result.work.title).toBe('Fix the thing');
-    expect(result.work.provenance).toBe('legacy');
+    expect(result.work.provenance).toEqual({ kind: 'legacy' });
     expect(result.work.attempts).toEqual([]);
+  });
+
+  it('reports generatedAt as the older of the two cached sources it was built from, not the render time (Codex review on #375)', async () => {
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+    // Fixed well in the past - `getCachedTaskSource`'s own `fetchedAt` is a
+    // real `new Date().toISOString()` captured at call time, so it will
+    // always be newer than this. `oldestFetchedAt` must pick this older one,
+    // proving the result reflects the cache's real age rather than a bare
+    // `new Date()` at render time (which is what the pre-fix behavior
+    // amounted to - see task-detail.ts's own doc comment on `generatedAt`).
+    const OLD_ACTIVITY_FETCH = '2020-01-01T00:00:00Z';
+    vi.mocked(
+      (await import('./dashboard-data')).getCachedAgentActivity,
+    ).mockResolvedValueOnce({
+      data: EMPTY_ACTIVITY,
+      fetchedAt: OLD_ACTIVITY_FETCH,
+    });
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.generatedAt).toBe(OLD_ACTIVITY_FETCH);
   });
 
   it('reports anchorState closed for a closed issue while still resolving the task', async () => {
@@ -207,7 +250,7 @@ describe('getTaskDetail', () => {
     );
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
-    expect(result.work.provenance).toBe('ledger-v1');
+    expect(result.work.provenance).toEqual({ kind: 'ledger-v1', revision: 1 });
     expect(result.work.attempts).toHaveLength(1);
     expect(result.work.attempts[0].attribution).toBe('ledger');
     expect(result.work.intents).toHaveLength(1);

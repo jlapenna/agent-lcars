@@ -92,10 +92,13 @@ export interface FleetSummary {
 
 export interface AgentActivity {
   /** Every live (queued or running) workflow attempt, exactly as GitHub
-   * reports them - no representative-attempt collapsing (see
-   * `collapseLogicalLiveRuns`'s doc comment for why #306 removed that from
-   * this path). Two attempts racing the same repo/issue/pipeline both
-   * appear here; `logical-work.ts`'s `deriveLogicalWork` is what groups them
+   * reports them - no representative-attempt collapsing: #306 removed the
+   * old "pick one representative attempt per (issue, pipeline) key and
+   * silently drop the rest" behavior, since a duplicate dispatch (or a
+   * genuine retry-in-flight) is exactly the kind of anomaly an operator
+   * needs to see, not a rendering inconvenience to smooth over. Two attempts
+   * racing the same repo/issue/pipeline both appear here; `logical-work.ts`'s
+   * `deriveLogicalWork` is what groups them
    * into one `LogicalWork` card with a visible "N attempts" disclosure -
    * this field itself is the raw, ungrouped truth. Identical to
    * `liveRunAttempts` today; kept as two field names only so existing
@@ -250,53 +253,38 @@ export function groupLiveRunsByIssue(liveRuns: AgentRun[]): LiveRunGroup[] {
 }
 
 /**
- * GitHub can briefly expose more than one workflow attempt for the same
- * logical piece of work (the same repository, issue and agent pipeline),
- * most visibly as one running attempt beside one queued attempt.
+ * The shared "is this a duplicate dispatch" rule: among the live
+ * (queued/running) items in `runs`, group by pipeline and keep only the
+ * groups with more than one member. Two independent renderers build their
+ * own formatting on top of this one counting rule rather than each
+ * re-deriving it - the task-detail anomaly list
+ * (`logical-work.ts`'s `duplicateAttemptAnomalies`, one anomaly line per
+ * duplicated pipeline with the run IDs named) and the home/agents page's "In
+ * Flight" duplicate badge (`agent-activity-panel.tsx`'s
+ * `duplicatePipelineSummary`, a short `"2 claude"`-style summary) - so a
+ * future change to the rule itself (e.g. what counts as "live") only has to
+ * happen once.
  *
- * This used to be how `getAgentActivity` built its authoritative `liveRuns`:
- * pick one representative attempt per (issue, pipeline) key and silently
- * drop the rest. #306 replaced that - a duplicate dispatch (or a genuine
- * retry-in-flight) is exactly the kind of anomaly an operator needs to see,
- * not a rendering inconvenience to smooth over - so `getAgentActivity` no
- * longer calls this to build `liveRuns`; every raw attempt now survives into
- * both `liveRuns` and `liveRunAttempts` (see that field's own doc comment),
- * and `logical-work.ts`'s `deriveLogicalWork` groups duplicates explicitly
- * instead of collapsing them. This function is kept - still pure, still
- * covered by its own tests below - only for callers that still want a
- * single representative row; production code no longer calls it. #307
- * removes it once both repositories and the production canary prove the
- * v1 ledger/run-marker join (see agent-lcars#301).
- *
- * Prefer an actively running attempt over a queued one, then the newest
- * attempt when statuses tie. Runs whose issue number cannot be parsed stay
- * independent because there is no safe item identity on which to collapse.
+ * Generic over `T extends AgentRun` so a caller passing `ExecutionAttempt[]`
+ * (logical-work.ts) gets groups of `ExecutionAttempt` back, not a narrowed
+ * `AgentRun[]` that would drop the extra fields its own formatting needs.
  */
-export function collapseLogicalLiveRuns(liveRuns: AgentRun[]): AgentRun[] {
-  const byLogicalKey = new Map<string, AgentRun>();
-  const statusRank: Record<AgentRunStatus, number> = {
-    completed: 0,
-    queued: 1,
-    running: 2,
-  };
-
-  for (const run of liveRuns) {
-    const key =
-      run.issueNumber === undefined
-        ? `run-${run.id}`
-        : `${repoItemKey(run.repo, run.issueNumber)}:${run.pipeline}`;
-    const current = byLogicalKey.get(key);
-    if (
-      !current ||
-      statusRank[run.status] > statusRank[current.status] ||
-      (statusRank[run.status] === statusRank[current.status] &&
-        run.createdAt > current.createdAt)
-    ) {
-      byLogicalKey.set(key, run);
-    }
+export function duplicateLivePipelineGroups<T extends AgentRun>(
+  runs: T[],
+): Map<AgentPipeline, T[]> {
+  const live = runs.filter(
+    (run) => run.status === 'queued' || run.status === 'running',
+  );
+  const byPipeline = new Map<AgentPipeline, T[]>();
+  for (const run of live) {
+    const group = byPipeline.get(run.pipeline);
+    if (group) group.push(run);
+    else byPipeline.set(run.pipeline, [run]);
   }
-
-  return Array.from(byLogicalKey.values());
+  for (const [pipeline, group] of byPipeline) {
+    if (group.length <= 1) byPipeline.delete(pipeline);
+  }
+  return byPipeline;
 }
 
 interface WorkflowRunLike {

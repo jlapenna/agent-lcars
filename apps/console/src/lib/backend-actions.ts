@@ -73,7 +73,7 @@ function requireAgentIntegration(repo: WatchedRepo, pipeline: Pipeline) {
   return integration;
 }
 
-function isNotFound(error: unknown): boolean {
+export function isNotFound(error: unknown): boolean {
   return (
     typeof error === 'object' &&
     error !== null &&

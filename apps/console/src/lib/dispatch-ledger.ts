@@ -30,18 +30,26 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
   'completion-awaiting-terminal',
 ]);
 
+/** Every state a ledger generation can be in - the single source both the
+ * `LedgerGenerationState` type and the `LEDGER_GENERATION_STATES` runtime
+ * membership check (used by `isWellFormedGeneration` below) derive from, so
+ * the ~11 literals are never hand-listed twice and can't drift apart. */
+const LEDGER_GENERATION_STATES_LIST = [
+  'accepted',
+  'pending',
+  'dispatching',
+  'dispatch-unknown',
+  'dispatch-rejected',
+  'active',
+  'completion-observed',
+  'completion-awaiting-terminal',
+  'completed',
+  'superseded',
+  'superseded-by-close',
+] as const;
+
 export type LedgerGenerationState =
-  | 'accepted'
-  | 'pending'
-  | 'dispatching'
-  | 'dispatch-unknown'
-  | 'dispatch-rejected'
-  | 'active'
-  | 'completion-observed'
-  | 'completion-awaiting-terminal'
-  | 'completed'
-  | 'superseded'
-  | 'superseded-by-close';
+  (typeof LEDGER_GENERATION_STATES_LIST)[number];
 
 export interface LedgerRunAttempt {
   runId?: number;
@@ -94,10 +102,20 @@ export interface LedgerControl {
   merged?: boolean;
 }
 
+/** A ledger's own `task` field (broker.mjs's `"owner/name"` string form),
+ * and also the shape a caller passes in to name the task it expects a
+ * scanned comment window to belong to (see `parseDispatchLedger`) - one
+ * type for both so comparing the two is a plain equality check rather than
+ * two independently-declared duplicates of the same two fields. */
+export interface ExpectedTask {
+  repository: string;
+  issue: number;
+}
+
 export interface DispatchLedger {
   schema: string;
   revision: number;
-  task: { repository: string; issue: number };
+  task: ExpectedTask;
   createdAt: string;
   updatedAt: string;
   control: LedgerControl;
@@ -122,7 +140,13 @@ export function sourceKindForGeneration(
 
 const SINGLE_JSON_BLOCK_RE = /```json\s*([\s\S]*?)\s*```/gu;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+// Exported for logical-work.ts's describeLedgerAnomaly, which needs the
+// identical narrow-unknown-to-record check when rendering an
+// `LedgerAnomaly.detail` payload - kept as one definition rather than a
+// byte-identical copy in each file.
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -132,19 +156,9 @@ function isNonEmptyString(value: unknown): value is string {
 
 const PIPELINES = new Set<AgentPipeline>(['claude', 'codex', 'opencode']);
 
-const LEDGER_GENERATION_STATES = new Set<LedgerGenerationState>([
-  'accepted',
-  'pending',
-  'dispatching',
-  'dispatch-unknown',
-  'dispatch-rejected',
-  'active',
-  'completion-observed',
-  'completion-awaiting-terminal',
-  'completed',
-  'superseded',
-  'superseded-by-close',
-]);
+const LEDGER_GENERATION_STATES = new Set<LedgerGenerationState>(
+  LEDGER_GENERATION_STATES_LIST,
+);
 
 /**
  * Per-element shape check for one `ledger.generations` entry. This is the
@@ -239,15 +253,6 @@ export interface ParseLedgerResult {
    * `{}` with no warning: an issue predating the dispatch broker rollout is
    * expected to have neither. */
   warning?: string;
-}
-
-/** The task the caller expects a ledger comment to belong to - i.e. the
- * exact issue whose comment window was scanned. Same shape as
- * `DispatchLedger['task']` (broker.mjs's `"owner/name"` string form)
- * deliberately, so comparing the two is a plain equality check. */
-export interface ExpectedTask {
-  repository: string;
-  issue: number;
 }
 
 function taskLabel(task: ExpectedTask): string {

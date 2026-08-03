@@ -336,6 +336,44 @@ build session; the builder does not store it. Log out in an `always()`
 cleanup step. See jlapenna/homelab `docs/registry.md` for credential
 rotation and policy verification.
 
+### Scanning and attesting a new published image
+
+Every image `publish-images.yml` builds and pushes gets provenance/SBOM
+attestation and a vulnerability scan that actually gates the mutable tag
+the fleet consumes (agent-lcars#224) — do the same for a new image rather
+than treating it as optional:
+
+- Add `provenance: true` and `sbom: true` to the `docker/build-push-action`
+  step. This needs the same remote-driver BuildKit builder already in use
+  here; the default `docker` driver does not support attestations.
+- **Push to a staging tag first, never straight to the mutable tag.** Tag
+  the build `:<github.sha>` and push only that. Scanning an already-live
+  mutable tag (`:latest` and friends) is too late to matter: the
+  autoscaler's `ensureRunnerImage` treats a moving tag as immediately
+  consumable the moment it's pushed, so a scan that fails after that push
+  only turns the CI run red without having stopped anything.
+- Scan the staging reference with the local `.github/actions/scan-image`
+  composite action, reusing the `docker login` credential already
+  established above — never a local tag or image ID. This runner has no
+  Docker socket (§2 above / agent-lcars#101), so there is no local image to
+  scan even if one were preferable. **If the image is multi-platform, scan
+  it once per platform** (pass `platform:` to `scan-image`) — Trivy
+  resolves an arbitrary single manifest from a manifest list otherwise, so
+  scanning it only once silently leaves every other architecture unchecked.
+  Give each image+platform its own `category` input so its SARIF results
+  don't overwrite another one's in the code-scanning UI.
+- Only after the scan(s) pass, promote the staging tag to the real mutable
+  tag with `docker buildx imagetools create --tag <mutable> <staging>` — a
+  registry-side manifest copy, not a rebuild, and (per docker/buildx's own
+  docs) a "carbon copy" when given one manifest-list source, so it carries
+  the attestations over rather than losing them. This is the same tool
+  `runner-image/Dockerfile`'s own comment already uses to mirror its
+  upstream base image.
+
+See `scan-image/action.yml` for the CRITICAL + fixable-only severity bar
+and why it was chosen, and `publish-images.yml`'s own header comment for
+the full staging-tag/promote shape applied to all three images it builds.
+
 ## Verifying it actually worked
 
 Same principle as the console/telemetry onboarding doc: confirm live, not
