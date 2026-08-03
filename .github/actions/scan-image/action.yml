@@ -111,6 +111,14 @@ runs:
     # workflow's own comments) -- so exiting 1 here still actually blocks
     # a vulnerable image from ever becoming the one the fleet pulls,
     # rather than just turning the run red after the damage is done.
+    #
+    # trivyignores points at the repo-root .trivyignore: a small, scoped,
+    # expiring (exp: dated) list of CVE IDs baked into RUNNER_BASE itself
+    # rather than anything this monorepo depends on, with no newer upstream
+    # release to bump to yet -- see that file's own comment and
+    # agent-lcars#414 for the full writeup. Deliberately only on this gate
+    # step, not the SARIF step above: both findings stay visible in the
+    # Security tab for tracking even while suppressed here.
     - name: 'Fail on fixable CRITICAL CVEs: ${{ inputs.category }}'
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
@@ -120,3 +128,4 @@ runs:
         ignore-unfixed: true
         exit-code: '1'
         skip-setup-trivy: true
+        trivyignores: ${{ github.workspace }}/.trivyignore
