@@ -1,0 +1,18 @@
+# Scoped, expiring suppressions consumed by .github/actions/scan-image's
+# gate step only (the SARIF upload step is untouched, so both findings stay
+# visible in the Security tab). Both CVEs are baked into RUNNER_BASE
+# (ghcr.io/actions/actions-runner, pinned in
+# apps/runner-autoscaler/runner-image/Dockerfile) -- not a dependency of this
+# monorepo -- and https://api.github.com/repos/actions/runner/releases/latest
+# is v2.336.0, the exact version already pinned: there is no newer upstream
+# release to bump to yet. See agent-lcars#414 for the full writeup and what
+# to check before extending or removing these.
+
+# tar (node-tar) DoS via crafted gzip bomb. Vendored inside RUNNER_BASE's
+# bundled npm (externals/node20's tar@6.2.1, externals/node24's tar@7.5.15).
+CVE-2026-59873 exp:2026-11-01
+
+# grpc-go authorization bypass via improper HTTP/2 path validation. In
+# containerd/ctr/containerd-shim-runc-v2, also bundled by RUNNER_BASE for
+# its own docker/buildx tooling (agent-lcars#101).
+CVE-2026-33186 exp:2026-11-01
