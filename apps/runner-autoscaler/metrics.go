@@ -209,6 +209,13 @@ var (
 		},
 		[]string{"scale_set"},
 	)
+	drainAutoClearedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_drain_auto_cleared_total",
+			Help: "Stuck drains the watchdog self-healed after the scale set sat draining at zero runners past drainStuckTimeout (homelab#321), by scale set. Sustained nonzero indicates deploy.sh keeps getting interrupted before its recreate step.",
+		},
+		[]string{"scale_set"},
+	)
 	placementDecisions = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "github_runner_autoscaler_placement_decisions_total",
@@ -294,6 +301,7 @@ func registerMetrics() {
 			hostLoadPenaltyGauge,
 			hostFleetRunnersGauge,
 			drainingGauge,
+			drainAutoClearedTotal,
 			placementDecisions,
 			workdirBytesGauge,
 			workdirSweptBytesTotal,

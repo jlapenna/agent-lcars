@@ -2212,6 +2212,46 @@ func (a *Scaler) BeginDrain(ctx context.Context) {
 	a.removeIdleRunners(ctx)
 }
 
+// drainWatchdogInterval is how often runOrchestrator's drain watchdog polls
+// the fleet-wide runner count for a stuck drain (see drainStuckTimeout).
+const drainWatchdogInterval = time.Minute
+
+// drainStuckTimeout is how long the fleet may sit globally drained with zero
+// runners across every scale set before runOrchestrator concludes the
+// operator's drain-and-restart cycle was interrupted before its recreate
+// step (homelab#321: Ctrl-C, an SSH drop, or the unreachable-host refusal
+// drain-and-restart.sh used to hit before homelab#320 all leave BeginDrain's
+// effects in place forever otherwise) and self-heals by clearing drain mode
+// fleet-wide. This must be evaluated fleet-wide, not per scale set: BeginDrain
+// is applied to every scale set at once, but they can reach zero runners at
+// different times depending on how long each one's in-flight jobs take
+// (drain-and-restart.sh's own fleet_runner_count gate sums across every scale
+// set the same way). Clearing an individual scale set the moment it alone
+// goes idle would let it accept new placements again while a sibling scale
+// set is still legitimately draining a long-running job -- reopening exactly
+// the job-interruption hazard drain mode exists to prevent, and starving the
+// fleet-wide zero the operator's own drain-and-restart.sh is waiting for.
+// The threshold itself sits comfortably above the few-second window between
+// the fleet reaching zero and the operator's recreate step, and well below
+// RunnerAutoscalerDrainStuck's 30-minute alert threshold, so a stuck drain
+// self-heals well before a human would need to notice the ticket.
+const drainStuckTimeout = 5 * time.Minute
+
+// EndDrain clears drain mode. Idempotent; a no-op if not currently draining.
+// Called by runOrchestrator's fleet-wide drain watchdog once every scale set
+// has sat at zero runners past drainStuckTimeout -- see drainStuckTimeout's
+// doc comment for why that decision is made fleet-wide rather than by each
+// Scaler independently. A normal deploy never reaches this path: it recreates
+// the whole process, which starts fresh with draining already false.
+func (a *Scaler) EndDrain() {
+	if !a.draining.CompareAndSwap(true, false) {
+		return
+	}
+	scaleSet := a.scaleSetLabel()
+	drainingGauge.WithLabelValues(scaleSet).Set(0)
+	drainAutoClearedTotal.WithLabelValues(scaleSet).Inc()
+}
+
 func (a *Scaler) shutdown(ctx context.Context) {
 	a.logger.Info("Shutting down control plane; preserving busy runners for startup adoption")
 	a.removeIdleRunners(ctx)

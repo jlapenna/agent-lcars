@@ -908,6 +908,34 @@ func TestBeginDrainRemovesIdleAndPreservesBusy(t *testing.T) {
 	}
 }
 
+func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
+	scaler := &Scaler{
+		scaleSetName: "watchdog-stuck",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	scaler.draining.Store(true)
+	drainingGauge.WithLabelValues("watchdog-stuck").Set(1)
+	cleared := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck"))
+
+	scaler.EndDrain()
+	if scaler.draining.Load() {
+		t.Fatal("EndDrain did not clear the draining flag")
+	}
+	if got := testutil.ToFloat64(drainingGauge.WithLabelValues("watchdog-stuck")); got != 0 {
+		t.Errorf("drainingGauge = %v, want 0 after EndDrain", got)
+	}
+	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
+		t.Errorf("drainAutoClearedTotal delta = %v, want 1", got)
+	}
+
+	// Calling again while already clear must not double-count the metric.
+	scaler.EndDrain()
+	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
+		t.Errorf("drainAutoClearedTotal delta after a second EndDrain = %v, want still 1 (idempotent)", got)
+	}
+}
+
 func TestPickHostCountsRunnersAcrossScaleSets(t *testing.T) {
 	loaded := newFakeDockerServer(t)
 	loaded.setContainers([]container.Summary{
