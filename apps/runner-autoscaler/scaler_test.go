@@ -152,6 +152,28 @@ func TestParseSweepOutput(t *testing.T) {
 	}
 }
 
+func TestParseExternalsHealthOutput(t *testing.T) {
+	cases := []struct {
+		name        string
+		out         string
+		wantHealthy bool
+		wantOK      bool
+	}{
+		{"healthy", "SWEEP before=1 after=1 cap=2\nEXTERNALS_HEALTHY=1\n", true, true},
+		{"unhealthy", "SWEEP before=1 after=1 cap=2\nEXTERNALS_HEALTHY=0\n", false, true},
+		{"missing line", "SWEEP before=1 after=1 cap=2\n", false, false},
+		{"empty", "", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			healthy, ok := parseExternalsHealthOutput(c.out)
+			if ok != c.wantOK || healthy != c.wantHealthy {
+				t.Errorf("parseExternalsHealthOutput(%q) = (%v, %v), want (%v, %v)", c.out, healthy, ok, c.wantHealthy, c.wantOK)
+			}
+		})
+	}
+}
+
 func TestSweepWorkDirsSkipsHostWithRunner(t *testing.T) {
 	scaler := &Scaler{
 		dockerHosts: []DockerHost{{Name: "janeway"}}, // nil client proves no helper is created
@@ -695,6 +717,10 @@ func TestPruneDeadIdleRunners(t *testing.T) {
 		unreachable bool
 		setup       func(f *fakeDockerServer)
 		wantPruned  bool
+		// wantReason is the runnerDiedIdleTotal reason label expected to
+		// increment by exactly 1, or "" if pruning must not touch the
+		// counter at all (agent-lcars#393).
+		wantReason string
 	}{
 		{
 			name:       "running container is kept",
@@ -705,11 +731,13 @@ func TestPruneDeadIdleRunners(t *testing.T) {
 			name:       "exited container is pruned",
 			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusOK, exited) },
 			wantPruned: true,
+			wantReason: runnerDeadReasonNotRunning,
 		},
 		{
 			name:       "not found (404) is pruned",
 			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusNotFound, nil) },
 			wantPruned: true,
+			wantReason: runnerDeadReasonNotFound,
 		},
 		{
 			name:       "server error (500) is kept, not treated as not-found",
@@ -751,6 +779,15 @@ func TestPruneDeadIdleRunners(t *testing.T) {
 				logger:         slog.New(slog.NewTextHandler(os.Stdout, nil)),
 			}
 
+			// Counters are process-global and other subtests/tests share
+			// them, so measure the delta this call produces rather than an
+			// absolute value (same reasoning as
+			// TestPickHostSharedWorkDirExhaustionCountsPlacementBlocked).
+			notRunningCounter := runnerDiedIdleTotal.WithLabelValues("default", "host-a", runnerDeadReasonNotRunning)
+			notFoundCounter := runnerDiedIdleTotal.WithLabelValues("default", "host-a", runnerDeadReasonNotFound)
+			beforeNotRunning := testutil.ToFloat64(notRunningCounter)
+			beforeNotFound := testutil.ToFloat64(notFoundCounter)
+
 			scaler.pruneDeadIdleRunners(context.Background())
 
 			_, stillIdle := scaler.runners.idle["runner-1"]
@@ -759,6 +796,22 @@ func TestPruneDeadIdleRunners(t *testing.T) {
 				t.Errorf("expected runner-1 to be pruned, but it is still tracked idle")
 			case !c.wantPruned && !stillIdle:
 				t.Errorf("expected runner-1 to remain tracked idle, but it was pruned")
+			}
+
+			gotNotRunning := testutil.ToFloat64(notRunningCounter) - beforeNotRunning
+			gotNotFound := testutil.ToFloat64(notFoundCounter) - beforeNotFound
+			wantNotRunning, wantNotFound := 0.0, 0.0
+			switch c.wantReason {
+			case runnerDeadReasonNotRunning:
+				wantNotRunning = 1
+			case runnerDeadReasonNotFound:
+				wantNotFound = 1
+			}
+			if gotNotRunning != wantNotRunning {
+				t.Errorf("runner_died_idle_total{reason=%q} rose by %v, want %v", runnerDeadReasonNotRunning, gotNotRunning, wantNotRunning)
+			}
+			if gotNotFound != wantNotFound {
+				t.Errorf("runner_died_idle_total{reason=%q} rose by %v, want %v", runnerDeadReasonNotFound, gotNotFound, wantNotFound)
 			}
 		})
 	}
