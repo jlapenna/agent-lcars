@@ -145,6 +145,27 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await expect(card.getByTestId('logical-work-anomalies')).toHaveCount(0);
   });
 
+  test('ctrl+enter in the description field files the task through the real server action, same as clicking the button (agent-lcars#269)', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await openQuickTask(page);
+    const dialog = page.getByRole('dialog');
+    const description = dialog.getByLabel('Description');
+    await description.fill(
+      'E2E ctrl+enter path: dispatch without touching the button',
+    );
+    await description.press('Control+Enter');
+
+    const receipt = taskRefNotification(page);
+    await expect(receipt).toBeVisible();
+    await expect(receipt).toHaveAttribute(
+      'href',
+      /^https:\/\/github\.com\/supersprinklesracing\/sprinkles\/issues\/\d+$/,
+    );
+    await expect(page.getByRole('dialog')).toBeHidden();
+  });
+
   test('replaying the same request ID returns the same issue instead of creating a second one', async ({
     page,
   }) => {
