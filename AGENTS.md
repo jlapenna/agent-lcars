@@ -38,7 +38,12 @@ branch, and never use `--no-verify` to bypass commit or push hooks.
 The hooks reject commits and pushes from `main` and from the primary checkout;
 the policy above prevents edits from accumulating there in the first place.
 
-Before publishing, run the affected Nx test, typecheck, and build targets.
+Before publishing, run the affected Nx test, typecheck, and build targets. Once
+those fast checks pass, push and let CI start immediately — don't wait on a
+slow local suite (e.g. `tools/e2e-local.sh`'s hermetic build + Firebase
+emulator startup) to finish first. Let it run concurrently with CI as an
+independent second confirmation instead of serializing after it; report the
+pushed SHA right away and the local suite's result in a follow-up.
 
 After merging and safely removing the feature worktree, sync the primary
 checkout to the latest remote base with a fast-forward-only pull. First confirm
