@@ -20,6 +20,8 @@ runtime:
   is no `activate_skill` tool.
 - **Codex**: repository skills are catalogued by the local plugin
   marketplace manifest in `.agents/skills/.claude-plugin/marketplace.json`.
+  Trusted Codex sessions load `.codex/hooks.json`, which reinforces the
+  issue-claim and tmux-title guardrails in every worktree.
 
 If a skill is not discoverable, read its `SKILL.md` and `references/`
 files directly from `.agents/skills/<name>/`.
