@@ -62,7 +62,8 @@ concurrency:
 jobs:
   smoke:
     if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    # See dispatch-canary.yml's `canary` job for why this stays ubuntu-latest.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Assert required repo variables are set

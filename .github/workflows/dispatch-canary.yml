@@ -39,7 +39,13 @@ concurrency:
 
 jobs:
   canary:
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    # Deliberately ubuntu-latest, not self-hosted: this orchestrator and
+    # post-deploy-smoke.yml prove the *entire* canary lifecycle -- not just
+    # the agent-dispatch-canary.yml worker -- never touches self-hosted
+    # infrastructure or a secret (#307). workflow-contract.test.mjs's "the
+    # canary orchestrators... never reference a self-hosted runner or a
+    # secret" asserts this literally; changing it fails CI.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Assert required repo variables are set
