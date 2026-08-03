@@ -62,7 +62,7 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
+    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 5
     steps:
       - name: Checkout trusted broker revision

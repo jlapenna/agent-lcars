@@ -39,7 +39,7 @@ concurrency:
 
 jobs:
   canary:
-    runs-on: ubuntu-latest
+    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 15
     steps:
       - name: Assert required repo variables are set

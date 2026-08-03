@@ -19,7 +19,13 @@ jobs:
   verify:
     name: Verify
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    # Self-hosted for everything trusted (push to main, merge_group,
+    # workflow_dispatch, and a same-repo PR branch -- opening one already
+    # requires write access to this repo). Only a pull_request whose head is
+    # a fork -- the one case where this public repo would be building and
+    # running someone else's arbitrary code -- falls back to ubuntu-latest,
+    # since a fork PR needs no repo permissions at all to open.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 30
 
     steps:
@@ -98,7 +104,8 @@ jobs:
   e2e:
     name: E2E
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    # See the `verify` job above for the fork-safety rationale.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 20
 
     steps:
