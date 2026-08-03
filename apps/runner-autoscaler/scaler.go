@@ -376,6 +376,13 @@ func (a *Scaler) RunHostSampler(ctx context.Context) {
 	}
 }
 
+// applyOverloadCooldown is the single authority that arms or extends a
+// host's cooldown window: callers must pass a load whose .overloaded bit
+// reflects a FRESH, raw scoreHostLoad result, measured right now, not a
+// value that has already been through this function (directly or via the
+// hostLoadCache). It is the arm/extend side of the state machine --
+// refreshOverloadCooldown is the read-only side placement uses to re-check
+// an existing window against the current time.
 func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
 	fleet := a.coordinator()
 	fleet.overloadMu.Lock()
@@ -391,6 +398,48 @@ func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time
 		load.penalty = 100
 		load.overloaded = true
 	}
+	return load
+}
+
+// refreshOverloadCooldown re-evaluates whether host should still be treated
+// as overloaded for placement, against the live cooldown expiry, WITHOUT
+// ever arming or extending it. currentHostLoad's cache can be up to
+// 2*hostSampleInterval (30s) stale, and a cached entry's .overloaded bit is
+// not necessarily a fresh raw reading -- probeHostLoad sets it via
+// applyOverloadCooldown's check-only branch whenever a host's raw signal has
+// already recovered but its cooldown window has not yet elapsed, and that
+// cooldown-derived true then gets cached exactly like a genuine raw breach
+// would.
+//
+// pickHostLocked used to feed that cached value straight back into
+// applyOverloadCooldown to keep the cooldown check live against wall-clock
+// time between probes. Because applyOverloadCooldown cannot distinguish "a
+// fresh raw breach" from "an echo of my own prior cooldown-forcing," every
+// such re-read re-armed the timer to now+cooldown -- so as long as placement
+// kept retrying faster than the cooldown duration (guaranteed whenever
+// there is pending demand), a host that had genuinely recovered could never
+// actually exit cooldown (agent-lcars#259 follow-up).
+//
+// This performs only the read side: an .overloaded=false cached sample is
+// left untouched (it can only have been produced when no cooldown was
+// active, and cooldown windows never restart on their own, so it stays
+// correct at any later time). An .overloaded=true sample is re-derived
+// purely from whether `now` is still before the cooldown recorded by the
+// last FRESH probe -- letting a window that has genuinely elapsed since the
+// cached read expire on schedule, without ever writing overloadedUntil.
+func (a *Scaler) refreshOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
+	if !load.overloaded {
+		return load
+	}
+	fleet := a.coordinator()
+	fleet.overloadMu.Lock()
+	until := fleet.overloadedUntil[host]
+	fleet.overloadMu.Unlock()
+	if now.Before(until) {
+		return load
+	}
+	load.overloaded = false
+	load.penalty = 0
 	return load
 }
 
@@ -956,7 +1005,14 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 				hostTelemetryGauge.WithLabelValues(res.host.Name).Set(0)
 				a.logger.Warn("Host load metrics unavailable; applying uncertainty penalty", slog.String("host", res.host.Name), slog.Int("penalty", res.load.penalty), slog.String("error", res.loadErr.Error()))
 			} else {
-				res.load = a.applyOverloadCooldown(res.host.Name, res.load, time.Now())
+				// Read-only re-check against wall-clock time, NOT
+				// applyOverloadCooldown: res.load may be a cache read up to
+				// 2*hostSampleInterval stale, and its .overloaded bit may
+				// already be cooldown-derived rather than a fresh raw
+				// reading. Feeding that back into applyOverloadCooldown
+				// would re-arm the cooldown from an echo of itself every
+				// time placement re-reads it -- see refreshOverloadCooldown.
+				res.load = a.refreshOverloadCooldown(res.host.Name, res.load, time.Now())
 				hostLoads[res.host.Name] = res.load
 				a.recordHostLoadMetrics(res.host.Name, res.load, true)
 				log := a.logger.Debug
