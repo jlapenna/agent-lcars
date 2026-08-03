@@ -232,14 +232,45 @@ tools/claude-agent-session.sh resume <session-id>
 Find `<session-id>` the way agent-protocol.md §1 describes (the basename of
 the newest `~/.claude/projects/<slugified-repo-path>/*.jsonl`).
 
-**Dispatched by `codex.yml` or `opencode.yml`:** this script cannot resume
-your session, and `opencode.yml` archives no transcript at all. Say plainly
-that no resume tooling exists for your pipeline rather than pasting a
-command that will fail for the maintainer — and do not substitute a
-differently-named script, since agent-protocol.md §1's scanner matches the
-literal `claude-agent-session.sh` and does not generalize per agent. That
-gap is real and unclosed; naming it in your comment is the honest
-deliverable here.
+**Dispatched by `codex.yml` or `opencode.yml`:** `tools/claude-agent-session.sh`
+cannot resume either pipeline's session — it only knows Claude's transcript
+format and authenticates with Claude's own OAuth token. Do not substitute a
+differently-named script (agent-protocol.md §1's scanner matches the
+literal `claude-agent-session.sh` and does not generalize per agent, so an
+invented one would just be a dead command), and do not name
+`claude-agent-session.sh`, or any other script, in the comment itself: it's
+a Claude-only tool, and citing it from a Codex or OpenCode comment reads as
+if that pipeline is confused about its own tooling, not as an honest gap
+disclosure. Say plainly, in your own words, that no resume tooling exists
+for your pipeline, then point the maintainer at the PR branch. That gap is
+real and unclosed — naming the gap is the honest deliverable, not naming a
+Claude script that doesn't apply to you.
+
+The two pipelines' actual situations differ, and the comment should say so
+accurately rather than treating "no resume tooling" as identical for both:
+
+- **Codex:** there is no live-resume command, but the run's transcript IS
+  archived to GCS once the job ends (`codex.yml`'s telemetry sidecar +
+  `libs/telemetry/src/lib/codex-transcript-adapter.ts`), and the session's
+  console page does show an "Archived transcript" note naming that
+  `gs://` URI (`apps/console/src/app/sessions/[id]/session-header.tsx`) —
+  but the console does not render the transcript's _contents_ there.
+  `getSessionDetail` (`apps/console/src/lib/session-detail.ts`) only
+  fetches and parses a transcript when `sessionAgent(doc) === 'claude-code'`,
+  so a Codex session's page shows where the archive lives, never the
+  transcript itself. Say the transcript is archived to GCS, not that it's
+  "viewable in the console." If you want to hand the maintainer a real way
+  to read it, `gcloud storage cat` on that `gs://` URI prints the raw
+  JSONL directly — the same `gcloud storage` tool
+  `tools/claude-agent-session.sh`'s own `resume-archive` uses to download
+  it. No `resume-archive` equivalent exists for Codex today.
+- **OpenCode:** nothing is archived at all. The telemetry sidecar's watch
+  roots are `~/.claude/projects` and `~/.codex/sessions`
+  (`apps/telemetry-watcher/src/lib/runner.ts`'s `startSidecar`) — OpenCode
+  writes to neither, and no OpenCode transcript adapter exists
+  (`libs/telemetry/src/lib/transcript-adapter.ts`'s `TRANSCRIPT_ADAPTERS`),
+  so an OpenCode run ships no transcript and no session doc at all. There
+  is nothing to point at beyond the PR branch.
 
 This section used to say the script did not exist here at all, and stayed
 that way long after it landed. Every pipeline's agents read it and posted
