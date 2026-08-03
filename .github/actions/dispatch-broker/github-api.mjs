@@ -430,6 +430,47 @@ async function listAll(api, path) {
   throw new Error('GitHub pagination exceeded safety bound');
 }
 
+// Shared by main.mjs's dispatchReconcileScan and run-dispatch-canary/
+// run.mjs's sweepStaleCanaries: both fire one independent GitHub write (or
+// small sequence of writes) per discovered candidate, and both discovery
+// lanes can legitimately return a large backlog (a scheduled reconcile scan
+// over every agent-labeled/fleet-assigned issue; a canary janitor sweep over
+// every stale marked issue). Firing all of them at once via a bare
+// Promise.all(Settled) would burst one request per candidate simultaneously
+// and risk tripping GitHub's secondary rate limits -- the resulting
+// rejections would just become per-candidate failures, silently skipping
+// otherwise-healthy candidates for the rest of that pass. This bounds how
+// many `worker` calls are in flight at once (a small fixed-size pool that
+// refills as each slot frees up) while still attempting every item and
+// keeping each item's success/failure fully independent, mirroring
+// Promise.allSettled's per-item `{status, value}` / `{status, reason}`
+// result shape (in the same order as `items`) so callers built around that
+// shape don't need to change.
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function runNext() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        results[index] = {
+          status: 'fulfilled',
+          value: await worker(items[index], index),
+        };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < Math.min(limit, items.length); i += 1) {
+    workers.push(runNext());
+  }
+  await Promise.all(workers);
+  return results;
+}
+
 // The three `agent:*` labels dispatch-capable issues/PRs carry (normalize.mjs
 // owns the authoritative AGENT_LABELS map keyed the other direction; this is
 // a small, stable literal duplication rather than a new cross-module export
@@ -847,6 +888,7 @@ export {
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   loadLedger,
+  mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
   repositoryPath,

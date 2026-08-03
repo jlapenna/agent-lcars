@@ -20,6 +20,7 @@ import {
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   loadLedger,
+  mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
   validateBrokerConcurrencyResponse,
@@ -1105,6 +1106,62 @@ test('transport loss is distinguishable from a definite HTTP rejection', async (
     () => api.request('/dispatch', { method: 'POST' }),
     (error) =>
       error.status === undefined && /transport failure/u.test(error.message),
+  );
+});
+
+// PR #374 review (P2): a bare Promise.all(Settled) over a large discovered
+// backlog fires one request per candidate simultaneously and risks
+// tripping GitHub's secondary rate limits -- mapWithConcurrency is the
+// bounded-pool replacement dispatchReconcileScan and sweepStaleCanaries
+// both use. Assert it (a) never lets more than `limit` workers run at
+// once, (b) still attempts every item, and (c) preserves per-item success
+// or failure -- and their original order -- exactly like
+// Promise.allSettled would.
+test('mapWithConcurrency bounds in-flight work to the given limit while still processing every item', async () => {
+  const limit = 3;
+  let active = 0;
+  let maxActive = 0;
+  const items = Array.from({ length: 11 }, (_, index) => index);
+  const results = await mapWithConcurrency(items, limit, async (item) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+    if (item === 4) throw new Error(`boom-${item}`);
+    return item * 2;
+  });
+  assert.equal(active, 0, 'every worker must have finished');
+  assert.ok(
+    maxActive <= limit,
+    `expected at most ${limit} concurrent workers, saw ${maxActive}`,
+  );
+  assert.equal(
+    maxActive,
+    limit,
+    'expected the pool to actually reach its concurrency limit given more items than the limit',
+  );
+  assert.equal(results.length, items.length);
+  results.forEach((result, index) => {
+    if (index === 4) {
+      assert.equal(result.status, 'rejected');
+      assert.match(result.reason.message, /boom-4/u);
+    } else {
+      assert.equal(result.status, 'fulfilled');
+      assert.equal(result.value, index * 2);
+    }
+  });
+});
+
+test('mapWithConcurrency never starts more workers than there are items', async () => {
+  let concurrentCalls = 0;
+  const results = await mapWithConcurrency([1, 2], 5, async (item) => {
+    concurrentCalls += 1;
+    return item;
+  });
+  assert.equal(concurrentCalls, 2);
+  assert.deepEqual(
+    results.map((result) => result.value),
+    [1, 2],
   );
 });
 

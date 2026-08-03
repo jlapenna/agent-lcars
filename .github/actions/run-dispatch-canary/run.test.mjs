@@ -7,6 +7,7 @@ import {
 } from '../dispatch-broker/broker.mjs';
 import { createGitHubApi } from '../dispatch-broker/github-api.mjs';
 import {
+  CANARY_SWEEP_CONCURRENCY,
   closeCanaryIssue,
   createCanaryIssue,
   dispatchRouterCanary,
@@ -644,6 +645,52 @@ test('sweepStaleCanaries never closes a stale issue on the strength of a spoofed
     calls.some((call) => call.method === 'PATCH'),
     false,
     'a spoofed ledger comment must never cause the janitor to close the issue',
+  );
+});
+
+// PR #374 review (P2): the same unbounded-burst risk flagged for
+// dispatchReconcileScan applies here too -- a "list every open issue"
+// discovery pass can turn up a large stale backlog, and firing every
+// issue's cleanup (comment + label + assignee mutations) at once would
+// risk tripping GitHub's secondary rate limits.
+test('sweepStaleCanaries bounds concurrent per-issue cleanup to CANARY_SWEEP_CONCURRENCY while still sweeping every stale issue', async () => {
+  const total = CANARY_SWEEP_CONCURRENCY * 3 + 1;
+  const issues = Array.from({ length: total }, (_, index) =>
+    openIssue({ number: 2000 + index }),
+  );
+  let active = 0;
+  let maxActive = 0;
+  const client = api(async (url, options) => {
+    if (url.includes('/issues?state=open')) {
+      return response(200, issues);
+    }
+    // Every other call is one sequential step of a single issue's cleanup
+    // (comments GET via loadLedger, then comment/label/assignee POSTs) --
+    // since steps within one issue are sequential (awaited one at a time),
+    // the number of these simultaneously in flight across all issues
+    // reflects exactly how many pool slots are active at once.
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    active -= 1;
+    if ((options.method ?? 'GET') === 'GET') return response(200, []);
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.equal(swept.length, total);
+  assert.ok(swept.every((entry) => entry.outcome === 'parked'));
+  assert.equal(active, 0, 'every in-flight request must have finished');
+  assert.ok(
+    maxActive <= CANARY_SWEEP_CONCURRENCY,
+    `expected at most ${CANARY_SWEEP_CONCURRENCY} concurrent in-flight requests, saw ${maxActive}`,
+  );
+  assert.equal(
+    maxActive,
+    CANARY_SWEEP_CONCURRENCY,
+    'expected the pool to actually reach its concurrency limit given a backlog larger than it',
   );
 });
 

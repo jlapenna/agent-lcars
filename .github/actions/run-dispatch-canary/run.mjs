@@ -22,6 +22,7 @@ import {
   ensureNeedsHumanParked,
   listAll,
   loadLedger,
+  mapWithConcurrency,
   repositoryPath,
 } from '../dispatch-broker/github-api.mjs';
 
@@ -279,8 +280,12 @@ async function parkCanaryFailure(api, task, maintainer, reason) {
 //   - otherwise parks status:needs-human, identical to parkCanaryFailure.
 // A per-issue failure is recorded and reported but never blocks sweeping
 // the remaining candidates -- each candidate's cleanup is independent, so
-// they run concurrently (Promise.allSettled below) rather than one at a
-// time.
+// they run concurrently rather than one at a time, bounded by
+// CANARY_SWEEP_CONCURRENCY below (a "list every open issue" discovery pass
+// can turn up a large stale backlog; an unbounded burst of simultaneous
+// GitHub writes risks tripping secondary rate limits, per the same PR #374
+// review finding dispatch-broker/main.mjs's dispatchReconcileScan already
+// applies this bound for).
 async function sweepOneStaleCanary(api, task, maintainer) {
   const found = await findCanaryGeneration(api, task);
   const conclusion = found?.generation?.attempt?.conclusion;
@@ -308,6 +313,9 @@ async function sweepOneStaleCanary(api, task, maintainer) {
   return { issue: task.issue, outcome: 'parked' };
 }
 
+// See the comment above sweepOneStaleCanary for why this is bounded.
+const CANARY_SWEEP_CONCURRENCY = 5;
+
 async function sweepStaleCanaries(
   api,
   repository,
@@ -333,14 +341,15 @@ async function sweepStaleCanaries(
       ),
   );
 
-  const outcomes = await Promise.allSettled(
-    toSweep.map((issue) =>
+  const outcomes = await mapWithConcurrency(
+    toSweep,
+    CANARY_SWEEP_CONCURRENCY,
+    (issue) =>
       sweepOneStaleCanary(
         api,
         { repositoryId, repository, issue: issue.number },
         maintainer,
       ),
-    ),
   );
   return outcomes.map((outcome, index) =>
     outcome.status === 'fulfilled'
@@ -489,6 +498,7 @@ if (
 }
 
 export {
+  CANARY_SWEEP_CONCURRENCY,
   closeCanaryIssue,
   createCanaryIssue,
   dispatchRouterCanary,

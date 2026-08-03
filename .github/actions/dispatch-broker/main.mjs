@@ -30,6 +30,7 @@ import {
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   loadLedger,
+  mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
   repositoryPath,
@@ -364,19 +365,27 @@ async function reconcileLedger(client, loaded, now = new Date().toISOString()) {
 // comment itself, so it needs no concurrency verification of its own --
 // only dispatch-reconcile.yml's single scan-wide concurrency group (to
 // avoid two overlapping scans firing duplicate dispatches) applies here.
+// Bounds how many workflow_dispatch POSTs dispatchReconcileScan fires at
+// once. Every candidate's dispatch is independent -- no ordering dependency
+// between them -- but the fleet-assignee discovery lane (#363 review) can
+// legitimately return a large historical backlog, and an unbounded burst of
+// simultaneous POSTs risks tripping GitHub's secondary rate limits (a PR
+// #374 review finding): the resulting rejections would just become
+// per-candidate failures, silently skipping otherwise-healthy candidates
+// for this pass. A small worker pool (mapWithConcurrency) still attempts
+// every candidate and keeps per-candidate failure isolation, just bounded.
+const RECONCILE_DISPATCH_CONCURRENCY = 5;
+
 async function dispatchReconcileScan(client, repository, issueNumbers) {
   const task = { repository };
-  // Every candidate's dispatch is independent -- no ordering dependency
-  // between them -- so fire them all concurrently. Promise.allSettled
-  // preserves the original per-candidate try/catch semantics: one
-  // candidate's failure is recorded without ever blocking the others.
-  const outcomes = await Promise.allSettled(
-    issueNumbers.map((issueNumber) =>
+  const outcomes = await mapWithConcurrency(
+    issueNumbers,
+    RECONCILE_DISPATCH_CONCURRENCY,
+    (issueNumber) =>
       dispatchRouterEvent(client, task, {
         kind: 'reconcile',
         issue: String(issueNumber),
       }),
-    ),
   );
   const results = { dispatched: 0, failed: [] };
   outcomes.forEach((outcome, index) => {
@@ -902,6 +911,7 @@ export {
   handleCompletion,
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
+  RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
