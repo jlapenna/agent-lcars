@@ -220,6 +220,86 @@ func TestMergeDockerHostsRetainsOnlyTrackedRemovedHosts(t *testing.T) {
 	}
 }
 
+func TestFleetRunnerCountSumsAcrossScaleSets(t *testing.T) {
+	runtimes := []*scaleSetRuntime{
+		{scaler: &Scaler{runners: runnerState{idle: map[string]runnerRef{"a": {}}, busy: map[string]runnerRef{"b": {}}}}},
+		{scaler: &Scaler{runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{"c": {}}}}},
+	}
+	if got := fleetRunnerCount(runtimes); got != 3 {
+		t.Fatalf("fleetRunnerCount = %d, want 3", got)
+	}
+}
+
+func TestDrainWatchdogTick(t *testing.T) {
+	t0 := time.Now()
+	cases := []struct {
+		name             string
+		draining         bool
+		fleetRunnerCount int
+		zeroSince        time.Time
+		now              time.Time
+		wantZeroSince    time.Time
+		wantSelfHeal     bool
+	}{
+		{
+			name:             "not draining is always left alone",
+			draining:         false,
+			fleetRunnerCount: 0,
+			zeroSince:        t0,
+			now:              t0.Add(2 * drainStuckTimeout),
+			wantZeroSince:    time.Time{},
+			wantSelfHeal:     false,
+		},
+		{
+			name:             "draining with runners resets the clock",
+			draining:         true,
+			fleetRunnerCount: 1,
+			zeroSince:        t0,
+			now:              t0.Add(2 * drainStuckTimeout),
+			wantZeroSince:    time.Time{},
+			wantSelfHeal:     false,
+		},
+		{
+			name:             "first zero observation starts the clock without healing",
+			draining:         true,
+			fleetRunnerCount: 0,
+			zeroSince:        time.Time{},
+			now:              t0,
+			wantZeroSince:    t0,
+			wantSelfHeal:     false,
+		},
+		{
+			name:             "zero but under the stuck timeout keeps waiting",
+			draining:         true,
+			fleetRunnerCount: 0,
+			zeroSince:        t0,
+			now:              t0.Add(drainStuckTimeout - time.Second),
+			wantZeroSince:    t0,
+			wantSelfHeal:     false,
+		},
+		{
+			name:             "zero past the stuck timeout self-heals and resets the clock",
+			draining:         true,
+			fleetRunnerCount: 0,
+			zeroSince:        t0,
+			now:              t0.Add(drainStuckTimeout),
+			wantZeroSince:    time.Time{},
+			wantSelfHeal:     true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotZeroSince, gotSelfHeal := drainWatchdogTick(tc.draining, tc.fleetRunnerCount, tc.zeroSince, tc.now)
+			if !gotZeroSince.Equal(tc.wantZeroSince) {
+				t.Errorf("zeroSince = %v, want %v", gotZeroSince, tc.wantZeroSince)
+			}
+			if gotSelfHeal != tc.wantSelfHeal {
+				t.Errorf("selfHeal = %v, want %v", gotSelfHeal, tc.wantSelfHeal)
+			}
+		})
+	}
+}
+
 func TestOrchestratorConfigRejectsUnknownField(t *testing.T) {
 	_, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML+"unknown: true\n"))
 	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {

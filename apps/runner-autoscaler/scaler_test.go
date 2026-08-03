@@ -908,82 +908,31 @@ func TestBeginDrainRemovesIdleAndPreservesBusy(t *testing.T) {
 	}
 }
 
-func TestCheckDrainWatchdogClearsStuckDrainAfterTimeout(t *testing.T) {
+func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
 	scaler := &Scaler{
 		scaleSetName: "watchdog-stuck",
 		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	scaler.draining.Store(true)
+	drainingGauge.WithLabelValues("watchdog-stuck").Set(1)
 	cleared := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck"))
 
-	t0 := time.Now()
-	scaler.checkDrainWatchdog(t0)
-	if !scaler.draining.Load() {
-		t.Fatal("first observation must not clear drain; it only starts the stuck timer")
-	}
-
-	scaler.checkDrainWatchdog(t0.Add(drainStuckTimeout - time.Second))
-	if !scaler.draining.Load() {
-		t.Fatal("drain cleared before drainStuckTimeout elapsed")
-	}
-
-	scaler.checkDrainWatchdog(t0.Add(drainStuckTimeout))
+	scaler.EndDrain()
 	if scaler.draining.Load() {
-		t.Fatal("drain was not self-healed once stuck past drainStuckTimeout")
+		t.Fatal("EndDrain did not clear the draining flag")
 	}
 	if got := testutil.ToFloat64(drainingGauge.WithLabelValues("watchdog-stuck")); got != 0 {
-		t.Errorf("drainingGauge = %v, want 0 after self-heal", got)
+		t.Errorf("drainingGauge = %v, want 0 after EndDrain", got)
 	}
 	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
 		t.Errorf("drainAutoClearedTotal delta = %v, want 1", got)
 	}
-}
 
-func TestCheckDrainWatchdogLeavesActiveDrainAlone(t *testing.T) {
-	scaler := &Scaler{
-		scaleSetName: "watchdog-active",
-		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
-		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-
-	t0 := time.Now()
-	scaler.checkDrainWatchdog(t0.Add(2 * drainStuckTimeout))
-	if scaler.draining.Load() {
-		t.Fatal("checkDrainWatchdog must never set draining true when not already draining")
-	}
-}
-
-func TestCheckDrainWatchdogResetsClockWhileRunnersRemain(t *testing.T) {
-	scaler := &Scaler{
-		scaleSetName: "watchdog-busy",
-		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{"r": {host: "h"}}},
-		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	scaler.draining.Store(true)
-
-	t0 := time.Now()
-	scaler.checkDrainWatchdog(t0.Add(2 * drainStuckTimeout))
-	if !scaler.draining.Load() {
-		t.Fatal("drain must never self-heal while runners remain tracked, regardless of elapsed time")
-	}
-
-	// Once the last runner finishes, the stuck timer starts fresh from this
-	// observation -- it must not credit time accrued before the scale set
-	// last had a nonzero runner count.
-	scaler.runners.busy = map[string]runnerRef{}
-	t1 := t0.Add(2 * drainStuckTimeout)
-	scaler.checkDrainWatchdog(t1)
-	if !scaler.draining.Load() {
-		t.Fatal("drain cleared on the same observation the runner count first reached zero")
-	}
-	scaler.checkDrainWatchdog(t1.Add(drainStuckTimeout - time.Second))
-	if !scaler.draining.Load() {
-		t.Fatal("drain cleared before a fresh drainStuckTimeout elapsed since reaching zero")
-	}
-	scaler.checkDrainWatchdog(t1.Add(drainStuckTimeout))
-	if scaler.draining.Load() {
-		t.Fatal("drain was not self-healed once stuck past a fresh drainStuckTimeout")
+	// Calling again while already clear must not double-count the metric.
+	scaler.EndDrain()
+	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
+		t.Errorf("drainAutoClearedTotal delta after a second EndDrain = %v, want still 1 (idempotent)", got)
 	}
 }
 

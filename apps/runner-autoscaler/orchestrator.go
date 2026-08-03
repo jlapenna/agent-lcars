@@ -65,6 +65,13 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	defer signal.Stop(drainSignals)
 	defer signal.Stop(reloadSignals)
 	draining := false
+	// drainZeroSince tracks how long the fleet has sat globally drained with
+	// zero runners across every scale set; see drainStuckTimeout's doc
+	// comment for why this decision must be fleet-wide rather than made
+	// independently by each Scaler. Read and written only by this loop.
+	var drainZeroSince time.Time
+	drainWatchdog := time.NewTicker(drainWatchdogInterval)
+	defer drainWatchdog.Stop()
 
 	for {
 		select {
@@ -80,10 +87,25 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				continue
 			}
 			draining = true
+			drainZeroSince = time.Time{}
 			logger.Info("Global drain requested")
 			for _, runtime := range runtimes {
 				runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
 			}
+		case <-drainWatchdog.C:
+			now := time.Now()
+			nextZeroSince, selfHeal := drainWatchdogTick(draining, fleetRunnerCount(runtimes), drainZeroSince, now)
+			stuckFor := now.Sub(drainZeroSince)
+			drainZeroSince = nextZeroSince
+			if !selfHeal {
+				continue
+			}
+			draining = false
+			for _, runtime := range runtimes {
+				runtime.scaler.EndDrain()
+			}
+			logger.Warn("Fleet drain self-healed after sitting at zero runners past the stuck timeout; a deploy was likely interrupted before its recreate step",
+				slog.Duration("stuck_for", stuckFor))
 		case <-reloadSignals:
 			next, reloadErr := loadOrchestratorConfig(orchestratorConfigPath)
 			if reloadErr == nil {
@@ -126,6 +148,12 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			logger = resolved.ScaleSets[0].Logger().With("component", "orchestrator")
 			pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
 			if draining {
+				// The replacement scalers re-adopt already-running containers
+				// during initialization (see initializeGitHubScaleSet), which
+				// takes a moment and would otherwise read as a momentary,
+				// spurious fleet-wide zero. Restart the stuck-drain clock so
+				// the watchdog measures from after adoption, not before it.
+				drainZeroSince = time.Time{}
 				for _, runtime := range runtimes {
 					runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
 				}
@@ -274,8 +302,6 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	go func() { defer wg.Done(); runtimes[0].scaler.RunHostSampler(ctx) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); runFleetOrphanSweeper(ctx, runtimes) }()
-	wg.Add(1)
-	go func() { defer wg.Done(); runFleetDrainWatchdog(ctx, runtimes) }()
 	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)
 	for _, runtime := range runtimes {
 		if runtime.config.ShareWorkDir {
@@ -463,24 +489,37 @@ func runFleetOrphanSweeper(ctx context.Context, runtimes []*scaleSetRuntime) {
 	}
 }
 
-// runFleetDrainWatchdog polls every scale set for a stuck drain (see
-// (*Scaler).checkDrainWatchdog / drainStuckTimeout) and self-heals it. Runs
-// unconditionally, independent of runtime.initialized: a scale set can be
-// left draining before its GitHub registration ever completes, since
-// runOrchestrator's SIGUSR1 handler calls BeginDrain on every runtime
-// regardless of initialization state.
-func runFleetDrainWatchdog(ctx context.Context, runtimes []*scaleSetRuntime) {
-	ticker := time.NewTicker(drainWatchdogInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			now := time.Now()
-			for _, runtime := range runtimes {
-				runtime.scaler.checkDrainWatchdog(now)
-			}
-		}
+// fleetRunnerCount sums tracked runners across every scale set, mirroring
+// what drain-and-restart.sh's own fleet_runner_count gate waits to see reach
+// zero (across every scale set, not just one) before it recreates the
+// container. Used by runOrchestrator's drain watchdog for the same reason:
+// see drainStuckTimeout's doc comment.
+func fleetRunnerCount(runtimes []*scaleSetRuntime) int {
+	total := 0
+	for _, runtime := range runtimes {
+		total += runtime.scaler.runners.count()
 	}
+	return total
+}
+
+// drainWatchdogTick decides what runOrchestrator's drain watchdog should do
+// on one tick, given the current draining state, the fleet's current runner
+// count, when the fleet was first observed at zero while draining
+// (zeroSince, zero value = not yet observed), and now. It returns the
+// zeroSince value to carry into the next tick and whether the fleet drain
+// should self-heal on this tick. Pure and side-effect-free -- runOrchestrator
+// applies the result (flips draining, calls EndDrain on every scaler, logs)
+// and is the only production caller, always passing time.Now(); tests call
+// this directly instead of driving a live ticker.
+func drainWatchdogTick(draining bool, fleetRunnerCount int, zeroSince, now time.Time) (nextZeroSince time.Time, selfHeal bool) {
+	if !draining || fleetRunnerCount > 0 {
+		return time.Time{}, false
+	}
+	if zeroSince.IsZero() {
+		return now, false
+	}
+	if now.Sub(zeroSince) < drainStuckTimeout {
+		return zeroSince, false
+	}
+	return time.Time{}, true
 }
