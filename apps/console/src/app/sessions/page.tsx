@@ -1,4 +1,5 @@
 import { Anchor, Container, Group } from '@mantine/core';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
@@ -134,6 +135,7 @@ function ViewToggle({
       {(['flat', 'by-issue'] as const).map((candidate) => (
         <Anchor
           key={candidate}
+          component={Link}
           href={displayHref(query, { view: candidate })}
           className="sessions-view-toggle__option"
           data-active={candidate === view ? '' : undefined}
