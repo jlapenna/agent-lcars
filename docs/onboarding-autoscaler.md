@@ -130,6 +130,33 @@ registrations:
         mount_docker_socket: false # see the split below before setting true
 ```
 
+### Choosing a scale set: don't just reuse whichever pool already has the right label
+
+Privilege (`mount_docker_socket`) isn't the only reason a job needs its
+**own** scale set instead of joining an existing one that happens to run
+the right image — **runtime duration is a placement concern too.** A scale
+set's `max_runners` is a hard ceiling on how many jobs with that label can
+run at once; pointing a new, long-running (double-digit-minute) job at a
+pool sized for small, fast jobs starves everything else waiting on that
+same label for as long as the long job runs.
+
+This actually happened (agent-lcars#408/#451): `ci.yml`'s `verify`/`e2e`
+jobs (20-30 min) landed on `lcars-default`, a 2-runner pool
+`orchestrator.yml`'s own comment already documented as reserved for small
+glue jobs (`agent-automerge.yml`, `agent-router.yml`'s dispatch-broker
+routing) specifically so they'd never queue behind something slow. It
+still happened, because nothing forced a reader adding a new `runs-on` to
+check what else already shared that label. `ci.yml`'s jobs got their own
+`homelab-autoscale-lcars-ci` pool instead once diagnosed.
+
+Before pointing a new (or newly self-hosted) job at an existing label,
+ask: **how long does this job run, and what else already uses this
+label?** If the answer is "several minutes or more" and the existing pool
+backs anything latency-sensitive, give the new job its own scale set —
+same `runner_image`, same privilege posture, just a different `name`/
+`labels`/`max_runners`, mirroring `homelab-autoscale-lcars-ci` alongside
+`homelab-autoscale-lcars-default` in the live `orchestrator.yml`.
+
 ### Building images: use the BuildKit builder, not a Docker socket
 
 **If you only need to build and publish container images, you do not need

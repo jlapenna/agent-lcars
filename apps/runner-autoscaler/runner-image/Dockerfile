@@ -160,6 +160,19 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip $EXTRA_APT_PACKAGES; \
     node --version; \
+    # NodeSource's nodejs package bundles the `corepack` binary but never
+    # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
+    # as the throwaway telemetry-watcher-build stage above already does for
+    # itself. This stage never did it for the image jobs actually run in, so
+    # every consuming workflow's bare `pnpm ...` silently depended on each
+    # job re-deriving that gap around (sprinkles#4003/#4006 hit it live:
+    # "pnpm: command not found" the moment a step tried to call pnpm before
+    # the agent's own worktree setup happened to paper over it). Smoke-check
+    # it here for the same reason as docker/buildx below: failing the build
+    # is recoverable, shipping a runner image that silently can't run pnpm
+    # is not.
+    corepack enable; \
+    pnpm --version; \
     # docker + buildx come from the upstream base, not from apt. They are
     # smoke-checked here because the PUBLISH job runs on this very image and
     # drives `docker buildx inspect --bootstrap`: if a future RUNNER_BASE
