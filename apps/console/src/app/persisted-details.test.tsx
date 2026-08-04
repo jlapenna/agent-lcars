@@ -48,6 +48,26 @@ describe('PersistedDetails', () => {
     expect(window.localStorage.getItem(KEY)).toBe('0');
   });
 
+  it('reopens when props switch to the pinned anomaly mode mid-session', () => {
+    window.localStorage.setItem(KEY, '0');
+    const view = renderDisclosure();
+    expect(screen.getByTestId('disclosure')).not.toHaveAttribute('open');
+
+    // router.refresh() preserves client state; the anomaly transition
+    // arrives as a prop change, not a remount.
+    view.rerender(
+      <PersistedDetails
+        storageKey={undefined}
+        defaultOpen
+        data-testid="disclosure"
+        summary="Section"
+      >
+        <p>content</p>
+      </PersistedDetails>,
+    );
+    expect(screen.getByTestId('disclosure')).toHaveAttribute('open');
+  });
+
   it('degrades to the default when nothing is stored', () => {
     renderDisclosure({ defaultOpen: true });
     expect(screen.getByTestId('disclosure')).toHaveAttribute('open');

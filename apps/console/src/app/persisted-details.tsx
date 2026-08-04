@@ -37,14 +37,22 @@ export function PersistedDetails({
   const [open, setOpen] = useState(defaultOpen);
 
   useEffect(() => {
-    if (!storageKey) return;
+    // Keyless mode pins to defaultOpen - and must keep tracking it:
+    // router.refresh() preserves client state, so a task that *becomes*
+    // anomalous mid-session switches this component keyed->keyless with
+    // defaultOpen=true, and the anomaly must reopen the disclosure
+    // (Codex review on #518).
+    if (!storageKey) {
+      setOpen(defaultOpen);
+      return;
+    }
     try {
       const raw = window.localStorage.getItem(STORAGE_PREFIX + storageKey);
-      if (raw !== null) setOpen(raw === '1');
+      setOpen(raw !== null ? raw === '1' : defaultOpen);
     } catch {
       // Unavailable storage degrades to the default, never a crash.
     }
-  }, [storageKey]);
+  }, [storageKey, defaultOpen]);
 
   return (
     <details
