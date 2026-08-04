@@ -338,6 +338,32 @@ describe('inbox keyboard navigation', () => {
     );
   });
 
+  it('key-repeat advances past the still-pending selection', () => {
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+      makeCard({
+        number: 251,
+        title: 'Third row',
+        actionTypes: ['needs-human'],
+      }),
+    ]);
+
+    // Two rapid presses before any selectedItemKey update lands: the
+    // second must target row 3, not recompute row 2 from the stale
+    // rendered selection.
+    fireEvent.keyDown(window, { key: 'j' });
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(mockReplace).toHaveBeenCalledTimes(2);
+    expect(mockReplace.mock.calls[1][0]).toContain(
+      encodeURIComponent('agent/lcars#251'),
+    );
+  });
+
   it('k at the top and j at the bottom stay put', () => {
     renderWorkspace([makeCard()]);
     fireEvent.keyDown(window, { key: 'k' });
