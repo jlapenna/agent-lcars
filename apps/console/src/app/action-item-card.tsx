@@ -573,6 +573,12 @@ export function ActionItemCard({
           </Group>
         )}
 
+        {error && (
+          <Text c="red" size="sm">
+            {error}
+          </Text>
+        )}
+
         <Group
           gap="sm"
           wrap="wrap"
@@ -644,12 +650,6 @@ export function ActionItemCard({
             />
           )}
         </Group>
-
-        {error && (
-          <Text c="red" size="sm">
-            {error}
-          </Text>
-        )}
       </Stack>
     </Card>
   );
