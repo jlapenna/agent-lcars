@@ -9,6 +9,7 @@ import { getCliSessions } from '../lib/cli-sessions';
 import {
   getCachedActionItems,
   getCachedAgentActivity,
+  oldestFetchedAt,
 } from '../lib/dashboard-data';
 import {
   getWatchedRepos,
@@ -27,8 +28,9 @@ import { type BoardCard, CommandDeckSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
+import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
-import { formatCompactRelativeTime } from './format';
+import { formatCompactRelativeTime, formatRelativeTime } from './format';
 import { PageLoading } from './page-loading';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 
@@ -52,8 +54,9 @@ async function IndexBody({
   const [
     {
       data: { items: rawItems, warnings: itemWarnings },
+      fetchedAt: itemsFetchedAt,
     },
-    { data: activity },
+    { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
@@ -129,8 +132,14 @@ async function IndexBody({
     ? cliSessions.filter((s) => matchesFilter(s.repo ?? primaryWatchedRepo()))
     : cliSessions;
 
+  const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
+
   return (
     <>
+      <DataFreshness
+        fetchedAt={dataAsOf}
+        initialLabel={formatRelativeTime(dataAsOf)}
+      />
       {warnings.length > 0 && (
         <Box mb="xl">
           <DataWarnings warnings={warnings} />

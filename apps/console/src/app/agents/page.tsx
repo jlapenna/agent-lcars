@@ -10,6 +10,7 @@ import { getCliSessions } from '../../lib/cli-sessions';
 import {
   getCachedActionItems,
   getCachedAgentActivity,
+  oldestFetchedAt,
 } from '../../lib/dashboard-data';
 import {
   getWatchedRepos,
@@ -29,6 +30,8 @@ import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from '../console-header';
+import { DataFreshness } from '../data-freshness';
+import { formatRelativeTime } from '../format';
 import { PageLoading } from '../page-loading';
 import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
@@ -55,8 +58,9 @@ async function AgentsPageBody({
   const [
     {
       data: { items, warnings: itemWarnings },
+      fetchedAt: itemsFetchedAt,
     },
-    { data: activity },
+    { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
@@ -185,7 +189,15 @@ async function AgentsPageBody({
   return (
     <AgentsWorkspace
       warnings={
-        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
+        <>
+          <DataFreshness
+            fetchedAt={oldestFetchedAt(itemsFetchedAt, activityFetchedAt)}
+            initialLabel={formatRelativeTime(
+              oldestFetchedAt(itemsFetchedAt, activityFetchedAt),
+            )}
+          />
+          {warnings.length > 0 && <DataWarnings warnings={warnings} />}
+        </>
       }
       fleet={
         <FleetSnapshotBar
