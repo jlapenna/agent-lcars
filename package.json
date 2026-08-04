@@ -11,6 +11,8 @@
     "lint": "nx run-many -t lint --all",
     "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
     "prepare": "if [ -z \"$CI\" ]; then pnpm exec husky; fi",
+    "session:capture": "node tools/saved-session/capture.mjs",
+    "session:verify": "node tools/saved-session/verify.mjs",
     "tsc": "nx run-many -t typecheck",
     "lint:circular": "madge --circular --extensions ts,tsx --ts-config tsconfig.base.json --exclude '.*(dist|test|spec).*' libs/ apps/",
     "verify": "pnpm format:check && pnpm lint && pnpm lint:circular && nx run-many -t test typecheck build --all"
