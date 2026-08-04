@@ -8,6 +8,10 @@ import { ActionItemCard } from './action-item-card';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
 // out of scope here, matching the pattern in action-items-board.test.tsx.
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('./actions', () => ({
   mergePr: vi.fn(),
   approveAndRebase: vi.fn(),
