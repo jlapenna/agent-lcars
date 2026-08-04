@@ -456,3 +456,75 @@ func TestCleanupOrphansSkipsUnreachableHostAndSweepsTheRest(t *testing.T) {
 		t.Fatalf("healthy host should still have been swept despite an unreachable peer, removed=%v", removed)
 	}
 }
+
+// A host skipped at boot (unreachable, or its list call failed) leaves its
+// running containers untracked. The periodic pass used to `continue` past
+// every running container, so those runners stayed invisible until the next
+// process restart: counted against neither host limits nor fleet capacity,
+// and on JobCompleted there was no entry to reconcile, so the container was
+// never removed and leaked.
+//
+// This is the claim the original agent-lcars#511 change asserted without
+// testing -- "the periodic sweeper picks them up" -- which was false.
+func TestPeriodicSweepAdoptsUntrackedRunningContainer(t *testing.T) {
+	old := time.Now().Add(-time.Hour).Unix()
+	ours := map[string]string{runnerScaleSetLabelKey: "myset"}
+
+	f := newFakeDockerServer(t)
+	f.setContainers([]container.Summary{
+		{ID: "busy", Names: []string{"/runner-busy"}, Labels: ours, State: container.StateRunning, Created: old},
+		{ID: "idle", Names: []string{"/runner-idle"}, Labels: ours, State: container.StateRunning, Created: old},
+	})
+	f.setTop("busy", [][]string{{"1", "/home/runner/run.sh"}, {"42", "Runner.Worker"}})
+	f.setTop("idle", [][]string{{"1", "/home/runner/run.sh"}})
+
+	scaler := &Scaler{
+		scaleSetName:   "myset",
+		dockerHosts:    []DockerHost{{Name: "host-a", Client: f.client(t)}},
+		runners:        runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	scaler.cleanupOrphans(context.Background(), false)
+
+	if _, ok := scaler.runners.busy["runner-busy"]; !ok {
+		t.Errorf("running container with a Runner.Worker should be adopted busy: idle=%#v busy=%#v", scaler.runners.idle, scaler.runners.busy)
+	}
+	if _, ok := scaler.runners.idle["runner-idle"]; !ok {
+		t.Errorf("running container without a Runner.Worker should be adopted idle: idle=%#v busy=%#v", scaler.runners.idle, scaler.runners.busy)
+	}
+	for _, id := range f.removedIDs() {
+		t.Errorf("periodic sweep must never remove a running container, removed %q", id)
+	}
+}
+
+// The adoption above must not reach back before orphanMinAge, or it would
+// race startRunner's create->addIdle window and adopt a container another
+// goroutine is still setting up.
+func TestPeriodicSweepLeavesYoungRunningContainerAlone(t *testing.T) {
+	ours := map[string]string{runnerScaleSetLabelKey: "myset"}
+
+	f := newFakeDockerServer(t)
+	f.setContainers([]container.Summary{
+		{ID: "fresh", Names: []string{"/runner-fresh"}, Labels: ours, State: container.StateRunning, Created: time.Now().Unix()},
+	})
+	f.setTop("fresh", [][]string{{"1", "/home/runner/run.sh"}})
+
+	scaler := &Scaler{
+		scaleSetName:   "myset",
+		dockerHosts:    []DockerHost{{Name: "host-a", Client: f.client(t)}},
+		runners:        runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	scaler.cleanupOrphans(context.Background(), false)
+
+	if scaler.runners.count() != 0 {
+		t.Errorf("a container younger than orphanMinAge must not be adopted: idle=%#v busy=%#v", scaler.runners.idle, scaler.runners.busy)
+	}
+	for _, id := range f.removedIDs() {
+		t.Errorf("young running container must not be removed either, removed %q", id)
+	}
+}

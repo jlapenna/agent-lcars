@@ -1617,33 +1617,7 @@ func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bo
 			continue
 		}
 		if boot && c.State == container.StateRunning {
-			// The checkpoint, when it has an entry, is authoritative:
-			// it records the idle/busy split this process actually
-			// observed from GitHub's JobStarted/JobCompleted messages.
-			// The ContainerTop probe below can only ask whether a
-			// Runner.Worker process exists YET, so it reports a runner
-			// that GitHub has already assigned a job to -- but which is
-			// still pulling its image or checking out -- as idle, and
-			// anything that reaps idle capacity then kills a live job.
-			// That misclassification is the reason a restart previously
-			// had to be preceded by a full drain.
-			if recorded, ok := a.bootCheckpoint[cleanName]; ok {
-				a.adoptRunner(cleanName, h.Name, c.ID, time.Unix(c.Created, 0), recorded.Busy)
-				a.logger.Info("Adopted runner from checkpoint",
-					slog.String("host", h.Name), slog.String("name", cleanName),
-					slog.String("containerID", c.ID), slog.Bool("busy", recorded.Busy))
-				continue
-			}
-			top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
-			if topErr == nil && !topHasRunnerWorker(top) {
-				a.runners.addIdle(cleanName, h.Name, c.ID, time.Unix(c.Created, 0))
-				a.logger.Info("Adopted idle runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
-			} else {
-				a.runners.mu.Lock()
-				a.runners.busy[cleanName] = runnerRef{host: h.Name, containerID: c.ID, startedAt: time.Unix(c.Created, 0)}
-				a.runners.mu.Unlock()
-				a.logger.Info("Adopted busy runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID), slog.Any("top_error", topErr))
-			}
+			a.adoptRunningContainer(ctx, h, c, cleanName, a.bootCheckpoint)
 			continue
 		}
 
@@ -1651,10 +1625,34 @@ func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bo
 			if a.runners.isTracked(cleanName) {
 				continue
 			}
-			if c.State == container.StateRunning {
+			if time.Since(time.Unix(c.Created, 0)) <= orphanMinAge {
 				continue
 			}
-			if time.Since(time.Unix(c.Created, 0)) <= orphanMinAge {
+			if c.State == container.StateRunning {
+				// Adopt rather than skip. A running container this scale
+				// set owns but is not tracking is not a container to leave
+				// alone: it counts against neither host limits nor fleet
+				// capacity, and when its job finishes HandleJobCompleted
+				// finds no entry to reconcile, so the container is never
+				// removed and leaks until the process restarts.
+				//
+				// Reachable only when the boot pass missed it -- the host
+				// was unreachable, or its list call failed. Before the
+				// per-host reachability gate that was rare enough to go
+				// unnoticed; the gate makes skipping a host cheap and
+				// therefore more likely, so this pass has to be able to
+				// recover from it rather than waiting for a restart.
+				//
+				// The orphanMinAge check above (10 minutes) already ran, so
+				// this cannot race startRunner's create->addIdle window,
+				// which closes in seconds.
+				//
+				// Deliberately probe rather than consult the checkpoint:
+				// the checkpoint's value is at boot, for a runner GitHub
+				// assigned a job to seconds ago. This container has been
+				// running for over ten minutes, so that window is long
+				// past and a live probe is the more current answer.
+				a.adoptRunningContainer(ctx, h, c, cleanName, nil)
 				continue
 			}
 		}
@@ -1665,6 +1663,43 @@ func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bo
 		}
 		a.deregisterRunner(ctx, cleanName)
 	}
+}
+
+// adoptRunningContainer records a running container this scale set owns but
+// is not currently tracking, classifying it idle or busy.
+//
+// recorded is the checkpoint to trust when it holds an entry, or nil to
+// classify purely by probe. A checkpoint entry is authoritative because it
+// records the split this process observed from GitHub's JobStarted/
+// JobCompleted messages, whereas ContainerTop can only report whether a
+// Runner.Worker process exists YET -- so a runner GitHub has already assigned
+// a job to, but which is still pulling its image or checking out, probes as
+// idle. Anything that reaps idle capacity then kills a live job, which is the
+// misclassification that used to make a restart require a full drain.
+//
+// A probe error classifies busy: refusing to remove a runner that turns out
+// to be idle costs one runner slot until its next reconcile, while removing
+// one that turns out to be busy kills a job.
+func (a *Scaler) adoptRunningContainer(ctx context.Context, h DockerHost, c container.Summary, cleanName string, recorded map[string]checkpointRunner) {
+	startedAt := time.Unix(c.Created, 0)
+	if entry, ok := recorded[cleanName]; ok {
+		a.adoptRunner(cleanName, h.Name, c.ID, startedAt, entry.Busy)
+		a.logger.Info("Adopted runner from checkpoint",
+			slog.String("host", h.Name), slog.String("name", cleanName),
+			slog.String("containerID", c.ID), slog.Bool("busy", entry.Busy))
+		return
+	}
+	top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
+	if topErr == nil && !topHasRunnerWorker(top) {
+		a.adoptRunner(cleanName, h.Name, c.ID, startedAt, false)
+		a.logger.Info("Adopted idle runner from previous control-plane instance",
+			slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
+		return
+	}
+	a.adoptRunner(cleanName, h.Name, c.ID, startedAt, true)
+	a.logger.Info("Adopted busy runner from previous control-plane instance",
+		slog.String("host", h.Name), slog.String("name", cleanName),
+		slog.String("containerID", c.ID), slog.Any("top_error", topErr))
 }
 
 func topHasRunnerWorker(top container.TopResponse) bool {
