@@ -94,6 +94,16 @@ function renderBoard({
 }
 
 describe('Decision Inbox and Command Deck surfaces', () => {
+  it('says so when both Deck sections are empty instead of rendering nothing', () => {
+    renderBoard({});
+    expect(screen.getByTestId('deck-sections-empty')).toBeTruthy();
+  });
+
+  it('drops the empty note as soon as either section has items', () => {
+    renderBoard({ waitingOnDeploy: [makeItem({ number: 7 })] });
+    expect(screen.queryByTestId('deck-sections-empty')).toBeNull();
+  });
+
   it('shows the empty-queue message when nothing needs the maintainer', () => {
     render(
       <MantineProvider>
