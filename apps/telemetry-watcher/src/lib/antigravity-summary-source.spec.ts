@@ -119,7 +119,12 @@ describe('parseGoTimestamp', () => {
   });
 });
 
-describe('pollAntigravitySummaries', () => {
+// These tests intentionally build real on-disk SQLite databases. Under a
+// saturated CI runner, the filesystem work has taken 12.8s even though local
+// runs finish the whole suite in milliseconds. Keep the wider budget scoped
+// to the disk-backed cases; the pure parsing tests above retain Vitest's 5s
+// default so genuine hangs still fail quickly.
+describe('pollAntigravitySummaries', { timeout: 30_000 }, () => {
   const CHECKOUT_PREFIX = '/home/developer/p/sprinkles';
 
   it('ships a row whose workspace_uris matches the allowlist', () => {
