@@ -1,10 +1,10 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { SessionArchiveQuery } from '@/lib/session-archive';
 
-import { ConsoleHeader } from './console-header';
+import { ConsoleHeader, ConsoleNavRail } from './console-header';
 
 function renderHeader(
   current: 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs',
@@ -132,6 +132,26 @@ describe('ConsoleHeader nav rail', () => {
     expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute(
       'href',
       '/agents',
+    );
+  });
+});
+
+describe('ConsoleNavRail (standalone)', () => {
+  it('renders all five destinations with the parent marked current', () => {
+    render(
+      <MantineProvider>
+        <ConsoleNavRail current="sessions" />
+      </MantineProvider>,
+    );
+    const nav = screen.getByRole('navigation', { name: 'Console sections' });
+    const links = within(nav).getAllByRole('link');
+    expect(links).toHaveLength(5);
+    expect(within(nav).getByRole('link', { name: 'Sessions' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(within(nav).getByRole('link', { name: 'Deck' })).not.toHaveAttribute(
+      'aria-current',
     );
   });
 });

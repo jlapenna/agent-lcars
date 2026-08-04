@@ -1,14 +1,6 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { sessionAgent } from '@agent-lcars/telemetry';
-import {
-  Anchor,
-  Code,
-  Container,
-  Group,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Code, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -19,6 +11,7 @@ import { getWatchedRepos } from '../../../lib/github-client';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleFooter } from '../../console-footer';
+import { ConsoleNavRail } from '../../console-header';
 import { formatRelativeTime } from '../../format';
 import { PageLoading } from '../../page-loading';
 import { QuickTaskButton } from '../../quick-task-button';
@@ -117,14 +110,7 @@ async function SessionDetailPageContent({ params }: PageProps) {
   return (
     <Container size="xl" py="xl">
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
-        <Anchor
-          href="/sessions"
-          underline="never"
-          className="lcars-nav-pill"
-          data-accent="teal"
-        >
-          ← Sessions
-        </Anchor>
+        <ConsoleNavRail current="sessions" />
         <RefreshButton
           generatedAt={generatedAt}
           initialLabel={formatRelativeTime(generatedAt)}
