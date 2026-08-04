@@ -1799,3 +1799,10 @@
     min-height: 44px;
   }
 }
+
+/* Inbox search (queue-workspace.tsx): compact enough to share the header
+   row with Filter/Sort; grows only on wide viewports. */
+.queue-search-input {
+  width: 11.5rem;
+  max-width: 40vw;
+}

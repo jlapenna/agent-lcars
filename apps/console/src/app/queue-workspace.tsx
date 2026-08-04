@@ -1,10 +1,21 @@
 'use client';
 
-import { Button, Group, Menu, Stack, Text, Title } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Group,
+  Menu,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
 import {
   IconArrowsSort,
   IconChevronLeft,
   IconFilter,
+  IconSearch,
+  IconX,
 } from '@tabler/icons-react';
 import { useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -45,6 +56,7 @@ const SORT_OPTIONS: Array<{ value: QueueSort; label: string }> = [
 // Inbox already round-trips. Defaults are elided to keep bare URLs bare.
 const REASON_PARAM = 'reason';
 const SORT_PARAM = 'sort';
+const SEARCH_PARAM = 'q';
 
 export function parseQueueFilter(value: string | null): QueueFilter {
   return FILTER_OPTIONS.some((option) => option.value === value)
@@ -88,6 +100,9 @@ export function QueueWorkspace({
   const [sort, setSort] = useState<QueueSort>(() =>
     parseQueueSort(searchParams.get(SORT_PARAM)),
   );
+  const [search, setSearch] = useState(
+    () => searchParams.get(SEARCH_PARAM) ?? '',
+  );
   const { muted, mute, unmute } = useMutedItems();
 
   // Browser Back/Forward (and any same-route navigation that changes the
@@ -103,14 +118,18 @@ export function QueueWorkspace({
   // Mirror the controls into the URL without a server round-trip -
   // history.replaceState is the App Router's sanctioned shallow update, and
   // useSearchParams picks it up so row links carry the params too.
-  const applyQueueControls = (nextFilter: QueueFilter, nextSort: QueueSort) => {
-    setFilter(nextFilter);
-    setSort(nextSort);
+  const syncControlsToUrl = (
+    nextFilter: QueueFilter,
+    nextSort: QueueSort,
+    nextSearch: string,
+  ) => {
     const params = new URLSearchParams(window.location.search);
     if (nextFilter === 'all') params.delete(REASON_PARAM);
     else params.set(REASON_PARAM, nextFilter);
     if (nextSort === 'priority') params.delete(SORT_PARAM);
     else params.set(SORT_PARAM, nextSort);
+    if (nextSearch) params.set(SEARCH_PARAM, nextSearch);
+    else params.delete(SEARCH_PARAM);
     const query = params.toString();
     window.history.replaceState(
       null,
@@ -118,10 +137,27 @@ export function QueueWorkspace({
       query ? `?${query}` : window.location.pathname,
     );
   };
+  const applyQueueControls = (nextFilter: QueueFilter, nextSort: QueueSort) => {
+    setFilter(nextFilter);
+    setSort(nextSort);
+    syncControlsToUrl(nextFilter, nextSort, search);
+  };
+  const applySearch = (next: string) => {
+    setSearch(next);
+    syncControlsToUrl(filter, sort, next.trim());
+  };
 
   const visibleCards = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const matchesSearch = (item: BoardCard['item']) =>
+      !needle ||
+      item.title.toLowerCase().includes(needle) ||
+      String(item.number).includes(needle.replace(/^#/, '')) ||
+      (item.author ?? '').toLowerCase().includes(needle) ||
+      item.labels.some((label) => label.toLowerCase().includes(needle));
     const filtered = cards.filter(({ item }) => {
       if (muted.has(repoItemKey(item.repo, item.number))) return false;
+      if (!matchesSearch(item)) return false;
       return filter === 'all' || item.actionTypes.includes(filter);
     });
 
@@ -137,7 +173,7 @@ export function QueueWorkspace({
         (queueReasonFor(b.item)?.rank ?? Number.MAX_SAFE_INTEGER)
       );
     });
-  }, [cards, filter, muted, sort]);
+  }, [cards, filter, muted, search, sort]);
 
   const mutedCards = cards.filter(({ item }) =>
     muted.has(repoItemKey(item.repo, item.number)),
@@ -211,6 +247,28 @@ export function QueueWorkspace({
             </Text>
           </div>
           <Group gap={6} wrap="nowrap" className="queue-list-controls">
+            <TextInput
+              size="xs"
+              value={search}
+              onChange={(event) => applySearch(event.currentTarget.value)}
+              placeholder="Search title, #, author, label"
+              aria-label="Search the Inbox"
+              leftSection={<IconSearch aria-hidden="true" size={13} />}
+              rightSection={
+                search ? (
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="xs"
+                    aria-label="Clear search text"
+                    onClick={() => applySearch('')}
+                  >
+                    <IconX aria-hidden="true" size={12} />
+                  </ActionIcon>
+                ) : undefined
+              }
+              className="queue-search-input"
+            />
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
                 <Button
@@ -272,24 +330,37 @@ export function QueueWorkspace({
           {visibleCards.length === 0 ? (
             <div className="queue-workspace__empty">
               <Text fw={600}>
-                {filter === 'all'
-                  ? 'Nothing needs you right now.'
-                  : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
+                {search.trim()
+                  ? `No matches for “${search.trim()}”.`
+                  : filter === 'all'
+                    ? 'Nothing needs you right now.'
+                    : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
               </Text>
               <Text size="sm" c="dimmed">
-                {filter === 'all'
-                  ? 'Check back after the next refresh.'
-                  : 'Other items may be hidden by the active filter.'}
+                {search.trim() || filter !== 'all'
+                  ? 'Other items may be hidden by the search or active filter.'
+                  : 'Check back after the next refresh.'}
               </Text>
-              {filter !== 'all' && (
-                <Button
-                  variant="default"
-                  size="compact-sm"
-                  onClick={() => applyQueueControls('all', sort)}
-                >
-                  Show all reasons
-                </Button>
-              )}
+              <Group gap="xs">
+                {search.trim() && (
+                  <Button
+                    variant="default"
+                    size="compact-sm"
+                    onClick={() => applySearch('')}
+                  >
+                    Clear search
+                  </Button>
+                )}
+                {filter !== 'all' && (
+                  <Button
+                    variant="default"
+                    size="compact-sm"
+                    onClick={() => applyQueueControls('all', sort)}
+                  >
+                    Show all reasons
+                  </Button>
+                )}
+              </Group>
             </div>
           ) : (
             visibleCards.map((card) => {
