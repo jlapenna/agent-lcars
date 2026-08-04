@@ -189,6 +189,9 @@ async function AgentsPageBody({
   return (
     <AgentsWorkspace
       warnings={
+        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
+      }
+      fleet={
         <>
           <DataFreshness
             fetchedAt={oldestFetchedAt(itemsFetchedAt, activityFetchedAt)}
@@ -196,15 +199,12 @@ async function AgentsPageBody({
               oldestFetchedAt(itemsFetchedAt, activityFetchedAt),
             )}
           />
-          {warnings.length > 0 && <DataWarnings warnings={warnings} />}
+          <FleetSnapshotBar
+            activity={filteredActivity}
+            activeCliSessionCount={filteredActiveSessions.length}
+            metrics={activityMetrics}
+          />
         </>
-      }
-      fleet={
-        <FleetSnapshotBar
-          activity={filteredActivity}
-          activeCliSessionCount={filteredActiveSessions.length}
-          metrics={activityMetrics}
-        />
       }
       active={
         <ActiveAgentsSection
