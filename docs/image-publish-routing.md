@@ -106,48 +106,68 @@ smoke-test and both other images' build/scan/promote steps, etc.).
 This was **not** the first design. A now-reverted version split
 `control-plane`/`jit-runner`/`watcher` into separate GitHub Actions jobs
 (`plan -> verify-workspace -> {control-plane, jit-runner, watcher}` in
-parallel), reasoning that independent images could build concurrently. Real
-production testing (agent-lcars#441's PR discussion) showed this was wrong
-for two compounding reasons:
+parallel), reasoning that independent images could build concurrently. That
+parallelism bought nothing: **`lcars-build-client` is capped at
+`max_runners: 1`, by design.** jlapenna/homelab's orchestrator config
+comments this exact scale set: "image publishing is serialized by the
+registry anyway, and one holder of the push credential at a time is the
+point." Three dependency-free jobs on that label can never actually run
+concurrently -- only one runner of that label is ever online -- so the
+split's entire premise was moot from the start. That fact alone, independent
+of anything below, is reason enough to prefer one job: no benefit, plus real
+added complexity (job-output plumbing, three duplicated
+checkout/buildx-setup/registry-login sequences).
 
-1. **`lcars-build-client` is capped at `max_runners: 1`, by design.**
-   jlapenna/homelab's orchestrator config comments this exact scale set:
-   "image publishing is serialized by the registry anyway, and one holder
-   of the push credential at a time is the point." Three dependency-free
-   jobs on that label can never actually run concurrently -- only one
-   runner of that label is ever online.
-2. **Splitting into jobs multiplies the per-job runner-provisioning cost.**
-   A real `workflow_dispatch` run of the 5-job version
-   ([run 30869868020](https://github.com/jlapenna/agent-lcars/actions/runs/30869868020))
-   took **52m09s** wall-clock -- slower than the original single-job
-   baseline -- even though the three images' actual build times were each
-   fast (2m16s, 1m34s, 3m12s -- a warm registry cache). The gap was
-   overhead: ~26 minutes queued before `plan` even started, then another
-   ~16 minutes between `verify-workspace` finishing and `control-plane`
-   starting. Every job boundary under a capacity-1 pool appears to pay its
-   own ephemeral-runner cold-start cost, serially -- a cost the original
-   single-job design only ever paid once.
+> **Correction (2026-08-04):** this section previously also claimed the
+> split _measurably cost more wall-clock time_ -- a forced
+> `workflow_dispatch` of the 5-job design
+> ([run 30869868020](https://github.com/jlapenna/agent-lcars/actions/runs/30869868020))
+> took 52m09s, cited as "slower than the original single-job baseline." That
+> attribution was wrong, caught by the user pushing back on "why would
+> spinning up an already-built image over LAN take 15 minutes?" -- a fair
+> question the original writeup never actually answered. What really
+> happened: merging the PR that introduced each design (#443, then later
+> #457) auto-triggered its own `push`-triggered `publish-images.yml` run via
+> this same workflow's own paths filter, and the forced `workflow_dispatch`
+> validation run landed in the same `concurrency: group: publish-images,
+cancel-in-progress: false` group as that already-running automatic run --
+> so the "cold start" observed in _both_ the 5-job and single-job validation
+> runs was almost entirely each dispatch queuing behind itself, not a
+> property of runner count or job count. A clean run with nothing else in
+> that concurrency group ([run 30878411972](https://github.com/jlapenna/agent-lcars/actions/runs/30878411972))
+> measured a 13-second queue delay -- there is no multi-minute scale-up cost
+> on this pool at all when nothing else is contending for it. One ~16-minute
+> gap between two jobs inside the original 5-job run remains genuinely
+> unexplained (it happened entirely within one run, so the concurrency-group
+> finding above doesn't cover it) and correlated suspiciously with the
+> runner-autoscaler control-plane container itself restarting seconds before
+> the next job started -- but no confirmed trigger for that restart was
+> found, and no clean (uncontaminated) measurement of the 5-job design was
+> ever taken. It's left here as an open question, not a settled fact the
+> way the original text presented it.
 
-Given (1), job-level parallelism bought nothing this pool could ever use;
-given (2), it actively cost more on the very case (rebuilding everything)
-the split was supposed to leave no worse off. Step-level `if:` gates inside
-one job get the same "skip unrelated image work" benefit -- the actual
-point of agent-lcars#441 -- without either problem, at the cost of never
-attempting real concurrency (which, per (1), was never available anyway).
+Step-level `if:` gates inside one job get the same "skip unrelated image
+work" benefit -- the actual point of agent-lcars#441 -- as the reverted
+design, without its added complexity, and without ever needing real
+concurrency (which, per the `max_runners: 1` constraint, was never available
+anyway).
 
 ## Recorded run durations
 
-| Scenario                                                       | Before (serial, single job, no routing)                                                                                                  | After (single job, step-level routing)                                                                                                                                                                |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Representative full run (all three images legitimately change) | 20m02s ([run 30863366962](https://github.com/jlapenna/agent-lcars/actions/runs/30863366962))                                             | 28m10s: 15m19s queued + 12m50s execution ([run 30875061766](https://github.com/jlapenna/agent-lcars/actions/runs/30875061766)) -- close to the original baseline and a single queueing wait, not five |
-| Watcher deployment-config-only (#440)                          | 19m57s wall-clock (~17m44s queued), no image built ([run 30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750)) | No workflow run created (excluded by the `on.push.paths` negation) -- 0 builder capacity consumed                                                                                                     |
-| Bundle-input-only change (watcher app source or a shared lib)  | ~20m02s (same as the full run -- no routing existed)                                                                                     | _to record: first post-merge push touching only bundle inputs -- expect the workspace gate + bundle smoke-test + two image steps_                                                                     |
-| Full rebuild, split into 5 jobs (reverted design)              | n/a                                                                                                                                      | 52m09s ([run 30869868020](https://github.com/jlapenna/agent-lcars/actions/runs/30869868020)) -- see "Job graph" above for why this was slower, not faster, and why it was reverted                    |
+| Scenario                                                       | Before (serial, single job, no routing)                                                                                                  | After (single job, step-level routing)                                                                                                                                                                                   |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Representative full run (all three images legitimately change) | 20m02s ([run 30863366962](https://github.com/jlapenna/agent-lcars/actions/runs/30863366962))                                             | **16m43s: 13s queued + 16m28s execution** ([run 30878411972](https://github.com/jlapenna/agent-lcars/actions/runs/30878411972)) -- clean measurement, nothing else in the `publish-images` concurrency group at the time |
+| Watcher deployment-config-only (#440)                          | 19m57s wall-clock (~17m44s queued), no image built ([run 30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750)) | No workflow run created (excluded by the `on.push.paths` negation) -- 0 builder capacity consumed                                                                                                                        |
+| Bundle-input-only change (watcher app source or a shared lib)  | ~20m02s (same as the full run -- no routing existed)                                                                                     | _to record: first post-merge push touching only bundle inputs -- expect the workspace gate + bundle smoke-test + two image steps_                                                                                        |
 
-The "before" rows, the reverted-design row, and the single-job full-run row
-are concrete evidence already gathered (the latter two both forced via
-`workflow_dispatch` specifically to validate this design in production --
-see #441/#443/#457's PR discussions). The one remaining "after" row needs a
-real push that touches only bundle inputs (a `workflow_dispatch` always
-plans every image, so it can't produce this data point) -- update this
-table from the Actions run list the first time that occurs.
+The "before" rows and the clean single-job full-run row are concrete,
+uncontaminated evidence. Two earlier `workflow_dispatch` validation runs
+(one for the reverted 5-job design, one for this single-job design) each
+measured 15-52 minutes with large queue delays -- both later found to be
+mostly an artifact of colliding with an automatic push-triggered run in the
+same concurrency group, not a property of either design; see the "Job
+graph" section's correction above for the full story rather than treating
+either of those two numbers as current evidence. The one remaining "after"
+row needs a real push that touches only bundle inputs (a `workflow_dispatch`
+always plans every image, so it can't produce this data point) -- update
+this table from the Actions run list the first time that occurs.
