@@ -30,7 +30,23 @@ const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
 const CANARY_TITLE_PREFIX = '[dispatch-canary]';
 const LIVE_URL_PROBE_MAX_ATTEMPTS = 5;
 const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
-const LEDGER_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+// A canary lifecycle round-trips through agent-router.yml's `broker` job
+// TWICE (once to dispatch the worker for the `canary` intent, once to
+// process the worker's `completion` callback), and each hop needs the
+// self-hosted DEFAULT_RUNNER_LABEL fleet to pick up a fresh job. That
+// pickup is normally sub-second (apps/runner-autoscaler provisions a
+// runner container on an always-on host, not a VM boot -- see its own
+// `runner_start_duration_seconds` metric, bucketed to a 10s ceiling), but
+// fleet-capacity contention can occasionally queue a `broker` job for
+// several minutes before any runner claims it. #436 (and #425, #435)
+// were false-positive canary failures caused by exactly this: production
+// evidence showed one hop alone taking up to ~16.6 minutes, and one
+// two-hop round trip totaling ~20 minutes, while the dispatch broker
+// itself completed every one of those generations successfully -- the
+// ledger just hadn't caught up before this poll gave up. 25 minutes
+// keeps a real, bounded budget (a genuinely wedged broker still fails
+// loud) while comfortably covering the worst round trip observed so far.
+const LEDGER_POLL_TIMEOUT_MS = 25 * 60 * 1000;
 // Mirrors dispatch-broker/main.mjs's handleCompletion poll-until-terminal
 // backoff (same start/cap/doubling shape) rather than a flat interval: start
 // small so a fast-completing canary is detected quickly, double each
@@ -47,8 +63,8 @@ const TERMINAL_REJECTED_STATES = new Set([
 // a job-level `timeout-minutes` or an operator/workflow cancellation tears
 // down the whole runner process, including anything still awaiting inside
 // pollCanaryLedger, before that catch block ever runs. Neither
-// dispatch-canary.yml (timeout-minutes: 15) nor post-deploy-smoke.yml
-// (timeout-minutes: 15) has a separate cleanup job to survive that -- this
+// dispatch-canary.yml (timeout-minutes: 35) nor post-deploy-smoke.yml
+// (timeout-minutes: 35) has a separate cleanup job to survive that -- this
 // canary is a small, self-contained workflow, not embedded in
 // deploy-console.yml's own job, so there is no natural place to split
 // "verify" and "cleanup" into two jobs the way the epic design audit (#301)
@@ -60,11 +76,13 @@ const TERMINAL_REJECTED_STATES = new Set([
 // issue is found and closed/parked within one hour at the very most --
 // still "automatically cleaned up" per #307's acceptance bar, just not
 // synchronously. The threshold is comfortably beyond
-// LEDGER_POLL_TIMEOUT_MS (10 min) plus both orchestrators' own
-// timeout-minutes: 15 job budget and ordinary API/network overhead: an
-// open, marked canary issue older than this can only mean its own
-// orchestrator run never reached its own cleanup path.
-const STALE_CANARY_AGE_MS = 30 * 60 * 1000;
+// LEDGER_POLL_TIMEOUT_MS (25 min) plus both orchestrators' own
+// timeout-minutes: 35 job budget and ordinary API/network overhead, while
+// staying under dispatch-canary.yml's hourly cadence so a genuinely killed
+// run is still swept by the very next scheduled pass: an open, marked
+// canary issue older than this can only mean its own orchestrator run
+// never reached its own cleanup path.
+const STALE_CANARY_AGE_MS = 50 * 60 * 1000;
 
 function env(name, required = true) {
   const value = process.env[name];

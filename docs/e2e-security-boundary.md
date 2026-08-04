@@ -71,9 +71,9 @@ instead, `dispatch-canary.yml`'s existing hourly run also sweeps stale
 canaries left behind by a previous run of either orchestrator
 (`run.mjs`'s `sweepStaleCanaries`, `sweep-stale-canaries: true` only on
 that caller): it lists open issues, filters to this canary's own title
-prefix and marker, and for every candidate more than 30 minutes old --
+prefix and marker, and for every candidate more than 50 minutes old --
 comfortably past both orchestrators' `LEDGER_POLL_TIMEOUT_MS` and
-`timeout-minutes: 15` budgets -- closes it if its ledger already shows a
+`timeout-minutes: 35` budgets -- closes it if its ledger already shows a
 successful completion or parks `status:needs-human` otherwise. This is the
 deterministic-rediscovery scheduled/manual janitor backstop layer the
 design audit calls for; a killed run's issue is still found and either
