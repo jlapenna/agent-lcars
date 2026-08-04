@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
 )
 
 func testCheckpoint() checkpointFile {
@@ -379,5 +381,78 @@ func TestQuiesceCheckpointsEvenIfGenerationHangs(t *testing.T) {
 	}
 	if _, err := loadCheckpoint(path); err != nil {
 		t.Fatalf("expected a checkpoint despite the hung generation: %v", err)
+	}
+}
+
+// agent-lcars#511: the boot sweep used to run hosts serially, so one wedged
+// fleet host stalled every host after it -- and since each scale set runs its
+// own boot sweep before its listener connects, every scale set paid that
+// stall independently. Wall-clock is the honest assertion here: with N slow
+// hosts, serial costs N*delay and concurrent costs ~delay.
+func TestCleanupOrphansSweepsHostsConcurrently(t *testing.T) {
+	const delay = 400 * time.Millisecond
+	const hosts = 4
+
+	scaler := &Scaler{
+		scaleSetName:   "myset",
+		runners:        runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	for i := range hosts {
+		f := newFakeDockerServer(t)
+		f.setListDelay(delay)
+		scaler.dockerHosts = append(scaler.dockerHosts, DockerHost{
+			Name: fmt.Sprintf("host-%d", i), Client: f.client(t),
+		})
+	}
+
+	start := time.Now()
+	scaler.cleanupOrphans(context.Background(), true)
+	elapsed := time.Since(start)
+
+	if serial := hosts * delay; elapsed >= serial {
+		t.Fatalf("sweep took %v, at least the serial cost %v -- hosts are not being swept concurrently", elapsed, serial)
+	}
+}
+
+// An unreachable host must be skipped rather than blocking the sweep, and
+// must not stop the reachable hosts from being swept. Skipping is already the
+// behavior when the list call itself errors; the ping gate just reaches that
+// outcome without waiting out a transport timeout first.
+func TestCleanupOrphansSkipsUnreachableHostAndSweepsTheRest(t *testing.T) {
+	old := time.Now().Add(-time.Hour).Unix()
+	ours := map[string]string{runnerScaleSetLabelKey: "myset"}
+
+	healthy := newFakeDockerServer(t)
+	healthy.setContainers([]container.Summary{
+		{ID: "dead", Names: []string{"/runner-dead"}, Labels: ours, State: container.StateExited, Created: old},
+	})
+
+	// Port 1 refuses immediately: an unreachable host without making the
+	// test wait on a real transport timeout.
+	unreachable, err := dockerclient.NewClientWithOpts(
+		dockerclient.WithHost("tcp://127.0.0.1:1"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scaler := &Scaler{
+		scaleSetName: "myset",
+		dockerHosts: []DockerHost{
+			{Name: "unreachable", Client: unreachable},
+			{Name: "healthy", Client: healthy.client(t)},
+		},
+		runners:        runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	scaler.cleanupOrphans(context.Background(), true)
+
+	removed := healthy.removedIDs()
+	if len(removed) != 1 || removed[0] != "dead" {
+		t.Fatalf("healthy host should still have been swept despite an unreachable peer, removed=%v", removed)
 	}
 }
