@@ -75,14 +75,22 @@ const TERMINAL_REJECTED_STATES = new Set([
 // unconditionally, before creating its own new canary, so a killed run's
 // issue is found and closed/parked within one hour at the very most --
 // still "automatically cleaned up" per #307's acceptance bar, just not
-// synchronously. The threshold is comfortably beyond
-// LEDGER_POLL_TIMEOUT_MS (25 min) plus both orchestrators' own
-// timeout-minutes: 35 job budget and ordinary API/network overhead, while
-// staying under dispatch-canary.yml's hourly cadence so a genuinely killed
-// run is still swept by the very next scheduled pass: an open, marked
-// canary issue older than this can only mean its own orchestrator run
-// never reached its own cleanup path.
-const STALE_CANARY_AGE_MS = 50 * 60 * 1000;
+// synchronously. Pinned to exactly both orchestrators' own
+// timeout-minutes: 35 job budget, not padded beyond it (PR #448 review):
+// GitHub Actions kills a job the instant its own runtime hits
+// timeout-minutes, so an open, marked canary issue older than that value
+// can ONLY mean its own orchestrator run was killed before reaching its
+// cleanup path -- there is no earlier moment at which that's already
+// guaranteed true, and no later one is needed. Padding this further (as
+// an earlier version of this comment reasoned "comfortably beyond" the
+// job budget) only shrinks the window in which an orphan is stale enough
+// to sweep but not yet old enough to pass this filter -- for an orphan
+// that lands in that window right before an hourly pass, the janitor
+// skips it and it waits a full extra cycle, silently breaking the "next
+// pass" guarantee above. Keeping this well under the hourly cadence (35
+// min < 60 min) still guarantees a genuinely killed run is swept by the
+// very next scheduled pass.
+const STALE_CANARY_AGE_MS = 35 * 60 * 1000;
 
 function env(name, required = true) {
   const value = process.env[name];
