@@ -645,6 +645,7 @@ export function ActionItemCard({
               size="sm"
               label="Unstick"
               defaultContext={`#${item.number} ${item.title}`}
+              repo={item.repo}
             />
           )}
         </Group>

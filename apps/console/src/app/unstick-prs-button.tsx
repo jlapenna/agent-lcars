@@ -20,10 +20,15 @@ export function UnstickPrsButton({
   size = 'compact-sm',
   label = 'Run unstick-prs',
   defaultContext = '',
+  repo,
 }: {
   size?: string;
   label?: string;
   defaultContext?: string;
+  /** The item's repo when dispatching from a card - omitted, the action
+   * falls back to the primary watched repo (the old, wrong-for-secondary
+   * -repos behavior, now only a last resort for the global variant). */
+  repo?: { owner: string; name: string };
 }) {
   const [opened, setOpened] = useState(false);
   const [context, setContext] = useState(defaultContext);
@@ -32,7 +37,10 @@ export function UnstickPrsButton({
   const handleDispatch = () => {
     setOpened(false);
     startTransition(async () => {
-      const result = await dispatchUnstickPrs(context.trim() || undefined);
+      const result = await dispatchUnstickPrs(
+        context.trim() || undefined,
+        repo,
+      );
       if (!result.ok) {
         notifications.show({ message: result.message, color: 'red' });
         return;
