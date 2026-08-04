@@ -32,6 +32,7 @@ vi.mock('./cancel-run-button', () => ({
 // rather than imported for real - agent-activity.test.ts is the source of
 // truth for their actual behavior; keep these in sync with it.
 vi.mock('../lib/agent-activity', () => ({
+  RECENT_RUN_LIMIT: 8,
   RUN_TIMEOUT_MINUTES: 90,
   MAX_TURNS_BUDGET: 200,
   QUEUE_STALL_THRESHOLD_SECONDS: 300,
