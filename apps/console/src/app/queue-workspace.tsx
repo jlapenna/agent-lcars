@@ -8,7 +8,7 @@ import {
 } from '@tabler/icons-react';
 import { useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { ActionType } from '../lib/action-items';
 import type { WatchedRepo } from '../lib/watched-repo';
@@ -89,6 +89,16 @@ export function QueueWorkspace({
     parseQueueSort(searchParams.get(SORT_PARAM)),
   );
   const { muted, mute, unmute } = useMutedItems();
+
+  // Browser Back/Forward (and any same-route navigation that changes the
+  // query) must resync the controls: the useState initializers above only
+  // run on mount, while useSearchParams keeps updating. Our own
+  // history.replaceState writes land here too - setState with an unchanged
+  // value is a bail-out, so that echo is benign. (Codex review on #469.)
+  useEffect(() => {
+    setFilter(parseQueueFilter(searchParams.get(REASON_PARAM)));
+    setSort(parseQueueSort(searchParams.get(SORT_PARAM)));
+  }, [searchParams]);
 
   // Mirror the controls into the URL without a server round-trip -
   // history.replaceState is the App Router's sanctioned shallow update, and

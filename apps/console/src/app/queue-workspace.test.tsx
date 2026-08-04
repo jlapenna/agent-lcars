@@ -12,12 +12,22 @@ import {
 } from './queue-workspace';
 
 let mockSearch = 'repo=agent%2Flcars';
+// Identity-stable per value, matching the real hook: useSearchParams only
+// returns a new object when the URL actually changes, and the workspace's
+// resync effect keys off that identity.
+let cachedParams: [string, URLSearchParams] | undefined;
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(mockSearch),
+  useSearchParams: () => {
+    if (!cachedParams || cachedParams[0] !== mockSearch) {
+      cachedParams = [mockSearch, new URLSearchParams(mockSearch)];
+    }
+    return cachedParams[1];
+  },
 }));
 
 afterEach(() => {
   mockSearch = 'repo=agent%2Flcars';
+  cachedParams = undefined;
   vi.restoreAllMocks();
 });
 vi.mock('./action-item-card', () => ({
@@ -212,6 +222,41 @@ describe('QueueWorkspace', () => {
     expect(screen.getByText('Responsive Inbox')).toBeTruthy();
     const lastUrl = replaceState.mock.calls.at(-1)?.[2] as string;
     expect(lastUrl).not.toContain('reason=');
+  });
+});
+
+describe('URL resync', () => {
+  it('re-reads filter/sort when the query changes after mount (back/forward)', () => {
+    const view = renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+
+    mockSearch = 'reason=review-requested';
+    view.rerender(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[
+            makeCard(),
+            makeCard({
+              number: 250,
+              title: 'Review the next item',
+              actionTypes: ['review-requested'],
+            }),
+          ]}
+          watchedRepos={[{ owner: 'agent', name: 'lcars' }]}
+          mobileUtilityMenu={<button>More console options</button>}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.queryByText('Responsive Inbox')).toBeNull();
+    expect(screen.getByText('Review the next item')).toBeTruthy();
   });
 });
 
