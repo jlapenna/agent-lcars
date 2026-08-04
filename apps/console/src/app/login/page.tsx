@@ -5,16 +5,26 @@ import { Suspense } from 'react';
 import { auth, signIn, signOut } from '../../auth';
 import { PageLoading } from '../page-loading';
 
-async function LoginPageContent() {
+async function LoginPageContent({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const session = await auth();
   if (session?.user?.isAdmin) {
     redirect('/');
   }
 
-  // Signed in but not an admin: without this branch the page re-renders
-  // the sign-in button with no explanation, and every guarded route
-  // bounces straight back here - it reads as a redirect loop rather than
-  // a permissions decision.
+  // Two ways to be unauthorized, both previously rendered as a bare
+  // sign-in button that read like a redirect loop:
+  // - auth.ts's signIn callback rejects non-admin GitHub logins before a
+  //   session exists; Auth.js then lands here with ?error=AccessDenied -
+  //   the production-path signal (Codex review on #491).
+  // - A session can exist without isAdmin (e.g. the configured admin
+  //   login changed since sign-in); that session-present branch also
+  //   offers sign-out.
+  const { error } = await searchParams;
+  const accessDenied = error === 'AccessDenied';
   const signedInAs = session?.user?.email ?? session?.user?.name;
 
   return (
@@ -24,6 +34,12 @@ async function LoginPageContent() {
         <Text c="dimmed" ta="center" mb="md">
           supersprinklesracing/sprinkles &mdash; Claude issue agent activity
         </Text>
+        {accessDenied && !session && (
+          <Text ta="center" size="sm" data-testid="login-unauthorized">
+            That GitHub account isn&rsquo;t authorized for this console. Sign in
+            with the maintainer account.
+          </Text>
+        )}
         {session ? (
           <>
             <Text ta="center" size="sm" data-testid="login-unauthorized">
@@ -62,10 +78,14 @@ async function LoginPageContent() {
 // `cacheComponents` requires uncached data access to sit inside a Suspense
 // boundary, so the page body streams in behind 2-row placeholder rather
 // than blocking the whole route on the GitHub/Firestore reads.
-export default function LoginPage() {
+export default function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   return (
     <Suspense fallback={<PageLoading rows={2} />}>
-      <LoginPageContent />
+      <LoginPageContent searchParams={searchParams} />
     </Suspense>
   );
 }
