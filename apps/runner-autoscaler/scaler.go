@@ -2149,7 +2149,14 @@ fi
 	if externalsHealthSkipped(string(out)) {
 		// This runner_image has no agent-lcars externals-health.sh baked in
 		// (e.g. homelab-autoscale-e2e's third-party-built e2e-runner) -- the
-		// check never applies here, not a failure worth a gauge or a WARN.
+		// check never applies here, not a failure worth a WARN. Delete rather
+		// than leave any prior value in place: validateReloadCompatibility
+		// permits a scale set's runner_image to change on a live reload, and
+		// this gauge is a process-lifetime resource that survives generation
+		// replacement -- if this host previously reported 0/1 under an image
+		// that HAD the health script, an image swap to one that doesn't must
+		// not leave that now-inapplicable reading exported forever.
+		hostExternalsHealthyGauge.DeleteLabelValues(host)
 		return nil
 	}
 	healthy, healthOK := parseExternalsHealthOutput(string(out))
