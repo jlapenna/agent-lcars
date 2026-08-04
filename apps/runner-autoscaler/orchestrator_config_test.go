@@ -178,6 +178,15 @@ func TestValidateReloadCompatibilityRejectsProcessLifetimeChanges(t *testing.T) 
 			body: strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway", 1),
 			want: "cannot change Docker transport",
 		},
+		{
+			// The checkpoint store binds its path at startup, so accepting
+			// this would send every later checkpoint to the OLD file while
+			// the config claimed otherwise -- and a restart would adopt from
+			// a path nothing had written since the reload.
+			name: "changed checkpoint state path",
+			body: strings.Replace(validOrchestratorYAML, "state_path: /var/lib/runner-autoscaler/state.json", "state_path: /var/lib/runner-autoscaler/moved.json", 1),
+			want: "server.state_path",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

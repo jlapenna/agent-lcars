@@ -220,6 +220,16 @@ func verifyCheckpointWritable(path string) error {
 	if err := validateCheckpointPath(path); err != nil {
 		return err
 	}
+	// Reject the path itself being a directory before probing its parent.
+	// Probing only the parent would pass here while every atomic rename onto
+	// the target failed at runtime -- the mandatory check would report a
+	// healthy state path for a deployment that can never checkpoint, which is
+	// the exact silent degradation this check exists to prevent. (A likely
+	// cause is Docker auto-creating the directory from a volume mount whose
+	// target was pointed at the file rather than its parent.)
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return fmt.Errorf("server.state_path %q is a directory; it must be the checkpoint file itself", path)
+	}
 	dir := filepath.Dir(path)
 	info, err := os.Stat(dir)
 	if err != nil {

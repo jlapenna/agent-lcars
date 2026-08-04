@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,6 +161,26 @@ func TestVerifyCheckpointWritableRejectsMissingDirectory(t *testing.T) {
 	ok := filepath.Join(t.TempDir(), "state.json")
 	if err := verifyCheckpointWritable(ok); err != nil {
 		t.Fatalf("expected a writable directory to be accepted, got %v", err)
+	}
+}
+
+// Probing only the parent would pass while every atomic rename onto the
+// target failed, reporting a healthy state path for a deployment that can
+// never checkpoint -- the silent degradation the mandatory check exists to
+// prevent. A plausible cause is a volume mount aimed at the file rather than
+// its parent, which Docker then auto-creates as a directory.
+func TestVerifyCheckpointWritableRejectsDirectoryAtPath(t *testing.T) {
+	dir := t.TempDir()
+	asDir := filepath.Join(dir, "state.json")
+	if err := os.Mkdir(asDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := verifyCheckpointWritable(asDir)
+	if err == nil {
+		t.Fatal("expected a directory at state_path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "is a directory") {
+		t.Fatalf("error should name the cause, got %v", err)
 	}
 }
 

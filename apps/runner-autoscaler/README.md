@@ -246,7 +246,14 @@ Live reload can update scale-set limits, images, resource settings, placement
 policy, weights, credentials, scale sets, and fleet hosts. Added hosts are
 immediately eligible for placements. Removed hosts are cordoned immediately,
 while their tracked runners remain managed until their jobs complete (and are
-dropped on the next reload). The metrics bind address and an existing scale
-set's GitHub registration/runner group are process-lifetime settings;
-removing a scale set remains a drain-and-restart operation. Renaming a host
-is required when its Docker transport changes.
+dropped on the next reload). The metrics bind address, `server.state_path`,
+and an existing scale set's GitHub registration/runner group are
+process-lifetime settings; removing a scale set remains a drain-and-restart
+operation. Renaming a host is required when its Docker transport changes.
+
+`server.state_path` is process-lifetime because the checkpoint store binds
+its path at startup. Accepting a change would send every later checkpoint to
+the _old_ file while the configuration claimed otherwise, and a subsequent
+restart would then adopt from a path nothing had written since the reload.
+A reload that moves it is rejected outright, leaving the current
+configuration running.

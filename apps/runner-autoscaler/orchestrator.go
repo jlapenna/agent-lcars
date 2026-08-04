@@ -365,6 +365,15 @@ func validateReloadCompatibility(current, next resolvedOrchestratorConfig) error
 	if current.Raw.Server.MetricsAddr != next.Raw.Server.MetricsAddr {
 		return fmt.Errorf("server.metrics_addr cannot change during a live reload")
 	}
+	// The checkpoint store binds its path once at startup, so a reload that
+	// moved it would leave every subsequent checkpoint going to the OLD file
+	// while the config claimed otherwise -- and a later restart would then
+	// adopt from a path nothing had written since the reload. Process-lifetime
+	// for the same reason metrics_addr is: the resource is bound before the
+	// reload path can reach it.
+	if current.Raw.Server.StatePath != next.Raw.Server.StatePath {
+		return fmt.Errorf("server.state_path cannot change during a live reload")
+	}
 	currentTargets, _, _ := ParseDockerHosts(current.DockerHosts)
 	nextTargets, _, _ := ParseDockerHosts(next.DockerHosts)
 	for name, currentTarget := range currentTargets {
