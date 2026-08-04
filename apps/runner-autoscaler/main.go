@@ -46,6 +46,12 @@ var cmd = &cobra.Command{
 		if err := resolved.loadCredentials(); err != nil {
 			return err
 		}
+		// Probed before --check-config returns, so the preflight the deploy
+		// runs catches a missing or unwritable state volume rather than the
+		// process discovering it after cutover.
+		if err := verifyCheckpointWritable(resolved.Raw.Server.StatePath); err != nil {
+			return err
+		}
 		if checkOrchestratorConfig {
 			return nil
 		}

@@ -29,6 +29,15 @@ RUN apt-get update \
 # $HOME resolution and fails outright ("No user exists for uid 1001") without
 # a matching /etc/passwd entry — unrelated to the remote login (-l) user.
 RUN useradd --uid 1001 --create-home --shell /usr/sbin/nologin runner-autoscaler
+# State directory for server.state_path's checkpoint. Created here, owned by
+# the runtime uid, specifically so the deployment's named volume inherits that
+# ownership when Docker initializes it from the image on first mount -- a
+# volume mounted over a path the image does not define comes up root-owned,
+# and the process (uid 1001, read_only rootfs) could not write its checkpoint.
+# The mount must be a volume, not a container path: the container filesystem
+# is destroyed by the very restart the checkpoint exists to make safe.
+RUN mkdir -p /var/lib/runner-autoscaler \
+ && chown 1001:1001 /var/lib/runner-autoscaler
 COPY --from=build /out/runner-autoscaler /usr/local/bin/runner-autoscaler
 USER 1001:1001
 ENTRYPOINT ["/usr/local/bin/runner-autoscaler"]
