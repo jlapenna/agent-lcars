@@ -59,16 +59,28 @@ export function QueueItemRow({
                 {repoDisplayName(item.repo)} / #{item.number}
               </Text>
             </Group>
-            {reason && (
-              <Badge
-                color={reason.color}
-                variant="light"
-                size="sm"
-                className="queue-reason-badge"
-              >
-                {reason.label}
-              </Badge>
-            )}
+            <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+              {reason && (
+                <Badge
+                  color={reason.color}
+                  variant="light"
+                  size="sm"
+                  className="queue-reason-badge"
+                >
+                  {reason.label}
+                </Badge>
+              )}
+              {item.ciRunning && (
+                <Badge
+                  color="indigo"
+                  variant="light"
+                  size="sm"
+                  className="ci-running-badge"
+                >
+                  CI running
+                </Badge>
+              )}
+            </Group>
           </Group>
 
           <Text

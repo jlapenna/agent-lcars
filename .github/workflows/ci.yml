@@ -27,7 +27,15 @@ jobs:
     # -race`), which needs cgo -- the runner image now bakes in a C
     # toolchain (gcc/libc6-dev, #410) via EXTRA_APT_PACKAGES, so this no
     # longer needs the ubuntu-latest carve-out it had between #408 and #410.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
+    #
+    # CI_RUNNER_LABEL, not DEFAULT_RUNNER_LABEL (#451): this job runs up to
+    # 30 minutes, and DEFAULT_RUNNER_LABEL's pool is a 2-runner glue-job
+    # pool that agent-router.yml's own dispatch-broker routing depends on
+    # staying fast -- sharing it with this job queued broker-job pickup for
+    # up to 16.6 minutes and produced #425/#435/#436's false-positive
+    # dispatch-canary timeouts. CI_RUNNER_LABEL is its own dedicated pool
+    # (homelab's homelab-autoscale-lcars-ci) sized for long-running jobs.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_RUNNER_LABEL }}
     timeout-minutes: 30
 
     steps:
@@ -130,7 +138,9 @@ jobs:
     # codeql.yml's `analyze` job for the same rationale in more detail).
     # No cgo dependency here (that's the `verify` job's problem), so this
     # job doesn't need the ubuntu-latest carve-out `verify` currently has.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
+    # CI_RUNNER_LABEL, not DEFAULT_RUNNER_LABEL -- see the `verify` job
+    # above for why (#451).
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_RUNNER_LABEL }}
     timeout-minutes: 20
 
     steps:
