@@ -40,13 +40,17 @@ name: Publish images
 # capped at `max_runners: 1` in jlapenna/homelab's orchestrator config
 # ("image publishing is serialized by the registry anyway, and one holder of
 # the push credential at a time is the point"), so those jobs could never
-# actually run concurrently. Worse, a real dispatch run measured 52m09s
-# across 5 separate jobs -- slower than the original single-job baseline --
-# apparently from each job paying its own ephemeral-runner cold-start cost
-# under that capacity-1 pool, rather than paying it once. Step-level `if:`
-# gates get the same "skip unrelated image work" benefit as separate jobs
-# without that per-job provisioning tax; see
-# docs/image-publish-routing.md for the full writeup. See
+# actually run concurrently: no benefit, for real added complexity (job
+# output plumbing, three duplicated checkout/buildx-setup/registry-login
+# sequences). An early real dispatch of the 5-job version measured 52m09s
+# and was first blamed on a per-job runner cold-start tax -- that
+# explanation turned out to be wrong (the delay was almost entirely the
+# dispatch queuing behind an unrelated already-running publish in this
+# workflow's own concurrency group, not a property of job count; see
+# docs/image-publish-routing.md's dated correction for the full story).
+# Step-level `if:` gates still get the same "skip unrelated image work"
+# benefit as separate jobs, with less complexity and without ever needing
+# concurrency this pool can't provide anyway. See
 # `.github/actions/plan-image-publish/plan.mjs` for the routing rules and
 # the bundle-input invariant they preserve.
 #
