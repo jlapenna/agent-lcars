@@ -27,15 +27,15 @@ class GitHubApiError extends Error {
   }
 }
 
-// Thrown by `validateBrokerConcurrencyResponse` (the event-triggered path)
-// and `checkDispatchBrokerConcurrency` (the workflow_dispatch-triggered
-// path, #348). `retryable` marks the failure modes that can resolve with
-// more time: the event-triggered path's expected group simply hasn't
-// materialized in its own listing yet; the dispatch-triggered path found
-// another in-progress run currently reporting the group, which may finish
-// imminently. Every other failure mode (config mismatch, malformed
-// response, more than one match) is a real anomaly and must never be
-// retried.
+// Thrown by `validateBrokerConcurrencyResponse` (the direct, own-listing
+// path) and `checkIndirectBrokerConcurrency` (the indirect path used for
+// event types whose own listing is unreliable, #348). `retryable` marks the
+// failure modes that can resolve with more time: the direct path's
+// expected group simply hasn't materialized in its own listing yet; the
+// indirect path found another in-progress run currently reporting the
+// group, which may finish imminently. Every other failure mode (config
+// mismatch, malformed response, more than one match) is a real anomaly and
+// must never be retried.
 //
 // A `retryable: true` error that survives verifyBrokerConcurrency's full
 // retry budget has two possible explanations that look identical from
@@ -136,12 +136,11 @@ function brokerConcurrencyGroup(task) {
   return `agent-lcars-dispatch-v1-${task.repositoryId}-${task.issue}`;
 }
 
-// Shared by validateBrokerConcurrencyResponse (the event-triggered path) and
-// checkDispatchBrokerConcurrency (the workflow_dispatch-triggered path,
-// #348): a config mismatch between a run's own supplied group and its
-// TaskRef-derived expected group is never explained by listing lag — it
-// means the two disagree right now and will keep disagreeing on every
-// retry.
+// Shared by validateBrokerConcurrencyResponse (the direct, own-listing path)
+// and checkIndirectBrokerConcurrency (the indirect path, #348): a config
+// mismatch between a run's own supplied group and its TaskRef-derived
+// expected group is never explained by listing lag — it means the two
+// disagree right now and will keep disagreeing on every retry.
 function assertSuppliedGroupMatches(suppliedGroup, expected) {
   if (suppliedGroup !== expected) {
     throw new BrokerConcurrencyMismatchError(
@@ -204,7 +203,7 @@ async function fetchAndValidateOwnListing(api, task, runId, suppliedGroup) {
 }
 
 // Bounds how many other in-progress `agent-router.yml` runs are checked per
-// dispatch-run verification attempt. Realistically there are only ever a
+// indirect-verification attempt. Realistically there are only ever a
 // handful of concurrently in-progress router runs; this just keeps API
 // usage bounded, mirroring SUPERSEDING_RUN_CANDIDATE_LIMIT below.
 const DISPATCH_CONFLICT_CANDIDATE_LIMIT = 20;
@@ -222,19 +221,34 @@ const DISPATCH_CONFLICT_CANDIDATE_LIMIT = 20;
 // which is exactly #348's bug (a 100% failure rate for every
 // workflow_dispatch-triggered broker run).
 //
+// #348 reopened, 2026-08-04: the same is true of pull_request-triggered
+// runs. PR #349's original fix assumed "event-triggered runs (issues,
+// issue_comment, pull_request)" all shared issues' reliable self-listing,
+// but that was never actually sampled for pull_request -- production
+// evidence says otherwise: every pull_request-triggered `agent-router.yml`
+// run has failed this same check with a 100% failure rate since the
+// broker's introduction (run 30737200685 onward), and a failing run's own
+// listing was re-probed and still empty hours later, ruling out ordinary
+// lag. pull_request-triggered runs are therefore routed onto the same
+// indirect path as workflow_dispatch below. issues and issue_comment
+// remain the only trigger types confirmed to self-report reliably.
+//
 // `findConflictingRouterRun` verifies an equivalent invariant indirectly
 // instead: it confirms no OTHER currently in-progress `agent-router.yml`
-// run reports (via ITS OWN listing, which is reliable for event-triggered
-// runs) holding this run's expected concurrency group. The broker job's
+// run reports (via ITS OWN listing, which is reliable only for
+// issues/issue_comment-triggered runs) holding this run's expected
+// concurrency group. The broker job's
 // `concurrency: { group, cancel-in-progress: false, queue: max }` block
 // already guarantees GitHub itself never runs two broker jobs for the same
 // group at once; this indirect check confirms that guarantee is actually
 // holding for THIS run, the same thing the direct listing check confirms
-// for event-triggered runs -- it just can't observe this run's own
-// membership, only the absence of a conflicting one held by another run.
-// It cannot detect two simultaneous dispatch-triggered runs racing each
-// other (neither would ever self-report), so that residual gap is a known,
-// accepted limitation rather than a silently assumed absence of risk.
+// for issues/issue_comment-triggered runs -- it just can't observe this
+// run's own membership, only the absence of a conflicting one held by
+// another run. It cannot detect two simultaneous runs of an
+// unreliable-self-listing trigger type (workflow_dispatch or pull_request)
+// racing each other -- including one of each -- since neither would ever
+// self-report; that residual gap is a known, accepted limitation rather
+// than a silently assumed absence of risk.
 //
 // A candidate whose own listing request fails is NOT proof it is clean
 // (PR #349 review, P1): if the one candidate that actually holds the group
@@ -296,18 +310,18 @@ async function findConflictingRouterRun(api, task, runId) {
   return undefined;
 }
 
-async function checkDispatchBrokerConcurrency(api, task, runId, suppliedGroup) {
+async function checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup) {
   const expected = brokerConcurrencyGroup(task);
-  // Same config-mismatch defense as the event-triggered path: never
-  // explained by eventual consistency, so never retryable.
+  // Same config-mismatch defense as the direct path: never explained by
+  // eventual consistency, so never retryable.
   assertSuppliedGroupMatches(suppliedGroup, expected);
   const conflicting = await findConflictingRouterRun(api, task, runId);
   if (conflicting) {
     // Retryable: the conflicting run may simply be mid-flight (about to
-    // complete) or -- indistinguishably from here -- this dispatch run
-    // itself may be the one that got queue-evicted (#344/#345), in which
-    // case main.mjs's wasSupersededEviction disambiguates once retries are
-    // exhausted, exactly as it already does for the event-triggered path.
+    // complete) or -- indistinguishably from here -- this run itself may
+    // be the one that got queue-evicted (#344/#345), in which case
+    // main.mjs's wasSupersededEviction disambiguates once retries are
+    // exhausted, exactly as it already does for the direct path.
     throw new BrokerConcurrencyMismatchError(
       `Another in-progress agent-router.yml run (${conflicting.id}) ` +
         `reports holding broker concurrency group ${expected}`,
@@ -316,6 +330,16 @@ async function checkDispatchBrokerConcurrency(api, task, runId, suppliedGroup) {
   }
   return { group_name: expected, group_members: [] };
 }
+
+// Trigger types whose own `/actions/runs/{id}/concurrency_groups` listing
+// never materializes -- see the comment above `findConflictingRouterRun`
+// for the empirical evidence behind each. issues and issue_comment are the
+// only trigger types confirmed to self-report reliably, so they alone keep
+// using the direct, own-listing check.
+const UNRELIABLE_OWN_LISTING_EVENTS = new Set([
+  'workflow_dispatch',
+  'pull_request',
+]);
 
 async function verifyBrokerConcurrency(
   api,
@@ -329,20 +353,19 @@ async function verifyBrokerConcurrency(
     eventName,
   } = {},
 ) {
-  const isDispatchTriggered = eventName === 'workflow_dispatch';
+  const usesIndirectVerification = UNRELIABLE_OWN_LISTING_EVENTS.has(eventName);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const result = isDispatchTriggered
-        ? await checkDispatchBrokerConcurrency(api, task, runId, suppliedGroup)
+      const result = usesIndirectVerification
+        ? await checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup)
         : await fetchAndValidateOwnListing(api, task, runId, suppliedGroup);
-      if (isDispatchTriggered) {
+      if (usesIndirectVerification) {
         console.log(
           '::notice::' +
-            `Dispatch-triggered broker run ${runId} verified concurrency ` +
+            `${eventName}-triggered broker run ${runId} verified concurrency ` +
             `group ${suppliedGroup} indirectly (#348: GitHub never reports ` +
-            'concurrency-group membership for workflow_dispatch runs). No ' +
-            'other in-progress agent-router.yml run currently reports ' +
-            'holding it.',
+            `concurrency-group membership for ${eventName} runs). No other ` +
+            'in-progress agent-router.yml run currently reports holding it.',
         );
       }
       return result;
