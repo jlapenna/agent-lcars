@@ -223,6 +223,24 @@ authoritative for existence. A container the checkpoint does not mention
 falls back to the process probe, so a first boot, a corrupt file, or a
 newly added scale set all still work.
 
+### Boot sweep and unreachable hosts
+
+The boot sweep that performs adoption runs one goroutine per fleet host, and
+gates each on a short reachability probe. Both matter for how quickly the
+control plane becomes useful again, because every scale set runs its own
+sweep before its listener connects: swept serially, one wedged host delayed
+every host behind it, and every scale set paid that delay independently.
+
+An unreachable host is skipped with a log line rather than waited on. Its
+containers are simply not adopted on that pass — already what happened when
+the list call itself failed — and the periodic sweeper picks them up once the
+host returns.
+
+Note that a host being unreachable is not the same as it being slow to
+answer. SSH's `ConnectTimeout` bounds only the TCP connect, so a host that
+accepts the connection and then never completes its banner exchange is not
+covered by it; the per-host calls carry their own deadlines for that case.
+
 ### Configuration
 
 `server.state_path` is **required**, and required to be an absolute path in
