@@ -7,6 +7,7 @@ import { repoDisplayName } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
+import { RelativeTime } from './relative-time';
 
 export function QueueItemRow({
   card,
@@ -21,7 +22,7 @@ export function QueueItemRow({
   muted?: boolean;
   onToggleMute?: () => void;
 }) {
-  const { item, updatedAtLabel } = card;
+  const { item } = card;
   const reason = queueReasonFor(item);
   const hiddenLabels = queueDisclosureLabels(item);
 
@@ -97,7 +98,7 @@ export function QueueItemRow({
           <Group justify="space-between" gap="xs" wrap="nowrap">
             <Text component="span" size="xs" c="dimmed" truncate>
               {item.author ? `by ${item.author} · ` : ''}
-              {updatedAtLabel}
+              <RelativeTime iso={item.updatedAt} variant="compact" />
             </Text>
             {hiddenLabels.length > 0 && (
               <Badge
