@@ -1524,78 +1524,125 @@ const (
 // any runner has been started.
 func (a *Scaler) cleanupOrphans(ctx context.Context, boot bool) {
 	a.logger.Info("Checking for orphaned runner containers across docker hosts", slog.Bool("boot", boot))
+	// One goroutine per host, mirroring pickHostLocked and pullRunnerImages.
+	// Serially, a single wedged fleet host stalled every host after it in the
+	// list -- and because initializeGitHubScaleSet runs this before its
+	// listener connects, every scale set paid that stall independently before
+	// it could accept work (agent-lcars#511: ~70s to reach all listeners up,
+	// with the process itself down for barely a second).
+	var wg sync.WaitGroup
 	for _, h := range a.dockerHosts {
-		containers, err := h.Client.ContainerList(ctx, container.ListOptions{All: true})
-		if err != nil {
-			a.logger.Warn("Failed to list containers on docker host during orphan cleanup", slog.String("host", h.Name), slog.String("error", err.Error()))
+		wg.Add(1)
+		go func(h DockerHost) {
+			defer wg.Done()
+			a.cleanupOrphansOnHost(ctx, h, boot)
+		}(h)
+	}
+	wg.Wait()
+	a.runnersChanged()
+}
+
+// hostReachableTimeout bounds the reachability probe that gates each host's
+// orphan sweep. Same 5s budget pickHostLocked uses, for the same reason: a
+// cold SSH handshake can exceed a tighter bound and would flap a healthy host.
+const hostReachableTimeout = 5 * time.Second
+
+// orphanSweepHostTimeout bounds the actual sweep work per host, after the
+// reachability probe has passed. The probe alone is not enough -- a host can
+// answer a ping and then wedge mid-transfer, and SSH's ConnectTimeout covers
+// only TCP connect, not a server that accepts the connection and never
+// completes the banner exchange (the live agent-lcars#511 failure mode).
+const orphanSweepHostTimeout = 60 * time.Second
+
+// cleanupOrphansOnHost runs the sweep for one fleet host. Safe to call
+// concurrently for different hosts: every runnerState mutation below takes
+// its mutex, and each host owns a disjoint set of containers.
+func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bool) {
+	// Fail fast on an unreachable host rather than blocking the sweep on it.
+	// Skipping means its containers are not adopted on this pass -- already
+	// the behavior when the list call itself errored, and the periodic
+	// sweeper plus the next reconcile pick them up, so no guarantee changes.
+	pingCtx, cancelPing := context.WithTimeout(ctx, hostReachableTimeout)
+	_, pingErr := h.Client.Ping(pingCtx)
+	cancelPing()
+	if pingErr != nil {
+		a.logger.Warn("Skipping unreachable docker host during orphan cleanup",
+			slog.String("host", h.Name), slog.String("error", pingErr.Error()))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, orphanSweepHostTimeout)
+	defer cancel()
+
+	containers, err := h.Client.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		a.logger.Warn("Failed to list containers on docker host during orphan cleanup", slog.String("host", h.Name), slog.String("error", err.Error()))
+		return
+	}
+	for _, c := range containers {
+		if owner := c.Labels[runnerScaleSetLabelKey]; owner != a.scaleSetName {
+			// Unlabeled (not a runner container we manage) or belongs
+			// to a different control plane's scale set.
 			continue
 		}
-		for _, c := range containers {
-			if owner := c.Labels[runnerScaleSetLabelKey]; owner != a.scaleSetName {
-				// Unlabeled (not a runner container we manage) or belongs
-				// to a different control plane's scale set.
-				continue
-			}
 
-			var cleanName string
-			for _, name := range c.Names {
-				cleanName = strings.TrimPrefix(name, "/")
-				break
-			}
-			if cleanName == "" {
-				continue
-			}
-			if boot && c.State == container.StateRunning {
-				// The checkpoint, when it has an entry, is authoritative:
-				// it records the idle/busy split this process actually
-				// observed from GitHub's JobStarted/JobCompleted messages.
-				// The ContainerTop probe below can only ask whether a
-				// Runner.Worker process exists YET, so it reports a runner
-				// that GitHub has already assigned a job to -- but which is
-				// still pulling its image or checking out -- as idle, and
-				// anything that reaps idle capacity then kills a live job.
-				// That misclassification is the reason a restart previously
-				// had to be preceded by a full drain.
-				if recorded, ok := a.bootCheckpoint[cleanName]; ok {
-					a.adoptRunner(cleanName, h.Name, c.ID, time.Unix(c.Created, 0), recorded.Busy)
-					a.logger.Info("Adopted runner from checkpoint",
-						slog.String("host", h.Name), slog.String("name", cleanName),
-						slog.String("containerID", c.ID), slog.Bool("busy", recorded.Busy))
-					continue
-				}
-				top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
-				if topErr == nil && !topHasRunnerWorker(top) {
-					a.runners.addIdle(cleanName, h.Name, c.ID, time.Unix(c.Created, 0))
-					a.logger.Info("Adopted idle runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
-				} else {
-					a.runners.mu.Lock()
-					a.runners.busy[cleanName] = runnerRef{host: h.Name, containerID: c.ID, startedAt: time.Unix(c.Created, 0)}
-					a.runners.mu.Unlock()
-					a.logger.Info("Adopted busy runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID), slog.Any("top_error", topErr))
-				}
-				continue
-			}
-
-			if !boot {
-				if a.runners.isTracked(cleanName) {
-					continue
-				}
-				if c.State == container.StateRunning {
-					continue
-				}
-				if time.Since(time.Unix(c.Created, 0)) <= orphanMinAge {
-					continue
-				}
-			}
-
-			a.logger.Info("Removing orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
-			if err := h.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-				a.logger.Error("Failed to remove orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("error", err.Error()))
-			}
-			a.deregisterRunner(ctx, cleanName)
+		var cleanName string
+		for _, name := range c.Names {
+			cleanName = strings.TrimPrefix(name, "/")
+			break
 		}
+		if cleanName == "" {
+			continue
+		}
+		if boot && c.State == container.StateRunning {
+			// The checkpoint, when it has an entry, is authoritative:
+			// it records the idle/busy split this process actually
+			// observed from GitHub's JobStarted/JobCompleted messages.
+			// The ContainerTop probe below can only ask whether a
+			// Runner.Worker process exists YET, so it reports a runner
+			// that GitHub has already assigned a job to -- but which is
+			// still pulling its image or checking out -- as idle, and
+			// anything that reaps idle capacity then kills a live job.
+			// That misclassification is the reason a restart previously
+			// had to be preceded by a full drain.
+			if recorded, ok := a.bootCheckpoint[cleanName]; ok {
+				a.adoptRunner(cleanName, h.Name, c.ID, time.Unix(c.Created, 0), recorded.Busy)
+				a.logger.Info("Adopted runner from checkpoint",
+					slog.String("host", h.Name), slog.String("name", cleanName),
+					slog.String("containerID", c.ID), slog.Bool("busy", recorded.Busy))
+				continue
+			}
+			top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
+			if topErr == nil && !topHasRunnerWorker(top) {
+				a.runners.addIdle(cleanName, h.Name, c.ID, time.Unix(c.Created, 0))
+				a.logger.Info("Adopted idle runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
+			} else {
+				a.runners.mu.Lock()
+				a.runners.busy[cleanName] = runnerRef{host: h.Name, containerID: c.ID, startedAt: time.Unix(c.Created, 0)}
+				a.runners.mu.Unlock()
+				a.logger.Info("Adopted busy runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID), slog.Any("top_error", topErr))
+			}
+			continue
+		}
+
+		if !boot {
+			if a.runners.isTracked(cleanName) {
+				continue
+			}
+			if c.State == container.StateRunning {
+				continue
+			}
+			if time.Since(time.Unix(c.Created, 0)) <= orphanMinAge {
+				continue
+			}
+		}
+
+		a.logger.Info("Removing orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
+		if err := h.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+			a.logger.Error("Failed to remove orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("error", err.Error()))
+		}
+		a.deregisterRunner(ctx, cleanName)
 	}
-	a.runnersChanged()
 }
 
 func topHasRunnerWorker(top container.TopResponse) bool {
