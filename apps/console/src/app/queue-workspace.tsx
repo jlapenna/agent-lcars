@@ -27,7 +27,7 @@ import { repoItemKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import type { BoardCard } from './board-card';
 import { QueueItemRow } from './queue-item-row';
-import { queueReasonFor } from './queue-reason';
+import { INBOX_FILTER_REASONS, queueReasonFor } from './queue-reason';
 import { QuickTaskButton } from './quick-task-button';
 import { RefreshButton } from './refresh-button';
 import { muteSignatureFor, useMutedItems } from './use-muted-items';
@@ -35,14 +35,14 @@ import { muteSignatureFor, useMutedItems } from './use-muted-items';
 type QueueFilter = 'all' | ActionType;
 type QueueSort = 'priority' | 'newest' | 'oldest';
 
+// Derived from queue-reason.ts's canonical map so the menu can never
+// drift from what the rows and cards call the same reason.
 const FILTER_OPTIONS: Array<{ value: QueueFilter; label: string }> = [
   { value: 'all', label: 'All reasons' },
-  { value: 'needs-human', label: 'Human needed' },
-  { value: 'review-requested', label: 'Review requested' },
-  { value: 'ready-for-agent', label: 'Ready for agent' },
-  { value: 'run-failed', label: 'Run failed' },
-  { value: 'merge-blocked', label: 'Merge blocked' },
-  { value: 'silent-error', label: 'Silent error' },
+  ...INBOX_FILTER_REASONS.map((reason) => ({
+    value: reason.type as QueueFilter,
+    label: reason.label,
+  })),
 ];
 
 const SORT_OPTIONS: Array<{ value: QueueSort; label: string }> = [
