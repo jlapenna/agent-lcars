@@ -142,6 +142,7 @@ export function ItemOverflowMenu({
           variant="subtle"
           color="gray"
           disabled={isPending}
+          loading={isPending}
           aria-label={`More actions for #${item.number}`}
           style={{ flexShrink: 0 }}
         >
