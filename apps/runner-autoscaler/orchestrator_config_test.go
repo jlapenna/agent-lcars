@@ -12,7 +12,8 @@ const validOrchestratorYAML = `
 version: 1
 github:
   url: https://github.com/example/repo
-server: {}
+server:
+  state_path: /var/lib/runner-autoscaler/state.json
 fleet:
   max_runners: 2
   hosts:
@@ -164,7 +165,7 @@ func TestValidateReloadCompatibilityRejectsProcessLifetimeChanges(t *testing.T) 
 	}{
 		{
 			name: "metrics bind",
-			body: strings.Replace(validOrchestratorYAML, "server: {}", "server:\n  metrics_addr: 0.0.0.0:8080", 1),
+			body: strings.Replace(validOrchestratorYAML, "server:\n", "server:\n  metrics_addr: 0.0.0.0:8080\n", 1),
 			want: "server.metrics_addr",
 		},
 		{
@@ -176,6 +177,15 @@ func TestValidateReloadCompatibilityRejectsProcessLifetimeChanges(t *testing.T) 
 			name: "changed host transport",
 			body: strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway", 1),
 			want: "cannot change Docker transport",
+		},
+		{
+			// The checkpoint store binds its path at startup, so accepting
+			// this would send every later checkpoint to the OLD file while
+			// the config claimed otherwise -- and a restart would adopt from
+			// a path nothing had written since the reload.
+			name: "changed checkpoint state path",
+			body: strings.Replace(validOrchestratorYAML, "state_path: /var/lib/runner-autoscaler/state.json", "state_path: /var/lib/runner-autoscaler/moved.json", 1),
+			want: "server.state_path",
 		},
 	}
 	for _, tt := range tests {
@@ -591,7 +601,8 @@ func TestOrchestratorConfigDisabledRegistrationSkipsValidationAndCredentials(t *
 func TestOrchestratorConfigRejectsAllDisabledRegistrations(t *testing.T) {
 	body := `
 version: 1
-server: {}
+server:
+  state_path: /var/lib/runner-autoscaler/state.json
 fleet:
   max_runners: 1
   hosts:
@@ -797,7 +808,7 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 
 	hosts := []DockerHost{{Name: "janeway"}}
 	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.WorkDirSizeCaps, resolved.DockerSocketGID, resolved.Weights, nil)
-	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet)
+	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

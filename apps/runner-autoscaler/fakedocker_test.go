@@ -22,10 +22,13 @@ import (
 type fakeDockerServer struct {
 	srv *httptest.Server
 
-	mu              sync.Mutex
-	inspect         map[string]inspectStub // containerID -> canned ContainerInspect response
-	containers      []container.Summary    // ContainerList response
-	removed         []string               // IDs passed to ContainerRemove, in call order
+	mu      sync.Mutex
+	inspect map[string]inspectStub // containerID -> canned ContainerInspect response
+	// tops: containerID -> canned ContainerTop process list. An ID absent
+	// here 404s, which is what cleanupOrphans sees as a top error.
+	tops            map[string]container.TopResponse
+	containers      []container.Summary // ContainerList response
+	removed         []string            // IDs passed to ContainerRemove, in call order
 	imagePresent    bool
 	imagePulls      int
 	pullStreamError bool
@@ -44,7 +47,7 @@ type inspectStub struct {
 // t.Cleanup.
 func newFakeDockerServer(t *testing.T) *fakeDockerServer {
 	t.Helper()
-	f := &fakeDockerServer{inspect: make(map[string]inspectStub)}
+	f := &fakeDockerServer{inspect: make(map[string]inspectStub), tops: make(map[string]container.TopResponse)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -111,6 +114,21 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(cs)
 
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/top"):
+		// ContainerTop: GET .../containers/{id}/top. Must be matched before
+		// the generic inspect case below, which would otherwise swallow it.
+		id := containerIDFromPath(r.URL.Path)
+		f.mu.Lock()
+		top, ok := f.tops[id]
+		f.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such container: " + id})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(top)
+
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/containers/"):
 		// Inspect: GET .../containers/{id}/json
 		id := containerIDFromPath(r.URL.Path)
@@ -172,6 +190,15 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// setTop configures the canned ContainerTop process list for containerID.
+// Pass process rows as ContainerTop returns them; a row containing
+// "Runner.Worker" is what topHasRunnerWorker looks for.
+func (f *fakeDockerServer) setTop(containerID string, processes [][]string) {
+	f.mu.Lock()
+	f.tops[containerID] = container.TopResponse{Titles: []string{"PID", "CMD"}, Processes: processes}
+	f.mu.Unlock()
 }
 
 func (f *fakeDockerServer) pullCount() int {
