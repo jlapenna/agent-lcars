@@ -27,6 +27,7 @@ import { SignOutButton } from '../sign-out-button';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
 import { SessionsWorkspace } from './sessions-workspace';
+import { ViewToggle } from './view-toggle';
 
 type SessionsView = 'flat' | 'by-issue';
 
@@ -106,7 +107,13 @@ async function SessionsBody({
       warnings={
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
       }
-      toolbar={<ViewToggle query={query} view={view} />}
+      toolbar={
+        <ViewToggle
+          view={view}
+          flatHref={displayHref(query, { view: 'flat' })}
+          byIssueHref={displayHref(query, { view: 'by-issue' })}
+        />
+      }
     >
       <div data-testid="sessions-archive-content">
         {view === 'by-issue' ? (
@@ -122,30 +129,6 @@ async function SessionsBody({
 /** The flat/by-issue toggle rendered above the session table. The cost
  * ledger has no equivalent view, and since #192 it isn't on this page at
  * all - it's the top-level /costs destination. */
-function ViewToggle({
-  query,
-  view,
-}: {
-  query: SessionArchiveQuery;
-  view: SessionsView;
-}) {
-  return (
-    <nav className="sessions-view-toggle" aria-label="Archive view">
-      {(['flat', 'by-issue'] as const).map((candidate) => (
-        <Anchor
-          key={candidate}
-          href={displayHref(query, { view: candidate })}
-          className="sessions-view-toggle__option"
-          data-active={candidate === view ? '' : undefined}
-          aria-current={candidate === view ? 'page' : undefined}
-          underline="never"
-        >
-          {candidate === 'flat' ? 'Flat' : 'By issue'}
-        </Anchor>
-      ))}
-    </nav>
-  );
-}
 
 function SessionsUtilities({
   watchedRepos,

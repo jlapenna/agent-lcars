@@ -1,7 +1,7 @@
 import { Group } from '@mantine/core';
 
 import type { WatchedRepo } from '../lib/watched-repo';
-import { repoScopedConsoleHrefs } from './console-header';
+import { repoScopedConsoleHrefs } from './console-hrefs';
 import { QueueUtilityMenu } from './queue-utility-menu';
 import { QuickTaskButton } from './quick-task-button';
 import { RefreshButton } from './refresh-button';
