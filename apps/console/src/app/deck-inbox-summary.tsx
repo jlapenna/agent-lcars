@@ -35,6 +35,11 @@ export function DeckInboxSummary({
             ? 'item needs your decision'
             : 'items need your decision'}
       </Text>
+      {/* Deliberately avoids the word "Inbox": Playwright role-name
+          matching is substring-based, and the e2e suite addresses the nav
+          pill with an unscoped getByRole('link', { name: 'Inbox' }) - a
+          second link containing that word is a strict-mode violation
+          (Codex review on #481). */}
       <Anchor
         component={Link}
         href={inboxHref}
@@ -42,7 +47,7 @@ export function DeckInboxSummary({
         fw={600}
         style={{ flexShrink: 0 }}
       >
-        Open Inbox →
+        Open the queue →
       </Anchor>
     </Group>
   );

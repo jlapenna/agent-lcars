@@ -19,10 +19,9 @@ describe('DeckInboxSummary', () => {
     const tile = screen.getByTestId('deck-inbox-summary');
     expect(tile.textContent).toContain('03');
     expect(tile.textContent).toContain('items need your decision');
-    expect(screen.getByRole('link', { name: 'Open Inbox →' })).toHaveAttribute(
-      'href',
-      '/inbox?repo=agent%2Flcars',
-    );
+    expect(
+      screen.getByRole('link', { name: 'Open the queue →' }),
+    ).toHaveAttribute('href', '/inbox?repo=agent%2Flcars');
     expect(tile).not.toHaveAttribute('data-empty');
   });
 
@@ -39,7 +38,7 @@ describe('DeckInboxSummary', () => {
     const tile = screen.getByTestId('deck-inbox-summary');
     expect(tile).toHaveAttribute('data-empty');
     expect(tile.textContent).toContain('the Inbox is clear');
-    expect(screen.getByRole('link', { name: 'Open Inbox →' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open the queue →' })).toBeTruthy();
   });
 
   it('avoids landmark/alert roles the Deck e2e contract forbids', () => {
