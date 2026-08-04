@@ -25,11 +25,8 @@ import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, CommandDeckSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
-import {
-  ConsoleHeader,
-  DataWarnings,
-  repoScopedConsoleHrefs,
-} from './console-header';
+import { ConsoleHeader, DataWarnings } from './console-header';
+import { repoScopedConsoleHrefs } from './console-hrefs';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatCompactRelativeTime } from './format';
 import { PageLoading } from './page-loading';
