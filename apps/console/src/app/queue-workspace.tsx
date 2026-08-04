@@ -113,6 +113,7 @@ export function QueueWorkspace({
   useEffect(() => {
     setFilter(parseQueueFilter(searchParams.get(REASON_PARAM)));
     setSort(parseQueueSort(searchParams.get(SORT_PARAM)));
+    setSearch(searchParams.get(SEARCH_PARAM) ?? '');
   }, [searchParams]);
 
   // Mirror the controls into the URL without a server round-trip -
@@ -246,9 +247,10 @@ export function QueueWorkspace({
               decision or response
             </Text>
           </div>
-          <Group gap={6} wrap="nowrap" className="queue-list-controls">
+          <Group gap={6} className="queue-list-controls">
             <TextInput
               size="xs"
+              rightSectionPointerEvents="all"
               value={search}
               onChange={(event) => applySearch(event.currentTarget.value)}
               placeholder="Search title, #, author, label"

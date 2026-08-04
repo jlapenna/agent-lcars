@@ -1722,7 +1722,16 @@
     display: none;
   }
 
+  /* Mobile keeps the search/filter/sort controls - only the title block
+     duplicates the mobile bar's identity and hides (Codex review on #494:
+     a shared ?q=/?reason= URL must not silently filter an uncontrollable
+     list). */
   .queue-workspace__list-header {
+    min-height: 0;
+    padding: 6px 14px 10px;
+  }
+
+  .queue-workspace__list-header > div:first-child {
     display: none;
   }
 
@@ -1821,6 +1830,7 @@
 /* Inbox search (queue-workspace.tsx): compact enough to share the header
    row with Filter/Sort; grows only on wide viewports. */
 .queue-search-input {
-  width: 11.5rem;
-  max-width: 40vw;
+  flex: 1 1 9rem;
+  min-width: 7rem;
+  max-width: 14rem;
 }
