@@ -16,6 +16,7 @@ let mockSearch = 'repo=agent%2Flcars';
 // returns a new object when the URL actually changes, and the workspace's
 // resync effect keys off that identity.
 let cachedParams: [string, URLSearchParams] | undefined;
+const mockReplace = vi.fn();
 vi.mock('next/navigation', () => ({
   useSearchParams: () => {
     if (!cachedParams || cachedParams[0] !== mockSearch) {
@@ -23,11 +24,13 @@ vi.mock('next/navigation', () => ({
     }
     return cachedParams[1];
   },
+  useRouter: () => ({ replace: mockReplace }),
 }));
 
 afterEach(() => {
   mockSearch = 'repo=agent%2Flcars';
   cachedParams = undefined;
+  mockReplace.mockReset();
   vi.restoreAllMocks();
 });
 vi.mock('./action-item-card', () => ({
@@ -314,6 +317,55 @@ describe('inbox search', () => {
     ]);
     expect(screen.queryByText('Responsive Inbox')).toBeNull();
     expect(screen.getByText('Review the next item')).toBeTruthy();
+  });
+});
+
+describe('inbox keyboard navigation', () => {
+  it('j/k move the selection through visible rows without pushing history', () => {
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/inbox?repo=agent%2Flcars&item=agent%2Flcars%23250',
+      { scroll: false },
+    );
+  });
+
+  it('k at the top and j at the bottom stay put', () => {
+    renderWorkspace([makeCard()]);
+    fireEvent.keyDown(window, { key: 'k' });
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('slash focuses the search input', () => {
+    renderWorkspace([makeCard()]);
+    fireEvent.keyDown(window, { key: '/' });
+    expect(document.activeElement).toBe(
+      screen.getByRole('textbox', { name: 'Search the Inbox' }),
+    );
+  });
+
+  it('ignores j/k while typing in the search field', () => {
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+    const input = screen.getByRole('textbox', { name: 'Search the Inbox' });
+    input.focus();
+    fireEvent.keyDown(input, { key: 'j' });
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });
 

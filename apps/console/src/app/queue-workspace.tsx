@@ -17,9 +17,9 @@ import {
   IconSearch,
   IconX,
 } from '@tabler/icons-react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ActionType } from '../lib/action-items';
 import type { WatchedRepo } from '../lib/watched-repo';
@@ -104,6 +104,9 @@ export function QueueWorkspace({
     () => searchParams.get(SEARCH_PARAM) ?? '',
   );
   const { muted, mute, unmute } = useMutedItems();
+  const router = useRouter();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const keyboardNavigated = useRef(false);
 
   // Browser Back/Forward (and any same-route navigation that changes the
   // query) must resync the controls: the useState initializers above only
@@ -187,6 +190,72 @@ export function QueueWorkspace({
   const explicitDetail = selectedItemKey !== undefined;
   const backHref = queueSelectionHref(currentSearch);
 
+  // Gmail-style list keys, global while the Inbox is mounted: j/k move the
+  // selection (which IS navigation here - the detail pane follows ?item=),
+  // '/' jumps to search. Guarded off inside inputs/textareas and when any
+  // modifier is held; arrows are deliberately left alone so they keep
+  // scrolling the panes.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key === '/') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      const isNext = event.key === 'j';
+      const isPrev = event.key === 'k';
+      if ((!isNext && !isPrev) || visibleCards.length === 0) return;
+      const currentKey = selectedCard
+        ? repoItemKey(selectedCard.item.repo, selectedCard.item.number)
+        : undefined;
+      const index = visibleCards.findIndex(
+        ({ item }) => repoItemKey(item.repo, item.number) === currentKey,
+      );
+      const nextIndex =
+        index === -1
+          ? 0
+          : Math.min(
+              Math.max(index + (isNext ? 1 : -1), 0),
+              visibleCards.length - 1,
+            );
+      if (nextIndex === index) return;
+      event.preventDefault();
+      keyboardNavigated.current = true;
+      const nextKey = repoItemKey(
+        visibleCards[nextIndex].item.repo,
+        visibleCards[nextIndex].item.number,
+      );
+      // replace, not push: holding j shouldn't bury the back button under
+      // one history entry per row skimmed.
+      router.replace(queueSelectionHref(currentSearch, nextKey), {
+        scroll: false,
+      });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [visibleCards, selectedCard, currentSearch, router]);
+
+  // Keep a keyboard-moved selection visible in the scrollable list; mouse
+  // selection never needs this (the row was already under the pointer).
+  useEffect(() => {
+    if (!keyboardNavigated.current) return;
+    keyboardNavigated.current = false;
+    document
+      .querySelector('.queue-item-row[data-selected]')
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [selectedItemKey]);
+
   return (
     <section
       className="queue-workspace"
@@ -245,10 +314,20 @@ export function QueueWorkspace({
               {visibleCards.length}{' '}
               {visibleCards.length === 1 ? 'item' : 'items'} · needs your
               decision or response
+              <Text
+                component="span"
+                size="xs"
+                c="dimmed"
+                className="queue-kbd-hint"
+              >
+                {' '}
+                · j/k to move · / to search
+              </Text>
             </Text>
           </div>
           <Group gap={6} className="queue-list-controls">
             <TextInput
+              ref={searchInputRef}
               size="xs"
               rightSectionPointerEvents="all"
               value={search}
