@@ -6,6 +6,7 @@ import type { BoardCard } from './board-card';
 import { CompactItemRow } from './compact-item-row';
 import { repoScopedConsoleHrefs } from './console-hrefs';
 import { ItemOverflowMenu } from './item-overflow-menu';
+import { PersistedDetails } from './persisted-details';
 import { QueueUtilityMenu } from './queue-utility-menu';
 import { QueueWorkspace } from './queue-workspace';
 import { RelativeTime } from './relative-time';
@@ -82,16 +83,21 @@ export function CommandDeckSections({
       )}
 
       {rest.length > 0 && (
-        <details data-testid="everything-else">
-          <summary style={{ cursor: 'pointer' }}>
-            <Title order={3} size="h4" component="span">
-              Everything Else ({rest.length})
-            </Title>
-            <Text c="dimmed" size="sm" component="span">
-              {' '}
-              — open agent items with nothing to do
-            </Text>
-          </summary>
+        <PersistedDetails
+          data-testid="everything-else"
+          storageKey="deck:everything-else"
+          summary={
+            <>
+              <Title order={3} size="h4" component="span">
+                Everything Else ({rest.length})
+              </Title>
+              <Text c="dimmed" size="sm" component="span">
+                {' '}
+                — open agent items with nothing to do
+              </Text>
+            </>
+          }
+        >
           <Stack gap={6} mt="sm">
             {rest.map(({ item }) => (
               <CompactItemRow
@@ -107,7 +113,7 @@ export function CommandDeckSections({
               />
             ))}
           </Stack>
-        </details>
+        </PersistedDetails>
       )}
     </Stack>
   );

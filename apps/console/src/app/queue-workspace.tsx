@@ -26,6 +26,7 @@ import type { WatchedRepo } from '../lib/watched-repo';
 import { repoItemKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import type { BoardCard } from './board-card';
+import { PersistedDetails } from './persisted-details';
 import { QueueItemRow } from './queue-item-row';
 import { INBOX_FILTER_REASONS, queueReasonFor } from './queue-reason';
 import { QuickTaskButton } from './quick-task-button';
@@ -480,8 +481,11 @@ export function QueueWorkspace({
         </div>
 
         {mutedCards.length > 0 && (
-          <details className="queue-muted-items">
-            <summary>Muted ({mutedCards.length})</summary>
+          <PersistedDetails
+            className="queue-muted-items"
+            storageKey="inbox:muted"
+            summary={<>Muted ({mutedCards.length})</>}
+          >
             <Stack gap={4} mt="xs">
               {mutedCards.map(({ item }) => {
                 const key = repoItemKey(item.repo, item.number);
@@ -502,7 +506,7 @@ export function QueueWorkspace({
                 );
               })}
             </Stack>
-          </details>
+          </PersistedDetails>
         )}
       </div>
 
