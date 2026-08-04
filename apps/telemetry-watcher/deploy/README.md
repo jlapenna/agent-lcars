@@ -82,9 +82,9 @@ ownership fixups above):
 
 ## Monitoring
 
-The watcher publishes Prometheus text on host port `9464`.
-`jlapenna/homelab` owns the scrape and alert rules: cAdvisor still detects
-crash loops, while the watcher metrics distinguish a healthy tick loop from a
-watcher that has stopped shipping active sessions. Only the deployment config
-moved here in homelab#218 Phase 6—the monitoring of the deployed container
-stays in homelab.
+The watcher publishes Prometheus text on host port `9464`; its Compose
+healthcheck exercises that exact endpoint. `jlapenna/homelab` owns the scrape
+and alert rules: cAdvisor still detects crash loops, while the watcher metrics
+distinguish a healthy tick loop from a watcher that has stopped shipping
+active sessions. Only the deployment config moved here in homelab#218 Phase
+6—the monitoring of the deployed container stays in homelab.

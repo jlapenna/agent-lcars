@@ -30,13 +30,10 @@ name: agent-lcars-telemetry-watcher
 # a different uid cannot read them even through read-only mounts.
 services:
   agent-lcars-telemetry-watcher:
-    # agent-lcars 5bb8ac6. The previous pin (b456a8c) predated the
-    # members -> sprinkles rename fix (agent-lcars#137), so the image's
-    # built-in default allowlist still said members: it matched none of this
-    # host's live sessions, and separately matched ~1.5GB of archived members
-    # worktrees, which OOM-killed the daemon on its first tick every time it
-    # restarted. Both symptoms trace to that one stale pin.
-    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:5bb8ac6@sha256:8356a37da287f512008196953d412801a191507d28fb4616acb551353128fe44
+    # agent-lcars 799ff0b contains the explicit multi-root privacy scope and
+    # Prometheus endpoint from #434. Keep tag and digest immutable together:
+    # the healthcheck below requires the endpoint provided by this image.
+    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:799ff0b25d5cc4388af98aebb7b89983b97000f9@sha256:a6f797208cef0453891bd854cef04c73772da43fdae0ad805e3c3c6fd6b586cc
     container_name: agent-lcars-telemetry-watcher
     user: '${WATCHER_UID:?deploy.sh must export WATCHER_UID}:${WATCHER_GID:?deploy.sh must export WATCHER_GID}'
     # Shares the host PID namespace so isProcessAliveForCwd's /proc/<pid>/cwd
@@ -115,6 +112,16 @@ services:
     cpus: 0.5
     mem_limit: 512m
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:9464/metrics').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
     logging:
       driver: json-file
       options:
