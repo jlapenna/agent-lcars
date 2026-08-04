@@ -46,6 +46,7 @@ import { CancelRunButton } from './cancel-run-button';
 import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
 import { lcarsPanelStyle } from './lcars';
+import { PersistedDetails } from './persisted-details';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { TakeoverCommand } from './takeover-command';
@@ -769,14 +770,17 @@ export function AgentActivityPanel({
         )}
 
         {recentRuns.length > 0 && (
-          <details data-testid="recent-runs">
-            <summary style={{ cursor: 'pointer' }}>
+          <PersistedDetails
+            data-testid="recent-runs"
+            storageKey="activity:recent-runs"
+            summary={
               <Eyebrow component="span">
                 {(recentRunsCapped ?? recentRuns.length >= RECENT_RUN_LIMIT)
                   ? `Recently finished (${recentRuns.length} shown — fetch capped at last ${RECENT_RUN_LIMIT})`
                   : `Recently finished (${recentRuns.length})`}
               </Eyebrow>
-            </summary>
+            }
+          >
             <Stack gap={6} mt="xs">
               {recentRuns.map((run) => (
                 <FinishedRunRow
@@ -786,24 +790,27 @@ export function AgentActivityPanel({
                 />
               ))}
             </Stack>
-          </details>
+          </PersistedDetails>
         )}
 
         {finishedSessions.length > 0 && (
-          <details data-testid="recent-sessions">
-            <summary style={{ cursor: 'pointer' }}>
+          <PersistedDetails
+            data-testid="recent-sessions"
+            storageKey="activity:recent-sessions"
+            summary={
               <Eyebrow component="span">
                 {(cliSessionsCapped ?? cliSessions.length >= MAX_SESSIONS)
                   ? `Recent CLI sessions (${finishedSessions.length} shown — list capped, older in Sessions)`
                   : `Recent CLI sessions (${finishedSessions.length})`}
               </Eyebrow>
-            </summary>
+            }
+          >
             <Stack gap="xs" mt="xs">
               {finishedSessions.map((session) => (
                 <CliSessionRow key={session.sessionId} session={session} />
               ))}
             </Stack>
-          </details>
+          </PersistedDetails>
         )}
       </Stack>
     </Card>
