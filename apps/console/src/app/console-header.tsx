@@ -1,10 +1,10 @@
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import {
-  DEFAULT_ARCHIVE_DAYS,
-  type SessionArchiveQuery,
-} from '@/lib/session-archive';
+import { DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
+import type { SessionArchiveQuery } from '@/lib/session-archive';
+
+import { repoScopedConsoleHrefs } from './console-hrefs';
 
 type NavKey = 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs';
 type Accent = 'amber' | 'blue' | 'periwinkle' | 'teal' | 'gold';
@@ -59,17 +59,6 @@ function navHref(
   }
   const queryString = params.toString();
   return queryString ? `${item.href}?${queryString}` : item.href;
-}
-
-export function repoScopedConsoleHrefs(repoFilter?: string):
-  | {
-      deck: string;
-      inbox: string;
-    }
-  | undefined {
-  if (!repoFilter) return undefined;
-  const query = new URLSearchParams({ repo: repoFilter }).toString();
-  return { deck: `/?${query}`, inbox: `/inbox?${query}` };
 }
 
 /**
@@ -132,26 +121,52 @@ export function ConsoleHeader({
       </div>
 
       <div className="lcars-command-row">
-        <nav className="lcars-nav" aria-label="Console sections">
-          {NAV_ITEMS.map((item) => (
-            <Anchor
-              key={item.key}
-              href={navHref(item, archiveQuery, repoFilter)}
-              underline="never"
-              className="lcars-nav-pill"
-              data-accent={item.accent}
-              data-active={item.key === current ? '' : undefined}
-              aria-current={item.key === current ? 'page' : undefined}
-            >
-              {item.label}
-            </Anchor>
-          ))}
-        </nav>
+        <ConsoleNavRail
+          current={current}
+          archiveQuery={archiveQuery}
+          repoFilter={repoFilter}
+        />
         {utilities && (
           <div className="lcars-command-utilities">{utilities}</div>
         )}
       </div>
     </Stack>
+  );
+}
+
+/**
+ * The five-destination pill rail on its own - ConsoleHeader composes it
+ * under the title block, and the drill-down pages (session detail, task)
+ * render it bare in place of what used to be a single hardcoded back
+ * link, so they stop being navigation dead ends while keeping their
+ * deliberately lighter no-title chrome.
+ */
+export function ConsoleNavRail({
+  current,
+  archiveQuery,
+  repoFilter,
+}: {
+  /** Highlighted destination; drill-downs pass their logical parent. */
+  current: NavKey;
+  archiveQuery?: SessionArchiveQuery;
+  repoFilter?: string;
+}) {
+  return (
+    <nav className="lcars-nav" aria-label="Console sections">
+      {NAV_ITEMS.map((item) => (
+        <Anchor
+          key={item.key}
+          href={navHref(item, archiveQuery, repoFilter)}
+          underline="never"
+          className="lcars-nav-pill"
+          data-accent={item.accent}
+          data-active={item.key === current ? '' : undefined}
+          aria-current={item.key === current ? 'page' : undefined}
+        >
+          {item.label}
+        </Anchor>
+      ))}
+    </nav>
   );
 }
 
