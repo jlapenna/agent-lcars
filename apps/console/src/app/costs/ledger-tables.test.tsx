@@ -34,6 +34,30 @@ describe('LedgerTables', () => {
     expect(screen.queryByTestId('session-ledger')).toBeNull();
   });
 
+  it('admits when the issue ledger is windowed instead of looking complete', () => {
+    renderLedger({
+      byIssue: Array.from({ length: 18 }, (_, i) => ({
+        issueNumber: i + 1,
+        sessions: 1,
+        turns: 2,
+        tokens: 100,
+        costUsd: 0.1,
+      })),
+      byWeek: [],
+    });
+    expect(screen.getByText('Showing 15 of 18')).toBeTruthy();
+  });
+
+  it('renders no truncation note while the window still fits', () => {
+    renderLedger({
+      byIssue: [
+        { issueNumber: 1, sessions: 1, turns: 2, tokens: 100, costUsd: 0.1 },
+      ],
+      byWeek: [],
+    });
+    expect(screen.queryByText(/^Showing \d+ of \d+$/)).toBeNull();
+  });
+
   it('links a real issue number and labels the no-issue bucket in plain text, in both the full and compact tables', () => {
     renderLedger({
       byIssue: [

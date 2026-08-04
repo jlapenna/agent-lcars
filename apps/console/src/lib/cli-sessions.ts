@@ -27,8 +27,9 @@ const ACTIVE_WINDOW_HOURS = 24;
 
 /** Hard cap on rendered sessions even within the window - a busy fleet day
  * produces 40+ session docs in 24h, and rows past this many are archive
- * material, not activity. Active (live/idle) sessions are kept first. */
-const MAX_SESSIONS = 20;
+ * material, not activity. Active (live/idle) sessions are kept first.
+ * Exported so the panel can say the list is capped when it fills. */
+export const MAX_SESSIONS = 20;
 
 export interface JoinedPr {
   number: number;

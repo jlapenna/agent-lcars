@@ -22,6 +22,7 @@ import type {
   AgentRun,
   FleetSummary,
 } from '../lib/agent-activity';
+import { RECENT_RUN_LIMIT } from '../lib/agent-activity';
 import {
   displayRunTitle,
   duplicateLivePipelineGroups,
@@ -32,6 +33,7 @@ import {
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
+import { MAX_SESSIONS } from '../lib/cli-sessions';
 import { shareArtifactUrl } from '../lib/deployment';
 import {
   getWatchedRepos,
@@ -761,7 +763,9 @@ export function AgentActivityPanel({
           <details data-testid="recent-runs">
             <summary style={{ cursor: 'pointer' }}>
               <Eyebrow component="span">
-                Recently finished ({recentRuns.length})
+                {recentRuns.length >= RECENT_RUN_LIMIT
+                  ? `Recently finished (last ${RECENT_RUN_LIMIT})`
+                  : `Recently finished (${recentRuns.length})`}
               </Eyebrow>
             </summary>
             <Stack gap={6} mt="xs">
@@ -780,7 +784,9 @@ export function AgentActivityPanel({
           <details data-testid="recent-sessions">
             <summary style={{ cursor: 'pointer' }}>
               <Eyebrow component="span">
-                Recent CLI sessions ({finishedSessions.length})
+                {cliSessions.length >= MAX_SESSIONS
+                  ? `Recent CLI sessions (${finishedSessions.length} shown — list capped, older in Sessions)`
+                  : `Recent CLI sessions (${finishedSessions.length})`}
               </Eyebrow>
             </summary>
             <Stack gap="xs" mt="xs">
