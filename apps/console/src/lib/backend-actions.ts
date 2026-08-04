@@ -281,13 +281,27 @@ export async function dispatchUnstickPrs(
   const targetRepo = repo ?? primaryWatchedRepo();
   const octokit = getGithubClient();
   const trimmedContext = context?.trim();
-  await octokit.rest.actions.createWorkflowDispatch({
-    owner: targetRepo.owner,
-    repo: targetRepo.name,
-    workflow_id: 'playbook-unstick-prs.yml',
-    ref: DEFAULT_BRANCH,
-    inputs: trimmedContext ? { context: trimmedContext } : {},
-  });
+  try {
+    await octokit.rest.actions.createWorkflowDispatch({
+      owner: targetRepo.owner,
+      repo: targetRepo.name,
+      workflow_id: 'playbook-unstick-prs.yml',
+      ref: DEFAULT_BRANCH,
+      inputs: trimmedContext ? { context: trimmedContext } : {},
+    });
+  } catch (error) {
+    // Deliberately fail loud rather than silently retargeting the primary
+    // repo: a watched repo without the playbook (GitHub answers 404 for an
+    // unknown workflow_id) needs the maintainer to know that, not an
+    // unstick run against some other repository (Codex review on #493).
+    if ((error as { status?: number }).status === 404) {
+      throw new ActionError(
+        `${targetRepo.owner}/${targetRepo.name} has no playbook-unstick-prs.yml - add the workflow there or dispatch from a primary-repo item`,
+        404,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function retriggerIssue(
