@@ -158,6 +158,82 @@ operational docs (secrets, GitHub App setup, fleet topology).
 Migrated from `jlapenna/homelab` — see
 [agent-lcars#52](https://github.com/jlapenna/agent-lcars/issues/52).
 
+## State checkpointing and restart without a drain
+
+Redeploying used to mean draining the whole fleet first: signal `SIGUSR1`,
+then wait for every host to report zero runner containers before recreating
+the container. That wait is bounded only by the longest in-flight CI job —
+up to `DRAIN_TIMEOUT_SECONDS` (an hour, in the deployment) — and for its
+whole duration the control plane refuses every new placement, fleet-wide,
+for every repository it serves. A routine deploy could stall all CI for the
+length of the slowest job then running.
+
+`SIGTERM` is now a fast **quiesce** instead: refuse new placements, let
+in-flight placements settle, write a checkpoint, exit — bounded by
+`quiesceTimeout`, comfortably inside Docker's ten-second stop grace, because
+overrunning that grace turns an orderly exit into a `SIGKILL` and discards
+the checkpoint. `docker compose up --force-recreate` alone is now a safe
+deploy; no drain gate is required.
+
+Crucially, quiescing **preserves idle runners** rather than removing them.
+Busy runners were already kept for startup adoption; idle ones are warm,
+already-registered capacity the replacement process adopts in milliseconds,
+and destroying them was pure loss once adoption became reliable.
+
+`SIGUSR1` still performs the full drain, unchanged, for the cases that
+genuinely need an empty fleet — removing a scale set, decommissioning a
+host.
+
+### What the checkpoint holds, and why
+
+Runner _ownership_ never needed persisting: boot already re-adopts
+containers from their Docker labels. What it could not recover is the
+**idle/busy split**. Adoption used to re-derive it by inspecting each
+container for a `Runner.Worker` process, which can only report whether that
+process exists _yet_ — so a runner GitHub had already assigned a job to, but
+which was still pulling its image or checking out, was adopted as **idle**,
+and anything reaping idle capacity would then kill a live job. That single
+misclassification is why a restart had to be preceded by a drain.
+
+The checkpoint records the split this process actually observed from
+GitHub's `JobStarted`/`JobCompleted` messages, so adoption restores what was
+known instead of guessing. It also carries host overload cooldowns (which
+otherwise reset, making a host that was hard-overloaded seconds ago
+immediately placeable again) and the previous host telemetry samples
+(without which the first probe after boot computes every rate as zero,
+disabling pressure-based admission until a second sample lands).
+
+Runner transitions checkpoint synchronously — a transition lost to a kill is
+exactly the misclassification being prevented. The fleet-telemetry half
+flushes on a timer.
+
+At boot the checkpoint is authoritative for classification; Docker remains
+authoritative for existence. A container the checkpoint does not mention
+falls back to the process probe, so a first boot, a corrupt file, or a
+newly added scale set all still work.
+
+### Configuration
+
+`server.state_path` is **required**, and required to be an absolute path in
+a writable directory:
+
+```yaml
+server:
+  state_path: /var/lib/runner-autoscaler/state.json
+```
+
+The process refuses to start without one, and `--check-config` fails the
+same way, so a missing or unwritable state volume is caught by the deploy's
+preflight rather than after cutover. This is deliberately loud: a restart is
+only safe when the state actually persists, and silently degrading to the
+guess would reintroduce precisely the hazard the checkpoint removes.
+
+The path must be backed by a volume that survives container recreation. A
+path inside the container's own filesystem is erased by the very restart the
+checkpoint exists to make safe. The image creates
+`/var/lib/runner-autoscaler` owned by the runtime uid so a named volume
+mounted there inherits writable ownership.
+
 ## Live configuration reload
 
 Send the running orchestrator `SIGHUP` after atomically replacing
@@ -170,7 +246,14 @@ Live reload can update scale-set limits, images, resource settings, placement
 policy, weights, credentials, scale sets, and fleet hosts. Added hosts are
 immediately eligible for placements. Removed hosts are cordoned immediately,
 while their tracked runners remain managed until their jobs complete (and are
-dropped on the next reload). The metrics bind address and an existing scale
-set's GitHub registration/runner group are process-lifetime settings;
-removing a scale set remains a drain-and-restart operation. Renaming a host
-is required when its Docker transport changes.
+dropped on the next reload). The metrics bind address, `server.state_path`,
+and an existing scale set's GitHub registration/runner group are
+process-lifetime settings; removing a scale set remains a drain-and-restart
+operation. Renaming a host is required when its Docker transport changes.
+
+`server.state_path` is process-lifetime because the checkpoint store binds
+its path at startup. Accepting a change would send every later checkpoint to
+the _old_ file while the configuration claimed otherwise, and a subsequent
+restart would then adopt from a path nothing had written since the reload.
+A reload that moves it is rejected outright, leaving the current
+configuration running.
