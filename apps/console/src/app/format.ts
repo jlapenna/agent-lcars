@@ -52,6 +52,17 @@ export function githubIssueUrl(item: { url: string }, number: number): string {
   return item.url.replace(/\/(?:issues|pull)\/\d+$/, `/issues/${number}`);
 }
 
+/** Viewer-local absolute time for hover titles: "2026-08-03 04:58".
+ * Built from Date parts rather than toLocaleString - the lint config pins
+ * locale/timezone-defaulting APIs (they cause server/client mismatches),
+ * and this numeric layout needs no locale. Only meaningful client-side,
+ * where the runtime timezone is the viewer's own. */
+export function formatAbsoluteLocal(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Compact duration for run rows: "42s", "4m 32s", "1h 12m". */
 export function formatDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.round(totalSeconds));

@@ -38,8 +38,9 @@ import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
 import { Eyebrow } from './eyebrow';
-import { formatCost, formatDuration, formatRelativeTime } from './format';
+import { formatCost, formatDuration } from './format';
 import { lcarsPanelStyle } from './lcars';
+import { RelativeTime } from './relative-time';
 import { TakeoverCommand } from './takeover-command';
 
 // Labels/colors are keyed by the run-status classifier's own output
@@ -533,7 +534,7 @@ export function FinishedRunRow({
       <Group gap="xs" wrap="nowrap">
         <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
           {formatDuration(run.elapsedSeconds)} · finished{' '}
-          {formatRelativeTime(run.updatedAt)}
+          <RelativeTime iso={run.updatedAt} />
         </Text>
         <Group
           gap={6}
@@ -652,7 +653,7 @@ export function CliSessionRow({
           </Text>
         )}
         <Text size="xs" c="dimmed">
-          last active {formatRelativeTime(session.lastActivityAt)}
+          last active <RelativeTime iso={session.lastActivityAt} />
         </Text>
       </Group>
       {takeoverCommand && <TakeoverCommand command={takeoverCommand} />}
