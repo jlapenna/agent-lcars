@@ -358,7 +358,11 @@ func TestScoreHostLoadPressureSignals(t *testing.T) {
 		{"memory hard", "pike", hostLoad{memoryAvailable: .05}, 100, true},
 		{"spark memory exempt", "spark", hostLoad{memoryAvailable: .01}, 0, false},
 		{"active swap", "pike", hostLoad{memoryAvailable: 1, swapPagesPerSec: 20}, 10, false},
-		{"swap hard", "pike", hostLoad{memoryAvailable: 1, swapPagesPerSec: 150}, 100, true},
+		// Swap past swapHard penalizes heavily but must NOT set overloaded:
+		// pswpin/pswpout cannot tell zram from disk, so it deprioritizes
+		// rather than excludes. See scoreHostLoad and
+		// TestScoreHostLoadSwapNeverHardOverloads.
+		{"swap hard", "pike", hostLoad{memoryAvailable: 1, swapPagesPerSec: 150}, 100, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -680,13 +684,17 @@ func TestPickHostOverloadCooldownCachedRereadDoesNotExtendWindow(t *testing.T) {
 }
 
 // TestPickHostExcludesEachHardOverloadSignal pins agent-lcars#259's
-// requirement that load, CPU/PSI, memory, and swap hard thresholds each
+// requirement that load, CPU/PSI, and memory hard thresholds each
 // independently exclude a host from placement, by feeding scoreHostLoad's
 // real output for each signal through the real pickHost path (see
 // seedHostLoad). TestScoreHostLoadPressureSignals already covers scoring in
 // isolation; this covers that a hard-overloaded reading, from whichever
 // signal produced it, actually removes the host from candidates and reports
 // fleet-at-capacity instead of placing on it.
+//
+// Swap rate is deliberately NOT in this list -- it deprioritizes without
+// excluding, because pswpin/pswpout cannot distinguish zram from disk. Its
+// inverse is pinned by TestScoreHostLoadSwapNeverHardOverloads.
 func TestPickHostExcludesEachHardOverloadSignal(t *testing.T) {
 	cases := []struct {
 		name string
@@ -697,7 +705,6 @@ func TestPickHostExcludesEachHardOverloadSignal(t *testing.T) {
 		{"cpu psi hard", hostLoad{memoryAvailable: 1, cpuPressure: .30}},
 		{"memory psi hard", hostLoad{memoryAvailable: 1, memoryPressure: .30}},
 		{"memory available hard", hostLoad{memoryAvailable: .05}},
-		{"swap hard", hostLoad{memoryAvailable: 1, swapPagesPerSec: 150}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -726,6 +733,43 @@ func TestPickHostExcludesEachHardOverloadSignal(t *testing.T) {
 				t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonOverload, got)
 			}
 		})
+	}
+}
+
+// TestScoreHostLoadSwapNeverHardOverloads is the inverse of
+// TestPickHostExcludesEachHardOverloadSignal, for the one pressure signal
+// that must NOT exclude. node_vmstat_pswpin/pswpout sum every swap device,
+// so a host paging hard into zram (compressed RAM, microsecond latency) is
+// indistinguishable from one thrashing to disk. pike does exactly that --
+// /dev/zram0 at priority 5 under Ubuntu's zram-config, vm.swappiness=180 --
+// and the old hard gate removed it from placement 25.1% of a measured week
+// while memory PSI, which sees the actual stall, tripped on only 1.7% of it.
+//
+// So a swap rate far past swapHard must still score a heavy penalty (it
+// loses ties) while remaining a placement candidate.
+func TestScoreHostLoadSwapNeverHardOverloads(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "set",
+		dockerHosts:  []DockerHost{{Name: "pike", Client: fake.client(t)}},
+		runners:      runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	scored := scaler.scoreHostLoad("pike", hostLoad{memoryAvailable: 1, swapPagesPerSec: 10000})
+	if scored.overloaded {
+		t.Fatal("swap rate must never hard-overload: zram traffic is indistinguishable from disk thrash")
+	}
+	if scored.penalty != 100 {
+		t.Fatalf("penalty = %d, want 100 (deprioritized but still placeable)", scored.penalty)
+	}
+
+	fleet := scaler.coordinator()
+	seedHostLoad(fleet, "pike", scaler.applyOverloadCooldown("pike", scored, time.Now()))
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil || host != "pike" {
+		t.Fatalf("pickHost() = (%q, %v), want (\"pike\", nil)", host, err)
 	}
 }
 

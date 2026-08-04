@@ -118,8 +118,19 @@ PSI (pressure-stall) ratios, available memory, and swap-in/out rate against
 runner-count penalty, which nudges the round-robin comparison toward less
 busy hosts without ruling anything out.
 
-Crossing a **hard** threshold on any single signal is different: the host is
-marked hard-overloaded and, once it is, stays that way for
+**Swap rate is the exception: it only ever penalizes, never excludes.**
+`node_vmstat_pswpin`/`pswpout` are kernel-global counters summed across every
+swap device, so they cannot tell zram (compressed RAM, microsecond latency)
+from a disk-backed swap file. `pike` runs zram at priority 5 via Ubuntu's
+`zram-config` with `vm.swappiness=180`, and treating that healthy compression
+traffic as thrashing excluded the fleet's most CPU-idle host from placement
+25.1% of a measured week, against 1.7% by memory PSI — which measures the
+actual stall instead of a proxy for it. The hard gate therefore belongs to
+PSI and available memory; a host genuinely thrashing to disk still stalls,
+so PSI still catches it.
+
+Crossing a **hard** threshold on any other single signal is different: the
+host is marked hard-overloaded and, once it is, stays that way for
 `fleet.placement.overload_cooldown` (default 2 minutes) even after the
 underlying signal recovers, so a flapping host doesn't bounce in and out of
 rotation. A hard-overloaded (or still-cooling-down) host is **excluded from
