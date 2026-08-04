@@ -33,7 +33,11 @@ import {
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import { shareArtifactUrl } from '../lib/deployment';
-import { getWatchedRepos, repoDisplayName } from '../lib/github-client';
+import {
+  getWatchedRepos,
+  repoDisplayName,
+  repoKey,
+} from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { CancelRunButton } from './cancel-run-button';
@@ -41,6 +45,7 @@ import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
 import { lcarsPanelStyle } from './lcars';
 import { RelativeTime } from './relative-time';
+import { RepoScopeBadge } from './repo-scope-badge';
 import { TakeoverCommand } from './takeover-command';
 
 // Labels/colors are keyed by the run-status classifier's own output
@@ -220,15 +225,10 @@ export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
     (watched) => watched.owner === repo.owner && watched.name === repo.name,
   );
   return (
-    <Badge
-      variant="outline"
-      color="gray"
-      size="xs"
-      style={{ flexShrink: 0 }}
-      data-testid="repo-badge"
-    >
-      {repoDisplayName(configured ?? repo)}
-    </Badge>
+    <RepoScopeBadge
+      repoKey={repoKey(configured ?? repo)}
+      display={repoDisplayName(configured ?? repo)}
+    />
   );
 }
 

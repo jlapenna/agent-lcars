@@ -17,6 +17,10 @@ import {
 // CancelRunButton is a 'use server' client component wired to backend
 // actions - out of scope here, matching the pattern in
 // action-items-board.test.tsx.
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('./cancel-run-button', () => ({
   CancelRunButton: () => null,
 }));
