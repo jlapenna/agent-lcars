@@ -64,6 +64,18 @@ describe('parseDispatchLedger', () => {
     expect(result.ledger).toEqual(ledger);
   });
 
+  it('accepts the broker production-canary pipeline', () => {
+    const ledger = ledgerJson({
+      generations: [{ ...ledgerJson().generations[0], pipeline: 'canary' }],
+    });
+    const result = parseDispatchLedger(
+      commentWithLedger(ledger),
+      EXPECTED_TASK,
+    );
+    expect(result.warning).toBeUndefined();
+    expect(result.ledger).toEqual(ledger);
+  });
+
   it('returns nothing (no warning) for a comment with no ledger marker at all', () => {
     const result = parseDispatchLedger('just a regular comment', EXPECTED_TASK);
     expect(result.ledger).toBeUndefined();
