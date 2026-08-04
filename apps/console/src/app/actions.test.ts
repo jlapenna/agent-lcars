@@ -324,7 +324,10 @@ describe('agent-lcars Server Actions', () => {
       await expect(dispatchUnstickPrs('PR #123 stuck')).resolves.toEqual({
         ok: true,
       });
-      expect(dispatchUnstickPrsLib).toHaveBeenCalledWith('PR #123 stuck');
+      expect(dispatchUnstickPrsLib).toHaveBeenCalledWith(
+        'PR #123 stuck',
+        undefined,
+      );
     });
 
     it('createQuickTask returns the canonical receipt and revalidates', async () => {
@@ -373,6 +376,26 @@ describe('agent-lcars Server Actions', () => {
     });
   });
 
+  describe('dispatchUnstickPrs repo scoping', () => {
+    it('forwards a watched repo resolved against the config', async () => {
+      (dispatchUnstickPrsLib as Mock).mockResolvedValue(undefined);
+
+      await expect(
+        dispatchUnstickPrs('stuck #42', {
+          owner: DEFAULT_REPO.owner,
+          name: DEFAULT_REPO.name,
+        }),
+      ).resolves.toEqual({ ok: true });
+      expect(dispatchUnstickPrsLib).toHaveBeenCalledWith(
+        'stuck #42',
+        expect.objectContaining({
+          owner: DEFAULT_REPO.owner,
+          name: DEFAULT_REPO.name,
+        }),
+      );
+    });
+  });
+
   // Security-critical (see the resolveWatchedRepo doc comment in
   // github-client.ts): Server Action arguments are client-controlled at the
   // HTTP boundary regardless of their TS signature, so a client-supplied
@@ -418,6 +441,12 @@ describe('agent-lcars Server Actions', () => {
       const result = await retriggerIssue(UNWATCHED_REPO, 42, DISPATCH_ID);
       expect(result.ok).toBe(false);
       expect(retriggerIssueLib).not.toHaveBeenCalled();
+    });
+
+    it('dispatchUnstickPrs rejects without calling the lib', async () => {
+      const result = await dispatchUnstickPrs('ctx', UNWATCHED_REPO);
+      expect(result.ok).toBe(false);
+      expect(dispatchUnstickPrsLib).not.toHaveBeenCalled();
     });
 
     it('cancelRun rejects without calling cancelWorkflowRun', async () => {

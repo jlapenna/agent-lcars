@@ -189,10 +189,16 @@ export async function cancelRun(
 
 export async function dispatchUnstickPrs(
   context?: string,
+  repo?: { owner: string; name: string },
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await dispatchUnstickPrsLib(context);
+    // resolveWatchedRepo: never forward a client-supplied repo unvalidated
+    // (see its doc comment) - unknown repos throw instead of dispatching.
+    await dispatchUnstickPrsLib(
+      context,
+      repo ? resolveWatchedRepo(repo) : undefined,
+    );
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
