@@ -27,6 +27,7 @@ import { type PrimaryAction } from '../lib/primary-action';
 import {
   agentIntegration,
   repoDisplayName,
+  repoKey,
   selectedAgentPipeline,
 } from '../lib/watched-repo';
 import { approveAndRebase, mergePr, replyToItem } from './actions';
@@ -34,6 +35,7 @@ import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
 import { RelativeTime } from './relative-time';
+import { RepoScopeBadge } from './repo-scope-badge';
 import { RetriggerButton } from './retrigger-button';
 import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
@@ -400,15 +402,10 @@ export function ActionItemCard({
             ) : (
               <>
                 {multiRepo && (
-                  <Badge
-                    variant="outline"
-                    color="gray"
-                    size="xs"
-                    style={{ flexShrink: 0 }}
-                    data-testid="repo-badge"
-                  >
-                    {repoDisplayName(item.repo)}
-                  </Badge>
+                  <RepoScopeBadge
+                    repoKey={repoKey(item.repo)}
+                    display={repoDisplayName(item.repo)}
+                  />
                 )}
                 {item.actionTypes.map((type) => (
                   <Badge

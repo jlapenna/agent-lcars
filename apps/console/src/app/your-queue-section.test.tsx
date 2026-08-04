@@ -8,6 +8,10 @@ import { YourQueueSection } from './your-queue-section';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
 // out of scope here, matching action-item-card.test.tsx's own mock.
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('./actions', () => ({
   mergePr: vi.fn(),
   replyToItem: vi.fn(),
