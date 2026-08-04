@@ -103,7 +103,7 @@ export function QueueWorkspace({
   const [search, setSearch] = useState(
     () => searchParams.get(SEARCH_PARAM) ?? '',
   );
-  const { muted, mute, unmute } = useMutedItems();
+  const { isMuted, mute, unmute } = useMutedItems();
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keyboardNavigated = useRef(false);
@@ -164,7 +164,8 @@ export function QueueWorkspace({
       (item.author ?? '').toLowerCase().includes(needle) ||
       item.labels.some((label) => label.toLowerCase().includes(needle));
     const filtered = cards.filter(({ item }) => {
-      if (muted.has(repoItemKey(item.repo, item.number))) return false;
+      if (isMuted(repoItemKey(item.repo, item.number), item.updatedAt))
+        return false;
       if (!matchesSearch(item)) return false;
       return filter === 'all' || item.actionTypes.includes(filter);
     });
@@ -181,10 +182,10 @@ export function QueueWorkspace({
         (queueReasonFor(b.item)?.rank ?? Number.MAX_SAFE_INTEGER)
       );
     });
-  }, [cards, filter, muted, search, sort]);
+  }, [cards, filter, isMuted, search, sort]);
 
   const mutedCards = cards.filter(({ item }) =>
-    muted.has(repoItemKey(item.repo, item.number)),
+    isMuted(repoItemKey(item.repo, item.number), item.updatedAt),
   );
   const selectedCard = selectedItemKey
     ? visibleCards.find(
@@ -471,7 +472,7 @@ export function QueueWorkspace({
                     ) === key
                   }
                   muted={false}
-                  onToggleMute={() => mute(key)}
+                  onToggleMute={() => mute(key, card.item.updatedAt)}
                 />
               );
             })
@@ -516,6 +517,7 @@ export function QueueWorkspace({
             onToggleMute={() =>
               mute(
                 repoItemKey(selectedCard.item.repo, selectedCard.item.number),
+                selectedCard.item.updatedAt,
               )
             }
             variant="workspace"

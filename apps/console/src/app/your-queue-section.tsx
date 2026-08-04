@@ -92,10 +92,10 @@ export function YourQueueSection({
   cards: BoardCard[];
   multiRepo: boolean;
 }) {
-  const { muted, mute, unmute } = useMutedItems();
+  const { isMuted: isKeyMuted, mute, unmute } = useMutedItems();
 
   const isMuted = (item: BoardCard['item']) =>
-    muted.has(repoItemKey(item.repo, item.number));
+    isKeyMuted(repoItemKey(item.repo, item.number), item.updatedAt);
 
   const visible = cards.filter(({ item }) => !isMuted(item));
   const mutedCards = cards.filter(({ item }) => isMuted(item));
@@ -122,7 +122,9 @@ export function YourQueueSection({
               primaryAction={primaryAction}
               multiRepo={multiRepo}
               muted={false}
-              onToggleMute={() => mute(repoItemKey(item.repo, item.number))}
+              onToggleMute={() =>
+                mute(repoItemKey(item.repo, item.number), item.updatedAt)
+              }
             />
           ))}
         </Stack>
