@@ -5,7 +5,8 @@ import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
-import { getCliSessions } from '../lib/cli-sessions';
+import { RECENT_RUN_LIMIT } from '../lib/agent-activity';
+import { getCliSessions, MAX_SESSIONS } from '../lib/cli-sessions';
 import {
   getCachedActionItems,
   getCachedAgentActivity,
@@ -170,6 +171,8 @@ async function IndexBody({
         cliSessions={filteredCliSessions}
         itemsByRunId={itemsByRunId}
         sessionsByRunId={sessionsByRunId}
+        recentRunsCapped={activity.recentRuns.length >= RECENT_RUN_LIMIT}
+        cliSessionsCapped={cliSessions.length >= MAX_SESSIONS}
       />
     </>
   );

@@ -45,6 +45,18 @@ function CostCell({ row }: { row: LedgerTotals }) {
  * useful to show at once. */
 const MAX_LEDGER_ROWS = 15;
 
+/** Truthful footer for a windowed ledger - a capped list that looks
+ * complete reads as "covered everything" when it is not. Renders nothing
+ * while the window still fits. */
+function TruncationNote({ shown, total }: { shown: number; total: number }) {
+  if (total <= shown) return null;
+  return (
+    <Text size="xs" c="dimmed" mt={4}>
+      Showing {shown} of {total}
+    </Text>
+  );
+}
+
 /** React key for an issue-ledger row - the bare issue number collides once
  * two watched repos can each have their own #42 (same class of bug Codex
  * caught in the board's row keys, #18); 'no-issue' is already a unique
@@ -269,6 +281,10 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
           </div>
           <IssueLedgerTable rows={byIssue} />
           <IssueLedgerTableCompact rows={byIssue} />
+          <TruncationNote
+            shown={byIssue.length}
+            total={ledger.byIssue.length}
+          />
         </section>
         <section className="costs-ledger-section" aria-labelledby="by-week">
           <div className="costs-ledger-section__heading" id="by-week">
@@ -276,6 +292,7 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
           </div>
           <WeekLedgerTable rows={byWeek} />
           <WeekLedgerTableCompact rows={byWeek} />
+          <TruncationNote shown={byWeek.length} total={ledger.byWeek.length} />
         </section>
       </div>
       <Text size="xs" c="dimmed" className="costs-ledger-note">
