@@ -82,7 +82,7 @@ describe('ActionItemCard', () => {
     );
 
     expect(screen.getByText('Human needed')).toBeTruthy();
-    expect(screen.queryByText('CI run failed')).toBeNull();
+    expect(screen.queryByText('Run failed')).toBeNull();
     expect(screen.getByText('type:bug')).toBeTruthy();
     expect(screen.getByText('app:console')).toBeTruthy();
     expect(screen.queryByText('priority')).toBeNull();
@@ -147,10 +147,10 @@ describe('ActionItemCard', () => {
     );
 
     for (const label of [
-      'Needs a human',
-      'CI run failed',
+      'Human needed',
+      'Run failed',
       'Review requested',
-      'Awaiting next deploy',
+      'Awaiting deploy',
     ]) {
       expect(screen.getByText(label)).toBeTruthy();
     }
