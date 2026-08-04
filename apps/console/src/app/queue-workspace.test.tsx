@@ -260,6 +260,63 @@ describe('URL resync', () => {
   });
 });
 
+describe('inbox search', () => {
+  it('narrows rows by title, number, author, or label and syncs the URL', () => {
+    const replaceState = vi.spyOn(window.history, 'replaceState');
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+        author: 'octocat',
+      }),
+    ]);
+
+    const input = screen.getByRole('textbox', { name: 'Search the Inbox' });
+    fireEvent.change(input, { target: { value: 'octo' } });
+
+    expect(screen.queryByText('Responsive Inbox')).toBeNull();
+    expect(screen.getByText('Review the next item')).toBeTruthy();
+    expect(replaceState).toHaveBeenCalledWith(
+      null,
+      '',
+      expect.stringContaining('q=octo'),
+    );
+
+    fireEvent.change(input, { target: { value: '#249' } });
+    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+    expect(screen.queryByText('Review the next item')).toBeNull();
+  });
+
+  it('offers a clear-search reset from the empty state', () => {
+    renderWorkspace([makeCard()]);
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Search the Inbox' }),
+      { target: { value: 'zzz-no-match' } },
+    );
+    expect(screen.getByText('No matches for “zzz-no-match”.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+  });
+
+  it('initializes from ?q= so a shared URL lands on the same view', () => {
+    mockSearch = 'q=next';
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+    expect(screen.queryByText('Responsive Inbox')).toBeNull();
+    expect(screen.getByText('Review the next item')).toBeTruthy();
+  });
+});
+
 describe('parseQueueFilter / parseQueueSort', () => {
   it('accepts known values and falls back on defaults for junk', () => {
     expect(parseQueueFilter('run-failed')).toBe('run-failed');
