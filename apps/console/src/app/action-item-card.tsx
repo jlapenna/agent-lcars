@@ -557,6 +557,7 @@ export function ActionItemCard({
               // item.draft is belt-and-suspenders for the 'draft'
               // mergeable_state: merging a draft always 405s.
               disabled={mergeDisabled}
+              loading={isPending}
               title={
                 item.draft ? MERGEABLE_WARNINGS.draft : mergeableWarning(item)
               }
@@ -570,6 +571,7 @@ export function ActionItemCard({
               color={workspace ? 'orange' : 'dark'}
               className={workspace ? 'queue-primary-action' : undefined}
               disabled={rebaseDisabled}
+              loading={isPending}
               title={item.draft ? MERGEABLE_WARNINGS.draft : undefined}
               onClick={confirmRebase}
             >
