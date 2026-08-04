@@ -7,6 +7,8 @@ import type { ReactNode } from 'react';
 import { DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
 import type { SessionArchiveQuery } from '@/lib/session-archive';
 
+import { repoScopedConsoleHrefs } from './console-hrefs';
+
 type NavKey = 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs';
 type Accent = 'amber' | 'blue' | 'periwinkle' | 'teal' | 'gold';
 
@@ -60,17 +62,6 @@ function navHref(
   }
   const queryString = params.toString();
   return queryString ? `${item.href}?${queryString}` : item.href;
-}
-
-export function repoScopedConsoleHrefs(repoFilter?: string):
-  | {
-      deck: string;
-      inbox: string;
-    }
-  | undefined {
-  if (!repoFilter) return undefined;
-  const query = new URLSearchParams({ repo: repoFilter }).toString();
-  return { deck: `/?${query}`, inbox: `/inbox?${query}` };
 }
 
 /**
