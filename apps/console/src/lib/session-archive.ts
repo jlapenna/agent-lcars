@@ -14,6 +14,7 @@ import {
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
+import { DEFAULT_ARCHIVE_DAYS } from './archive-window';
 import {
   parseRepoFilterParam,
   primaryWatchedRepo,
@@ -22,7 +23,8 @@ import {
 } from './github-client';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 
-export const DEFAULT_ARCHIVE_DAYS = 14;
+export { DEFAULT_ARCHIVE_DAYS } from './archive-window';
+
 export const MAX_ARCHIVE_DAYS = 90;
 
 /** Server-side page-size cap for the archive table - the store's own
