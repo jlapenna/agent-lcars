@@ -223,8 +223,29 @@ func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
 			load.penalty = maxPenalty(load.penalty, 10)
 		}
 	}
+	// Swap page rate DEPRIORITIZES but never excludes.
+	// node_vmstat_pswpin/pswpout are kernel-global counters summed across
+	// every swap device, so they cannot distinguish zram (compressed RAM,
+	// microsecond latency) from a disk-backed swap file.
+	//
+	// pike runs both: Ubuntu's zram-config package puts /dev/zram0 at
+	// priority 5 with vm.swappiness=180, so pages land in compressed RAM
+	// first and its disk /swap.img (priority -1) stays nearly untouched.
+	// Measured 2026-08-04: 12.4G of pages held in 5.4G of RAM via lzo-rle
+	// against just 1.2G of 16G on the disk file, sustaining 634 pages/sec
+	// averaged over 7 days. The old hard threshold read that healthy,
+	// deliberate compression traffic as thrashing and removed the fleet's
+	// most CPU-idle host (16 cores, 0.55 normalized load that same week)
+	// from the candidate set 25.1% of the time.
+	//
+	// Memory PSI measures the actual stall rather than a proxy for it, and
+	// put pike over psiHard only 1.7% of the time -- ~15x less often. So
+	// the hard gate belongs to PSI and available-memory, which measure harm
+	// directly and do not care which device backed the page. A host that is
+	// genuinely thrashing to disk still stalls, so PSI still excludes it;
+	// short of that it merely loses ties via the penalty here.
 	if load.swapPagesPerSec >= p.swapHard {
-		load.penalty, load.overloaded = 100, true
+		load.penalty = maxPenalty(load.penalty, 100)
 	} else if load.swapPagesPerSec >= p.swapSoft {
 		load.penalty = maxPenalty(load.penalty, 10)
 	}
@@ -862,8 +883,9 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 // idle fleet hosts are preferred over it.
 //
 // Hard overload is different from a soft penalty: a host scoreHostLoad marks
-// hard-overloaded (load/CPU/PSI/memory/swap pressure past its *Hard
-// threshold), or one still inside applyOverloadCooldown's post-overload
+// hard-overloaded (load/CPU/PSI/memory pressure past its *Hard threshold --
+// swap rate is deliberately excluded, see scoreHostLoad), or one still
+// inside applyOverloadCooldown's post-overload
 // window, is removed from the candidate set entirely rather than merely
 // deprioritized -- a virtual penalty only changes which candidate wins a
 // tie, so with a soft penalty alone a lowest-effective-count comparison
