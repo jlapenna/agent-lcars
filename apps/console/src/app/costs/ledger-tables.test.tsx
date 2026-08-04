@@ -6,6 +6,10 @@ import { getWatchedRepos } from '../../lib/github-client';
 import type { SessionLedger } from '../../lib/session-ledger';
 import { LedgerTables } from './ledger-tables';
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('../../lib/github-client', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../lib/github-client')>();
