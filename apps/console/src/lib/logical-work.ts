@@ -312,18 +312,29 @@ function intentsFromLedger(ledger: DispatchLedger): DispatchIntentView[] {
   const bySourceId = new Map(
     ledger.sources.map((source) => [source.sourceId, source]),
   );
-  return ledger.generations
-    .slice()
-    .sort((a, b) => a.generation - b.generation)
-    .map((generation) => ({
-      intentId: generation.intentId,
-      generation: generation.generation,
-      sourceKind: bySourceId.get(generation.sourceId)?.sourceKind,
-      occurredAt: generation.occurredAt,
-      pipeline: generation.pipeline,
-      mode: generation.mode,
-      state: generation.state,
-    }));
+  return (
+    ledger.generations
+      // The broker's no-op production canary is valid ledger history, but it
+      // is not a selectable coding-agent intent and has no UI integration.
+      .filter(
+        (
+          generation,
+        ): generation is LedgerGeneration & {
+          pipeline: AgentPipeline;
+        } => generation.pipeline !== 'canary',
+      )
+      .slice()
+      .sort((a, b) => a.generation - b.generation)
+      .map((generation) => ({
+        intentId: generation.intentId,
+        generation: generation.generation,
+        sourceKind: bySourceId.get(generation.sourceId)?.sourceKind,
+        occurredAt: generation.occurredAt,
+        pipeline: generation.pipeline,
+        mode: generation.mode,
+        state: generation.state,
+      }))
+  );
 }
 
 /** The pipeline selected by the newest non-superseded generation, falling
@@ -342,7 +353,7 @@ function selectedPipeline(
       ledger.generations.findLast(
         (g) => g.state !== 'superseded' && g.state !== 'superseded-by-close',
       ) ?? ledger.generations.at(-1);
-    if (newest) return newest.pipeline;
+    if (newest?.pipeline !== 'canary') return newest?.pipeline;
   }
   return attempts.at(-1)?.pipeline;
 }
