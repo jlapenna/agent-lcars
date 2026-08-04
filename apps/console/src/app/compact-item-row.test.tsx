@@ -6,6 +6,10 @@ import type { ActionItem } from '../lib/action-items';
 import { getWatchedRepos } from '../lib/github-client';
 import { CompactItemRow } from './compact-item-row';
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('../lib/github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/github-client')>();
   return { ...actual, getWatchedRepos: vi.fn(actual.getWatchedRepos) };
