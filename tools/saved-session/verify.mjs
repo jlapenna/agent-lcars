@@ -4,12 +4,14 @@ import { parseArgs } from 'node:util';
 import { chromium } from '@playwright/test';
 
 import {
+  assertSuccessfulNavigation,
   DEFAULT_ORIGIN,
   DEFAULT_PROJECT,
   isLoginPath,
   isSessionRole,
   isStorageBackend,
   loadStorageState,
+  matchesTargetLocation,
   normalizeOrigin,
   secretNameForRole,
   SESSION_ROLES,
@@ -93,7 +95,10 @@ async function main() {
   try {
     const context = await browser.newContext({ storageState });
     const page = await context.newPage();
-    await page.goto(target.toString(), { waitUntil: 'networkidle' });
+    const navigation = await page.goto(target.toString(), {
+      waitUntil: 'networkidle',
+    });
+    assertSuccessfulNavigation(navigation, target);
     const landed = new URL(page.url());
     if (isLoginPath(landed.pathname)) {
       console.error(
@@ -116,10 +121,7 @@ async function main() {
       );
       return 3;
     }
-    if (
-      landed.origin !== target.origin ||
-      landed.pathname !== target.pathname
-    ) {
+    if (!matchesTargetLocation(landed, target)) {
       console.error(
         `REDIRECTED: requested ${target.toString()} but landed on ${page.url()}.`,
       );

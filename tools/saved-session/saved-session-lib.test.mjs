@@ -6,8 +6,10 @@ import path from 'node:path';
 import { test } from 'vitest';
 
 import {
+  assertSuccessfulNavigation,
   defaultStatePath,
   loadStorageState,
+  matchesTargetLocation,
   normalizeOrigin,
   saveStorageState,
   secretNameForRole,
@@ -54,6 +56,58 @@ test('session targets stay on the configured origin', () => {
   assert.throws(
     () => normalizeOrigin('https://user:secret@console.example'),
     /without credentials/,
+  );
+});
+
+test('destination checks preserve meaningful query and hash state', () => {
+  const target = new URL(
+    'https://console.example/inbox?repo=lcars&q=open#queue',
+  );
+
+  assert.equal(
+    matchesTargetLocation(
+      new URL('https://console.example/inbox?q=open&repo=lcars#queue'),
+      target,
+    ),
+    true,
+  );
+  assert.equal(
+    matchesTargetLocation(
+      new URL('https://console.example/inbox?repo=lcars#queue'),
+      target,
+    ),
+    false,
+  );
+  assert.equal(
+    matchesTargetLocation(
+      new URL('https://console.example/inbox?repo=lcars&q=open#other'),
+      target,
+    ),
+    false,
+  );
+});
+
+test('navigation checks reject missing and unsuccessful document responses', () => {
+  const target = new URL('https://console.example/missing');
+
+  assert.throws(
+    () => assertSuccessfulNavigation(null, target),
+    /returned no response/,
+  );
+  assert.throws(
+    () =>
+      assertSuccessfulNavigation(
+        {
+          ok: () => false,
+          status: () => 404,
+          statusText: () => 'Not Found',
+        },
+        target,
+      ),
+    /HTTP 404 Not Found/,
+  );
+  assert.doesNotThrow(() =>
+    assertSuccessfulNavigation({ ok: () => true }, target),
   );
 });
 

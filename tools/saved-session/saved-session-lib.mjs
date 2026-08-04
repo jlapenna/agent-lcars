@@ -53,6 +53,33 @@ export function targetUrlFor(origin, targetPath) {
   return target;
 }
 
+function normalizedSearch(url) {
+  const search = new URLSearchParams(url.search);
+  search.sort();
+  const serialized = search.toString();
+  return serialized ? `?${serialized}` : '';
+}
+
+export function matchesTargetLocation(landed, target) {
+  return (
+    landed.origin === target.origin &&
+    landed.pathname === target.pathname &&
+    normalizedSearch(landed) === normalizedSearch(target) &&
+    landed.hash === target.hash
+  );
+}
+
+export function assertSuccessfulNavigation(response, target) {
+  if (!response) {
+    throw new Error(`Navigation to ${target.toString()} returned no response.`);
+  }
+  if (!response.ok()) {
+    throw new Error(
+      `Navigation to ${target.toString()} returned HTTP ${response.status()} ${response.statusText()}.`,
+    );
+  }
+}
+
 export function isLoginPath(pathname) {
   return pathname === '/login' || pathname.startsWith('/login/');
 }
