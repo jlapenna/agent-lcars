@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { useMutedItems } from './use-muted-items';
+import { muteSignatureFor, useMutedItems } from './use-muted-items';
 
 const STORAGE_KEY = 'agent-lcars:muted-queue-items';
 
@@ -20,6 +20,26 @@ describe('useMutedItems', () => {
     expect(result.current.isMuted('other#2', '2026-08-01T00:00:00Z')).toBe(
       false,
     );
+  });
+
+  it('expires when only the classification changes (CI/telemetry activity)', () => {
+    const before = muteSignatureFor({
+      updatedAt: '2026-08-01T00:00:00Z',
+      actionTypes: ['review-requested'],
+      ciRunning: false,
+    });
+    const afterCi = muteSignatureFor({
+      updatedAt: '2026-08-01T00:00:00Z',
+      actionTypes: ['review-requested', 'run-failed'],
+      ciRunning: false,
+    });
+    expect(afterCi).not.toBe(before);
+
+    const { result } = renderHook(() => useMutedItems());
+    act(() => result.current.mute('a/b#1', before));
+    expect(result.current.isMuted('a/b#1', before)).toBe(true);
+    // A failed run reclassified the item without touching issue.updated_at.
+    expect(result.current.isMuted('a/b#1', afterCi)).toBe(false);
   });
 
   it('unmute removes the entry', () => {

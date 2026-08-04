@@ -30,7 +30,7 @@ import { QueueItemRow } from './queue-item-row';
 import { queueReasonFor } from './queue-reason';
 import { QuickTaskButton } from './quick-task-button';
 import { RefreshButton } from './refresh-button';
-import { useMutedItems } from './use-muted-items';
+import { muteSignatureFor, useMutedItems } from './use-muted-items';
 
 type QueueFilter = 'all' | ActionType;
 type QueueSort = 'priority' | 'newest' | 'oldest';
@@ -164,7 +164,7 @@ export function QueueWorkspace({
       (item.author ?? '').toLowerCase().includes(needle) ||
       item.labels.some((label) => label.toLowerCase().includes(needle));
     const filtered = cards.filter(({ item }) => {
-      if (isMuted(repoItemKey(item.repo, item.number), item.updatedAt))
+      if (isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)))
         return false;
       if (!matchesSearch(item)) return false;
       return filter === 'all' || item.actionTypes.includes(filter);
@@ -185,7 +185,7 @@ export function QueueWorkspace({
   }, [cards, filter, isMuted, search, sort]);
 
   const mutedCards = cards.filter(({ item }) =>
-    isMuted(repoItemKey(item.repo, item.number), item.updatedAt),
+    isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)),
   );
   const selectedCard = selectedItemKey
     ? visibleCards.find(
@@ -472,7 +472,7 @@ export function QueueWorkspace({
                     ) === key
                   }
                   muted={false}
-                  onToggleMute={() => mute(key, card.item.updatedAt)}
+                  onToggleMute={() => mute(key, muteSignatureFor(card.item))}
                 />
               );
             })
@@ -517,7 +517,7 @@ export function QueueWorkspace({
             onToggleMute={() =>
               mute(
                 repoItemKey(selectedCard.item.repo, selectedCard.item.number),
-                selectedCard.item.updatedAt,
+                muteSignatureFor(selectedCard.item),
               )
             }
             variant="workspace"

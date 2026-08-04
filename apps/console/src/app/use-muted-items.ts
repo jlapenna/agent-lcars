@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import type { ActionItem } from '../lib/action-items';
+
 // Per-browser only (#59) - deliberately not a GitHub label or a Firestore
 // doc: muting is "get this out of my way for a while" on the maintainer's
 // own console, not a signal any other viewer or automation should ever see
@@ -10,11 +12,30 @@ import { useCallback, useEffect, useState } from 'react';
 const STORAGE_KEY = 'agent-lcars:muted-queue-items';
 
 /**
- * `repoItemKey` -> the item's `updatedAt` when it was muted, or null for a
- * mute with no expiry (only produced by migrating the legacy `string[]`
- * format, which predates expiry). A mute recorded against one `updatedAt`
- * stops matching the moment the item changes - "muted until something new
- * happens", so a mute can never hide fresh activity.
+ * What "the item changed" means for mute expiry. `issue.updated_at` alone
+ * is not enough: run-failed/ciRunning/silent-error are derived from check
+ * runs and telemetry that never touch the issue timestamp (Codex review
+ * on #497, P1) - so the signature also folds in the classification that
+ * makes the row actionable. Any new CI outcome or reclassification
+ * resurfaces a muted row.
+ */
+export function muteSignatureFor(
+  item: Pick<ActionItem, 'updatedAt' | 'actionTypes' | 'ciRunning'>,
+): string {
+  return [
+    item.updatedAt,
+    [...item.actionTypes].sort().join('+'),
+    item.ciRunning ? 'ci' : '',
+  ].join('|');
+}
+
+/**
+ * `repoItemKey` -> the item's mute signature (muteSignatureFor) when it
+ * was muted, or null for a mute with no expiry (only produced by
+ * migrating the legacy `string[]` format, which predates expiry). A mute
+ * recorded against one signature stops matching the moment the item
+ * changes - "muted until something new happens", so a mute can never hide
+ * fresh activity.
  */
 type MutedEntries = Record<string, string | null>;
 
@@ -72,9 +93,9 @@ export function useMutedItems() {
     setEntries(readStoredEntries());
   }, []);
 
-  const mute = useCallback((key: string, updatedAt?: string) => {
+  const mute = useCallback((key: string, version?: string) => {
     setEntries((prev) => {
-      const next = { ...prev, [key]: updatedAt ?? null };
+      const next = { ...prev, [key]: version ?? null };
       storeEntries(next);
       return next;
     });
@@ -90,12 +111,12 @@ export function useMutedItems() {
   }, []);
 
   const isMuted = useCallback(
-    (key: string, updatedAt?: string) => {
+    (key: string, version?: string) => {
       if (!(key in entries)) return false;
-      const mutedAt = entries[key];
-      // Legacy no-expiry mute, or a caller with no timestamp to compare.
-      if (mutedAt === null || updatedAt === undefined) return true;
-      return mutedAt === updatedAt;
+      const mutedVersion = entries[key];
+      // Legacy no-expiry mute, or a caller with no signature to compare.
+      if (mutedVersion === null || version === undefined) return true;
+      return mutedVersion === version;
     },
     [entries],
   );
