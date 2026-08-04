@@ -47,6 +47,7 @@ export function CancelRunButton({
       color="red"
       size="compact-xs"
       disabled={isPending}
+      loading={isPending}
       onClick={confirmCancel}
       {...buttonProps}
     >
