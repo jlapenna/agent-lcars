@@ -25,6 +25,7 @@ import {
 } from '../agent-activity-panel';
 import { formatDuration, formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
+import { PersistedDetails } from '../persisted-details';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
   pending: 'pending',
@@ -154,15 +155,18 @@ export function LogicalWorkCard({
         )}
 
         {work.intents.length > 0 && (
-          <details
+          <PersistedDetails
             data-testid="logical-work-intents"
-            open={work.anomalies.length > 0}
-          >
-            <summary style={{ cursor: 'pointer' }}>
+            // An anomaly must not stay hidden behind a remembered "closed":
+            // omit the storage key and pin open when anomalies exist.
+            storageKey={work.anomalies.length > 0 ? undefined : 'task:intents'}
+            defaultOpen={work.anomalies.length > 0}
+            summary={
               <Text component="span" size="sm" fw={600}>
                 Dispatch intents ({work.intents.length})
               </Text>
-            </summary>
+            }
+          >
             <Stack gap={6} mt="xs">
               {work.intents.map((intent) => (
                 <Group key={intent.intentId} gap="xs" wrap="wrap">
@@ -182,7 +186,7 @@ export function LogicalWorkCard({
                 </Group>
               ))}
             </Stack>
-          </details>
+          </PersistedDetails>
         )}
 
         <Stack gap={6} data-testid="logical-work-attempts">
