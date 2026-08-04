@@ -2,19 +2,19 @@ name: agent-lcars-telemetry-watcher
 
 # Per-host CLI telemetry watcher for Agent LCARS (members#2540,
 # members#2548). Ships summary+heartbeat telemetry for Claude Code CLI sessions
-# on pike into the dedicated agent-telemetry Firestore database, so they show
-# up in Agent LCARS alongside GitHub Actions runner sessions.
+# on personal-login hosts into the dedicated agent-telemetry Firestore
+# database, so they show up alongside GitHub Actions runner sessions.
 #
 # The immutable image is built from this repo's own main
 # (.github/workflows/publish-images.yml) and published to the homelab
-# registry. Pike only pulls and runs it; it does not build application code
-# during deployment.
+# registry. Watcher hosts only pull and run it; they do not build application
+# code during deployment.
 #
 # Canonical copy of this compose file lives here, in jlapenna/agent-lcars
 # (moved from jlapenna/homelab in homelab#218 Phase 6 -- the deployment
 # config lives with the image that builds it and the semantics it depends
-# on), deployed to pike via deploy.sh in this same directory. See
-# deploy/README.md for how secrets (writer-key.json, .env) reach pike.
+# on), deployed per host via deploy.sh in this same directory. See
+# deploy/README.md for how secrets reach each watcher host.
 #
 # jlapenna/homelab owns the Prometheus scrape and alert rules for this
 # service; this repo owns the endpoint and published port they consume.
@@ -50,8 +50,8 @@ services:
     # same-uid suffices for READ — so no capability grant is needed either
     # (cap_add: [SYS_PTRACE] was tested and does nothing anyway: caps are
     # stripped on execve for non-root container users). Unconfining AppArmor
-    # while staying uid 1000 with default (no) effective caps means the
-    # container can read cwd symlinks of jlapenna's own processes and
+    # while staying at the host's jlapenna uid with default (no) effective caps
+    # means the container can read cwd symlinks of jlapenna's own processes and
     # nothing more — strictly narrower than a CAP_SYS_PTRACE grant, and far
     # narrower than cadvisor's privileged:true on this same host.
     security_opt:
@@ -68,15 +68,15 @@ services:
     environment:
       - AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR=${WATCHER_HOME:?deploy.sh must export WATCHER_HOME}/.claude/projects
       - AGENT_TELEMETRY_CODEX_SESSIONS_DIR=${WATCHER_HOME}/.codex/sessions
-      - AGENT_TELEMETRY_HOST=pike
+      - AGENT_TELEMETRY_HOST=${WATCHER_HOST:?deploy.sh must export WATCHER_HOST}
       # One source-of-truth list derives Claude project slugs, Codex cwd globs,
       # and Antigravity workspace prefixes inside the watcher. There is no
       # built-in checkout fallback: a missing value fails startup closed.
       #
       # These roots are a privacy boundary, not just a filter: the transcript
       # directories contain other projects too, and only these roots ship.
-      - AGENT_TELEMETRY_CHECKOUT_ROOTS=${WATCHER_HOME}/p/sprinkles,${WATCHER_HOME}/p/agent-lcars
-      - AGENT_TELEMETRY_PROJECT_ID=${AGENT_TELEMETRY_PROJECT_ID}
+      - AGENT_TELEMETRY_CHECKOUT_ROOTS=${WATCHER_CHECKOUT_ROOTS:?deploy.sh must export WATCHER_CHECKOUT_ROOTS}
+      - AGENT_TELEMETRY_PROJECT_ID=${AGENT_TELEMETRY_PROJECT_ID:-agent-lcars}
       - AGENT_TELEMETRY_DATABASE_ID=(default)
       # share-media skill convention (members#2631) — artifact discovery
       # no-ops soft on a missing dir, so leaving this unset wouldn't crash

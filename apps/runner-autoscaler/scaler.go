@@ -281,8 +281,29 @@ func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
 			load.penalty = maxPenalty(load.penalty, 10)
 		}
 	}
+	// Swap page rate DEPRIORITIZES but never excludes.
+	// node_vmstat_pswpin/pswpout are kernel-global counters summed across
+	// every swap device, so they cannot distinguish zram (compressed RAM,
+	// microsecond latency) from a disk-backed swap file.
+	//
+	// pike runs both: Ubuntu's zram-config package puts /dev/zram0 at
+	// priority 5 with vm.swappiness=180, so pages land in compressed RAM
+	// first and its disk /swap.img (priority -1) stays nearly untouched.
+	// Measured 2026-08-04: 12.4G of pages held in 5.4G of RAM via lzo-rle
+	// against just 1.2G of 16G on the disk file, sustaining 634 pages/sec
+	// averaged over 7 days. The old hard threshold read that healthy,
+	// deliberate compression traffic as thrashing and removed the fleet's
+	// most CPU-idle host (16 cores, 0.55 normalized load that same week)
+	// from the candidate set 25.1% of the time.
+	//
+	// Memory PSI measures the actual stall rather than a proxy for it, and
+	// put pike over psiHard only 1.7% of the time -- ~15x less often. So
+	// the hard gate belongs to PSI and available-memory, which measure harm
+	// directly and do not care which device backed the page. A host that is
+	// genuinely thrashing to disk still stalls, so PSI still excludes it;
+	// short of that it merely loses ties via the penalty here.
 	if load.swapPagesPerSec >= p.swapHard {
-		load.penalty, load.overloaded = 100, true
+		load.penalty = maxPenalty(load.penalty, 100)
 	} else if load.swapPagesPerSec >= p.swapSoft {
 		load.penalty = maxPenalty(load.penalty, 10)
 	}
@@ -939,8 +960,9 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 // idle fleet hosts are preferred over it.
 //
 // Hard overload is different from a soft penalty: a host scoreHostLoad marks
-// hard-overloaded (load/CPU/PSI/memory/swap pressure past its *Hard
-// threshold), or one still inside applyOverloadCooldown's post-overload
+// hard-overloaded (load/CPU/PSI/memory pressure past its *Hard threshold --
+// swap rate is deliberately excluded, see scoreHostLoad), or one still
+// inside applyOverloadCooldown's post-overload
 // window, is removed from the candidate set entirely rather than merely
 // deprioritized -- a virtual penalty only changes which candidate wins a
 // tie, so with a soft penalty alone a lowest-effective-count comparison
@@ -1524,78 +1546,125 @@ const (
 // any runner has been started.
 func (a *Scaler) cleanupOrphans(ctx context.Context, boot bool) {
 	a.logger.Info("Checking for orphaned runner containers across docker hosts", slog.Bool("boot", boot))
+	// One goroutine per host, mirroring pickHostLocked and pullRunnerImages.
+	// Serially, a single wedged fleet host stalled every host after it in the
+	// list -- and because initializeGitHubScaleSet runs this before its
+	// listener connects, every scale set paid that stall independently before
+	// it could accept work (agent-lcars#511: ~70s to reach all listeners up,
+	// with the process itself down for barely a second).
+	var wg sync.WaitGroup
 	for _, h := range a.dockerHosts {
-		containers, err := h.Client.ContainerList(ctx, container.ListOptions{All: true})
-		if err != nil {
-			a.logger.Warn("Failed to list containers on docker host during orphan cleanup", slog.String("host", h.Name), slog.String("error", err.Error()))
+		wg.Add(1)
+		go func(h DockerHost) {
+			defer wg.Done()
+			a.cleanupOrphansOnHost(ctx, h, boot)
+		}(h)
+	}
+	wg.Wait()
+	a.runnersChanged()
+}
+
+// hostReachableTimeout bounds the reachability probe that gates each host's
+// orphan sweep. Same 5s budget pickHostLocked uses, for the same reason: a
+// cold SSH handshake can exceed a tighter bound and would flap a healthy host.
+const hostReachableTimeout = 5 * time.Second
+
+// orphanSweepHostTimeout bounds the actual sweep work per host, after the
+// reachability probe has passed. The probe alone is not enough -- a host can
+// answer a ping and then wedge mid-transfer, and SSH's ConnectTimeout covers
+// only TCP connect, not a server that accepts the connection and never
+// completes the banner exchange (the live agent-lcars#511 failure mode).
+const orphanSweepHostTimeout = 60 * time.Second
+
+// cleanupOrphansOnHost runs the sweep for one fleet host. Safe to call
+// concurrently for different hosts: every runnerState mutation below takes
+// its mutex, and each host owns a disjoint set of containers.
+func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bool) {
+	// Fail fast on an unreachable host rather than blocking the sweep on it.
+	// Skipping means its containers are not adopted on this pass -- already
+	// the behavior when the list call itself errored, and the periodic
+	// sweeper plus the next reconcile pick them up, so no guarantee changes.
+	pingCtx, cancelPing := context.WithTimeout(ctx, hostReachableTimeout)
+	_, pingErr := h.Client.Ping(pingCtx)
+	cancelPing()
+	if pingErr != nil {
+		a.logger.Warn("Skipping unreachable docker host during orphan cleanup",
+			slog.String("host", h.Name), slog.String("error", pingErr.Error()))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, orphanSweepHostTimeout)
+	defer cancel()
+
+	containers, err := h.Client.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		a.logger.Warn("Failed to list containers on docker host during orphan cleanup", slog.String("host", h.Name), slog.String("error", err.Error()))
+		return
+	}
+	for _, c := range containers {
+		if owner := c.Labels[runnerScaleSetLabelKey]; owner != a.scaleSetName {
+			// Unlabeled (not a runner container we manage) or belongs
+			// to a different control plane's scale set.
 			continue
 		}
-		for _, c := range containers {
-			if owner := c.Labels[runnerScaleSetLabelKey]; owner != a.scaleSetName {
-				// Unlabeled (not a runner container we manage) or belongs
-				// to a different control plane's scale set.
-				continue
-			}
 
-			var cleanName string
-			for _, name := range c.Names {
-				cleanName = strings.TrimPrefix(name, "/")
-				break
-			}
-			if cleanName == "" {
-				continue
-			}
-			if boot && c.State == container.StateRunning {
-				// The checkpoint, when it has an entry, is authoritative:
-				// it records the idle/busy split this process actually
-				// observed from GitHub's JobStarted/JobCompleted messages.
-				// The ContainerTop probe below can only ask whether a
-				// Runner.Worker process exists YET, so it reports a runner
-				// that GitHub has already assigned a job to -- but which is
-				// still pulling its image or checking out -- as idle, and
-				// anything that reaps idle capacity then kills a live job.
-				// That misclassification is the reason a restart previously
-				// had to be preceded by a full drain.
-				if recorded, ok := a.bootCheckpoint[cleanName]; ok {
-					a.adoptRunner(cleanName, h.Name, c.ID, time.Unix(c.Created, 0), recorded.Busy)
-					a.logger.Info("Adopted runner from checkpoint",
-						slog.String("host", h.Name), slog.String("name", cleanName),
-						slog.String("containerID", c.ID), slog.Bool("busy", recorded.Busy))
-					continue
-				}
-				top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
-				if topErr == nil && !topHasRunnerWorker(top) {
-					a.runners.addIdle(cleanName, h.Name, c.ID, time.Unix(c.Created, 0))
-					a.logger.Info("Adopted idle runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
-				} else {
-					a.runners.mu.Lock()
-					a.runners.busy[cleanName] = runnerRef{host: h.Name, containerID: c.ID, startedAt: time.Unix(c.Created, 0)}
-					a.runners.mu.Unlock()
-					a.logger.Info("Adopted busy runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID), slog.Any("top_error", topErr))
-				}
-				continue
-			}
-
-			if !boot {
-				if a.runners.isTracked(cleanName) {
-					continue
-				}
-				if c.State == container.StateRunning {
-					continue
-				}
-				if time.Since(time.Unix(c.Created, 0)) <= orphanMinAge {
-					continue
-				}
-			}
-
-			a.logger.Info("Removing orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
-			if err := h.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-				a.logger.Error("Failed to remove orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("error", err.Error()))
-			}
-			a.deregisterRunner(ctx, cleanName)
+		var cleanName string
+		for _, name := range c.Names {
+			cleanName = strings.TrimPrefix(name, "/")
+			break
 		}
+		if cleanName == "" {
+			continue
+		}
+		if boot && c.State == container.StateRunning {
+			// The checkpoint, when it has an entry, is authoritative:
+			// it records the idle/busy split this process actually
+			// observed from GitHub's JobStarted/JobCompleted messages.
+			// The ContainerTop probe below can only ask whether a
+			// Runner.Worker process exists YET, so it reports a runner
+			// that GitHub has already assigned a job to -- but which is
+			// still pulling its image or checking out -- as idle, and
+			// anything that reaps idle capacity then kills a live job.
+			// That misclassification is the reason a restart previously
+			// had to be preceded by a full drain.
+			if recorded, ok := a.bootCheckpoint[cleanName]; ok {
+				a.adoptRunner(cleanName, h.Name, c.ID, time.Unix(c.Created, 0), recorded.Busy)
+				a.logger.Info("Adopted runner from checkpoint",
+					slog.String("host", h.Name), slog.String("name", cleanName),
+					slog.String("containerID", c.ID), slog.Bool("busy", recorded.Busy))
+				continue
+			}
+			top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
+			if topErr == nil && !topHasRunnerWorker(top) {
+				a.runners.addIdle(cleanName, h.Name, c.ID, time.Unix(c.Created, 0))
+				a.logger.Info("Adopted idle runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
+			} else {
+				a.runners.mu.Lock()
+				a.runners.busy[cleanName] = runnerRef{host: h.Name, containerID: c.ID, startedAt: time.Unix(c.Created, 0)}
+				a.runners.mu.Unlock()
+				a.logger.Info("Adopted busy runner from previous control-plane instance", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID), slog.Any("top_error", topErr))
+			}
+			continue
+		}
+
+		if !boot {
+			if a.runners.isTracked(cleanName) {
+				continue
+			}
+			if c.State == container.StateRunning {
+				continue
+			}
+			if time.Since(time.Unix(c.Created, 0)) <= orphanMinAge {
+				continue
+			}
+		}
+
+		a.logger.Info("Removing orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("containerID", c.ID))
+		if err := h.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+			a.logger.Error("Failed to remove orphaned runner container", slog.String("host", h.Name), slog.String("name", cleanName), slog.String("error", err.Error()))
+		}
+		a.deregisterRunner(ctx, cleanName)
 	}
-	a.runnersChanged()
 }
 
 func topHasRunnerWorker(top container.TopResponse) bool {
@@ -2164,12 +2233,24 @@ echo "SWEEP before=$before after=$after cap=$cap"
 # this same image), so a broken host is caught between real jobs instead of
 # only when one happens to hit it, and this can never race a booting
 # runner's own repair attempt.
-. /usr/local/lib/agent-lcars/externals-health.sh
-repair_externals_if_needed
-if node24_runs; then
-  echo "EXTERNALS_HEALTHY=1"
+#
+# Guarded: this file is only baked into agent-lcars' own homelab-runner
+# image. RunWorkDirSweeper (and this script) also runs against any other
+# share_workdir pool's own configured runner_image -- e.g.
+# homelab-autoscale-e2e's supersprinklesracing/sprinkles/e2e-runner, which
+# has no reason to carry an agent-lcars-specific health check. Without this
+# guard the sweep died here on every attempt, on every host, before ever
+# reaching the disk-cap eviction above (agent-lcars#464).
+if [ -f /usr/local/lib/agent-lcars/externals-health.sh ]; then
+  . /usr/local/lib/agent-lcars/externals-health.sh
+  repair_externals_if_needed
+  if node24_runs; then
+    echo "EXTERNALS_HEALTHY=1"
+  else
+    echo "EXTERNALS_HEALTHY=0"
+  fi
 else
-  echo "EXTERNALS_HEALTHY=0"
+  echo "EXTERNALS_HEALTHY_SKIPPED"
 fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
 
@@ -2231,6 +2312,19 @@ fi
 		a.logger.Info("Swept shared workdir", slog.String("host", host), slog.Int64("before_bytes", before), slog.Int64("after_bytes", after), slog.Int64("reclaimed_bytes", reclaimed))
 	}
 
+	if externalsHealthSkipped(string(out)) {
+		// This runner_image has no agent-lcars externals-health.sh baked in
+		// (e.g. homelab-autoscale-e2e's third-party-built e2e-runner) -- the
+		// check never applies here, not a failure worth a WARN. Delete rather
+		// than leave any prior value in place: validateReloadCompatibility
+		// permits a scale set's runner_image to change on a live reload, and
+		// this gauge is a process-lifetime resource that survives generation
+		// replacement -- if this host previously reported 0/1 under an image
+		// that HAD the health script, an image swap to one that doesn't must
+		// not leave that now-inapplicable reading exported forever.
+		hostExternalsHealthyGauge.DeleteLabelValues(host)
+		return nil
+	}
 	healthy, healthOK := parseExternalsHealthOutput(string(out))
 	if !healthOK {
 		a.logger.Warn("Could not parse externals-health output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
@@ -2243,6 +2337,10 @@ fi
 		a.logger.Warn("Shared externals/node24 runtime is still unhealthy after a repair attempt", slog.String("host", host))
 	}
 	return nil
+}
+
+func externalsHealthSkipped(out string) bool {
+	return strings.Contains(out, "EXTERNALS_HEALTHY_SKIPPED")
 }
 
 var externalsHealthRe = regexp.MustCompile(`EXTERNALS_HEALTHY=([01])`)

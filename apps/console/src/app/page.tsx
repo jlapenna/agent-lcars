@@ -10,6 +10,7 @@ import { getCliSessions, MAX_SESSIONS } from '../lib/cli-sessions';
 import {
   getCachedActionItems,
   getCachedAgentActivity,
+  oldestFetchedAt,
 } from '../lib/dashboard-data';
 import {
   getWatchedRepos,
@@ -27,7 +28,10 @@ import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, CommandDeckSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from './console-header';
-import { formatCompactRelativeTime } from './format';
+import { repoScopedConsoleHrefs } from './console-hrefs';
+import { DataFreshness } from './data-freshness';
+import { DeckInboxSummary } from './deck-inbox-summary';
+import { formatCompactRelativeTime, formatRelativeTime } from './format';
 import { PageLoading } from './page-loading';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 
@@ -51,8 +55,9 @@ async function IndexBody({
   const [
     {
       data: { items: rawItems, warnings: itemWarnings },
+      fetchedAt: itemsFetchedAt,
     },
-    { data: activity },
+    { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
@@ -128,13 +133,29 @@ async function IndexBody({
     ? cliSessions.filter((s) => matchesFilter(s.repo ?? primaryWatchedRepo()))
     : cliSessions;
 
+  const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
+
   return (
     <>
+      <DataFreshness
+        fetchedAt={dataAsOf}
+        initialLabel={formatRelativeTime(dataAsOf)}
+      />
       {warnings.length > 0 && (
         <Box mb="xl">
           <DataWarnings warnings={warnings} />
         </Box>
       )}
+
+      <DeckInboxSummary
+        count={
+          queueView.yourQueue.filter((item) => matchesFilter(item.repo)).length
+        }
+        inboxHref={
+          repoScopedConsoleHrefs(repoFilter ? repoKey(repoFilter) : undefined)
+            ?.inbox ?? '/inbox'
+        }
+      />
 
       <CommandDeckSections
         waitingOnDeploy={queueView.waitingOnDeploy

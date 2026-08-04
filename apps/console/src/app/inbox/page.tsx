@@ -8,6 +8,7 @@ import type { ActionItem } from '../../lib/action-items';
 import {
   getCachedActionItems,
   getCachedAgentActivity,
+  oldestFetchedAt,
 } from '../../lib/dashboard-data';
 import {
   getWatchedRepos,
@@ -21,7 +22,8 @@ import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { ConsoleHeader, DataWarnings } from '../console-header';
-import { formatCompactRelativeTime } from '../format';
+import { DataFreshness } from '../data-freshness';
+import { formatCompactRelativeTime, formatRelativeTime } from '../format';
 import { PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
 
@@ -47,8 +49,9 @@ async function InboxBody({
   const [
     {
       data: { items, warnings: itemWarnings },
+      fetchedAt: itemsFetchedAt,
     },
-    { data: activity },
+    { data: activity, fetchedAt: activityFetchedAt },
     { sessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
     getCachedActionItems(),
@@ -62,8 +65,14 @@ async function InboxBody({
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
 
+  const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
+
   return (
     <>
+      <DataFreshness
+        fetchedAt={dataAsOf}
+        initialLabel={formatRelativeTime(dataAsOf)}
+      />
       {warnings.length > 0 && (
         <Box mb="xl">
           <DataWarnings warnings={warnings} />

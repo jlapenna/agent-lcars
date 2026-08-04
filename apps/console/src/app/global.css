@@ -1799,3 +1799,21 @@
     min-height: 44px;
   }
 }
+
+/* Command Deck's Inbox signpost (deck-inbox-summary.tsx): a quiet chip-row
+   with the LCARS left-accent treatment; the count dims when nothing waits. */
+.deck-inbox-summary {
+  padding: 0.65rem 0.9rem;
+  margin-bottom: var(--mantine-spacing-xl);
+  border: 1px solid var(--mantine-color-default-border);
+  border-left: 4px solid var(--mantine-color-blue-6);
+  border-radius: var(--mantine-radius-md);
+}
+
+.deck-inbox-summary[data-empty] {
+  border-left-color: var(--mantine-color-default-border);
+}
+
+.deck-inbox-summary[data-empty] .mantine-Text-root {
+  color: var(--mantine-color-dimmed);
+}

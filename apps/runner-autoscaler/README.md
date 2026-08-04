@@ -118,8 +118,19 @@ PSI (pressure-stall) ratios, available memory, and swap-in/out rate against
 runner-count penalty, which nudges the round-robin comparison toward less
 busy hosts without ruling anything out.
 
-Crossing a **hard** threshold on any single signal is different: the host is
-marked hard-overloaded and, once it is, stays that way for
+**Swap rate is the exception: it only ever penalizes, never excludes.**
+`node_vmstat_pswpin`/`pswpout` are kernel-global counters summed across every
+swap device, so they cannot tell zram (compressed RAM, microsecond latency)
+from a disk-backed swap file. `pike` runs zram at priority 5 via Ubuntu's
+`zram-config` with `vm.swappiness=180`, and treating that healthy compression
+traffic as thrashing excluded the fleet's most CPU-idle host from placement
+25.1% of a measured week, against 1.7% by memory PSI — which measures the
+actual stall instead of a proxy for it. The hard gate therefore belongs to
+PSI and available memory; a host genuinely thrashing to disk still stalls,
+so PSI still catches it.
+
+Crossing a **hard** threshold on any other single signal is different: the
+host is marked hard-overloaded and, once it is, stays that way for
 `fleet.placement.overload_cooldown` (default 2 minutes) even after the
 underlying signal recovers, so a flapping host doesn't bounce in and out of
 rotation. A hard-overloaded (or still-cooling-down) host is **excluded from
@@ -211,6 +222,24 @@ At boot the checkpoint is authoritative for classification; Docker remains
 authoritative for existence. A container the checkpoint does not mention
 falls back to the process probe, so a first boot, a corrupt file, or a
 newly added scale set all still work.
+
+### Boot sweep and unreachable hosts
+
+The boot sweep that performs adoption runs one goroutine per fleet host, and
+gates each on a short reachability probe. Both matter for how quickly the
+control plane becomes useful again, because every scale set runs its own
+sweep before its listener connects: swept serially, one wedged host delayed
+every host behind it, and every scale set paid that delay independently.
+
+An unreachable host is skipped with a log line rather than waited on. Its
+containers are simply not adopted on that pass — already what happened when
+the list call itself failed — and the periodic sweeper picks them up once the
+host returns.
+
+Note that a host being unreachable is not the same as it being slow to
+answer. SSH's `ConnectTimeout` bounds only the TCP connect, so a host that
+accepts the connection and then never completes its banner exchange is not
+covered by it; the per-host calls carry their own deadlines for that case.
 
 ### Configuration
 
