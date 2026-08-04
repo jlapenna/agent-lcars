@@ -1,4 +1,4 @@
-import { Anchor, Container, Group, Text } from '@mantine/core';
+import { Container, Group, Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -8,6 +8,7 @@ import { auth } from '../../../../../auth';
 import { getWatchedRepos } from '../../../../../lib/github-client';
 import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleFooter } from '../../../../console-footer';
+import { ConsoleNavRail } from '../../../../console-header';
 import { formatRelativeTime } from '../../../../format';
 import { PageLoading } from '../../../../page-loading';
 import { QuickTaskButton } from '../../../../quick-task-button';
@@ -53,14 +54,7 @@ async function TaskDetailPageContent({ params }: PageProps) {
   return (
     <Container size="xl" py="xl">
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
-        <Anchor
-          href="/"
-          underline="never"
-          className="lcars-nav-pill"
-          data-accent="amber"
-        >
-          ← Command Deck
-        </Anchor>
+        <ConsoleNavRail current="deck" />
         <RefreshButton
           generatedAt={generatedAt}
           initialLabel={formatRelativeTime(generatedAt)}
