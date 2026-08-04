@@ -107,6 +107,10 @@ export function QueueWorkspace({
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keyboardNavigated = useRef(false);
+  // Where the last j/k already sent us: router.replace is asynchronous, so
+  // key-repeat arriving before selectedItemKey updates must step from this
+  // pending target, not the stale rendered selection (Codex review #495).
+  const pendingItemKey = useRef<string | null>(null);
 
   // Browser Back/Forward (and any same-route navigation that changes the
   // query) must resync the controls: the useState initializers above only
@@ -216,9 +220,11 @@ export function QueueWorkspace({
       const isNext = event.key === 'j';
       const isPrev = event.key === 'k';
       if ((!isNext && !isPrev) || visibleCards.length === 0) return;
-      const currentKey = selectedCard
-        ? repoItemKey(selectedCard.item.repo, selectedCard.item.number)
-        : undefined;
+      const currentKey =
+        pendingItemKey.current ??
+        (selectedCard
+          ? repoItemKey(selectedCard.item.repo, selectedCard.item.number)
+          : undefined);
       const index = visibleCards.findIndex(
         ({ item }) => repoItemKey(item.repo, item.number) === currentKey,
       );
@@ -236,6 +242,7 @@ export function QueueWorkspace({
         visibleCards[nextIndex].item.repo,
         visibleCards[nextIndex].item.number,
       );
+      pendingItemKey.current = nextKey;
       // replace, not push: holding j shouldn't bury the back button under
       // one history entry per row skimmed.
       router.replace(queueSelectionHref(currentSearch, nextKey), {
@@ -249,6 +256,11 @@ export function QueueWorkspace({
   // Keep a keyboard-moved selection visible in the scrollable list; mouse
   // selection never needs this (the row was already under the pointer).
   useEffect(() => {
+    // The router caught up with the last keyboard move; step from the
+    // rendered selection again.
+    if (pendingItemKey.current === selectedItemKey) {
+      pendingItemKey.current = null;
+    }
     if (!keyboardNavigated.current) return;
     keyboardNavigated.current = false;
     document
