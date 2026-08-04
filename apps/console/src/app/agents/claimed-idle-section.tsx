@@ -6,8 +6,8 @@ import type { CliSession } from '../../lib/cli-sessions';
 import { agentFleetLogin } from '../../lib/deployment';
 import { repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
-import { formatRelativeTime } from '../format';
 import { lcarsPanelStyle } from '../lcars';
+import { RelativeTime } from '../relative-time';
 import { TakeoverCommand } from '../takeover-command';
 
 /**
@@ -60,7 +60,11 @@ export function ClaimedIdleSection({
                 >
                   <CompactItemRow
                     item={item}
-                    hint={`updated ${formatRelativeTime(item.updatedAt)}`}
+                    hint={
+                      <>
+                        updated <RelativeTime iso={item.updatedAt} />
+                      </>
+                    }
                     action={
                       session && (
                         <Anchor

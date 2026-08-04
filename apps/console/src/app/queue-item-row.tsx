@@ -1,12 +1,13 @@
 'use client';
 
-import { Badge, Group, Stack, Text } from '@mantine/core';
+import { Badge, Group, Stack, Text, Tooltip } from '@mantine/core';
 import Link from 'next/link';
 
 import { repoDisplayName } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
+import { RelativeTime } from './relative-time';
 
 export function QueueItemRow({
   card,
@@ -21,7 +22,7 @@ export function QueueItemRow({
   muted?: boolean;
   onToggleMute?: () => void;
 }) {
-  const { item, updatedAtLabel } = card;
+  const { item } = card;
   const reason = queueReasonFor(item);
   const hiddenLabels = queueDisclosureLabels(item);
 
@@ -83,19 +84,21 @@ export function QueueItemRow({
             </Group>
           </Group>
 
-          <Text
-            component="span"
-            fw={600}
-            size="sm"
-            className="queue-item-row__title"
-          >
-            {item.title}
-          </Text>
+          <Tooltip label={item.title} multiline maw={320} openDelay={300}>
+            <Text
+              component="span"
+              fw={600}
+              size="sm"
+              className="queue-item-row__title"
+            >
+              {item.title}
+            </Text>
+          </Tooltip>
 
           <Group justify="space-between" gap="xs" wrap="nowrap">
             <Text component="span" size="xs" c="dimmed" truncate>
               {item.author ? `by ${item.author} · ` : ''}
-              {updatedAtLabel}
+              <RelativeTime iso={item.updatedAt} variant="compact" />
             </Text>
             {hiddenLabels.length > 0 && (
               <Badge

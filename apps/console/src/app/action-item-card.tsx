@@ -33,6 +33,7 @@ import { approveAndRebase, mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
+import { RelativeTime } from './relative-time';
 import { RetriggerButton } from './retrigger-button';
 import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
@@ -186,7 +187,6 @@ function CommentPreview({
  */
 export function ActionItemCard({
   item,
-  updatedAtLabel,
   primaryAction,
   multiRepo = false,
   muted,
@@ -446,7 +446,8 @@ export function ActionItemCard({
         <Text size="xs" c="dimmed">
           {item.kind === 'pr' ? 'PR' : 'Issue'}
           {item.draft ? ' (draft)' : ''}
-          {item.author && <> · by {item.author}</>} · updated {updatedAtLabel}
+          {item.author && <> · by {item.author}</>} · updated{' '}
+          <RelativeTime iso={item.updatedAt} variant="compact" />
           {item.parentNumber && (
             <>
               {' · '}
@@ -573,6 +574,12 @@ export function ActionItemCard({
           </Group>
         )}
 
+        {error && (
+          <Text c="red" size="sm">
+            {error}
+          </Text>
+        )}
+
         <Group
           gap="sm"
           wrap="wrap"
@@ -644,12 +651,6 @@ export function ActionItemCard({
             />
           )}
         </Group>
-
-        {error && (
-          <Text c="red" size="sm">
-            {error}
-          </Text>
-        )}
       </Stack>
     </Card>
   );
