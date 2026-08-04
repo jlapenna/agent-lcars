@@ -74,8 +74,10 @@ The deployment derives the watcher uid, gid, home directory, and host label
 from the local `jlapenna` account. Its default privacy scope is the explicit
 set `~/p/sprinkles`, `~/p/agent-lcars`, and `~/p/homelab`. Override that scope
 for a host by setting `AGENT_TELEMETRY_CHECKOUT_ROOTS` to a comma-separated
-absolute-path list when invoking `deploy.sh`; there is intentionally no
-implicit "watch every checkout" mode.
+absolute-path list when invoking `deploy.sh`. Every override must resolve under
+`~/p`, the checkout tree mounted into the container; the deploy fails closed
+for roots outside it. There is intentionally no implicit "watch every
+checkout" mode.
 
 ## Deploying
 

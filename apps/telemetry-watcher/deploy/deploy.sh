@@ -55,6 +55,28 @@ if [ -z "$WATCHER_HOST" ] || [ -z "$WATCHER_CHECKOUT_ROOTS" ]; then
   echo "Watcher host and checkout roots must be non-empty" >&2
   exit 1
 fi
+
+# The compose stack mounts WATCHER_HOME/p at its real absolute path. Keep
+# every configurable checkout root inside that mounted tree so git metadata
+# lookups cannot silently lose access to an accepted root. Normalize first so
+# paths containing `..` cannot escape the mount after this check.
+watcher_checkout_mount="$(realpath -m -- "$WATCHER_HOME/p")"
+IFS=',' read -r -a requested_checkout_roots <<<"$WATCHER_CHECKOUT_ROOTS"
+normalized_checkout_roots=()
+for checkout_root in "${requested_checkout_roots[@]}"; do
+  if [[ -z "$checkout_root" || "$checkout_root" != /* ]]; then
+    echo "Watcher checkout roots must be non-empty absolute paths" >&2
+    exit 1
+  fi
+  normalized_checkout_root="$(realpath -m -- "$checkout_root")"
+  if [[ "$normalized_checkout_root" != "$watcher_checkout_mount" &&
+    "$normalized_checkout_root" != "$watcher_checkout_mount/"* ]]; then
+    echo "$checkout_root resolves outside $watcher_checkout_mount, the checkout tree mounted into the watcher" >&2
+    exit 1
+  fi
+  normalized_checkout_roots+=("$normalized_checkout_root")
+done
+WATCHER_CHECKOUT_ROOTS="$(IFS=,; printf '%s' "${normalized_checkout_roots[*]}")"
 export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME WATCHER_HOST WATCHER_CHECKOUT_ROOTS
 
 mkdir -p "$DEPLOY_DIR"
@@ -65,7 +87,11 @@ ensure_watcher_dir() {
   local path="$1"
   local mode="$2"
   if [ ! -d "$path" ]; then
-    sudo install -d -o "$WATCHER_UID" -g "$WATCHER_GID" -m "$mode" "$path"
+    # Run the creation itself as the watcher account. `install -o/-g` only
+    # applies ownership to the final component and otherwise leaves newly
+    # created parents root-owned, which prevents the CLI from writing its
+    # own adjacent config/state files later.
+    sudo -u "$WATCHER_USER" install -d -m "$mode" "$path"
   fi
   if ! sudo -u "$WATCHER_USER" test -r "$path" ||
     ! sudo -u "$WATCHER_USER" test -x "$path"; then
