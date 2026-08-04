@@ -900,6 +900,7 @@
 .queue-kind-badge,
 .queue-reason-badge,
 .queue-label-count,
+.ci-running-badge,
 .queue-detail-labels .mantine-Badge-root {
   min-height: 20px;
   font-family: var(--font-display), sans-serif;

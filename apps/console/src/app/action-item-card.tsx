@@ -87,6 +87,21 @@ function mergeableWarning(item: {
   return item.mergeableState && MERGEABLE_WARNINGS[item.mergeableState];
 }
 
+// Same priority order mergeDisabled checks its conditions in - draft first,
+// then a real mergeable-state blocker, and only then CI, since a still-dirty
+// branch is the more actionable thing to surface even if checks also happen
+// to be running.
+function disabledMergeReason(item: {
+  draft?: boolean;
+  mergeableState?: MergeableState;
+  ciRunning?: boolean;
+}): string | undefined {
+  if (item.draft) return MERGEABLE_WARNINGS.draft;
+  if (item.ciRunning && !mergeableWarning(item))
+    return 'CI checks still running';
+  return mergeableWarning(item);
+}
+
 function CommentPreview({
   body,
   url,
@@ -361,6 +376,16 @@ export function ActionItemCard({
                     {queueReason.label}
                   </Badge>
                 )}
+                {item.ciRunning && (
+                  <Badge
+                    color="indigo"
+                    variant="light"
+                    size="sm"
+                    className="ci-running-badge"
+                  >
+                    CI running
+                  </Badge>
+                )}
                 <Anchor
                   href={item.url}
                   target="_blank"
@@ -395,6 +420,16 @@ export function ActionItemCard({
                     {ACTION_LABELS[type]}
                   </Badge>
                 ))}
+                {item.ciRunning && (
+                  <Badge
+                    color="indigo"
+                    variant="light"
+                    size="sm"
+                    className="ci-running-badge"
+                  >
+                    CI running
+                  </Badge>
+                )}
               </>
             )}
             <ItemOverflowMenu
@@ -491,12 +526,6 @@ export function ActionItemCard({
           </Text>
         )}
 
-        {item.ciRunning && (
-          <Text size="xs" c="dimmed">
-            CI running…
-          </Text>
-        )}
-
         {item.silentErrorDiagnosis && (
           <Text size="xs" c="orange" data-testid="silent-error-diagnosis">
             🔍 {item.silentErrorDiagnosis}
@@ -558,9 +587,7 @@ export function ActionItemCard({
               // mergeable_state: merging a draft always 405s.
               disabled={mergeDisabled}
               loading={isPending}
-              title={
-                item.draft ? MERGEABLE_WARNINGS.draft : mergeableWarning(item)
-              }
+              title={disabledMergeReason(item)}
               onClick={confirmMerge}
             >
               Approve &amp; Merge
