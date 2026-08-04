@@ -3,7 +3,8 @@
 The `agent-lcars-telemetry-watcher` container (this app's Docker image,
 published by [`.github/workflows/publish-images.yml`](../../../.github/workflows/publish-images.yml)
 — see the app README's [Deployment](../README.md#deployment) section) runs
-as a per-host daemon on `pike`, a `jlapenna/homelab`-fleet Docker host.
+as a per-host daemon on `pike`, `laforge`, and `janeway`, which are
+`jlapenna/homelab`-fleet Docker hosts.
 This directory is the deployment config's canonical home — moved from
 `jlapenna/homelab` in homelab#218 Phase 6, on the reasoning that the
 deployment config should live with the image that builds it and the
@@ -12,29 +13,27 @@ semantics (allowlists, entrypoint, uid) it depends on.
 ## Files
 
 - `docker-compose.yml` — the compose service definition. Almost every
-  non-default setting here (why uid 1000, why `pid: host` +
+  non-default setting here (why the host's `jlapenna` uid, why `pid: host` +
   `security_opt: apparmor=unconfined`, why the project-dir/cwd allowlists
   are pinned explicitly instead of left to the image default) is the
   product of a real incident and is explained in its own in-file comments
   — read those before changing anything.
-- `.env.example` — copy to `.env` on pike (never commit `.env`).
+- `.env.example` — optional per-host Compose overrides (never commit `.env`).
 - `deploy.sh` — pulls the image, syncs the compose file, brings the stack
   up, and verifies the container is actually stable/healthy afterward (not
   just "Up" per `docker ps`).
 
 ## Secrets
 
-Two files must exist on pike, at
-`/home/homelab/agent-lcars-telemetry-watcher/`, before `deploy.sh` will
-bring the service up:
+The watcher writer key must exist on each host at
+`/home/homelab/agent-lcars-telemetry-watcher/writer-key.json` before
+`deploy.sh` will bring the service up:
 
-- **`.env`** — `AGENT_TELEMETRY_PROJECT_ID`. Never managed by automation;
-  copy `.env.example` and fill it in by hand.
 - **`writer-key.json`** — the `telemetry-writer` service-account key
-  (JSON), bind-mounted read-only into the container and read as uid 1000
-  (see the compose file's comment for why: the container's process reads
-  it directly at a fixed uid, unlike `.env`, which the host's `docker`
-  CLI reads under whatever identity invokes it).
+  (JSON), bind-mounted read-only into the container and read as the host's
+  `jlapenna` uid (see the compose file's comment for why: the container's
+  process reads it directly under that account, unlike `.env`, which the
+  host's `docker` CLI reads under whatever identity invokes it).
 
   **This credential's source of truth stays `jlapenna/homelab`'s encrypted
   vault**, not this repo — per this repo's own [`AGENTS.md`](../../../AGENTS.md)
@@ -48,10 +47,11 @@ bring the service up:
      there).
   2. `ansible/deploy_secrets.yml` decrypts it and stages it in that repo's
      tree.
-  3. `ansible/sync_agent_lcars_writer_key.yml` (hosts: `pike`) pushes the
+  3. `ansible/sync_agent_lcars_writer_key.yml` (hosts:
+     `telemetry_watcher_hosts`) pushes the
      staged file to `/home/homelab/agent-lcars-telemetry-watcher/writer-key.json`
-     over SSH+`become` and applies the container's required `1000:1000`
-     ownership — this is deliberately the one narrow piece of
+     over SSH+`become` and applies the host's real `jlapenna` uid/gid — this
+     is deliberately the one narrow piece of
      watcher-specific logic that stays in homelab, scoped to _secret
      delivery_ rather than _deployment_.
 
@@ -66,15 +66,22 @@ bring the service up:
   ```
 
   `deploy.sh` checks for this file and fails with these same instructions
-  if it's missing, then enforces `1000:1000` ownership and `0600` mode on
-  it every run regardless of how it arrived (vault-synced or hand-placed)
-  — this repo's deploy never needs to know which.
+  if it's missing, then enforces the host's `jlapenna` uid/gid and `0600`
+  mode on it every run regardless of how it arrived (vault-synced or
+  hand-placed) — this repo's deploy never needs to know which.
+
+The deployment derives the watcher uid, gid, home directory, and host label
+from the local `jlapenna` account. Its default privacy scope is the explicit
+set `~/p/sprinkles`, `~/p/agent-lcars`, and `~/p/homelab`. Override that scope
+for a host by setting `AGENT_TELEMETRY_CHECKOUT_ROOTS` to a comma-separated
+absolute-path list when invoking `deploy.sh`; there is intentionally no
+implicit "watch every checkout" mode.
 
 ## Deploying
 
-On pike, as the identity that owns `/home/homelab/agent-lcars-telemetry-watcher`
-(normally the `homelab` service account, with `sudo` available for the
-ownership fixups above):
+On each watcher host, as the identity that owns
+`/home/homelab/agent-lcars-telemetry-watcher` (normally the `homelab` service
+account, with `sudo` available for ownership fixups):
 
 ```bash
 ./deploy.sh

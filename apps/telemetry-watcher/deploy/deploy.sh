@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Deploy (or redeploy) agent-lcars-telemetry-watcher on pike.
+# Deploy (or redeploy) agent-lcars-telemetry-watcher on a personal-login host.
 #
 # Converted from jlapenna/homelab's
 # ansible/deploy_agent_lcars_telemetry_watcher.yml when the deployment
 # config moved into this repo (homelab#218 Phase 6). See docker-compose.yml
 # in this same directory for the full design rationale (why the watched uid, why
 # pid: host + apparmor=unconfined, why the allowlists are pinned
-# explicitly) and deploy/README.md for how secrets reach pike.
+# explicitly) and deploy/README.md for how secrets reach watcher hosts.
 #
 # Preserves the operational lessons the original playbook encoded
 # (jlapenna/homelab#204, docs/incidents.md 2026-07-29 in that repo):
-#   - the writer key must exist and be owned by the watched uid/gid -- those are
-#     the CONTAINER reads it as, not the identity running this script.
-#   - .env must exist and be readable by the identity that actually runs
-#     `docker compose` -- this script asserts against its OWN invoking
-#     identity, since it no longer runs through Ansible's
+#   - the writer key must exist and be owned by the watched uid/gid -- the
+#     CONTAINER reads it as that identity, not as the user running this script.
+#   - when an optional .env exists, it must be readable by the identity that
+#     actually runs `docker compose` -- this script asserts against its OWN
+#     invoking identity, since it no longer runs through Ansible's
 #     become/delegate_to indirection (the original incident was a
 #     controller-vs-remote-CLI identity mismatch that indirection created).
 #   - a successful `docker compose up` only means the API calls succeeded,
@@ -22,8 +22,8 @@
 #     still running and hasn't restarted (or is reporting healthy, when a
 #     HEALTHCHECK is defined) before declaring success.
 #
-# Usage: run directly on pike as the deployment identity (normally the
-# `homelab` service account, with sudo available for ownership fixups):
+# Usage: run directly on a watcher host as the deployment identity (normally
+# the `homelab` service account, with sudo available for ownership fixups):
 #   ./deploy.sh
 set -euo pipefail
 
@@ -33,19 +33,54 @@ WRITER_KEY="$DEPLOY_DIR/writer-key.json"
 ENV_FILE="$DEPLOY_DIR/.env"
 CONTAINER_NAME=agent-lcars-telemetry-watcher
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
-WATCHER_UID="${AGENT_TELEMETRY_WATCHER_UID:-1000}"
-WATCHER_GID="${AGENT_TELEMETRY_WATCHER_GID:-$WATCHER_UID}"
-WATCHER_HOME="$(getent passwd "$WATCHER_UID" | cut -d: -f6 || true)"
+WATCHER_USER="${AGENT_TELEMETRY_WATCHER_USER:-jlapenna}"
+watcher_passwd="$(getent passwd "$WATCHER_USER" || true)"
 
-if [[ -z "$WATCHER_HOME" || "$WATCHER_HOME" != /* ]]; then
-  echo "Cannot derive an absolute home directory for watcher uid $WATCHER_UID" >&2
+if [ -z "$watcher_passwd" ]; then
+  echo "Cannot resolve watcher account $WATCHER_USER" >&2
   exit 1
 fi
-export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME
+
+WATCHER_UID="$(cut -d: -f3 <<<"$watcher_passwd")"
+WATCHER_GID="$(cut -d: -f4 <<<"$watcher_passwd")"
+WATCHER_HOME="$(cut -d: -f6 <<<"$watcher_passwd")"
+WATCHER_HOST="${AGENT_TELEMETRY_HOST:-$(hostname -s)}"
+WATCHER_CHECKOUT_ROOTS="${AGENT_TELEMETRY_CHECKOUT_ROOTS:-$WATCHER_HOME/p/sprinkles,$WATCHER_HOME/p/agent-lcars,$WATCHER_HOME/p/homelab}"
+
+if [[ -z "$WATCHER_HOME" || "$WATCHER_HOME" != /* ]]; then
+  echo "Cannot derive an absolute home directory for watcher account $WATCHER_USER" >&2
+  exit 1
+fi
+if [ -z "$WATCHER_HOST" ] || [ -z "$WATCHER_CHECKOUT_ROOTS" ]; then
+  echo "Watcher host and checkout roots must be non-empty" >&2
+  exit 1
+fi
+export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME WATCHER_HOST WATCHER_CHECKOUT_ROOTS
 
 mkdir -p "$DEPLOY_DIR"
 
-# --- writer-key.json: must exist; the CONTAINER reads it as uid 1000 -------
+# Docker bind mounts create missing source paths as root. Seed every watched
+# directory as the account that owns the transcripts before Compose sees it.
+ensure_watcher_dir() {
+  local path="$1"
+  local mode="$2"
+  if [ ! -d "$path" ]; then
+    sudo install -d -o "$WATCHER_UID" -g "$WATCHER_GID" -m "$mode" "$path"
+  fi
+  if ! sudo -u "$WATCHER_USER" test -r "$path" ||
+    ! sudo -u "$WATCHER_USER" test -x "$path"; then
+    echo "$path is not readable and traversable by $WATCHER_USER" >&2
+    exit 1
+  fi
+}
+
+ensure_watcher_dir "$WATCHER_HOME/.claude/projects" 0700
+ensure_watcher_dir "$WATCHER_HOME/.codex/sessions" 0700
+ensure_watcher_dir "$WATCHER_HOME/p" 0755
+ensure_watcher_dir "$WATCHER_HOME/share" 0755
+ensure_watcher_dir "$WATCHER_HOME/.gemini/antigravity-cli" 0700
+
+# --- writer-key.json: must exist; the CONTAINER reads it as jlapenna -------
 if [ ! -f "$WRITER_KEY" ]; then
   cat >&2 <<EOF
 $WRITER_KEY must exist.
@@ -66,22 +101,22 @@ fi
 sudo chown "$WATCHER_UID:$WATCHER_GID" "$WRITER_KEY"
 sudo chmod 0600 "$WRITER_KEY"
 
-# --- .env: must exist; never managed by this script -------------------------
-if [ ! -f "$ENV_FILE" ]; then
-  echo "$ENV_FILE must exist -- copy .env.example and fill it in." >&2
-  exit 1
-fi
-if [ ! -r "$ENV_FILE" ]; then
+# --- .env: optional host-specific overrides ---------------------------------
+compose_env_args=()
+if [ -f "$ENV_FILE" ] && [ ! -r "$ENV_FILE" ]; then
   echo "$ENV_FILE exists but is not readable by $(id -un) -- fix its ownership/mode before deploying." >&2
   exit 1
+fi
+if [ -f "$ENV_FILE" ]; then
+  compose_env_args=(--env-file "$ENV_FILE")
 fi
 
 # --- sync the compose file and bring the stack up ---------------------------
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
 cd "$DEPLOY_DIR"
 
-docker compose pull
-docker compose --env-file "$ENV_FILE" up -d --remove-orphans
+docker compose "${compose_env_args[@]}" pull
+docker compose "${compose_env_args[@]}" up -d --remove-orphans
 
 # Baseline restart count / health status AFTER `up`, not before: a changed
 # image pin or config recreates the container (docker compose's own
