@@ -12,7 +12,8 @@ const validOrchestratorYAML = `
 version: 1
 github:
   url: https://github.com/example/repo
-server: {}
+server:
+  state_path: /var/lib/runner-autoscaler/state.json
 fleet:
   max_runners: 2
   hosts:
@@ -164,7 +165,7 @@ func TestValidateReloadCompatibilityRejectsProcessLifetimeChanges(t *testing.T) 
 	}{
 		{
 			name: "metrics bind",
-			body: strings.Replace(validOrchestratorYAML, "server: {}", "server:\n  metrics_addr: 0.0.0.0:8080", 1),
+			body: strings.Replace(validOrchestratorYAML, "server:\n", "server:\n  metrics_addr: 0.0.0.0:8080\n", 1),
 			want: "server.metrics_addr",
 		},
 		{
@@ -591,7 +592,8 @@ func TestOrchestratorConfigDisabledRegistrationSkipsValidationAndCredentials(t *
 func TestOrchestratorConfigRejectsAllDisabledRegistrations(t *testing.T) {
 	body := `
 version: 1
-server: {}
+server:
+  state_path: /var/lib/runner-autoscaler/state.json
 fleet:
   max_runners: 1
   hosts:
@@ -797,7 +799,7 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 
 	hosts := []DockerHost{{Name: "janeway"}}
 	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.WorkDirSizeCaps, resolved.DockerSocketGID, resolved.Weights, nil)
-	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet)
+	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

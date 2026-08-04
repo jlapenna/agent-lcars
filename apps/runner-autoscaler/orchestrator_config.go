@@ -85,6 +85,14 @@ type OrchestratorServer struct {
 	MetricsAddr string `yaml:"metrics_addr,omitempty"`
 	LogLevel    string `yaml:"log_level,omitempty"`
 	LogFormat   string `yaml:"log_format,omitempty"`
+	// StatePath is where the control plane checkpoints runner state so a
+	// restart can adopt in-flight runners instead of waiting out a full
+	// fleet drain. Required, and required to be writable: see
+	// verifyCheckpointPath for why this fails loudly rather than degrading.
+	// The deployment must back it with a volume that survives container
+	// recreation -- a path inside the container's own filesystem is erased
+	// by the very restart the checkpoint exists to make safe.
+	StatePath string `yaml:"state_path"`
 }
 
 type OrchestratorFleet struct {
@@ -343,6 +351,9 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	}
 	if c.Server.LogFormat == "" {
 		c.Server.LogFormat = "text"
+	}
+	if err := validateCheckpointPath(c.Server.StatePath); err != nil {
+		return err
 	}
 	if c.Fleet.MaxRunners < 1 {
 		return fmt.Errorf("fleet.max_runners must be at least 1")

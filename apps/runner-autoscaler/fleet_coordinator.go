@@ -58,6 +58,58 @@ func newFleetCoordinator(maxRunners int, limits map[string]int, workCaps map[str
 	}
 }
 
+// snapshot records the fleet telemetry a restart cannot re-derive instantly.
+// Both halves are rate/deadline state, not inventory: overload cooldowns
+// otherwise reset to zero and make a host that was hard-overloaded seconds
+// ago immediately placeable again, and host samples otherwise leave the first
+// probe after boot with no previous counter reading, so CPU-utilization, PSI
+// and swap RATES all compute as zero and pressure-based admission is
+// effectively disabled until a second sample lands.
+func (f *FleetCoordinator) snapshot() checkpointFleet {
+	out := checkpointFleet{
+		OverloadedUntil: map[string]time.Time{},
+		HostSamples:     map[string]checkpointHostSample{},
+	}
+	f.overloadMu.Lock()
+	for host, until := range f.overloadedUntil {
+		out.OverloadedUntil[host] = until
+	}
+	f.overloadMu.Unlock()
+
+	f.hostSampleMu.Lock()
+	for host, s := range f.hostSamples {
+		out.HostSamples[host] = checkpointHostSample{
+			At: s.at, IdleSeconds: s.idleSeconds, CPUPressure: s.cpuPressure,
+			MemoryPressure: s.memoryPressure, SwapPages: s.swapPages,
+		}
+	}
+	f.hostSampleMu.Unlock()
+	return out
+}
+
+// restore reapplies a checkpointed fleet snapshot. Expired cooldowns are
+// dropped rather than restored -- a deadline already in the past would only
+// add work for the next placement to discard -- and samples are restored
+// verbatim so the first post-boot probe computes a real rate against them.
+func (f *FleetCoordinator) restore(cp checkpointFleet, now time.Time) {
+	f.overloadMu.Lock()
+	for host, until := range cp.OverloadedUntil {
+		if until.After(now) {
+			f.overloadedUntil[host] = until
+		}
+	}
+	f.overloadMu.Unlock()
+
+	f.hostSampleMu.Lock()
+	for host, s := range cp.HostSamples {
+		f.hostSamples[host] = hostSample{
+			at: s.At, idleSeconds: s.IdleSeconds, cpuPressure: s.CPUPressure,
+			memoryPressure: s.MemoryPressure, swapPages: s.SwapPages,
+		}
+	}
+	f.hostSampleMu.Unlock()
+}
+
 func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostReservation, error) {
 	releaseTurn, err := f.gate.acquire(ctx, scaler.scaleSetName)
 	if err != nil {

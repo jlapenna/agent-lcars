@@ -44,10 +44,32 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	fleet := newFleetCoordinator(0, nil, nil, nil, nil, nil)
 	configureFleet(fleet, resolved)
 	managedHosts := placementHosts
-	runtimes, err := buildOrchestratorRuntimes(resolved, managedHosts, placementHosts, fleet)
+
+	// Load before building runtimes: the scalers consult their slice of it
+	// during cleanupOrphans' boot pass. A missing file is a normal first
+	// boot; a corrupt or wrong-version one is logged and then treated the
+	// same way, falling adoption back to the ContainerTop probe rather than
+	// refusing to start over state the fleet can survive without.
+	checkpoints := newCheckpointStore(resolved.Raw.Server.StatePath, logger)
+	restored, loadErr := loadCheckpoint(resolved.Raw.Server.StatePath)
+	switch {
+	case loadErr != nil:
+		logger.Error("Ignoring unreadable control-plane checkpoint; adopting runners from Docker instead",
+			slog.String("path", resolved.Raw.Server.StatePath), slog.Any("error", loadErr))
+	case restored == nil:
+		logger.Info("No control-plane checkpoint found; this is a first boot for this state path",
+			slog.String("path", resolved.Raw.Server.StatePath))
+	default:
+		fleet.restore(restored.Fleet, time.Now())
+		logger.Info("Restored control-plane checkpoint",
+			slog.Time("written_at", restored.WrittenAt), slog.Int("scale_sets", len(restored.ScaleSets)))
+	}
+
+	runtimes, err := buildOrchestratorRuntimes(resolved, managedHosts, placementHosts, fleet, checkpoints, restored)
 	if err != nil {
 		return err
 	}
+	checkpoints.setSnapshot(orchestratorSnapshot(runtimes, fleet))
 	pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
 
 	orchestratorSchedulerReady.Store(true)
@@ -72,16 +94,19 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	var drainZeroSince time.Time
 	drainWatchdog := time.NewTicker(drainWatchdogInterval)
 	defer drainWatchdog.Stop()
+	checkpointTicker := time.NewTicker(checkpointFlushInterval)
+	defer checkpointTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			generation.cancel()
-			<-generation.done
-			for _, runtime := range runtimes {
-				runtime.scaler.shutdown(context.WithoutCancel(ctx))
-			}
+			quiesce(ctx, generation, runtimes, checkpoints, logger)
 			return nil
+		case <-checkpointTicker.C:
+			// Runner transitions checkpoint synchronously; this tick exists
+			// only to keep the fleet telemetry half (overload cooldowns, host
+			// samples) reasonably fresh.
+			checkpoints.flush()
 		case <-drainSignals:
 			if draining {
 				continue
@@ -131,7 +156,14 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			<-generation.done
 			nextManagedHosts := mergeDockerHosts(nextPlacementHosts, managedHosts, trackedRunnerHosts(runtimes))
 			configureFleet(fleet, next)
-			nextRuntimes, buildErr := buildOrchestratorRuntimes(next, nextManagedHosts, nextPlacementHosts, fleet)
+			// Hand the outgoing generation's live state to the replacement
+			// scalers as their adoption source. A reload re-adopts through
+			// the same cleanupOrphans boot pass a restart uses, so without
+			// this it would re-derive idle/busy from the ContainerTop probe
+			// and inherit the same misclassification -- despite the answer
+			// being known exactly, in memory, microseconds earlier.
+			handover := orchestratorSnapshot(runtimes, fleet)()
+			nextRuntimes, buildErr := buildOrchestratorRuntimes(next, nextManagedHosts, nextPlacementHosts, fleet, checkpoints, &handover)
 			if buildErr != nil {
 				// This should be impossible after loadOrchestratorConfig and
 				// compatibility validation. Keep the old config live if an
@@ -144,6 +176,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			}
 			closeUnusedDockerHostClients(managedHosts, nextManagedHosts)
 			resolved, runtimes = next, nextRuntimes
+			checkpoints.setSnapshot(orchestratorSnapshot(runtimes, fleet))
 			managedHosts, placementHosts = nextManagedHosts, nextPlacementHosts
 			logger = resolved.ScaleSets[0].Logger().With("component", "orchestrator")
 			pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
@@ -164,7 +197,70 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	}
 }
 
-func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator) ([]*scaleSetRuntime, error) {
+// orchestratorSnapshot builds the closure the checkpoint store flushes. It
+// reads whichever runtimes are live when it runs, so a config reload replaces
+// it rather than leaving the store writing a stale generation's runners.
+func orchestratorSnapshot(runtimes []*scaleSetRuntime, fleet *FleetCoordinator) func() checkpointFile {
+	return func() checkpointFile {
+		cp := checkpointFile{
+			Version:   checkpointVersion,
+			WrittenAt: time.Now(),
+			ScaleSets: make(map[string]checkpointScaleSet, len(runtimes)),
+			Fleet:     fleet.snapshot(),
+		}
+		for _, runtime := range runtimes {
+			cp.ScaleSets[runtime.config.ScaleSetName] = runtime.scaler.snapshotRunners()
+		}
+		return cp
+	}
+}
+
+// quiesceTimeout bounds how long shutdown waits for the runtime generation to
+// unwind before checkpointing and exiting anyway. It sits well inside Docker's
+// default 10s stop grace period: overrunning that grace turns an orderly exit
+// into a SIGKILL, which would discard the very checkpoint this path exists to
+// write. Listeners that have not noticed cancellation by then are abandoned
+// rather than waited on -- their work is a long-poll against GitHub, and the
+// replacement process re-establishes it regardless.
+const quiesceTimeout = 3 * time.Second
+
+// quiesce is the fast shutdown path, and the reason an aggressive restart no
+// longer needs a fleet drain. It stops accepting new work, gives in-flight
+// control-plane operations a bounded moment to settle, writes the checkpoint,
+// and returns.
+//
+// It deliberately does NOT remove idle runners, which is what SIGTERM used to
+// do. An idle runner is a warm, already-registered container: destroying it
+// throws away capacity the replacement process could adopt in milliseconds,
+// and doing so was pure loss once the checkpoint made adoption reliable.
+// Busy runners were already preserved for adoption; now idle ones are too.
+//
+// Draining the fleet (SIGUSR1) remains available for the cases that genuinely
+// need an empty fleet -- removing a scale set, decommissioning a host -- and
+// is unchanged.
+func quiesce(ctx context.Context, generation runtimeGeneration, runtimes []*scaleSetRuntime, checkpoints *checkpointStore, logger *slog.Logger) {
+	started := time.Now()
+	logger.Info("Quiescing control plane; preserving all runners for adoption by the next instance")
+
+	// Refuse new placements first, so nothing new is created during the
+	// window between cancelling the generation and writing the checkpoint.
+	for _, runtime := range runtimes {
+		runtime.scaler.stopPlacing()
+	}
+	generation.cancel()
+
+	select {
+	case <-generation.done:
+	case <-time.After(quiesceTimeout):
+		logger.Warn("Runtime generation did not stop within the quiesce timeout; checkpointing and exiting anyway",
+			slog.Duration("timeout", quiesceTimeout))
+	}
+
+	checkpoints.flush()
+	logger.Info("Control plane quiesced", slog.Duration("took", time.Since(started)))
+}
+
+func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator, checkpoints *checkpointStore, restored *checkpointFile) ([]*scaleSetRuntime, error) {
 	runtimes := make([]*scaleSetRuntime, 0, len(resolved.ScaleSets))
 	for _, base := range resolved.ScaleSets {
 		c := base
@@ -176,7 +272,7 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
 		c.ReadinessMetric = resolved.Raw.Fleet.Placement.ReadinessMetric
 		c.ReadinessMaxAge = resolved.ReadinessMaxAge
-		runtime, err := buildScaleSetRuntime(c, dockerHosts, placementHosts, fleet)
+		runtime, err := buildScaleSetRuntime(c, dockerHosts, placementHosts, fleet, checkpoints, restored.runners(c.ScaleSetName))
 		if err != nil {
 			return nil, fmt.Errorf("initializing scale set %q: %w", c.ScaleSetName, err)
 		}
@@ -319,7 +415,7 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	return runtimeGeneration{cancel: cancel, done: done}
 }
 
-func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator) (*scaleSetRuntime, error) {
+func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator, checkpoints *checkpointStore, boot map[string]checkpointRunner) (*scaleSetRuntime, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -353,7 +449,8 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		readinessMaxAge:     c.ReadinessMaxAge,
 		workDirSizeCapBytes: defaultWorkDirSizeCapBytes,
 		workDirSizeCaps:     fleet.workDirSizeCaps, hostRunnerLimits: fleet.hostRunnerLimits,
-		fleet: fleet,
+		fleet:       fleet,
+		checkpoints: checkpoints, bootCheckpoint: boot,
 	}
 	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
 	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)
