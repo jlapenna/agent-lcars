@@ -174,6 +174,32 @@ func TestParseExternalsHealthOutput(t *testing.T) {
 	}
 }
 
+// TestExternalsHealthSkipped covers agent-lcars#464: a share_workdir pool
+// (e.g. homelab-autoscale-e2e) can be configured with a runner_image that
+// never had agent-lcars' externals-health.sh baked in, so the sweep script
+// prints EXTERNALS_HEALTHY_SKIPPED instead of attempting the check. That
+// must be recognized as "not applicable", not "malformed output" (which
+// would log a WARN every single sweep, on every host, forever).
+func TestExternalsHealthSkipped(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"skipped", "SWEEP before=1 after=1 cap=2\nEXTERNALS_HEALTHY_SKIPPED\n", true},
+		{"healthy", "SWEEP before=1 after=1 cap=2\nEXTERNALS_HEALTHY=1\n", false},
+		{"unhealthy", "SWEEP before=1 after=1 cap=2\nEXTERNALS_HEALTHY=0\n", false},
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := externalsHealthSkipped(c.out); got != c.want {
+				t.Errorf("externalsHealthSkipped(%q) = %v, want %v", c.out, got, c.want)
+			}
+		})
+	}
+}
+
 func TestSweepWorkDirsSkipsHostWithRunner(t *testing.T) {
 	scaler := &Scaler{
 		dockerHosts: []DockerHost{{Name: "janeway"}}, // nil client proves no helper is created

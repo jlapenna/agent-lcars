@@ -2164,12 +2164,24 @@ echo "SWEEP before=$before after=$after cap=$cap"
 # this same image), so a broken host is caught between real jobs instead of
 # only when one happens to hit it, and this can never race a booting
 # runner's own repair attempt.
-. /usr/local/lib/agent-lcars/externals-health.sh
-repair_externals_if_needed
-if node24_runs; then
-  echo "EXTERNALS_HEALTHY=1"
+#
+# Guarded: this file is only baked into agent-lcars' own homelab-runner
+# image. RunWorkDirSweeper (and this script) also runs against any other
+# share_workdir pool's own configured runner_image -- e.g.
+# homelab-autoscale-e2e's supersprinklesracing/sprinkles/e2e-runner, which
+# has no reason to carry an agent-lcars-specific health check. Without this
+# guard the sweep died here on every attempt, on every host, before ever
+# reaching the disk-cap eviction above (agent-lcars#464).
+if [ -f /usr/local/lib/agent-lcars/externals-health.sh ]; then
+  . /usr/local/lib/agent-lcars/externals-health.sh
+  repair_externals_if_needed
+  if node24_runs; then
+    echo "EXTERNALS_HEALTHY=1"
+  else
+    echo "EXTERNALS_HEALTHY=0"
+  fi
 else
-  echo "EXTERNALS_HEALTHY=0"
+  echo "EXTERNALS_HEALTHY_SKIPPED"
 fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
 
@@ -2231,6 +2243,19 @@ fi
 		a.logger.Info("Swept shared workdir", slog.String("host", host), slog.Int64("before_bytes", before), slog.Int64("after_bytes", after), slog.Int64("reclaimed_bytes", reclaimed))
 	}
 
+	if externalsHealthSkipped(string(out)) {
+		// This runner_image has no agent-lcars externals-health.sh baked in
+		// (e.g. homelab-autoscale-e2e's third-party-built e2e-runner) -- the
+		// check never applies here, not a failure worth a WARN. Delete rather
+		// than leave any prior value in place: validateReloadCompatibility
+		// permits a scale set's runner_image to change on a live reload, and
+		// this gauge is a process-lifetime resource that survives generation
+		// replacement -- if this host previously reported 0/1 under an image
+		// that HAD the health script, an image swap to one that doesn't must
+		// not leave that now-inapplicable reading exported forever.
+		hostExternalsHealthyGauge.DeleteLabelValues(host)
+		return nil
+	}
 	healthy, healthOK := parseExternalsHealthOutput(string(out))
 	if !healthOK {
 		a.logger.Warn("Could not parse externals-health output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
@@ -2243,6 +2268,10 @@ fi
 		a.logger.Warn("Shared externals/node24 runtime is still unhealthy after a repair attempt", slog.String("host", host))
 	}
 	return nil
+}
+
+func externalsHealthSkipped(out string) bool {
+	return strings.Contains(out, "EXTERNALS_HEALTHY_SKIPPED")
 }
 
 var externalsHealthRe = regexp.MustCompile(`EXTERNALS_HEALTHY=([01])`)
