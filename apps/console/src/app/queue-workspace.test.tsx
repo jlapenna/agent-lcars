@@ -16,6 +16,7 @@ let mockSearch = 'repo=agent%2Flcars';
 // returns a new object when the URL actually changes, and the workspace's
 // resync effect keys off that identity.
 let cachedParams: [string, URLSearchParams] | undefined;
+const mockReplace = vi.fn();
 vi.mock('next/navigation', () => ({
   useSearchParams: () => {
     if (!cachedParams || cachedParams[0] !== mockSearch) {
@@ -23,11 +24,13 @@ vi.mock('next/navigation', () => ({
     }
     return cachedParams[1];
   },
+  useRouter: () => ({ replace: mockReplace }),
 }));
 
 afterEach(() => {
   mockSearch = 'repo=agent%2Flcars';
   cachedParams = undefined;
+  mockReplace.mockReset();
   vi.restoreAllMocks();
 });
 vi.mock('./action-item-card', () => ({
@@ -257,6 +260,141 @@ describe('URL resync', () => {
 
     expect(screen.queryByText('Responsive Inbox')).toBeNull();
     expect(screen.getByText('Review the next item')).toBeTruthy();
+  });
+});
+
+describe('inbox search', () => {
+  it('narrows rows by title, number, author, or label and syncs the URL', () => {
+    const replaceState = vi.spyOn(window.history, 'replaceState');
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+        author: 'octocat',
+      }),
+    ]);
+
+    const input = screen.getByRole('textbox', { name: 'Search the Inbox' });
+    fireEvent.change(input, { target: { value: 'octo' } });
+
+    expect(screen.queryByText('Responsive Inbox')).toBeNull();
+    expect(screen.getByText('Review the next item')).toBeTruthy();
+    expect(replaceState).toHaveBeenCalledWith(
+      null,
+      '',
+      expect.stringContaining('q=octo'),
+    );
+
+    fireEvent.change(input, { target: { value: '#249' } });
+    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+    expect(screen.queryByText('Review the next item')).toBeNull();
+  });
+
+  it('offers a clear-search reset from the empty state', () => {
+    renderWorkspace([makeCard()]);
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Search the Inbox' }),
+      { target: { value: 'zzz-no-match' } },
+    );
+    expect(screen.getByText('No matches for “zzz-no-match”.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+  });
+
+  it('initializes from ?q= so a shared URL lands on the same view', () => {
+    mockSearch = 'q=next';
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+    expect(screen.queryByText('Responsive Inbox')).toBeNull();
+    expect(screen.getByText('Review the next item')).toBeTruthy();
+  });
+});
+
+describe('inbox keyboard navigation', () => {
+  it('j/k move the selection through visible rows without pushing history', () => {
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/inbox?repo=agent%2Flcars&item=agent%2Flcars%23250',
+      { scroll: false },
+    );
+  });
+
+  it('key-repeat advances past the still-pending selection', () => {
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+      makeCard({
+        number: 251,
+        title: 'Third row',
+        // Same rank as row 2 so priority sort preserves input order and
+        // the assertion below is unambiguous: a stale-selection recompute
+        // would produce #250 twice, the fix advances to #251.
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+
+    // Two rapid presses before any selectedItemKey update lands: the
+    // second must target row 3, not recompute row 2 from the stale
+    // rendered selection.
+    fireEvent.keyDown(window, { key: 'j' });
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(mockReplace).toHaveBeenCalledTimes(2);
+    expect(mockReplace.mock.calls[1][0]).toContain(
+      encodeURIComponent('agent/lcars#251'),
+    );
+  });
+
+  it('k at the top and j at the bottom stay put', () => {
+    renderWorkspace([makeCard()]);
+    fireEvent.keyDown(window, { key: 'k' });
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('slash focuses the search input', () => {
+    renderWorkspace([makeCard()]);
+    fireEvent.keyDown(window, { key: '/' });
+    expect(document.activeElement).toBe(
+      screen.getByRole('textbox', { name: 'Search the Inbox' }),
+    );
+  });
+
+  it('ignores j/k while typing in the search field', () => {
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+    const input = screen.getByRole('textbox', { name: 'Search the Inbox' });
+    input.focus();
+    fireEvent.keyDown(input, { key: 'j' });
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });
 

@@ -1,5 +1,11 @@
 import type { ActionItem, ActionType } from '../lib/action-items';
 
+/**
+ * The single source of truth for how an action type reads anywhere in the
+ * UI - list rows, the detail card's badges, and the Inbox filter menu all
+ * pull from here, so one type can never read three different ways
+ * depending on which surface happens to render it.
+ */
 export interface QueueReason {
   type: ActionType;
   label: string;
@@ -59,6 +65,18 @@ const HIDDEN_ROUTING_LABELS = new Set([
   'status:ready-for-agent',
   'status:needs-human',
 ]);
+
+/** Canonical label/color/rank for one action type. */
+export function actionTypeMeta(type: ActionType): QueueReason {
+  return QUEUE_REASONS[type];
+}
+
+/** The Inbox filter menu's reasons, rank order - every type except
+ * post-deploy-action, which the Deck's Waiting-on-Deploy section owns and
+ * the Inbox never lists. */
+export const INBOX_FILTER_REASONS: QueueReason[] = Object.values(QUEUE_REASONS)
+  .filter((reason) => reason.type !== 'post-deploy-action')
+  .sort((a, b) => a.rank - b.rank);
 
 export function queueReasonFor(item: ActionItem): QueueReason | undefined {
   let best: QueueReason | undefined;
