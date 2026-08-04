@@ -22,6 +22,7 @@ import type {
   AgentRun,
   FleetSummary,
 } from '../lib/agent-activity';
+import { RECENT_RUN_LIMIT } from '../lib/agent-activity';
 import {
   displayRunTitle,
   duplicateLivePipelineGroups,
@@ -32,6 +33,7 @@ import {
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
+import { MAX_SESSIONS } from '../lib/cli-sessions';
 import { shareArtifactUrl } from '../lib/deployment';
 import {
   getWatchedRepos,
@@ -691,11 +693,20 @@ export function CliSessionRow({
 export function AgentActivityPanel({
   activity,
   cliSessions = [],
+  recentRunsCapped,
+  cliSessionsCapped,
   itemsByRunId = {},
   sessionsByRunId = {},
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
+  /** Whether the *unfiltered* recent-run fetch hit RECENT_RUN_LIMIT - a
+   * repo filter can narrow the visible list below the cap while older
+   * runs for that repo were still cut by the global slice (Codex review
+   * on #490). Omitted, falls back to a length heuristic. */
+  recentRunsCapped?: boolean;
+  /** Same, for getCliSessions()'s MAX_SESSIONS slice. */
+  cliSessionsCapped?: boolean;
   itemsByRunId?: Record<number, RunItemRef>;
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByNumericRunId` in run-classification.ts. Absent/empty
@@ -761,7 +772,9 @@ export function AgentActivityPanel({
           <details data-testid="recent-runs">
             <summary style={{ cursor: 'pointer' }}>
               <Eyebrow component="span">
-                Recently finished ({recentRuns.length})
+                {(recentRunsCapped ?? recentRuns.length >= RECENT_RUN_LIMIT)
+                  ? `Recently finished (${recentRuns.length} shown — fetch capped at last ${RECENT_RUN_LIMIT})`
+                  : `Recently finished (${recentRuns.length})`}
               </Eyebrow>
             </summary>
             <Stack gap={6} mt="xs">
@@ -780,7 +793,9 @@ export function AgentActivityPanel({
           <details data-testid="recent-sessions">
             <summary style={{ cursor: 'pointer' }}>
               <Eyebrow component="span">
-                Recent CLI sessions ({finishedSessions.length})
+                {(cliSessionsCapped ?? cliSessions.length >= MAX_SESSIONS)
+                  ? `Recent CLI sessions (${finishedSessions.length} shown — list capped, older in Sessions)`
+                  : `Recent CLI sessions (${finishedSessions.length})`}
               </Eyebrow>
             </summary>
             <Stack gap="xs" mt="xs">

@@ -1722,7 +1722,16 @@
     display: none;
   }
 
+  /* Mobile keeps the search/filter/sort controls - only the title block
+     duplicates the mobile bar's identity and hides (Codex review on #494:
+     a shared ?q=/?reason= URL must not silently filter an uncontrollable
+     list). */
   .queue-workspace__list-header {
+    min-height: 0;
+    padding: 6px 14px 10px;
+  }
+
+  .queue-workspace__list-header > div:first-child {
     display: none;
   }
 
@@ -1797,5 +1806,43 @@
 
   .queue-detail-state .mantine-Button-root {
     min-height: 44px;
+  }
+}
+
+/* Command Deck's Inbox signpost (deck-inbox-summary.tsx): a quiet chip-row
+   with the LCARS left-accent treatment; the count dims when nothing waits. */
+.deck-inbox-summary {
+  padding: 0.65rem 0.9rem;
+  margin-bottom: var(--mantine-spacing-xl);
+  border: 1px solid var(--mantine-color-default-border);
+  border-left: 4px solid var(--mantine-color-blue-6);
+  border-radius: var(--mantine-radius-md);
+}
+
+.deck-inbox-summary[data-empty] {
+  border-left-color: var(--mantine-color-default-border);
+}
+
+.deck-inbox-summary[data-empty] .mantine-Text-root {
+  color: var(--mantine-color-dimmed);
+}
+
+/* Inbox search (queue-workspace.tsx): compact enough to share the header
+   row with Filter/Sort; grows only on wide viewports. */
+.queue-search-input {
+  flex: 1 1 9rem;
+  min-width: 7rem;
+  max-width: 14rem;
+}
+
+/* Keyboard-hint tail of the Inbox count line: pointless on touch, hidden
+   until a hover-capable pointer is present. */
+.queue-kbd-hint {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .queue-kbd-hint {
+    display: inline;
   }
 }

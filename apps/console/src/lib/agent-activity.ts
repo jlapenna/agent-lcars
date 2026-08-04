@@ -35,7 +35,8 @@ function resolveWorkflowFile(
   return agentIntegration(repo, pipeline)?.workflowFile;
 }
 
-const RECENT_RUN_LIMIT = 8;
+/** Exported so the panel can label the list as "last N" when it fills. */
+export const RECENT_RUN_LIMIT = 8;
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
 export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';

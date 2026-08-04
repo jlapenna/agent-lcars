@@ -47,6 +47,9 @@ describe('WatcherDaemon tick() memory usage', () => {
   let corpusDir: string;
   let totalBytes = 0;
 
+  // Building the 200MB+ corpus is itself I/O-heavy and has exceeded Vitest's
+  // 10s hook default on saturated runners. Give fixture creation the same
+  // budget as the memory measurements below.
   beforeAll(() => {
     corpusDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'agent-telemetry-oom-regression-'),
@@ -94,7 +97,7 @@ describe('WatcherDaemon tick() memory usage', () => {
       fs.closeSync(fd);
       totalBytes += fs.statSync(filePath).size;
     }
-  });
+  }, 120_000);
 
   afterAll(() => {
     fs.rmSync(corpusDir, { recursive: true, force: true });

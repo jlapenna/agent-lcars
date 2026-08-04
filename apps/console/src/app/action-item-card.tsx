@@ -18,11 +18,7 @@ import { useState, useTransition } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import type {
-  ActionItem,
-  ActionType,
-  MergeableState,
-} from '../lib/action-items';
+import type { ActionItem, MergeableState } from '../lib/action-items';
 import { type PrimaryAction } from '../lib/primary-action';
 import {
   agentIntegration,
@@ -33,32 +29,16 @@ import {
 import { approveAndRebase, mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
-import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
+import {
+  actionTypeMeta,
+  queueDisclosureLabels,
+  queueReasonFor,
+} from './queue-reason';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { RetriggerButton } from './retrigger-button';
 import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
-
-const ACTION_LABELS: Record<ActionType, string> = {
-  'needs-human': 'Needs a human',
-  'ready-for-agent': 'Ready for agent',
-  'run-failed': 'CI run failed',
-  'review-requested': 'Review requested',
-  'merge-blocked': 'Base branch moved',
-  'post-deploy-action': 'Awaiting next deploy',
-  'silent-error': 'Silent error',
-};
-
-const ACTION_COLORS: Record<ActionType, string> = {
-  'needs-human': 'blue',
-  'ready-for-agent': 'cyan',
-  'run-failed': 'red',
-  'review-requested': 'grape',
-  'merge-blocked': 'yellow',
-  'post-deploy-action': 'gray',
-  'silent-error': 'orange',
-};
 
 const TRUNCATION_THRESHOLD = 400;
 const COLLAPSED_HEIGHT = 120;
@@ -410,11 +390,11 @@ export function ActionItemCard({
                 {item.actionTypes.map((type) => (
                   <Badge
                     key={type}
-                    color={ACTION_COLORS[type]}
+                    color={actionTypeMeta(type).color}
                     variant="light"
                     size="sm"
                   >
-                    {ACTION_LABELS[type]}
+                    {actionTypeMeta(type).label}
                   </Badge>
                 ))}
                 {item.ciRunning && (
@@ -645,6 +625,7 @@ export function ActionItemCard({
               size="sm"
               label="Unstick"
               defaultContext={`#${item.number} ${item.title}`}
+              repo={item.repo}
             />
           )}
         </Group>
