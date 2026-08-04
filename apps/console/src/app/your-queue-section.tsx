@@ -6,7 +6,7 @@ import { repoDisplayName, repoItemKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import type { BoardCard } from './board-card';
 import { SectionHeading } from './section-heading';
-import { useMutedItems } from './use-muted-items';
+import { muteSignatureFor, useMutedItems } from './use-muted-items';
 
 /**
  * A muted row's two-line summary. Deliberately NOT CompactItemRow: that
@@ -95,7 +95,7 @@ export function YourQueueSection({
   const { isMuted: isKeyMuted, mute, unmute } = useMutedItems();
 
   const isMuted = (item: BoardCard['item']) =>
-    isKeyMuted(repoItemKey(item.repo, item.number), item.updatedAt);
+    isKeyMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item));
 
   const visible = cards.filter(({ item }) => !isMuted(item));
   const mutedCards = cards.filter(({ item }) => isMuted(item));
@@ -123,7 +123,10 @@ export function YourQueueSection({
               multiRepo={multiRepo}
               muted={false}
               onToggleMute={() =>
-                mute(repoItemKey(item.repo, item.number), item.updatedAt)
+                mute(
+                  repoItemKey(item.repo, item.number),
+                  muteSignatureFor(item),
+                )
               }
             />
           ))}
