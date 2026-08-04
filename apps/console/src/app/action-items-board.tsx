@@ -4,7 +4,7 @@ import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { CompactItemRow } from './compact-item-row';
-import { repoScopedConsoleHrefs } from './console-header';
+import { repoScopedConsoleHrefs } from './console-hrefs';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { QueueUtilityMenu } from './queue-utility-menu';
 import { QueueWorkspace } from './queue-workspace';
