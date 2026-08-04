@@ -51,6 +51,10 @@ const LEDGER_GENERATION_STATES_LIST = [
 export type LedgerGenerationState =
   (typeof LEDGER_GENERATION_STATES_LIST)[number];
 
+/** Every pipeline the broker can persist. `canary` is the trusted no-op
+ * production probe, not a selectable coding-agent integration. */
+export type LedgerPipeline = AgentPipeline | 'canary';
+
 export interface LedgerRunAttempt {
   runId?: number;
   runUrl?: string;
@@ -67,7 +71,7 @@ export interface LedgerGeneration {
   intentId: string;
   sourceId: string;
   occurredAt: string;
-  pipeline: AgentPipeline;
+  pipeline: LedgerPipeline;
   mode?: string;
   runbook?: string;
   state: LedgerGenerationState;
@@ -154,7 +158,12 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-const PIPELINES = new Set<AgentPipeline>(['claude', 'codex', 'opencode']);
+const PIPELINES = new Set<LedgerPipeline>([
+  'claude',
+  'codex',
+  'opencode',
+  'canary',
+]);
 
 const LEDGER_GENERATION_STATES = new Set<LedgerGenerationState>(
   LEDGER_GENERATION_STATES_LIST,
@@ -182,7 +191,7 @@ function isWellFormedGeneration(value: unknown): value is LedgerGeneration {
   if (!isNonEmptyString(value.intentId)) return false;
   if (!isNonEmptyString(value.sourceId)) return false;
   if (!isNonEmptyString(value.occurredAt)) return false;
-  if (!PIPELINES.has(value.pipeline as AgentPipeline)) return false;
+  if (!PIPELINES.has(value.pipeline as LedgerPipeline)) return false;
   if (!LEDGER_GENERATION_STATES.has(value.state as LedgerGenerationState)) {
     return false;
   }

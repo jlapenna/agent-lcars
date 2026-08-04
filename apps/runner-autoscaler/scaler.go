@@ -91,8 +91,14 @@ type Scaler struct {
 	// of treating runner count as a sufficient proxy for host saturation.
 	hostMetricsURLTemplate string
 	draining               atomic.Bool
-	hostLoadPolicy         hostLoadPolicy
-	hostMemoryExempt       map[string]bool
+	// quiescing refuses new placements during the fast shutdown path without
+	// draining's destructive half. draining tears idle capacity down because
+	// an operator asked for an empty fleet; quiescing only closes the window
+	// between cancelling the listeners and writing the checkpoint, so a
+	// placement cannot start after the state it would appear in was recorded.
+	quiescing        atomic.Bool
+	hostLoadPolicy   hostLoadPolicy
+	hostMemoryExempt map[string]bool
 	// readiness* configure the operator-defined placement gate applied to
 	// hosts that set require_readiness. See hostReady.
 	readinessMetricsURL string
@@ -105,6 +111,58 @@ type Scaler struct {
 	fleet          *FleetCoordinator
 	localFleetOnce sync.Once
 	localFleet     *FleetCoordinator
+	// checkpoints persists runner state so a restart adopts the real
+	// idle/busy split instead of re-deriving it from a process probe. Nil in
+	// tests and single-scaler construction paths, where checkpoint() is a
+	// no-op.
+	checkpoints *checkpointStore
+	// bootCheckpoint is this scale set's slice of the checkpoint loaded at
+	// startup, consulted only by cleanupOrphans' boot pass. Empty on a first
+	// boot or an unreadable checkpoint, which falls adoption back to the
+	// ContainerTop probe. Written once before any goroutine starts, then
+	// read-only.
+	bootCheckpoint map[string]checkpointRunner
+}
+
+// adoptRunner records a runner recovered from a previous control-plane
+// instance with a known idle/busy state, rather than inferring one.
+func (a *Scaler) adoptRunner(name, host, containerID string, startedAt time.Time, busy bool) {
+	if !busy {
+		a.runners.addIdle(name, host, containerID, startedAt)
+		return
+	}
+	a.runners.mu.Lock()
+	a.runners.busy[name] = runnerRef{host: host, containerID: containerID, startedAt: startedAt}
+	a.runners.mu.Unlock()
+}
+
+// checkpoint persists the current state immediately. Called after every
+// idle/busy transition rather than on a timer: a transition lost to a kill is
+// exactly the misclassification the checkpoint exists to prevent, and a
+// runner recorded idle while GitHub has already assigned it a job is the case
+// that makes an aggressive restart unsafe.
+//
+// Must not be called while holding runners.mu -- the snapshot takes it.
+func (a *Scaler) checkpoint() {
+	a.checkpoints.flush()
+}
+
+// snapshotRunners records the authoritative idle/busy split for this scale
+// set. This is the half of the checkpoint Docker genuinely cannot reproduce:
+// a container's existence is visible to ContainerList, but whether GitHub has
+// assigned it a job is known only from the JobStarted/JobCompleted messages
+// this process received.
+func (a *Scaler) snapshotRunners() checkpointScaleSet {
+	a.runners.mu.Lock()
+	defer a.runners.mu.Unlock()
+	runners := make(map[string]checkpointRunner, len(a.runners.idle)+len(a.runners.busy))
+	for name, ref := range a.runners.idle {
+		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: false}
+	}
+	for name, ref := range a.runners.busy {
+		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: true}
+	}
+	return checkpointScaleSet{Draining: a.draining.Load(), Runners: runners}
 }
 
 // scaleSetLabel returns the Prometheus label value identifying this scaler:
@@ -490,6 +548,18 @@ func (a *Scaler) updateRunnerMetrics() {
 	}
 }
 
+// runnersChanged is the single hook every runner state transition goes
+// through: it republishes the gauges and persists the new state. Keeping both
+// on one call is deliberate -- a transition that updated the metrics but not
+// the checkpoint would leave the fleet looking correct while a restart
+// silently misclassifies the runner, which is the exact failure the
+// checkpoint exists to prevent. Add new transitions here, not to
+// updateRunnerMetrics.
+func (a *Scaler) runnersChanged() {
+	a.updateRunnerMetrics()
+	a.checkpoint()
+}
+
 func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
 	// Correct currentCount against reality BEFORE comparing it to demand --
 	// see pruneDeadIdleRunners for why a stale idle entry can otherwise
@@ -510,7 +580,7 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	defer func() {
 		pendingRunnersGauge.WithLabelValues(scaleSet).Set(float64(max(0, targetRunnerCount-a.runners.count())))
 	}()
-	defer a.updateRunnerMetrics()
+	defer a.runnersChanged()
 
 	switch {
 	case targetRunnerCount == currentCount:
@@ -661,7 +731,7 @@ func (a *Scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStar
 			a.logger.Warn("Received job started for untracked runner", slog.String("runnerName", jobInfo.RunnerName))
 		}
 	}
-	a.updateRunnerMetrics()
+	a.runnersChanged()
 	return nil
 }
 
@@ -671,7 +741,7 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 	a.logger.Info("Job completed", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
 
 	runner, ok := a.runners.markDone(jobInfo.RunnerName)
-	a.updateRunnerMetrics()
+	a.runnersChanged()
 	if !ok {
 		a.logger.Warn("Job completed for untracked runner", slog.String("runnerName", jobInfo.RunnerName))
 		return nil
@@ -722,6 +792,13 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 // pruneDeadIdleRunners' local-only cleanup left 32 such ghosts behind in a
 // few hours (see jlapenna/homelab's docs/incidents.md for the postmortem).
 func (a *Scaler) deregisterRunner(ctx context.Context, name string) {
+	// Bounded for the same reason removeIdleRunners' teardown is: both of
+	// these are GitHub round trips reached from the drain path, which runs
+	// inline in runOrchestrator's select loop. Best-effort already, so a
+	// timeout costs nothing a slow API call would not have cost anyway --
+	// the runner just stays a GitHub-side ghost until a later sweep.
+	ctx, cancel := context.WithTimeout(ctx, deregisterRunnerTimeout)
+	defer cancel()
 	runner, err := a.scalesetClient.GetRunnerByName(ctx, name)
 	if err != nil {
 		a.logger.Warn("Failed to look up runner on GitHub for deregistration", slog.String("name", name), slog.String("error", err.Error()))
@@ -1491,6 +1568,23 @@ func (a *Scaler) cleanupOrphans(ctx context.Context, boot bool) {
 				continue
 			}
 			if boot && c.State == container.StateRunning {
+				// The checkpoint, when it has an entry, is authoritative:
+				// it records the idle/busy split this process actually
+				// observed from GitHub's JobStarted/JobCompleted messages.
+				// The ContainerTop probe below can only ask whether a
+				// Runner.Worker process exists YET, so it reports a runner
+				// that GitHub has already assigned a job to -- but which is
+				// still pulling its image or checking out -- as idle, and
+				// anything that reaps idle capacity then kills a live job.
+				// That misclassification is the reason a restart previously
+				// had to be preceded by a full drain.
+				if recorded, ok := a.bootCheckpoint[cleanName]; ok {
+					a.adoptRunner(cleanName, h.Name, c.ID, time.Unix(c.Created, 0), recorded.Busy)
+					a.logger.Info("Adopted runner from checkpoint",
+						slog.String("host", h.Name), slog.String("name", cleanName),
+						slog.String("containerID", c.ID), slog.Bool("busy", recorded.Busy))
+					continue
+				}
 				top, topErr := h.Client.ContainerTop(ctx, c.ID, []string{"-eo", "pid,args"})
 				if topErr == nil && !topHasRunnerWorker(top) {
 					a.runners.addIdle(cleanName, h.Name, c.ID, time.Unix(c.Created, 0))
@@ -1523,7 +1617,7 @@ func (a *Scaler) cleanupOrphans(ctx context.Context, boot bool) {
 			a.deregisterRunner(ctx, cleanName)
 		}
 	}
-	a.updateRunnerMetrics()
+	a.runnersChanged()
 }
 
 func topHasRunnerWorker(top container.TopResponse) bool {
@@ -1623,6 +1717,9 @@ func runnerHostConfig(binds, groupAdd []string, memory, pidsLimit, shmSize int64
 func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	if a.draining.Load() {
 		return "", fmt.Errorf("scale set %q is draining", a.scaleSetName)
+	}
+	if a.quiescing.Load() {
+		return "", fmt.Errorf("scale set %q is quiescing for shutdown", a.scaleSetName)
 	}
 	start := time.Now()
 	scaleSet := a.scaleSetLabel()
@@ -1760,7 +1857,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	runnerStartDuration.WithLabelValues(scaleSet, host).Observe(time.Since(start).Seconds())
 	a.logger.Info("Placed runner", slog.String("name", name), slog.String("host", host))
 	a.runners.addIdle(name, host, c.ID, time.Now())
-	a.updateRunnerMetrics()
+	a.runnersChanged()
 	return name, nil
 }
 
@@ -2089,12 +2186,24 @@ echo "SWEEP before=$before after=$after cap=$cap"
 # this same image), so a broken host is caught between real jobs instead of
 # only when one happens to hit it, and this can never race a booting
 # runner's own repair attempt.
-. /usr/local/lib/agent-lcars/externals-health.sh
-repair_externals_if_needed
-if node24_runs; then
-  echo "EXTERNALS_HEALTHY=1"
+#
+# Guarded: this file is only baked into agent-lcars' own homelab-runner
+# image. RunWorkDirSweeper (and this script) also runs against any other
+# share_workdir pool's own configured runner_image -- e.g.
+# homelab-autoscale-e2e's supersprinklesracing/sprinkles/e2e-runner, which
+# has no reason to carry an agent-lcars-specific health check. Without this
+# guard the sweep died here on every attempt, on every host, before ever
+# reaching the disk-cap eviction above (agent-lcars#464).
+if [ -f /usr/local/lib/agent-lcars/externals-health.sh ]; then
+  . /usr/local/lib/agent-lcars/externals-health.sh
+  repair_externals_if_needed
+  if node24_runs; then
+    echo "EXTERNALS_HEALTHY=1"
+  else
+    echo "EXTERNALS_HEALTHY=0"
+  fi
 else
-  echo "EXTERNALS_HEALTHY=0"
+  echo "EXTERNALS_HEALTHY_SKIPPED"
 fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
 
@@ -2156,6 +2265,19 @@ fi
 		a.logger.Info("Swept shared workdir", slog.String("host", host), slog.Int64("before_bytes", before), slog.Int64("after_bytes", after), slog.Int64("reclaimed_bytes", reclaimed))
 	}
 
+	if externalsHealthSkipped(string(out)) {
+		// This runner_image has no agent-lcars externals-health.sh baked in
+		// (e.g. homelab-autoscale-e2e's third-party-built e2e-runner) -- the
+		// check never applies here, not a failure worth a WARN. Delete rather
+		// than leave any prior value in place: validateReloadCompatibility
+		// permits a scale set's runner_image to change on a live reload, and
+		// this gauge is a process-lifetime resource that survives generation
+		// replacement -- if this host previously reported 0/1 under an image
+		// that HAD the health script, an image swap to one that doesn't must
+		// not leave that now-inapplicable reading exported forever.
+		hostExternalsHealthyGauge.DeleteLabelValues(host)
+		return nil
+	}
 	healthy, healthOK := parseExternalsHealthOutput(string(out))
 	if !healthOK {
 		a.logger.Warn("Could not parse externals-health output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
@@ -2168,6 +2290,10 @@ fi
 		a.logger.Warn("Shared externals/node24 runtime is still unhealthy after a repair attempt", slog.String("host", host))
 	}
 	return nil
+}
+
+func externalsHealthSkipped(out string) bool {
+	return strings.Contains(out, "EXTERNALS_HEALTHY_SKIPPED")
 }
 
 var externalsHealthRe = regexp.MustCompile(`EXTERNALS_HEALTHY=([01])`)
@@ -2195,8 +2321,24 @@ func parseSweepOutput(out string) (before, after int64, ok bool) {
 	return before, after, true
 }
 
+// removeIdleRunnerTimeout bounds each idle runner's teardown. This whole
+// function runs inline in runOrchestrator's select loop (BeginDrain is called
+// from the SIGUSR1 case), so an unbounded ContainerRemove against a host that
+// accepts the connection and then black-holes it stalls SIGHUP, SIGTERM and
+// the drain watchdog for the kernel TCP timeout -- i.e. a single sick host
+// could block the shutdown path this change exists to make fast.
+const removeIdleRunnerTimeout = 15 * time.Second
+
+// deregisterRunnerTimeout bounds the two GitHub calls deregisterRunner makes.
+// See removeIdleRunnerTimeout for why anything on the drain path needs one.
+const deregisterRunnerTimeout = 15 * time.Second
+
 // removeIdleRunners removes only runners that GitHub has not assigned. Busy
-// runners are deliberately preserved across SIGTERM and adopted on startup.
+// runners are deliberately preserved and adopted on startup.
+//
+// Note this is now a DRAIN-only path (SIGUSR1). An orderly shutdown no longer
+// calls it: see quiesce, which preserves idle runners for adoption instead of
+// destroying capacity the next process could pick up immediately.
 func (a *Scaler) removeIdleRunners(ctx context.Context) {
 	a.runners.mu.Lock()
 	idle := make(map[string]runnerRef, len(a.runners.idle))
@@ -2210,15 +2352,23 @@ func (a *Scaler) removeIdleRunners(ctx context.Context) {
 		a.logger.Info("Removing runner", slog.String("name", name), slog.String("host", r.host), slog.String("containerID", r.containerID))
 		client, err := a.hostClient(r.host)
 		if err != nil {
+			// One unreachable host must not abandon the remaining runners.
+			// The idle map was already cleared above, so returning here left
+			// every container after this one running AND untracked -- invisible
+			// until some later boot's cleanupOrphans swept it up, while the
+			// drain gate this feeds waited for a fleet count that had stopped
+			// reflecting them.
 			a.logger.Error("Failed to get docker host client for runner shutdown", slog.String("name", name), slog.String("host", r.host), slog.String("error", err.Error()))
-			return
+			continue
 		}
-		if err := client.ContainerRemove(ctx, r.containerID, container.RemoveOptions{Force: true}); err != nil {
+		removeCtx, cancel := context.WithTimeout(ctx, removeIdleRunnerTimeout)
+		if err := client.ContainerRemove(removeCtx, r.containerID, container.RemoveOptions{Force: true}); err != nil {
 			a.logger.Error("Failed to remove runner container", slog.String("name", name), slog.String("host", r.host), slog.String("error", err.Error()))
 		}
+		cancel()
 		a.deregisterRunner(ctx, name)
 	}
-	a.updateRunnerMetrics()
+	a.runnersChanged()
 }
 
 // BeginDrain is idempotent. It refuses future scale-ups and removes idle
@@ -2274,9 +2424,12 @@ func (a *Scaler) EndDrain() {
 	drainAutoClearedTotal.WithLabelValues(scaleSet).Inc()
 }
 
-func (a *Scaler) shutdown(ctx context.Context) {
-	a.logger.Info("Shutting down control plane; preserving busy runners for startup adoption")
-	a.removeIdleRunners(ctx)
+// stopPlacing refuses new placements for the rest of this process's life. It
+// is the shutdown counterpart to BeginDrain, minus the teardown: see the
+// quiescing field and quiesce's doc comment for why an orderly exit now keeps
+// idle runners instead of removing them.
+func (a *Scaler) stopPlacing() {
+	a.quiescing.Store(true)
 }
 
 var _ listener.Scaler = (*Scaler)(nil)

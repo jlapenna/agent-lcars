@@ -198,10 +198,10 @@ For a local image without pushing:
 ./tools/nx run @agent-lcars/telemetry-watcher:docker-build
 ```
 
-Deployed to the `pike` homelab host via Docker Compose — chosen over the
-PRD's original "bundled systemd unit" plan to match how the rest of the
-homelab fleet is managed. The compose file and deploy script live in this
-repo, at [`deploy/`](deploy/README.md) — moved from `jlapenna/homelab` in
+Deployed to the `pike`, `laforge`, and `janeway` homelab hosts via Docker
+Compose — chosen over the PRD's original "bundled systemd unit" plan to match
+how the rest of the homelab fleet is managed. The compose file and deploy
+script live in this repo, at [`deploy/`](deploy/README.md) — moved from `jlapenna/homelab` in
 homelab#218 Phase 6, on the reasoning that the deployment config should
 live with the image that builds it and the semantics (allowlists,
 entrypoint, uid) it depends on. `jlapenna/homelab` owns the Prometheus scrape
@@ -213,5 +213,5 @@ and this app's `/metrics` dead-man signal — see
 `tag@digest`, and Renovate is disabled for that LAN registry in this repo's
 own `renovate.json` (its runner can't reach
 `docker-registry.lan.jlapenna.net`), so moving the pin is still a human
-step — run [`deploy/deploy.sh`](deploy/deploy.sh) on pike after updating
-it.
+step — run [`deploy/deploy.sh`](deploy/deploy.sh) on each watcher host after
+updating it.
