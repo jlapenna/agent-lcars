@@ -1,7 +1,4 @@
-'use client';
-
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
@@ -65,12 +62,6 @@ function navHref(
 }
 
 /**
- * A client module: the pills render through next/link via Mantine's
- * polymorphic `component` prop, and a component reference can't cross the
- * server->client serialization boundary as a prop - so the boundary sits
- * here instead. Every prop the server pages pass in (strings, plain
- * objects, ReactNode slots) serializes fine.
- *
  * Shared top-of-page chrome for the five console destinations (Command Deck,
  * Inbox, agents, sessions, costs): title/subtitle row and the LCARS pill nav rail
  * (the one page every page can jump from/to). The session detail page (a
@@ -134,7 +125,6 @@ export function ConsoleHeader({
           {NAV_ITEMS.map((item) => (
             <Anchor
               key={item.key}
-              component={Link}
               href={navHref(item, archiveQuery, repoFilter)}
               underline="never"
               className="lcars-nav-pill"

@@ -2,7 +2,6 @@
 
 import { ActionIcon, Anchor, Menu } from '@mantine/core';
 import { IconDotsVertical } from '@tabler/icons-react';
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { ThemeToggle } from './theme-toggle';
@@ -45,7 +44,7 @@ export function QueueUtilityMenu({
             {MOBILE_DESTINATIONS.map((destination) => (
               <Menu.Item
                 key={destination.key}
-                component={Link}
+                component="a"
                 href={navigationHrefs?.[destination.key] ?? destination.href}
               >
                 {destination.label}
