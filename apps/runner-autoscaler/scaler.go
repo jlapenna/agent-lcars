@@ -116,12 +116,33 @@ type Scaler struct {
 	// tests and single-scaler construction paths, where checkpoint() is a
 	// no-op.
 	checkpoints *checkpointStore
+	// tearingDown names runners whose state has already been dropped from
+	// a.runners but whose container removal has not finished yet. Every
+	// teardown path untracks first and removes after, so in between the
+	// container is running and untracked -- indistinguishable, to the
+	// periodic sweep, from one the boot pass missed. Without this the sweep
+	// would adopt a runner mid-teardown and be left holding an entry for a
+	// container that no longer exists.
+	tearingDown sync.Map // map[string]struct{}
 	// bootCheckpoint is this scale set's slice of the checkpoint loaded at
 	// startup, consulted only by cleanupOrphans' boot pass. Empty on a first
 	// boot or an unreadable checkpoint, which falls adoption back to the
 	// ContainerTop probe. Written once before any goroutine starts, then
 	// read-only.
 	bootCheckpoint map[string]checkpointRunner
+}
+
+// beginTeardown marks a runner as being removed. Must be called BEFORE the
+// call that drops it from a.runners, so the untracked window is never
+// observable without the mark. endTeardown clears it once the container is
+// actually gone.
+func (a *Scaler) beginTeardown(name string) { a.tearingDown.Store(name, struct{}{}) }
+
+func (a *Scaler) endTeardown(name string) { a.tearingDown.Delete(name) }
+
+func (a *Scaler) isTearingDown(name string) bool {
+	_, ok := a.tearingDown.Load(name)
+	return ok
 }
 
 // adoptRunner records a runner recovered from a previous control-plane
@@ -739,6 +760,12 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 	scaleSet := a.scaleSetLabel()
 	jobsCompletedCounter.WithLabelValues(scaleSet).Inc()
 	a.logger.Info("Job completed", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
+
+	// Marked before markDone and held until the container is gone: between
+	// those two the container is running and untracked, which the periodic
+	// sweep would otherwise adopt as a runner the boot pass had missed.
+	a.beginTeardown(jobInfo.RunnerName)
+	defer a.endTeardown(jobInfo.RunnerName)
 
 	runner, ok := a.runners.markDone(jobInfo.RunnerName)
 	a.runnersChanged()
@@ -1625,6 +1652,12 @@ func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bo
 			if a.runners.isTracked(cleanName) {
 				continue
 			}
+			// Untracked because it is being torn down right now, not
+			// because the boot pass missed it. Adopting here would leave
+			// an entry pointing at a container that is about to vanish.
+			if a.isTearingDown(cleanName) {
+				continue
+			}
 			if time.Since(time.Unix(c.Created, 0)) <= orphanMinAge {
 				continue
 			}
@@ -2426,9 +2459,18 @@ func (a *Scaler) removeIdleRunners(ctx context.Context) {
 	idle := make(map[string]runnerRef, len(a.runners.idle))
 	for name, r := range a.runners.idle {
 		idle[name] = r
+		// Marked while still holding the lock, so no window exists where a
+		// name is out of a.runners without being marked -- see
+		// tearingDown's doc comment.
+		a.beginTeardown(name)
 	}
 	clear(a.runners.idle)
 	a.runners.mu.Unlock()
+	defer func() {
+		for name := range idle {
+			a.endTeardown(name)
+		}
+	}()
 
 	for name, r := range idle {
 		a.logger.Info("Removing runner", slog.String("name", name), slog.String("host", r.host), slog.String("containerID", r.containerID))

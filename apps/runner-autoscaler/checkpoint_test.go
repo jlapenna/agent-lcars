@@ -528,3 +528,43 @@ func TestPeriodicSweepLeavesYoungRunningContainerAlone(t *testing.T) {
 		t.Errorf("young running container must not be removed either, removed %q", id)
 	}
 }
+
+// Every teardown path untracks a runner first and removes its container
+// after, so in between the container is running and untracked -- which looks
+// exactly like one the boot pass missed. Adopting it there leaves an entry
+// pointing at a container that is about to vanish, pinning capacity against
+// a runner that no longer exists.
+func TestPeriodicSweepIgnoresRunnerBeingTornDown(t *testing.T) {
+	old := time.Now().Add(-time.Hour).Unix()
+	ours := map[string]string{runnerScaleSetLabelKey: "myset"}
+
+	f := newFakeDockerServer(t)
+	f.setContainers([]container.Summary{
+		{ID: "going", Names: []string{"/runner-going"}, Labels: ours, State: container.StateRunning, Created: old},
+	})
+	f.setTop("going", [][]string{{"1", "/home/runner/run.sh"}})
+
+	scaler := &Scaler{
+		scaleSetName:   "myset",
+		dockerHosts:    []DockerHost{{Name: "host-a", Client: f.client(t)}},
+		runners:        runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	// Exactly the window HandleJobCompleted opens: already dropped from
+	// a.runners, container removal still in flight.
+	scaler.beginTeardown("runner-going")
+	scaler.cleanupOrphans(context.Background(), false)
+
+	if scaler.runners.count() != 0 {
+		t.Fatalf("a runner mid-teardown must not be adopted: idle=%#v busy=%#v", scaler.runners.idle, scaler.runners.busy)
+	}
+
+	// Once teardown finishes the mark is cleared, and a container that
+	// somehow survived is a genuine orphan again.
+	scaler.endTeardown("runner-going")
+	if scaler.isTearingDown("runner-going") {
+		t.Fatal("endTeardown should clear the mark")
+	}
+}
