@@ -349,7 +349,10 @@ describe('inbox keyboard navigation', () => {
       makeCard({
         number: 251,
         title: 'Third row',
-        actionTypes: ['needs-human'],
+        // Same rank as row 2 so priority sort preserves input order and
+        // the assertion below is unambiguous: a stale-selection recompute
+        // would produce #250 twice, the fix advances to #251.
+        actionTypes: ['review-requested'],
       }),
     ]);
 
