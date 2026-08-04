@@ -693,11 +693,20 @@ export function CliSessionRow({
 export function AgentActivityPanel({
   activity,
   cliSessions = [],
+  recentRunsCapped,
+  cliSessionsCapped,
   itemsByRunId = {},
   sessionsByRunId = {},
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
+  /** Whether the *unfiltered* recent-run fetch hit RECENT_RUN_LIMIT - a
+   * repo filter can narrow the visible list below the cap while older
+   * runs for that repo were still cut by the global slice (Codex review
+   * on #490). Omitted, falls back to a length heuristic. */
+  recentRunsCapped?: boolean;
+  /** Same, for getCliSessions()'s MAX_SESSIONS slice. */
+  cliSessionsCapped?: boolean;
   itemsByRunId?: Record<number, RunItemRef>;
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByNumericRunId` in run-classification.ts. Absent/empty
@@ -763,8 +772,8 @@ export function AgentActivityPanel({
           <details data-testid="recent-runs">
             <summary style={{ cursor: 'pointer' }}>
               <Eyebrow component="span">
-                {recentRuns.length >= RECENT_RUN_LIMIT
-                  ? `Recently finished (last ${RECENT_RUN_LIMIT})`
+                {(recentRunsCapped ?? recentRuns.length >= RECENT_RUN_LIMIT)
+                  ? `Recently finished (${recentRuns.length} shown — fetch capped at last ${RECENT_RUN_LIMIT})`
                   : `Recently finished (${recentRuns.length})`}
               </Eyebrow>
             </summary>
@@ -784,7 +793,7 @@ export function AgentActivityPanel({
           <details data-testid="recent-sessions">
             <summary style={{ cursor: 'pointer' }}>
               <Eyebrow component="span">
-                {cliSessions.length >= MAX_SESSIONS
+                {(cliSessionsCapped ?? cliSessions.length >= MAX_SESSIONS)
                   ? `Recent CLI sessions (${finishedSessions.length} shown — list capped, older in Sessions)`
                   : `Recent CLI sessions (${finishedSessions.length})`}
               </Eyebrow>
