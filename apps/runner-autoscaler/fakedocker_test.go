@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -26,9 +27,13 @@ type fakeDockerServer struct {
 	inspect map[string]inspectStub // containerID -> canned ContainerInspect response
 	// tops: containerID -> canned ContainerTop process list. An ID absent
 	// here 404s, which is what cleanupOrphans sees as a top error.
-	tops            map[string]container.TopResponse
-	containers      []container.Summary // ContainerList response
-	removed         []string            // IDs passed to ContainerRemove, in call order
+	tops       map[string]container.TopResponse
+	containers []container.Summary // ContainerList response
+	removed    []string            // IDs passed to ContainerRemove, in call order
+	// listDelay stalls every ContainerList response, standing in for a slow
+	// fleet host. Lets a test distinguish concurrent from serial fan-out by
+	// wall-clock rather than by inspecting goroutines.
+	listDelay       time.Duration
 	imagePresent    bool
 	imagePulls      int
 	pullStreamError bool
@@ -80,6 +85,14 @@ func (f *fakeDockerServer) setInspect(containerID string, status int, state *con
 	f.inspect[containerID] = inspectStub{status: status, state: state}
 }
 
+// setListDelay makes every ContainerList response stall, standing in for a
+// slow fleet host.
+func (f *fakeDockerServer) setListDelay(d time.Duration) {
+	f.mu.Lock()
+	f.listDelay = d
+	f.mu.Unlock()
+}
+
 // setContainers configures the full ContainerList response.
 func (f *fakeDockerServer) setContainers(cs []container.Summary) {
 	f.mu.Lock()
@@ -107,7 +120,11 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/json"):
 		f.mu.Lock()
 		cs := f.containers
+		delay := f.listDelay
 		f.mu.Unlock()
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		if cs == nil {
 			cs = []container.Summary{}
 		}
