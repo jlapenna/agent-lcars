@@ -20,21 +20,35 @@ name: Publish images
 # Note that (2) and (3) are DIFFERENT artifacts built from the same source:
 # (2) bakes the telemetry bundle into the runner image for CI issue-agent
 # telemetry, while (3) is the long-lived workstation daemon. A telemetry
-# change must rebuild both -- which is why the `plan` job below always
-# routes a shared-telemetry-input change to both.
+# change must rebuild both -- which is why the plan step below always
+# routes a bundle-input change to both.
 #
-# Each of the three images is its own job (`control-plane`, `jit-runner`,
-# `watcher`), gated on the `plan` job's per-image outputs and run in
-# parallel once `verify-workspace` passes (agent-lcars#441). Building all
-# three unconditionally, serially, in one job used to spend ~20 minutes of
-# builder capacity -- dominated by the emulated arm64 JIT build -- even for
-# a push that only touched one image's inputs, or none of them at all: a
+# Each image's build/scan/promote steps are individually gated on the plan
+# step's per-image output (agent-lcars#441), so a push that only touches one
+# image's inputs skips the other two entirely. Building all three
+# unconditionally, serially, used to spend ~20 minutes of builder capacity
+# -- dominated by the emulated arm64 JIT build -- even for a push that
+# touched only one image's inputs, or none of them at all: a
 # telemetry-watcher deployment-config-only change (agent-lcars#440, exactly
 # `apps/telemetry-watcher/deploy/**`) still triggered a full, wasted
 # ~20-minute run that built nothing (agent-lcars#441's issue comment has the
-# concrete run link). See `.github/actions/plan-image-publish/plan.mjs` for
-# the routing rules and the shared-telemetry-input invariant they preserve,
-# and that action's own README section below for the documented behavior.
+# concrete run link).
+#
+# This stays ONE job, not one job per image. An earlier version of this fix
+# split control-plane/jit-runner/watcher into separate jobs so independent
+# images could build in parallel -- but `lcars-build-client` is deliberately
+# capped at `max_runners: 1` in jlapenna/homelab's orchestrator config
+# ("image publishing is serialized by the registry anyway, and one holder of
+# the push credential at a time is the point"), so those jobs could never
+# actually run concurrently. Worse, a real dispatch run measured 52m09s
+# across 5 separate jobs -- slower than the original single-job baseline --
+# apparently from each job paying its own ephemeral-runner cold-start cost
+# under that capacity-1 pool, rather than paying it once. Step-level `if:`
+# gates get the same "skip unrelated image work" benefit as separate jobs
+# without that per-job provisioning tax; see
+# docs/image-publish-routing.md for the full writeup. See
+# `.github/actions/plan-image-publish/plan.mjs` for the routing rules and
+# the bundle-input invariant they preserve.
 #
 # Runs on lcars-build-client: a socketless pool that holds no Docker socket
 # and needs no local Docker daemon (agent-lcars#101). Images are built by a
@@ -145,16 +159,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Decides which of the three images below actually need building for
-  # this push, from the set of changed paths -- see
-  # .github/actions/plan-image-publish/plan.mjs for the routing rules.
-  # Every downstream job's `if` reads this job's outputs directly (e.g.
-  # `needs.plan.outputs.control-plane == 'true'`); a skipped or failed
-  # `plan` leaves those outputs empty, which is never equal to 'true', so
-  # every image job (and verify-workspace) naturally skips too without
-  # needing to repeat the trust-gate condition below on every job.
-  plan:
-    name: Plan image publish
+  publish:
+    name: Build and publish
     # The push trigger is already branch-scoped to main above; workflow_dispatch
     # is not (it lets any write-access collaborator pick an arbitrary ref in
     # the UI/API) and this workflow publishes the exact images the whole
@@ -172,24 +178,30 @@ jobs:
     # The repo-variable refactor deliberately does NOT apply here. Here the
     # label IS the security control, not configuration: anyone who can edit
     # a repository variable could otherwise redirect fleet-image publishing.
-    # A fork edits this line. `plan` itself builds and pushes nothing, but
-    # it is what every real build job's `if` trusts, so it stays on the
-    # same trusted pool as the jobs it gates.
+    # A fork edits this line.
     runs-on: lcars-build-client
-    timeout-minutes: 10
-    outputs:
-      control-plane: ${{ steps.plan.outputs.control-plane }}
-      jit-runner: ${{ steps.plan.outputs.jit-runner }}
-      watcher: ${{ steps.plan.outputs.watcher }}
+    # Raised from 20: arm64 is emulated on the builder (no native aarch64
+    # host is available -- see agent-lcars#101), and a cold BuildKit cache
+    # makes the JIT runner image build the dominant cost. Steady-state runs
+    # are far quicker once the cache is warm.
+    timeout-minutes: 60
+
     steps:
-      # Full history: base-ref (github.event.before) must actually be
-      # present locally for the diff below to succeed. A shallow checkout
-      # would make every push look non-diffable and silently force a full
-      # publish every time -- see plan-image-publish/main.mjs's fallback.
       - uses: actions/checkout@v7
         with:
+          # Full history: base-ref (github.event.before) must actually be
+          # present locally for the plan step's diff to succeed. A shallow
+          # checkout would make every push look non-diffable and silently
+          # force a full publish every time -- see
+          # plan-image-publish/main.mjs's fallback.
           fetch-depth: 0
 
+      # Decides which of the three images below actually need building for
+      # this push, from the set of changed paths -- see
+      # .github/actions/plan-image-publish/plan.mjs for the routing rules.
+      # Every later step's `if` reads this step's outputs directly (e.g.
+      # `steps.plan.outputs.control-plane == 'true'`).
+      #
       # workflow_dispatch carries no `before` SHA at all (that field only
       # exists on push events) -- treat a manual dispatch as an explicit
       # "republish everything" request rather than trying to guess a base
@@ -200,24 +212,6 @@ jobs:
         with:
           base-ref: ${{ github.event_name == 'workflow_dispatch' && '' || github.event.before }}
           head-ref: ${{ github.sha }}
-
-  # The whole-workspace build/test/typecheck gate and the telemetry bundle
-  # standalone-smoke-test, shared by every image job below exactly as they
-  # were before this workflow was split (agent-lcars#441's "preserve the
-  # existing build, smoke-test ... guarantees"). Runs once, not once per
-  # image job, since it is not specific to any one artifact.
-  verify-workspace:
-    name: Verify workspace before publishing
-    needs: plan
-    if: |
-      needs.plan.outputs.control-plane == 'true' ||
-      needs.plan.outputs.jit-runner == 'true' ||
-      needs.plan.outputs.watcher == 'true'
-    runs-on: lcars-build-client
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@v7
 
       # This repo's only Go module lives at apps/runner-autoscaler/go.mod,
       # not the repo root. setup-go's default dependency-cache lookup only
@@ -254,7 +248,14 @@ jobs:
       # real: an unrelated project's broken test now blocks publishing. That
       # is a loud failure, and loud beats silent here. The shared Nx cache
       # (NX_CACHE_URL) keeps the marginal cost small.
+      #
+      # Skipped entirely when plan found nothing to build (all three
+      # outputs false) -- nothing here would gate.
       - name: Build and test before publishing
+        if: |
+          steps.plan.outputs.control-plane == 'true' ||
+          steps.plan.outputs.jit-runner == 'true' ||
+          steps.plan.outputs.watcher == 'true'
         run: ./tools/nx run-many -t build test typecheck --all
 
       # Only relevant to the two images that bake in this bundle. Skipped
@@ -275,11 +276,10 @@ jobs:
       # manual verification step; this is that step, automated.
       #
       # Deliberately NOT `docker run`: this pool holds no Docker socket (the
-      # assertion in each image job below is the point of #101), so a
-      # container-based smoke test cannot work here. Plain node needs no
-      # daemon.
+      # assertion below is the point of #101), so a container-based smoke
+      # test cannot work here. Plain node needs no daemon.
       - name: Verify the telemetry-watcher bundle runs standalone
-        if: needs.plan.outputs.jit-runner == 'true' || needs.plan.outputs.watcher == 'true'
+        if: steps.plan.outputs.jit-runner == 'true' || steps.plan.outputs.watcher == 'true'
         run: |
           ./tools/nx bundle @agent-lcars/telemetry-watcher
 
@@ -306,16 +306,6 @@ jobs:
           fi
           grep "starting; watching" "$smoke/out.log"
 
-  control-plane:
-    name: Build and publish control-plane image
-    needs: [plan, verify-workspace]
-    if: needs.plan.outputs.control-plane == 'true'
-    runs-on: lcars-build-client
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@v7
-
       # No docker/setup-qemu-action: nothing is built locally any more.
       # Emulation for linux/arm64 lives on the builder (qemu-user-static,
       # installed by homelab's ansible/deploy_buildkit.yml), which is where
@@ -333,7 +323,13 @@ jobs:
       # configuration. A mutable repository variable here would let anyone
       # who can edit variables point fleet-image builds at a builder they
       # control. A fork edits this line.
+      #
+      # Skipped when nothing needs building -- no image job below would use it.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        if: |
+          steps.plan.outputs.control-plane == 'true' ||
+          steps.plan.outputs.jit-runner == 'true' ||
+          steps.plan.outputs.watcher == 'true'
         with:
           driver: remote
           endpoint: tcp://oldbook.lan.jlapenna.net:1234
@@ -345,12 +341,20 @@ jobs:
       # Records which builder and platforms actually served the build --
       # the first thing worth seeing when a publish misbehaves.
       - name: Show builder
+        if: |
+          steps.plan.outputs.control-plane == 'true' ||
+          steps.plan.outputs.jit-runner == 'true' ||
+          steps.plan.outputs.watcher == 'true'
         run: docker buildx inspect --bootstrap
 
       # Fail loudly rather than silently falling back to a local daemon if
       # this ever lands on a socket-mounted pool by mistake. The absence of
       # this socket is the entire point of agent-lcars#101.
       - name: Assert the runner holds no Docker socket
+        if: |
+          steps.plan.outputs.control-plane == 'true' ||
+          steps.plan.outputs.jit-runner == 'true' ||
+          steps.plan.outputs.watcher == 'true'
         run: |
           if [ -S /var/run/docker.sock ]; then
             echo "::error::/var/run/docker.sock is present; this job must run on a socketless pool"
@@ -362,6 +366,10 @@ jobs:
       # writes. BuildKit receives this client-side credential through the
       # remote build session; the builder stores no publisher password.
       - name: Log in to the registry
+        if: |
+          steps.plan.outputs.control-plane == 'true' ||
+          steps.plan.outputs.jit-runner == 'true' ||
+          steps.plan.outputs.watcher == 'true'
         run: |
           test -r /secrets/registry-password || {
             echo "::error::registry credential not mounted; check the lane's file_mounts"
@@ -374,6 +382,7 @@ jobs:
       # header comment for why :latest is only promoted below, after both
       # platform scans pass.
       - name: Build and push control-plane image (staging)
+        if: steps.plan.outputs.control-plane == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: apps/runner-autoscaler
@@ -393,6 +402,7 @@ jobs:
           sbom: true
 
       - name: Scan control-plane image (linux/amd64)
+        if: steps.plan.outputs.control-plane == 'true'
         uses: ./.github/actions/scan-image
         with:
           image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
@@ -400,6 +410,7 @@ jobs:
           category: runner-autoscaler-linux-amd64
 
       - name: Scan control-plane image (linux/arm64)
+        if: steps.plan.outputs.control-plane == 'true'
         uses: ./.github/actions/scan-image
         with:
           image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
@@ -417,59 +428,11 @@ jobs:
       # whatever the currently logged-in credential can read/write -- it
       # does not dispatch a build, so it needs no BuildKit compute.
       - name: Promote control-plane image to :latest
+        if: steps.plan.outputs.control-plane == 'true'
         run: |
           docker buildx imagetools create \
             --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:latest \
             ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
-
-      - name: Log out of the registry
-        if: always()
-        run: docker logout docker-registry.lan.jlapenna.net || true
-
-  jit-runner:
-    name: Build and publish JIT runner image
-    needs: [plan, verify-workspace]
-    if: needs.plan.outputs.jit-runner == 'true'
-    runs-on: lcars-build-client
-    # Raised from 20: arm64 is emulated on the builder (no native aarch64
-    # host is available -- see agent-lcars#101), and the first publish runs
-    # against a cold BuildKit cache on a 4-core box. Steady-state runs are
-    # far quicker once the cache is warm. This is the dominant cost among
-    # the three image jobs (agent-lcars#441); it now runs in parallel with
-    # control-plane/watcher rather than serially after them.
-    timeout-minutes: 60
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        with:
-          driver: remote
-          endpoint: tcp://oldbook.lan.jlapenna.net:1234
-          driver-opts: |
-            cacert=/secrets/buildkit-ca.pem
-            cert=/secrets/buildkit-client-cert.pem
-            key=/secrets/buildkit-client-key.pem
-
-      - name: Show builder
-        run: docker buildx inspect --bootstrap
-
-      - name: Assert the runner holds no Docker socket
-        run: |
-          if [ -S /var/run/docker.sock ]; then
-            echo "::error::/var/run/docker.sock is present; this job must run on a socketless pool"
-            exit 1
-          fi
-          echo "no docker socket present"
-
-      - name: Log in to the registry
-        run: |
-          test -r /secrets/registry-password || {
-            echo "::error::registry credential not mounted; check the lane's file_mounts"
-            exit 1
-          }
-          docker login docker-registry.lan.jlapenna.net \
-            --username publisher --password-stdin < /secrets/registry-password
 
       # Pushed to the staging tag (:<sha>) first, same reason as the
       # control-plane image above. The FINAL tag name is unaffected and
@@ -478,6 +441,7 @@ jobs:
       # ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24 --
       # renaming it is out of scope for this migration.
       - name: Build and push JIT worker runner image (staging)
+        if: steps.plan.outputs.jit-runner == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: apps/runner-autoscaler/runner-image
@@ -506,6 +470,7 @@ jobs:
           sbom: true
 
       - name: Scan JIT worker runner image (linux/amd64)
+        if: steps.plan.outputs.jit-runner == 'true'
         uses: ./.github/actions/scan-image
         with:
           image-ref: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:${{ github.sha }}
@@ -513,6 +478,7 @@ jobs:
           category: homelab-runner-linux-amd64
 
       - name: Scan JIT worker runner image (linux/arm64)
+        if: steps.plan.outputs.jit-runner == 'true'
         uses: ./.github/actions/scan-image
         with:
           image-ref: ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:${{ github.sha }}
@@ -524,53 +490,11 @@ jobs:
       # create` is safe to use here (registry-side carbon copy, preserves
       # attestations, no BuildKit compute needed).
       - name: Promote JIT worker runner image to :jit-node24
+        if: steps.plan.outputs.jit-runner == 'true'
         run: |
           docker buildx imagetools create \
             --tag ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:jit-node24 \
             ${{ vars.HOMELAB_REGISTRY }}/homelab-runner:${{ github.sha }}
-
-      - name: Log out of the registry
-        if: always()
-        run: docker logout docker-registry.lan.jlapenna.net || true
-
-  watcher:
-    name: Build and publish telemetry-watcher image
-    needs: [plan, verify-workspace]
-    if: needs.plan.outputs.watcher == 'true'
-    runs-on: lcars-build-client
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        with:
-          driver: remote
-          endpoint: tcp://oldbook.lan.jlapenna.net:1234
-          driver-opts: |
-            cacert=/secrets/buildkit-ca.pem
-            cert=/secrets/buildkit-client-cert.pem
-            key=/secrets/buildkit-client-key.pem
-
-      - name: Show builder
-        run: docker buildx inspect --bootstrap
-
-      - name: Assert the runner holds no Docker socket
-        run: |
-          if [ -S /var/run/docker.sock ]; then
-            echo "::error::/var/run/docker.sock is present; this job must run on a socketless pool"
-            exit 1
-          fi
-          echo "no docker socket present"
-
-      - name: Log in to the registry
-        run: |
-          test -r /secrets/registry-password || {
-            echo "::error::registry credential not mounted; check the lane's file_mounts"
-            exit 1
-          }
-          docker login docker-registry.lan.jlapenna.net \
-            --username publisher --password-stdin < /secrets/registry-password
 
       # The standalone per-host daemon image (agent-lcars#231). Two things
       # differ from the two images above, both deliberate:
@@ -594,6 +518,7 @@ jobs:
       # that made scanning-after-push meaningless: by the time any scan
       # ran, :latest -- the tag homelab pulls -- was already live.
       - name: Build and push telemetry-watcher daemon image (staging)
+        if: steps.plan.outputs.watcher == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -610,6 +535,7 @@ jobs:
       # unambiguous, so no `platform` input is needed here (contrast with
       # the two multi-arch images above, each scanned once per platform).
       - name: Scan telemetry-watcher daemon image
+        if: steps.plan.outputs.watcher == 'true'
         uses: ./.github/actions/scan-image
         with:
           image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
@@ -627,6 +553,7 @@ jobs:
       # reach a LAN registry -- so publishing guarantees the artifact
       # EXISTS but a human still moves the pin.
       - name: Promote telemetry-watcher daemon image to :latest
+        if: steps.plan.outputs.watcher == 'true'
         run: |
           docker buildx imagetools create \
             --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:latest \
