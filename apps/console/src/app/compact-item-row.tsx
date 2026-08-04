@@ -19,8 +19,9 @@ export function CompactItemRow({
   action,
 }: {
   item: ActionItem;
-  /** One dimmed clause of context, e.g. "updated 2 hours ago". */
-  hint: string;
+  /** One dimmed clause of context, e.g. "updated 2 hours ago" - a node so
+   * callers can embed a ticking `RelativeTime`. */
+  hint: React.ReactNode;
   action?: React.ReactNode;
 }) {
   return (

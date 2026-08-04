@@ -8,6 +8,7 @@ import { repoScopedConsoleHrefs } from './console-header';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { QueueUtilityMenu } from './queue-utility-menu';
 import { QueueWorkspace } from './queue-workspace';
+import { RelativeTime } from './relative-time';
 import { SectionHeading } from './section-heading';
 import { SignOutButton } from './sign-out-button';
 
@@ -63,11 +64,16 @@ export function CommandDeckSections({
             description="Verified and closed automatically after the affected app’s next deploy."
           />
           <Stack gap={6}>
-            {waitingOnDeploy.map(({ item, updatedAtLabel }) => (
+            {waitingOnDeploy.map(({ item }) => (
               <CompactItemRow
                 key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
                 item={item}
-                hint={`updated ${updatedAtLabel}`}
+                hint={
+                  <>
+                    updated{' '}
+                    <RelativeTime iso={item.updatedAt} variant="compact" />
+                  </>
+                }
                 action={<ItemOverflowMenu item={item} />}
               />
             ))}
@@ -87,11 +93,16 @@ export function CommandDeckSections({
             </Text>
           </summary>
           <Stack gap={6} mt="sm">
-            {rest.map(({ item, updatedAtLabel }) => (
+            {rest.map(({ item }) => (
               <CompactItemRow
                 key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
                 item={item}
-                hint={`updated ${updatedAtLabel}`}
+                hint={
+                  <>
+                    updated{' '}
+                    <RelativeTime iso={item.updatedAt} variant="compact" />
+                  </>
+                }
                 action={<ItemOverflowMenu item={item} />}
               />
             ))}
