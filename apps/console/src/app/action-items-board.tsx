@@ -50,6 +50,11 @@ export function CommandDeckSections({
 }) {
   return (
     <Stack gap="xl" mb="xl">
+      {waitingOnDeploy.length === 0 && rest.length === 0 && (
+        <Text c="dimmed" size="sm" data-testid="deck-sections-empty">
+          No parked work — nothing waiting on a deploy and no idle agent items.
+        </Text>
+      )}
       {waitingOnDeploy.length > 0 && (
         <div>
           <SectionHeading

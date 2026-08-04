@@ -25,7 +25,12 @@ import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, CommandDeckSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
-import { ConsoleHeader, DataWarnings } from './console-header';
+import {
+  ConsoleHeader,
+  DataWarnings,
+  repoScopedConsoleHrefs,
+} from './console-header';
+import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatCompactRelativeTime } from './format';
 import { PageLoading } from './page-loading';
 import { QueueConsoleUtilities } from './queue-console-utilities';
@@ -134,6 +139,16 @@ async function IndexBody({
           <DataWarnings warnings={warnings} />
         </Box>
       )}
+
+      <DeckInboxSummary
+        count={
+          queueView.yourQueue.filter((item) => matchesFilter(item.repo)).length
+        }
+        inboxHref={
+          repoScopedConsoleHrefs(repoFilter ? repoKey(repoFilter) : undefined)
+            ?.inbox ?? '/inbox'
+        }
+      />
 
       <CommandDeckSections
         waitingOnDeploy={queueView.waitingOnDeploy
