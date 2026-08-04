@@ -232,9 +232,17 @@ sweep before its listener connects: swept serially, one wedged host delayed
 every host behind it, and every scale set paid that delay independently.
 
 An unreachable host is skipped with a log line rather than waited on. Its
-containers are simply not adopted on that pass — already what happened when
-the list call itself failed — and the periodic sweeper picks them up once the
-host returns.
+containers are not adopted on that pass — already what happened when the list
+call itself failed.
+
+The periodic sweep is what recovers from that, and it has to **adopt** those
+runners, not merely tolerate them. A running container this scale set owns but
+does not track counts against neither host limits nor fleet capacity, and when
+its job finishes there is no entry for `HandleJobCompleted` to reconcile, so
+the container is never removed and leaks until the process restarts. The sweep
+therefore adopts any owned, untracked, running container older than the
+orphan-minimum age — old enough that it cannot be one another goroutine is
+still starting.
 
 Note that a host being unreachable is not the same as it being slow to
 answer. SSH's `ConnectTimeout` bounds only the TCP connect, so a host that
