@@ -25,8 +25,19 @@ test('a shared telemetry lib change schedules both the JIT runner and watcher, n
   });
 });
 
-test('every shared-telemetry input schedules both the JIT runner and watcher', () => {
+// Every one of these is inlined into the SAME bundle
+// (`nx bundle @agent-lcars/telemetry-watcher`) that both the JIT runner
+// image and the standalone watcher image build -- the JIT runner
+// Dockerfile clones this repo and runs that exact target itself, it does
+// not reuse a locally-built artifact. A watcher-app source change is not
+// "watcher-only": treating it as such was a real bug caught in PR #443
+// review (a plain apps/telemetry-watcher/src/** change used to schedule
+// only the watcher, silently leaving every fleet runner on the previous
+// sidecar bundle).
+test('every bundle input schedules both the JIT runner and watcher, not the control plane', () => {
   for (const file of [
+    'apps/telemetry-watcher/src/lib/daemon.ts',
+    'apps/telemetry-watcher/project.json',
     'libs/telemetry/src/index.ts',
     'libs/logging/src/index.ts',
     'libs/env-vars/src/index.ts',
@@ -49,15 +60,6 @@ test('every shared-telemetry input schedules both the JIT runner and watcher', (
       `${file} should not schedule the control plane`,
     );
   }
-});
-
-// agent-lcars#441 acceptance criterion: a watcher-only source change
-// schedules the watcher build without unrelated control-plane work.
-test('a watcher-only source change schedules only the watcher', () => {
-  assert.deepEqual(
-    planImageBuilds(['apps/telemetry-watcher/src/lib/daemon.ts']),
-    { controlPlane: false, jitRunner: false, watcher: true },
-  );
 });
 
 // agent-lcars#441 acceptance criterion: a watcher deployment-config-only or

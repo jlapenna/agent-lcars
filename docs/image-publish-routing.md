@@ -33,39 +33,42 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
    Schedules **all three** images. Changing how an image is built, scanned,
    or routed is as much a reason to republish-and-exercise as changing what's
    in it (the same reasoning `scan-image` already applied, #224).
-2. **Shared telemetry inputs** — `libs/telemetry/**`, `libs/logging/**`,
+2. **Bundle inputs** — `apps/telemetry-watcher/**` (except the two
+   exclusions below), plus `libs/telemetry/**`, `libs/logging/**`,
    `libs/env-vars/**`, `libs/util/**`, `libs/util-server/**`, `package.json`,
    `pnpm-lock.yaml`, `patches/**`. Schedules **both** the JIT runner and the
    watcher (never the control plane, which doesn't depend on any of these).
-   See "The shared-telemetry invariant" below.
+   See "The shared bundle invariant" below — the watcher app's own source is
+   in this bucket too, not a separate "watcher-only" one, because both
+   images bundle it identically.
 3. **JIT runner image inputs** — `apps/runner-autoscaler/runner-image/**`.
    Schedules only the JIT runner.
 4. **Control-plane inputs** — everything else under
    `apps/runner-autoscaler/**`. Schedules only the control plane.
-5. **Watcher inputs** — `apps/telemetry-watcher/**`, **except**
-   `apps/telemetry-watcher/deploy/**` and
-   `apps/telemetry-watcher/README.md` (see below). Schedules only the
-   watcher.
-6. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
+5. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
 
 A push can match more than one rule; each image is scheduled if **any**
 matching rule schedules it — there is no "first match wins" short-circuit
 across images, only within a single image's own inputs.
 
-## The shared-telemetry invariant
+## The shared bundle invariant
 
-A change to shared telemetry source or its dependencies must schedule the
-JIT runner and watcher builds **together, every time** — never one without
-the other. Left to drift, one image would keep shipping the daemon bundle
-without the other's fix or dependency bump, silently, until some unrelated
-change happened to trigger the missed one (see #29 and #52 for the two prior
-incidents this exact failure mode already caused).
+A change to the telemetry-watcher bundle's inputs — its own app source, or
+anything it inlines — must schedule the JIT runner and watcher builds
+**together, every time** — never one without the other. Left to drift, one
+image would keep shipping the daemon bundle without the other's fix or
+dependency bump, silently, until some unrelated change happened to trigger
+the missed one (see #29 and #52 for the two prior incidents this exact
+failure mode already caused, and the PR #443 review discussion for a third:
+an early version of `plan.mjs` treated `apps/telemetry-watcher/src/**` as
+watcher-only, which would have left the JIT runner on a stale bundle after
+every plain watcher-app source change).
 
-`plan.mjs` protects this by reading both routes from **one** list
-(`SHARED_TELEMETRY_PREFIXES`/`SHARED_TELEMETRY_FILES`) rather than
-maintaining a separate "runner telemetry inputs" and "watcher telemetry
-inputs" list that could diverge. `plan.test.mjs` asserts every entry in that
-list schedules both images and never the control plane.
+`plan.mjs` protects this by reading both routes from **one** function
+(`isBundleInput`) rather than maintaining a separate "runner telemetry
+inputs" and "watcher telemetry inputs" list that could diverge.
+`plan.test.mjs` asserts every bundle input schedules both images and never
+the control plane.
 
 ## What never triggers a build
 
@@ -111,12 +114,11 @@ from on a push that touches more than one image's inputs.
 
 ## Recorded run durations
 
-| Scenario                                                       | Before (serial, single job)                                                                                                              | After (path-gated, parallel)                                                                                                                                                       |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Representative full run (all three images legitimately change) | 20m02s ([run 30863366962](https://github.com/jlapenna/agent-lcars/actions/runs/30863366962))                                             | _to record: first post-merge push that legitimately changes all three inputs together — expect close to `max(control-plane, jit-runner, watcher)` build time instead of their sum_ |
-| Watcher deployment-config-only (#440)                          | 19m57s wall-clock (~17m44s queued), no image built ([run 30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750)) | No workflow run created (excluded by the `on.push.paths` negation) — 0 builder capacity consumed                                                                                   |
-| Watcher-only source change                                     | ~20m02s (same as the full run — no routing existed)                                                                                      | _to record: first post-merge watcher-only push — expect only the `watcher` job's build+scan+promote time_                                                                          |
-| Shared-telemetry-only change                                   | ~20m02s (same as the full run — no routing existed)                                                                                      | _to record: first post-merge shared-telemetry push — expect `jit-runner` and `watcher` running in parallel, no `control-plane` work_                                               |
+| Scenario                                                                | Before (serial, single job)                                                                                                              | After (path-gated, parallel)                                                                                                                                                       |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Representative full run (all three images legitimately change)          | 20m02s ([run 30863366962](https://github.com/jlapenna/agent-lcars/actions/runs/30863366962))                                             | _to record: first post-merge push that legitimately changes all three inputs together — expect close to `max(control-plane, jit-runner, watcher)` build time instead of their sum_ |
+| Watcher deployment-config-only (#440)                                   | 19m57s wall-clock (~17m44s queued), no image built ([run 30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750)) | No workflow run created (excluded by the `on.push.paths` negation) — 0 builder capacity consumed                                                                                   |
+| Bundle-input-only change (watcher app source or a shared telemetry lib) | ~20m02s (same as the full run — no routing existed)                                                                                      | _to record: first post-merge push touching only bundle inputs — expect `jit-runner` and `watcher` running in parallel, no `control-plane` work_                                    |
 
 The two "before" rows are the concrete evidence from #441 itself. The "after"
 rows can only be measured from real runs once this lands on `main` — update
