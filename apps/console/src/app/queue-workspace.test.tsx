@@ -1,14 +1,35 @@
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import type { BoardCard } from './board-card';
-import { queueSelectionHref, QueueWorkspace } from './queue-workspace';
+import {
+  parseQueueFilter,
+  parseQueueSort,
+  queueSelectionHref,
+  QueueWorkspace,
+} from './queue-workspace';
 
+let mockSearch = 'repo=agent%2Flcars';
+// Identity-stable per value, matching the real hook: useSearchParams only
+// returns a new object when the URL actually changes, and the workspace's
+// resync effect keys off that identity.
+let cachedParams: [string, URLSearchParams] | undefined;
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams('repo=agent%2Flcars'),
+  useSearchParams: () => {
+    if (!cachedParams || cachedParams[0] !== mockSearch) {
+      cachedParams = [mockSearch, new URLSearchParams(mockSearch)];
+    }
+    return cachedParams[1];
+  },
 }));
+
+afterEach(() => {
+  mockSearch = 'repo=agent%2Flcars';
+  cachedParams = undefined;
+  vi.restoreAllMocks();
+});
 vi.mock('./action-item-card', () => ({
   ActionItemCard: ({ item }: { item: ActionItem }) => (
     <div data-testid="selected-detail">Detail #{item.number}</div>
@@ -159,5 +180,93 @@ describe('QueueWorkspace', () => {
 
     expect(screen.queryByText('Responsive Inbox')).toBeNull();
     expect(screen.getByText('Review the next item')).toBeTruthy();
+  });
+
+  it('initializes filter and sort from the URL and marks the active controls', () => {
+    mockSearch = 'reason=review-requested&sort=newest';
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+
+    expect(screen.queryByText('Responsive Inbox')).toBeNull();
+    expect(screen.getByText('Review the next item')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Review requested' }),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Newest update' })).toBeTruthy();
+  });
+
+  it('writes filter changes to the URL and offers a reset from the empty state', async () => {
+    const replaceState = vi.spyOn(window.history, 'replaceState');
+    renderWorkspace([makeCard()]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(
+      within(menu).getByRole('menuitem', { name: 'Run failed', hidden: true }),
+    );
+
+    expect(replaceState).toHaveBeenCalledWith(
+      null,
+      '',
+      expect.stringContaining('reason=run-failed'),
+    );
+    expect(screen.getByText('No “Run failed” items right now.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all reasons' }));
+    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+    const lastUrl = replaceState.mock.calls.at(-1)?.[2] as string;
+    expect(lastUrl).not.toContain('reason=');
+  });
+});
+
+describe('URL resync', () => {
+  it('re-reads filter/sort when the query changes after mount (back/forward)', () => {
+    const view = renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+
+    mockSearch = 'reason=review-requested';
+    view.rerender(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[
+            makeCard(),
+            makeCard({
+              number: 250,
+              title: 'Review the next item',
+              actionTypes: ['review-requested'],
+            }),
+          ]}
+          watchedRepos={[{ owner: 'agent', name: 'lcars' }]}
+          mobileUtilityMenu={<button>More console options</button>}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.queryByText('Responsive Inbox')).toBeNull();
+    expect(screen.getByText('Review the next item')).toBeTruthy();
+  });
+});
+
+describe('parseQueueFilter / parseQueueSort', () => {
+  it('accepts known values and falls back on defaults for junk', () => {
+    expect(parseQueueFilter('run-failed')).toBe('run-failed');
+    expect(parseQueueFilter('nonsense')).toBe('all');
+    expect(parseQueueFilter(null)).toBe('all');
+    expect(parseQueueSort('newest')).toBe('newest');
+    expect(parseQueueSort('nonsense')).toBe('priority');
+    expect(parseQueueSort(null)).toBe('priority');
   });
 });

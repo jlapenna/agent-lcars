@@ -8,7 +8,7 @@ import {
 } from '@tabler/icons-react';
 import { useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { ActionType } from '../lib/action-items';
 import type { WatchedRepo } from '../lib/watched-repo';
@@ -40,6 +40,24 @@ const SORT_OPTIONS: Array<{ value: QueueSort; label: string }> = [
   { value: 'oldest', label: 'Oldest update' },
 ];
 
+// Filter/sort live in the URL (`?reason=`, `?sort=`) so a reload or a shared
+// link lands on the same view - matching the `?repo=`/`?item=` params the
+// Inbox already round-trips. Defaults are elided to keep bare URLs bare.
+const REASON_PARAM = 'reason';
+const SORT_PARAM = 'sort';
+
+export function parseQueueFilter(value: string | null): QueueFilter {
+  return FILTER_OPTIONS.some((option) => option.value === value)
+    ? (value as QueueFilter)
+    : 'all';
+}
+
+export function parseQueueSort(value: string | null): QueueSort {
+  return SORT_OPTIONS.some((option) => option.value === value)
+    ? (value as QueueSort)
+    : 'priority';
+}
+
 export function queueSelectionHref(
   currentSearch: string,
   itemKey?: string,
@@ -64,9 +82,42 @@ export function QueueWorkspace({
 }) {
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
-  const [filter, setFilter] = useState<QueueFilter>('all');
-  const [sort, setSort] = useState<QueueSort>('priority');
+  const [filter, setFilter] = useState<QueueFilter>(() =>
+    parseQueueFilter(searchParams.get(REASON_PARAM)),
+  );
+  const [sort, setSort] = useState<QueueSort>(() =>
+    parseQueueSort(searchParams.get(SORT_PARAM)),
+  );
   const { muted, mute, unmute } = useMutedItems();
+
+  // Browser Back/Forward (and any same-route navigation that changes the
+  // query) must resync the controls: the useState initializers above only
+  // run on mount, while useSearchParams keeps updating. Our own
+  // history.replaceState writes land here too - setState with an unchanged
+  // value is a bail-out, so that echo is benign. (Codex review on #469.)
+  useEffect(() => {
+    setFilter(parseQueueFilter(searchParams.get(REASON_PARAM)));
+    setSort(parseQueueSort(searchParams.get(SORT_PARAM)));
+  }, [searchParams]);
+
+  // Mirror the controls into the URL without a server round-trip -
+  // history.replaceState is the App Router's sanctioned shallow update, and
+  // useSearchParams picks it up so row links carry the params too.
+  const applyQueueControls = (nextFilter: QueueFilter, nextSort: QueueSort) => {
+    setFilter(nextFilter);
+    setSort(nextSort);
+    const params = new URLSearchParams(window.location.search);
+    if (nextFilter === 'all') params.delete(REASON_PARAM);
+    else params.set(REASON_PARAM, nextFilter);
+    if (nextSort === 'priority') params.delete(SORT_PARAM);
+    else params.set(SORT_PARAM, nextSort);
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      '',
+      query ? `?${query}` : window.location.pathname,
+    );
+  };
 
   const visibleCards = useMemo(() => {
     const filtered = cards.filter(({ item }) => {
@@ -163,12 +214,15 @@ export function QueueWorkspace({
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
                 <Button
-                  variant="subtle"
-                  color="gray"
+                  variant={filter === 'all' ? 'subtle' : 'light'}
+                  color={filter === 'all' ? 'gray' : 'blue'}
                   size="compact-sm"
                   leftSection={<IconFilter aria-hidden="true" size={14} />}
                 >
-                  Filter
+                  {filter === 'all'
+                    ? 'Filter'
+                    : FILTER_OPTIONS.find((option) => option.value === filter)
+                        ?.label}
                 </Button>
               </Menu.Target>
               <Menu.Dropdown>
@@ -176,7 +230,7 @@ export function QueueWorkspace({
                   <Menu.Item
                     key={option.value}
                     aria-current={filter === option.value ? 'true' : undefined}
-                    onClick={() => setFilter(option.value)}
+                    onClick={() => applyQueueControls(option.value, sort)}
                     data-active={filter === option.value ? '' : undefined}
                   >
                     {option.label}
@@ -187,12 +241,15 @@ export function QueueWorkspace({
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
                 <Button
-                  variant="subtle"
-                  color="gray"
+                  variant={sort === 'priority' ? 'subtle' : 'light'}
+                  color={sort === 'priority' ? 'gray' : 'blue'}
                   size="compact-sm"
                   leftSection={<IconArrowsSort aria-hidden="true" size={14} />}
                 >
-                  Sort
+                  {sort === 'priority'
+                    ? 'Sort'
+                    : SORT_OPTIONS.find((option) => option.value === sort)
+                        ?.label}
                 </Button>
               </Menu.Target>
               <Menu.Dropdown>
@@ -200,7 +257,7 @@ export function QueueWorkspace({
                   <Menu.Item
                     key={option.value}
                     aria-current={sort === option.value ? 'true' : undefined}
-                    onClick={() => setSort(option.value)}
+                    onClick={() => applyQueueControls(filter, option.value)}
                     data-active={sort === option.value ? '' : undefined}
                   >
                     {option.label}
@@ -214,10 +271,25 @@ export function QueueWorkspace({
         <div className="queue-workspace__rows">
           {visibleCards.length === 0 ? (
             <div className="queue-workspace__empty">
-              <Text fw={600}>Nothing needs you right now.</Text>
-              <Text size="sm" c="dimmed">
-                Change the filter or check back after the next refresh.
+              <Text fw={600}>
+                {filter === 'all'
+                  ? 'Nothing needs you right now.'
+                  : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
               </Text>
+              <Text size="sm" c="dimmed">
+                {filter === 'all'
+                  ? 'Check back after the next refresh.'
+                  : 'Other items may be hidden by the active filter.'}
+              </Text>
+              {filter !== 'all' && (
+                <Button
+                  variant="default"
+                  size="compact-sm"
+                  onClick={() => applyQueueControls('all', sort)}
+                >
+                  Show all reasons
+                </Button>
+              )}
             </div>
           ) : (
             visibleCards.map((card) => {
