@@ -94,33 +94,57 @@ config files risks silently shipping a stale bundle; this repo's default is
 to rebuild rather than risk that (the same "loud beats silent" tradeoff the
 whole-workspace test gate below already makes).
 
-## Job graph
+## Job graph: one job, not one per image
 
-```
-plan ──▶ verify-workspace ──┬──▶ control-plane   (if plan.control-plane)
-                             ├──▶ jit-runner      (if plan.jit-runner)
-                             └──▶ watcher         (if plan.watcher)
-```
+`publish-images.yml` is a single job (`publish`). The plan step runs first;
+every later step -- the whole-workspace test gate, the bundle smoke-test,
+and each image's own build/scan/promote steps -- has its own `if:` reading
+`steps.plan.outputs.*` directly, so a push that needs nothing built skips
+every step after the plan (and a control-plane-only push skips the bundle
+smoke-test and both other images' build/scan/promote steps, etc.).
 
-`verify-workspace` (the whole-workspace `nx run-many -t build test typecheck
---all` gate, plus the telemetry-watcher bundle standalone-smoke-test) runs
-once — it isn't specific to any one image — and only if at least one image
-is scheduled. The three image jobs are otherwise independent: no job needs
-another, so they run in parallel subject to the remote BuildKit builder's
-own capacity. Previously all three built serially in one job; the emulated
-arm64 JIT build (`jit-runner` here) was the dominant cost, so running it
-concurrently with the other two is where most of the wall-clock win comes
-from on a push that touches more than one image's inputs.
+This was **not** the first design. A now-reverted version split
+`control-plane`/`jit-runner`/`watcher` into separate GitHub Actions jobs
+(`plan -> verify-workspace -> {control-plane, jit-runner, watcher}` in
+parallel), reasoning that independent images could build concurrently. Real
+production testing (agent-lcars#441's PR discussion) showed this was wrong
+for two compounding reasons:
+
+1. **`lcars-build-client` is capped at `max_runners: 1`, by design.**
+   jlapenna/homelab's orchestrator config comments this exact scale set:
+   "image publishing is serialized by the registry anyway, and one holder
+   of the push credential at a time is the point." Three dependency-free
+   jobs on that label can never actually run concurrently -- only one
+   runner of that label is ever online.
+2. **Splitting into jobs multiplies the per-job runner-provisioning cost.**
+   A real `workflow_dispatch` run of the 5-job version
+   ([run 30869868020](https://github.com/jlapenna/agent-lcars/actions/runs/30869868020))
+   took **52m09s** wall-clock -- slower than the original single-job
+   baseline -- even though the three images' actual build times were each
+   fast (2m16s, 1m34s, 3m12s -- a warm registry cache). The gap was
+   overhead: ~26 minutes queued before `plan` even started, then another
+   ~16 minutes between `verify-workspace` finishing and `control-plane`
+   starting. Every job boundary under a capacity-1 pool appears to pay its
+   own ephemeral-runner cold-start cost, serially -- a cost the original
+   single-job design only ever paid once.
+
+Given (1), job-level parallelism bought nothing this pool could ever use;
+given (2), it actively cost more on the very case (rebuilding everything)
+the split was supposed to leave no worse off. Step-level `if:` gates inside
+one job get the same "skip unrelated image work" benefit -- the actual
+point of agent-lcars#441 -- without either problem, at the cost of never
+attempting real concurrency (which, per (1), was never available anyway).
 
 ## Recorded run durations
 
-| Scenario                                                                | Before (serial, single job)                                                                                                              | After (path-gated, parallel)                                                                                                                                                       |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Representative full run (all three images legitimately change)          | 20m02s ([run 30863366962](https://github.com/jlapenna/agent-lcars/actions/runs/30863366962))                                             | _to record: first post-merge push that legitimately changes all three inputs together — expect close to `max(control-plane, jit-runner, watcher)` build time instead of their sum_ |
-| Watcher deployment-config-only (#440)                                   | 19m57s wall-clock (~17m44s queued), no image built ([run 30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750)) | No workflow run created (excluded by the `on.push.paths` negation) — 0 builder capacity consumed                                                                                   |
-| Bundle-input-only change (watcher app source or a shared telemetry lib) | ~20m02s (same as the full run — no routing existed)                                                                                      | _to record: first post-merge push touching only bundle inputs — expect `jit-runner` and `watcher` running in parallel, no `control-plane` work_                                    |
+| Scenario                                                       | Before (serial, single job, no routing)                                                                                                  | After (single job, step-level routing)                                                                                                                                             |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Representative full run (all three images legitimately change) | 20m02s ([run 30863366962](https://github.com/jlapenna/agent-lcars/actions/runs/30863366962))                                             | _to record: first post-merge push (or forced dispatch) against the single-job design -- expect close to the original baseline_                                                     |
+| Watcher deployment-config-only (#440)                          | 19m57s wall-clock (~17m44s queued), no image built ([run 30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750)) | No workflow run created (excluded by the `on.push.paths` negation) -- 0 builder capacity consumed                                                                                  |
+| Bundle-input-only change (watcher app source or a shared lib)  | ~20m02s (same as the full run -- no routing existed)                                                                                     | _to record: first post-merge push touching only bundle inputs -- expect the workspace gate + bundle smoke-test + two image steps_                                                  |
+| Full rebuild, split into 5 jobs (reverted design)              | n/a                                                                                                                                      | 52m09s ([run 30869868020](https://github.com/jlapenna/agent-lcars/actions/runs/30869868020)) -- see "Job graph" above for why this was slower, not faster, and why it was reverted |
 
-The two "before" rows are the concrete evidence from #441 itself. The "after"
-rows can only be measured from real runs once this lands on `main` — update
-this table from the Actions run list the first time each scenario actually
-occurs.
+The "before" rows and the reverted-design row are concrete evidence already
+gathered. The remaining "after" rows can only be measured from real runs of
+the single-job design once it lands on `main` -- update this table from the
+Actions run list the first time each scenario actually occurs.
