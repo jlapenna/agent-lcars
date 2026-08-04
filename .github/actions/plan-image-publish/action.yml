@@ -1,0 +1,43 @@
+name: Plan image publish
+description: >-
+  Decide which of the three images publish-images.yml produces
+  (control-plane, JIT runner, telemetry-watcher) need building for this
+  push, from the set of changed paths (agent-lcars#441). See plan.mjs for
+  the routing rules and the shared-telemetry-input invariant they preserve.
+
+inputs:
+  base-ref:
+    description: >-
+      Git ref/SHA to diff FROM, e.g. github.event.before. Leave empty (or
+      pass the all-zero SHA) to force building every image -- the safe
+      fallback when there is no well-defined prior state to diff against,
+      such as a manual workflow_dispatch republish.
+    required: true
+  head-ref:
+    description: Git ref/SHA to diff TO, e.g. github.sha.
+    required: true
+
+outputs:
+  control-plane:
+    description: 'Whether the control-plane image should be built ("true"/"false")'
+    value: ${{ steps.run.outputs.control-plane }}
+  jit-runner:
+    description: 'Whether the JIT runner image should be built ("true"/"false")'
+    value: ${{ steps.run.outputs.jit-runner }}
+  watcher:
+    description: 'Whether the telemetry-watcher image should be built ("true"/"false")'
+    value: ${{ steps.run.outputs.watcher }}
+
+runs:
+  using: composite
+  steps:
+    # Requires the caller's checkout to have enough history that base-ref
+    # is actually present (fetch-depth: 0) -- a shallow checkout would make
+    # every push look non-diffable and force a full publish every time.
+    - name: Compute changed files and route image builds
+      id: run
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+        HEAD_REF: ${{ inputs.head-ref }}
+      run: node "$GITHUB_ACTION_PATH/main.mjs"
