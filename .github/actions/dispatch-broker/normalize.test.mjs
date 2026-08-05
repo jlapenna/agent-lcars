@@ -677,6 +677,32 @@ test('Quick Task opened and labeled transports derive one semantic intent', () =
   assert.notEqual(opened.intent.sourceId, labeled.intent.sourceId);
 });
 
+test('a later relabel to a different pipeline is an ordinary intent, not a Quick Task digest mismatch (#630)', () => {
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  const description = 'Do the work';
+  const persistedDigest = digestQuickTask({
+    repository: context.repository,
+    pipeline: 'codex',
+    title: baseIssue.title,
+    description,
+  });
+  const issue = {
+    ...baseIssue,
+    labels: [{ name: 'agent:claude' }],
+    body: `${description}\n\n<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${persistedDigest} -->`,
+  };
+  const relabeled = normalizeEvent({
+    eventName: 'issues',
+    event: issueEvent('labeled', { issue, label: { name: 'agent:claude' } }),
+    context,
+    timeline: timeline('labeled', { label: { name: 'agent:claude' } }),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(relabeled.kind, 'intent');
+  assert.equal(relabeled.intent.pipeline, 'claude');
+  assert.equal(relabeled.intent.intentId.startsWith('quick:'), false);
+});
+
 test('Quick Task conflicting marker digest and multiple agent labels fail closed', () => {
   const marker = `<!-- agent-lcars:quick-task-request:v1 id=11111111-1111-4111-8111-111111111111 digest=${'0'.repeat(64)} -->`;
   assert.throws(

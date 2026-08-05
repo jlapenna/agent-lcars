@@ -94,18 +94,36 @@ function quickTaskRequest(issue, repository, pipeline) {
   }
   const [marker, requestId, persistedDigest] = matches[0];
   const description = body.slice(0, matches[0].index).trim();
-  const expectedDigest = digestQuickTask({
-    repository,
-    pipeline,
-    title: issue.title,
-    description,
-  });
-  if (persistedDigest !== expectedDigest) {
+  // The digest binds (repository, pipeline, title, description) at Quick
+  // Task creation time (docs/quick-task-identity.md) -- it is a create-time
+  // idempotency/tamper check, not an ongoing constraint that the issue's
+  // agent:* label can never change again. A later legitimate relabel (the
+  // console's reassignPipeline hand-off, or a maintainer manually retrying
+  // with a different agent after a failure) changes `pipeline` without
+  // touching the marker, so re-deriving the expected digest from the
+  // *current* label would always mismatch and, left uncaught, crashes this
+  // whole normalize step -- silently dropping the relabel's dispatch (#630,
+  // reported against #622). Recover the digest's actual originally-bound
+  // pipeline by trying every known pipeline instead of assuming the
+  // caller-supplied one: title/description tampering still fails against
+  // all of them (a real integrity failure), while a pipeline that simply
+  // changed since creation is expected and must not throw.
+  const originalPipeline = [...AGENT_LABELS.values()].find(
+    (candidate) =>
+      digestQuickTask({
+        repository,
+        pipeline: candidate,
+        title: issue.title,
+        description,
+      }) === persistedDigest,
+  );
+  if (!originalPipeline) {
     throw new Error('Quick Task marker digest mismatch');
   }
   if (body.slice(matches[0].index + marker.length).trim()) {
     throw new Error('Quick Task marker must be the final body element');
   }
+  if (originalPipeline !== pipeline) return undefined;
   return { requestId, digest: persistedDigest };
 }
 
