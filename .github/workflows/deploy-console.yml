@@ -54,6 +54,8 @@ jobs:
             echo "verify_passed=true" >> "$GITHUB_OUTPUT"
           else
             echo "verify_passed=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Verify did not pass for CI run $RUN_ID (conclusion: '${CONCLUSION:-missing}')."
+            exit 1
           fi
 
   deploy:
