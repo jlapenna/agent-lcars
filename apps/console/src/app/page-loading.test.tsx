@@ -1,0 +1,29 @@
+import { MantineProvider } from '@mantine/core';
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+
+import { NavPageLoading } from './page-loading';
+
+// #585: the outer Suspense boundary that gates a nav-destination page on
+// `auth()` used to fall back to a generic skeleton with a different
+// shape/height than the real `ConsoleHeader`, so every page load reflowed
+// and ghosted the header the instant `auth()` resolved. `NavPageLoading`
+// renders the real header instead, so the swap never changes shape.
+describe('NavPageLoading', () => {
+  it('renders the real header title and nav rail, not a skeleton', () => {
+    render(
+      <MantineProvider>
+        <NavPageLoading
+          current="agents"
+          title="Agent Status"
+          className="agents-page-shell"
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Agent Status' })).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: 'Agents' }).getAttribute('aria-current'),
+    ).toBe('page');
+  });
+});
