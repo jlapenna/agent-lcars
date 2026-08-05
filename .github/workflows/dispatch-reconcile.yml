@@ -69,13 +69,10 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Assert required repo variables are set
-        env:
-          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-        run: |
-          if [ -z "$AGENT_FLEET_LOGIN" ]; then
-            echo "::error::Missing required repo variable: AGENT_FLEET_LOGIN"
-            exit 1
-          fi
+        uses: ./.github/actions/assert-repo-vars
+        with:
+          vars: |
+            AGENT_FLEET_LOGIN=${{ vars.AGENT_FLEET_LOGIN }}
 
       - name: Scan open agent-labeled/fleet-assigned issues and dispatch reconciliation
         uses: ./.github/actions/dispatch-broker

@@ -1,0 +1,31 @@
+name: Setup Node and pnpm
+description: >-
+  This repo's standard toolchain block - pnpm (version resolved from
+  packageManager), Node with the pnpm store cache, and a frozen-lockfile
+  install. Internal dedup for this repo's own workflows; consumer repos
+  have their own setup conventions and should not adopt this one.
+
+inputs:
+  node-version:
+    description: Node version to install.
+    required: false
+    default: '24'
+  install:
+    description: Whether to run `pnpm install --frozen-lockfile`.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile
