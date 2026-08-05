@@ -17,6 +17,7 @@ import {
   reassignPipeline,
   rebasePr,
 } from './actions';
+import { showErrorToast } from './show-error-toast';
 
 /**
  * An overflow menu, shared by queue cards and compact rows, for secondary
@@ -69,7 +70,7 @@ export function ItemOverflowMenu({
     startTransition(async () => {
       const result = await closeIssue(item.repo, item.number);
       if (!result.ok) {
-        notifications.show({ message: result.message, color: 'red' });
+        showErrorToast(result.message);
         return;
       }
       notifications.show({
@@ -97,7 +98,7 @@ export function ItemOverflowMenu({
     startTransition(async () => {
       const result = await clearHumanNeeded(item.repo, item.number);
       if (!result.ok) {
-        notifications.show({ message: result.message, color: 'red' });
+        showErrorToast(result.message);
         return;
       }
       notifications.show({
@@ -111,7 +112,7 @@ export function ItemOverflowMenu({
     startTransition(async () => {
       const result = await reassignPipeline(item.repo, item.number, target);
       if (!result.ok) {
-        notifications.show({ message: result.message, color: 'red' });
+        showErrorToast(result.message);
         return;
       }
       notifications.show({
@@ -125,7 +126,7 @@ export function ItemOverflowMenu({
     startTransition(async () => {
       const result = await rebasePr(item.repo, item.number);
       if (!result.ok) {
-        notifications.show({ message: result.message, color: 'red' });
+        showErrorToast(result.message);
         return;
       }
       notifications.show({

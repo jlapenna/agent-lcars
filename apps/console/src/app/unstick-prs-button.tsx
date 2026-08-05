@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import { dispatchUnstickPrs } from './actions';
+import { showErrorToast } from './show-error-toast';
 
 /**
  * Dispatches playbook-unstick-prs.yml, which finds/creates an anchor issue
@@ -42,7 +43,7 @@ export function UnstickPrsButton({
         repo,
       );
       if (!result.ok) {
-        notifications.show({ message: result.message, color: 'red' });
+        showErrorToast(result.message);
         return;
       }
       setContext(defaultContext);

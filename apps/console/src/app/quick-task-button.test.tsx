@@ -222,6 +222,8 @@ describe('QuickTaskButton', () => {
       expect(notifications.show).toHaveBeenCalledWith({
         message: 'socket timed out',
         color: 'red',
+        autoClose: false,
+        withCloseButton: true,
       }),
     );
     const firstRequest = (createQuickTask as Mock).mock.calls[0][0];
