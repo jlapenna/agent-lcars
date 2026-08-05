@@ -103,16 +103,16 @@ test.describe('/agents page @smoke', () => {
   test('preserves repository scope in header and mobile navigation', async ({
     page,
   }) => {
-    await page.goto('/agents?repo=jlapenna%2Fagent-lcars');
+    await page.goto('/agents?repo=supersprinklesracing%2Fsprinkles');
 
     const header = page.locator('.console-header[data-current="agents"]');
     await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
       'href',
-      '/?repo=jlapenna%2Fagent-lcars',
+      '/?repo=supersprinklesracing%2Fsprinkles',
     );
     await expect(header.getByRole('link', { name: 'Inbox' })).toHaveAttribute(
       'href',
-      '/inbox?repo=jlapenna%2Fagent-lcars',
+      '/inbox?repo=supersprinklesracing%2Fsprinkles',
     );
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -120,11 +120,11 @@ test.describe('/agents page @smoke', () => {
     const menu = page.getByRole('menu');
     await expect(menu.getByRole('menuitem', { name: 'Deck' })).toHaveAttribute(
       'href',
-      '/?repo=jlapenna%2Fagent-lcars',
+      '/?repo=supersprinklesracing%2Fsprinkles',
     );
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toHaveAttribute(
       'href',
-      '/inbox?repo=jlapenna%2Fagent-lcars',
+      '/inbox?repo=supersprinklesracing%2Fsprinkles',
     );
   });
 
