@@ -75,6 +75,15 @@ test('exact command parsing accepts command lines and rejects prose, quotes, and
   assert.equal(parseExactCommand('/codex\n@claude'), undefined);
 });
 
+test('exact command parsing recognizes the generic @agent command (#573)', () => {
+  assert.deepEqual(parseExactCommand('@agent please retry'), {
+    command: '@agent',
+    pipeline: null,
+  });
+  assert.equal(parseExactCommand('I mentioned @agent in prose'), undefined);
+  assert.equal(parseExactCommand('@agent\n/codex'), undefined);
+});
+
 test('manual dispatch requires maintainer authorization and a stable caller UUID', () => {
   const normalized = normalizeEvent({
     eventName: 'workflow_dispatch',
@@ -248,6 +257,109 @@ test('comment dispatch requires one exact command, owner association, and matchi
         maintainer: 'jlapenna',
       }),
     /Unauthorized/u,
+  );
+});
+
+test('generic @agent comment resolves to whichever pipeline the issue is currently labeled (#573)', () => {
+  // baseIssue carries exactly one agent:* label (agent:codex) -- @agent
+  // must resolve to that without the commenter naming it.
+  const normalized = normalizeEvent({
+    eventName: 'issue_comment',
+    event: {
+      action: 'created',
+      issue: baseIssue,
+      sender: { login: 'jlapenna' },
+      comment: {
+        id: 12346,
+        body: '@agent please retry',
+        created_at: context.now,
+        author_association: 'OWNER',
+        user: { type: 'User' },
+      },
+    },
+    context,
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'intent');
+  assert.equal(normalized.intent.pipeline, 'codex');
+  assert.equal(normalized.intent.sourceId, 'comment:12346');
+});
+
+test('generic @agent comment fails closed when the issue carries no unambiguous agent:* label (#573)', () => {
+  const unlabeledIssue = { ...baseIssue, labels: [] };
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'issue_comment',
+        event: {
+          action: 'created',
+          issue: unlabeledIssue,
+          sender: { login: 'jlapenna' },
+          comment: {
+            id: 12347,
+            body: '@agent',
+            created_at: context.now,
+            author_association: 'OWNER',
+            user: { type: 'User' },
+          },
+        },
+        context,
+        maintainer: 'jlapenna',
+      }),
+    /no unambiguous agent:\* label/u,
+  );
+
+  const dualLabelIssue = {
+    ...baseIssue,
+    labels: [{ name: 'agent:claude' }, { name: 'agent:codex' }],
+  };
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'issue_comment',
+        event: {
+          action: 'created',
+          issue: dualLabelIssue,
+          sender: { login: 'jlapenna' },
+          comment: {
+            id: 12348,
+            body: '@agent',
+            created_at: context.now,
+            author_association: 'OWNER',
+            user: { type: 'User' },
+          },
+        },
+        context,
+        maintainer: 'jlapenna',
+      }),
+    /no unambiguous agent:\* label/u,
+  );
+});
+
+test('pipeline-specific comment commands still require an exact match against the label -- @agent does not relax them', () => {
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'issue_comment',
+        event: {
+          action: 'created',
+          // baseIssue is labeled agent:codex; /opencode is a real command
+          // for a DIFFERENT pipeline, not the generic one -- must still
+          // fail exactly as it did before #573.
+          issue: baseIssue,
+          sender: { login: 'jlapenna' },
+          comment: {
+            id: 12349,
+            body: '/opencode continue',
+            created_at: context.now,
+            author_association: 'OWNER',
+            user: { type: 'User' },
+          },
+        },
+        context,
+        maintainer: 'jlapenna',
+      }),
+    /does not match the selected integration/u,
   );
 });
 

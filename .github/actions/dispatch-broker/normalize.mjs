@@ -7,11 +7,18 @@ const AGENT_LABELS = new Map([
   ['agent:codex', 'codex'],
   ['agent:opencode', 'opencode'],
 ]);
+// `null` is a sentinel, not a pipeline: `@agent` (#573) doesn't name a
+// specific integration, it defers to whichever `agent:*` label the issue
+// already carries at comment-normalization time. Every other command
+// keeps requiring an exact match against that label -- this only adds a
+// second way to say "the one that's already selected", it doesn't relax
+// the existing ones.
 const COMMANDS = new Map([
   ['@claude', 'claude'],
   ['/codex', 'codex'],
   ['/opencode', 'opencode'],
   ['/oc', 'opencode'],
+  ['@agent', null],
 ]);
 const WORKER_WORKFLOWS = new Set([
   'claude.yml',
@@ -298,10 +305,21 @@ function normalizeEvent({
   if (eventName === 'issue_comment' && event.action === 'created') {
     const parsed = parseExactCommand(event.comment?.body ?? '');
     if (!parsed) return { kind: 'ignored', reason: 'no exact agent command' };
+    // `@agent` (#573) carries no pipeline of its own (parsed.pipeline is
+    // the `null` sentinel) -- resolve it from whichever agent:* label the
+    // issue currently, unambiguously carries. An absent or ambiguous label
+    // leaves nothing to resolve against; fail closed rather than guessing,
+    // same posture as every other "can't disambiguate" case in this file.
+    const resolvedPipeline = parsed.pipeline ?? pipeline;
+    if (!resolvedPipeline) {
+      throw new Error(
+        'Generic @agent command has no unambiguous agent:* label to resolve against',
+      );
+    }
     const isPullRequest = Boolean(issue.pull_request);
     if (
-      pipeline !== parsed.pipeline &&
-      !(isPullRequest && parsed.pipeline === 'claude')
+      pipeline !== resolvedPipeline &&
+      !(isPullRequest && resolvedPipeline === 'claude')
     ) {
       throw new Error(
         'Comment command does not match the selected integration',
@@ -331,7 +349,7 @@ function normalizeEvent({
         sourceId: `comment:${event.comment.id}`,
         transportRunId: context.runId,
         occurredAt: event.comment.created_at,
-        pipeline: parsed.pipeline,
+        pipeline: resolvedPipeline,
         mode: 'reply',
         reply: event.comment.body,
         runbook: '',
