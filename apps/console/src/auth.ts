@@ -1,3 +1,5 @@
+import 'server-only';
+
 import { isE2eTesting, isOnGoogleCloud, required } from '@repo/util-server';
 import { headers } from 'next/headers';
 import type { Session } from 'next-auth';

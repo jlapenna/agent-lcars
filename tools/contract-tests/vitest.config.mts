@@ -12,6 +12,17 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   root: path.resolve(__dirname, '../..'),
   plugins: [tsconfigPaths()],
+  resolve: {
+    // Keep standalone contract tests aligned with the workspace-wide Vitest
+    // config: server modules remain marked for Next.js, while Node-based test
+    // runners resolve that marker to the existing no-op test shim.
+    alias: {
+      'server-only': path.resolve(
+        __dirname,
+        '../../libs/test-utils/src/server-only-mock.js',
+      ),
+    },
+  },
   test: {
     include: [
       'tools/contract-tests/**/*.test.ts',

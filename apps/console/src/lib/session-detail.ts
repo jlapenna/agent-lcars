@@ -1,3 +1,5 @@
+import 'server-only';
+
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { sessionAgent } from '@agent-lcars/telemetry';
 import {
