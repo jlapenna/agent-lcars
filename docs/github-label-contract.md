@@ -31,21 +31,21 @@ pull-request state.
 
 ## Repository profiles
 
-| Family            | Agent LCARS                              | Sprinkles                                         | Homelab                                             |
-| ----------------- | ---------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
-| `type:*`          | All canonical types                      | All canonical types                               | All canonical types                                 |
-| `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy          | Ready, blocked, needs-human                         |
-| `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | None; the console declares no dispatch integrations |
-| `agent-option:*`  | Long run                                 | Long run                                          | None                                                |
-| Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                              | Renovate                                            |
-| Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, E2E, snapshots | None                                                |
-| Apps              | Console, telemetry, runner autoscaler    | Members, OneCake, Primes                          | None                                                |
-| Planning          | `planning`                               | `planning`                                        | `planning`                                          |
+| Family            | Agent LCARS                              | Sprinkles                                         | Homelab                                  |
+| ----------------- | ---------------------------------------- | ------------------------------------------------- | ---------------------------------------- |
+| `type:*`          | All canonical types                      | All canonical types                               | All canonical types                      |
+| `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy          | Ready, blocked, needs-human, post-deploy |
+| `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
+| `agent-option:*`  | Long run                                 | Long run                                          | Long run                                 |
+| Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                              | Quick task, Renovate                     |
+| Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, E2E, snapshots | None                                     |
+| Apps              | Console, telemetry, runner autoscaler    | Members, OneCake, Primes                          | None                                     |
+| Planning          | `planning`                               | `planning`                                        | `planning`                               |
 
 Repository profiles deliberately share names without requiring every
 repository to install every label. Agent LCARS reads each watched repository's
-declared agent integrations; Homelab remains visible in the console without
-offering invalid dispatch or reassignment actions.
+declared agent integrations; Homelab now declares the standard Claude, Codex,
+and OpenCode workflows and therefore exposes dispatch and reassignment actions.
 
 ## State boundaries
 

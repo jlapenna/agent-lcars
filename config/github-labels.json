@@ -220,6 +220,12 @@
         "status:ready-for-agent",
         "status:blocked",
         "status:needs-human",
+        "status:post-deploy-action",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "agent-option:long-run",
+        "intake:quick-task",
         "planning",
         "bot:renovate"
       ],
