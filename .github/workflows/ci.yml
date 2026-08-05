@@ -96,6 +96,9 @@ jobs:
       - name: Test live-base merging
         run: bash .github/actions/merge-live-base/merge-live-base.test.sh
 
+      - name: Test published-action contracts
+        run: node .github/actions/published-actions.contract.test.mjs
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
 
