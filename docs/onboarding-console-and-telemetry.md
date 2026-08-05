@@ -19,7 +19,10 @@ but the console only becomes useful once all three are in place:
 Pull in the shared skill and follow it. Every dispatch workflow (however
 many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
 
-- Use the pinned `prepare-agent-dispatch` action and have the agent read the
+- Use the `prepare-agent-dispatch` action (ref per the convention in
+  [published-actions.md](published-actions.md) — floating `@main` during the
+  early fleet integration, full-SHA pins once the pinning follow-up lands)
+  and have the agent read the
   shared protocol at `$AGENT_PROTOCOL_PATH` first, before its own repo-specific
   delta skill. The action is already downloaded outside the consumer's Git
   worktree, so it exposes its bundled protocol file and writes the dispatch
@@ -28,7 +31,7 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
   ```yaml
   - name: Prepare dispatch context
     id: dispatch
-    uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@<full-commit-sha>
+    uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@main
     with:
       agent: Claude
       issue: ${{ github.event.inputs.issue }}

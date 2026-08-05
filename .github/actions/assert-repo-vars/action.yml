@@ -9,10 +9,15 @@ description: >-
 inputs:
   vars:
     description: >-
-      Newline-separated NAME=VALUE lines, with repository-variable values
-      interpolated by the caller. Fails, listing every NAME whose VALUE is
-      empty, if any are missing. Lines that are blank or carry no `=` are
-      ignored (a multi-line value's continuation lines).
+      Newline-separated NAME=VALUE lines - each VALUE the caller-side
+      interpolation of the matching repo variable (vars.NAME). Fails,
+      listing every NAME whose VALUE is empty, if any are missing. Lines
+      that are blank or carry no `=` are ignored (a multi-line value's
+      continuation lines). NOTE: this description must never contain a
+      literal dollar-brace expression - GitHub evaluates action.yml
+      metadata as a template at load time, where the `vars` context does
+      not exist, and the whole job dies in "Set up job" (took down the
+      router on 2026-08-05).
     required: true
 
 runs:

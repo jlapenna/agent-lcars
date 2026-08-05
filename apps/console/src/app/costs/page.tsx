@@ -13,7 +13,7 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { ConsoleHeader, DataWarnings } from '../console-header';
-import { PageLoading } from '../page-loading';
+import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
 import { RefreshButton } from '../refresh-button';
@@ -175,7 +175,16 @@ async function CostsPageShell({ searchParams }: PageProps) {
 // boundary - see /sessions' page.tsx for the same shape and reasoning.
 export default function CostsPage({ searchParams }: PageProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="costs"
+          title="Cost Ledger"
+          className="costs-page-shell"
+          rows={6}
+        />
+      }
+    >
       <CostsPageShell searchParams={searchParams} />
     </Suspense>
   );

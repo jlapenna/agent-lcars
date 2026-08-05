@@ -6,7 +6,7 @@ import type { SessionArchiveQuery } from '@/lib/session-archive';
 
 import { repoScopedConsoleHrefs } from './console-hrefs';
 
-type NavKey = 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs';
+export type NavKey = 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs';
 type Accent = 'amber' | 'blue' | 'periwinkle' | 'teal' | 'gold';
 
 const NAV_ITEMS: Array<{

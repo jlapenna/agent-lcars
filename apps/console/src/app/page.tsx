@@ -32,7 +32,7 @@ import { repoScopedConsoleHrefs } from './console-hrefs';
 import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatCompactRelativeTime, formatRelativeTime } from './format';
-import { PageLoading } from './page-loading';
+import { NavPageLoading, PageLoading } from './page-loading';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 
 function toCard(item: ActionItem): BoardCard {
@@ -255,7 +255,16 @@ async function IndexShell({ searchParams }: PageProps) {
 // separately, so the header never waits on those (see #160).
 export default function Index({ searchParams }: PageProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="deck"
+          title="Command Deck"
+          className="deck-page-shell"
+          rows={6}
+        />
+      }
+    >
       <IndexShell searchParams={searchParams} />
     </Suspense>
   );
