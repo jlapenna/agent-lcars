@@ -124,14 +124,12 @@ takeover comment, eyes reactions, one edited progress comment, parking on
 a real blocker; a review dispatch pushes nothing (there is nothing to push
 on a pure review).
 
-**Known gap (#565):** this dispatch path only fires once
-`.github/workflows/agent-router.yml`'s own `pull_request:` trigger listens
-for `labeled`/`unlabeled` in addition to its current `[closed, reopened]` —
-a `.github/workflows/*` edit, which AGENTS.md's hard limits reserve for a
-repository owner's explicit permission. Everything upstream of that one
-trigger line (`normalize.mjs`, `main.mjs`'s timeline fetch,
-`verify-deliverable.sh`) is already wired and tested; only the workflow
-subscription itself is outstanding.
+`.github/workflows/agent-router.yml` subscribes to pull-request
+`labeled`/`unlabeled` actions in addition to `closed`/`reopened`, so both
+label families reach the same normalized, serialized broker path (#565).
+`normalize.mjs`, `main.mjs`'s timeline fetch, and
+`verify-deliverable.sh` keep the transport, authorization, and deliverable
+contracts aligned for both modes.
 
 ## Dispatch ledger reconciliation
 

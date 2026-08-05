@@ -144,7 +144,10 @@ test('router serializes issue and pull-request lifecycle through one normalized 
     /^\s+group:\s+\$\{\{ steps\.normalize\.outputs\.group \}\}\s*$/mu,
   );
   assert.match(source, /^\s+pull_request:\s*$/mu);
-  assert.match(source, /^\s+types:\s+\[closed, reopened\]\s*$/mu);
+  assert.match(
+    source,
+    /^\s+types:\s+\[closed, reopened, labeled, unlabeled\]\s*$/mu,
+  );
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
 });
 

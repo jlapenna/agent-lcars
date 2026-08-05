@@ -13,7 +13,7 @@ on:
   issue_comment:
     types: [created]
   pull_request:
-    types: [closed, reopened]
+    types: [closed, reopened, labeled, unlabeled]
   workflow_dispatch:
     inputs:
       kind:
@@ -66,9 +66,10 @@ jobs:
     # Self-hosted for everything trusted (issues/issue_comment/workflow_dispatch,
     # and a same-repo PR branch). The "Checkout trusted broker revision" step
     # below only lives up to that name for those triggers -- for this
-    # workflow's other trigger, `pull_request: [closed, reopened]`, the
-    # default checkout ref is the PR's own merge commit, which for a fork PR
-    # means untrusted code. Fall back to ubuntu-latest for exactly that case.
+    # workflow's other trigger, `pull_request: [closed, reopened, labeled,
+    # unlabeled]`, the default checkout ref is the PR's own merge commit,
+    # which for a fork PR means untrusted code. Fall back to ubuntu-latest
+    # for exactly that case.
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.DEFAULT_RUNNER_LABEL }}
     timeout-minutes: 2
     outputs:
