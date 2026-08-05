@@ -683,11 +683,31 @@ async function healStaleAgentLabels(client, loaded, intent) {
   if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
 }
 
+async function loadBrokerLedger(client, task, normalized, isPullRequest) {
+  // GitHub fires this workflow for every PR close/reopen in the repository.
+  // Ledger presence is the durable signal that a PR is actually a broker
+  // anchor; do not create ledger comments on ordinary PRs just because their
+  // lifecycle changed. Issue events keep the existing create-if-missing
+  // behavior, and every other PR broker event still creates its required
+  // ledger normally.
+  const untrackedPullRequestControl =
+    isPullRequest && normalized.kind === 'anchor-control';
+  return loadLedger(client, task, undefined, {
+    createIfMissing: !untrackedPullRequestControl,
+  });
+}
+
+async function applyAnchorControlTransition(client, loaded, control) {
+  applyAnchorControl(loaded.ledger, control);
+  await saveLedger(client, loaded);
+}
+
 async function broker() {
   const normalized = decode(env('BROKER_PAYLOAD'));
   if (normalized.kind === 'ignored') return;
   const task = resolveTask(normalized);
   const client = api();
+  const isPullRequest = env('ANCHOR_IS_PR', false) === 'true';
   const runId = Number(env('GITHUB_RUN_ID'));
   const group = env('BROKER_GROUP');
   // GITHUB_EVENT_NAME is a standard runner-provided variable (already
@@ -720,20 +740,18 @@ async function broker() {
   }
   let loaded;
   try {
-    loaded = await loadLedger(client, task);
+    loaded = await loadBrokerLedger(client, task, normalized, isPullRequest);
   } catch (error) {
-    await failClosed(
-      client,
-      task,
-      env('MAINTAINER_LOGIN', false),
-      error.message,
-    );
+    await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
   }
-  await pinLedgerWhenUnoccupied(
-    client,
-    loaded,
-    env('ANCHOR_IS_PR', false) === 'true',
-  );
+  if (!loaded) {
+    console.log(
+      `::notice::Ignoring ${normalized.control.kind} for untracked pull ` +
+        `request #${task.issue}; no dispatch ledger exists.`,
+    );
+    return;
+  }
+  await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
     await reconcileActive(client, loaded);
     if (normalized.kind === 'intent') {
@@ -751,8 +769,7 @@ async function broker() {
         await healStaleAgentLabels(client, loaded, normalized.intent);
       }
     } else if (normalized.kind === 'anchor-control') {
-      applyAnchorControl(loaded.ledger, normalized.control);
-      await saveLedger(client, loaded);
+      await applyAnchorControlTransition(client, loaded, normalized.control);
     } else if (normalized.kind === 'control-evidence') {
       recordControlEvidence(loaded.ledger, normalized.evidence);
       await saveLedger(client, loaded);
@@ -765,12 +782,7 @@ async function broker() {
     }
     await dispatchAccepted(client, loaded);
   } catch (error) {
-    await failClosed(
-      client,
-      task,
-      env('MAINTAINER_LOGIN', false),
-      error.message,
-    );
+    await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
   }
 }
 
@@ -905,6 +917,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 }
 
 export {
+  applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,
   contextFor,
@@ -916,6 +929,7 @@ export {
   handleCompletion,
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
+  loadBrokerLedger,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,

@@ -13,6 +13,7 @@ import {
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
   ensureNeedsHumanParked,
+  failClosed,
   findConflictingRouterRun,
   findRunsForGeneration,
   findSupersedingRouterRun,
@@ -962,6 +963,57 @@ test('ensureNeedsHumanParked applies the label and assignee on success, with no 
   assert.equal(calls[0].method, 'POST');
   assert.match(calls[1].url, /\/assignees$/u);
   assert.equal(calls[1].method, 'POST');
+});
+
+test('failClosed parks the anchor and rethrows the original broker error', async () => {
+  const calls = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, method: options.method });
+      return response(200, {});
+    },
+  });
+  const original = new GitHubApiError('ledger write failed', 500, {
+    message: 'boom',
+  });
+  await assert.rejects(
+    () => failClosed(api, task, 'jlapenna', original),
+    (error) => error === original,
+  );
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /\/labels$/u);
+  assert.match(calls[1].url, /\/assignees$/u);
+});
+
+test('failClosed preserves both the broker error and a fallback parking error', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'POST' && url.endsWith('/labels')) {
+        return response(403, { message: 'parking forbidden' });
+      }
+      if (url.includes(`/issues/${task.issue}`)) {
+        return response(200, { labels: [], assignees: [] });
+      }
+      throw new Error(`Unexpected API request: ${options.method} ${url}`);
+    },
+  });
+  const original = new GitHubApiError('ledger write failed', 500, {
+    message: 'broker boom',
+  });
+  await assert.rejects(
+    () => failClosed(api, task, 'jlapenna', original),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.cause, original);
+      assert.equal(error.errors[0], original);
+      assert.ok(error.errors[1] instanceof GitHubApiError);
+      assert.equal(error.errors[1].status, 403);
+      assert.match(error.message, /fail-closed parking also failed/u);
+      return true;
+    },
+  );
 });
 
 test('ensureNeedsHumanParked skips the assignee mutation entirely when no maintainer is configured', async () => {
