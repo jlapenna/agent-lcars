@@ -1,6 +1,6 @@
 /* eslint-disable vitest/no-import-node-test -- CI runs this boundary test with node --test before installing workspace dependencies. */
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -216,6 +216,7 @@ test('ambient mode cannot select a non-hermetic live implementation', () => {
       env: {
         ...process.env,
         E2E_CONFIGURATION: 'live',
+        E2E_LOCAL_LOCK_FILE: path.join(tempDir, 'e2e-local.lock'),
         PATH: `${fakeBin}:${process.env.PATH}`,
       },
     });
@@ -228,6 +229,128 @@ test('ambient mode cannot select a non-hermetic live implementation', () => {
       '@agent-lcars/console-e2e:e2e-implementation:emulator',
       '--skip-nx-cache',
     ]);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a concurrent e2e-local run fails fast against the held host lock', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-lock-'));
+  const fakeBin = path.join(tempDir, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const pnpm = path.join(fakeBin, 'pnpm');
+  // Simulates a long-running e2e-implementation run so the lock stays held
+  // long enough for a concurrent contender to observe it (agent-lcars#535:
+  // two real runs fight over the same fixed emulator/app ports instead of
+  // failing cleanly).
+  fs.writeFileSync(pnpm, '#!/bin/sh\nsleep 5\n');
+  fs.chmodSync(pnpm, 0o755);
+  const lockFile = path.join(tempDir, 'e2e-local.lock');
+  const env = {
+    ...process.env,
+    E2E_LOCAL_LOCK_FILE: lockFile,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+  };
+
+  const holder = spawn(e2eLocal, [], { cwd: root, env, detached: true });
+  try {
+    const deadline = Date.now() + 5000;
+    while (
+      Date.now() < deadline &&
+      (!fs.existsSync(lockFile) ||
+        fs.readFileSync(lockFile, 'utf8').trim() === '')
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(
+      fs.readFileSync(lockFile, 'utf8').trim(),
+      String(holder.pid),
+      'holder should have recorded its own pid before the contender races it',
+    );
+
+    const contender = spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env,
+    });
+
+    assert.equal(contender.status, 1);
+    assert.match(
+      contender.stderr,
+      new RegExp(`another e2e-local is running \\(pid ${holder.pid}\\)`, 'u'),
+    );
+    // The lock's holder recorded pid must not have been clobbered by the
+    // losing contender opening the same lock file.
+    assert.equal(fs.readFileSync(lockFile, 'utf8').trim(), String(holder.pid));
+  } finally {
+    if (holder.pid) {
+      try {
+        process.kill(-holder.pid, 'SIGKILL');
+      } catch {
+        // Already exited.
+      }
+    }
+    await new Promise((resolve) => holder.on('exit', resolve));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('the host lock releases once the holder exits', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-lock-'));
+  const fakeBin = path.join(tempDir, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const pnpm = path.join(fakeBin, 'pnpm');
+  fs.writeFileSync(pnpm, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(pnpm, 0o755);
+  const lockFile = path.join(tempDir, 'e2e-local.lock');
+  const env = {
+    ...process.env,
+    E2E_LOCAL_LOCK_FILE: lockFile,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+  };
+
+  try {
+    const first = spawnSync(e2eLocal, [], { cwd: root, encoding: 'utf8', env });
+    assert.equal(first.status, 0, first.stderr);
+
+    const second = spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env,
+    });
+    assert.equal(second.status, 0, second.stderr);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a platform without flock on PATH fails clearly instead of an opaque error', () => {
+  // Simulates a stock macOS or Windows Bash environment where flock is not
+  // preinstalled (agent-lcars#535 review thread: this wrapper documents
+  // supporting those platforms, so the lock must degrade honestly rather
+  // than fail with a bash syntax error or a bare "command not found").
+  // Only `bash` (to run the script at all) and `dirname` (used before the
+  // flock check) are put on PATH -- deliberately no `flock`.
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-noflock-'));
+  const fakeBin = path.join(tempDir, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  for (const bin of ['bash', 'dirname']) {
+    const real = spawnSync('/bin/sh', ['-c', `command -v ${bin}`], {
+      encoding: 'utf8',
+    }).stdout.trim();
+    assert.ok(real, `expected to locate ${bin} on the host`);
+    fs.symlinkSync(real, path.join(fakeBin, bin));
+  }
+
+  try {
+    const result = spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { PATH: fakeBin },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /flock is required/u);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
