@@ -23,3 +23,40 @@
    to register a new pipeline's bot login. A human-authored or
    interactively-driven PR merges normally through GitHub's own review
    flow.
+
+5. **Resolve every review thread — replying is not enough.** The
+   `Protect main` ruleset sets `required_review_thread_resolution: true`
+   on its `pull_request` rule: a PR with any unresolved review thread
+   (Codex or human) cannot merge, full stop, no matter how green its
+   checks are or how long `gh pr merge --auto` sits queued. Posting a
+   reply comment does not resolve the thread — GitHub tracks resolution
+   as a separate boolean the REST API doesn't expose, so after replying,
+   explicitly resolve it via GraphQL:
+
+   ```bash
+   # --paginate walks every page (a plain `first: 50` with no cursor
+   # silently drops any thread past the 50th on a busier PR, resolved or
+   # not — Codex review on #569).
+   gh api graphql --paginate -f query='
+   query($endCursor: String) {
+     repository(owner: "jlapenna", name: "agent-lcars") {
+       pullRequest(number: <N>) {
+         reviewThreads(first: 50, after: $endCursor) {
+           nodes { id isResolved comments(first: 1) { nodes { body } } }
+           pageInfo { hasNextPage endCursor }
+         }
+       }
+     }
+   }'
+
+   gh api graphql -f query='
+   mutation {
+     resolveReviewThread(input: {threadId: "<PRRT_...>"}) {
+       thread { id isResolved }
+     }
+   }'
+   ```
+
+   Do this for every actionable thread once its fix is pushed, before
+   assuming `--auto` will ever land the merge — a queued auto-merge gives
+   no error and no signal that it's stuck on this.
