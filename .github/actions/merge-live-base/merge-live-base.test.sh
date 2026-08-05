@@ -95,6 +95,27 @@ if (cd "$work" && BASE_REF=main GITHUB_OUTPUT="$out_file" run_step) 2>/dev/null;
 fi
 grep -q "^tested_head=" "$out_file" && fail "no tested_head may be emitted on a failed merge"
 
+# --- Case 2b: a shallow (depth-1) PR-head checkout still merges cleanly -
+# the action unshallows while fetching the base instead of failing with
+# "refusing to merge unrelated histories" ---
+case_dir="$test_root/shallow"
+work="$(setup_case "$case_dir" no-conflict)"
+# Publish the PR head the way a real PR does - the head must be fetchable
+# from origin for any shallow checkout to be deepenable at all.
+git -C "$work" push -q origin feature
+shallow="$case_dir/shallow-work"
+# --no-single-branch keeps the wildcard fetch refspec (matching what
+# actions/checkout configures) while still cloning shallow.
+git clone -q --depth 1 --no-single-branch --branch feature \
+  "file://$case_dir/origin.git" "$shallow"
+test "$(git -C "$shallow" rev-parse --is-shallow-repository)" = "true" \
+  || fail "the shallow-case clone must actually be shallow"
+out_file="$case_dir/github-output"
+: > "$out_file"
+(cd "$shallow" && BASE_REF=main GITHUB_OUTPUT="$out_file" run_step) \
+  || fail "a shallow PR-head checkout must still merge the live base"
+grep -q "^tested_head=" "$out_file" || fail "shallow case must emit tested_head"
+
 # --- Case 3: an invalid base ref is rejected before any fetch ---
 work="$(setup_case "$test_root/badref" no-conflict)"
 if (cd "$work" && BASE_REF='-bad..ref' GITHUB_OUTPUT=/dev/null run_step) 2>/dev/null; then

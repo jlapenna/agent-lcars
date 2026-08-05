@@ -39,6 +39,18 @@ runs:
         set -u
         git check-ref-format --branch "$BASE_REF" >/dev/null
         original_head=$(git rev-parse HEAD)
+        # A default (depth-1) checkout leaves HEAD shallow, and merging a
+        # base fetched next to a shallow HEAD fails with "refusing to
+        # merge unrelated histories" even for a clean PR whose true merge
+        # base lies outside the shallow boundary. Deepen the checkout
+        # itself first (per the remote's configured refspec - what the PR
+        # head was fetched through), because unshallowing only the base
+        # fetch would leave the HEAD's own shallow boundary in .git/shallow
+        # and the merge would still fail. A full checkout (fetch-depth: 0)
+        # skips this entirely.
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --no-tags --unshallow origin
+        fi
         git fetch --no-tags origin "$BASE_REF"
         live_base=$(git rev-parse "origin/$BASE_REF")
         git \
