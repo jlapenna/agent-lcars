@@ -31,6 +31,7 @@ import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from '../console-header';
+import { repoScopedConsoleHrefs } from '../console-hrefs';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
@@ -252,6 +253,9 @@ function AgentsUtilities({
       <QueueUtilityMenu
         repositoryUrl={consoleRepositoryUrl()}
         includeNavigation={includeNavigation}
+        navigationHrefs={repoScopedConsoleHrefs(
+          repoFilter ? repoKey(repoFilter) : undefined,
+        )}
         signOutControl={<SignOutButton />}
       />
     </Group>
@@ -285,6 +289,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
       <ConsoleHeader
         current="agents"
         title="Agent Status"
+        repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
         subtitle={
           <>
             {subtitle}
