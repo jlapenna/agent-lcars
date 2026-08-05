@@ -68,6 +68,7 @@ export function UnstickPrsButton({
           data-accent="violet"
           size={size}
           disabled={isPending}
+          loading={isPending}
           onClick={() => setOpened((prev) => !prev)}
         >
           {label}
@@ -82,7 +83,12 @@ export function UnstickPrsButton({
             autosize
             minRows={2}
           />
-          <Button disabled={isPending} onClick={handleDispatch} fullWidth>
+          <Button
+            disabled={isPending}
+            loading={isPending}
+            onClick={handleDispatch}
+            fullWidth
+          >
             Dispatch
           </Button>
         </Stack>

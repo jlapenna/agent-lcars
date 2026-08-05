@@ -191,6 +191,7 @@ export function QuickTaskButton({
         data-accent="amber"
         size={size}
         disabled={isPending}
+        loading={isPending}
         onClick={() => setOpened(true)}
       >
         Quick task
@@ -258,6 +259,7 @@ export function QuickTaskButton({
             disabled={isPending}
           />
           <Button
+            loading={isPending}
             disabled={
               isPending ||
               !description.trim() ||
