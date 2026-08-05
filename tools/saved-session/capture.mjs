@@ -19,7 +19,7 @@ import {
 
 function usage() {
   console.error(
-    'Usage: pnpm session:capture [--role <admin|user>] ' +
+    'Usage: ./tools/nx run @agent-lcars/console:capture-session -- [--role <admin|user>] ' +
       '[--storage <local|secret>] [--origin <origin>] [--state-file <path>] ' +
       '[--project <gcp-project>] [--secret-name <name>]',
   );
@@ -115,8 +115,8 @@ async function main() {
       console.log(
         defaultReuseCommand
           ? `Saved ${role} session to ${result.destination}. Reuse it with: ` +
-              `pnpm session:verify --role ${role} --storage ${storage} --path /`
-          : `Saved ${role} session to ${result.destination}. Reuse it with session:verify and the same role, storage, origin, and location options.`,
+              `./tools/nx run @agent-lcars/console:verify-session -- --role ${role} --storage ${storage} --path /`
+          : `Saved ${role} session to ${result.destination}. Reuse it with the @agent-lcars/console:verify-session Nx target and the same role, storage, origin, and location options.`,
       );
       return 0;
     } finally {

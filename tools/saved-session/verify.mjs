@@ -22,7 +22,7 @@ import {
 
 function usage() {
   console.error(
-    'Usage: pnpm session:verify --path <path> [--role <admin|user>] ' +
+    'Usage: ./tools/nx run @agent-lcars/console:verify-session -- --path <path> [--role <admin|user>] ' +
       '[--storage <local|secret>] [--origin <origin>] [--state-file <path>] ' +
       '[--project <gcp-project>] [--secret-name <name>] ' +
       '[--wait-for <selector>] [--click <selector>] [--assert-text <text>] ' +
@@ -102,7 +102,7 @@ async function main() {
     const landed = new URL(page.url());
     if (isLoginPath(landed.pathname)) {
       console.error(
-        `SESSION_EXPIRED: ${source} redirected ${target.toString()} to ${page.url()}. Re-run session:capture.`,
+        `SESSION_EXPIRED: ${source} redirected ${target.toString()} to ${page.url()}. Re-run the @agent-lcars/console:capture-session Nx target.`,
       );
       return 2;
     }
@@ -111,7 +111,7 @@ async function main() {
     const status = sessionStatus(session, role);
     if (status === 'expired') {
       console.error(
-        `SESSION_EXPIRED: ${source} no longer authenticates. Re-run session:capture.`,
+        `SESSION_EXPIRED: ${source} no longer authenticates. Re-run the @agent-lcars/console:capture-session Nx target.`,
       );
       return 2;
     }

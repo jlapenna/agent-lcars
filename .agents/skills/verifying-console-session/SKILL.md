@@ -82,10 +82,11 @@ From the repository root:
 
 ```bash
 # Private state on this workstation (default)
-pnpm session:capture --role admin
+./tools/nx run @agent-lcars/console:capture-session -- --role admin
 
 # Shared/headless reuse, after the secret container and grants exist
-pnpm session:capture --role admin --storage secret
+./tools/nx run @agent-lcars/console:capture-session -- \
+  --role admin --storage secret
 ```
 
 The command opens `https://agent-console.supersprinkles.racing/login`, waits
@@ -97,7 +98,8 @@ test environment.
 ## Reuse and verify
 
 ```bash
-pnpm session:verify --role admin \
+./tools/nx run @agent-lcars/console:verify-session -- \
+  --role admin \
   --path /sessions \
   --wait-for 'text=Sessions' \
   --assert-text 'Session archive' \
