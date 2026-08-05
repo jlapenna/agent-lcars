@@ -21,6 +21,7 @@ import {
   type WatchedRepo,
 } from '../lib/watched-repo';
 import { createQuickTask } from './actions';
+import { showErrorToast } from './show-error-toast';
 
 const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'claude', label: 'claude' },
@@ -138,10 +139,7 @@ export function QuickTaskButton({
       try {
         requestId = createRequestId();
       } catch {
-        notifications.show({
-          message: 'This browser cannot generate a Quick Task request ID',
-          color: 'red',
-        });
+        showErrorToast('This browser cannot generate a Quick Task request ID');
         return;
       }
       requestIdRef.current = requestId;
@@ -160,7 +158,7 @@ export function QuickTaskButton({
           description: trimmed,
         });
         if (!result.ok) {
-          notifications.show({ message: result.message, color: 'red' });
+          showErrorToast(result.message);
           return;
         }
         requestIdRef.current = undefined;

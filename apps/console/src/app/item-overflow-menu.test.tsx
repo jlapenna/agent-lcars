@@ -126,7 +126,12 @@ describe('ItemOverflowMenu', () => {
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'Issue not found', color: 'red' }),
+        expect.objectContaining({
+          message: 'Issue not found',
+          color: 'red',
+          autoClose: false,
+          withCloseButton: true,
+        }),
       ),
     );
   });

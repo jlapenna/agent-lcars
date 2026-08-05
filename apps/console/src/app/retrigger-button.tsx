@@ -7,6 +7,7 @@ import { useState, useTransition } from 'react';
 import type { Pipeline } from '../lib/primary-action';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { retriggerIssue } from './actions';
+import { showErrorToast } from './show-error-toast';
 
 /**
  * Retrigger-with-steering-note, shared by queue cards and compact rows.
@@ -48,7 +49,7 @@ export function RetriggerButton({
       );
       if (!result.ok) {
         onError?.(result.message);
-        notifications.show({ message: result.message, color: 'red' });
+        showErrorToast(result.message);
         return;
       }
       setNote('');

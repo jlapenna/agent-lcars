@@ -7,6 +7,7 @@ import { useTransition } from 'react';
 
 import type { WatchedRepo } from '../lib/watched-repo';
 import { cancelRun } from './actions';
+import { showErrorToast } from './show-error-toast';
 
 export function CancelRunButton({
   repo,
@@ -25,7 +26,7 @@ export function CancelRunButton({
     startTransition(async () => {
       const result = await cancelRun(repo, runId);
       if (!result.ok) {
-        notifications.show({ message: result.message, color: 'red' });
+        showErrorToast(result.message);
         return;
       }
       notifications.show({ message: 'Run cancelled', color: 'green' });
