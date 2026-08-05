@@ -239,3 +239,97 @@ describe('enrichItems - dispatch ledger parsing', () => {
     expect(enrichment?.ledger?.generations).toHaveLength(1);
   });
 });
+
+// #538: GitHub's `reviewThreads` connection has no `isResolved` filter
+// argument, so the unresolved count has to come from fetching nodes and
+// filtering client-side - this is the one place that logic lives.
+describe('enrichItems - review threads (#538)', () => {
+  function prResponse(reviewThreads: {
+    totalCount: number;
+    nodes: { isResolved: boolean }[];
+  }) {
+    return {
+      repository: {
+        i42: {
+          __typename: 'PullRequest',
+          isDraft: false,
+          mergeStateStatus: 'BLOCKED',
+          reviewRequests: { nodes: [] },
+          reviewThreads,
+          commits: { nodes: [] },
+        },
+      },
+    };
+  }
+
+  const wantsPr: EnrichmentRequest = {
+    number: 42,
+    isPr: true,
+    wantsComments: false,
+  };
+
+  it('counts only nodes with isResolved: false', async () => {
+    setupGraphql(
+      prResponse({
+        totalCount: 4,
+        nodes: [
+          { isResolved: false },
+          { isResolved: true },
+          { isResolved: false },
+          { isResolved: false },
+        ],
+      }),
+    );
+
+    const result = await enrichItems(DEFAULT_REPO, [wantsPr]);
+
+    expect(result.byNumber.get(42)?.pr?.unresolvedReviewThreadCount).toBe(3);
+    expect(result.byNumber.get(42)?.pr?.reviewThreadsTruncated).toBe(false);
+  });
+
+  it('reports zero for a PR with no unresolved threads', async () => {
+    setupGraphql(
+      prResponse({
+        totalCount: 2,
+        nodes: [{ isResolved: true }, { isResolved: true }],
+      }),
+    );
+
+    const result = await enrichItems(DEFAULT_REPO, [wantsPr]);
+
+    expect(result.byNumber.get(42)?.pr?.unresolvedReviewThreadCount).toBe(0);
+  });
+
+  it('flags truncation when totalCount exceeds the fetched node window', async () => {
+    setupGraphql(
+      prResponse({
+        totalCount: 150,
+        nodes: Array.from({ length: 100 }, () => ({ isResolved: false })),
+      }),
+    );
+
+    const result = await enrichItems(DEFAULT_REPO, [wantsPr]);
+
+    expect(result.byNumber.get(42)?.pr?.unresolvedReviewThreadCount).toBe(100);
+    expect(result.byNumber.get(42)?.pr?.reviewThreadsTruncated).toBe(true);
+  });
+
+  it('defaults to zero and not-truncated when reviewThreads is absent', async () => {
+    setupGraphql({
+      repository: {
+        i42: {
+          __typename: 'PullRequest',
+          isDraft: false,
+          mergeStateStatus: 'CLEAN',
+          reviewRequests: { nodes: [] },
+          commits: { nodes: [] },
+        },
+      },
+    });
+
+    const result = await enrichItems(DEFAULT_REPO, [wantsPr]);
+
+    expect(result.byNumber.get(42)?.pr?.unresolvedReviewThreadCount).toBe(0);
+    expect(result.byNumber.get(42)?.pr?.reviewThreadsTruncated).toBe(false);
+  });
+});

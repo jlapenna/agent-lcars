@@ -48,6 +48,14 @@ export interface EnrichedPr {
   checkRuns: EnrichedCheckRun[];
   /** More check runs exist than {@link CHECK_WINDOW} returned. */
   checksTruncated: boolean;
+  /** Count of `reviewThreads` nodes with `isResolved: false` - the "read
+   * the threads" signal #538 exists for: green checks and an empty
+   * `reviewDecision` can both be true while this alone is what keeps a PR
+   * unmergeable. */
+  unresolvedReviewThreadCount: number;
+  /** More review threads exist than {@link REVIEW_THREAD_WINDOW} returned -
+   * `unresolvedReviewThreadCount` may be an undercount. */
+  reviewThreadsTruncated: boolean;
 }
 
 export interface ItemEnrichment {
@@ -80,6 +88,17 @@ const COMMENT_WINDOW = 100;
  * and flagged truncation past that; `totalCount` gives the same signal in
  * one shot, so anything beyond one page is reported rather than walked. */
 export const CHECK_WINDOW = 100;
+
+/** GitHub's `reviewThreads` connection has no `isResolved`-filter argument
+ * (verified against the live schema), so an unresolved count can only come
+ * from fetching nodes and filtering client-side - there is no way to ask
+ * for just the unresolved ones or for a resolved/unresolved split via
+ * `totalCount` alone. A typical PR carries at most a handful of threads
+ * (the #521 retro's worst case was 17 across ten PRs), so one page is
+ * expected to cover it; `totalCount` still catches the rare PR that
+ * exceeds it so the count degrades to "truncated" instead of silently
+ * undercounting (same pattern as `CHECK_WINDOW`/`checksTruncated`). */
+export const REVIEW_THREAD_WINDOW = 100;
 
 /** Items per GraphQL document. Each item is a separate aliased field, so
  * this bounds query size (and blast radius) on a large board rather than
@@ -120,6 +139,10 @@ function selectionFor(request: EnrichmentRequest): string {
         ${comments}
         reviewRequests(first: 20) {
           nodes { requestedReviewer { ... on User { login } } }
+        }
+        reviewThreads(first: ${REVIEW_THREAD_WINDOW}) {
+          totalCount
+          nodes { isResolved }
         }
         commits(last: 1) {
           nodes {
@@ -174,6 +197,10 @@ interface RawItem {
   comments?: { nodes?: (RawComment | null)[] | null } | null;
   reviewRequests?: {
     nodes?: ({ requestedReviewer?: { login?: string } | null } | null)[] | null;
+  } | null;
+  reviewThreads?: {
+    totalCount?: number;
+    nodes?: ({ isResolved?: boolean } | null)[] | null;
   } | null;
   commits?: {
     nodes?:
@@ -232,6 +259,21 @@ function toCheckRuns(item: RawItem): {
   };
 }
 
+function toReviewThreads(item: RawItem): {
+  unresolvedReviewThreadCount: number;
+  reviewThreadsTruncated: boolean;
+} {
+  const reviewThreads = item.reviewThreads;
+  const nodes = reviewThreads?.nodes ?? [];
+  const unresolvedReviewThreadCount = nodes.filter(
+    (node) => node?.isResolved === false,
+  ).length;
+  return {
+    unresolvedReviewThreadCount,
+    reviewThreadsTruncated: (reviewThreads?.totalCount ?? 0) > nodes.length,
+  };
+}
+
 interface EnrichmentOutcome {
   enrichment: ItemEnrichment;
   /** A ledger comment was present but failed to parse - see
@@ -278,6 +320,8 @@ function toEnrichment(
 
   const mergeState = lower(item.mergeStateStatus) ?? 'unknown';
   const { checkRuns, checksTruncated } = toCheckRuns(item);
+  const { unresolvedReviewThreadCount, reviewThreadsTruncated } =
+    toReviewThreads(item);
   return {
     enrichment: {
       comments,
@@ -294,6 +338,8 @@ function toEnrichment(
         ),
         checkRuns,
         checksTruncated,
+        unresolvedReviewThreadCount,
+        reviewThreadsTruncated,
       },
     },
     warning,

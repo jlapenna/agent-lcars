@@ -34,6 +34,7 @@ export const E2E_ITEM_NUMBERS = {
   readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
   ledgerDuplicateDispatch: 9008,
+  mergeBlockedThreads: 9011,
 } as const;
 
 /** Mirrors `E2E_LEDGER_INTENT_ID` in the frontend app's

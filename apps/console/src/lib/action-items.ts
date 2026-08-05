@@ -12,6 +12,7 @@ import {
   enrichItems,
   type EnrichmentRequest,
   type ItemEnrichment,
+  REVIEW_THREAD_WINDOW,
 } from './item-enrichment';
 import { supportedAgentLabels } from './watched-repo';
 
@@ -26,11 +27,22 @@ export type ActionType =
   | 'run-failed'
   | 'review-requested'
   | 'post-deploy-action'
-  // A non-draft PR whose branch has fallen behind its base (mergeableState
-  // 'behind') after the maintainer already approved it, so 'review-requested'
-  // no longer applies - GitHub's own auto-merge won't catch a PR up on its
-  // own (#216), so this is the maintainer's to unstick with a single
-  // "Rebase onto base branch" click (see ItemOverflowMenu's canRebase).
+  // A non-draft, already-actionable-by-nobody-else PR that GitHub itself
+  // won't merge. Two distinct causes raise this, both requiring
+  // !reviewRequested (an outstanding review request already explains why
+  // the PR is stuck, and owns its own higher-priority action type):
+  //  - mergeableState 'behind': the branch fell behind its base after the
+  //    maintainer already approved it - GitHub's own auto-merge won't catch
+  //    it up on its own (#216), so this is the maintainer's to unstick with
+  //    a single "Rebase onto base branch" click (see ItemOverflowMenu's
+  //    canRebase).
+  //  - mergeableState 'blocked' with unresolvedReviewThreadCount > 0 (#538):
+  //    the retro that filed this (#521) found ten PRs sitting green-checked,
+  //    auto-merge-armed, and unmergeable for hours behind 17 unresolved
+  //    Codex review threads - `gh pr checks` green and `reviewDecision`
+  //    empty gave no hint why. `unresolvedReviewThreadCount` carries the
+  //    count so the UI can name the actual blocker instead of just a
+  //    generic "can't merge yet."
   | 'merge-blocked'
   // A finished run's GitHub conclusion said success, but its joined session
   // telemetry shows a session-provable anomaly (an error result - expired
@@ -88,6 +100,14 @@ export interface ActionItem {
   failingChecks?: { name: string; url: string }[];
   /** Some check run on the PR's head is still queued or in progress. */
   ciRunning?: boolean;
+  /** Unresolved review-thread count (#538), set ONLY when it is the
+   * operative reason this PR carries 'merge-blocked' - i.e. mergeableState
+   * is 'blocked' and the count is nonzero. A PR can carry unresolved
+   * threads without this being the blocker (mergeableState 'clean', or
+   * blocked for some other reason with zero unresolved threads), and
+   * that's deliberately not surfaced here - see `classifyIssue`'s
+   * `blockedByThreads`. */
+  unresolvedReviewThreadCount?: number;
   /** Set alongside the `silent-error` actionType - the classifier's short
    * explanation of what looks wrong despite GitHub reporting success (see
    * `run-classification.ts`'s `deriveSilentErrorDiagnoses`). */
@@ -276,6 +296,7 @@ function classifyIssue(
   let mergeableState: MergeableState | undefined;
   let failingChecks: { name: string; url: string }[] | undefined;
   let ciRunning: boolean | undefined;
+  let unresolvedReviewThreadCount: number | undefined;
   let linkedIssueNumbers = extractLinkedIssueNumbers(issue.body, issue.number);
 
   if (isPr) {
@@ -301,13 +322,31 @@ function classifyIssue(
     // someone to catch it up rather than doing so itself (#216). Skipped
     // when review-requested already fired: that case's own primary action
     // (approve-rebase) already covers catching the branch up.
-    if (!reviewRequested && !pr?.draft && mergeableState === 'behind') {
+    const behindBase = mergeableState === 'behind';
+    // GitHub reports mergeStateStatus BLOCKED for several unrelated causes
+    // (a missing required reviewer, a required check, unresolved review
+    // threads...); only attribute it to threads - and only then surface
+    // the count - when there actually are unresolved ones (#538). A
+    // 'blocked' PR with zero here is blocked by something else this
+    // classifier doesn't (yet) name.
+    const blockedByThreads =
+      mergeableState === 'blocked' &&
+      (pr?.unresolvedReviewThreadCount ?? 0) > 0;
+    if (!reviewRequested && !pr?.draft && (behindBase || blockedByThreads)) {
       actionTypes.push('merge-blocked');
+      if (blockedByThreads) {
+        unresolvedReviewThreadCount = pr?.unresolvedReviewThreadCount;
+      }
     }
 
     if (pr?.checksTruncated) {
       warnings.push(
         `Check runs truncated for #${issue.number} (over ${CHECK_WINDOW} runs) - some failures may not be shown.`,
+      );
+    }
+    if (blockedByThreads && pr?.reviewThreadsTruncated) {
+      warnings.push(
+        `Review threads truncated for #${issue.number} (over ${REVIEW_THREAD_WINDOW}) - the unresolved count may be an undercount.`,
       );
     }
     // Only genuine failures count: a `cancelled` conclusion is almost
@@ -357,6 +396,7 @@ function classifyIssue(
     mergeableState,
     failingChecks,
     ciRunning,
+    unresolvedReviewThreadCount,
     ledger: enrichment?.ledger,
   };
   return { item, warnings };
