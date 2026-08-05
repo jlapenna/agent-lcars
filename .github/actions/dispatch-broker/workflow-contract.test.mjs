@@ -189,15 +189,12 @@ test('the canary orchestrators (#307) never reference a self-hosted runner or a 
 });
 
 test('post-deploy-smoke.yml gates only on conclusion, never on head_branch (#307 P2 fix)', async () => {
-  // deploy-console.yml has exactly one job, so its workflow-level
-  // conclusion is a direct, total function of that job's own conclusion:
-  // 'success' only when 'deploy' actually ran and succeeded, 'skipped'
-  // when its own `if:` was false -- verified against real production runs
-  // (see this file's header comment). A `head_branch == 'main'` filter on
-  // top of that would silently skip verifying a real production deploy
-  // triggered by workflow_dispatch from a non-main ref, since
-  // deploy-console.yml's own `deploy` job runs unconditionally for any
-  // workflow_dispatch regardless of ref.
+  // deploy-console.yml's gate job fails unless the triggering CI run's
+  // Verify job passed, and deploy depends on that gate. Its workflow-level
+  // conclusion can therefore be 'success' only when deploy actually ran and
+  // succeeded. A `head_branch == 'main'` filter here would silently skip
+  // verifying a real production deploy triggered by workflow_dispatch from a
+  // non-main ref.
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'post-deploy-smoke.yml'),
     'utf8',
@@ -211,6 +208,22 @@ test('post-deploy-smoke.yml gates only on conclusion, never on head_branch (#307
   // as the filter this fix removed.
   const jobsSection = source.slice(source.indexOf('\njobs:'));
   assert.doesNotMatch(jobsSection, /head_branch/u);
+});
+
+test('deploy-console.yml fails closed when the triggering Verify job did not pass (#543)', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'deploy-console.yml'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /else\s+echo "verify_passed=false"[^]*?echo "::error::Verify did not pass[^]*?exit 1\s+fi/u,
+  );
+  assert.match(source, /^\s+needs:\s+gate\s*$/mu);
+  assert.match(
+    source,
+    /^\s+if:\s+needs\.gate\.outputs\.verify_passed == 'true'\s*$/mu,
+  );
 });
 
 let failures = 0;
