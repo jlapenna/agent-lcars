@@ -53,24 +53,22 @@ have their own setup actions; do not adopt.
 
 ## Referencing from a consumer repo
 
-Interim convention (early fleet integration, deliberately floating):
-
-```yaml
-- uses: jlapenna/agent-lcars/.github/actions/<name>@main
-```
-
-Floating `@main` trades pin auditability for iteration speed while the
-consumer migrations are actively landing; moving consumers to
-full-SHA-plus-version-comment pins managed by Renovate (with `vX.Y.Z`
-tags cut here) is tracked as a follow-up and intentionally NOT part of the
-initial adoption. When that lands, the convention becomes:
+Every consumer must pin the action repository by its full commit SHA and keep
+the corresponding immutable release tag as a human-readable comment:
 
 ```yaml
 - uses: jlapenna/agent-lcars/.github/actions/<name>@<full-sha> # vX.Y.Z
 ```
 
-with the contract-test manifest diff in review as the "this needs a major
-bump" signal.
+Do not use `@main` or a mutable version-only reference. Renovate's
+`github-actions` manager updates the SHA and version comment together, while a
+consumer-specific package rule groups Agent LCARS action updates and leaves
+them for manual review.
+
+Release tags are plain annotated `vX.Y.Z` tags and never move. A compatible
+fix is a patch release, a new optional input or action is a minor release, and
+a removed or renamed input or a changed default requires a major release. The
+contract-test manifest diff in review is the "this needs a major bump" signal.
 
 ### The whole-repo-download caveat
 
