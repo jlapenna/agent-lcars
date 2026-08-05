@@ -53,16 +53,26 @@ jlapenna`), and use as the assignee in the parking recipe
   label win, removing the stale one via the API with ledger evidence before
   dispatching — comment-path ambiguity, three or more coexisting labels, and
   a label missing from the current issue snapshot still throw.
-- **Reply triggers:** `@claude`, `/codex`, or `/opencode`/`/oc`, but only
-  when the command is the sole first token of its own line (trailing text
-  after it is fine, e.g. `@claude please retry`); a command embedded
-  mid-prose, inside a fenced code block, or on a quoted (`>`) line does not
-  count (`parseExactCommand` in `normalize.mjs`). The command's pipeline
-  must match the issue's single selected `agent:*` label — except `@claude`
-  on a pull request, which dispatches regardless of label. A plain reply
-  with no recognized command, or a comment carrying more than one, is
-  silently ignored — always end a parking comment with the correct trigger
-  for whichever pipeline dispatched you.
+- **Reply triggers:** `@claude`, `/codex`, `/opencode`/`/oc`, or the generic
+  `@agent` (#573), but only when the command is the sole first token of its
+  own line (trailing text after it is fine, e.g. `@claude please retry`); a
+  command embedded mid-prose, inside a fenced code block, or on a quoted
+  (`>`) line does not count (`parseExactCommand` in `normalize.mjs`). The
+  pipeline-specific commands' pipeline must match the issue's single
+  selected `agent:*` label — except `@claude` on a pull request, which
+  dispatches regardless of label. `@agent` names no pipeline at all; it
+  resolves to whatever that single selected label already is, and fails
+  closed (no dispatch) if the label is absent or ambiguous — it does not
+  get the pull-request default `@claude` gets. A plain reply with no
+  recognized command, or a comment carrying more than one, is silently
+  ignored — always end a parking comment with the correct trigger for
+  whichever pipeline dispatched you. `@agent` is safe there ONLY when an
+  `agent:*` label is actually set (Codex review on #574): a PR dispatched
+  via `@claude`'s label-free default, or an issue dispatched via a manual
+  `workflow_dispatch` intent that named a pipeline without ever adding a
+  label, has nothing for `@agent` to resolve against — it throws instead of
+  redispatching. Keep recommending the pipeline-specific trigger for any
+  run that could be label-free.
 
 - **Bot login format:** `claude[bot]` (REST) / `app/claude` (GraphQL), and
   `agent-lcars[bot]` / `app/agent-lcars`, are the same App installations
