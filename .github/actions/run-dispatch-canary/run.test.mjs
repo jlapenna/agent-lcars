@@ -548,20 +548,68 @@ test('sweepStaleCanaries never touches an issue younger than the staleness thres
   assert.equal(touchedBeyondListing, false);
 });
 
-test('sweepStaleCanaries skips an already-parked stale issue without re-commenting', async () => {
+test('sweepStaleCanaries leaves an already-parked stale issue alone (no duplicate park comment/label/assignee) while its ledger is still unresolved (#527)', async () => {
+  const calls = [];
   const issue = openIssue({ number: 953, labels: ['status:needs-human'] });
-  let touchedBeyondListing = false;
-  const client = api(async (url) => {
+  const client = api(async (url, options) => {
+    calls.push({ url, method: options.method ?? 'GET' });
     if (url.includes('/issues?state=open')) return response(200, [issue]);
-    touchedBeyondListing = true;
+    if (
+      url.includes('/issues/953/comments') &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, []);
+    }
     return response(200, {});
   });
   const clock = Date.parse('2026-08-01T01:00:00.000Z');
   const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
     now: () => clock,
   });
-  assert.deepEqual(swept, []);
-  assert.equal(touchedBeyondListing, false);
+  assert.deepEqual(swept, [{ issue: 953, outcome: 'already-parked' }]);
+  assert.equal(
+    calls.some((call) => call.method === 'POST'),
+    false,
+    'an already-parked, still-unresolved canary must never be re-parked or re-commented',
+  );
+  assert.equal(
+    calls.some((call) => call.method === 'PATCH'),
+    false,
+  );
+});
+
+test('sweepStaleCanaries recovers and closes an already-parked stale issue once its ledger shows a late successful completion (#527)', async () => {
+  const calls = [];
+  const issue = openIssue({ number: 953, labels: ['status:needs-human'] });
+  const client = api(async (url, options) => {
+    calls.push({ url, method: options.method ?? 'GET' });
+    if (url.includes('/issues?state=open')) return response(200, [issue]);
+    if (
+      url.includes('/issues/953/comments') &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, [ledgerCommentWithGeneration({ issue: 953 })]);
+    }
+    return response(200, {});
+  });
+  const clock = Date.parse('2026-08-01T01:00:00.000Z');
+  const swept = await sweepStaleCanaries(client, repository, 123, 'jlapenna', {
+    now: () => clock,
+  });
+  assert.deepEqual(swept, [
+    { issue: 953, outcome: 'closed-after-late-success' },
+  ]);
+  assert.ok(
+    calls.some((call) => call.method === 'PATCH'),
+    'expected the recovered issue to be closed',
+  );
+  assert.equal(
+    calls.some(
+      (call) => call.method === 'POST' && call.url.includes('/labels'),
+    ),
+    false,
+    'a recovered canary must never be re-parked',
+  );
 });
 
 test('sweepStaleCanaries ignores open issues that are not its own marked canary', async () => {

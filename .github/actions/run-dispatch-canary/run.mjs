@@ -291,6 +291,13 @@ async function parkCanaryFailure(api, task, maintainer, reason) {
   await ensureNeedsHumanParked(api, task, maintainer);
 }
 
+function hasNeedsHumanLabel(issue) {
+  return (issue.labels ?? []).some(
+    (label) =>
+      (typeof label === 'string' ? label : label.name) === 'status:needs-human',
+  );
+}
+
 // Deterministic-rediscovery backstop for an orchestrator run that never
 // reached its own runDispatchCanary catch block (job timeout, workflow
 // cancellation, runner loss -- see STALE_CANARY_AGE_MS above). Lists every
@@ -299,11 +306,22 @@ async function parkCanaryFailure(api, task, maintainer, reason) {
 // notes the epic design audit explicitly rejected full-text/marker search
 // as a discovery mechanism because of search-index replication lag),
 // filters to this canary's own title prefix plus marker, and for every
-// candidate older than the threshold that is not already parked:
-//   - closes it (with evidence) if its ledger already shows a successful
-//     canary completion -- the orchestrator verified success but never got
-//     to call closeCanaryIssue itself;
-//   - otherwise parks status:needs-human, identical to parkCanaryFailure.
+// candidate older than the threshold:
+//   - closes it (with evidence) if its ledger shows a successful canary
+//     completion -- the orchestrator verified success but never got to
+//     call closeCanaryIssue itself. This applies whether or not the issue
+//     was already parked status:needs-human (#527): a canary that timed
+//     out and got parked, then had its generation complete successfully
+//     moments later, must still recover -- parkCanaryFailure's own park is
+//     not a terminal verdict, just the best evidence available at the time
+//     it ran.
+//   - otherwise, if not already parked, parks status:needs-human
+//     (parkCanaryFailure).
+//   - otherwise (already parked, still not successful), does nothing: a
+//     duplicate park would re-post the "canary failed" comment and
+//     re-verify the label/assignee on every single sweep pass for as long
+//     as the ledger stays unresolved, and the issue is already carrying
+//     the correct signal.
 // A per-issue failure is recorded and reported but never blocks sweeping
 // the remaining candidates -- each candidate's cleanup is independent, so
 // they run concurrently rather than one at a time, bounded by
@@ -312,20 +330,31 @@ async function parkCanaryFailure(api, task, maintainer, reason) {
 // GitHub writes risks tripping secondary rate limits, per the same PR #374
 // review finding dispatch-broker/main.mjs's dispatchReconcileScan already
 // applies this bound for).
-async function sweepOneStaleCanary(api, task, maintainer) {
+async function sweepOneStaleCanary(api, task, maintainer, alreadyParked) {
   const found = await findCanaryGeneration(api, task);
   const conclusion = found?.generation?.attempt?.conclusion;
   if (found?.generation.state === 'completed' && conclusion === 'success') {
     await closeCanaryIssue(api, task, {
       generation: found.generation,
-      message:
-        "🧹 Swept by the scheduled canary janitor: this canary's own " +
-        'orchestrator run never returned (job timeout or workflow ' +
-        'cancellation), but its dispatch broker ledger shows ' +
-        `generation g${found.generation.generation} completed ` +
-        'successfully. Closing.',
+      message: alreadyParked
+        ? '🧹 Swept by the scheduled canary janitor: this canary was ' +
+          'previously parked status:needs-human after its orchestrator ' +
+          'run never returned, but its dispatch broker ledger shows ' +
+          `generation g${found.generation.generation} completed ` +
+          'successfully since then. Recovering and closing.'
+        : "🧹 Swept by the scheduled canary janitor: this canary's own " +
+          'orchestrator run never returned (job timeout or workflow ' +
+          'cancellation), but its dispatch broker ledger shows ' +
+          `generation g${found.generation.generation} completed ` +
+          'successfully. Closing.',
     });
-    return { issue: task.issue, outcome: 'closed' };
+    return {
+      issue: task.issue,
+      outcome: alreadyParked ? 'closed-after-late-success' : 'closed',
+    };
+  }
+  if (alreadyParked) {
+    return { issue: task.issue, outcome: 'already-parked' };
   }
   await parkCanaryFailure(
     api,
@@ -358,30 +387,23 @@ async function sweepStaleCanaries(
     const ageMsActual = now() - Date.parse(issue.created_at);
     return Number.isFinite(ageMsActual) && ageMsActual >= ageMs;
   });
-  const toSweep = stale.filter(
-    (issue) =>
-      !(issue.labels ?? []).some(
-        (label) =>
-          (typeof label === 'string' ? label : label.name) ===
-          'status:needs-human',
-      ),
-  );
 
   const outcomes = await mapWithConcurrency(
-    toSweep,
+    stale,
     CANARY_SWEEP_CONCURRENCY,
     (issue) =>
       sweepOneStaleCanary(
         api,
         { repositoryId, repository, issue: issue.number },
         maintainer,
+        hasNeedsHumanLabel(issue),
       ),
   );
   return outcomes.map((outcome, index) =>
     outcome.status === 'fulfilled'
       ? outcome.value
       : {
-          issue: toSweep[index].number,
+          issue: stale[index].number,
           outcome: 'error',
           error: outcome.reason.message,
         },
