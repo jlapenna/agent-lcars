@@ -158,25 +158,14 @@ jobs:
           token: ${{ steps.agent-lcars-token.outputs.token }}
           persist-credentials: true
 
-      # "Run Codex" below has unrestricted Bash on this same checkout and
-      # can rewrite any file in it, including the post-agent enforcement
-      # composites (verify-deliverable, report-failure, telemetry-finalize)
-      # invoked later in this job. Those used to be inline YAML baked into
-      # the dispatched workflow file itself, resolved from the trusted
-      # ref - immune to a mid-run edit. As local composite actions
-      # (`uses: ./.github/actions/...`), they instead resolve from the
-      # CURRENT working tree at the moment they run, so a rewritten script
-      # would execute with this job's App token. Freeze a copy now, while
-      # the tree is still exactly what the trusted dispatched ref checked
-      # out, and have the post-agent steps below run this copy directly
-      # (`run:` from $RUNNER_TEMP, not `uses:`) instead of the possibly
-      # agent-modified one in .github/actions.
+      # The agent step below has unrestricted Bash on this same checkout,
+      # so the post-agent gates (verify-deliverable, report-failure,
+      # telemetry-finalize) must run from a copy frozen now, while the tree
+      # is still exactly what the trusted dispatched ref checked out - and
+      # via `run:` from $RUNNER_TEMP, never `uses:`, at gate time. The full
+      # rationale lives in snapshot-enforcement-scripts/action.yml.
       - name: Snapshot post-agent enforcement scripts
-        run: |
-          mkdir -p "$RUNNER_TEMP/trusted-actions"
-          cp -r .github/actions/verify-deliverable "$RUNNER_TEMP/trusted-actions/"
-          cp -r .github/actions/report-failure "$RUNNER_TEMP/trusted-actions/"
-          cp -r .github/actions/telemetry-finalize "$RUNNER_TEMP/trusted-actions/"
+        uses: ./.github/actions/snapshot-enforcement-scripts
 
       - name: Shared agent setup
         id: agent-setup
