@@ -121,10 +121,11 @@ These override any default behavior:
 
 Read the reference before starting the corresponding task:
 
-| Workflow                          | When to use                                                    |
-| --------------------------------- | -------------------------------------------------------------- |
-| [pr.md](references/pr.md)         | Creating or updating a Pull Request.                           |
-| [verify.md](references/verify.md) | Definition of Done — run before declaring any change complete. |
+| Workflow                                    | When to use                                                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [pr.md](references/pr.md)                   | Creating or updating a Pull Request.                                                                 |
+| [verify.md](references/verify.md)           | Definition of Done — run before declaring any change complete.                                       |
+| [stacked-prs.md](references/stacked-prs.md) | Multiple auto-merge-armed PRs racing a moving `main`, or a reviewed stacked chain ready to collapse. |
 
 ## Related Skills
 
@@ -134,3 +135,7 @@ Load these when the task enters their domain:
   — headless CI dispatch conventions and this repo's own dispatch-broker,
   auto-merge, and identity delta. Not needed for ordinary interactive
   development.
+- **[verifying-console-session](../verifying-console-session/SKILL.md)** —
+  capture and reuse a real authenticated LCARS browser session for approved
+  production UI verification when hermetic E2E cannot prove the live auth or
+  deployment path.
