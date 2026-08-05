@@ -43,6 +43,46 @@ Action, the e2e GitHub fixture — run it too:
 pnpm exec nx run @agent-lcars/console-e2e:e2e-local
 ```
 
+### RSC client/server boundary traps
+
+`apps/console` is a Next.js App Router app: scoped vitest + typecheck are
+structurally blind to bugs at the server/client component boundary. Four
+distinct traps shipped past both in one night (retro #521) and were only
+caught by the hermetic e2e suite or CI's prerender step, each with a
+multi-minute feedback loop:
+
+1. **Component-as-prop across the boundary.** Passing a component
+   reference as a prop from a server component into a client component's
+   polymorphic prop (e.g. Mantine's `component={SomeComponent}`) fails at
+   render with "Functions cannot be passed directly to Client Components."
+2. **A `'use client'` module value-importing a server-deps module.**
+   Drags Node-only dependencies (firebase-admin, google-auth-library, ...)
+   into the browser bundle and fails the build with dozens of Turbopack
+   resolve errors (the #59 failure mode). `import type` is always safe.
+   `eslint.config.mjs`'s `repo/no-server-only-imports-in-client` rule
+   (`tools/eslint/no-server-only-imports-in-client.mjs`) catches the direct
+   -import case in the editor, but not transitive/indirect drag-in through
+   a component that isn't itself `'use client'`.
+3. **Server code calling a function exported from a client module.**
+   Fails at runtime with "Attempted to call X() from the server."
+4. **Cross-page `next/link` transitions leaving the previous page's DOM
+   mounted** (#503) — a pure client-side/browser bug; nothing short of a
+   real browser catches this one.
+
+None of these are reliably caught by unit tests or typecheck (#537). Treat
+any change that adds/removes a `'use client'` directive, moves a component
+across the server/client line, or touches `apps/console/src/app`'s
+navigation/layout as boundary-adjacent, and run `console-e2e:e2e-local`
+(above) before pushing it — not just when one of the four examples above
+literally recurs, but as a standing habit for anything boundary-shaped.
+
+An `apps/console`-affected push also gets a fast production `next build`
+smoke in the pre-push hook (`tools/console-build-smoke.sh`), which catches
+class 1 and prerenderable cases of class 3 in well under a minute. It is
+not a substitute for `e2e-local`: a build can't see anything that only
+breaks at request time on a non-prerendered route or in a real browser
+(class 4 stays e2e-only until #503 is understood).
+
 Use that target, not `:e2e` directly. It sets up the same environment CI's
 "Prepare E2E environment" step does (materializing `.env.e2e` from
 `tools/e2e/ci.env` without clobbering a customized one, and exporting the

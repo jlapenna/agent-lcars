@@ -5,6 +5,8 @@ import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
 import * as jsoncParser from 'jsonc-eslint-parser';
 
+import repoBoundaries from './tools/eslint/no-server-only-imports-in-client.mjs';
+
 export default [
   ...nx.configs['flat/base'],
   ...nx.configs['flat/typescript'],
@@ -87,6 +89,28 @@ export default [
             'CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/][arguments.length=0]',
           message:
             'Pin the locale and timezone; runtime defaults cause server/client mismatches.',
+        },
+      ],
+    },
+  },
+  {
+    // Server/client boundary (#537): a 'use client' file must not
+    // value-import one of these server-only modules. No-ops on files
+    // without the directive, so it's safe to apply repo-wide rather than
+    // scoping to apps/console - see tools/eslint/no-server-only-imports-in-client.mjs
+    // for what's covered and why this list, specifically, was chosen.
+    files: ['**/*.{ts,tsx}'],
+    plugins: { repo: repoBoundaries },
+    rules: {
+      'repo/no-server-only-imports-in-client': [
+        'error',
+        {
+          restricted: [
+            '@agent-lcars/telemetry/server',
+            '@repo/util-server',
+            'github-client',
+            'session-archive',
+          ],
         },
       ],
     },
