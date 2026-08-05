@@ -505,34 +505,38 @@ async function mapWithConcurrency(items, limit, worker) {
   return results;
 }
 
-// The three `agent:*` labels dispatch-capable issues/PRs carry (normalize.mjs
-// owns the authoritative AGENT_LABELS map keyed the other direction; this is
-// a small, stable literal duplication rather than a new cross-module export
-// for three constants). GitHub's issues-list-by-label filter is an AND
-// across a comma-separated `labels` value, so discovering "any agent:*
-// label" requires one query per label rather than one combined query --
-// each is independently cheap and reliably paginated (no search-index
-// replication lag), unlike a full-text search over the ledger's hidden
-// marker comment, which the epic design audit (#301) explicitly rejected as
-// a discovery mechanism.
+// The six `agent:*`/`review:*` labels dispatch-capable issues/PRs carry
+// (normalize.mjs owns the authoritative AGENT_LABELS/REVIEW_LABELS maps
+// keyed the other direction; this is a small, stable literal duplication
+// rather than a new cross-module export for six constants). GitHub's
+// issues-list-by-label filter is an AND across a comma-separated `labels`
+// value, so discovering "any agent:*/review:* label" requires one query per
+// label rather than one combined query -- each is independently cheap and
+// reliably paginated (no search-index replication lag), unlike a full-text
+// search over the ledger's hidden marker comment, which the epic design
+// audit (#301) explicitly rejected as a discovery mechanism.
 const RECONCILE_DISCOVERY_LABELS = [
   'agent:claude',
   'agent:codex',
   'agent:opencode',
+  'review:claude',
+  'review:codex',
+  'review:opencode',
 ];
 
 // Read-only discovery for dispatch-reconcile.yml's scan job (#305): every
-// currently open issue or pull request carrying any `agent:*` label (the
-// Issues API returns both; a PR item carries a `pull_request` key). Merges
-// and deduplicates by issue number across the per-label queries so an issue
-// with (invalidly) more than one agent:* label is still only scanned once.
+// currently open issue or pull request carrying any `agent:*`/`review:*`
+// label (the Issues API returns both; a PR item carries a `pull_request`
+// key). Merges and deduplicates by issue number across the per-label
+// queries so an issue with (invalidly) more than one label in the same
+// namespace is still only scanned once.
 //
-// Cost: up to 3 paginated `state=open&labels=agent:<pipeline>` requests per
-// scan (almost always a single page each at this repo's scale -- a healthy
-// dispatch backlog is a handful of issues, not hundreds), well inside the
-// 1,000 requests/hour GITHUB_TOKEN budget even at a 30-minute cadence,
-// before adding one workflow_dispatch call per discovered candidate (see
-// dispatchReconcileScan in main.mjs).
+// Cost: up to 6 paginated `state=open&labels=<agent|review>:<pipeline>`
+// requests per scan (almost always a single page each at this repo's scale
+// -- a healthy dispatch backlog is a handful of issues, not hundreds), well
+// inside the 1,000 requests/hour GITHUB_TOKEN budget even at a 30-minute
+// cadence, before adding one workflow_dispatch call per discovered
+// candidate (see dispatchReconcileScan in main.mjs).
 async function listOpenAgentLabeledIssues(api, task) {
   const root = repositoryPath(task);
   const byNumber = new Map();

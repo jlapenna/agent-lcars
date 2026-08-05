@@ -43,7 +43,9 @@ import {
   makeIntent,
   normalizeEvent,
   quickTaskRequest,
+  REVIEW_LABELS,
   selectedPipeline,
+  selectedPipelineFrom,
 } from './normalize.mjs';
 
 function env(name, required = true) {
@@ -377,9 +379,23 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   const task = ledger.task;
   const root = repositoryPath(task);
   const issue = await client.requestOk(`${root}/issues/${task.issue}`);
-  const pipeline = selectedPipeline(issue);
+  // review:* only ever applies to a pull request (normalize.mjs), and only
+  // if the issue carries no agent:* label to repair from first -- the two
+  // namespaces coexist, but a stuck agent:* dispatch takes priority since
+  // it is the more commonly time-sensitive one (a maintainer waiting on
+  // implementation, not a review).
+  let pipeline = selectedPipeline(issue);
+  let mode = 'implement';
+  let labelName = pipeline && `agent:${pipeline}`;
+  if (!pipeline && issue.pull_request) {
+    const issueLabels = (issue.labels ?? []).map((label) =>
+      typeof label === 'string' ? label : label.name,
+    );
+    pipeline = selectedPipelineFrom(issueLabels, REVIEW_LABELS);
+    mode = 'review';
+    labelName = pipeline && `review:${pipeline}`;
+  }
   if (!pipeline) return;
-  const labelName = `agent:${pipeline}`;
   const maintainer = env('MAINTAINER_LOGIN', false);
   const timeline = await listAll(
     client,
@@ -407,7 +423,7 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     transportRunId: runId,
     occurredAt: now,
     pipeline,
-    mode: 'implement',
+    mode,
     reply: '',
     runbook: '',
     context: '',
@@ -750,10 +766,12 @@ const FRESH_INTENT_OUTCOMES = new Set(['dispatch', 'pending']);
 // Self-heals the transient manual-relabel dual-label window (#304 audit
 // item 4): normalize.mjs marks an intent's `staleAgentLabels` when a
 // `labeled` event's own label disambiguates against exactly one other
-// agent:* label still on the issue. Removing the stale label(s) here --
-// inside the serialized broker write path, the only place control-plane
-// writes are allowed -- restores the "exactly one agent:* label" contract
-// before the intent dispatches.
+// label still on the issue in that same namespace (agent:* or, on a pull
+// request, review:* -- the two families never contend with each other).
+// Removing the stale label(s) here -- inside the serialized broker write
+// path, the only place control-plane writes are allowed -- restores the
+// "exactly one label in that namespace" contract before the intent
+// dispatches.
 //
 // Belt-and-braces beyond the FRESH_INTENT_OUTCOMES gate at the call site:
 // the payload's dual-label snapshot can still be stale by the time this
@@ -773,7 +791,10 @@ async function healStaleAgentLabels(client, loaded, intent) {
   const staleLabels = intent.staleAgentLabels;
   if (!staleLabels?.length) return;
   const task = loaded.ledger.task;
-  const eventLabel = `agent:${intent.pipeline}`;
+  // staleAgentLabels is only ever set by normalize.mjs's labeled-event
+  // self-heal, whose namespace (agent:* vs review:* -- never mixed, see
+  // normalize.mjs) is exactly what produced this intent's own `mode`.
+  const eventLabel = `${intent.mode === 'review' ? 'review' : 'agent'}:${intent.pipeline}`;
   const issue = await client.requestOk(
     `${repositoryPath(task)}/issues/${task.issue}`,
   );

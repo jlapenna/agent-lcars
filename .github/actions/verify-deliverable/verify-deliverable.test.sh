@@ -169,6 +169,25 @@ JSON
   esac
 )
 
+# --- Case 2c: clause (a) also matches when #NUM IS the PR's own number -
+# an implement dispatch whose anchor is a pull request (agent:* takeover,
+# #567), where the pushed-to PR never mentions its own number in its own
+# title/body ---
+(
+  base_env
+  case_dir="$test_root/pr-self-referencing-anchor"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":42,"title":"Fix widget","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case pr-self-referencing-anchor
+  test "$status" = 0 || fail "clause (a) should pass when the PR IS #NUM"
+  case "$output" in
+    *"Deliverable evidence: PR referencing #42"*) ;;
+    *) fail "self-referencing-anchor message missing expected text" ;;
+  esac
+)
+
 # --- Case 3: clause (b) - issue closed since start ---
 (
   base_env

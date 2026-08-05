@@ -751,7 +751,7 @@ test('removeIssueLabel propagates a genuine failure so the broker falls back to 
   );
 });
 
-test('listOpenAgentLabeledIssues queries all three agent labels and dedupes by issue number (#305)', async () => {
+test('listOpenAgentLabeledIssues queries all three agent labels and all three review labels, deduping by issue number (#305, #567)', async () => {
   const seen = [];
   const api = createGitHubApi({
     token: 'token',
@@ -768,15 +768,24 @@ test('listOpenAgentLabeledIssues queries all three agent labels and dedupes by i
       if (url.includes('labels=agent%3Aopencode')) {
         return response(200, [{ number: 20 }]);
       }
+      if (url.includes('labels=review%3Aclaude')) {
+        return response(200, [{ number: 30 }]);
+      }
+      if (
+        url.includes('labels=review%3Acodex') ||
+        url.includes('labels=review%3Aopencode')
+      ) {
+        return response(200, []);
+      }
       throw new Error(`Unexpected URL: ${url}`);
     },
   });
   const issues = await listOpenAgentLabeledIssues(api, task);
   assert.deepEqual(
     issues.map((issue) => issue.number),
-    [5, 10, 20],
+    [5, 10, 20, 30],
   );
-  assert.equal(seen.length, 3);
+  assert.equal(seen.length, 6);
   for (const url of seen) assert.match(url, /state=open/u);
 });
 

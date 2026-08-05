@@ -12,15 +12,23 @@ pull-request state.
 - `status:*` records durable workflow state. `status:needs-human` means a
   maintainer must take the next action; `status:blocked` means an external
   dependency or prerequisite is preventing progress. They are not aliases.
-- `agent:*` selects an executor. The serialized dispatch broker enforces that
-  exactly one of `agent:claude`, `agent:codex`, or `agent:opencode` is present
-  and dispatches that agent. Contradictory `agent:*` labels fail loudly instead
-  of being tolerated or resolved by precedence, with one narrow self-heal
-  exception: a manual GitHub UI relabel can momentarily leave two agent
-  labels on an issue (the new one added before the old one is removed), and
-  the broker resolves that transient window itself by honoring the newest
-  label and removing the other before dispatching, rather than failing the
-  run.
+- `agent:*` selects an executor and means "take this over" -- on an issue,
+  implement it and open a PR; on a pull request (Agent LCARS only today,
+  #567), take the PR over and keep pushing commits to its branch. The
+  serialized dispatch broker enforces that exactly one of `agent:claude`,
+  `agent:codex`, or `agent:opencode` is present and dispatches that agent.
+  Contradictory `agent:*` labels fail loudly instead of being tolerated or
+  resolved by precedence, with one narrow self-heal exception: a manual
+  GitHub UI relabel can momentarily leave two agent labels on an issue (the
+  new one added before the old one is removed), and the broker resolves
+  that transient window itself by honoring the newest label and removing
+  the other before dispatching, rather than failing the run.
+- `review:*` (pull requests only, Agent LCARS only today, #567) asks an
+  agent to leave a review on the diff instead of taking it over -- no
+  commits pushed. Same one-of-three-and-only-within-its-own-namespace
+  contract as `agent:*`, evaluated independently: a PR may carry an
+  `agent:*` label, a `review:*` label, both, or neither, and each drives
+  its own dispatch mode when applied.
 - `agent-option:*` modifies an agent run without selecting the executor.
 - `intake:*` and `bot:*` record provenance, not execution state.
 - `automation:*` and `ci:*` are explicit workflow controls.
@@ -36,6 +44,7 @@ pull-request state.
 | `type:*`          | All canonical types                      | All canonical types                               | All canonical types                      |
 | `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy          | Ready, blocked, needs-human, post-deploy |
 | `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
+| `review:*`        | Claude, Codex, OpenCode                  | None                                              | None                                     |
 | `agent-option:*`  | Long run                                 | Long run                                          | Long run                                 |
 | Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                              | Quick task, Renovate                     |
 | Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, E2E, snapshots | None                                     |

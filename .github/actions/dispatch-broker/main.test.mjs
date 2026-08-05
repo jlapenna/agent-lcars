@@ -559,6 +559,24 @@ test('healStaleAgentLabels removes the stale label via the API and records evide
   assert.deepEqual(evidence.labels, ['agent:codex']);
 });
 
+test('healStaleAgentLabels resolves the stale label in the review:* namespace for a review-mode intent', async () => {
+  const ledger = createLedger(task);
+  const intent = {
+    sourceId: 'timeline:501',
+    transportRunId: 9001,
+    pipeline: 'claude',
+    mode: 'review',
+    staleAgentLabels: ['review:codex'],
+  };
+  const { client, deleteCalls, saveCalls } = labelHealStubClient({
+    currentLabels: ['review:claude', 'review:codex'],
+  });
+  await healStaleAgentLabels(client, { ledger, comment: { id: 9 } }, intent);
+  assert.equal(deleteCalls.length, 1);
+  assert.match(deleteCalls[0].path, /\/issues\/304\/labels\/review%3Acodex$/u);
+  assert.equal(saveCalls.length, 1);
+});
+
 test('healStaleAgentLabels is a no-op for an intent without staleAgentLabels', async () => {
   const ledger = createLedger(task);
   const { client, deleteCalls, saveCalls } = labelHealStubClient();
@@ -1176,6 +1194,48 @@ test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a l
   }
 });
 
+test('reconcileLedger repair falls through to the review:* namespace on a pull request with no agent:* label (#567)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { client, calls } = reconcileStubClient({
+      issue: {
+        id: 9304,
+        pull_request: {},
+        labels: [{ name: 'review:codex' }],
+        assignees: [],
+      },
+      timeline: [
+        {
+          event: 'labeled',
+          label: { name: 'review:codex' },
+          actor: { login: 'jlapenna' },
+          created_at: '2026-08-04T05:59:00.000Z',
+        },
+      ],
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    const generation = ledger.generations[0];
+    assert.equal(generation.pipeline, 'codex');
+    assert.equal(generation.mode, 'review');
+    assert.ok(
+      calls.some(
+        (call) => call.method === 'GET' && call.path.endsWith('/issues/304'),
+      ),
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
 test('reconcileLedger repair does NOT fire when the label was most recently applied by a non-maintainer (Codex review P1, #520)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {
@@ -1545,7 +1605,10 @@ test('discoverReconcileCandidates includes an unlabeled issue with an active gen
       }
       if (
         url.includes('labels=agent%3Acodex') ||
-        url.includes('labels=agent%3Aopencode')
+        url.includes('labels=agent%3Aopencode') ||
+        url.includes('labels=review%3Aclaude') ||
+        url.includes('labels=review%3Acodex') ||
+        url.includes('labels=review%3Aopencode')
       ) {
         return [];
       }
