@@ -7,17 +7,15 @@ import {
   assertSuccessfulNavigation,
   DEFAULT_ORIGIN,
   DEFAULT_PROJECT,
-  isLoginPath,
   isSessionRole,
   isStorageBackend,
   loadStorageState,
-  matchesTargetLocation,
   normalizeOrigin,
   secretNameForRole,
   SESSION_ROLES,
-  sessionStatus,
   STORAGE_BACKENDS,
   targetUrlFor,
+  verificationStatus,
 } from './saved-session-lib.mjs';
 
 function usage() {
@@ -100,15 +98,8 @@ async function main() {
     });
     assertSuccessfulNavigation(navigation, target);
     const landed = new URL(page.url());
-    if (isLoginPath(landed.pathname)) {
-      console.error(
-        `SESSION_EXPIRED: ${source} redirected ${target.toString()} to ${page.url()}. Re-run the @agent-lcars/console:capture-session Nx target.`,
-      );
-      return 2;
-    }
-
     const session = await readAuthenticatedSession(context, origin);
-    const status = sessionStatus(session, role);
+    const status = verificationStatus(session, role, landed, target);
     if (status === 'expired') {
       console.error(
         `SESSION_EXPIRED: ${source} no longer authenticates. Re-run the @agent-lcars/console:capture-session Nx target.`,
@@ -121,7 +112,7 @@ async function main() {
       );
       return 3;
     }
-    if (!matchesTargetLocation(landed, target)) {
+    if (status === 'redirected') {
       console.error(
         `REDIRECTED: requested ${target.toString()} but landed on ${page.url()}.`,
       );

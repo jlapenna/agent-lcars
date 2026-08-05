@@ -15,6 +15,7 @@ import {
   secretNameForRole,
   sessionStatus,
   targetUrlFor,
+  verificationStatus,
 } from './saved-session-lib.mjs';
 
 const STORAGE_STATE = {
@@ -42,6 +43,19 @@ test('role checks distinguish an admin from any authenticated user', () => {
   assert.equal(sessionStatus(user, 'admin'), 'wrong-role');
   assert.equal(sessionStatus(user, 'user'), 'ok');
   assert.equal(sessionStatus({}, 'user'), 'expired');
+});
+
+test('authenticated login redirects are classified after session and role checks', () => {
+  const target = new URL('https://console.example/sessions');
+  const login = new URL('https://console.example/login');
+  const admin = { user: { id: '1', isAdmin: true } };
+  const user = { user: { id: '2', isAdmin: false } };
+
+  assert.equal(verificationStatus(admin, 'admin', login, target), 'redirected');
+  assert.equal(verificationStatus(user, 'admin', login, target), 'wrong-role');
+  assert.equal(verificationStatus(user, 'user', login, target), 'redirected');
+  assert.equal(verificationStatus({}, 'user', login, target), 'expired');
+  assert.equal(verificationStatus(admin, 'admin', target, target), 'ok');
 });
 
 test('session targets stay on the configured origin', () => {

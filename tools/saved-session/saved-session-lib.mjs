@@ -80,16 +80,18 @@ export function assertSuccessfulNavigation(response, target) {
   }
 }
 
-export function isLoginPath(pathname) {
-  return pathname === '/login' || pathname.startsWith('/login/');
-}
-
 export function sessionStatus(session, role) {
   if (!session?.user) return 'expired';
   if (role === 'admin' && session.user.isAdmin !== true) {
     return 'wrong-role';
   }
   return 'ok';
+}
+
+export function verificationStatus(session, role, landed, target) {
+  const authentication = sessionStatus(session, role);
+  if (authentication !== 'ok') return authentication;
+  return matchesTargetLocation(landed, target) ? 'ok' : 'redirected';
 }
 
 export function secretNameForRole(role) {
