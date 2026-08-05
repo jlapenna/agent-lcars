@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Same gate every worker uses (agent-protocol.md #5): an agent can reason to
 # a genuine conclusion and stop without ever posting it, so a bare "success"
-# job conclusion is never trusted on its own. A run passes if ANY of four
+# job conclusion is never trusted on its own. A run passes if ANY of five
 # deliverable kinds exists:
 #   (a) an open/updated PR referencing #NUM, created or updated since
 #       STARTED_AT (covers new PRs AND pushes to existing ones; on an
@@ -11,12 +11,18 @@
 #       below for why);
 #   (b) the issue was closed since STARTED_AT;
 #   (c) the status:needs-human label is present (the sanctioned blocked/
-#       clarifying-question ending); or
+#       clarifying-question ending);
 #   (d) - only on a reply dispatch (MODE=reply) - EXPECTED_COMMENT_LOGIN
 #       posted a comment on the anchor since STARTED_AT. Gated on reply
 #       mode deliberately: a bare pickup/plan comment alone proves nothing
 #       on an implement dispatch, but a reply's whole sanctioned
-#       deliverable can legitimately BE a comment.
+#       deliverable can legitimately BE a comment; or
+#   (e) - only on a review dispatch (MODE=review) - EXPECTED_COMMENT_LOGIN
+#       submitted a pull request review on #NUM since STARTED_AT. A review
+#       dispatch's anchor is always a pull request and its whole sanctioned
+#       deliverable IS the review verdict, which GitHub records as a
+#       `/pulls/{n}/reviews` object, not an issue comment - clause (d)'s
+#       comments endpoint would never see it.
 #
 # Uses the REST list/view endpoints throughout (not `gh pr list`/`gh issue
 # view --json ... | GraphQL-backed flags) - see docs/bot-identity-formats.md:
@@ -113,6 +119,22 @@ if [ -z "$found" ] && [ "$MODE" = "reply" ]; then
   fi
 fi
 
+# (e) review-mode PR review evidence - the submitted-review analog of
+# clause (d)'s comment check, gated on MODE=review the same way.
+if [ -z "$found" ] && [ "$MODE" = "review" ]; then
+  if reviews_json=$(gh api "repos/$REPO/pulls/$NUM/reviews?per_page=100" 2>&1); then
+    botreviews=$(jq -r \
+      --arg login "$EXPECTED_COMMENT_LOGIN" --arg started "$STARTED_AT" \
+      '[.[] | select(.user.login == $login) | select(.submitted_at >= $started)]
+       | length' <<<"$reviews_json")
+    if [ "${botreviews:-0}" -ge 1 ]; then
+      found="$EXPECTED_COMMENT_LOGIN submitted a pull request review on #$NUM since $STARTED_AT"
+    fi
+  else
+    errors+=("PR review lookup (gh api repos/$REPO/pulls/$NUM/reviews) failed: $reviews_json")
+  fi
+fi
+
 if [ -n "$found" ]; then
   echo "Deliverable evidence: $found"
   exit 0
@@ -125,9 +147,11 @@ if [ "${#errors[@]}" -gt 0 ]; then
 fi
 
 echo "NO_DELIVERABLE=1" >> "${GITHUB_ENV:-/dev/null}"
-reply_clause=""
+mode_clause=""
 if [ "$MODE" = "reply" ]; then
-  reply_clause=", no qualifying comment posted"
+  mode_clause=", no qualifying comment posted"
+elif [ "$MODE" = "review" ]; then
+  mode_clause=", no qualifying pull request review submitted"
 fi
-echo "::error::$AGENT run completed 'successfully' but produced no deliverable on #$NUM (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no status:needs-human label${reply_clause}). All of its local work may be lost."
+echo "::error::$AGENT run completed 'successfully' but produced no deliverable on #$NUM (no PR referencing #$NUM created/updated since $STARTED_AT, issue not closed, no status:needs-human label${mode_clause}). All of its local work may be lost."
 exit 1

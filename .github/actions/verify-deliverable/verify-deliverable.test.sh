@@ -25,6 +25,7 @@ if [ "$1" != "api" ]; then
 fi
 path="$2"
 case "$path" in
+  *"/reviews?"*) key=reviews ;;
   *"/comments?"*) key=comments ;;
   *"/pulls?"*) key=pulls ;;
   *"/issues/"*) key=issue ;;
@@ -43,7 +44,7 @@ if [ -f "$FAKE_GH_DIR/$key.json" ]; then
   cat "$FAKE_GH_DIR/$key.json"
 else
   case "$key" in
-    pulls | comments) echo "[]" ;;
+    pulls | comments | reviews) echo "[]" ;;
     issue) echo '{"state":"open","closed_at":null,"labels":[]}' ;;
   esac
 fi
@@ -213,6 +214,44 @@ JSON
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "expected NO_DELIVERABLE=1 to be recorded"
 )
 
+# --- Case 6b: clause (e) - review-mode PR review evidence ---
+(
+  base_env
+  export MODE=review
+  case_dir="$test_root/review-comment"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/reviews.json" <<'JSON'
+[{"user":{"login":"agent-lcars[bot]"},"submitted_at":"2024-01-02T00:00:00Z"}]
+JSON
+  run_case review-comment
+  test "$status" = 0 || fail "clause (e) should pass on review mode"
+  case "$output" in
+    *"agent-lcars[bot] submitted a pull request review"*) ;;
+    *) fail "clause (e) message missing expected text" ;;
+  esac
+)
+
+# --- Case 6c: clause (e) is NOT evaluated outside review mode, even with a
+# qualifying review present - the whole run must still fail ---
+(
+  base_env
+  export MODE=implement
+  case_dir="$test_root/review-ignored-outside-review"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/reviews.json" <<'JSON'
+[{"user":{"login":"agent-lcars[bot]"},"submitted_at":"2024-01-02T00:00:00Z"}]
+JSON
+  run_case review-ignored-outside-review
+  test "$status" = 1 || fail "a bare review must not satisfy the gate outside review mode"
+  case "$output" in
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message" ;;
+  esac
+  case "$output" in
+    *"no qualifying pull request review submitted"*) fail "review-only clause should not be mentioned outside review mode" ;;
+  esac
+)
+
 # --- Case 7: all four clauses empty (reply mode) - genuine no-deliverable ---
 (
   base_env
@@ -222,6 +261,19 @@ JSON
   case "$output" in
     *"no deliverable"*"no qualifying comment posted"*) ;;
     *) fail "all-empty reply-mode message should name the missing comment clause too" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1"
+)
+
+# --- Case 7b: all clauses empty (review mode) - genuine no-deliverable ---
+(
+  base_env
+  export MODE=review
+  run_case all-empty-review
+  test "$status" = 1 || fail "all-empty review case must fail"
+  case "$output" in
+    *"no deliverable"*"no qualifying pull request review submitted"*) ;;
+    *) fail "all-empty review-mode message should name the missing review clause too" ;;
   esac
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1"
 )

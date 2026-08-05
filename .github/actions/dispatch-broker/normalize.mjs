@@ -96,7 +96,7 @@ function digestQuickTask({ repository, pipeline, title, description }) {
 
 function timelineSource(timeline, eventName, event) {
   const action = event.action;
-  const targetTime = Date.parse(event.issue.updated_at);
+  const targetTime = Date.parse((event.issue ?? event.pull_request).updated_at);
   const candidates = timeline.filter((candidate) => {
     if (candidate.event !== action) return false;
     if (['labeled', 'unlabeled'].includes(action)) {
@@ -342,27 +342,34 @@ function normalizeEvent({
   }
 
   if (eventName === 'pull_request') {
-    if (!['closed', 'reopened'].includes(event.action)) {
+    if (['closed', 'reopened'].includes(event.action)) {
+      if (!issue.id || Number.isNaN(Date.parse(issue.updated_at))) {
+        throw new Error('Malformed pull request anchor event');
+      }
+      return {
+        kind: 'anchor-control',
+        task,
+        control: {
+          kind: event.action,
+          sourceId: `pull-request:${issue.id}:${event.action}:${issue.updated_at}`,
+          occurredAt: issue.updated_at,
+          transportRunId: context.runId,
+          authorization: { observed: true, actor: event.sender?.login },
+          merged: event.action === 'closed' && Boolean(issue.merged),
+        },
+      };
+    }
+    // `labeled`/`unlabeled` falls through to the shared handling below,
+    // shared with the `issues` event's own labeled/unlabeled branch --
+    // the only difference is the resulting intent's `mode`, since a label
+    // added to a pull request means "review this diff", not "implement
+    // this issue".
+    if (!['labeled', 'unlabeled'].includes(event.action)) {
       return { kind: 'ignored', reason: 'unsupported pull request action' };
     }
-    if (!issue.id || Number.isNaN(Date.parse(issue.updated_at))) {
-      throw new Error('Malformed pull request anchor event');
-    }
-    return {
-      kind: 'anchor-control',
-      task,
-      control: {
-        kind: event.action,
-        sourceId: `pull-request:${issue.id}:${event.action}:${issue.updated_at}`,
-        occurredAt: issue.updated_at,
-        transportRunId: context.runId,
-        authorization: { observed: true, actor: event.sender?.login },
-        merged: event.action === 'closed' && Boolean(issue.merged),
-      },
-    };
   }
 
-  if (eventName !== 'issues')
+  if (!['issues', 'pull_request'].includes(eventName))
     return { kind: 'ignored', reason: 'unsupported event' };
   const auth = authorization(
     event.sender?.login,
@@ -475,7 +482,7 @@ function normalizeEvent({
         ...source,
         transportRunId: context.runId,
         pipeline: eventPipeline,
-        mode: 'implement',
+        mode: eventName === 'pull_request' ? 'review' : 'implement',
         reply: '',
         runbook: '',
         context: '',
