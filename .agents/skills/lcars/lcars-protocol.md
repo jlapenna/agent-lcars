@@ -72,6 +72,40 @@ jlapenna`), and use as the assignee in the parking recipe
   login straight against `AGENT_BOT_LOGINS` or `AGENT_FLEET_LOGIN` without
   normalizing it first.
 
+## Review mode — the same `agent:*` label, applied to a pull request
+
+Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`
+dispatches `mode: implement` (§Dispatch above). Tagging a **pull request**
+with the same label dispatches `mode: review` instead — GitHub delivers a
+PR's own `labeled`/`unlabeled` action as a `pull_request` webhook event,
+never an `issues` event, so `normalize.mjs` can tell the two apart from the
+event's own shape alone and doesn't need a distinct label per mode. No new
+label exists or is planned for this — reuse the existing three.
+
+If you are dispatched with `mode: review` in the JSON brief at
+`$AGENT_DISPATCH_CONTEXT`, the anchor is always a pull request and your job
+is to **review its diff, not implement or push changes to it.** Read the
+PR the way the built-in `review` skill would, then submit your findings as
+a real GitHub pull request review (`gh pr review --comment`/
+`--request-changes`/`--approve`, with a body) — not a plain issue comment.
+This repo's deliverable-evidence gate (`verify-deliverable.sh`, per
+agent-protocol.md §5) checks for exactly that: on a review dispatch, a
+submitted PR review from your own bot login is the sanctioned deliverable,
+the same way a posted comment is the sanctioned deliverable on a reply
+dispatch. A takeover/progress comment alone does not count. The rest of the
+protocol still applies unchanged — takeover comment, eyes reactions, one
+edited progress comment, parking on a real blocker, pushing nothing (there
+is nothing to push on a pure review).
+
+**Known gap (#565):** this dispatch path only fires once
+`.github/workflows/agent-router.yml`'s own `pull_request:` trigger listens
+for `labeled`/`unlabeled` in addition to its current `[closed, reopened]` —
+a `.github/workflows/*` edit, which AGENTS.md's hard limits reserve for a
+repository owner's explicit permission. Everything upstream of that one
+trigger line (`normalize.mjs`, `main.mjs`'s timeline fetch,
+`verify-deliverable.sh`) is already wired and tested; only the workflow
+subscription itself is outstanding.
+
 ## Dispatch ledger reconciliation
 
 `.github/workflows/dispatch-reconcile.yml` runs every 30 minutes (offset

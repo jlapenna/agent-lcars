@@ -87,12 +87,22 @@ async function normalize() {
     event.issue = issue;
   }
   let timeline = [];
-  if (
-    eventName === 'issues' &&
-    ['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)
-  ) {
+  // The Issue Timeline API also covers pull requests (a PR number IS an
+  // issue number under the hood), so a pull_request labeled/unlabeled event
+  // -- the review-dispatch counterpart to an issue's labeled/unlabeled --
+  // needs the same timeline fetch normalizeEvent's timelineSource() relies
+  // on to disambiguate which delivery this webhook is. pull_request's own
+  // closed/reopened actions don't need it: normalizeEvent resolves their
+  // sourceId directly from the payload, not the timeline.
+  const wantsTimeline =
+    (eventName === 'issues' &&
+      ['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)) ||
+    (eventName === 'pull_request' &&
+      ['labeled', 'unlabeled'].includes(event.action));
+  if (wantsTimeline) {
+    const numbered = event.issue ?? event.pull_request;
     timeline = await client.requestOk(
-      `${repositoryPath({ repository: context.repository })}/issues/${event.issue.number}/timeline?per_page=100`,
+      `${repositoryPath({ repository: context.repository })}/issues/${numbered.number}/timeline?per_page=100`,
     );
   }
   const normalized = normalizeEvent({

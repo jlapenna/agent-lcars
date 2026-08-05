@@ -53,6 +53,16 @@ function issueEvent(action, overrides = {}) {
   };
 }
 
+function prEvent(action, overrides = {}) {
+  return {
+    action,
+    pull_request: { ...baseIssue, id: 8080 },
+    label: { name: 'agent:codex' },
+    sender: { login: 'jlapenna' },
+    ...overrides,
+  };
+}
+
 test('exact command parsing accepts command lines and rejects prose, quotes, and code', () => {
   assert.deepEqual(parseExactCommand('/codex please continue'), {
     command: '/codex',
@@ -420,6 +430,55 @@ test('pull request close, merge, and reopen become serialized anchor controls', 
     assert.equal(normalized.control.merged, action === 'closed' && merged);
     assert.match(normalized.control.sourceId, /^pull-request:8080:/u);
   }
+});
+
+test('a pull request labeled event dispatches a review-mode intent, not implement', () => {
+  const normalized = normalizeEvent({
+    eventName: 'pull_request',
+    event: prEvent('labeled'),
+    context,
+    timeline: timeline('labeled'),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'intent');
+  assert.equal(normalized.intent.mode, 'review');
+  assert.equal(normalized.intent.pipeline, 'codex');
+});
+
+test('a pull request unlabeled event stays control-evidence, never an intent (same as an issue)', () => {
+  const normalized = normalizeEvent({
+    eventName: 'pull_request',
+    event: prEvent('unlabeled'),
+    context,
+    timeline: timeline('unlabeled'),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'control-evidence');
+  assert.equal(normalized.evidence.label, 'agent:codex');
+});
+
+test('a pull request labeled event requires maintainer authorization, same as an issue label event', () => {
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'pull_request',
+        event: prEvent('labeled', { sender: { login: 'someone-else' } }),
+        context,
+        timeline: timeline('labeled', { actor: { login: 'someone-else' } }),
+        maintainer: 'jlapenna',
+      }),
+    /Unauthorized label dispatch/u,
+  );
+});
+
+test('pull request actions other than closed/reopened/labeled/unlabeled are ignored', () => {
+  const normalized = normalizeEvent({
+    eventName: 'pull_request',
+    event: prEvent('synchronize'),
+    context,
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'ignored');
 });
 
 test('Quick Task opened and labeled transports derive one semantic intent', () => {
