@@ -103,19 +103,6 @@ describe('FleetSnapshotBar', () => {
     expect(screen.getByTestId('queue-alert')).toBeTruthy();
   });
 
-  it('passes raw workflow attempts to queue health without counting them as work', () => {
-    renderBar({
-      ...EMPTY_ACTIVITY,
-      liveRuns: [makeAgentRun({ status: 'running', elapsedSeconds: 10 })],
-      liveRunAttempts: [
-        makeAgentRun({ status: 'running', elapsedSeconds: 10 }),
-        makeAgentRun({ id: 2, status: 'queued', elapsedSeconds: 999 }),
-      ],
-    });
-    expect(screen.getByText('1 live')).toBeTruthy();
-    expect(screen.getByTestId('queue-alert')).toBeTruthy();
-  });
-
   it('renders no queue alert when nothing is stalled', () => {
     renderBar(EMPTY_ACTIVITY);
     expect(screen.queryByTestId('queue-alert')).toBeNull();

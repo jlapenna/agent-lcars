@@ -824,20 +824,6 @@ describe('AgentActivityPanel fleet chip', () => {
 });
 
 describe('AgentActivityPanel queue health alert', () => {
-  it('checks raw queued attempts even when the logical row is running', () => {
-    renderPanel([], {
-      ...EMPTY_ACTIVITY,
-      liveRuns: [
-        makeAgentRun({ id: 3, status: 'running', elapsedSeconds: 30 }),
-      ],
-      liveRunAttempts: [
-        makeAgentRun({ id: 3, status: 'running', elapsedSeconds: 30 }),
-        makeAgentRun({ id: 2, status: 'queued', elapsedSeconds: 600 }),
-      ],
-    });
-    expect(screen.getByTestId('queue-health-alert')).toBeTruthy();
-  });
-
   it('warns when a live run has been queued past the stall threshold', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
