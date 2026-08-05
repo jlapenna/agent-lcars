@@ -51,6 +51,12 @@ const (
 	runnerDeadReasonNotFound   = "not_found"
 )
 
+const (
+	checkpointRestoreRestored   = "restored"
+	checkpointRestoreAbsent     = "absent"
+	checkpointRestoreUnreadable = "unreadable"
+)
+
 var (
 	metricsOnce                   sync.Once
 	orchestratorSchedulerReady    atomic.Bool
@@ -272,7 +278,29 @@ var (
 		Name: "github_runner_autoscaler_fleet_max_runners",
 		Help: "Configured hard maximum runner count across the fleet.",
 	})
+	checkpointWriteFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_checkpoint_write_failures_total",
+		Help: "Total number of failed control-plane checkpoint write attempts.",
+	})
+	checkpointLastWriteTimestamp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_checkpoint_last_write_timestamp_seconds",
+		Help: "Unix timestamp of the last successful control-plane checkpoint write.",
+	})
+	checkpointRestoreStatus = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_checkpoint_restore_status",
+		Help: "One-hot checkpoint restore outcome at boot, by status: restored, absent, or unreadable.",
+	}, []string{"status"})
 )
+
+func setCheckpointRestoreStatus(status string) {
+	for _, candidate := range []string{checkpointRestoreRestored, checkpointRestoreAbsent, checkpointRestoreUnreadable} {
+		value := 0.0
+		if candidate == status {
+			value = 1
+		}
+		checkpointRestoreStatus.WithLabelValues(candidate).Set(value)
+	}
+}
 
 func registerMetrics() {
 	metricsOnce.Do(func() {
@@ -313,6 +341,9 @@ func registerMetrics() {
 			githubUnavailableRunnersGauge,
 			runnerStatusProbeUpGauge,
 			fleetMaxRunnersGauge,
+			checkpointWriteFailures,
+			checkpointLastWriteTimestamp,
+			checkpointRestoreStatus,
 		)
 	})
 }

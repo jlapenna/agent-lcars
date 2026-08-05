@@ -109,6 +109,7 @@ func (s *checkpointStore) flush() {
 	}
 	cp := s.snapshot()
 	if err := writeCheckpoint(s.path, cp); err != nil {
+		checkpointWriteFailures.Inc()
 		if !s.failed {
 			s.failed = true
 			s.logger.Error("Failed to write control-plane checkpoint; a restart will fall back to Docker-derived adoption",
@@ -116,6 +117,7 @@ func (s *checkpointStore) flush() {
 		}
 		return
 	}
+	checkpointLastWriteTimestamp.SetToCurrentTime()
 	if s.failed {
 		s.failed = false
 		s.logger.Info("Control-plane checkpoint writes recovered", slog.String("path", s.path))
