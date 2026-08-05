@@ -20,8 +20,9 @@ test.describe('/agents page @smoke', () => {
     page,
   }) => {
     await page.goto('/');
-    await expect(page.getByRole('link', { name: 'Agents' })).toBeVisible();
-    await page.getByRole('link', { name: 'Agents' }).click();
+    const header = page.locator('.console-header');
+    await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
+    await header.getByRole('link', { name: 'Agents' }).click();
     await page.waitForURL('/agents');
 
     await expect(
@@ -61,7 +62,7 @@ test.describe('/agents page @smoke', () => {
 
     // Cross-link back to the overview (the shared ConsoleHeader nav rail's
     // "Deck" pill, see console-header.tsx).
-    await page.getByRole('link', { name: 'Deck' }).click();
+    await header.getByRole('link', { name: 'Deck' }).click();
     await page.waitForURL('/');
     await expect(
       page.getByRole('heading', { name: 'Command Deck' }),
@@ -80,7 +81,7 @@ test.describe('/agents page @smoke', () => {
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
 
     expect((await header.boundingBox())?.height).toBeLessThanOrEqual(80);
     await expect(workspace.locator('.agents-workspace__operations')).toHaveCSS(
@@ -114,7 +115,7 @@ test.describe('/agents page @smoke', () => {
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
     expect((await header.boundingBox())?.height).toBe(64);
 
     await expect(workspace.locator('.agents-workspace__operations')).toHaveCSS(
@@ -132,12 +133,13 @@ test.describe('/agents page @smoke', () => {
     expect(sectionTops).toEqual([...sectionTops].sort((a, b) => a - b));
 
     await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await expect(
-      page.getByRole('menuitem', { name: 'Sessions' }),
+      menu.getByRole('menuitem', { name: 'Sessions' }),
     ).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Sign out' })).toBeVisible();
     await page.keyboard.press('Escape');
 
     const undersizedControls = await page
