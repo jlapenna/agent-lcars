@@ -476,6 +476,17 @@ describe('AgentActivityPanel recent runs', () => {
 });
 
 describe('AgentActivityPanel live run links (#176)', () => {
+  it('labels the running run wall-clock budget gauge', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [makeAgentRun({ id: 29, status: 'running' })],
+    });
+
+    expect(
+      screen.getByRole('progressbar', { name: 'Run wall-clock budget' }),
+    ).toBeTruthy();
+  });
+
   it('links a live run to its joined item when one exists', () => {
     renderPanel(
       [],

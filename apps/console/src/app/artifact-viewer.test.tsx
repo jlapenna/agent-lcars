@@ -56,7 +56,11 @@ describe('ArtifactPreviewToggle', () => {
 
   it('renders a collapsed toggle for a markdown artifact', () => {
     renderToggle('report.md');
-    expect(screen.getByTestId('artifact-toggle-report.md')).toBeTruthy();
+    expect(
+      screen
+        .getByTestId('artifact-toggle-report.md')
+        .getAttribute('aria-expanded'),
+    ).toBe('false');
     expect(screen.queryByTestId('artifact-preview-report.md')).toBeNull();
   });
 
@@ -71,6 +75,12 @@ describe('ArtifactPreviewToggle', () => {
 
     renderToggle('report.md');
     fireEvent.click(screen.getByTestId('artifact-toggle-report.md'));
+
+    expect(
+      screen
+        .getByTestId('artifact-toggle-report.md')
+        .getAttribute('aria-expanded'),
+    ).toBe('true');
 
     const stub = await screen.findByTestId('markdown-stub');
     expect(stub.textContent).toBe('# Hello artifact');
