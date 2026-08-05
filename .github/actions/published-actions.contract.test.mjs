@@ -211,6 +211,32 @@ for (const [name, expected] of Object.entries(PUBLISHED)) {
   });
 }
 
+// The generic parser skips block-scalar defaults, but
+// snapshot-enforcement-scripts' default `actions` list IS published
+// surface: a consumer that omits the input (sprinkles claude.yml) relies
+// on it naming every post-agent gate. Assert the exact list so silently
+// dropping a gate fails here.
+test('snapshot-enforcement-scripts default gate list is guarded', async () => {
+  const source = await fs.readFile(
+    path.join(actionsDirectory, 'snapshot-enforcement-scripts', 'action.yml'),
+    'utf8',
+  );
+  const lines = source.split(/\r?\n/gu);
+  const start = lines.findIndex((line) => /^ {4}default: \|/u.test(line));
+  assert.notEqual(start, -1, 'actions input must keep a block-scalar default');
+  const entries = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const entry = /^ {6}([a-z-]+)\s*$/u.exec(lines[i]);
+    if (!entry) break;
+    entries.push(entry[1]);
+  }
+  assert.deepEqual(entries, [
+    'verify-deliverable',
+    'report-failure',
+    'telemetry-finalize',
+  ]);
+});
+
 test('every Published action directory exists', async () => {
   for (const name of Object.keys(PUBLISHED)) {
     await fs.access(path.join(actionsDirectory, name, 'action.yml'));
