@@ -32,7 +32,7 @@ import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
-import { PageLoading } from '../page-loading';
+import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
 import { RefreshButton } from '../refresh-button';
@@ -329,7 +329,16 @@ async function AgentsPageShell({ searchParams }: PageProps) {
 // reads separately, so the header never waits on those (see #160).
 export default function AgentsPage({ searchParams }: PageProps) {
   return (
-    <Suspense fallback={<PageLoading rows={5} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="agents"
+          title="Agent Status"
+          className="agents-page-shell"
+          rows={5}
+        />
+      }
+    >
       <AgentsPageShell searchParams={searchParams} />
     </Suspense>
   );

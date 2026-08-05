@@ -24,7 +24,7 @@ import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { ConsoleHeader, DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
 import { formatCompactRelativeTime, formatRelativeTime } from '../format';
-import { PageLoading } from '../page-loading';
+import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
 
 interface PageProps {
@@ -154,7 +154,16 @@ async function InboxPageShell({ searchParams }: PageProps) {
 
 export default function InboxPage({ searchParams }: PageProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="inbox"
+          title="Decision Inbox"
+          className="inbox-page-shell"
+          rows={6}
+        />
+      }
+    >
       <InboxPageShell searchParams={searchParams} />
     </Suspense>
   );

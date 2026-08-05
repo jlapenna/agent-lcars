@@ -19,7 +19,7 @@ import {
 } from '../../lib/session-archive';
 import { groupSessionsByIssue } from '../../lib/session-issue-groups';
 import { ConsoleHeader, DataWarnings } from '../console-header';
-import { PageLoading } from '../page-loading';
+import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
 import { RefreshButton } from '../refresh-button';
@@ -270,7 +270,16 @@ async function SessionsPageShell({ searchParams }: PageProps) {
 // #160).
 export default function SessionsPage({ searchParams }: PageProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="sessions"
+          title="Session Archive"
+          className="sessions-page-shell"
+          rows={6}
+        />
+      }
+    >
       <SessionsPageShell searchParams={searchParams} />
     </Suspense>
   );
