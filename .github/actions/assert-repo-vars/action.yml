@@ -9,11 +9,10 @@ description: >-
 inputs:
   vars:
     description: >-
-      Newline-separated NAME=VALUE lines, e.g.
-      `MAINTAINER_LOGIN=${{ vars.MAINTAINER_LOGIN }}`. Fails, listing
-      every NAME whose VALUE is empty, if any are missing. Lines that are
-      blank or carry no `=` are ignored (a multi-line value's continuation
-      lines).
+      Newline-separated NAME=VALUE lines, with repository-variable values
+      interpolated by the caller. Fails, listing every NAME whose VALUE is
+      empty, if any are missing. Lines that are blank or carry no `=` are
+      ignored (a multi-line value's continuation lines).
     required: true
 
 runs:
