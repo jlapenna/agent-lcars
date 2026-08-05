@@ -1,0 +1,44 @@
+name: Snapshot post-agent enforcement scripts
+description: >-
+  Freeze trusted copies of the post-agent enforcement actions into
+  $RUNNER_TEMP/trusted-actions BEFORE any agent step runs. The agent step
+  has unrestricted Bash on the working tree (and, in a consumer repo, on
+  the runner's _actions download of this repo), so a post-agent gate
+  resolved from either of those locations at gate time could execute an
+  agent-rewritten script with the job's token. The gates must therefore
+  run this snapshot directly (`run: bash "$RUNNER_TEMP/trusted-actions/
+  <name>/<name>.sh"`), never via `uses:` after the agent step. This action
+  itself is safe to call via `uses:` because it runs pre-agent; the copied
+  bytes come from $GITHUB_ACTION_PATH's parent - the working tree when
+  used locally, the pinned-ref fetch when used cross-repo.
+
+inputs:
+  actions:
+    description: >-
+      Newline-separated .github/actions/<name> directories to snapshot.
+    required: false
+    default: |
+      verify-deliverable
+      report-failure
+      telemetry-finalize
+
+outputs:
+  path:
+    description: The trusted snapshot directory ($RUNNER_TEMP/trusted-actions).
+    value: ${{ steps.snapshot.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Snapshot post-agent enforcement scripts
+      id: snapshot
+      shell: bash
+      env:
+        ACTIONS: ${{ inputs.actions }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/trusted-actions"
+        while IFS= read -r name; do
+          [ -z "$name" ] && continue
+          cp -r "$GITHUB_ACTION_PATH/../$name" "$RUNNER_TEMP/trusted-actions/"
+        done <<<"$ACTIONS"
+        echo "path=$RUNNER_TEMP/trusted-actions" >> "$GITHUB_OUTPUT"
