@@ -60,6 +60,7 @@ base_env() {
   export NUM=42
   export STARTED_AT=2024-01-01T00:00:00Z
   export MODE=implement
+  export RUNBOOK=
   export EXPECTED_COMMENT_LOGIN="agent-lcars[bot]"
   export EXCLUDE_PR_AUTHOR=
   export EXCLUDE_COMMENT_ID=
@@ -119,6 +120,32 @@ JSON
     *) fail "excluded-author case should fall through to no-deliverable" ;;
   esac
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "excluded-author case should still be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 2a2: clause (a)'s author exclusion is comma-separated - every
+# listed sibling pipeline login is excluded, an unlisted author still
+# counts ---
+(
+  base_env
+  export EXCLUDE_PR_AUTHOR="claude[bot],agent-lcars[bot]"
+  case_dir="$test_root/pr-excluded-author-list"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}},{"number":8,"title":"Also #42","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case pr-excluded-author-list
+  test "$status" = 1 || fail "every login in a comma-separated exclusion list must be excluded"
+)
+(
+  base_env
+  export EXCLUDE_PR_AUTHOR="claude[bot],agent-lcars[bot]"
+  case_dir="$test_root/pr-unlisted-author-passes"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":9,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"codex[bot]"}}]
+JSON
+  run_case pr-unlisted-author-passes
+  test "$status" = 0 || fail "an author absent from the exclusion list must still satisfy clause (a)"
 )
 
 # --- Case 2b: clause (a) does NOT exclude by author on a reply dispatch -
@@ -189,6 +216,26 @@ JSON
   case "$output" in
     *"agent-lcars[bot] posted a comment"*) ;;
     *) fail "clause (d) message missing expected text" ;;
+  esac
+)
+
+# --- Case 5b: clause (d) also fires on a runbook dispatch (implement mode
+# but RUNBOOK non-empty) - a runbook's sanctioned deliverable can be a
+# summary comment ---
+(
+  base_env
+  export MODE=implement
+  export RUNBOOK=unsticking-stuck-prs
+  case_dir="$test_root/runbook-comment"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":600,"user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case runbook-comment
+  test "$status" = 0 || fail "clause (d) should pass on a runbook dispatch"
+  case "$output" in
+    *"agent-lcars[bot] posted a comment"*) ;;
+    *) fail "runbook clause (d) message missing expected text" ;;
   esac
 )
 

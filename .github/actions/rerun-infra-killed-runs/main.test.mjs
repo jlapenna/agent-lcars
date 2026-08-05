@@ -208,6 +208,40 @@ test('a per-candidate rerun failure is reported but never blocks scanning the re
   assert.deepEqual(result, { scanned: 2, rerun: 1 });
 });
 
+test('scans the workflow named by workflowFile instead of the ci.yml default', async () => {
+  const run = workflowRun({ id: 9 });
+  const api = fakeApi([
+    {
+      path: `${ROOT}/actions/workflows/validate.yml/runs`,
+      data: { workflow_runs: [run] },
+    },
+    {
+      path: `${ROOT}/actions/runs/9/jobs`,
+      data: { jobs: [infraKilledJob('repository validation')] },
+    },
+    {
+      path: `${ROOT}/actions/runs/9/rerun-failed-jobs`,
+      method: 'POST',
+      data: {},
+    },
+    { path: `${ROOT}/commits/sha-9/pulls`, data: [] },
+  ]);
+
+  const result = await scanAndRerun({
+    api,
+    repository: REPO,
+    workflowFile: 'validate.yml',
+  });
+
+  assert.deepEqual(result, { scanned: 1, rerun: 1 });
+  assert.ok(
+    api.calls.every(
+      (call) => !call.basePath.includes('/actions/workflows/ci.yml/'),
+    ),
+    'the ci.yml default must not be queried when workflowFile overrides it',
+  );
+});
+
 let failures = 0;
 for (const { name, run } of tests) {
   try {

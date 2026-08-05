@@ -6,6 +6,13 @@ inputs:
   agent-login:
     description: Git identity used for agent commits.
     required: true
+  shared-cache:
+    description: >-
+      'auto' (default) points Nx at /shared-cache/nx when the runner mounts
+      /shared-cache; 'off' never does - for a consumer runner where the
+      mount exists but is not meant for Nx.
+    required: false
+    default: auto
 outputs:
   started-at:
     description: UTC timestamp used by the deliverable gate.
@@ -30,6 +37,7 @@ runs:
     # Same-host cache sharing with the CI runner: presence-gated so the job
     # still works on a runner container without the mount.
     - name: Point Nx at the shared host cache when present
+      if: inputs.shared-cache != 'off'
       shell: bash
       run: |
         if [ -d /shared-cache ]; then

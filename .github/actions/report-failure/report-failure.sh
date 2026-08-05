@@ -17,7 +17,7 @@ MESSAGE_PREFIX="${MESSAGE_PREFIX:-}"
 REASON="${REASON:-}"
 
 if [ "$JOB_STATUS" = "cancelled" ]; then
-  MSG="was cancelled (likely hit the 90-minute job timeout)"
+  MSG="was cancelled (likely hit the job's timeout-minutes limit)"
 else
   MSG="failed"
 fi
