@@ -512,6 +512,39 @@ describe('retriggerIssue (pipeline routing)', () => {
     expect(addLabels).not.toHaveBeenCalled();
     expect(createWorkflowDispatch).toHaveBeenCalled();
   });
+
+  it("retries without caller_id when the target repo's router predates that input", async () => {
+    const { createWorkflowDispatch } = mockOctokit(['agent:claude']);
+    createWorkflowDispatch
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Unexpected inputs provided: ["caller_id"]'), {
+          status: 422,
+        }),
+      )
+      .mockResolvedValueOnce({});
+
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
+
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
+    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        inputs: { issue: '2709', pipeline: 'claude', mode: 'implement' },
+      }),
+    );
+  });
+
+  it('propagates a GitHub error unrelated to unexpected inputs', async () => {
+    const { createWorkflowDispatch } = mockOctokit(['agent:claude']);
+    createWorkflowDispatch.mockRejectedValue(
+      Object.assign(new Error('Server Error'), { status: 500 }),
+    );
+
+    await expect(
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
+    ).rejects.toThrow('Server Error');
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('reassignPipeline', () => {
