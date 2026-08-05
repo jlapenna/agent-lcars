@@ -81,6 +81,9 @@ jobs:
       - name: Test image publish path-based routing (#441)
         run: node --test .github/actions/plan-image-publish/*.test.mjs
 
+      - name: Test infra-killed CI run detection and rerun (#536)
+        run: node --test .github/actions/rerun-infra-killed-runs/*.test.mjs
+
       - name: Test deliverable verification
         run: bash .github/actions/verify-deliverable/verify-deliverable.test.sh
 
@@ -141,7 +144,7 @@ jobs:
     # CI_RUNNER_LABEL, not DEFAULT_RUNNER_LABEL -- see the `verify` job
     # above for why (#451).
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_RUNNER_LABEL }}
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v7
