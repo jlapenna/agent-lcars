@@ -1,0 +1,55 @@
+name: 'Merge live base for testing'
+description: >-
+  Merges the freshly fetched live base branch into the already-checked-out,
+  immutable pull-request head commit, so CI tests the state that will
+  actually land on merge instead of a possibly-stale refs/pull/N/merge ref
+  or the bare branch head. No-op unless the invoking step's own `if:`
+  restricts it to `github.event_name == 'pull_request'` — merge/push runs
+  have no PR base to merge and must skip this entirely.
+  Deterministic, not probabilistic: it merges whatever `origin/<base-ref>`
+  actually is at the moment this runs, so there is nothing to poll or tune
+  (no attempt count, no commits-behind slack). A conflict fails the step
+  immediately via `git merge`'s own exit code — this never silently tests a
+  misleading tree.
+inputs:
+  base-ref:
+    description: >-
+      The pull request's base branch name to merge, e.g.
+      github.event.pull_request.base.ref. Must be a valid branch name;
+      checked with `git check-ref-format` before use.
+    required: true
+outputs:
+  original_head:
+    description: 'SHA of the checked-out PR head commit before merging.'
+    value: ${{ steps.merge.outputs.original_head }}
+  live_base:
+    description: 'SHA of the live base branch that was fetched and merged in.'
+    value: ${{ steps.merge.outputs.live_base }}
+  tested_head:
+    description: 'SHA of the resulting merge commit that CI actually tests.'
+    value: ${{ steps.merge.outputs.tested_head }}
+runs:
+  using: 'composite'
+  steps:
+    - id: merge
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        set -u
+        git check-ref-format --branch "$BASE_REF" >/dev/null
+        original_head=$(git rev-parse HEAD)
+        git fetch --no-tags origin "$BASE_REF"
+        live_base=$(git rev-parse "origin/$BASE_REF")
+        git \
+          -c user.name=github-actions[bot] \
+          -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+          merge --no-ff --no-edit "origin/$BASE_REF" \
+          -m "ci: merge live $BASE_REF for testing"
+        tested_head=$(git rev-parse HEAD)
+        echo "Testing original head $original_head with live $BASE_REF at $live_base (checkout $tested_head)."
+        {
+          echo "original_head=$original_head"
+          echo "live_base=$live_base"
+          echo "tested_head=$tested_head"
+        } >> "$GITHUB_OUTPUT"

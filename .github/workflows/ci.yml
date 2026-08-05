@@ -93,6 +93,9 @@ jobs:
       - name: Test repo-variable assertion
         run: bash .github/actions/assert-repo-vars/assert.test.sh
 
+      - name: Test live-base merging
+        run: bash .github/actions/merge-live-base/merge-live-base.test.sh
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
 
