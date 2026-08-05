@@ -271,6 +271,44 @@ const AGENT_ROUTER_WORKFLOW = 'agent-router.yml';
 const DISPATCH_CALLER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
+// A watched repo's own agent-router.yml is a separate file that repo
+// maintains independently (this codebase deliberately keeps no shared
+// build context with a consuming repo - see AGENTS.md), so a newly added
+// *optional* workflow_dispatch input like `caller_id` can reach a repo
+// whose copy of the workflow predates it. GitHub rejects the whole
+// dispatch with a 422 naming exactly the inputs it doesn't recognize
+// (`Unexpected inputs provided: ["caller_id"]`) rather than ignoring them.
+// Since every optional input this call sends has a documented fallback on
+// the receiving end (see normalize.mjs's resolveCallerSourceId), retrying
+// once without the rejected keys degrades gracefully instead of leaving
+// retrigger permanently broken for a lagging repo.
+const UNEXPECTED_INPUTS_PATTERN = /Unexpected inputs provided: (\[.*\])/u;
+
+function withoutUnexpectedInputs(
+  error: unknown,
+  inputs: Record<string, string>,
+): Record<string, string> | undefined {
+  const message = error instanceof Error ? error.message : undefined;
+  const match = message ? UNEXPECTED_INPUTS_PATTERN.exec(message) : null;
+  if (!match) return undefined;
+  let unexpectedKeys: unknown;
+  try {
+    unexpectedKeys = JSON.parse(match[1]);
+  } catch {
+    return undefined;
+  }
+  if (
+    !Array.isArray(unexpectedKeys) ||
+    unexpectedKeys.length === 0 ||
+    !unexpectedKeys.every((key): key is string => typeof key === 'string')
+  ) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(inputs).filter(([key]) => !unexpectedKeys.includes(key)),
+  );
+}
+
 // dispatchUnstickPrs is console-level ops. A caller with a concrete item
 // (the card's per-PR "Unstick") passes that item's repo; the bare header
 // variant omits it and falls back to the primary watched repo.
@@ -355,18 +393,31 @@ export async function retriggerIssue(
     }
   }
 
-  await octokit.rest.actions.createWorkflowDispatch({
-    owner: repo.owner,
-    repo: repo.name,
-    workflow_id: AGENT_ROUTER_WORKFLOW,
-    ref: DEFAULT_BRANCH,
-    inputs: {
-      issue: String(issueNumber),
-      pipeline,
-      mode: 'implement',
-      caller_id: callerId,
-    },
-  });
+  const inputs = {
+    issue: String(issueNumber),
+    pipeline,
+    mode: 'implement',
+    caller_id: callerId,
+  };
+  try {
+    await octokit.rest.actions.createWorkflowDispatch({
+      owner: repo.owner,
+      repo: repo.name,
+      workflow_id: AGENT_ROUTER_WORKFLOW,
+      ref: DEFAULT_BRANCH,
+      inputs,
+    });
+  } catch (error) {
+    const retryInputs = withoutUnexpectedInputs(error, inputs);
+    if (!retryInputs) throw error;
+    await octokit.rest.actions.createWorkflowDispatch({
+      owner: repo.owner,
+      repo: repo.name,
+      workflow_id: AGENT_ROUTER_WORKFLOW,
+      ref: DEFAULT_BRANCH,
+      inputs: retryInputs,
+    });
+  }
 }
 
 // The console's "hand this off to a different agent" action (#143) - e.g. a
