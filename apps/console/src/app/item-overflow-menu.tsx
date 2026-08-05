@@ -3,6 +3,7 @@
 import { ActionIcon, Menu, Text } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
+import { IconDotsVertical } from '@tabler/icons-react';
 import { useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
@@ -147,7 +148,7 @@ export function ItemOverflowMenu({
           aria-label={`More actions for #${item.number}`}
           style={{ flexShrink: 0 }}
         >
-          ⋮
+          <IconDotsVertical aria-hidden="true" size={18} stroke={1.7} />
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
