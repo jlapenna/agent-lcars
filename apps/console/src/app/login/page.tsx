@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { auth, signIn, signOut } from '../../auth';
+import { consoleDescription } from '../../lib/deployment';
 import { PageLoading } from '../page-loading';
 
 async function LoginPageContent({
@@ -32,7 +33,7 @@ async function LoginPageContent({
       <Stack align="center" gap="xs" style={{ maxWidth: 360 }}>
         <Title order={1}>Agent LCARS</Title>
         <Text c="dimmed" ta="center" mb="md">
-          supersprinklesracing/sprinkles &mdash; Claude issue agent activity
+          {consoleDescription()}
         </Text>
         {accessDenied && !session && (
           <Text ta="center" size="sm" data-testid="login-unauthorized">

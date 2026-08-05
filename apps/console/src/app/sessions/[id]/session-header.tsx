@@ -15,7 +15,10 @@ import {
 } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import { shareArtifactUrl } from '../../../lib/deployment';
+import {
+  agentSessionResumeScript,
+  shareArtifactUrl,
+} from '../../../lib/deployment';
 import { primaryWatchedRepo } from '../../../lib/github-client';
 import { sessionDurationSeconds } from '../../../lib/session-archive';
 import {
@@ -220,7 +223,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
               archived — run this on a workstation checkout to resume it there.
             </Text>
             <TakeoverCommand
-              command={`~/p/members/tools/claude-agent-session.sh resume-archive ${doc.transcriptGcsUri}`}
+              command={`${agentSessionResumeScript()} resume-archive ${doc.transcriptGcsUri}`}
             />
           </Stack>
         )}

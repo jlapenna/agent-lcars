@@ -188,7 +188,7 @@ describe('SessionHeader', () => {
 
     expect(
       screen.getByText(
-        '~/p/members/tools/claude-agent-session.sh resume-archive gs://supersprinklesracing-agent-session-transcripts/runs/999/agent-1.jsonl',
+        'tools/claude-agent-session.sh resume-archive gs://supersprinklesracing-agent-session-transcripts/runs/999/agent-1.jsonl',
       ),
     ).toBeTruthy();
     expect(

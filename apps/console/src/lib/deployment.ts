@@ -46,6 +46,21 @@ export function agentFleetLogin(): string {
   return optional('AGENT_LCARS_FLEET_GITHUB_LOGIN') ?? 'jclaw-bot';
 }
 
+/** Copy identifying this console deployment in metadata and auth surfaces. */
+export function consoleDescription(): string {
+  return 'jlapenna/agent-lcars — multi-agent issue activity';
+}
+
+/** Repository that contains and deploys this console. */
+export function consoleRepositoryUrl(): string {
+  return 'https://github.com/jlapenna/agent-lcars';
+}
+
+/** Checkout-relative script used to restore archived Claude transcripts. */
+export function agentSessionResumeScript(): string {
+  return 'tools/claude-agent-session.sh';
+}
+
 /**
  * Base URL the share-media skill's files are served from. Files land at
  * `~/share/<conversation-id>/<filename>` on the originating host and are

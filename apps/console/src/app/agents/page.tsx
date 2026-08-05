@@ -12,6 +12,7 @@ import {
   getCachedAgentActivity,
   oldestFetchedAt,
 } from '../../lib/dashboard-data';
+import { consoleRepositoryUrl } from '../../lib/deployment';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
@@ -249,6 +250,7 @@ function AgentsUtilities({
       />
       <RefreshButton compact bustsGithubCache />
       <QueueUtilityMenu
+        repositoryUrl={consoleRepositoryUrl()}
         includeNavigation={includeNavigation}
         signOutControl={<SignOutButton />}
       />
