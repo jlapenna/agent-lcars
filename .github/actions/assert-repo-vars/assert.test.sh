@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/assert.sh"
+action_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script="$action_dir/assert.sh"
+
+# The runner evaluates expression syntax anywhere in action metadata, including
+# descriptions. Repository vars are unavailable while loading a composite.
+if grep -Fq '${{ vars.' "$action_dir/action.yml"; then
+  echo "FAIL: action metadata must not reference the vars expression context" >&2
+  exit 1
+fi
 
 run() {
   set +e
