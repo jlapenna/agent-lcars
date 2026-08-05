@@ -132,6 +132,16 @@ type Scaler struct {
 	bootCheckpoint map[string]checkpointRunner
 }
 
+// Docker's SSH ConnectTimeout only bounds the TCP connection. These caller
+// deadlines also cover SSH banner exchange and a daemon that accepts a
+// request but never completes it.
+const (
+	dockerInspectTimeout            = 10 * time.Second
+	dockerContainerOperationTimeout = 30 * time.Second
+	dockerContainerWaitTimeout      = 2 * time.Minute
+	dockerImagePullTimeout          = 90 * time.Second
+)
+
 // beginTeardown marks a runner as being removed. Must be called BEFORE the
 // call that drops it from a.runners, so the untracked window is never
 // observable without the mark. endTeardown clears it once the container is
@@ -1919,8 +1929,9 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	}
 	hostConfig := runnerHostConfig(binds, groupAdd, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize)
 
+	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
 	c, err := client.ContainerCreate(
-		ctx,
+		createCtx,
 		&container.Config{
 			Image: a.runnerImage,
 			User:  "runner",
@@ -1938,6 +1949,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		nil, nil,
 		name,
 	)
+	cancelCreate()
 	if err != nil {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()
 		// GenerateJitRunnerConfig above already registered `name` with GitHub.
@@ -1956,14 +1968,20 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to create runner container on host %q: %w", host, err)
 	}
 
-	if err := client.ContainerStart(ctx, c.ID, container.StartOptions{}); err != nil {
+	startCtx, cancelStart := context.WithTimeout(ctx, dockerContainerOperationTimeout)
+	err = client.ContainerStart(startCtx, c.ID, container.StartOptions{})
+	cancelStart()
+	if err != nil {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()
 		// Same ghost-registration gap and detached-context reasoning as
 		// above, plus the container itself now exists (created but never
 		// started) and needs cleanup too.
 		cleanupCtx := context.WithoutCancel(ctx)
 		a.deregisterRunner(cleanupCtx, name)
-		if rmErr := client.ContainerRemove(cleanupCtx, c.ID, container.RemoveOptions{Force: true}); rmErr != nil {
+		removeCtx, cancelRemove := context.WithTimeout(cleanupCtx, dockerContainerOperationTimeout)
+		rmErr := client.ContainerRemove(removeCtx, c.ID, container.RemoveOptions{Force: true})
+		cancelRemove()
+		if rmErr != nil {
 			a.logger.Warn("Failed to remove container that failed to start", slog.String("host", host), slog.String("containerID", c.ID), slog.String("error", rmErr.Error()))
 		}
 		return "", fmt.Errorf("failed to start runner container on host %q: %w", host, err)
@@ -2016,7 +2034,10 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 	// So: always pull for a tag. Layers are already local in the common
 	// case, making this a manifest check rather than a transfer.
 	if isDigestRef(a.runnerImage) {
-		if _, err := client.ImageInspect(ctx, a.runnerImage); err == nil {
+		inspectCtx, cancelInspect := context.WithTimeout(ctx, dockerInspectTimeout)
+		_, err := client.ImageInspect(inspectCtx, a.runnerImage)
+		cancelInspect()
+		if err == nil {
 			return nil
 		} else if !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("failed to inspect runner image %q on host %q: %w", a.runnerImage, host, err)
@@ -2025,11 +2046,18 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 
 	a.logger.Info("Refreshing runner image on selected host",
 		slog.String("host", host), slog.String("image", a.runnerImage))
-	pull, err := client.ImagePull(ctx, a.runnerImage, image.PullOptions{})
+	// Keep the deadline alive while consuming the response: Docker can accept
+	// ImagePull and then wedge part-way through the progress stream.
+	pullCtx, cancelPull := context.WithTimeout(ctx, dockerImagePullTimeout)
+	pull, err := client.ImagePull(pullCtx, a.runnerImage, image.PullOptions{})
 	if err != nil {
+		cancelPull()
 		return fmt.Errorf("failed to pull runner image %q on host %q: %w", a.runnerImage, host, err)
 	}
-	defer func() { _ = pull.Close() }()
+	defer func() {
+		_ = pull.Close()
+		cancelPull()
+	}()
 	// Docker streams pull progress as newline-delimited JSON and reports
 	// registry/auth/manifest failures INSIDE that stream -- ImagePull itself
 	// returns a nil error for them. Discarding the body would swallow that,
@@ -2058,7 +2086,10 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 			return fmt.Errorf("pull of runner image %q on host %q failed: %s", a.runnerImage, host, detail)
 		}
 	}
-	if _, err := client.ImageInspect(ctx, a.runnerImage); err != nil {
+	inspectCtx, cancelInspect := context.WithTimeout(ctx, dockerInspectTimeout)
+	_, err = client.ImageInspect(inspectCtx, a.runnerImage)
+	cancelInspect()
+	if err != nil {
 		return fmt.Errorf("runner image %q is still unavailable on host %q after pull: %w", a.runnerImage, host, err)
 	}
 	logDigests(ctx, a.logger, DockerHost{Name: host, Client: client}, a.runnerImage)
@@ -2070,9 +2101,11 @@ func (a *Scaler) checkHostRunnerLimit(ctx context.Context, client *dockerclient.
 	if !limited {
 		return nil
 	}
-	runners, err := client.ContainerList(ctx, container.ListOptions{
+	listCtx, cancelList := context.WithTimeout(ctx, dockerInspectTimeout)
+	runners, err := client.ContainerList(listCtx, container.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("label", runnerScaleSetLabelKey)),
 	})
+	cancelList()
 	if err != nil {
 		return fmt.Errorf("rechecking runner limit on host %q: %w", host, err)
 	}
@@ -2114,7 +2147,8 @@ for d in /home/runner/_work /home/runner/externals; do
   fi
 done
 `
-	resp, err := client.ContainerCreate(ctx,
+	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
+	resp, err := client.ContainerCreate(createCtx,
 		&container.Config{
 			Image:      a.runnerImage,
 			User:       "root",
@@ -2129,16 +2163,24 @@ done
 		},
 		nil, nil, "",
 	)
+	cancelCreate()
 	if err != nil {
 		return fmt.Errorf("creating workdir-chown helper on host %q: %w", host, err)
 	}
 	defer func() {
-		_ = client.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true})
+		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(ctx), dockerContainerOperationTimeout)
+		defer cancelRemove()
+		_ = client.ContainerRemove(removeCtx, resp.ID, container.RemoveOptions{Force: true})
 	}()
-	if err := client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	startCtx, cancelStart := context.WithTimeout(ctx, dockerContainerOperationTimeout)
+	err = client.ContainerStart(startCtx, resp.ID, container.StartOptions{})
+	cancelStart()
+	if err != nil {
 		return fmt.Errorf("starting workdir-chown helper on host %q: %w", host, err)
 	}
-	statusCh, errCh := client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waitCtx, cancelWait := context.WithTimeout(ctx, dockerContainerWaitTimeout)
+	defer cancelWait()
+	statusCh, errCh := client.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		if err != nil {
@@ -2354,7 +2396,8 @@ else
 fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
 
-	resp, err := client.ContainerCreate(ctx,
+	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
+	resp, err := client.ContainerCreate(createCtx,
 		&container.Config{
 			Image:      a.runnerImage,
 			User:       "root",
@@ -2370,16 +2413,24 @@ fi
 		},
 		nil, nil, "",
 	)
+	cancelCreate()
 	if err != nil {
 		return fmt.Errorf("creating workdir-sweep helper on host %q: %w", host, err)
 	}
 	defer func() {
-		_ = client.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true})
+		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(ctx), dockerContainerOperationTimeout)
+		defer cancelRemove()
+		_ = client.ContainerRemove(removeCtx, resp.ID, container.RemoveOptions{Force: true})
 	}()
-	if err := client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	startCtx, cancelStart := context.WithTimeout(ctx, dockerContainerOperationTimeout)
+	err = client.ContainerStart(startCtx, resp.ID, container.StartOptions{})
+	cancelStart()
+	if err != nil {
 		return fmt.Errorf("starting workdir-sweep helper on host %q: %w", host, err)
 	}
-	statusCh, errCh := client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waitCtx, cancelWait := context.WithTimeout(ctx, dockerContainerWaitTimeout)
+	defer cancelWait()
+	statusCh, errCh := client.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		if err != nil {

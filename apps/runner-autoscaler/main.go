@@ -99,7 +99,9 @@ func equalLabelSets(a, b map[string]bool) bool {
 // the fact by diffing digests across pulls, which today's logs don't
 // capture at all.
 func logDigests(ctx context.Context, logger *slog.Logger, host DockerHost, runnerImage string) {
-	inspect, err := host.Client.ImageInspect(ctx, runnerImage)
+	inspectCtx, cancel := context.WithTimeout(ctx, dockerInspectTimeout)
+	defer cancel()
+	inspect, err := host.Client.ImageInspect(inspectCtx, runnerImage)
 	if err != nil {
 		logger.Warn("Pulled runner image but could not inspect it for a digest", slog.String("host", host.Name), slog.String("image", runnerImage), slog.String("error", err.Error()))
 		return
