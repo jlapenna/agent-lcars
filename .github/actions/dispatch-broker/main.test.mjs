@@ -1066,6 +1066,78 @@ test('reconcileLedger repair does NOT fire when the issue timeline has no matchi
   }
 });
 
+test('reconcileLedger repair pages through the full timeline: a non-maintainer relabel past the first 100 entries still blocks the repair (Codex review P1 follow-up, #520)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    // Page 1: 100 old, irrelevant timeline events plus a maintainer-applied
+    // labeling of agent:codex -- what a single per_page=100 read alone
+    // would see and (wrongly) trust as "most recent".
+    const page1 = Array.from({ length: 99 }, (_, index) => ({
+      event: 'commented',
+      created_at: `2026-08-01T00:${String(index).padStart(2, '0')}:00.000Z`,
+    }));
+    page1.push({
+      event: 'labeled',
+      label: { name: 'agent:codex' },
+      actor: { login: 'jlapenna' },
+      created_at: '2026-08-04T05:00:00.000Z',
+    });
+    // Page 2: a genuinely later re-application of the same label by a
+    // non-maintainer -- the actual most-recent event, only reachable by
+    // paging past the first 100.
+    const page2 = [
+      {
+        event: 'unlabeled',
+        label: { name: 'agent:codex' },
+        actor: { login: 'jlapenna' },
+        created_at: '2026-08-04T05:30:00.000Z',
+      },
+      {
+        event: 'labeled',
+        label: { name: 'agent:codex' },
+        actor: { login: 'some-other-collaborator' },
+        created_at: '2026-08-04T05:59:00.000Z',
+      },
+    ];
+    const calls = [];
+    const client = {
+      requestOk: async (path, options = {}) => {
+        calls.push({ path, method: options.method ?? 'GET' });
+        if (path.includes(`/issues/${task.issue}/timeline`)) {
+          const pageParam = new URL(`https://x${path}`).searchParams.get(
+            'page',
+          );
+          return pageParam === '2' ? page2 : page1;
+        }
+        if (path.endsWith(`/issues/${task.issue}`)) {
+          return { id: 9304, labels: [{ name: 'agent:codex' }] };
+        }
+        throw new Error(`Unexpected API path: ${path}`);
+      },
+    };
+    const ledger = createLedger(task);
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+
+    assert.equal(
+      ledger.generations.length,
+      0,
+      'the true most-recent (non-maintainer) label application lives on page 2 and must block the repair',
+    );
+    assert.ok(
+      calls.some((call) => call.path.includes('page=2')),
+      'expected the repair to actually page past the first 100 timeline entries',
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
 test('reconcileLedger repair is idempotent: a second reconcile pass creates no second generation', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {

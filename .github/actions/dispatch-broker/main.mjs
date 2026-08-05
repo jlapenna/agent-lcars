@@ -27,6 +27,7 @@ import {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  listAll,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   loadLedger,
@@ -353,6 +354,14 @@ async function trackMissingRun(client, loaded, generation, now) {
 // require that actor to be the configured maintainer; an unresolvable or
 // non-maintainer authorship leaves the repair undone (fails closed, same
 // as the live path) rather than guessing.
+//
+// Must page through the ENTIRE timeline (listAll), not just its first
+// page (Codex review, P1 follow-up): an issue with over 100 timeline
+// events could have the label's true most-recent application sitting on
+// a later page than a single `per_page=100` GET ever sees, so a
+// single-page read can find and trust a stale entry instead -- wrong in
+// either direction (authorizing on a superseded maintainer application,
+// or rejecting on a superseded non-maintainer one).
 async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   const ledger = loaded.ledger;
   const task = ledger.task;
@@ -362,8 +371,9 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   if (!pipeline) return;
   const labelName = `agent:${pipeline}`;
   const maintainer = env('MAINTAINER_LOGIN', false);
-  const timeline = await client.requestOk(
-    `${root}/issues/${task.issue}/timeline?per_page=100`,
+  const timeline = await listAll(
+    client,
+    `${root}/issues/${task.issue}/timeline`,
   );
   const labelApplications = timeline
     .filter(
