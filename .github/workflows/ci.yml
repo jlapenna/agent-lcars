@@ -90,17 +90,13 @@ jobs:
       - name: Test failure reporting
         run: bash .github/actions/report-failure/report-failure.test.sh
 
+      - name: Test repo-variable assertion
+        run: bash .github/actions/assert-repo-vars/assert.test.sh
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
-      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-node-pnpm
 
       - name: Check dependency integrity
         run: pnpm check:dependencies
@@ -151,12 +147,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/setup-node-pnpm
 
       # firebase-tools' Firestore emulator requires Java 21+; ubuntu-latest's
       # default `java` on PATH is only 17 (confirmed the hard way: this job
@@ -167,9 +158,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium

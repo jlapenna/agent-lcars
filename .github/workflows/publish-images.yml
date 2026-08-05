@@ -227,15 +227,7 @@ jobs:
           go-version-file: apps/runner-autoscaler/go.mod
           cache-dependency-path: apps/runner-autoscaler/go.mod
 
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-node-pnpm
 
       # Whole workspace, not a per-project list. AGENTS.md requires the
       # affected test/typecheck/build targets before publishing, and the

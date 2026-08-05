@@ -1,0 +1,26 @@
+name: Assert repo variables
+description: >-
+  Fail fast - naming every missing variable in one ::error:: line - when
+  required repo variables are unset, instead of the job failing later,
+  deeper, on the first use of an empty value. A composite action cannot
+  read `vars.*` itself, so the caller passes NAME=VALUE lines with the
+  values already interpolated.
+
+inputs:
+  vars:
+    description: >-
+      Newline-separated NAME=VALUE lines, e.g.
+      `MAINTAINER_LOGIN=${{ vars.MAINTAINER_LOGIN }}`. Fails, listing
+      every NAME whose VALUE is empty, if any are missing. Lines that are
+      blank or carry no `=` are ignored (a multi-line value's continuation
+      lines).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Assert required repo variables are set
+      shell: bash
+      env:
+        VARS: ${{ inputs.vars }}
+      run: bash "$GITHUB_ACTION_PATH/assert.sh"
