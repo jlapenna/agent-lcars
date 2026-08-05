@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func testCheckpoint() checkpointFile {
@@ -371,6 +373,7 @@ func TestQuiesceCheckpointsEvenIfGenerationHangs(t *testing.T) {
 	store.setSnapshot(orchestratorSnapshot(runtimes, newFleetCoordinator(0, nil, nil, nil, nil, nil)))
 
 	start := time.Now()
+	timeoutsBefore := testutil.ToFloat64(quiesceGenerationTimeouts)
 	// A done channel that never closes, standing in for a listener wedged on
 	// a black-holed connection.
 	quiesce(context.Background(), runtimeGeneration{cancel: func() {}, done: make(chan struct{})}, runtimes, store, logger)
@@ -381,6 +384,38 @@ func TestQuiesceCheckpointsEvenIfGenerationHangs(t *testing.T) {
 	}
 	if _, err := loadCheckpoint(path); err != nil {
 		t.Fatalf("expected a checkpoint despite the hung generation: %v", err)
+	}
+	if got := testutil.ToFloat64(quiesceGenerationTimeouts) - timeoutsBefore; got != 1 {
+		t.Fatalf("quiesce generation timeout counter increased by %v, want 1", got)
+	}
+}
+
+type blockingMessageSession struct{}
+
+func (blockingMessageSession) Close(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// A cancelled listener context must not skip GitHub's server-side session
+// release, but a black-holed Close must still return inside its own budget.
+func TestCloseMessageSessionSurvivesParentCancellationAndIsBounded(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	const timeout = 25 * time.Millisecond
+
+	started := time.Now()
+	err := closeMessageSession(parent, blockingMessageSession{}, timeout)
+	elapsed := time.Since(started)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("closeMessageSession error = %v, want context deadline exceeded", err)
+	}
+	if elapsed < timeout/2 {
+		t.Fatalf("close returned after %v; cancelled parent leaked into close context", elapsed)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("close took %v; expected its %v deadline to bound it", elapsed, timeout)
 	}
 }
 

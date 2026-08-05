@@ -256,6 +256,10 @@ var (
 		Name: "github_runner_autoscaler_listener_restarts_total",
 		Help: "Listener reconnection attempts after an unexpected failure.",
 	}, []string{"scale_set"})
+	quiesceGenerationTimeouts = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_quiesce_generation_timeouts_total",
+		Help: "Control-plane quiesces that checkpointed and exited while the runtime generation was still running.",
+	})
 	pendingRunnersGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_scheduler_pending_runners",
 		Help: "Runner deficit still waiting for a safe fleet placement.",
@@ -309,6 +313,7 @@ func registerMetrics() {
 			placementBlocked,
 			listenerUpGauge,
 			listenerRestarts,
+			quiesceGenerationTimeouts,
 			pendingRunnersGauge,
 			githubUnavailableRunnersGauge,
 			runnerStatusProbeUpGauge,
