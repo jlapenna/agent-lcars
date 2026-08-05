@@ -340,14 +340,42 @@ async function trackMissingRun(client, loaded, generation, now) {
 // no-second-dispatch-while-one-is-active gate is what keeps that from
 // running two workers concurrently, exactly as it already does for any
 // other legitimate second intent arriving while the first is still active.
+//
+// Authorization (Codex review, P1): the live `labeled` path in
+// normalize.mjs rejects a non-maintainer's label before it ever produces
+// an intent (`if (!auth.authorized) throw new Error('Unauthorized label
+// dispatch')`). Re-deriving "current label present" from live issue state
+// alone -- as an earlier version of this function did -- has no sender to
+// check and would silently authorize a repair for a label ANY
+// collaborator with issue-write access applied, not just the maintainer.
+// Recover the same signal a live event would have used by asking the
+// issue's own timeline who most recently applied this exact label, and
+// require that actor to be the configured maintainer; an unresolvable or
+// non-maintainer authorship leaves the repair undone (fails closed, same
+// as the live path) rather than guessing.
 async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   const ledger = loaded.ledger;
   const task = ledger.task;
-  const issue = await client.requestOk(
-    `${repositoryPath(task)}/issues/${task.issue}`,
-  );
+  const root = repositoryPath(task);
+  const issue = await client.requestOk(`${root}/issues/${task.issue}`);
   const pipeline = selectedPipeline(issue);
   if (!pipeline) return;
+  const labelName = `agent:${pipeline}`;
+  const maintainer = env('MAINTAINER_LOGIN', false);
+  const timeline = await client.requestOk(
+    `${root}/issues/${task.issue}/timeline?per_page=100`,
+  );
+  const labelApplications = timeline
+    .filter(
+      (event) => event.event === 'labeled' && event.label?.name === labelName,
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.created_at) - Date.parse(left.created_at),
+    );
+  const mostRecent = labelApplications[0];
+  if (!mostRecent || mostRecent.actor?.login !== maintainer) return;
+
   const quickTask = quickTaskRequest(issue, task.repository, pipeline);
   const intent = makeIntent({
     task,
@@ -365,8 +393,8 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     context: '',
     authorization: {
       authorized: true,
-      actor: 'dispatch-broker',
-      configuredMaintainer: env('MAINTAINER_LOGIN', false),
+      actor: mostRecent.actor.login,
+      configuredMaintainer: maintainer,
       rule: 'reconcile-label-repair',
     },
   });
