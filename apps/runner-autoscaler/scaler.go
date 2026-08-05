@@ -1993,7 +1993,9 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 	key := host + "\x00" + a.runnerImage
 	lockValue, _ := a.hostImageLocks.LoadOrStore(key, &sync.Mutex{})
 	lock := lockValue.(*sync.Mutex)
-	lock.Lock()
+	if !lockMutexContext(ctx, lock) {
+		return fmt.Errorf("waiting to prepare runner image %q on host %q: %w", a.runnerImage, host, ctx.Err())
+	}
 	defer lock.Unlock()
 
 	// A DIGEST reference is immutable, so a local hit is authoritative and
@@ -2155,13 +2157,17 @@ done
 // rather than a flag: one less number to tune per deployment.
 const workDirSweepInterval = 15 * time.Minute
 
+// workDirSweepTimeout bounds one fleet-wide maintenance pass. A slow Docker
+// daemon, image registry, or du must not pin the periodic sweeper indefinitely.
+const workDirSweepTimeout = 10 * time.Minute
+
 // RunWorkDirSweeper periodically enforces workDirSizeCapBytes on the shared
 // /home/runner/_work directory across the fleet. Only started when
 // mountDockerSocket is true (see main.go) -- that's the only scale set that
 // bind-mounts the shared dir in the first place. Runs an initial sweep
 // immediately so a restart doesn't wait a full interval to reclaim space.
 func (a *Scaler) RunWorkDirSweeper(ctx context.Context) {
-	a.SweepWorkDirs(ctx)
+	a.sweepWorkDirsWithTimeout(ctx, workDirSweepTimeout)
 	ticker := time.NewTicker(workDirSweepInterval)
 	defer ticker.Stop()
 	for {
@@ -2169,9 +2175,15 @@ func (a *Scaler) RunWorkDirSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			a.SweepWorkDirs(ctx)
+			a.sweepWorkDirsWithTimeout(ctx, workDirSweepTimeout)
 		}
 	}
+}
+
+func (a *Scaler) sweepWorkDirsWithTimeout(ctx context.Context, timeout time.Duration) {
+	sweepCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	a.SweepWorkDirs(sweepCtx)
 }
 
 // SweepWorkDirs checks/reclaims the shared /home/runner/_work directory on
@@ -2190,8 +2202,24 @@ func (a *Scaler) SweepWorkDirs(ctx context.Context) {
 }
 
 func (a *Scaler) sweepHostIfIdle(ctx context.Context, client *dockerclient.Client, host string) {
+	if a.runners.hasHost(host) {
+		a.logger.Debug("Skipping workdir sweep while tracked shared-workdir runner is active", slog.String("host", host))
+		return
+	}
+	// Preparing the helper image can require a multi-gigabyte pull after the
+	// fleet's scheduled prune. Keep that network and disk work outside the
+	// workdir exclusion lock so a newly reserved runner can start meanwhile.
+	// Once preparation finishes, the checks under the lock below make the
+	// sweep stand down if placement claimed the host in the meantime.
+	if err := a.ensureRunnerImage(ctx, client, host); err != nil {
+		a.logger.Warn("Skipping workdir sweep because runner image preparation failed", slog.String("host", host), slog.String("error", err.Error()))
+		return
+	}
 	workDirLock := a.hostWorkDirLock(host)
-	workDirLock.Lock()
+	if !lockMutexContext(ctx, workDirLock) {
+		a.logger.Debug("Skipping workdir sweep while waiting for workdir lock", slog.String("host", host), slog.String("error", ctx.Err().Error()))
+		return
+	}
 	defer workDirLock.Unlock()
 	fleet := a.coordinator()
 	fleet.mu.Lock()
@@ -2222,6 +2250,24 @@ func (a *Scaler) hostWorkDirLock(host string) *sync.Mutex {
 	return lock.(*sync.Mutex)
 }
 
+func lockMutexContext(ctx context.Context, lock *sync.Mutex) bool {
+	if lock.TryLock() {
+		return true
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if lock.TryLock() {
+				return true
+			}
+		}
+	}
+}
+
 // sweepStaleMinutes is the mtime staleness threshold sweepHostWorkDir uses to
 // decide a top-level workdir entry is abandoned rather than a live checkout.
 // Must exceed the longest read-only stretch of any fleet CI job: read-mostly
@@ -2246,20 +2292,6 @@ const sweepStaleMinutes = 60
 // 2026-07-18: this shared dir has no per-container lifecycle, so without this
 // nothing else ever reclaims it.
 func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
-	// A scheduled prune reclaiming disk on an idle host (this fleet's
-	// documented maintenance) can remove a.runnerImage from it entirely
-	// between real placements -- exactly the idle hosts this externals
-	// health check exists to catch. Without this, ContainerCreate below
-	// fails outright on such a host, and the health check silently never
-	// runs there until a real job happens to place a runner (which itself
-	// calls ensureRunnerImage first) -- the exact reactive gap agent-lcars#392
-	// exists to close. startRunner already does the same before creating a
-	// real runner container; this is that same guard for the maintenance
-	// helper container.
-	if err := a.ensureRunnerImage(ctx, client, host); err != nil {
-		return fmt.Errorf("ensuring runner image before workdir sweep on host %q: %w", host, err)
-	}
-
 	capBytes := a.workDirSizeCapBytes
 	if override, ok := a.workDirSizeCaps[host]; ok {
 		capBytes = override

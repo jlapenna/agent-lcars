@@ -212,6 +212,74 @@ func TestSweepWorkDirsSkipsHostWithRunner(t *testing.T) {
 	scaler.SweepWorkDirs(context.Background())
 }
 
+func TestSweepHostPreparesImageOutsideWorkDirLock(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	client := fake.client(t)
+	scaler := &Scaler{
+		runnerImage: "registry.example/runner:test",
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	lock := scaler.hostWorkDirLock("pike")
+	lock.Lock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scaler.sweepHostIfIdle(context.Background(), client, "pike")
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for fake.pullCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if fake.pullCount() == 0 {
+		lock.Unlock()
+		<-done
+		t.Fatal("runner image preparation waited for the workdir lock")
+	}
+
+	lock.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("workdir sweep did not finish after releasing the lock")
+	}
+}
+
+func TestSweepWorkDirsWithTimeoutBoundsSlowHost(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	fake.setListDelay(time.Second)
+	scaler := &Scaler{
+		dockerHosts: []DockerHost{{Name: "pike", Client: fake.client(t)}},
+		runnerImage: "registry.example/runner:test",
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	start := time.Now()
+	scaler.sweepWorkDirsWithTimeout(context.Background(), 25*time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("timed sweep took %s, want context deadline to bound the slow host", elapsed)
+	}
+}
+
+func TestSweepWorkDirsWithTimeoutBoundsContendedLock(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		dockerHosts: []DockerHost{{Name: "pike", Client: fake.client(t)}},
+		runnerImage: "registry.example/runner:test",
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	lock := scaler.hostWorkDirLock("pike")
+	lock.Lock()
+	defer lock.Unlock()
+
+	start := time.Now()
+	scaler.sweepWorkDirsWithTimeout(context.Background(), 25*time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("timed sweep took %s, want context deadline to bound lock acquisition", elapsed)
+	}
+}
+
 func TestRunnerStateHasHostIncludesIdleAndBusy(t *testing.T) {
 	runners := runnerState{
 		idle: map[string]runnerRef{"idle": {host: "janeway"}},
