@@ -35,6 +35,13 @@
 # rewrote unrelated specs' screenshot baselines (members#2448). Rather than
 # reimplement that guard, this rejects them outright and points back at this
 # same hermetic entrypoint with E2E_GREP.
+#
+# Concurrency: this and every other e2e-local run on the same host bind the
+# same fixed Firebase-emulator/Next.js ports (see tools/kill-e2e-ports.sh), so
+# two runs -- even from different worktrees of this repo -- fight over them
+# instead of failing cleanly (agent-lcars#535). A host-level flock below
+# rejects a second concurrent run outright rather than letting it corrupt the
+# first one's in-flight suite.
 
 set -euo pipefail
 
@@ -43,6 +50,11 @@ cd "$ROOT"
 
 PROJECT="${E2E_PROJECT:-@agent-lcars/console-e2e}"
 HERMETIC_RUNNER="$ROOT/tools/e2e/run-hermetic.sh"
+# Fixed and repo-specific (not per-worktree): every worktree of this repo
+# binds the same host ports, so the lock must serialize across all of them,
+# not just within one. Overridable only so this script's own tests can assert
+# the locking behavior without fighting the real path.
+LOCK_FILE="${E2E_LOCAL_LOCK_FILE:-/tmp/agent-lcars-e2e-local.lock}"
 
 # Fail loudly instead of silently running everything - see the usage note.
 if [ "$#" -gt 0 ]; then
@@ -58,6 +70,27 @@ if [ ! -x "$HERMETIC_RUNNER" ]; then
   echo "tools/e2e-local.sh: missing executable $HERMETIC_RUNNER" >&2
   exit 1
 fi
+
+# Take a non-blocking host-level lock before touching any port or starting
+# any build. Open in append mode so a losing attempt never truncates the
+# winner's recorded pid out from under it -- only the confirmed holder
+# (below) rewrites the file. `exec {LOCK_FD}>>` opens the descriptor on the
+# current shell (rather than a subshell), and the later
+# `exec "$HERMETIC_RUNNER"` replaces this process without closing it, so the
+# lock stays held for the entire run -- build, emulators, and Playwright --
+# and is only released when the whole descendant process tree exits and the
+# kernel drops the last reference to it.
+exec {LOCK_FD}>>"$LOCK_FILE"
+if ! flock -n "$LOCK_FD"; then
+  holder_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
+  echo "tools/e2e-local.sh: another e2e-local is running (pid ${holder_pid:-unknown})" >&2
+  echo "  e2e-local runs bind fixed emulator/app ports and cannot run concurrently" >&2
+  echo "  on one host, even from a different worktree. Wait for it to finish, or if" >&2
+  echo "  pid ${holder_pid:-N} is dead, remove $LOCK_FILE and retry." >&2
+  exit 1
+fi
+# Now the confirmed exclusive holder: record our pid for the next contender.
+echo "$$" >"$LOCK_FILE"
 
 # `--skip-nx-cache` deliberately: an e2e result replayed from the Nx cache
 # reports a green suite that never actually ran, which is worse than useless
