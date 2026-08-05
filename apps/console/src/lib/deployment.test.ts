@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   agentFleetLogin,
+  agentSessionResumeScript,
   artifactShareBaseUrl,
+  consoleDescription,
+  consoleRepositoryUrl,
   maintainerLogin,
   shareArtifactUrl,
 } from './deployment';
@@ -43,6 +46,13 @@ describe('deployment config', () => {
   it('falls back to this deployment when nothing is configured', () => {
     expect(maintainerLogin()).toBe('jlapenna');
     expect(agentFleetLogin()).toBe('jclaw-bot');
+    expect(consoleDescription()).toBe(
+      'jlapenna/agent-lcars — multi-agent issue activity',
+    );
+    expect(consoleRepositoryUrl()).toBe(
+      'https://github.com/jlapenna/agent-lcars',
+    );
+    expect(agentSessionResumeScript()).toBe('tools/claude-agent-session.sh');
     expect(shareArtifactUrl('pike', 'abc', 'out.txt')).toBe(
       'https://share.lan.jlapenna.net/pike/abc/out.txt',
     );

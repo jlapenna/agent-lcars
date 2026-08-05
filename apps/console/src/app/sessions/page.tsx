@@ -5,6 +5,7 @@ import { cache, Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
+import { consoleRepositoryUrl } from '../../lib/deployment';
 import {
   getWatchedRepos,
   repoDisplayName,
@@ -153,6 +154,7 @@ function SessionsUtilities({
       />
       <RefreshButton compact />
       <QueueUtilityMenu
+        repositoryUrl={consoleRepositoryUrl()}
         includeNavigation={includeNavigation}
         navigationHrefs={navigationHrefs}
         signOutControl={<SignOutButton />}

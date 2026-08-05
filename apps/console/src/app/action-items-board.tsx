@@ -1,5 +1,6 @@
 import { Stack, Text, Title } from '@mantine/core';
 
+import { consoleRepositoryUrl } from '../lib/deployment';
 import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
@@ -34,6 +35,7 @@ export function DecisionInbox({
       watchedRepos={watchedRepos}
       mobileUtilityMenu={
         <QueueUtilityMenu
+          repositoryUrl={consoleRepositoryUrl()}
           includeNavigation
           navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
           signOutControl={<SignOutButton />}

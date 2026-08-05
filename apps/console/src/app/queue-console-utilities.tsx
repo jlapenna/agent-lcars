@@ -1,5 +1,6 @@
 import { Group } from '@mantine/core';
 
+import { consoleRepositoryUrl } from '../lib/deployment';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { repoScopedConsoleHrefs } from './console-hrefs';
 import { QueueUtilityMenu } from './queue-utility-menu';
@@ -28,6 +29,7 @@ export function QueueConsoleUtilities({
       />
       <RefreshButton compact bustsGithubCache />
       <QueueUtilityMenu
+        repositoryUrl={consoleRepositoryUrl()}
         includeNavigation={includeNavigation}
         navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
         signOutControl={<SignOutButton />}

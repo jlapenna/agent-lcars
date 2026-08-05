@@ -12,6 +12,7 @@ import type { Viewport } from 'next';
 import { cookies, headers } from 'next/headers';
 import { Suspense } from 'react';
 
+import { consoleDescription } from '../lib/deployment';
 import { bodyFont, displayFont, monoFont } from './fonts';
 import { Providers } from './providers';
 
@@ -26,7 +27,7 @@ export const viewport: Viewport = {
 
 export const metadata = {
   title: 'Agent LCARS',
-  description: 'supersprinklesracing/sprinkles — Claude issue agent activity',
+  description: consoleDescription(),
 };
 
 export default function RootLayout({

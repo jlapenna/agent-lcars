@@ -16,10 +16,12 @@ const MOBILE_DESTINATIONS = [
 
 export function QueueUtilityMenu({
   signOutControl,
+  repositoryUrl,
   includeNavigation = false,
   navigationHrefs,
 }: {
   signOutControl: ReactNode;
+  repositoryUrl: string;
   includeNavigation?: boolean;
   navigationHrefs?: Partial<
     Record<(typeof MOBILE_DESTINATIONS)[number]['key'], string>
@@ -59,7 +61,7 @@ export function QueueUtilityMenu({
         </div>
         <div className="queue-utility-menu__control">{signOutControl}</div>
         <Anchor
-          href="https://github.com/jlapenna/agent-lcars"
+          href={repositoryUrl}
           target="_blank"
           rel="noreferrer"
           size="xs"

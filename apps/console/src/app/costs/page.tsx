@@ -4,6 +4,7 @@ import { cache, Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
+import { consoleRepositoryUrl } from '../../lib/deployment';
 import { getWatchedRepos } from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
@@ -102,6 +103,7 @@ function CostsUtilities({
       <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
       <RefreshButton compact />
       <QueueUtilityMenu
+        repositoryUrl={consoleRepositoryUrl()}
         includeNavigation={includeNavigation}
         navigationHrefs={navigationHrefs}
         signOutControl={<SignOutButton />}
