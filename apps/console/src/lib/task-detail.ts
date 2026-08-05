@@ -156,8 +156,7 @@ export async function getTaskDetail(
 
   const { data: activity, fetchedAt: activityFetchedAt } =
     await getCachedAgentActivity();
-  const attempts = activity.liveRunAttempts ?? activity.liveRuns;
-  const allAttempts = [...attempts, ...activity.recentRuns];
+  const allAttempts = [...activity.liveRuns, ...activity.recentRuns];
 
   const key = repoItemKey(repo, issueNumber);
   const { work } = deriveLogicalWork({

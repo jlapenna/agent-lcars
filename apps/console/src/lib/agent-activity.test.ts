@@ -326,11 +326,8 @@ describe('getAgentActivity', () => {
 
     // Both the queued and the running attempt survive into `liveRuns` -
     // #306 removed the representative-attempt collapse that used to leave
-    // only the running one visible here. `liveRunAttempts` is no longer a
-    // separate "raw" copy revealing evidence `liveRuns` hid; the two are
-    // now the same evidence (see AgentActivity's own doc comments).
+    // only the running one visible here.
     expect(activity.liveRuns.map((run) => run.id)).toEqual([1, 2]);
-    expect(activity.liveRunAttempts?.map((run) => run.id)).toEqual([1, 2]);
   });
 
   it('falls back to undefined issueNumber for a legacy title', async () => {

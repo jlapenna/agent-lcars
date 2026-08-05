@@ -26,7 +26,6 @@ vi.mock('./github-client', async (importOriginal) => {
 
 const EMPTY_ACTIVITY = {
   liveRuns: [],
-  liveRunAttempts: [],
   recentRuns: [],
   fleet: { online: 0, busy: 0 },
   warnings: [],
@@ -240,7 +239,6 @@ describe('getTaskDetail', () => {
           elapsedSeconds: 60,
         },
       ],
-      liveRunAttempts: undefined,
     };
 
     const result = await getTaskDetail(

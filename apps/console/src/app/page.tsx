@@ -115,9 +115,6 @@ async function IndexBody({
     ? {
         ...activity,
         liveRuns: activity.liveRuns.filter((run) => matchesFilter(run.repo)),
-        liveRunAttempts: activity.liveRunAttempts?.filter((run) =>
-          matchesFilter(run.repo),
-        ),
         recentRuns: activity.recentRuns.filter((run) =>
           matchesFilter(run.repo),
         ),

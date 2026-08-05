@@ -101,16 +101,8 @@ export interface AgentActivity {
    * racing the same repo/issue/pipeline both appear here; `logical-work.ts`'s
    * `deriveLogicalWork` is what groups them
    * into one `LogicalWork` card with a visible "N attempts" disclosure -
-   * this field itself is the raw, ungrouped truth. Identical to
-   * `liveRunAttempts` today; kept as two field names only so existing
-   * callers built against either one keep working unchanged (#307 retires
-   * the duplicate name once every caller has migrated to the explicit view
-   * models). */
+   * this field itself is the raw, ungrouped truth. */
   liveRuns: AgentRun[];
-  /** Same raw list as `liveRuns` - see that field's doc comment. Optional
-   * for callers constructing local fixtures; production fetches always
-   * populate it. */
-  liveRunAttempts?: AgentRun[];
   recentRuns: AgentRun[];
   /** undefined = runner API unavailable (e.g. token lacks admin:read).
    * Deduped by runner id across every watched repo (see `fleetByRepo` for
@@ -454,10 +446,8 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     }
   }
   // No representative-attempt collapse here (#306) - every raw attempt
-  // survives into both fields the console reads (see AgentActivity's own
-  // doc comments). Duplicate/anomalous attempts are grouped explicitly by
+  // survives in `liveRuns`. Duplicate/anomalous attempts are grouped explicitly by
   // `logical-work.ts`'s `deriveLogicalWork`, never dropped by this fetch.
-  const liveRunAttempts = liveRuns;
 
   let recentRuns: AgentRun[] = [];
   for (const [i, result] of recentResults.entries()) {
@@ -529,7 +519,6 @@ export async function getAgentActivity(): Promise<AgentActivity> {
 
   return {
     liveRuns,
-    liveRunAttempts,
     recentRuns,
     fleet,
     fleetByRepo,
