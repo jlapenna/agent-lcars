@@ -242,6 +242,43 @@ test('scans the workflow named by workflowFile instead of the ci.yml default', a
   );
 });
 
+test('paginates a jobs list past 100 entries so a later-page real failure blocks the rerun', async () => {
+  const run = workflowRun({ id: 11 });
+  const fullPage = Array.from({ length: 100 }, (_, i) => ({
+    name: `job-${i}`,
+    conclusion: 'success',
+    steps: [step('success')],
+  }));
+  const api = fakeApi([
+    {
+      path: `${ROOT}/actions/workflows/ci.yml/runs`,
+      data: { workflow_runs: [run] },
+    },
+    {
+      path: `${ROOT}/actions/runs/11/jobs`,
+      data: ({ path }) =>
+        path.includes('page=2')
+          ? { jobs: [realFailureJob('late-real-failure')] }
+          : { jobs: fullPage },
+    },
+  ]);
+
+  const result = await scanAndRerun({ api, repository: REPO });
+
+  // The only failed job (page 2) has a real failed step, so nothing may be
+  // reran -- a single-page fetch would have seen 100 green jobs and never
+  // even found the failure.
+  assert.deepEqual(result, { scanned: 1, rerun: 0 });
+  assert.ok(
+    api.calls.some(
+      (call) =>
+        call.basePath === `${ROOT}/actions/runs/11/jobs` &&
+        call.path.includes('page=2'),
+    ),
+    'the second jobs page must have been fetched',
+  );
+});
+
 let failures = 0;
 for (const { name, run } of tests) {
   try {

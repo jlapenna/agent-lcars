@@ -89,14 +89,23 @@ async function listRecentFailedRuns(api, root, sinceIso, workflowFile) {
   return runs;
 }
 
-// ci.yml only ever declares two jobs (Verify, E2E), so a single
-// per_page=100 page always covers every job a run of it can have -- no
-// pagination loop needed the way listRecentFailedRuns has one.
+// Paginated like listRecentFailedRuns: the scanned workflow is now a
+// consumer input, so the two-job assumption that once made a single page
+// sufficient (this repo's ci.yml) no longer holds in general. An
+// incomplete job set would be actively harmful here -- a real failed job
+// on a missed page could make a genuine failure look infra-killed and
+// trigger a bogus rerun.
 async function getJobs(api, root, runId) {
-  const data = await api.requestOk(
-    `${root}/actions/runs/${runId}/jobs?per_page=100`,
-  );
-  return data.jobs ?? [];
+  const jobs = [];
+  for (let page = 1; page <= MAX_LIST_PAGES; page += 1) {
+    const data = await api.requestOk(
+      `${root}/actions/runs/${runId}/jobs?per_page=100&page=${page}`,
+    );
+    const pageJobs = data.jobs ?? [];
+    jobs.push(...pageJobs);
+    if (pageJobs.length < 100) break;
+  }
+  return jobs;
 }
 
 async function findAssociatedPullRequest(api, root, headSha) {
