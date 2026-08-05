@@ -324,6 +324,38 @@ test('the host lock releases once the holder exits', () => {
   }
 });
 
+test('a platform without flock on PATH fails clearly instead of an opaque error', () => {
+  // Simulates a stock macOS or Windows Bash environment where flock is not
+  // preinstalled (agent-lcars#535 review thread: this wrapper documents
+  // supporting those platforms, so the lock must degrade honestly rather
+  // than fail with a bash syntax error or a bare "command not found").
+  // Only `bash` (to run the script at all) and `dirname` (used before the
+  // flock check) are put on PATH -- deliberately no `flock`.
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-noflock-'));
+  const fakeBin = path.join(tempDir, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  for (const bin of ['bash', 'dirname']) {
+    const real = spawnSync('/bin/sh', ['-c', `command -v ${bin}`], {
+      encoding: 'utf8',
+    }).stdout.trim();
+    assert.ok(real, `expected to locate ${bin} on the host`);
+    fs.symlinkSync(real, path.join(fakeBin, bin));
+  }
+
+  try {
+    const result = spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { PATH: fakeBin },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /flock is required/u);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('public and internal Nx targets explicitly reject live configuration', () => {
   const project = JSON.parse(
     fs.readFileSync(path.join(root, 'apps/console-e2e/project.json'), 'utf8'),

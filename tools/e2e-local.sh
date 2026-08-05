@@ -72,16 +72,31 @@ if [ ! -x "$HERMETIC_RUNNER" ]; then
 fi
 
 # Take a non-blocking host-level lock before touching any port or starting
-# any build. Open in append mode so a losing attempt never truncates the
-# winner's recorded pid out from under it -- only the confirmed holder
-# (below) rewrites the file. `exec {LOCK_FD}>>` opens the descriptor on the
-# current shell (rather than a subshell), and the later
-# `exec "$HERMETIC_RUNNER"` replaces this process without closing it, so the
-# lock stays held for the entire run -- build, emulators, and Playwright --
-# and is only released when the whole descendant process tree exits and the
-# kernel drops the last reference to it.
-exec {LOCK_FD}>>"$LOCK_FILE"
-if ! flock -n "$LOCK_FD"; then
+# any build. This wrapper documents supporting macOS and Windows Bash
+# environments too (docs/e2e-security-boundary.md), where the stock shell is
+# Bash 3.2 (no `{var}` dynamic fd allocation) and `flock` is not preinstalled
+# -- so a fixed, low-numbered descriptor is used instead of `{LOCK_FD}`, and
+# `flock` itself is checked explicitly rather than left to fail opaquely.
+if ! command -v flock >/dev/null 2>&1; then
+  echo "tools/e2e-local.sh: flock is required to guard against concurrent" >&2
+  echo "  e2e-local runs, but is not on PATH. It ships in util-linux, which is" >&2
+  echo "  virtually always preinstalled on Linux; on macOS install it via" >&2
+  echo "  Homebrew's util-linux formula or the 'discoteq/discoteq/flock' tap" >&2
+  echo "  ('brew tap discoteq/discoteq && brew install flock'); on Windows Git" >&2
+  echo "  Bash/MSYS2, install util-linux through pacman, or run under WSL." >&2
+  exit 1
+fi
+
+# Open in append mode so a losing attempt never truncates the winner's
+# recorded pid out from under it -- only the confirmed holder (below)
+# rewrites the file. `exec 9>>` opens the descriptor on the current shell
+# (rather than a subshell), and the later `exec "$HERMETIC_RUNNER"` replaces
+# this process without closing it, so the lock stays held for the entire
+# run -- build, emulators, and Playwright -- and is only released when the
+# whole descendant process tree exits and the kernel drops the last
+# reference to it.
+exec 9>>"$LOCK_FILE"
+if ! flock -n 9; then
   holder_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
   echo "tools/e2e-local.sh: another e2e-local is running (pid ${holder_pid:-unknown})" >&2
   echo "  e2e-local runs bind fixed emulator/app ports and cannot run concurrently" >&2
