@@ -770,6 +770,37 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
+  it('still warns on truncation when every unresolved thread falls past the fetched page', async () => {
+    // Regression for Codex review on #538/#575: if the real unresolved
+    // thread sits past REVIEW_THREAD_WINDOW, the client-side count over the
+    // fetched page can land at 0, making blockedByThreads false even though
+    // the PR is genuinely blocked by threads. The truncation warning must
+    // not be gated behind that (now-wrong) flag.
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(93, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      93: prNode({
+        mergeStateStatus: 'BLOCKED',
+        reviewThreads: Array.from({ length: 100 }, () => true),
+        reviewThreadsTotal: 117,
+      }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].unresolvedReviewThreadCount).toBeUndefined();
+    expect(result.items[0].actionTypes).not.toContain('merge-blocked');
+    expect(
+      result.warnings.some((w) =>
+        w.includes('Review threads truncated for #93'),
+      ),
+    ).toBe(true);
+  });
+
   it('still renders an item when its enrichment is missing entirely', async () => {
     // A partial GraphQL failure drops individual items from the response;
     // the board must degrade to listing-only data, not lose the row.

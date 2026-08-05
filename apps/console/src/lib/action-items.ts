@@ -344,7 +344,13 @@ function classifyIssue(
         `Check runs truncated for #${issue.number} (over ${CHECK_WINDOW} runs) - some failures may not be shown.`,
       );
     }
-    if (blockedByThreads && pr?.reviewThreadsTruncated) {
+    // Gated on mergeableState alone, not blockedByThreads: truncation is
+    // exactly what can make the unresolved count land at 0 (the real
+    // unresolved thread sits past page one) and blockedByThreads false when
+    // the PR is genuinely blocked by threads - nesting this warning inside
+    // that condition would suppress the one signal that explains why the
+    // count can't be trusted (Codex review on #538/#575).
+    if (mergeableState === 'blocked' && pr?.reviewThreadsTruncated) {
       warnings.push(
         `Review threads truncated for #${issue.number} (over ${REVIEW_THREAD_WINDOW}) - the unresolved count may be an undercount.`,
       );
