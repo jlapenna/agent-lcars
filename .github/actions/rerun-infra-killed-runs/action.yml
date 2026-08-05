@@ -1,0 +1,27 @@
+name: Rerun infrastructure-killed CI runs
+description: >-
+  Scan recent completed-failure ci.yml runs for the all-null-steps
+  infra-killed signature (agent-lcars#536: the runner was evicted/killed
+  under the job before any step resolved, as opposed to a real step
+  failure), rerun each matching run exactly once via rerun-failed-jobs, and
+  post an audit-trail comment on its associated pull request.
+
+outputs:
+  scanned:
+    description: Number of recent failed ci.yml runs examined
+    value: ${{ steps.run.outputs.scanned }}
+  rerun:
+    description: Number of runs identified as infra-killed and automatically reran
+    value: ${{ steps.run.outputs.rerun }}
+
+runs:
+  using: composite
+  steps:
+    # GITHUB_TOKEN is deliberately not set here -- the calling workflow's
+    # own step env is what this composite action's step actually runs
+    # with, the same convention dispatch-broker/action.yml and
+    # run-dispatch-canary/action.yml both use.
+    - name: Scan and rerun infrastructure-killed CI runs
+      id: run
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/main.mjs"
