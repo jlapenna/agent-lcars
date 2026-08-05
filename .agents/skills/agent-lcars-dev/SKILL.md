@@ -121,10 +121,11 @@ These override any default behavior:
 
 Read the reference before starting the corresponding task:
 
-| Workflow                          | When to use                                                    |
-| --------------------------------- | -------------------------------------------------------------- |
-| [pr.md](references/pr.md)         | Creating or updating a Pull Request.                           |
-| [verify.md](references/verify.md) | Definition of Done — run before declaring any change complete. |
+| Workflow                                    | When to use                                                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [pr.md](references/pr.md)                   | Creating or updating a Pull Request.                                                                 |
+| [verify.md](references/verify.md)           | Definition of Done — run before declaring any change complete.                                       |
+| [stacked-prs.md](references/stacked-prs.md) | Multiple auto-merge-armed PRs racing a moving `main`, or a reviewed stacked chain ready to collapse. |
 
 ## Related Skills
 
