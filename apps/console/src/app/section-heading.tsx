@@ -2,7 +2,7 @@ import { Text, Title } from '@mantine/core';
 
 /** Shared two-line heading (title + "N items · description") for every
  * board tier, including tiers rendered from a client component (e.g.
- * your-queue-section.tsx) - it has no server-only dependencies, so it's
+ * client queue surfaces) - it has no server-only dependencies, so it's
  * safe from either side. */
 export function SectionHeading({
   title,

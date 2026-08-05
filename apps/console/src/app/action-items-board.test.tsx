@@ -73,7 +73,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
 }
 
 function card(item: ActionItem): BoardCard {
-  return { item, updatedAtLabel: 'now' };
+  return { item };
 }
 
 function renderBoard({

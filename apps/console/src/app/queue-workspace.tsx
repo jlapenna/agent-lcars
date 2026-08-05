@@ -514,7 +514,6 @@ export function QueueWorkspace({
         {selectedCard ? (
           <ActionItemCard
             item={selectedCard.item}
-            updatedAtLabel={selectedCard.updatedAtLabel}
             primaryAction={selectedCard.primaryAction}
             multiRepo={watchedRepos.length > 1}
             muted={false}

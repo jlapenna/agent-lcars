@@ -66,7 +66,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
 }
 
 function makeCard(overrides: Partial<ActionItem> = {}): BoardCard {
-  return { item: makeItem(overrides), updatedAtLabel: 'now' };
+  return { item: makeItem(overrides) };
 }
 
 function renderWorkspace(

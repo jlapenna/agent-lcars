@@ -23,9 +23,10 @@ import {
   STATUS_COLORS,
   STATUS_LABELS,
 } from '../agent-activity-panel';
-import { formatDuration, formatRelativeTime } from '../format';
+import { formatDuration } from '../format';
 import { lcarsPanelStyle } from '../lcars';
 import { PersistedDetails } from '../persisted-details';
+import { RelativeTime } from '../relative-time';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
   pending: 'pending',
@@ -181,7 +182,7 @@ export function LogicalWorkCard({
                     </Text>
                   )}
                   <Text size="xs" c="dimmed">
-                    {formatRelativeTime(intent.occurredAt)}
+                    <RelativeTime iso={intent.occurredAt} />
                   </Text>
                 </Group>
               ))}
