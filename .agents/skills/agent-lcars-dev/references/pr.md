@@ -34,12 +34,16 @@
    explicitly resolve it via GraphQL:
 
    ```bash
-   gh api graphql -f query='
-   query {
+   # --paginate walks every page (a plain `first: 50` with no cursor
+   # silently drops any thread past the 50th on a busier PR, resolved or
+   # not — Codex review on #569).
+   gh api graphql --paginate -f query='
+   query($endCursor: String) {
      repository(owner: "jlapenna", name: "agent-lcars") {
        pullRequest(number: <N>) {
-         reviewThreads(first: 50) {
+         reviewThreads(first: 50, after: $endCursor) {
            nodes { id isResolved comments(first: 1) { nodes { body } } }
+           pageInfo { hasNextPage endCursor }
          }
        }
      }
