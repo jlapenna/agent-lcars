@@ -376,7 +376,7 @@ function mappingRank(mapping: PathMapping): [number, number, number] {
   return [
     mapping.scopeRoot.length,
     mapping.alias.includes('*') ? 0 : 1,
-    mapping.alias.replace('*', '').length,
+    mapping.alias.replaceAll('*', '').length,
   ];
 }
 
