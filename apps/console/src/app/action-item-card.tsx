@@ -31,6 +31,7 @@ import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import {
   actionTypeMeta,
+  mergeBlockedReason,
   queueDisclosureLabels,
   queueReasonFor,
 } from './queue-reason';
@@ -309,6 +310,7 @@ export function ActionItemCard({
   const rebaseDisabled = isPending || item.draft;
   const workspace = variant === 'workspace';
   const queueReason = queueReasonFor(item);
+  const blockedReason = mergeBlockedReason(item);
   const disclosureLabels = queueDisclosureLabels(item);
   const visibleLabels = labelsExpanded
     ? disclosureLabels
@@ -358,6 +360,16 @@ export function ActionItemCard({
                     {queueReason.label}
                   </Badge>
                 )}
+                {blockedReason && (
+                  <Badge
+                    color="yellow"
+                    variant="light"
+                    size="sm"
+                    className="merge-blocked-reason-badge"
+                  >
+                    {blockedReason}
+                  </Badge>
+                )}
                 {item.ciRunning && (
                   <Badge
                     color="indigo"
@@ -397,6 +409,16 @@ export function ActionItemCard({
                     {actionTypeMeta(type).label}
                   </Badge>
                 ))}
+                {blockedReason && (
+                  <Badge
+                    color="yellow"
+                    variant="light"
+                    size="sm"
+                    className="merge-blocked-reason-badge"
+                  >
+                    {blockedReason}
+                  </Badge>
+                )}
                 {item.ciRunning && (
                   <Badge
                     color="indigo"

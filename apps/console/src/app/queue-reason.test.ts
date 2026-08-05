@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
-import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
+import {
+  mergeBlockedReason,
+  queueDisclosureLabels,
+  queueReasonFor,
+} from './queue-reason';
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -47,6 +51,40 @@ describe('queueReasonFor', () => {
       color: 'cyan',
       rank: 2,
     });
+  });
+});
+
+describe('mergeBlockedReason', () => {
+  it('names the unresolved review-thread count when that is the reason (#538)', () => {
+    expect(
+      mergeBlockedReason(
+        makeItem({
+          actionTypes: ['merge-blocked'],
+          unresolvedReviewThreadCount: 3,
+        }),
+      ),
+    ).toBe('3 unresolved review threads');
+  });
+
+  it('singularizes a count of one', () => {
+    expect(
+      mergeBlockedReason(
+        makeItem({
+          actionTypes: ['merge-blocked'],
+          unresolvedReviewThreadCount: 1,
+        }),
+      ),
+    ).toBe('1 unresolved review thread');
+  });
+
+  it('is undefined when merge-blocked came from a behind base, not threads', () => {
+    expect(
+      mergeBlockedReason(makeItem({ actionTypes: ['merge-blocked'] })),
+    ).toBeUndefined();
+  });
+
+  it('is undefined for an item with no merge-blocked reason at all', () => {
+    expect(mergeBlockedReason(makeItem())).toBeUndefined();
   });
 });
 

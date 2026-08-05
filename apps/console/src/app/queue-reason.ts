@@ -90,3 +90,19 @@ export function queueReasonFor(item: ActionItem): QueueReason | undefined {
 export function queueDisclosureLabels(item: ActionItem): string[] {
   return item.labels.filter((label) => !HIDDEN_ROUTING_LABELS.has(label));
 }
+
+/**
+ * A more specific reason than the generic "Merge blocked" label, when
+ * `action-items.ts` attributed the block to unresolved review threads
+ * (#538). `item.unresolvedReviewThreadCount` is only ever set when that is
+ * the operative blocker (see its own doc comment on `ActionItem`), so
+ * there's nothing else to branch on here - undefined means either the
+ * item isn't merge-blocked at all, or it is for the other existing reason
+ * (mergeableState 'behind', already covered by its own "Base branch has
+ * moved" callout).
+ */
+export function mergeBlockedReason(item: ActionItem): string | undefined {
+  const count = item.unresolvedReviewThreadCount;
+  if (!count) return undefined;
+  return `${count} unresolved review thread${count === 1 ? '' : 's'}`;
+}

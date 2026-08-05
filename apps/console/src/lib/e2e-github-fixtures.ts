@@ -60,6 +60,10 @@ export const E2E_ITEM_NUMBERS = {
    * history" link is what reaches its `/task/.../9008` detail page, not the
    * board. */
   ledgerDuplicateDispatch: 9008,
+  /** #538: green checks, no requested reviewer, mergeStateStatus BLOCKED
+   * with real unresolved review threads - the retro (#521) scenario a
+   * `gh pr checks` glance and an empty `reviewDecision` gave no hint about. */
+  mergeBlockedThreads: 9011,
 } as const;
 
 export const E2E_RUN_IDS = {
@@ -79,6 +83,7 @@ export const E2E_RUN_IDS = {
 const HEAD_SHAS = {
   runFailed: 'e2e0000000000000000000000000000000009002',
   reviewRequested: 'e2e0000000000000000000000000000000009003',
+  mergeBlockedThreads: 'e2e0000000000000000000000000000000009011',
 } as const;
 
 const secondsAgo = (seconds: number) =>
@@ -163,6 +168,9 @@ interface FixtureItem {
     mergeableState: string;
     headSha: string;
     requestedReviewers: string[];
+    /** `isResolved` for each `reviewThreads(first:N)` node (#538). Omitted
+     * (or all-resolved) for every fixture but `mergeBlockedThreads`. */
+    reviewThreads?: boolean[];
   };
   checkRuns?: { name: string; status: string; conclusion: string | null }[];
 }
@@ -233,6 +241,31 @@ const FIXTURE_ITEMS: FixtureItem[] = [
       mergeableState: 'behind',
       headSha: HEAD_SHAS.reviewRequested,
       requestedReviewers: [MAINTAINER],
+    },
+    checkRuns: [
+      { name: 'Verify', status: 'completed', conclusion: 'success' },
+      { name: 'E2E', status: 'completed', conclusion: 'success' },
+    ],
+  },
+  {
+    number: E2E_ITEM_NUMBERS.mergeBlockedThreads,
+    title: 'fix(console): tighten queue filter debounce',
+    body: 'Tightens the inbox search debounce.',
+    isPr: true,
+    labels: [],
+    assignees: [FLEET],
+    author: FLEET,
+    updatedAt: minutesAgo(50),
+    pr: {
+      draft: false,
+      // #538: green checks below, no requested reviewer, yet GitHub itself
+      // reports BLOCKED - the retro's (#521) exact "gh pr checks is green
+      // and reviewDecision is empty" shape. Only the unresolved review
+      // threads explain it.
+      mergeableState: 'blocked',
+      headSha: HEAD_SHAS.mergeBlockedThreads,
+      requestedReviewers: [],
+      reviewThreads: [false, false, false, true],
     },
     checkRuns: [
       { name: 'Verify', status: 'completed', conclusion: 'success' },
@@ -871,6 +904,12 @@ export function enrichmentGraphql() {
       reviewRequests: {
         nodes: (item.pr?.requestedReviewers ?? []).map((login) => ({
           requestedReviewer: { login },
+        })),
+      },
+      reviewThreads: {
+        totalCount: (item.pr?.reviewThreads ?? []).length,
+        nodes: (item.pr?.reviewThreads ?? []).map((isResolved) => ({
+          isResolved,
         })),
       },
       commits: {

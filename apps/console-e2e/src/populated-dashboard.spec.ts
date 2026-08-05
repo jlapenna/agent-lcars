@@ -46,6 +46,10 @@ test.describe('populated dashboard', () => {
       'Run failed',
       'Review requested',
       'Silent error',
+      // #538: the mergeBlockedThreads fixture is the first e2e coverage of
+      // this badge's own color at all - every prior `merge-blocked` fixture
+      // carried an outstanding review request, which outranks it.
+      'Merge blocked',
     ]) {
       await expect(page.getByText(label).first()).toBeVisible();
     }
@@ -93,6 +97,17 @@ test.describe('populated dashboard', () => {
       .getByRole('link')
       .click();
     await expect(page.getByText(/Base branch has moved/).first()).toBeVisible();
+
+    // #538: a PR blocked (mergeStateStatus BLOCKED) by unresolved review
+    // threads, not by anything CI or reviewDecision would show - the
+    // "Merge blocked" badge alone doesn't say why; the thread count does.
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.mergeBlockedThreads}`)
+      .getByRole('link')
+      .click();
+    await expect(
+      page.getByText('3 unresolved review threads').first(),
+    ).toBeVisible();
 
     // The takeover command the fleet posts on a claimed item.
     await page

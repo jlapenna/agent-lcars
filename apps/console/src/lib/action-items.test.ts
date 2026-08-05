@@ -143,6 +143,8 @@ describe('getActionItems', () => {
     reviewers = [],
     checks = [],
     checksTotal,
+    reviewThreads,
+    reviewThreadsTotal,
   }: {
     comments?: { body: string; url?: string; author?: string }[];
     isDraft?: boolean;
@@ -151,6 +153,9 @@ describe('getActionItems', () => {
     reviewers?: string[];
     checks?: { name: string; status: string; conclusion: string | null }[];
     checksTotal?: number;
+    /** `isResolved` for each `reviewThreads` node. */
+    reviewThreads?: boolean[];
+    reviewThreadsTotal?: number;
   } = {}) {
     return {
       ...issueNode(comments),
@@ -160,6 +165,10 @@ describe('getActionItems', () => {
       body,
       reviewRequests: {
         nodes: reviewers.map((login) => ({ requestedReviewer: { login } })),
+      },
+      reviewThreads: {
+        totalCount: reviewThreadsTotal ?? (reviewThreads ?? []).length,
+        nodes: (reviewThreads ?? []).map((isResolved) => ({ isResolved })),
       },
       commits: {
         nodes: [
@@ -648,6 +657,148 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items[0].actionTypes).not.toContain('merge-blocked');
+  });
+
+  // #538: the actual retro scenario (#521) - ten green-checked,
+  // auto-merge-armed PRs sat unmergeable for hours behind 17 unresolved
+  // Codex review threads, and nothing but tribal memory named the cause.
+  it('raises merge-blocked with the unresolved thread count when threads are the reason (#538)', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(86, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      86: prNode({
+        mergeStateStatus: 'BLOCKED',
+        reviewThreads: [false, false, true, false],
+      }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].actionTypes).toContain('merge-blocked');
+    expect(result.items[0].unresolvedReviewThreadCount).toBe(3);
+  });
+
+  it('does not raise merge-blocked on a blocked PR with no unresolved threads', async () => {
+    // mergeStateStatus BLOCKED has other causes (a missing required
+    // reviewer, a required check) this classifier doesn't attribute to
+    // threads - zero unresolved threads must not raise merge-blocked or
+    // claim a reason this classifier can't back up.
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(87, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      87: prNode({ mergeStateStatus: 'BLOCKED', reviewThreads: [true, true] }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].actionTypes).not.toContain('merge-blocked');
+    expect(result.items[0].unresolvedReviewThreadCount).toBeUndefined();
+  });
+
+  it('does not raise merge-blocked-by-threads while review is still outstanding', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(88, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      88: prNode({
+        mergeStateStatus: 'BLOCKED',
+        reviewers: ['jlapenna'],
+        reviewThreads: [false, false],
+      }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].actionTypes).toContain('review-requested');
+    expect(result.items[0].actionTypes).not.toContain('merge-blocked');
+    expect(result.items[0].unresolvedReviewThreadCount).toBeUndefined();
+  });
+
+  it('does not surface a thread count on a PR merely blocked by a behind base (behind, not blocked)', async () => {
+    // 'behind' already has its own reason ("Base branch has moved"); a
+    // stray unresolved thread on a `behind` PR isn't the operative blocker
+    // and must not double up on the reason line.
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(89, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      89: prNode({ mergeStateStatus: 'BEHIND', reviewThreads: [false] }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].actionTypes).toContain('merge-blocked');
+    expect(result.items[0].unresolvedReviewThreadCount).toBeUndefined();
+  });
+
+  it('warns when the review-thread window truncates a blocked PR carrying unresolved threads', async () => {
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(92, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      92: prNode({
+        mergeStateStatus: 'BLOCKED',
+        reviewThreads: Array.from({ length: 100 }, () => false),
+        reviewThreadsTotal: 117,
+      }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].unresolvedReviewThreadCount).toBe(100);
+    expect(
+      result.warnings.some((w) =>
+        w.includes('Review threads truncated for #92'),
+      ),
+    ).toBe(true);
+  });
+
+  it('still warns on truncation when every unresolved thread falls past the fetched page', async () => {
+    // Regression for Codex review on #538/#575: if the real unresolved
+    // thread sits past REVIEW_THREAD_WINDOW, the client-side count over the
+    // fetched page can land at 0, making blockedByThreads false even though
+    // the PR is genuinely blocked by threads. The truncation warning must
+    // not be gated behind that (now-wrong) flag.
+    const listForRepo = pagedListForRepo({
+      'supersprinklesracing/sprinkles': [
+        makeItem(93, { ...ON_BOARD, pull_request: {} }),
+      ],
+    });
+    const graphql = mockGraphql({
+      93: prNode({
+        mergeStateStatus: 'BLOCKED',
+        reviewThreads: Array.from({ length: 100 }, () => true),
+        reviewThreadsTotal: 117,
+      }),
+    });
+    setupOctokit({ listForRepo, graphql });
+
+    const result = await getActionItems();
+
+    expect(result.items[0].unresolvedReviewThreadCount).toBeUndefined();
+    expect(result.items[0].actionTypes).not.toContain('merge-blocked');
+    expect(
+      result.warnings.some((w) =>
+        w.includes('Review threads truncated for #93'),
+      ),
+    ).toBe(true);
   });
 
   it('still renders an item when its enrichment is missing entirely', async () => {
