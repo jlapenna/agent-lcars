@@ -145,6 +145,7 @@ test('router serializes issue and pull-request lifecycle through one normalized 
   );
   assert.match(source, /^\s+pull_request:\s*$/mu);
   assert.match(source, /^\s+types:\s+\[closed, reopened\]\s*$/mu);
+  assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
 });
 
 test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {

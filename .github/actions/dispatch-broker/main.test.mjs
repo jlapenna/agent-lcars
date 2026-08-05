@@ -8,6 +8,7 @@ import {
   createLedger,
   markDispatchUnknown,
   recordControlEvidence,
+  renderLedgerComment,
 } from './broker.mjs';
 import {
   BrokerConcurrencyMismatchError,
@@ -16,6 +17,7 @@ import {
   verifyBrokerConcurrency,
 } from './github-api.mjs';
 import {
+  applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,
   decode,
@@ -26,6 +28,7 @@ import {
   handleCompletion,
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
+  loadBrokerLedger,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
@@ -261,6 +264,161 @@ test('resolveTask recovers a canonical TaskRef from real normalize() output for 
   });
   assert.equal(reconcile.kind, 'reconcile');
   assert.deepEqual(resolveTask(reconcile), expectedTask);
+});
+
+test('an ordinary pull request close with no dispatch ledger is an intentional no-op', async () => {
+  const normalized = normalizeEvent({
+    eventName: 'pull_request',
+    event: {
+      action: 'closed',
+      pull_request: {
+        id: 3040,
+        number: task.issue,
+        title: 'Ordinary pull request',
+        body: '',
+        labels: [],
+        updated_at: '2026-08-05T00:00:00.000Z',
+        merged: true,
+      },
+      sender: { login: 'jlapenna' },
+    },
+    context: {
+      ...task,
+      runId: 9001,
+      actor: 'jlapenna',
+      now: '2026-08-05T00:00:01.000Z',
+    },
+    maintainer: 'jlapenna',
+  });
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if ((options.method ?? 'GET') === 'GET') return [];
+      throw new Error(`Unexpected write: ${options.method} ${path}`);
+    },
+  };
+
+  const loaded = await loadBrokerLedger(client, task, normalized, true);
+
+  assert.equal(loaded, undefined);
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['GET'],
+  );
+});
+
+test('an issue close keeps the existing create-if-missing ledger behavior', async () => {
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      const method = options.method ?? 'GET';
+      calls.push({ path, method });
+      if (method === 'GET') return [];
+      if (method === 'POST' && path.endsWith('/issues/304/comments')) {
+        return {
+          id: 9,
+          body: options.body.body,
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        };
+      }
+      throw new Error(`Unexpected API request: ${method} ${path}`);
+    },
+  };
+
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'anchor-control' },
+    false,
+  );
+
+  assert.equal(loaded.created, true);
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['GET', 'POST'],
+  );
+});
+
+test('tracked pull request close and reopen transitions persist to the existing ledger', async () => {
+  let persistedBody = renderLedgerComment(
+    createLedger(task, '2026-08-05T00:00:00.000Z'),
+  );
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      const method = options.method ?? 'GET';
+      calls.push({ path, method });
+      if (method === 'GET') {
+        return [
+          {
+            id: 9,
+            body: persistedBody,
+            user: { login: 'github-actions[bot]', type: 'Bot' },
+          },
+        ];
+      }
+      if (method === 'PATCH' && path.endsWith('/issues/comments/9')) {
+        persistedBody = options.body.body;
+        return {
+          id: 9,
+          body: persistedBody,
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        };
+      }
+      throw new Error(`Unexpected API request: ${method} ${path}`);
+    },
+  };
+  const normalizePullRequest = (action, updatedAt, merged, runId) =>
+    normalizeEvent({
+      eventName: 'pull_request',
+      event: {
+        action,
+        pull_request: {
+          id: 3040,
+          number: task.issue,
+          title: 'Tracked pull request',
+          body: '',
+          labels: [],
+          updated_at: updatedAt,
+          merged,
+        },
+        sender: { login: 'jlapenna' },
+      },
+      context: {
+        ...task,
+        runId,
+        actor: 'jlapenna',
+        now: updatedAt,
+      },
+      maintainer: 'jlapenna',
+    });
+
+  const closed = normalizePullRequest(
+    'closed',
+    '2026-08-05T00:01:00.000Z',
+    true,
+    9001,
+  );
+  const closedLedger = await loadBrokerLedger(client, task, closed, true);
+  await applyAnchorControlTransition(client, closedLedger, closed.control);
+  assert.equal(closedLedger.ledger.control.closed, true);
+  assert.equal(closedLedger.ledger.control.merged, true);
+
+  const reopened = normalizePullRequest(
+    'reopened',
+    '2026-08-05T00:02:00.000Z',
+    false,
+    9002,
+  );
+  const reopenedLedger = await loadBrokerLedger(client, task, reopened, true);
+  await applyAnchorControlTransition(client, reopenedLedger, reopened.control);
+  assert.equal(reopenedLedger.ledger.control.closed, false);
+  assert.deepEqual(
+    reopenedLedger.ledger.sources.map((source) => source.sourceKind),
+    ['closed', 'reopened'],
+  );
+  assert.equal(calls.filter((call) => call.method === 'PATCH').length, 2);
 });
 
 test('worker run identity requires repository, event, workflow, and immutable marker', () => {

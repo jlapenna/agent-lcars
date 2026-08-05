@@ -827,19 +827,30 @@ async function removeIssueLabel(api, task, label) {
   return { removed: true };
 }
 
-async function failClosed(api, task, maintainer, message) {
-  const root = repositoryPath(task);
-  await api.requestOk(`${root}/issues/${task.issue}/labels`, {
-    method: 'POST',
-    body: { labels: ['status:needs-human'] },
-  });
-  if (maintainer) {
-    await api.requestOk(`${root}/issues/${task.issue}/assignees`, {
-      method: 'POST',
-      body: { assignees: [maintainer] },
-    });
+async function failClosed(api, task, maintainer, error) {
+  const originalError =
+    error instanceof Error ? error : new Error(String(error));
+  let fallbackError;
+  try {
+    await ensureNeedsHumanParked(api, task, maintainer);
+  } catch (parkingError) {
+    fallbackError =
+      parkingError instanceof Error
+        ? parkingError
+        : new Error(String(parkingError));
   }
-  throw new Error(message);
+  if (fallbackError) {
+    // A fallback failure must not replace the broker failure that caused us
+    // to park. AggregateError keeps both stacks/status codes visible in the
+    // Actions log while `cause` identifies the primary failure explicitly.
+    throw new AggregateError(
+      [originalError, fallbackError],
+      `Dispatch broker failed (${originalError.message}); ` +
+        `fail-closed parking also failed (${fallbackError.message})`,
+      { cause: originalError },
+    );
+  }
+  throw originalError;
 }
 
 async function issueHasLabel(api, task, label) {
