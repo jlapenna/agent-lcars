@@ -35,10 +35,11 @@ import {
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
   reconcileActive,
   reconcileLedger,
+  repairMissingIntentFromLabel,
   resolveTask,
   wasSupersededEviction,
 } from './main.mjs';
-import { normalizeEvent } from './normalize.mjs';
+import { digestQuickTask, normalizeEvent } from './normalize.mjs';
 
 const tests = [];
 function test(name, run) {
@@ -872,7 +873,7 @@ function dispatchingLedger({ unknown = false } = {}) {
 // dependencies need: saveLedger's PATCH, ensureNeedsHumanParked's
 // label/assignee POSTs, and (only when a park mutation is made to fail) its
 // verify-then-decide re-read of the issue.
-function reconcileStubClient({ failParkStatus } = {}) {
+function reconcileStubClient({ failParkStatus, issue, timeline } = {}) {
   const calls = [];
   const client = {
     requestOk: async (path, options = {}) => {
@@ -887,8 +888,11 @@ function reconcileStubClient({ failParkStatus } = {}) {
       }
       if (options.method === 'POST' && path.endsWith('/labels')) return {};
       if (options.method === 'POST' && path.endsWith('/assignees')) return {};
+      if (path.includes(`/issues/${task.issue}/timeline`)) {
+        return timeline ?? [];
+      }
       if (path.endsWith(`/issues/${task.issue}`)) {
-        return { labels: [], assignees: [] };
+        return issue ?? { id: 9304, labels: [], assignees: [] };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
@@ -1096,15 +1100,276 @@ test('reconcileLedger treats a dispatch-unknown generation identically to dispat
   );
 });
 
-test('reconcileLedger no-ops when there is no active generation at all', async () => {
+test('reconcileLedger no-ops on an empty ledger when the live issue carries no agent label', async () => {
   const ledger = createLedger(task);
-  const client = {
-    requestOk: async (path) => {
-      throw new Error(`Unexpected API call: ${path}`);
-    },
-  };
+  const { client } = reconcileStubClient({
+    issue: { id: 9304, labels: [], assignees: [] },
+  });
   await reconcileLedger(client, { ledger, comment: { id: 9 } });
   assert.equal(ledger.anomalies.length, 0);
+  assert.equal(ledger.generations.length, 0);
+});
+
+test('reconcileLedger no-ops on an empty ledger when the live issue carries contradictory agent labels', async () => {
+  const ledger = createLedger(task);
+  const { client } = reconcileStubClient({
+    issue: {
+      id: 9304,
+      labels: [{ name: 'agent:codex' }, { name: 'agent:claude' }],
+      assignees: [],
+    },
+  });
+  await reconcileLedger(client, { ledger, comment: { id: 9 } });
+  assert.equal(ledger.anomalies.length, 0);
+  assert.equal(ledger.generations.length, 0);
+});
+
+// The repair's own authorization check (Codex review, P1) needs a
+// timeline entry showing WHO most recently applied the label, mirroring
+// what a live `labeled` event's `event.sender` would carry.
+function maintainerLabelTimeline(login = 'jlapenna') {
+  return [
+    {
+      event: 'labeled',
+      label: { name: 'agent:codex' },
+      actor: { login },
+      created_at: '2026-08-04T05:59:00.000Z',
+    },
+  ];
+}
+
+test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a live, unambiguous agent label applied by the maintainer (#520)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { client, calls } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: maintainerLabelTimeline(),
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    const generation = ledger.generations[0];
+    assert.equal(generation.pipeline, 'codex');
+    assert.equal(generation.state, 'accepted');
+    assert.equal(
+      ledger.sources.some(
+        (source) =>
+          source.sourceKind === 'reconcile-label-repair' &&
+          source.sourceId === 'reconcile-label-repair:9304',
+      ),
+      true,
+    );
+    assert.ok(
+      calls.some(
+        (call) => call.method === 'GET' && call.path.endsWith('/issues/304'),
+      ),
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repair does NOT fire when the label was most recently applied by a non-maintainer (Codex review P1, #520)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { client, calls } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: maintainerLabelTimeline('some-other-collaborator'),
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 0);
+    assert.equal(
+      calls.some((call) => call.method !== 'GET'),
+      false,
+      'a non-maintainer-applied label must never dispatch anything',
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repair does NOT fire when the issue timeline has no matching labeled event at all', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { client } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: [],
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+    assert.equal(ledger.generations.length, 0);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repair pages through the full timeline: a non-maintainer relabel past the first 100 entries still blocks the repair (Codex review P1 follow-up, #520)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    // Page 1: 100 old, irrelevant timeline events plus a maintainer-applied
+    // labeling of agent:codex -- what a single per_page=100 read alone
+    // would see and (wrongly) trust as "most recent".
+    const page1 = Array.from({ length: 99 }, (_, index) => ({
+      event: 'commented',
+      created_at: `2026-08-01T00:${String(index).padStart(2, '0')}:00.000Z`,
+    }));
+    page1.push({
+      event: 'labeled',
+      label: { name: 'agent:codex' },
+      actor: { login: 'jlapenna' },
+      created_at: '2026-08-04T05:00:00.000Z',
+    });
+    // Page 2: a genuinely later re-application of the same label by a
+    // non-maintainer -- the actual most-recent event, only reachable by
+    // paging past the first 100.
+    const page2 = [
+      {
+        event: 'unlabeled',
+        label: { name: 'agent:codex' },
+        actor: { login: 'jlapenna' },
+        created_at: '2026-08-04T05:30:00.000Z',
+      },
+      {
+        event: 'labeled',
+        label: { name: 'agent:codex' },
+        actor: { login: 'some-other-collaborator' },
+        created_at: '2026-08-04T05:59:00.000Z',
+      },
+    ];
+    const calls = [];
+    const client = {
+      requestOk: async (path, options = {}) => {
+        calls.push({ path, method: options.method ?? 'GET' });
+        if (path.includes(`/issues/${task.issue}/timeline`)) {
+          const pageParam = new URL(`https://x${path}`).searchParams.get(
+            'page',
+          );
+          return pageParam === '2' ? page2 : page1;
+        }
+        if (path.endsWith(`/issues/${task.issue}`)) {
+          return { id: 9304, labels: [{ name: 'agent:codex' }] };
+        }
+        throw new Error(`Unexpected API path: ${path}`);
+      },
+    };
+    const ledger = createLedger(task);
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+
+    assert.equal(
+      ledger.generations.length,
+      0,
+      'the true most-recent (non-maintainer) label application lives on page 2 and must block the repair',
+    );
+    assert.ok(
+      calls.some((call) => call.path.includes('page=2')),
+      'expected the repair to actually page past the first 100 timeline entries',
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repair is idempotent: a second reconcile pass creates no second generation', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { client } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: maintainerLabelTimeline(),
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await repairMissingIntentFromLabel(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+    assert.equal(ledger.generations.length, 1);
+    const revisionAfterRepair = ledger.revision;
+
+    // A second reconcile pass (e.g. the next scheduled scan, 30 minutes
+    // later) must not touch the ledger again: generations is no longer
+    // empty, so the repair branch's own gate excludes it, and the resulting
+    // 'accepted' generation isn't in a dispatching/dispatch-unknown state
+    // reconcileActive()/trackMissingRun() would otherwise act on either.
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30882222,
+    );
+    assert.equal(ledger.generations.length, 1);
+    assert.equal(ledger.revision, revisionAfterRepair);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repair honors a Quick Task marker for its intentId (dedupes against the original opened-event intent)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const description = 'Do the thing';
+    const digest = digestQuickTask({
+      repository: task.repository,
+      pipeline: 'codex',
+      title: 'Quick task issue',
+      description,
+    });
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const { client } = reconcileStubClient({
+      issue: {
+        id: 9304,
+        title: 'Quick task issue',
+        body: `${description}\n\n<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${digest} -->`,
+        labels: [{ name: 'agent:codex' }],
+        assignees: [],
+      },
+      timeline: maintainerLabelTimeline(),
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    assert.equal(
+      ledger.generations[0].intentId,
+      `quick:${requestId}:${digest}`,
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
 });
 
 test('reconcileLedger no-ops once a generation is already bound (active state, not dispatching/dispatch-unknown)', async () => {

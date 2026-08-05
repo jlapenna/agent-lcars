@@ -27,6 +27,7 @@ import {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  listAll,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   loadLedger,
@@ -38,7 +39,12 @@ import {
   verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api.mjs';
-import { normalizeEvent } from './normalize.mjs';
+import {
+  makeIntent,
+  normalizeEvent,
+  quickTaskRequest,
+  selectedPipeline,
+} from './normalize.mjs';
 
 function env(name, required = true) {
   const value = process.env[name];
@@ -300,6 +306,112 @@ async function trackMissingRun(client, loaded, generation, now) {
   await saveLedger(client, loaded);
 }
 
+// Repairs an orphan class outside #305's original scope (#520): a
+// `labeled` event's intent that was queue-evicted (#344/#345) before
+// verifyBrokerConcurrency ever let broker() reach loadLedger/acceptIntent
+// at all. reconcileActive()/trackMissingRun() above can only repair a
+// STUCK generation (dispatching/dispatch-unknown with no bound run) --
+// they have nothing to work with when there is no generation whatsoever.
+// dispatchReconcileScan's candidate discovery already found this issue by
+// its current agent:* label, but a `reconcile` payload carries no claim
+// about which label or intent that was (#305's design is "re-observe live
+// state", not a replayed webhook) -- so re-derive it here from the issue's
+// OWN current label, the same signal a live `labeled` event would read.
+//
+// Deliberately keyed off a label only, not discoverReconcileCandidates's
+// other, fleet-assignee candidate lane (#363): that lane's dispatch
+// mechanism doesn't go through acceptIntent()/makeIntent() and is out of
+// scope for this repair.
+//
+// No grace period, unlike trackMissingRun: this only fires when the issue
+// currently shows one definite, unambiguous agent:* label AND the ledger
+// has literally zero generations to explain it. If a genuine live
+// `labeled` event for that very label is still in flight, it shares this
+// issue's own concurrency group (queue: max, cancel-in-progress: false)
+// and is strictly serialized against this run: it either already ran (so
+// generations is no longer empty and this never fires) or is still queued
+// behind this run and hasn't touched the ledger yet, so there is nothing
+// for this run to race against. A *new* labeled/unlabeled+labeled event
+// arriving afterward -- a genuinely new maintainer action, or the rare
+// case of a manual webhook redelivery -- gets its own generation the same
+// way any ordinary relabel-while-a-generation-exists already does
+// elsewhere in this ledger (acceptIntent's dedup keys on sourceId/intentId,
+// not on {pipeline, mode, ...} alone, so it cannot recognize this repair's
+// synthetic source as "the same" delivery); dispatchAccepted's
+// no-second-dispatch-while-one-is-active gate is what keeps that from
+// running two workers concurrently, exactly as it already does for any
+// other legitimate second intent arriving while the first is still active.
+//
+// Authorization (Codex review, P1): the live `labeled` path in
+// normalize.mjs rejects a non-maintainer's label before it ever produces
+// an intent (`if (!auth.authorized) throw new Error('Unauthorized label
+// dispatch')`). Re-deriving "current label present" from live issue state
+// alone -- as an earlier version of this function did -- has no sender to
+// check and would silently authorize a repair for a label ANY
+// collaborator with issue-write access applied, not just the maintainer.
+// Recover the same signal a live event would have used by asking the
+// issue's own timeline who most recently applied this exact label, and
+// require that actor to be the configured maintainer; an unresolvable or
+// non-maintainer authorship leaves the repair undone (fails closed, same
+// as the live path) rather than guessing.
+//
+// Must page through the ENTIRE timeline (listAll), not just its first
+// page (Codex review, P1 follow-up): an issue with over 100 timeline
+// events could have the label's true most-recent application sitting on
+// a later page than a single `per_page=100` GET ever sees, so a
+// single-page read can find and trust a stale entry instead -- wrong in
+// either direction (authorizing on a superseded maintainer application,
+// or rejecting on a superseded non-maintainer one).
+async function repairMissingIntentFromLabel(client, loaded, now, runId) {
+  const ledger = loaded.ledger;
+  const task = ledger.task;
+  const root = repositoryPath(task);
+  const issue = await client.requestOk(`${root}/issues/${task.issue}`);
+  const pipeline = selectedPipeline(issue);
+  if (!pipeline) return;
+  const labelName = `agent:${pipeline}`;
+  const maintainer = env('MAINTAINER_LOGIN', false);
+  const timeline = await listAll(
+    client,
+    `${root}/issues/${task.issue}/timeline`,
+  );
+  const labelApplications = timeline
+    .filter(
+      (event) => event.event === 'labeled' && event.label?.name === labelName,
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.created_at) - Date.parse(left.created_at),
+    );
+  const mostRecent = labelApplications[0];
+  if (!mostRecent || mostRecent.actor?.login !== maintainer) return;
+
+  const quickTask = quickTaskRequest(issue, task.repository, pipeline);
+  const intent = makeIntent({
+    task,
+    ...(quickTask && {
+      intentId: `quick:${quickTask.requestId}:${quickTask.digest}`,
+    }),
+    sourceKind: 'reconcile-label-repair',
+    sourceId: `reconcile-label-repair:${issue.id}`,
+    transportRunId: runId,
+    occurredAt: now,
+    pipeline,
+    mode: 'implement',
+    reply: '',
+    runbook: '',
+    context: '',
+    authorization: {
+      authorized: true,
+      actor: mostRecent.actor.login,
+      configuredMaintainer: maintainer,
+      rule: 'reconcile-label-repair',
+    },
+  });
+  acceptIntent(ledger, intent, now);
+  await saveLedger(client, loaded);
+}
+
 // The `reconcile` normalized kind's own repair (#305), invoked from
 // broker() after reconcileActive() has already had its normal chance to
 // bind/complete the current active generation. Everything reconcileActive()
@@ -307,8 +419,17 @@ async function trackMissingRun(client, loaded, generation, now) {
 // anomaly+fail-closed a genuine duplicate-run collision) is intentionally
 // NOT duplicated here -- this only closes reconcileActive()'s one remaining
 // gap (a persistently runless dispatch) and one defensive invariant check.
-async function reconcileLedger(client, loaded, now = new Date().toISOString()) {
+async function reconcileLedger(
+  client,
+  loaded,
+  now = new Date().toISOString(),
+  runId,
+) {
   const ledger = loaded.ledger;
+  if (ledger.generations.length === 0) {
+    await repairMissingIntentFromLabel(client, loaded, now, runId);
+    return;
+  }
   const active = activeGeneration(ledger);
   const pending = ledger.generations.find(
     (candidate) => candidate.state === 'pending',
@@ -776,7 +897,7 @@ async function broker() {
     } else if (normalized.kind === 'completion') {
       await handleCompletion(client, loaded, normalized);
     } else if (normalized.kind === 'reconcile') {
-      await reconcileLedger(client, loaded);
+      await reconcileLedger(client, loaded, new Date().toISOString(), runId);
     } else {
       throw new Error(`Unsupported normalized event kind: ${normalized.kind}`);
     }
@@ -936,6 +1057,7 @@ export {
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
   reconcileActive,
   reconcileLedger,
+  repairMissingIntentFromLabel,
   resolveTask,
   wasSupersededEviction,
 };
