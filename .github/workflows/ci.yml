@@ -81,6 +81,9 @@ jobs:
       - name: Test image publish path-based routing (#441)
         run: node --test .github/actions/plan-image-publish/*.test.mjs
 
+      - name: Test infra-killed CI run detection and rerun (#536)
+        run: node --test .github/actions/rerun-infra-killed-runs/*.test.mjs
+
       - name: Test deliverable verification
         run: bash .github/actions/verify-deliverable/verify-deliverable.test.sh
 
