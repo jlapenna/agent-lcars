@@ -10,3 +10,4 @@ export NX_DAEMON=false
 ./tools/check-dependencies.sh
 ./tools/nx format:check --base=origin/main
 ./tools/nx affected -t lint typecheck --base=origin/main
+./tools/console-build-smoke.sh
