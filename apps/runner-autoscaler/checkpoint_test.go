@@ -201,8 +201,9 @@ func TestCheckpointStoreFlushRecordsFailureAndSuccessfulWrite(t *testing.T) {
 
 	beforeFailures := testutil.ToFloat64(checkpointWriteFailures)
 	store.flush()
-	if got := testutil.ToFloat64(checkpointWriteFailures) - beforeFailures; got != 1 {
-		t.Fatalf("checkpoint write failure increase = %v, want 1", got)
+	store.flush() // The repeated log is suppressed, but every attempt remains observable.
+	if got := testutil.ToFloat64(checkpointWriteFailures) - beforeFailures; got != 2 {
+		t.Fatalf("checkpoint write failure increase = %v, want 2", got)
 	}
 
 	path := filepath.Join(t.TempDir(), "checkpoint.json")

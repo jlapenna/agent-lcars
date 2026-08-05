@@ -28,6 +28,7 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 
 	// Record a test metric so label vector produces output
 	desiredRunnersGauge.WithLabelValues("test-scaleset").Set(2)
+	setCheckpointRestoreStatus(checkpointRestoreAbsent)
 
 	// Give the server a brief moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -83,5 +84,14 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 	metricsBody, _ := io.ReadAll(respMetrics.Body)
 	if !strings.Contains(string(metricsBody), "github_runner_autoscaler_desired_runners") {
 		t.Errorf("expected /metrics response to contain github_runner_autoscaler_desired_runners, got:\n%s", string(metricsBody))
+	}
+	for _, metric := range []string{
+		"github_runner_autoscaler_checkpoint_write_failures_total",
+		"github_runner_autoscaler_checkpoint_last_write_timestamp_seconds",
+		"github_runner_autoscaler_checkpoint_restore_status",
+	} {
+		if !strings.Contains(string(metricsBody), metric) {
+			t.Errorf("expected /metrics response to contain %s", metric)
+		}
 	}
 }
