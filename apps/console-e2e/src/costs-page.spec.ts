@@ -19,7 +19,7 @@ test.describe('/costs workspace @smoke', () => {
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
     await expect(page.getByTestId('session-ledger')).toBeVisible();
     await expect(
       workspace.getByRole('region', { name: 'By issue' }),
@@ -59,15 +59,16 @@ test.describe('/costs workspace @smoke', () => {
     expect((await header.boundingBox())?.height).toBe(64);
 
     await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await expect(
-      page.getByRole('menuitem', { name: 'Sessions' }),
+      menu.getByRole('menuitem', { name: 'Sessions' }),
     ).toHaveAttribute(
       'href',
       '/sessions?days=30&source=issue-agent&issue=9005',
     );
-    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Sign out' })).toBeVisible();
     await page.keyboard.press('Escape');
 
     const undersizedControls = await page

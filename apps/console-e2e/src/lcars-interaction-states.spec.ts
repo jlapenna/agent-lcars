@@ -14,12 +14,22 @@ import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
  * human's call.
  */
 
-const deckPill = (page: Page) => page.getByRole('link', { name: 'Deck' });
-const inboxPill = (page: Page) => page.getByRole('link', { name: 'Inbox' });
-const agentsPill = (page: Page) => page.getByRole('link', { name: 'Agents' });
+// Scoped to the nav rail landmark (not just `page.getByRole('link', ...)`)
+// because Playwright's role-name matching is a case-insensitive substring
+// unless `exact: true` - an unscoped 'Deck'/'Inbox'/'Agents' link locator
+// strict-mode-breaks the moment any other UI's accessible name merely
+// contains one of those words (agent-lcars#539).
+const nav = (page: Page) =>
+  page.getByRole('navigation', { name: 'Console sections' });
+
+const deckPill = (page: Page) => nav(page).getByRole('link', { name: 'Deck' });
+const inboxPill = (page: Page) =>
+  nav(page).getByRole('link', { name: 'Inbox' });
+const agentsPill = (page: Page) =>
+  nav(page).getByRole('link', { name: 'Agents' });
 
 const backgroundOf = (page: Page, name: string) =>
-  page
+  nav(page)
     .getByRole('link', { name })
     .evaluate((el) => getComputedStyle(el).backgroundColor);
 
@@ -66,18 +76,20 @@ test.describe('LCARS pill nav interaction states', () => {
     await page.goto('/');
 
     const ringOf = (name: string) =>
-      page.getByRole('link', { name }).evaluate((el) => {
-        const style = getComputedStyle(el);
-        return {
-          width: style.outlineWidth,
-          style: style.outlineStyle,
-          color: style.outlineColor,
-          offset: style.outlineOffset,
-        };
-      });
+      nav(page)
+        .getByRole('link', { name })
+        .evaluate((el) => {
+          const style = getComputedStyle(el);
+          return {
+            width: style.outlineWidth,
+            style: style.outlineStyle,
+            color: style.outlineColor,
+            offset: style.outlineOffset,
+          };
+        });
 
     for (const name of ['Deck', 'Inbox', 'Agents', 'Sessions', 'Costs']) {
-      await page.getByRole('link', { name }).focus();
+      await nav(page).getByRole('link', { name }).focus();
       const ring = await ringOf(name);
       expect(ring.style).toBe('solid');
       expect(ring.width).toBe('2px');
@@ -97,9 +109,11 @@ test.describe('LCARS pill nav interaction states', () => {
     await page.keyboard.press('Tab');
     await expect(agentsPill(page)).toBeFocused();
     await page.keyboard.press('Tab');
-    await expect(page.getByRole('link', { name: 'Sessions' })).toBeFocused();
+    await expect(
+      nav(page).getByRole('link', { name: 'Sessions' }),
+    ).toBeFocused();
     await page.keyboard.press('Tab');
-    await expect(page.getByRole('link', { name: 'Costs' })).toBeFocused();
+    await expect(nav(page).getByRole('link', { name: 'Costs' })).toBeFocused();
   });
 });
 

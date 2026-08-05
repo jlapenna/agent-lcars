@@ -250,11 +250,12 @@ test.describe('responsive decision inbox', () => {
     await expect(
       page.getByRole('region', { name: 'Decision Inbox' }),
     ).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+    const header = page.locator('.console-header[data-current="deck"]');
+    await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
       'aria-current',
       'page',
     );
-    await expect(page.getByRole('link', { name: 'Inbox' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
   });
 
   test('keeps list selection URL-addressable on desktop', async ({ page }) => {
@@ -285,22 +286,24 @@ test.describe('responsive decision inbox', () => {
     const repoQuery = 'supersprinklesracing%2Fsprinkles';
     await page.goto(`/?repo=${repoQuery}`);
 
-    const inboxLink = page.getByRole('link', { name: 'Inbox' });
+    const header = page.locator('.console-header');
+    const inboxLink = header.getByRole('link', { name: 'Inbox' });
     await expect(inboxLink).toHaveAttribute('href', `/inbox?repo=${repoQuery}`);
     await inboxLink.click();
     await expect(page).toHaveURL(new RegExp(`/inbox\\?repo=${repoQuery}$`));
-    await expect(page.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+    await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
       'href',
       `/?repo=${repoQuery}`,
     );
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Deck' })).toHaveAttribute(
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toHaveAttribute(
       'href',
       `/?repo=${repoQuery}`,
     );
-    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toHaveAttribute(
+    await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toHaveAttribute(
       'href',
       `/inbox?repo=${repoQuery}`,
     );
@@ -326,8 +329,9 @@ test.describe('responsive decision inbox', () => {
     ).toBe(true);
 
     await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await page.keyboard.press('Escape');
     await testInfo.attach('inbox-tablet.png', {
       body: await page.screenshot({ fullPage: true }),
@@ -376,8 +380,9 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 
     await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Agents' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitem', { name: 'Agents' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Sign out' })).toBeVisible();
     await page.keyboard.press('Escape');
 
     await workspace
@@ -417,7 +422,9 @@ test.describe('responsive decision inbox', () => {
     ).toBe(true);
 
     await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
+    await expect(
+      page.getByRole('menu').getByRole('menuitem', { name: 'Inbox' }),
+    ).toBeVisible();
   });
 });
 
