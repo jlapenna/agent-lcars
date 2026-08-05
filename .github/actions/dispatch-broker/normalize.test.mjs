@@ -544,7 +544,7 @@ test('pull request close, merge, and reopen become serialized anchor controls', 
   }
 });
 
-test('a pull request labeled event dispatches a review-mode intent, not implement', () => {
+test('an agent:* labeled event on a pull request dispatches an implement-mode intent, taking it over', () => {
   const normalized = normalizeEvent({
     eventName: 'pull_request',
     event: prEvent('labeled'),
@@ -553,8 +553,62 @@ test('a pull request labeled event dispatches a review-mode intent, not implemen
     maintainer: 'jlapenna',
   });
   assert.equal(normalized.kind, 'intent');
+  assert.equal(normalized.intent.mode, 'implement');
+  assert.equal(normalized.intent.pipeline, 'codex');
+});
+
+test('a review:* labeled event on a pull request dispatches a review-mode intent', () => {
+  const normalized = normalizeEvent({
+    eventName: 'pull_request',
+    event: prEvent('labeled', { label: { name: 'review:codex' } }),
+    context,
+    timeline: timeline('labeled', { label: { name: 'review:codex' } }),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'intent');
   assert.equal(normalized.intent.mode, 'review');
   assert.equal(normalized.intent.pipeline, 'codex');
+});
+
+test('a review:* label on a plain issue is not a recognized label at all (no diff to review)', () => {
+  const normalized = normalizeEvent({
+    eventName: 'issues',
+    event: issueEvent('labeled', { label: { name: 'review:codex' } }),
+    context,
+    timeline: timeline('labeled', { label: { name: 'review:codex' } }),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'ignored');
+});
+
+test('agent:* and review:* coexist on a pull request without contradiction -- each dispatches its own mode', () => {
+  const issue = {
+    ...baseIssue,
+    id: 8080,
+    labels: [{ name: 'agent:codex' }, { name: 'review:claude' }],
+  };
+  const agentNormalized = normalizeEvent({
+    eventName: 'pull_request',
+    event: prEvent('labeled', { pull_request: issue }),
+    context,
+    timeline: timeline('labeled'),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(agentNormalized.intent.mode, 'implement');
+  assert.equal(agentNormalized.intent.pipeline, 'codex');
+
+  const reviewNormalized = normalizeEvent({
+    eventName: 'pull_request',
+    event: prEvent('labeled', {
+      pull_request: issue,
+      label: { name: 'review:claude' },
+    }),
+    context,
+    timeline: timeline('labeled', { label: { name: 'review:claude' } }),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(reviewNormalized.intent.mode, 'review');
+  assert.equal(reviewNormalized.intent.pipeline, 'claude');
 });
 
 test('a pull request unlabeled event stays control-evidence, never an intent (same as an issue)', () => {

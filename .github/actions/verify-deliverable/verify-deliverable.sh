@@ -8,7 +8,11 @@
 #       implement dispatch, EXCLUDE_PR_AUTHOR keeps a concurrently
 #       dispatched sibling pipeline's PR from satisfying this clause, but
 #       that exclusion is skipped on a reply dispatch - see clause (a)
-#       below for why);
+#       below for why). Also matches when #NUM IS the PR's own number, not
+#       just a title/body reference to it - an agent:*-on-PR takeover
+#       dispatch (#567) has the anchor and the pushed-to PR be the exact
+#       same object, which never mentions its own number in its own title
+#       or body;
 #   (b) the issue was closed since STARTED_AT;
 #   (c) the status:needs-human label is present (the sanctioned blocked/
 #       clarifying-question ending);
@@ -73,7 +77,10 @@ if [ -z "$found" ]; then
        | [.[] | .user.login as $author
               | select(.updated_at >= $started)
               | select($mode == "reply" or ($excluded | index($author)) == null)
-              | select((.title + " " + (.body // "")) | test("#" + $num + "([^0-9]|$)"))]
+              | select(
+                  ((.title + " " + (.body // "")) | test("#" + $num + "([^0-9]|$)"))
+                  or (.number == ($num | tonumber))
+                )]
        | length' <<<"$pr_json")
     if [ "${prs:-0}" -gt 0 ]; then
       found="PR referencing #$NUM created/updated since $STARTED_AT"

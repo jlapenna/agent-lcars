@@ -82,15 +82,21 @@ jlapenna`), and use as the assignee in the parking recipe
   login straight against `AGENT_BOT_LOGINS` or `AGENT_FLEET_LOGIN` without
   normalizing it first.
 
-## Review mode — the same `agent:*` label, applied to a pull request
+## `agent:*` vs `review:*` on a pull request
 
 Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`
 dispatches `mode: implement` (§Dispatch above). Tagging a **pull request**
-with the same label dispatches `mode: review` instead — GitHub delivers a
-PR's own `labeled`/`unlabeled` action as a `pull_request` webhook event,
-never an `issues` event, so `normalize.mjs` can tell the two apart from the
-event's own shape alone and doesn't need a distinct label per mode. No new
-label exists or is planned for this — reuse the existing three.
+with the same `agent:*` label dispatches `mode: implement` too (#567) —
+take the PR over and keep pushing commits to its branch, same as an issue,
+just against an existing branch instead of a new one. A pull request
+tagged instead with `review:claude`/`review:codex`/`review:opencode`
+dispatches `mode: review` — leave a review, don't push (#565/#568, revised
+by #567 once the maintainer picked `review:*` as the dedicated review
+trigger rather than overloading `agent:*` for both meanings). The two
+label families are independent: a PR may carry `agent:*`, `review:*`,
+both, or neither, and each drives its own dispatch mode when applied
+(`normalize.mjs`'s `AGENT_LABELS`/`REVIEW_LABELS`). `review:*` is not a
+recognized label at all on a plain issue — there is no diff to review.
 
 If you are dispatched with `mode: review` in the JSON brief at
 `$AGENT_DISPATCH_CONTEXT`, the anchor is always a pull request and your job
@@ -102,10 +108,21 @@ This repo's deliverable-evidence gate (`verify-deliverable.sh`, per
 agent-protocol.md §5) checks for exactly that: on a review dispatch, a
 submitted PR review from your own bot login is the sanctioned deliverable,
 the same way a posted comment is the sanctioned deliverable on a reply
-dispatch. A takeover/progress comment alone does not count. The rest of the
-protocol still applies unchanged — takeover comment, eyes reactions, one
-edited progress comment, parking on a real blocker, pushing nothing (there
-is nothing to push on a pure review).
+dispatch. A takeover/progress comment alone does not count.
+
+If you are dispatched with `mode: implement` and the anchor is a pull
+request (an `agent:*` label applied to it, not an issue), your job is to
+**take the PR over and keep iterating on its own branch** — push commits
+the normal way, same as any other implement dispatch. `verify-deliverable.sh`
+clause (a) matches this case too: a PR anchor's own number satisfies "PR
+referencing #NUM", not just a title/body mention of it, so a push to the
+same PR is recognized evidence without requiring the PR to reference
+itself in prose.
+
+The rest of the protocol still applies unchanged in either mode —
+takeover comment, eyes reactions, one edited progress comment, parking on
+a real blocker; a review dispatch pushes nothing (there is nothing to push
+on a pure review).
 
 **Known gap (#565):** this dispatch path only fires once
 `.github/workflows/agent-router.yml`'s own `pull_request:` trigger listens
@@ -121,7 +138,7 @@ subscription itself is outstanding.
 `.github/workflows/dispatch-reconcile.yml` runs every 30 minutes (offset
 from :00/:30, cron `7,37 * * * *`) and on manual `workflow_dispatch`. Its own
 job is read-only discovery: it lists every currently open issue/PR carrying
-an `agent:*` label, unioned with every open issue/PR assigned to
+an `agent:*` or `review:*` label, unioned with every open issue/PR assigned to
 `vars.AGENT_FLEET_LOGIN` (`jclaw-bot`) — the durable, label-independent
 signal `claim-issue` already sets at the start of every worker dispatch and
 never clears, which is what still finds a ledger whose last `agent:*` label

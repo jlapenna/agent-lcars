@@ -13,6 +13,17 @@ const AGENT_LABELS = new Map([
 // keeps requiring an exact match against that label -- this only adds a
 // second way to say "the one that's already selected", it doesn't relax
 // the existing ones.
+// A pull request only: review:* drives `mode: 'review'` (leave a review,
+// don't push), independent of and coexistable with agent:* on the same PR,
+// which drives `mode: 'implement'` (take the PR over and keep iterating on
+// its branch). The two label families are never contradictory with each
+// other -- only within their own namespace, the same self-heal-or-fail-
+// closed contract agent:* already has alone.
+const REVIEW_LABELS = new Map([
+  ['review:claude', 'claude'],
+  ['review:codex', 'codex'],
+  ['review:opencode', 'opencode'],
+]);
 const COMMANDS = new Map([
   ['@claude', 'claude'],
   ['/codex', 'codex'],
@@ -37,11 +48,15 @@ function labelsOf(issue) {
   );
 }
 
-function selectedPipeline(issue) {
-  const selected = labelsOf(issue)
-    .filter((label) => AGENT_LABELS.has(label))
-    .map((label) => AGENT_LABELS.get(label));
+function selectedPipelineFrom(labels, labelMap) {
+  const selected = labels
+    .filter((label) => labelMap.has(label))
+    .map((label) => labelMap.get(label));
   return selected.length === 1 ? selected[0] : undefined;
+}
+
+function selectedPipeline(issue) {
+  return selectedPipelineFrom(labelsOf(issue), AGENT_LABELS);
 }
 
 function parseExactCommand(body) {
@@ -378,10 +393,11 @@ function normalizeEvent({
       };
     }
     // `labeled`/`unlabeled` falls through to the shared handling below,
-    // shared with the `issues` event's own labeled/unlabeled branch --
-    // the only difference is the resulting intent's `mode`, since a label
-    // added to a pull request means "review this diff", not "implement
-    // this issue".
+    // shared with the `issues` event's own labeled/unlabeled branch.
+    // agent:* on a pull request means the same thing it means on an issue
+    // -- take it over, `mode: 'implement'`, push commits to its branch --
+    // while review:* (pull requests only) means `mode: 'review'`: leave a
+    // review, don't push.
     if (!['labeled', 'unlabeled'].includes(event.action)) {
       return { kind: 'ignored', reason: 'unsupported pull request action' };
     }
@@ -434,9 +450,17 @@ function normalizeEvent({
         },
       };
     }
-    if (!event.label?.name?.startsWith('agent:')) {
+    // review:* only means anything on a pull request -- there is no diff
+    // to review on a plain issue -- so it is not a recognized label prefix
+    // at all on an `issues` event; agent:* is recognized on either.
+    const labelName = event.label?.name;
+    const isReviewLabel =
+      eventName === 'pull_request' && Boolean(labelName?.startsWith('review:'));
+    if (!labelName?.startsWith('agent:') && !isReviewLabel) {
       return { kind: 'ignored', reason: 'non-agent label event' };
     }
+    const labelMap = isReviewLabel ? REVIEW_LABELS : AGENT_LABELS;
+    const labelKind = isReviewLabel ? 'review' : 'agent';
     if (event.action === 'unlabeled') {
       return {
         kind: 'control-evidence',
@@ -451,37 +475,39 @@ function normalizeEvent({
       };
     }
     if (!auth.authorized) throw new Error('Unauthorized label dispatch');
-    const eventPipeline = AGENT_LABELS.get(event.label.name);
+    const eventPipeline = labelMap.get(event.label.name);
     if (!eventPipeline)
-      return { kind: 'ignored', reason: 'unknown agent label' };
-    const selectedAgentLabels = labelsOf(issue).filter((label) =>
-      AGENT_LABELS.has(label),
+      return { kind: 'ignored', reason: `unknown ${labelKind} label` };
+    const selectedLabelsInNamespace = labelsOf(issue).filter((label) =>
+      labelMap.has(label),
     );
-    // A manual GitHub UI relabel adds the new agent:* label before removing
-    // the old one, so this `labeled` event can fire inside a transient
-    // dual-label window (the old pre-broker router self-healed this; #304's
-    // audit found the broker did not). When this event's own label
-    // disambiguates against exactly one other agent:* label already on the
-    // issue, self-heal: honor the newest explicit maintainer action (the
-    // event's own label) as authoritative and mark the other as stale so
-    // main.mjs can remove it before dispatching. Anything less clear-cut --
-    // the event's label missing from the current snapshot, or two or more
-    // other labels present -- stays genuinely ambiguous and fails closed,
-    // same as a comment/dispatch arriving with no event label to
-    // disambiguate.
-    let effectivePipeline = pipeline;
+    // A manual GitHub UI relabel adds the new agent:*/review:* label before
+    // removing the old one, so this `labeled` event can fire inside a
+    // transient dual-label window (the old pre-broker router self-healed
+    // this; #304's audit found the broker did not). When this event's own
+    // label disambiguates against exactly one other label already on the
+    // issue *within the same namespace* (agent:* only contends with other
+    // agent:* labels; review:* only with other review:* labels -- the two
+    // families coexist freely), self-heal: honor the newest explicit
+    // maintainer action (the event's own label) as authoritative and mark
+    // the other as stale so main.mjs can remove it before dispatching.
+    // Anything less clear-cut -- the event's label missing from the
+    // current snapshot, or two or more other labels present in that same
+    // namespace -- stays genuinely ambiguous and fails closed, same as a
+    // comment/dispatch arriving with no event label to disambiguate.
+    let effectivePipeline = selectedPipelineFrom(labelsOf(issue), labelMap);
     let staleAgentLabels;
-    if (selectedAgentLabels.length > 1) {
-      const otherAgentLabels = selectedAgentLabels.filter(
+    if (selectedLabelsInNamespace.length > 1) {
+      const otherLabelsInNamespace = selectedLabelsInNamespace.filter(
         (label) => label !== event.label.name,
       );
       if (
-        !selectedAgentLabels.includes(event.label.name) ||
-        otherAgentLabels.length !== 1
+        !selectedLabelsInNamespace.includes(event.label.name) ||
+        otherLabelsInNamespace.length !== 1
       ) {
-        throw new Error('Issue has contradictory agent labels');
+        throw new Error(`Issue has contradictory ${labelKind} labels`);
       }
-      staleAgentLabels = otherAgentLabels;
+      staleAgentLabels = otherLabelsInNamespace;
       effectivePipeline = eventPipeline;
     }
     const quickTask = quickTaskRequest(
@@ -500,7 +526,7 @@ function normalizeEvent({
         ...source,
         transportRunId: context.runId,
         pipeline: eventPipeline,
-        mode: eventName === 'pull_request' ? 'review' : 'implement',
+        mode: isReviewLabel ? 'review' : 'implement',
         reply: '',
         runbook: '',
         context: '',
@@ -519,6 +545,8 @@ export {
   normalizeEvent,
   parseExactCommand,
   quickTaskRequest,
+  REVIEW_LABELS,
   selectedPipeline,
+  selectedPipelineFrom,
   timelineSource,
 };

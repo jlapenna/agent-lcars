@@ -53,6 +53,18 @@
       "color": "3776ab",
       "description": "Dispatch this item to the OpenCode agent"
     },
+    "review:claude": {
+      "color": "d97757",
+      "description": "Have the Claude agent review this pull request's diff"
+    },
+    "review:codex": {
+      "color": "14b8a6",
+      "description": "Have the Codex agent review this pull request's diff"
+    },
+    "review:opencode": {
+      "color": "3776ab",
+      "description": "Have the OpenCode agent review this pull request's diff"
+    },
     "agent-option:long-run": {
       "color": "b60205",
       "description": "Use the extended agent turn and time budget"
@@ -127,6 +139,9 @@
         "agent:claude",
         "agent:codex",
         "agent:opencode",
+        "review:claude",
+        "review:codex",
+        "review:opencode",
         "agent-option:long-run",
         "intake:quick-task",
         "bot:renovate",
