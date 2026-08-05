@@ -54,12 +54,15 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	restored, loadErr := loadCheckpoint(resolved.Raw.Server.StatePath)
 	switch {
 	case loadErr != nil:
+		setCheckpointRestoreStatus(checkpointRestoreUnreadable)
 		logger.Error("Ignoring unreadable control-plane checkpoint; adopting runners from Docker instead",
 			slog.String("path", resolved.Raw.Server.StatePath), slog.Any("error", loadErr))
 	case restored == nil:
+		setCheckpointRestoreStatus(checkpointRestoreAbsent)
 		logger.Info("No control-plane checkpoint found; this is a first boot for this state path",
 			slog.String("path", resolved.Raw.Server.StatePath))
 	default:
+		setCheckpointRestoreStatus(checkpointRestoreRestored)
 		fleet.restore(restored.Fleet, time.Now())
 		logger.Info("Restored control-plane checkpoint",
 			slog.Time("written_at", restored.WrittenAt), slog.Int("scale_sets", len(restored.ScaleSets)))

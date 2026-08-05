@@ -14,6 +14,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func testCheckpoint() checkpointFile {
@@ -191,6 +192,45 @@ func TestVerifyCheckpointWritableRejectsDirectoryAtPath(t *testing.T) {
 func TestNilCheckpointStoreFlushIsNoOp(t *testing.T) {
 	var store *checkpointStore
 	store.flush()
+}
+
+func TestCheckpointStoreFlushRecordsFailureAndSuccessfulWrite(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := newCheckpointStore(filepath.Join(t.TempDir(), "missing", "checkpoint.json"), logger)
+	store.setSnapshot(testCheckpoint)
+
+	beforeFailures := testutil.ToFloat64(checkpointWriteFailures)
+	store.flush()
+	if got := testutil.ToFloat64(checkpointWriteFailures) - beforeFailures; got != 1 {
+		t.Fatalf("checkpoint write failure increase = %v, want 1", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "checkpoint.json")
+	store.path = path
+	beforeWrite := time.Now().Add(-time.Second).Unix()
+	store.flush()
+	if got := testutil.ToFloat64(checkpointLastWriteTimestamp); got < float64(beforeWrite) {
+		t.Fatalf("last checkpoint write timestamp = %v, want at least %d", got, beforeWrite)
+	}
+	if _, err := loadCheckpoint(path); err != nil {
+		t.Fatalf("load successful checkpoint: %v", err)
+	}
+}
+
+func TestCheckpointRestoreStatusIsOneHot(t *testing.T) {
+	statuses := []string{checkpointRestoreRestored, checkpointRestoreAbsent, checkpointRestoreUnreadable}
+	for _, selected := range statuses {
+		setCheckpointRestoreStatus(selected)
+		for _, status := range statuses {
+			want := 0.0
+			if status == selected {
+				want = 1
+			}
+			if got := testutil.ToFloat64(checkpointRestoreStatus.WithLabelValues(status)); got != want {
+				t.Errorf("status %q after selecting %q = %v, want %v", status, selected, got, want)
+			}
+		}
+	}
 }
 
 func TestFleetCoordinatorRestoreDropsExpiredCooldowns(t *testing.T) {
