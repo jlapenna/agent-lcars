@@ -1,10 +1,18 @@
 name: Rerun infrastructure-killed CI runs
 description: >-
-  Scan recent completed-failure ci.yml runs for the all-null-steps
+  Scan recent completed-failure runs of one workflow for the all-null-steps
   infra-killed signature (agent-lcars#536: the runner was evicted/killed
   under the job before any step resolved, as opposed to a real step
   failure), rerun each matching run exactly once via rerun-failed-jobs, and
   post an audit-trail comment on its associated pull request.
+
+inputs:
+  workflow-file:
+    description: >-
+      Workflow file whose failed runs are scanned - name the workflow
+      carrying the caller's required status check (this repo's is ci.yml).
+    required: false
+    default: ci.yml
 
 outputs:
   scanned:
@@ -24,4 +32,6 @@ runs:
     - name: Scan and rerun infrastructure-killed CI runs
       id: run
       shell: bash
+      env:
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
       run: node "$GITHUB_ACTION_PATH/main.mjs"

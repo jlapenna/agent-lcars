@@ -11,6 +11,35 @@ inputs:
   private-key:
     description: GitHub App private key (repo secret AGENT_LCARS_PRIVATE_KEY).
     required: true
+  # The scoping passthroughs below mirror actions/create-github-app-token's
+  # own inputs, for which an empty string means "unset" - so blank defaults
+  # leave the minted token at its default scope (the workflow repo, all
+  # installation permissions). Always pass the narrowest scope the caller
+  # actually needs.
+  owner:
+    description: Org/user to scope the installation token to (defaults to the workflow repo's owner).
+    required: false
+    default: ''
+  repositories:
+    description: Comma- or newline-separated repositories to scope the token to.
+    required: false
+    default: ''
+  permission-issues:
+    description: Issues permission level to request (e.g. read, write).
+    required: false
+    default: ''
+  permission-contents:
+    description: Contents permission level to request.
+    required: false
+    default: ''
+  permission-pull-requests:
+    description: Pull-requests permission level to request.
+    required: false
+    default: ''
+  permission-actions:
+    description: Actions permission level to request.
+    required: false
+    default: ''
 
 outputs:
   token:
@@ -29,3 +58,9 @@ runs:
       with:
         client-id: ${{ inputs.client-id }}
         private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repositories }}
+        permission-issues: ${{ inputs.permission-issues }}
+        permission-contents: ${{ inputs.permission-contents }}
+        permission-pull-requests: ${{ inputs.permission-pull-requests }}
+        permission-actions: ${{ inputs.permission-actions }}

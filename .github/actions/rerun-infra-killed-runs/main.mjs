@@ -25,10 +25,12 @@ import {
   selectAssociatedPullRequest,
 } from './detect.mjs';
 
-// Only ci.yml's "Verify" job is a required status check (see the "Protect
-// main" ruleset); this scan is deliberately scoped to that one workflow
-// rather than every workflow in the repo.
-const WORKFLOW_FILE = 'ci.yml';
+// The scan is deliberately scoped to ONE workflow (action input
+// `workflow-file`, env WORKFLOW_FILE) rather than every workflow in the
+// repo - in this repo that's ci.yml, whose "Verify" job is the required
+// status check per the "Protect main" ruleset; a consumer names its own
+// required-check workflow instead.
+const DEFAULT_WORKFLOW_FILE = 'ci.yml';
 
 // Comfortably wider than this workflow's own ~30-minute scheduled cadence
 // (see rerun-infra-killed-runs.yml's cron) so a run is never missed just
@@ -68,7 +70,7 @@ async function output(name, value) {
   await fs.appendFile(path, `${name}=${value}\n`, 'utf8');
 }
 
-async function listRecentFailedRuns(api, root, sinceIso) {
+async function listRecentFailedRuns(api, root, sinceIso, workflowFile) {
   const runs = [];
   for (let page = 1; page <= MAX_LIST_PAGES; page += 1) {
     const params = new URLSearchParams({
@@ -78,7 +80,7 @@ async function listRecentFailedRuns(api, root, sinceIso) {
       page: String(page),
     });
     const data = await api.requestOk(
-      `${root}/actions/workflows/${WORKFLOW_FILE}/runs?${params}`,
+      `${root}/actions/workflows/${workflowFile}/runs?${params}`,
     );
     const pageRuns = data.workflow_runs ?? [];
     runs.push(...pageRuns);
@@ -87,14 +89,23 @@ async function listRecentFailedRuns(api, root, sinceIso) {
   return runs;
 }
 
-// ci.yml only ever declares two jobs (Verify, E2E), so a single
-// per_page=100 page always covers every job a run of it can have -- no
-// pagination loop needed the way listRecentFailedRuns has one.
+// Paginated like listRecentFailedRuns: the scanned workflow is now a
+// consumer input, so the two-job assumption that once made a single page
+// sufficient (this repo's ci.yml) no longer holds in general. An
+// incomplete job set would be actively harmful here -- a real failed job
+// on a missed page could make a genuine failure look infra-killed and
+// trigger a bogus rerun.
 async function getJobs(api, root, runId) {
-  const data = await api.requestOk(
-    `${root}/actions/runs/${runId}/jobs?per_page=100`,
-  );
-  return data.jobs ?? [];
+  const jobs = [];
+  for (let page = 1; page <= MAX_LIST_PAGES; page += 1) {
+    const data = await api.requestOk(
+      `${root}/actions/runs/${runId}/jobs?per_page=100&page=${page}`,
+    );
+    const pageJobs = data.jobs ?? [];
+    jobs.push(...pageJobs);
+    if (pageJobs.length < 100) break;
+  }
+  return jobs;
 }
 
 async function findAssociatedPullRequest(api, root, headSha) {
@@ -170,10 +181,15 @@ async function processRun(api, root, run) {
   return { reran: true };
 }
 
-async function scanAndRerun({ api, repository, now = new Date() }) {
+async function scanAndRerun({
+  api,
+  repository,
+  workflowFile = DEFAULT_WORKFLOW_FILE,
+  now = new Date(),
+}) {
   const root = repositoryPath({ repository });
   const since = new Date(now.getTime() - SCAN_WINDOW_MS).toISOString();
-  const runs = await listRecentFailedRuns(api, root, since);
+  const runs = await listRecentFailedRuns(api, root, since, workflowFile);
   const eligible = runs.filter(isEligibleForRerun);
 
   // processRun never throws (every step inside it is already its own
@@ -194,9 +210,14 @@ async function scanAndRerun({ api, repository, now = new Date() }) {
 async function run() {
   const api = createGitHubApi({ token: env('GITHUB_TOKEN') });
   const repository = env('GITHUB_REPOSITORY');
-  const { scanned, rerun } = await scanAndRerun({ api, repository });
+  const workflowFile = env('WORKFLOW_FILE', false) || DEFAULT_WORKFLOW_FILE;
+  const { scanned, rerun } = await scanAndRerun({
+    api,
+    repository,
+    workflowFile,
+  });
   console.log(
-    `rerun-infra-killed-runs: scanned ${scanned} recent failed ${WORKFLOW_FILE} run(s), reran ${rerun}.`,
+    `rerun-infra-killed-runs: scanned ${scanned} recent failed ${workflowFile} run(s), reran ${rerun}.`,
   );
   await output('scanned', String(scanned));
   await output('rerun', String(rerun));

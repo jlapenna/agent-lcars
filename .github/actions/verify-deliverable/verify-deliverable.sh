@@ -12,11 +12,12 @@
 #   (b) the issue was closed since STARTED_AT;
 #   (c) the status:needs-human label is present (the sanctioned blocked/
 #       clarifying-question ending);
-#   (d) - only on a reply dispatch (MODE=reply) - EXPECTED_COMMENT_LOGIN
-#       posted a comment on the anchor since STARTED_AT. Gated on reply
-#       mode deliberately: a bare pickup/plan comment alone proves nothing
-#       on an implement dispatch, but a reply's whole sanctioned
-#       deliverable can legitimately BE a comment; or
+#   (d) - only on a reply dispatch (MODE=reply) or a runbook dispatch
+#       (RUNBOOK non-empty) - EXPECTED_COMMENT_LOGIN posted a comment on
+#       the anchor since STARTED_AT. Gated deliberately: a bare pickup/plan
+#       comment alone proves nothing on an ordinary implement dispatch, but
+#       a reply's - or a runbook's - whole sanctioned deliverable can
+#       legitimately BE a comment (e.g. an unstick-prs summary); or
 #   (e) - only on a review dispatch (MODE=review) - EXPECTED_COMMENT_LOGIN
 #       submitted a pull request review on #NUM since STARTED_AT. A review
 #       dispatch's anchor is always a pull request and its whole sanctioned
@@ -42,6 +43,7 @@ set -uo pipefail
 : "${STARTED_AT:?STARTED_AT is required}"
 : "${MODE:?MODE is required}"
 : "${EXPECTED_COMMENT_LOGIN:?EXPECTED_COMMENT_LOGIN is required}"
+RUNBOOK="${RUNBOOK:-}"
 EXCLUDE_PR_AUTHOR="${EXCLUDE_PR_AUTHOR:-}"
 EXCLUDE_COMMENT_ID="${EXCLUDE_COMMENT_ID:-}"
 
@@ -53,10 +55,11 @@ errors=()
 # on "#4" also hits "#42"/"#400" in any PR title/body. sort=updated,
 # direction=desc so a push to an OLDER existing PR isn't missed once >50 PRs
 # exist (creation-date order would drop it off the first page).
-# EXCLUDE_PR_AUTHOR guards against crediting a different, concurrently
-# dispatched sibling pipeline's PR when two agents are testing against the
-# same issue - each workflow passes the OTHER pipelines' bot login here,
-# never its own. Only applied on an implement dispatch, though: on a reply
+# EXCLUDE_PR_AUTHOR (comma-separated logins) guards against crediting a
+# different, concurrently dispatched sibling pipeline's PR when two agents
+# are testing against the same issue - each workflow passes the OTHER
+# pipelines' bot logins here, never its own. Only applied on an implement
+# dispatch, though: on a reply
 # dispatch the anchor (issue or PR) is explicit and dispatched deliberately
 # at that anchor, so an update to a PR referencing it is valid evidence
 # regardless of which pipeline authored the PR - excluding by author there
@@ -66,9 +69,11 @@ if [ -z "$found" ]; then
   if pr_json=$(gh api "repos/$REPO/pulls?state=all&sort=updated&direction=desc&per_page=50" 2>&1); then
     prs=$(jq -r \
       --arg started "$STARTED_AT" --arg num "$NUM" --arg exclude "$EXCLUDE_PR_AUTHOR" --arg mode "$MODE" \
-      '[.[] | select(.updated_at >= $started)
-             | select($mode == "reply" or $exclude == "" or .user.login != $exclude)
-             | select((.title + " " + (.body // "")) | test("#" + $num + "([^0-9]|$)"))]
+      '($exclude | split(",") | map(select(length > 0))) as $excluded
+       | [.[] | .user.login as $author
+              | select(.updated_at >= $started)
+              | select($mode == "reply" or ($excluded | index($author)) == null)
+              | select((.title + " " + (.body // "")) | test("#" + $num + "([^0-9]|$)"))]
        | length' <<<"$pr_json")
     if [ "${prs:-0}" -gt 0 ]; then
       found="PR referencing #$NUM created/updated since $STARTED_AT"
@@ -101,11 +106,11 @@ if [ -z "$found" ]; then
   fi
 fi
 
-# (d) reply-mode comment evidence. EXCLUDE_COMMENT_ID skips a scripted
-# pickup comment (if this pipeline posts one): GitHub's `since` filter uses
-# updated_at, so a pickup comment the agent itself edits during the run
-# would otherwise look like fresh evidence.
-if [ -z "$found" ] && [ "$MODE" = "reply" ]; then
+# (d) reply-mode (or runbook-dispatch) comment evidence. EXCLUDE_COMMENT_ID
+# skips a scripted pickup comment (if this pipeline posts one): GitHub's
+# `since` filter uses updated_at, so a pickup comment the agent itself
+# edits during the run would otherwise look like fresh evidence.
+if [ -z "$found" ] && { [ "$MODE" = "reply" ] || [ -n "$RUNBOOK" ]; }; then
   if comments_json=$(gh api "repos/$REPO/issues/$NUM/comments?since=$STARTED_AT&per_page=100" 2>&1); then
     botcomments=$(jq -r \
       --arg login "$EXPECTED_COMMENT_LOGIN" --arg exclude "$EXCLUDE_COMMENT_ID" \
@@ -148,7 +153,7 @@ fi
 
 echo "NO_DELIVERABLE=1" >> "${GITHUB_ENV:-/dev/null}"
 mode_clause=""
-if [ "$MODE" = "reply" ]; then
+if [ "$MODE" = "reply" ] || [ -n "$RUNBOOK" ]; then
   mode_clause=", no qualifying comment posted"
 elif [ "$MODE" = "review" ]; then
   mode_clause=", no qualifying pull request review submitted"

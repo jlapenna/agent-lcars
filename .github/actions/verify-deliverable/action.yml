@@ -18,17 +18,28 @@ inputs:
     description: UTC timestamp (from agent-setup's started-at output) marking when this run started.
     required: true
   mode:
-    description: Dispatch mode. Only 'reply' allows a bare comment to count as evidence.
+    description: >-
+      Dispatch mode. Only 'reply' (or a non-empty runbook) allows a bare
+      comment to count as evidence.
     required: true
+  runbook:
+    description: >-
+      Runbook name when this is a runbook dispatch, empty otherwise. A
+      runbook's sanctioned deliverable can legitimately be a summary
+      comment, so a non-empty value enables comment evidence the same way
+      mode 'reply' does.
+    required: false
+    default: ''
   expected-comment-login:
     description: Bot login whose comment counts as reply-mode evidence.
     required: true
   exclude-pr-author:
     description: >-
-      Login whose PRs are ignored (guards against crediting a concurrently
-      dispatched sibling pipeline's PR). Only enforced when mode is not
-      'reply' - a reply dispatch's anchor is explicit, so a post-start
-      update to a PR referencing it is valid evidence regardless of author.
+      Comma-separated login(s) whose PRs are ignored (guards against
+      crediting a concurrently dispatched sibling pipeline's PR). Only
+      enforced when mode is not 'reply' - a reply dispatch's anchor is
+      explicit, so a post-start update to a PR referencing it is valid
+      evidence regardless of author.
     required: false
     default: ''
   exclude-comment-id:
@@ -54,6 +65,7 @@ runs:
         NUM: ${{ inputs.issue }}
         STARTED_AT: ${{ inputs.started-at }}
         MODE: ${{ inputs.mode }}
+        RUNBOOK: ${{ inputs.runbook }}
         EXPECTED_COMMENT_LOGIN: ${{ inputs.expected-comment-login }}
         EXCLUDE_PR_AUTHOR: ${{ inputs.exclude-pr-author }}
         EXCLUDE_COMMENT_ID: ${{ inputs.exclude-comment-id }}
