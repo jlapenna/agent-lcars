@@ -95,8 +95,13 @@ describe('QuickTaskButton', () => {
     // guarantee the dialog's own React update has flushed yet. Wait for the
     // dialog to actually be gone before rendering the captured message into a
     // second tree, same guard already used elsewhere in this file for the
-    // identical close-transition timing (agent-lcars#420).
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // identical close-transition timing (agent-lcars#420). The default
+    // waitFor timeout (1000ms) still wasn't enough for the Mantine portal to
+    // unmount on a loaded CI runner (agent-lcars#533), so this one gets a
+    // more generous explicit timeout.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), {
+      timeout: 5000,
+    });
     const { message } = (notifications.show as Mock).mock.calls[0][0];
     render(<MantineProvider>{message}</MantineProvider>);
     const link = screen.getByRole('link', {
