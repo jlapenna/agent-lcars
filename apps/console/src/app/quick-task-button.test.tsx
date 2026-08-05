@@ -269,6 +269,11 @@ describe('QuickTaskButton', () => {
       (screen.getByRole('combobox', { name: 'Agent' }) as HTMLInputElement)
         .disabled,
     ).toBe(true);
+    expect(
+      screen
+        .getByRole('button', { name: 'File & dispatch' })
+        .getAttribute('data-loading'),
+    ).toBe('true');
     submit();
     expect(createQuickTask).toHaveBeenCalledTimes(1);
 

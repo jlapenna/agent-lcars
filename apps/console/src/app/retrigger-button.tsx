@@ -73,6 +73,7 @@ export function RetriggerButton({
           variant="default"
           size={size}
           disabled={isPending || disabled}
+          loading={isPending}
           title={disabled ? disabledReason : undefined}
           onClick={() => setOpened((prev) => !prev)}
         >
@@ -88,7 +89,12 @@ export function RetriggerButton({
             autosize
             minRows={2}
           />
-          <Button disabled={isPending} onClick={handleRetrigger} fullWidth>
+          <Button
+            disabled={isPending}
+            loading={isPending}
+            onClick={handleRetrigger}
+            fullWidth
+          >
             Retrigger now
           </Button>
         </Stack>
