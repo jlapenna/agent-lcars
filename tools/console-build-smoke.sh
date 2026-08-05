@@ -32,14 +32,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export NX_TUI=false
 export NX_DAEMON=false
 
-affected="$(./tools/nx show projects --affected --base=origin/main --projects '@agent-lcars/console' 2>/dev/null || true)"
+affected_json="$(./tools/nx show projects --affected --base=origin/main --projects '@agent-lcars/console' --json 2>/dev/null)" || affected_json='[]'
 
-# `nx show projects --projects '@agent-lcars/console'` only ever matches
-# that exact project (confirmed empirically: it does not also match
-# '@agent-lcars/console-e2e'), so the only two possible outputs here are
-# the literal empty-array string `[]` or the single-element array
-# containing it - not an empty string, so don't test with `-z`.
-if [ "$affected" = '[]' ]; then
+# Parse as JSON rather than string-matching nx's plain-text list output,
+# which isn't a documented format and isn't worth trusting to stay `[]`
+# for "nothing matched" across nx versions. `--json` is explicit and
+# stable; treat any parse failure as "not affected" (fail open - a smoke
+# step shouldn't block the push because its own affected-check hiccuped).
+affected_count="$(printf '%s' "$affected_json" | jq 'length' 2>/dev/null)" || affected_count=0
+
+if [ "$affected_count" -eq 0 ]; then
   exit 0
 fi
 
