@@ -5,8 +5,6 @@ import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
 import * as jsoncParser from 'jsonc-eslint-parser';
 
-import repoBoundaries from './tools/eslint/no-server-only-imports-in-client.mjs';
-
 export default [
   ...nx.configs['flat/base'],
   ...nx.configs['flat/typescript'],
@@ -94,25 +92,13 @@ export default [
     },
   },
   {
-    // Server/client boundary (#537): a 'use client' file must not
-    // value-import one of these server-only modules. No-ops on files
-    // without the directive, so it's safe to apply repo-wide rather than
-    // scoping to apps/console - see tools/eslint/no-server-only-imports-in-client.mjs
-    // for what's covered and why this list, specifically, was chosen.
+    // Nx workspace rule (#537/#566): a 'use client' file must not value-import
+    // a server-only module. Tooling projects do not participate in the Next.js
+    // graph and may load ESLint before workspace rules are registered.
     files: ['**/*.{ts,tsx}'],
-    plugins: { repo: repoBoundaries },
+    ignores: ['tools/**/*'],
     rules: {
-      'repo/no-server-only-imports-in-client': [
-        'error',
-        {
-          restricted: [
-            '@agent-lcars/telemetry/server',
-            '@repo/util-server',
-            'github-client',
-            'session-archive',
-          ],
-        },
-      ],
+      '@nx/workspace-no-server-only-imports-in-client': 'error',
     },
   },
   {

@@ -59,10 +59,14 @@ multi-minute feedback loop:
    Drags Node-only dependencies (firebase-admin, google-auth-library, ...)
    into the browser bundle and fails the build with dozens of Turbopack
    resolve errors (the #59 failure mode). `import type` is always safe.
-   `eslint.config.mjs`'s `repo/no-server-only-imports-in-client` rule
-   (`tools/eslint/no-server-only-imports-in-client.mjs`) catches the direct
-   -import case in the editor, but not transitive/indirect drag-in through
-   a component that isn't itself `'use client'`.
+   Reusable Console modules that touch secrets, data stores, or Node-only
+   dependencies start with `import 'server-only';`. That framework-native
+   marker is the authoritative transitive build guard. The
+   `@nx/workspace-no-server-only-imports-in-client` rule
+   (`tools/eslint-rules/rules/no-server-only-imports-in-client.ts`) derives
+   its package and local-module coverage from Nx `platform:server` tags plus
+   the actual `server-only`/`assertNotBrowser()` markers, and catches direct
+   imports in the editor without a second hand-maintained denylist.
 3. **Server code calling a function exported from a client module.**
    Fails at runtime with "Attempted to call X() from the server."
 4. **Cross-page `next/link` transitions leaving the previous page's DOM
@@ -75,6 +79,12 @@ across the server/client line, or touches `apps/console/src/app`'s
 navigation/layout as boundary-adjacent, and run `console-e2e:e2e-local`
 (above) before pushing it — not just when one of the four examples above
 literally recurs, but as a standing habit for anything boundary-shaped.
+
+Use `'use server'` only for exported Server Functions/Actions; it is not a
+general replacement for `server-only`. Vitest aliases `server-only` to a
+shared no-op fixture so plain Node/Vite unit tests can import server modules;
+the production Next build does not use that alias and still fails if a marked
+module enters the client graph.
 
 An `apps/console`-affected push also gets a fast production `next build`
 smoke in the pre-push hook (`tools/console-build-smoke.sh`), which catches

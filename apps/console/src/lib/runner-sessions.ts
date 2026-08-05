@@ -1,3 +1,5 @@
+import 'server-only';
+
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
