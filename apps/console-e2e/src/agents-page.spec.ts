@@ -100,6 +100,34 @@ test.describe('/agents page @smoke', () => {
     });
   });
 
+  test('preserves repository scope in header and mobile navigation', async ({
+    page,
+  }) => {
+    await page.goto('/agents?repo=jlapenna%2Fagent-lcars');
+
+    const header = page.locator('.console-header[data-current="agents"]');
+    await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+      'href',
+      '/?repo=jlapenna%2Fagent-lcars',
+    );
+    await expect(header.getByRole('link', { name: 'Inbox' })).toHaveAttribute(
+      'href',
+      '/inbox?repo=jlapenna%2Fagent-lcars',
+    );
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: 'More console options' }).click();
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toHaveAttribute(
+      'href',
+      '/?repo=jlapenna%2Fagent-lcars',
+    );
+    await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toHaveAttribute(
+      'href',
+      '/inbox?repo=jlapenna%2Fagent-lcars',
+    );
+  });
+
   test('collapses to one mobile command strip and one overflow-safe column', async ({
     page,
   }, testInfo) => {
