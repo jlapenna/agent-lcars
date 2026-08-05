@@ -86,7 +86,9 @@
         "{projectRoot}/eslint.config.mjs",
         "{workspaceRoot}/tools/eslint-rules/**/*",
         "{workspaceRoot}/tsconfig.base.json",
-        "{workspaceRoot}/libs/*/project.json"
+        "{workspaceRoot}/**/project.json",
+        "{workspaceRoot}/**/package.json",
+        "{workspaceRoot}/**/tsconfig.json"
       ]
     },
     "serve": {
