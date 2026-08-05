@@ -95,6 +95,22 @@
           "NODE_OPTIONS": "--max-old-space-size=8192"
         }
       }
+    },
+    "capture-session": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/saved-session/capture.mjs",
+        "forwardAllArgs": true
+      }
+    },
+    "verify-session": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/saved-session/verify.mjs",
+        "forwardAllArgs": true
+      }
     }
   }
 }

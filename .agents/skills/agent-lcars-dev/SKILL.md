@@ -135,3 +135,7 @@ Load these when the task enters their domain:
   — headless CI dispatch conventions and this repo's own dispatch-broker,
   auto-merge, and identity delta. Not needed for ordinary interactive
   development.
+- **[verifying-console-session](../verifying-console-session/SKILL.md)** —
+  capture and reuse a real authenticated LCARS browser session for approved
+  production UI verification when hermetic E2E cannot prove the live auth or
+  deployment path.
