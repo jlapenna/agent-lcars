@@ -490,6 +490,7 @@ function normalizeEvent({
 
 export {
   digestQuickTask,
+  makeIntent,
   normalizeEvent,
   parseExactCommand,
   quickTaskRequest,

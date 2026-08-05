@@ -32,10 +32,11 @@ import {
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
   reconcileActive,
   reconcileLedger,
+  repairMissingIntentFromLabel,
   resolveTask,
   wasSupersededEviction,
 } from './main.mjs';
-import { normalizeEvent } from './normalize.mjs';
+import { digestQuickTask, normalizeEvent } from './normalize.mjs';
 
 const tests = [];
 function test(name, run) {
@@ -714,7 +715,7 @@ function dispatchingLedger({ unknown = false } = {}) {
 // dependencies need: saveLedger's PATCH, ensureNeedsHumanParked's
 // label/assignee POSTs, and (only when a park mutation is made to fail) its
 // verify-then-decide re-read of the issue.
-function reconcileStubClient({ failParkStatus } = {}) {
+function reconcileStubClient({ failParkStatus, issue } = {}) {
   const calls = [];
   const client = {
     requestOk: async (path, options = {}) => {
@@ -730,7 +731,7 @@ function reconcileStubClient({ failParkStatus } = {}) {
       if (options.method === 'POST' && path.endsWith('/labels')) return {};
       if (options.method === 'POST' && path.endsWith('/assignees')) return {};
       if (path.endsWith(`/issues/${task.issue}`)) {
-        return { labels: [], assignees: [] };
+        return issue ?? { id: 9304, labels: [], assignees: [] };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
@@ -938,15 +939,106 @@ test('reconcileLedger treats a dispatch-unknown generation identically to dispat
   );
 });
 
-test('reconcileLedger no-ops when there is no active generation at all', async () => {
+test('reconcileLedger no-ops on an empty ledger when the live issue carries no agent label', async () => {
   const ledger = createLedger(task);
-  const client = {
-    requestOk: async (path) => {
-      throw new Error(`Unexpected API call: ${path}`);
-    },
-  };
+  const { client } = reconcileStubClient({
+    issue: { id: 9304, labels: [], assignees: [] },
+  });
   await reconcileLedger(client, { ledger, comment: { id: 9 } });
   assert.equal(ledger.anomalies.length, 0);
+  assert.equal(ledger.generations.length, 0);
+});
+
+test('reconcileLedger no-ops on an empty ledger when the live issue carries contradictory agent labels', async () => {
+  const ledger = createLedger(task);
+  const { client } = reconcileStubClient({
+    issue: {
+      id: 9304,
+      labels: [{ name: 'agent:codex' }, { name: 'agent:claude' }],
+      assignees: [],
+    },
+  });
+  await reconcileLedger(client, { ledger, comment: { id: 9 } });
+  assert.equal(ledger.anomalies.length, 0);
+  assert.equal(ledger.generations.length, 0);
+});
+
+test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a live, unambiguous agent label (#520)', async () => {
+  const ledger = createLedger(task);
+  const { client, calls } = reconcileStubClient({
+    issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+  });
+  const now = '2026-08-04T06:00:00.000Z';
+  await reconcileLedger(client, { ledger, comment: { id: 9 } }, now, 30880000);
+
+  assert.equal(ledger.generations.length, 1);
+  const generation = ledger.generations[0];
+  assert.equal(generation.pipeline, 'codex');
+  assert.equal(generation.state, 'accepted');
+  assert.equal(
+    ledger.sources.some(
+      (source) =>
+        source.sourceKind === 'reconcile-label-repair' &&
+        source.sourceId === 'reconcile-label-repair:9304',
+    ),
+    true,
+  );
+  assert.ok(
+    calls.some(
+      (call) => call.method === 'GET' && call.path.endsWith('/issues/304'),
+    ),
+  );
+});
+
+test('reconcileLedger repair is idempotent: a second reconcile pass creates no second generation', async () => {
+  const ledger = createLedger(task);
+  const { client } = reconcileStubClient({
+    issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+  });
+  const now = '2026-08-04T06:00:00.000Z';
+  await repairMissingIntentFromLabel(
+    client,
+    { ledger, comment: { id: 9 } },
+    now,
+    30880000,
+  );
+  assert.equal(ledger.generations.length, 1);
+  const revisionAfterRepair = ledger.revision;
+
+  // A second reconcile pass (e.g. the next scheduled scan, 30 minutes
+  // later) must not touch the ledger again: generations is no longer
+  // empty, so the repair branch's own gate excludes it, and the resulting
+  // 'accepted' generation isn't in a dispatching/dispatch-unknown state
+  // reconcileActive()/trackMissingRun() would otherwise act on either.
+  await reconcileLedger(client, { ledger, comment: { id: 9 } }, now, 30882222);
+  assert.equal(ledger.generations.length, 1);
+  assert.equal(ledger.revision, revisionAfterRepair);
+});
+
+test('reconcileLedger repair honors a Quick Task marker for its intentId (dedupes against the original opened-event intent)', async () => {
+  const ledger = createLedger(task);
+  const description = 'Do the thing';
+  const digest = digestQuickTask({
+    repository: task.repository,
+    pipeline: 'codex',
+    title: 'Quick task issue',
+    description,
+  });
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  const { client } = reconcileStubClient({
+    issue: {
+      id: 9304,
+      title: 'Quick task issue',
+      body: `${description}\n\n<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${digest} -->`,
+      labels: [{ name: 'agent:codex' }],
+      assignees: [],
+    },
+  });
+  const now = '2026-08-04T06:00:00.000Z';
+  await reconcileLedger(client, { ledger, comment: { id: 9 } }, now, 30880000);
+
+  assert.equal(ledger.generations.length, 1);
+  assert.equal(ledger.generations[0].intentId, `quick:${requestId}:${digest}`);
 });
 
 test('reconcileLedger no-ops once a generation is already bound (active state, not dispatching/dispatch-unknown)', async () => {
