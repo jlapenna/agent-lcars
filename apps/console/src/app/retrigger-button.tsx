@@ -7,6 +7,7 @@ import { useState, useTransition } from 'react';
 import type { Pipeline } from '../lib/primary-action';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { retriggerIssue } from './actions';
+import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
 /**
@@ -43,7 +44,7 @@ export function RetriggerButton({
       const result = await retriggerIssue(
         repo,
         issueNumber,
-        crypto.randomUUID(),
+        createRandomId(),
         note.trim() || undefined,
         pipeline,
       );
