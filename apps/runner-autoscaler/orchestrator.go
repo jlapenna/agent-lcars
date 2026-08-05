@@ -225,7 +225,14 @@ func orchestratorSnapshot(runtimes []*scaleSetRuntime, fleet *FleetCoordinator) 
 // write. Listeners that have not noticed cancellation by then are abandoned
 // rather than waited on -- their work is a long-poll against GitHub, and the
 // replacement process re-establishes it regardless.
-const quiesceTimeout = 3 * time.Second
+const (
+	quiesceTimeout = 3 * time.Second
+	// Leave enough of the quiesce window for the generation wait to observe
+	// the listener exiting and for the checkpoint write itself. Session close
+	// survives cancellation of the listener context, but it must not outlive
+	// the shutdown budget it is part of.
+	sessionCloseTimeout = quiesceTimeout - 500*time.Millisecond
+)
 
 // quiesce is the fast shutdown path, and the reason an aggressive restart no
 // longer needs a fleet drain. It stops accepting new work, gives in-flight
@@ -255,6 +262,7 @@ func quiesce(ctx context.Context, generation runtimeGeneration, runtimes []*scal
 	select {
 	case <-generation.done:
 	case <-time.After(quiesceTimeout):
+		quiesceGenerationTimeouts.Inc()
 		logger.Warn("Runtime generation did not stop within the quiesce timeout; checkpointing and exiting anyway",
 			slog.Duration("timeout", quiesceTimeout))
 	}
@@ -518,6 +526,21 @@ func initializeGitHubScaleSet(ctx context.Context, runtime *scaleSetRuntime) err
 	return nil
 }
 
+type messageSessionCloser interface {
+	Close(context.Context) error
+}
+
+// closeMessageSession gives GitHub a fresh, bounded window to release the
+// server-side owner after listener cancellation. WithoutCancel is intentional:
+// the listener's parent is already cancelled when orderly shutdown reaches
+// this point, but carrying that cancellation into Close would prevent the
+// release attempt entirely.
+func closeMessageSession(ctx context.Context, session messageSessionCloser, timeout time.Duration) error {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	return session.Close(closeCtx)
+}
+
 func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger *slog.Logger) {
 	backoff := time.Second
 	owner, err := os.Hostname()
@@ -555,7 +578,7 @@ func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger
 				}
 				listenerUpGauge.WithLabelValues(runtime.config.ScaleSetName).Set(0)
 				orchestratorListenerStates.Store(runtime.config.ScaleSetName, false)
-				_ = session.Close(context.Background())
+				_ = closeMessageSession(ctx, session, sessionCloseTimeout)
 				sessionErr = listenerErr
 			}
 		}
