@@ -58,7 +58,6 @@ function renderCard(
     <MantineProvider>
       <ActionItemCard
         item={item}
-        updatedAtLabel="now"
         primaryAction={primaryAction}
         multiRepo={multiRepo}
       />
@@ -75,7 +74,6 @@ describe('ActionItemCard', () => {
             actionTypes: ['run-failed', 'needs-human'],
             labels: ['agent:claude', 'type:bug', 'app:console', 'priority'],
           })}
-          updatedAtLabel="now"
           variant="workspace"
         />
       </MantineProvider>,
@@ -286,7 +284,6 @@ describe('ActionItemCard', () => {
             mergeableState: 'blocked',
             unresolvedReviewThreadCount: 1,
           })}
-          updatedAtLabel="now"
           variant="workspace"
         />
       </MantineProvider>,
@@ -402,11 +399,7 @@ describe('ActionItemCard', () => {
       const onToggleMute = vi.fn();
       render(
         <MantineProvider>
-          <ActionItemCard
-            item={makeItem()}
-            updatedAtLabel="now"
-            onToggleMute={onToggleMute}
-          />
+          <ActionItemCard item={makeItem()} onToggleMute={onToggleMute} />
         </MantineProvider>,
       );
 

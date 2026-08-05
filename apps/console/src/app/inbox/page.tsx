@@ -23,7 +23,7 @@ import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { ConsoleHeader, DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
-import { formatCompactRelativeTime, formatRelativeTime } from '../format';
+import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
 
@@ -34,7 +34,6 @@ interface PageProps {
 function toCard(item: ActionItem): BoardCard {
   return {
     item,
-    updatedAtLabel: formatCompactRelativeTime(item.updatedAt),
     primaryAction: derivePrimaryAction(item),
   };
 }

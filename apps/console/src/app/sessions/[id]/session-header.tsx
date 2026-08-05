@@ -29,7 +29,8 @@ import {
 } from '../../agent-activity-panel';
 import { ArtifactPreviewToggle } from '../../artifact-viewer';
 import { Eyebrow } from '../../eyebrow';
-import { formatCost, formatDuration, formatRelativeTime } from '../../format';
+import { formatCost, formatDuration } from '../../format';
+import { RelativeTime } from '../../relative-time';
 import { TakeoverCommand } from '../../takeover-command';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -116,9 +117,11 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         <Field label="Cost">
           {doc.totalCostUsd !== undefined ? formatCost(doc.totalCostUsd) : '—'}
         </Field>
-        <Field label="Started">{formatRelativeTime(doc.startedAt)}</Field>
+        <Field label="Started">
+          <RelativeTime iso={doc.startedAt} />
+        </Field>
         <Field label="Last activity">
-          {formatRelativeTime(doc.lastActivityAt)}
+          <RelativeTime iso={doc.lastActivityAt} />
         </Field>
         <Field label="Duration">{formatDuration(durationSeconds)}</Field>
 

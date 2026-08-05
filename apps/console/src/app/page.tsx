@@ -31,14 +31,13 @@ import { ConsoleHeader, DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
 import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
-import { formatCompactRelativeTime, formatRelativeTime } from './format';
+import { formatRelativeTime } from './format';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 
 function toCard(item: ActionItem): BoardCard {
   return {
     item,
-    updatedAtLabel: formatCompactRelativeTime(item.updatedAt),
     primaryAction: derivePrimaryAction(item),
   };
 }

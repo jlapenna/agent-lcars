@@ -24,7 +24,8 @@ import {
   RepoBadge,
   SourceBadge,
 } from '../agent-activity-panel';
-import { formatCost, formatDuration, formatRelativeTime } from '../format';
+import { formatCost, formatDuration } from '../format';
+import { RelativeTime } from '../relative-time';
 
 /**
  * The archive's dense session table - unlike the dashboard's In
@@ -133,7 +134,7 @@ function SessionCard({ row }: { row: SessionRow }) {
 
         <Text size="xs" c="dimmed">
           {row.turns} turn{row.turns === 1 ? '' : 's'} · started{' '}
-          {formatRelativeTime(row.startedAt)} ·{' '}
+          <RelativeTime iso={row.startedAt} /> ·{' '}
           {formatDuration(
             sessionDurationSeconds(row.startedAt, row.lastActivityAt),
           )}
@@ -273,7 +274,9 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                     : '—'}
                 </TableTd>
                 <TableTd>
-                  <Text size="xs">{formatRelativeTime(row.startedAt)}</Text>
+                  <Text size="xs">
+                    <RelativeTime iso={row.startedAt} />
+                  </Text>
                 </TableTd>
                 <TableTd>
                   {formatDuration(

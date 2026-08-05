@@ -177,7 +177,6 @@ export function ActionItemCard({
   variant = 'card',
 }: {
   item: ActionItem;
-  updatedAtLabel: string;
   primaryAction?: PrimaryAction;
   /** Whether more than one repo is watched - passed down from the server
    * route rather than resolved here, since this is a client component and
