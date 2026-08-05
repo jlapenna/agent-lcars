@@ -25,6 +25,12 @@ alias with no resolvable target produces a configuration diagnostic instead of
 failing open. Imports that match no workspace alias or project keep ordinary
 third-party package behavior.
 
+An explicit `<project>/server` mapping is always a server boundary, including
+when its index only re-exports a marker-bearing module. A project that exposes
+that server entry point alongside an explicit `browser` or `client` entry point
+also keeps its package root server-side; only the resolved safe entry point is
+allowed into a client graph.
+
 Sprinkles carries its companion rule independently. Keep its fixtures aligned
 with this contract, but do not share source or build contexts across
 repositories.

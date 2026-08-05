@@ -32,6 +32,8 @@ function createFixture(): string {
         '@repo/server/client': ['packages/nested/server/src/client/index.ts'],
         '@repo/server/*': ['packages/nested/server/src/*'],
         '@repo/strict': ['packages/strict/src/index.ts'],
+        '@repo/mixed': ['packages/mixed/src/index.ts'],
+        '@repo/mixed/browser': ['packages/mixed/src/browser/index.ts'],
         '@repo/mixed/server': ['packages/mixed/src/server/index.ts'],
         '@repo/inferred': ['packages/inferred/src/index.ts'],
         '@repo/missing': ['packages/missing/src/index.ts'],
@@ -101,8 +103,23 @@ function createFixture(): string {
   });
   writeFixture(
     workspaceRoot,
+    'packages/mixed/src/index.ts',
+    'export const shared = true;\n',
+  );
+  writeFixture(
+    workspaceRoot,
+    'packages/mixed/src/browser/index.ts',
+    'export const browserSafe = true;\n',
+  );
+  writeFixture(
+    workspaceRoot,
     'packages/mixed/src/server/index.ts',
-    "import { assertNotBrowser } from '@repo/util';\nassertNotBrowser();\n",
+    "export * from './node';\n",
+  );
+  writeFixture(
+    workspaceRoot,
+    'packages/mixed/src/server/node.ts',
+    "import 'server-only';\nexport const nodeOnly = true;\n",
   );
 
   // A tsconfig-only root exercises the graph-cycle-safe fallback for an
@@ -180,6 +197,7 @@ describe('no-server-only-imports-in-client', () => {
     '@repo/server/private',
     '@repo/server/client/poison',
     '@repo/strict/client',
+    '@repo/mixed',
     '@repo/mixed/server',
     '@repo/inferred',
     '@web/server',
@@ -226,6 +244,7 @@ describe('no-server-only-imports-in-client', () => {
     "'use client';\nexport type { Secret } from '@repo/server';\n",
     "'use client';\nexport { type Secret } from '@repo/server';\n",
     "'use client';\nimport { safe } from '@repo/server/client';\n",
+    "'use client';\nimport { safe } from '@repo/mixed/browser';\n",
     "'use client';\nimport { safe } from './lib/safe-comment';\n",
     "'use client';\nimport React from 'react';\n",
     "'use client';\nimport { client } from '@third-party/server/client';\n",

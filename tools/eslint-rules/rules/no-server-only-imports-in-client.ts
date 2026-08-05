@@ -491,9 +491,21 @@ function discoverWorkspaceBoundaries(
   const projects = discoverProjects(workspaceRoot);
   const mappings = discoverPathMappings(workspaceRoot, projects);
   const prefixes = new Map<string, ServerPrefix>();
+  const exactAliases = new Set(
+    mappings
+      .filter((mapping) => !mapping.alias.includes('*'))
+      .map((mapping) => mapping.alias),
+  );
 
   for (const project of projects) {
-    if (!project.name || !project.tags.has('platform:server')) continue;
+    if (!project.name) continue;
+    const hasExplicitEnvironmentSplit =
+      exactAliases.has(`${project.name}/server`) &&
+      (exactAliases.has(`${project.name}/browser`) ||
+        exactAliases.has(`${project.name}/client`));
+    if (!project.tags.has('platform:server') && !hasExplicitEnvironmentSplit) {
+      continue;
+    }
     addServerPrefix(prefixes, {
       prefix: project.name,
       project,
@@ -504,8 +516,11 @@ function discoverWorkspaceBoundaries(
 
   for (const mapping of mappings) {
     const target = concreteMappingTarget(mapping);
-    if (!target || !hasServerOnlyMarker(target)) continue;
+    if (!target) continue;
     const project = projectForPath(projects, target);
+    const isExplicitServerAlias =
+      project?.name !== undefined && mapping.alias === `${project.name}/server`;
+    if (!isExplicitServerAlias && !hasServerOnlyMarker(target)) continue;
     const prefix = aliasPrefix(mapping.alias);
     addServerPrefix(prefixes, {
       prefix,
