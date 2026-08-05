@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
   pull-requests: write
 
@@ -16,12 +17,48 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # CI's workflow_run conclusion is a rollup of every job in that run,
+  # including E2E (timeout-minutes: 20, not a required merge gate) -- a
+  # timed-out E2E job reports "cancelled", which drags the whole run's
+  # conclusion to "cancelled" even when Verify (the actual required check
+  # gating the merge that triggered this run) passed cleanly (#543). Gate
+  # deploy on Verify's own job conclusion instead of the run's rollup, so a
+  # slow/hung non-required job can't silently block production deploys.
+  gate:
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
+    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    outputs:
+      verify_passed: ${{ steps.check.outputs.verify_passed }}
+    steps:
+      - name: Check Verify job's conclusion
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "verify_passed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CONCLUSION=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name == "Verify") | .conclusion')
+          echo "Verify job conclusion for run $RUN_ID: '$CONCLUSION'"
+
+          if [ "$CONCLUSION" = "success" ]; then
+            echo "verify_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "verify_passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: gate
+    if: needs.gate.outputs.verify_passed == 'true'
     runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 20
     environment: production

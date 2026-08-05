@@ -1,3 +1,5 @@
+'use client';
+
 import { Anchor, Group, Text } from '@mantine/core';
 import Link from 'next/link';
 
@@ -8,6 +10,11 @@ import Link from 'next/link';
  * the Deck. Deliberately a plain landmark-free Group (no `role="alert"`,
  * no region name): the e2e suite pins "no Decision Inbox region on the
  * Deck", and this is a signpost, not the inbox itself.
+ *
+ * 'use client': the Anchor below renders through next/link via Mantine's
+ * `component` prop, and a component reference can't cross the
+ * server->client boundary as a prop (mirrors sessions/view-toggle.tsx's
+ * identical fix) - the server page keeps `inboxHref` as a plain string.
  */
 export function DeckInboxSummary({
   count,
