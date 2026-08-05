@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
+import type { CliSession } from '../lib/cli-sessions';
 import {
   type BoardCard,
   CommandDeckSections,
@@ -76,18 +77,34 @@ function card(item: ActionItem): BoardCard {
   return { item };
 }
 
+function makeSession(overrides: Partial<CliSession> = {}): CliSession {
+  return {
+    sessionId: 'session-1',
+    liveness: 'ended',
+    agent: 'claude-code',
+    turns: 1,
+    totalTokens: 100,
+    startedAt: '2026-07-18T00:00:00Z',
+    lastActivityAt: '2026-07-18T00:00:00Z',
+    ...overrides,
+  };
+}
+
 function renderBoard({
   waitingOnDeploy = [],
   rest = [],
+  cliSessions = [],
 }: {
   waitingOnDeploy?: ActionItem[];
   rest?: ActionItem[];
+  cliSessions?: CliSession[];
 }) {
   render(
     <MantineProvider>
       <CommandDeckSections
         waitingOnDeploy={waitingOnDeploy.map(card)}
         rest={rest.map(card)}
+        cliSessions={cliSessions}
       />
     </MantineProvider>,
   );
@@ -185,6 +202,56 @@ describe('Decision Inbox and Command Deck surfaces', () => {
 
     expect(screen.getByTestId('overflow-7')).toBeTruthy();
     expect(screen.getByTestId('overflow-6')).toBeTruthy();
+  });
+
+  it('flags a fleet-claimed backlog item and offers its takeover command', () => {
+    renderBoard({
+      rest: [
+        makeItem({
+          number: 9,
+          title: 'Claimed backlog item',
+          assigneeLogins: ['jclaw-bot'],
+          takeoverCommand: '~/p/members/tools/claude-agent-session.sh resume x',
+        }),
+      ],
+    });
+
+    expect(screen.getByTestId('compact-item-9')).toHaveTextContent(
+      'claimed by the fleet',
+    );
+    expect(
+      screen.getByText('~/p/members/tools/claude-agent-session.sh resume x'),
+    ).toBeTruthy();
+    expect(screen.queryByTestId('everything-else-session-link')).toBeNull();
+  });
+
+  it('links a fleet-claimed item to the session that last worked it', () => {
+    renderBoard({
+      rest: [
+        makeItem({
+          number: 9,
+          assigneeLogins: ['jclaw-bot'],
+        }),
+      ],
+      cliSessions: [
+        makeSession({
+          sessionId: 'abc123',
+          pr: { number: 9, url: 'https://github.com/o/r/pull/9' },
+        }),
+      ],
+    });
+
+    const link = screen.getByTestId('everything-else-session-link');
+    expect(link).toHaveAttribute('href', '/sessions/abc123');
+  });
+
+  it('does not badge an unclaimed backlog item as fleet-claimed', () => {
+    renderBoard({ rest: [makeItem({ number: 9 })] });
+
+    expect(screen.getByTestId('compact-item-9')).not.toHaveTextContent(
+      'claimed by the fleet',
+    );
+    expect(screen.queryByTestId('everything-else-session-link')).toBeNull();
   });
 
   it('keeps Everything Else collapsed by default with its rows still reachable', () => {

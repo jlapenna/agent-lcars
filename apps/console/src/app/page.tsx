@@ -160,6 +160,7 @@ async function IndexBody({
         rest={queueView.rest
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}
+        cliSessions={filteredCliSessions}
       />
 
       <AgentActivityPanel
