@@ -85,6 +85,7 @@ export function RetriggerButton({
           <Textarea
             value={note}
             onChange={(e) => setNote(e.currentTarget.value)}
+            aria-label="Optional steering note — posted on the issue before the fresh run starts"
             placeholder="Optional steering note — posted on the issue before the fresh run starts"
             autosize
             minRows={2}

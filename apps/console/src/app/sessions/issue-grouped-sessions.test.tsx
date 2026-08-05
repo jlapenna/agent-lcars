@@ -157,12 +157,15 @@ describe('IssueGroupedSessions', () => {
     ]);
 
     const toggle = screen.getByTestId('no-issue-group-toggle');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(
       screen.getAllByRole('link', { name: 'Ad-hoc CLI session' }),
     ).toHaveLength(2);
 
     fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(
       screen.queryByRole('link', { name: 'Ad-hoc CLI session' }),
     ).toBeNull();

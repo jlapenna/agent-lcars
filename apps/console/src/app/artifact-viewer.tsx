@@ -138,6 +138,7 @@ export function ArtifactPreviewToggle({
         type="button"
         size="xs"
         c="dimmed"
+        aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
         data-testid={`artifact-toggle-${filename}`}
       >

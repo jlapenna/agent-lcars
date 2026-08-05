@@ -32,6 +32,7 @@ export function NoIssueSessionGroup({
       <Group gap={8} align="center" wrap="wrap">
         <UnstyledButton
           onClick={() => setCollapsed((prev) => !prev)}
+          aria-expanded={!collapsed}
           data-testid="no-issue-group-toggle"
           className="sessions-no-issue-toggle"
           style={{ display: 'flex', alignItems: 'center', gap: 4 }}

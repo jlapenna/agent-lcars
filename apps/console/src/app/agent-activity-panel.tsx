@@ -358,6 +358,7 @@ export function LiveRunRow({
           value={Math.min(100, budgetFraction * 100)}
           color={budgetColor(budgetFraction)}
           size="sm"
+          aria-label="Run wall-clock budget"
         />
       )}
       {run.status === 'running' &&

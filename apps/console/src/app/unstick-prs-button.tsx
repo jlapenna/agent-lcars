@@ -79,6 +79,7 @@ export function UnstickPrsButton({
           <Textarea
             value={context}
             onChange={(e) => setContext(e.currentTarget.value)}
+            aria-label="Optional context — PR numbers, symptoms — posted on the anchor issue"
             placeholder="Optional context — PR numbers, symptoms — posted on the anchor issue"
             autosize
             minRows={2}
