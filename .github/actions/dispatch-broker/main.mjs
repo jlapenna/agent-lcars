@@ -691,10 +691,15 @@ async function broker() {
   const runId = Number(env('GITHUB_RUN_ID'));
   const group = env('BROKER_GROUP');
   // GITHUB_EVENT_NAME is a standard runner-provided variable (already
-  // relied on by normalize()), not something this action sets itself. It
-  // is intentionally optional here: if it is ever unset, verifyBrokerConcurrency
-  // falls back to the strict, direct listing-based check rather than the
-  // indirect one, which is the safer default (#348).
+  // relied on by normalize()), not something this action sets itself.
+  // verifyBrokerConcurrency only uses it for its own diagnostic log line
+  // now: #348's third round (2026-08-04) retired the "some event types
+  // self-report reliably" allowlist after issues and issue_comment -- the
+  // last two events still on the direct, own-listing check -- both turned
+  // out to have real, nonzero failure rates too (see the comment above
+  // findConflictingRouterRun in github-api.mjs for the sampled numbers).
+  // The indirect check is now unconditional, so this stays optional without
+  // changing which verification path runs.
   const eventName = env('GITHUB_EVENT_NAME', false);
   try {
     await verifyBrokerConcurrency(client, task, runId, group, { eventName });

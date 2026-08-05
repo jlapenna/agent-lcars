@@ -27,15 +27,18 @@ class GitHubApiError extends Error {
   }
 }
 
-// Thrown by `validateBrokerConcurrencyResponse` (the direct, own-listing
-// path) and `checkIndirectBrokerConcurrency` (the indirect path used for
-// event types whose own listing is unreliable, #348). `retryable` marks the
-// failure modes that can resolve with more time: the direct path's
-// expected group simply hasn't materialized in its own listing yet; the
-// indirect path found another in-progress run currently reporting the
-// group, which may finish imminently. Every other failure mode (config
-// mismatch, malformed response, more than one match) is a real anomaly and
-// must never be retried.
+// Thrown by `checkIndirectBrokerConcurrency`, the sole concurrency-
+// verification path since #348's third round (2026-08-04) retired the
+// direct, own-listing check entirely -- no trigger type sampled so far
+// (workflow_dispatch, pull_request, issues, issue_comment) has proven it
+// self-reports its own group membership reliably; see the comment above
+// `findConflictingRouterRun` below for the sampled failure rates.
+// `retryable` marks the failure modes that can resolve with more time:
+// another in-progress run currently reports holding the expected group
+// (which may finish imminently), or a candidate run couldn't be inspected
+// at all (a later attempt may be able to). A config mismatch between the
+// supplied group and the TaskRef-derived one is the only failure mode that
+// is a real anomaly regardless of retrying -- it will never resolve itself.
 //
 // A `retryable: true` error that survives verifyBrokerConcurrency's full
 // retry budget has two possible explanations that look identical from
@@ -136,11 +139,14 @@ function brokerConcurrencyGroup(task) {
   return `agent-lcars-dispatch-v1-${task.repositoryId}-${task.issue}`;
 }
 
-// Shared by validateBrokerConcurrencyResponse (the direct, own-listing path)
-// and checkIndirectBrokerConcurrency (the indirect path, #348): a config
-// mismatch between a run's own supplied group and its TaskRef-derived
-// expected group is never explained by listing lag — it means the two
-// disagree right now and will keep disagreeing on every retry.
+// Used by checkIndirectBrokerConcurrency (the sole concurrency-verification
+// path, #348): a config mismatch between a run's own supplied group and its
+// TaskRef-derived expected group is never explained by listing lag — it
+// means the two disagree right now and will keep disagreeing on every
+// retry. This used to also guard validateBrokerConcurrencyResponse, the
+// direct/own-listing check's equivalent entry point, before #348's third
+// round retired that path entirely (see the comment above
+// findConflictingRouterRun below).
 function assertSuppliedGroupMatches(suppliedGroup, expected) {
   if (suppliedGroup !== expected) {
     throw new BrokerConcurrencyMismatchError(
@@ -149,13 +155,11 @@ function assertSuppliedGroupMatches(suppliedGroup, expected) {
   }
 }
 
-// Shared by validateBrokerConcurrencyResponse, findConflictingRouterRun, and
-// findSupersedingRouterRun: which entries of a `.../concurrency_groups`
-// listing response (if any) name the expected group, matched
-// case-insensitively. Returns the full matching array (not just a boolean)
-// so validateBrokerConcurrencyResponse can still distinguish "zero matches"
-// (retryable) from "more than one match" (a real anomaly); the two scan
-// loops only ever care whether the array is non-empty.
+// Shared by findConflictingRouterRun and findSupersedingRouterRun: which
+// entries of a `.../concurrency_groups` listing response (if any) name the
+// expected group, matched case-insensitively. Returns the full matching
+// array (not just a boolean); both callers only ever care whether it is
+// non-empty.
 function groupMembershipHolds(response, expected) {
   return (response?.concurrency_groups ?? []).filter(
     (group) =>
@@ -164,42 +168,16 @@ function groupMembershipHolds(response, expected) {
   );
 }
 
-// Shared URL builder for the three call sites below that fetch a specific
-// run's own concurrency-group listing.
+// Shared URL builder for findConflictingRouterRun and findSupersedingRouterRun
+// below, which each fetch OTHER in-progress/completed runs' own
+// concurrency-group listings while looking for a conflict or a superseding
+// run — never THIS run's own listing. #348's third round (2026-08-04)
+// removed the one call site that used to fetch a run's own listing
+// (validateBrokerConcurrencyResponse's direct check) after finding that no
+// trigger type actually self-reports reliably; see the comment above
+// findConflictingRouterRun for the data.
 function concurrencyGroupsPath(root, runId) {
   return `${root}/actions/runs/${runId}/concurrency_groups?per_page=100`;
-}
-
-function validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup) {
-  const expected = brokerConcurrencyGroup(task);
-  assertSuppliedGroupMatches(suppliedGroup, expected);
-  if (
-    !Number.isSafeInteger(runId) ||
-    runId <= 0 ||
-    !Array.isArray(data?.concurrency_groups)
-  ) {
-    throw new BrokerConcurrencyMismatchError(
-      'Malformed broker concurrency-group response',
-    );
-  }
-  const matching = groupMembershipHolds(data, expected);
-  if (matching.length !== 1) {
-    // Zero matches is the eventually-consistent case: the listing hasn't
-    // caught up with this run yet, and a later attempt can still succeed.
-    // More than one match is a real anomaly (e.g. a stale/duplicate group)
-    // that retrying cannot fix.
-    throw new BrokerConcurrencyMismatchError(
-      'Broker run does not report the expected concurrency group',
-      { retryable: matching.length === 0 },
-    );
-  }
-  return matching[0];
-}
-
-async function fetchAndValidateOwnListing(api, task, runId, suppliedGroup) {
-  const path = concurrencyGroupsPath(repositoryPath(task), runId);
-  const data = await api.requestOk(path);
-  return validateBrokerConcurrencyResponse(data, task, runId, suppliedGroup);
 }
 
 // Bounds how many other in-progress `agent-router.yml` runs are checked per
@@ -208,7 +186,7 @@ async function fetchAndValidateOwnListing(api, task, runId, suppliedGroup) {
 // usage bounded, mirroring SUPERSEDING_RUN_CANDIDATE_LIMIT below.
 const DISPATCH_CONFLICT_CANDIDATE_LIMIT = 20;
 
-// Empirically confirmed on issue #348: GitHub's own
+// Empirically confirmed on issue #348 (round 1): GitHub's own
 // `/actions/runs/{id}/concurrency_groups` listing never reports membership
 // for workflow_dispatch-triggered runs -- 5/5 sampled dispatch runs (some
 // hours old, ruling out ordinary listing lag) returned zero matches, while
@@ -216,39 +194,74 @@ const DISPATCH_CONFLICT_CANDIDATE_LIMIT = 20;
 // object (`GET /actions/runs/{id}`) nor the jobs API carries any
 // concurrency field for any event type either, so there is no direct
 // source of truth for a dispatch run's own group membership to fall back
-// to. `fetchAndValidateOwnListing` above is therefore unusable for these
-// runs -- it would always see zero matches and fail every single time,
-// which is exactly #348's bug (a 100% failure rate for every
-// workflow_dispatch-triggered broker run).
+// to. A direct, own-listing check is therefore unusable for these runs --
+// it would always see zero matches and fail every single time, which is
+// exactly #348's bug (a 100% failure rate for every workflow_dispatch-
+// triggered broker run).
 //
-// #348 reopened, 2026-08-04: the same is true of pull_request-triggered
-// runs. PR #349's original fix assumed "event-triggered runs (issues,
-// issue_comment, pull_request)" all shared issues' reliable self-listing,
-// but that was never actually sampled for pull_request -- production
-// evidence says otherwise: every pull_request-triggered `agent-router.yml`
-// run has failed this same check with a 100% failure rate since the
-// broker's introduction (run 30737200685 onward), and a failing run's own
-// listing was re-probed and still empty hours later, ruling out ordinary
-// lag. pull_request-triggered runs are therefore routed onto the same
-// indirect path as workflow_dispatch below. issues and issue_comment
-// remain the only trigger types confirmed to self-report reliably.
+// #348 reopened (round 2), 2026-08-04: the same is true of pull_request-
+// triggered runs. PR #349's original fix assumed "event-triggered runs
+// (issues, issue_comment, pull_request)" all shared issues' reliable
+// self-listing, but that was never actually sampled for pull_request --
+// production evidence said otherwise: every pull_request-triggered
+// `agent-router.yml` run had failed this same check with a 100% failure
+// rate since the broker's introduction (run 30737200685 onward), and a
+// failing run's own listing was re-probed and still empty hours later,
+// ruling out ordinary lag. PR #522 routed pull_request onto the same
+// indirect path as workflow_dispatch, and asserted issues/issue_comment
+// were "the only trigger types confirmed to self-report reliably" -- an
+// assumption, not a sampled fact (issue_comment had never actually been
+// probed at all; issues had only been eyeballed against a handful of
+// runs).
 //
-// `findConflictingRouterRun` verifies an equivalent invariant indirectly
-// instead: it confirms no OTHER currently in-progress `agent-router.yml`
-// run reports (via ITS OWN listing, which is reliable only for
-// issues/issue_comment-triggered runs) holding this run's expected
-// concurrency group. The broker job's
-// `concurrency: { group, cancel-in-progress: false, queue: max }` block
-// already guarantees GitHub itself never runs two broker jobs for the same
-// group at once; this indirect check confirms that guarantee is actually
-// holding for THIS run, the same thing the direct listing check confirms
-// for issues/issue_comment-triggered runs -- it just can't observe this
-// run's own membership, only the absence of a conflicting one held by
-// another run. It cannot detect two simultaneous runs of an
-// unreliable-self-listing trigger type (workflow_dispatch or pull_request)
-// racing each other -- including one of each -- since neither would ever
-// self-report; that residual gap is a known, accepted limitation rather
-// than a silently assumed absence of risk.
+// #348 reopened again (round 3), 2026-08-04: production disproved that
+// assumption within hours of #522 merging (headSha 2e2cb38). Eight
+// `/codex` reply-trigger retriggers -- issues #470-476 and #480, each a
+// SOLO router run for its own issue (no other in-progress agent-router.yml
+// run existed for the same issue to legitimately conflict with), dispatched
+// via issue_comment between 16:11:35Z and 16:12:18Z -- all died in "Apply
+// serialized broker transition" with `BrokerConcurrencyMismatchError:
+// Broker run does not report the expected concurrency group (after 5
+// attempts)`. E.g. runs 30927934741 (#470) and 30927991852 (#480): both
+// re-probed and still `{"total_count":0,"concurrency_groups":[]}` more
+// than 13 hours later, ruling out ordinary lag exactly as for round 1/2.
+// A broader sample across 2026-08-04/05 (36 issue_comment-triggered
+// `agent-router.yml` runs, pre- and post-#522 alike) put issue_comment's
+// failure rate at ~47% (16/34 concluded runs) -- well under
+// workflow_dispatch/pull_request's 100%, but nowhere near "reliable," and
+// identical in signature: the *direct* path's error message (not the
+// indirect path's "another run holds it" wording), on solo, uncontested
+// runs whose own listing simply never came to include a group they
+// legitimately held.
+//
+// The same sampling pass found `issues` wasn't clean either: ~17% of 90
+// sampled issues-triggered runs failed the same way, including a solo,
+// uncontested run (30927288777, itself routing #348) whose own listing was
+// still empty on re-probe. Every trigger type sampled to date --
+// workflow_dispatch, pull_request, issues, issue_comment -- has now shown
+// this same self-listing failure, just at different rates. Allowlisting
+// specific event names as "reliable" has proven to be an assumption
+// production keeps disproving one event type at a time, so this round
+// retires the allowlist entirely rather than waiting for a fourth
+// reopening: `findConflictingRouterRun`'s indirect check below is now the
+// unconditional default for every trigger, including any future/unlisted
+// one (see `verifyBrokerConcurrency`, which no longer branches on event
+// name at all).
+//
+// `findConflictingRouterRun` verifies an equivalent invariant indirectly:
+// it confirms no OTHER currently in-progress `agent-router.yml` run reports
+// (via ITS OWN listing) holding this run's expected concurrency group. The
+// broker job's `concurrency: { group, cancel-in-progress: false, queue: max
+// }` block already guarantees GitHub itself never runs two broker jobs for
+// the same group at once; this indirect check confirms that guarantee is
+// actually holding for THIS run -- the same invariant a reliable direct
+// listing would confirm, just observed from the other side (the absence of
+// a conflicting holder, rather than this run's own presence). Its one known
+// gap: it cannot detect two simultaneous runs racing for the same group
+// when NEITHER one's own listing ever materializes -- a risk that, per the
+// sampling above, is no longer confined to workflow_dispatch/pull_request,
+// but is still a narrower residual gap than "fails up to 100% of the time,"
+// and one this repo accepts rather than silently assumes away.
 //
 // A candidate whose own listing request fails is NOT proof it is clean
 // (PR #349 review, P1): if the one candidate that actually holds the group
@@ -331,16 +344,13 @@ async function checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup) {
   return { group_name: expected, group_members: [] };
 }
 
-// Trigger types whose own `/actions/runs/{id}/concurrency_groups` listing
-// never materializes -- see the comment above `findConflictingRouterRun`
-// for the empirical evidence behind each. issues and issue_comment are the
-// only trigger types confirmed to self-report reliably, so they alone keep
-// using the direct, own-listing check.
-const UNRELIABLE_OWN_LISTING_EVENTS = new Set([
-  'workflow_dispatch',
-  'pull_request',
-]);
-
+// #348's third round (2026-08-04) removed the previous allowlist of
+// "reliable" trigger types (see the comment above `findConflictingRouterRun`
+// for why): every event name now verifies indirectly, unconditionally, with
+// no branch on `eventName` at all. `eventName` is kept as an optional
+// parameter purely for the diagnostic `::notice::` log line below -- it no
+// longer selects between two verification paths, because there is only one
+// left.
 async function verifyBrokerConcurrency(
   api,
   task,
@@ -353,21 +363,22 @@ async function verifyBrokerConcurrency(
     eventName,
   } = {},
 ) {
-  const usesIndirectVerification = UNRELIABLE_OWN_LISTING_EVENTS.has(eventName);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const result = usesIndirectVerification
-        ? await checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup)
-        : await fetchAndValidateOwnListing(api, task, runId, suppliedGroup);
-      if (usesIndirectVerification) {
-        console.log(
-          '::notice::' +
-            `${eventName}-triggered broker run ${runId} verified concurrency ` +
-            `group ${suppliedGroup} indirectly (#348: GitHub never reports ` +
-            `concurrency-group membership for ${eventName} runs). No other ` +
-            'in-progress agent-router.yml run currently reports holding it.',
-        );
-      }
+      const result = await checkIndirectBrokerConcurrency(
+        api,
+        task,
+        runId,
+        suppliedGroup,
+      );
+      console.log(
+        '::notice::' +
+          `Broker run ${runId}${eventName ? ` (event: ${eventName})` : ''} ` +
+          `verified concurrency group ${suppliedGroup} indirectly (#348: no ` +
+          'trigger type sampled so far self-reports its own concurrency-' +
+          'group membership reliably). No other in-progress ' +
+          'agent-router.yml run currently reports holding it.',
+      );
       return result;
     } catch (error) {
       const canRetry = error.retryable === true && attempt < maxAttempts;
@@ -917,7 +928,6 @@ export {
   repositoryPath,
   saveLedger,
   splitRepository,
-  validateBrokerConcurrencyResponse,
   validateDispatchResponse,
   verifyBrokerConcurrency,
   workerWorkflow,
