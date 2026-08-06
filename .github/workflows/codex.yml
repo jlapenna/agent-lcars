@@ -97,6 +97,7 @@ jobs:
       AGENT_GIT_LOGIN: agent-lcars[bot]
       EXPECTED_COMMENT_LOGIN: agent-lcars[bot]
       EXCLUDE_PR_AUTHOR: claude[bot]
+      AGENT_LABEL: agent:codex
       REDISPATCH_COMMAND: /codex
       npm_config_store_dir: /tmp/runner/pnpm-store
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
@@ -387,7 +388,7 @@ jobs:
         run: |
           REASON=""
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
-            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `'"$REDISPATCH_COMMAND"$'`, and remind it to push or communicate a final result.'
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by re-adding the `'"$AGENT_LABEL"$'` label or replying `'"$REDISPATCH_COMMAND"$'`, and remind it to push or communicate a final result.'
           fi
           {
             echo "reason<<REASON_EOF"

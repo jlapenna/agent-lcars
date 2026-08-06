@@ -96,6 +96,7 @@ jobs:
       AGENT_GIT_LOGIN: agent-lcars[bot]
       EXPECTED_COMMENT_LOGIN: agent-lcars[bot]
       EXCLUDE_PR_AUTHOR: claude[bot]
+      AGENT_LABEL: agent:opencode
       REDISPATCH_COMMAND: /opencode
     steps:
       # A minimal checkout, before broker verification and the minted-token
@@ -303,7 +304,7 @@ jobs:
         run: |
           REASON=""
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
-            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `'"$REDISPATCH_COMMAND"$'`, and consider whether the prompt needs to be even more explicit for this issue.'
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by re-adding the `'"$AGENT_LABEL"$'` label or replying `'"$REDISPATCH_COMMAND"$'`, and consider whether the prompt needs to be even more explicit for this issue.'
           fi
           {
             echo "reason<<REASON_EOF"

@@ -266,6 +266,7 @@ test('workers expose one canonical dispatch and lane-configuration contract', as
       'AGENT_GIT_LOGIN',
       'EXPECTED_COMMENT_LOGIN',
       'EXCLUDE_PR_AUTHOR',
+      'AGENT_LABEL',
       'REDISPATCH_COMMAND',
     ]) {
       assert.ok(
@@ -278,6 +279,7 @@ test('workers expose one canonical dispatch and lane-configuration contract', as
       'agent: ${{ env.AGENT_NAME }}',
       'EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}',
       'EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}',
+      '$AGENT_LABEL',
       '$REDISPATCH_COMMAND',
     ]) {
       assert.ok(

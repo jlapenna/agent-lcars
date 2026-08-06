@@ -95,6 +95,7 @@ jobs:
       AGENT_GIT_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
       EXPECTED_COMMENT_LOGIN: claude[bot]
       EXCLUDE_PR_AUTHOR: agent-lcars[bot]
+      AGENT_LABEL: agent:claude
       REDISPATCH_COMMAND: '@claude'
       # Park the pnpm store on the disk-backed runner workdir mount so it
       # survives container recreations.
@@ -408,9 +409,9 @@ jobs:
             echo "::warning::Could not fetch this run's log (often unavailable while the run is still in progress); the log-based failure-reason checks below were skipped."
           fi
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
-            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no status:needs-human label. All of its local work is lost. Re-dispatch by replying `'"$REDISPATCH_COMMAND"$'`, and remind it to push early.'
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no status:needs-human label. All of its local work is lost. Re-dispatch by re-adding the `'"$AGENT_LABEL"$'` label or replying `'"$REDISPATCH_COMMAND"$'`, and remind it to push early.'
           elif echo "$LOG" | grep -qi "Reached maximum number of turns"; then
-            REASON=$'\n\nRan out of its turn budget mid-task (`error_max_turns`) - not a crash, it may have made real progress. Check its last comment for a takeover/resume command, or reply `'"$REDISPATCH_COMMAND"$'` to retry with a fresh run.'
+            REASON=$'\n\nRan out of its turn budget mid-task (`error_max_turns`) - not a crash, it may have made real progress. Check its last comment for a takeover/resume command. To retry with a fresh run, re-add the `'"$AGENT_LABEL"$'` label or reply `'"$REDISPATCH_COMMAND"$'`.'
           elif (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
                (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
             REASON=$'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'
