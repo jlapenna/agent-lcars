@@ -184,14 +184,34 @@ export interface IssueAgentSessionDoc extends BaseSessionDoc {
    * there is no runner-container-destroyed-on-exit problem to solve for
    * them.
    *
-   * Not always a single Claude Code `.jsonl` object: #3123 phase 2's
-   * archive-first strategy for agents this repo has no `TranscriptAdapter`
-   * for yet (opencode.yml's "Ship session archive" step) uploads that
-   * agent's raw local session storage as-is and points this at the
-   * `runs/<run-id>/<agent>/` GCS *prefix* it was archived under, not one
-   * file — see `sessionAgent(doc)` on the owning doc before assuming this is
-   * a fetchable single transcript object; only `'claude-code'` docs are. */
+   * Not necessarily a single Claude Code `.jsonl` object forever: an
+   * archive-first strategy for agents with no `TranscriptAdapter` at all
+   * (raw local session storage uploaded as-is under a `runs/<run-id>/<agent>/`
+   * GCS *prefix*, not one file) was the intended shape for such agents as of
+   * #3123 phase 2, but as of #645 no pipeline actually ships one yet —
+   * OpenCode (the one agent this would currently apply to) archives nothing
+   * today; see `RUNNER_CAPTURE_AGENTS` (`runner-capture.ts`) and
+   * `finalize.ts`'s zero-sessions-shipped warning. Do not assume this is a
+   * fetchable single transcript object without checking
+   * {@link IssueAgentSessionDoc.renderable} first — that flag, not
+   * `sessionAgent(doc)`, is the one the console reads. */
   transcriptGcsUri?: string;
+  /**
+   * Whether `transcriptGcsUri` (when set) points at a raw transcript
+   * `parseTranscriptTimeline` (`transcript-timeline.ts`) can actually parse
+   * into a rendered timeline — set once by `buildSessionDoc` from the
+   * capturing adapter's identity (see `isRenderableTranscriptAgent`),
+   * mirroring this issue's `TelemetrySessionRef` contract (agent-lcars#645):
+   * captured once by Worker runtime, read — never re-derived — by the
+   * console. Before this field existed, `apps/console/src/lib/
+   * session-detail.ts` re-derived the same fact itself by comparing
+   * `sessionAgent(doc) === 'claude-code'` directly, coincidentally matching
+   * `RENDERABLE_TRANSCRIPT_AGENTS`'s current (but unrelated) contents rather
+   * than reading it. Absent on docs shipped before this field existed —
+   * `isSessionRenderable` (`agent.ts`) is the one place that should read
+   * this with the pre-#645 fallback, never a fresh `=== 'claude-code'`
+   * check re-introduced elsewhere. */
+  renderable?: boolean;
 }
 
 /** Source-discriminated document shape stored at `sessions/{sessionId}`. */

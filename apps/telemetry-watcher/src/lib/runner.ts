@@ -1,32 +1,9 @@
+import { runnerWatchRoots } from '@agent-lcars/telemetry';
 import { logger } from '@repo/logging';
 
 import { WatcherDaemon } from './daemon';
 import { RunnerConfig } from './runner-config';
 import { SessionStore } from './store';
-
-/**
- * Runner mode has no privacy-scoping concept the way the host watcher does
- * (see `allowlist.ts`'s `defaultProjectDirAllowlist` comment): a
- * claude.yml runner container is single-purpose and destroyed after one
- * job — there's exactly one checkout, one agent turn, and nothing else
- * ever lands under `$HOME/.claude/projects` on it, unlike a developer
- * workstation that can have many unrelated Claude Code projects under the
- * same root. A `*` wildcard is therefore not a scoping gap here, just a
- * no-op allowlist check.
- */
-const RUNNER_ALLOWLIST = ['*'];
-
-/**
- * The same reasoning applied to Codex's own `cwd`-keyed allowlist. The host
- * watcher scopes codex sessions to `checkoutRoot()*`
- * (the configured checkout root) because a workstation runs Codex against
- * many unrelated checkouts; a runner container has exactly one, at a path
- * (`/home/runner/_work/...`) that would never match that workstation glob.
- * Reusing the host default here would silently discard every session this
- * sidecar exists to record — so runner mode gets the same no-op wildcard as
- * Claude above.
- */
-const RUNNER_CODEX_CWD_ALLOWLIST = ['*'];
 
 export interface StartSidecarOptions {
   config: RunnerConfig;
@@ -88,27 +65,20 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
   const { config, store } = options;
 
   const daemon = new WatcherDaemon({
-    // Both agents' transcript roots, unconditionally. A dispatch workflow
-    // only ever runs one of them, and the other root simply discovers
-    // nothing — cheaper and far less error-prone than having each workflow
-    // declare which agent it is. Until codex.yml existed this watched only
-    // Claude, which meant a Codex run would have shipped no telemetry at
-    // all: no turns, no tokens, no session row in the console.
-    watchRoots: [
-      {
-        path: config.claudeProjectsDir,
-        adapter: 'claude-code',
-        projectDirAllowlist: RUNNER_ALLOWLIST,
-      },
-      {
-        path: config.codexSessionsDir,
-        adapter: 'codex',
-        // Codex writes `~/.codex/sessions/<yyyy>/<mm>/<dd>/<uuid>.jsonl`,
-        // so unlike Claude's flat project dirs this root must be walked.
-        recursive: true,
-        cwdAllowlist: RUNNER_CODEX_CWD_ALLOWLIST,
-      },
-    ],
+    // The single runner-mode watch-root contract (@agent-lcars/telemetry,
+    // #645) — both captured agents' transcript roots, unconditionally. A
+    // dispatch workflow only ever runs one of them, and the other root
+    // simply discovers nothing — cheaper and far less error-prone than
+    // having each workflow declare which agent it is. Until codex.yml
+    // existed this watched only Claude, which meant a Codex run would have
+    // shipped no telemetry at all: no turns, no tokens, no session row in
+    // the console. `finalizeSidecar` (finalize.ts) imports this exact same
+    // function rather than hand-copying the array, so the two passes can
+    // never drift apart the way they used to.
+    watchRoots: runnerWatchRoots({
+      claudeProjectsDir: config.claudeProjectsDir,
+      codexSessionsDir: config.codexSessionsDir,
+    }),
     // Every transcript on a dispatch runner belongs to that job's agent
     // run, whatever the transcript itself claims — see
     // BuildSessionDocOptions.forceSource.

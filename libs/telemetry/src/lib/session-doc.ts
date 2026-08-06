@@ -1,3 +1,5 @@
+import { sessionAgent } from './agent';
+import { isRenderableTranscriptAgent } from './transcript-timeline';
 import {
   BuildSessionDocOptions,
   SessionDoc,
@@ -94,8 +96,18 @@ export function buildSessionDoc(
         issueNumber: options.issueNumber,
       }),
       ...(options.repo && { repo: options.repo }),
+      // renderable travels with transcriptGcsUri, never on its own — it
+      // describes whether *this* archived transcript can be rendered, so it
+      // has no meaning when there is nothing archived to render. Set once
+      // here, from the capturing adapter's own identity (see
+      // isRenderableTranscriptAgent's doc comment for why this is NOT the
+      // same question as "does a TranscriptAdapter exist for this agent")
+      // — this is this doc's only writer; the console reads the field
+      // rather than re-deriving it (agent-lcars#645's TelemetrySessionRef
+      // contract, `renderable` set once by Worker runtime).
       ...(options.transcriptGcsUri && {
         transcriptGcsUri: options.transcriptGcsUri,
+        renderable: isRenderableTranscriptAgent(sessionAgent(summary)),
       }),
     };
   }

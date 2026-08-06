@@ -44,6 +44,23 @@ adapter either by content (`adapterFor`) or by name
 (`getTranscriptAdapter`) — see `apps/telemetry-watcher`'s multi-root
 `watchRoots` config for the name-keyed case.
 
+Having a `TranscriptAdapter` (i.e. being summarizable into stats) is a
+_different_ capability from being _renderable_ as a raw timeline on the
+console's session detail page — `parseTranscriptTimeline`
+(`transcript-timeline.ts`) understands only Claude Code's raw line shape
+today, even for agents (Codex) that already have a working adapter. Whether
+a given session's archived transcript can be rendered is captured once by
+`buildSessionDoc` as `SessionDoc.renderable` (see `isRenderableTranscriptAgent`)
+and read — never re-derived — by the console via `isSessionRenderable`
+(`agent.ts`).
+
+The watch roots a runner-mode telemetry pass actually discovers transcripts
+under (as opposed to the host daemon's own `watchRoots` config) are defined
+once in `runner-capture.ts` (`runnerWatchRoots`, `RUNNER_CAPTURE_AGENTS`,
+`transcriptObjectPath`) and imported by both of `apps/telemetry-watcher`'s
+runner-mode entry points (`runner.ts`'s `startSidecar` and `finalize.ts`'s
+`finalizeSidecar`) rather than hand-copied.
+
 ## CLI
 
 ```bash

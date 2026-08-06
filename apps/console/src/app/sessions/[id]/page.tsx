@@ -1,5 +1,5 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
-import { sessionAgent } from '@agent-lcars/telemetry';
+import { isSessionRenderable, sessionAgent } from '@agent-lcars/telemetry';
 import { Code, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
@@ -25,18 +25,21 @@ interface PageProps {
 
 /**
  * The bottom half of an issue-agent session's detail view: either the real
- * turn-by-turn transcript timeline (`sessionAgent(doc) === 'claude-code'`,
- * the only agent with a working transcript reducer today - see
- * `transcript-adapter.ts`'s seam), or - for every other agent's
- * archive-first stub session (#3123 phase 2, e.g. opencode.yml's "Ship
- * session archive" step) - a short note that the archive exists without
- * attempting to render it as a transcript. Rendering the latter as a
- * transcript would fail-soft into a scary warning on every one of those
- * session pages for no benefit, since `getSessionTranscript` only knows how
- * to parse a single Claude Code `.jsonl` object, not a non-Claude archive
- * (which may not even be one file - see `types.ts`'s `transcriptGcsUri` doc
- * comment). Exported (not inlined into the page below) so both branches are
- * independently unit-testable without rendering the whole async server page.
+ * turn-by-turn transcript timeline (`isSessionRenderable(doc)`, true today
+ * only for Claude Code - the only agent with a working timeline parser, see
+ * `transcript-timeline.ts`'s `RENDERABLE_TRANSCRIPT_AGENTS`), or - for every
+ * other agent - a short note that the archive exists without attempting to
+ * render it as a transcript. Rendering the latter as a transcript would
+ * fail-soft into a scary warning on every one of those session pages for no
+ * benefit, since `getSessionTranscript` only knows how to parse a single
+ * Claude Code `.jsonl` object, not any other agent's raw shape (which for
+ * an archive-first agent may not even be one file - see `types.ts`'s
+ * `transcriptGcsUri` doc comment). This reads the same `renderable` field
+ * `session-detail.ts`'s fetch gate does rather than re-deriving its own
+ * opinion from `sessionAgent(doc)` - agent-lcars#645's Bug 3 was exactly two
+ * call sites disagreeing about how to answer this question. Exported (not
+ * inlined into the page below) so both branches are independently
+ * unit-testable without rendering the whole async server page.
  */
 export function ArchivedSessionTranscript({
   doc,
@@ -51,7 +54,7 @@ export function ArchivedSessionTranscript({
 
   const agent = sessionAgent(doc);
 
-  if (agent !== 'claude-code') {
+  if (!isSessionRenderable(doc)) {
     return (
       <Stack gap={4} data-testid="session-archive-note">
         <Text size="sm" c="dimmed">

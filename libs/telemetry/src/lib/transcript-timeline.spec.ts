@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 import {
   elideTranscriptTimeline,
   isElisionDivider,
+  isRenderableTranscriptAgent,
   parseTranscriptTimeline,
+  RENDERABLE_TRANSCRIPT_AGENTS,
   type TranscriptTimelineEvent,
 } from './transcript-timeline';
 
@@ -201,5 +203,28 @@ describe('elideTranscriptTimeline', () => {
     expect(divider?.elidedCount).toBe(250);
     const real = result.find((entry) => !isElisionDivider(entry));
     expect(isElisionDivider(real!)).toBe(false);
+  });
+});
+
+describe('isRenderableTranscriptAgent', () => {
+  it('is true for claude-code, the only format this parser understands', () => {
+    expect(isRenderableTranscriptAgent('claude-code')).toBe(true);
+  });
+
+  // Codex has a working TranscriptAdapter for stats summarization
+  // (transcript-adapter.ts), but its raw rollout JSONL uses a completely
+  // different line shape than parseTranscriptTimeline's message.content
+  // walk expects (see codex-transcript-adapter.spec.ts's fixture) -
+  // conflating "has an adapter" with "renderable" was Bug 3 in
+  // agent-lcars#645.
+  it('is false for every agent without a real timeline parser, codex included', () => {
+    expect(isRenderableTranscriptAgent('codex')).toBe(false);
+    expect(isRenderableTranscriptAgent('opencode')).toBe(false);
+    expect(isRenderableTranscriptAgent('gemini')).toBe(false);
+    expect(isRenderableTranscriptAgent('antigravity')).toBe(false);
+  });
+
+  it('RENDERABLE_TRANSCRIPT_AGENTS contains exactly claude-code today', () => {
+    expect(RENDERABLE_TRANSCRIPT_AGENTS).toEqual(['claude-code']);
   });
 });

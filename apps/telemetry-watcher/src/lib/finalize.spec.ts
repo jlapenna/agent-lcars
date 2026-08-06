@@ -6,6 +6,38 @@ import { RunnerConfig } from './runner-config';
 import { SessionStore } from './store';
 import { UploadTranscriptOptions } from './transcript-upload';
 
+/** A Codex CLI rollout transcript, mirroring runner.spec.ts's own
+ * CODEX_TRANSCRIPT fixture (kept separate rather than shared/exported since
+ * both files' copies are meant to stay simple, self-contained JSONL
+ * literals, not indirection through a shared builder). */
+const CODEX_TRANSCRIPT = [
+  JSON.stringify({
+    timestamp: '2026-07-27T10:00:00.000Z',
+    type: 'session_meta',
+    payload: {
+      id: 'codex-runner-session',
+      cwd: '/home/runner/_work/agent-lcars/agent-lcars',
+      model: 'gpt-5.6',
+      approval_policy: 'on-request',
+      instructions: 'Port codex.yml',
+    },
+  }),
+  JSON.stringify({
+    timestamp: '2026-07-27T10:00:05.000Z',
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: {
+          input_tokens: 120,
+          cached_input_tokens: 40,
+          output_tokens: 30,
+        },
+      },
+    },
+  }),
+].join('\n');
+
 /** Same fixture shape as runner.spec.ts's ISSUE_AGENT_TRANSCRIPT — the
  * `entrypoint: 'claude-code-github-action'` marker is what the reducer keys
  * off of to tag `source: 'issue-agent'`. */
@@ -135,6 +167,115 @@ describe('finalizeSidecar', () => {
       transcriptGcsUri:
         'gs://agent-lcars-session-transcripts/runs/42/claude-code/session-b.jsonl',
     });
+  });
+
+  it('archives a Codex transcript under the codex/ prefix, not claude-code/ (Bug 1, #645)', async () => {
+    const { store, upserts } = createFakeStore();
+    const { uploadTranscript, uploads } = createFakeUploader();
+    const codexFile =
+      '/home/runner/.codex/sessions/2026/07/27/rollout-abc.jsonl';
+    const files = { [codexFile]: CODEX_TRANSCRIPT };
+
+    await finalizeSidecar({
+      config: baseConfig({
+        runId: '42',
+        transcriptsBucket: 'agent-lcars-session-transcripts',
+      }),
+      store,
+      // Root-scoped (like runner.spec.ts's Codex tests) rather than
+      // `() => Object.keys(files)`: this file must only surface under the
+      // Codex root, not also get (harmlessly, but confusingly) tried
+      // against the Claude root's adapter.
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((f) => f.startsWith(rootPath)),
+      readFile: (p: string) => files[p as keyof typeof files],
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(uploads).toEqual([
+      {
+        projectId: undefined,
+        bucket: 'agent-lcars-session-transcripts',
+        object: 'runs/42/codex/codex-runner-session.jsonl',
+        contents: CODEX_TRANSCRIPT,
+      },
+    ]);
+    expect(upserts[0]).toMatchObject({
+      agent: 'codex',
+      // codexAdapter has no timeline parser (isRenderableTranscriptAgent),
+      // even though it reduces fine for stats - see transcript-timeline.ts.
+      renderable: false,
+      transcriptGcsUri:
+        'gs://agent-lcars-session-transcripts/runs/42/codex/codex-runner-session.jsonl',
+    });
+  });
+
+  it('reports a zero-session finalize pass loudly instead of shipping nothing silently (Bug 2, #645)', async () => {
+    const { store, upserts } = createFakeStore();
+    const consoleLogSpy = vi
+      .spyOn(console, 'log')
+      .mockImplementation(() => undefined);
+    const originalGithubActions = process.env['GITHUB_ACTIONS'];
+
+    try {
+      process.env['GITHUB_ACTIONS'] = 'true';
+      await finalizeSidecar({
+        config: baseConfig({ runId: '777' }),
+        store,
+        discover: () => [],
+      });
+
+      expect(upserts).toHaveLength(0);
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^::warning::.*zero sessions.*777/),
+      );
+    } finally {
+      consoleLogSpy.mockRestore();
+      if (originalGithubActions === undefined) {
+        delete process.env['GITHUB_ACTIONS'];
+      } else {
+        process.env['GITHUB_ACTIONS'] = originalGithubActions;
+      }
+    }
+  });
+
+  it('does not warn about a zero-session pass when at least one session shipped', async () => {
+    const { store } = createFakeStore();
+    const { uploadTranscript } = createFakeUploader();
+    const consoleLogSpy = vi
+      .spyOn(console, 'log')
+      .mockImplementation(() => undefined);
+    const originalGithubActions = process.env['GITHUB_ACTIONS'];
+    const files = {
+      '/home/runner/.claude/projects/proj/session-g.jsonl':
+        ISSUE_AGENT_TRANSCRIPT('session-g', '2026-07-19T10:00:00.000Z'),
+    };
+
+    try {
+      process.env['GITHUB_ACTIONS'] = 'true';
+      await finalizeSidecar({
+        config: baseConfig(),
+        store,
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
+        uploadTranscript,
+      });
+
+      expect(consoleLogSpy).not.toHaveBeenCalledWith(
+        expect.stringMatching(/zero sessions/),
+      );
+    } finally {
+      consoleLogSpy.mockRestore();
+      if (originalGithubActions === undefined) {
+        delete process.env['GITHUB_ACTIONS'];
+      } else {
+        process.env['GITHUB_ACTIONS'] = originalGithubActions;
+      }
+    }
   });
 
   it('ships the doc without transcriptGcsUri when no bucket is configured', async () => {

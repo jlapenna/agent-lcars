@@ -1,7 +1,7 @@
 import 'server-only';
 
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { sessionAgent } from '@agent-lcars/telemetry';
+import { isSessionRenderable } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
@@ -29,16 +29,24 @@ export type SessionDetailResult =
  * `getSessionTranscript` already absorbs it into its own `warning` field, so
  * the header still renders even when the transcript can't be shown.
  *
- * Only fetched for `sessionAgent(doc) === 'claude-code'` (#3123 phase 2):
- * `getSessionTranscript` parses `transcriptGcsUri` as a single Claude Code
- * `.jsonl` object, which is all that exists for every session shipped
- * before this phase. Non-Claude agents now archive-first (e.g. opencode.yml
- * uploading OpenCode's raw SQLite session storage under a `runs/<id>/opencode/`
- * GCS *prefix*, not one parseable file - see `types.ts`'s `transcriptGcsUri`
- * doc comment) - fetching that as a transcript would fail-soft into a scary
- * warning on every one of their session pages for no benefit, since there's
- * nothing renderable yet. The page instead shows a short note that the
- * archive exists without attempting to fetch/parse it.
+ * Only fetched when `isSessionRenderable(doc)` is true (#3123 phase 2,
+ * updated to read the `renderable` field in #645): `getSessionTranscript`
+ * parses `transcriptGcsUri` as a single Claude Code `.jsonl` object via
+ * `parseTranscriptTimeline`, which today understands only Claude Code's raw
+ * line shape (see `RENDERABLE_TRANSCRIPT_AGENTS` in
+ * `transcript-timeline.ts`) - not, for example, Codex's, despite Codex
+ * having a working `TranscriptAdapter` for stats summarization. Non-Claude
+ * agents may also archive-first rather than ship a parseable transcript at
+ * all (e.g. OpenCode's raw local session storage, which is a single SQLite
+ * database rather than a per-session file - see `types.ts`'s
+ * `transcriptGcsUri` doc comment) - fetching either shape as a transcript
+ * would fail-soft into a scary warning on every one of their session pages
+ * for no benefit, since there's nothing renderable yet. The page instead
+ * shows a short note that the archive exists without attempting to
+ * fetch/parse it. This gate is deliberately read from `doc.renderable`
+ * (Worker runtime's own claim, set once at capture time) rather than
+ * re-derived here from `sessionAgent(doc)` - see `isSessionRenderable`'s own
+ * doc comment for why re-deriving it was Bug 3.
  */
 export async function getSessionDetail(
   sessionId: string,
@@ -62,7 +70,7 @@ export async function getSessionDetail(
   const transcript =
     doc.source === 'issue-agent' &&
     doc.transcriptGcsUri &&
-    sessionAgent(doc) === 'claude-code'
+    isSessionRenderable(doc)
       ? await getSessionTranscript(doc.transcriptGcsUri)
       : undefined;
 

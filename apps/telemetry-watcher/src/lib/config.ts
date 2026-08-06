@@ -51,7 +51,8 @@ export interface WatcherConfig extends SharedWatcherConfig {
  * so runner mode's fallback stays correct even when
  * `AGENT_TELEMETRY_WATCH_ROOTS` is set — that env var reconfigures the host
  * watcher's roots wholesale and has no bearing on runner mode's single,
- * allowlist-free root (see runner.ts's `RUNNER_ALLOWLIST` comment). */
+ * allowlist-free roots (see `@agent-lcars/telemetry`'s `runnerWatchRoots`
+ * doc comment). */
 export function defaultClaudeProjectsDir(): string {
   return (
     optional('AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR') ??

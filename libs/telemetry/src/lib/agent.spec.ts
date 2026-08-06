@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HasSessionAgent, sessionAgent } from './agent';
+import { HasSessionAgent, isSessionRenderable, sessionAgent } from './agent';
 
 describe('sessionAgent', () => {
   it('returns the explicit agent when present', () => {
@@ -22,5 +22,27 @@ describe('sessionAgent', () => {
       source: 'cli',
     };
     expect(sessionAgent(legacy)).toBe('claude-code');
+  });
+});
+
+describe('isSessionRenderable', () => {
+  it('returns the explicit renderable value when present, regardless of agent', () => {
+    expect(isSessionRenderable({ agent: 'codex', renderable: true })).toBe(
+      true,
+    );
+    expect(
+      isSessionRenderable({ agent: 'claude-code', renderable: false }),
+    ).toBe(false);
+  });
+
+  // A doc/summary stored before #645 added this field carries no
+  // `renderable` key at all - falling back to the pre-#645 gate keeps every
+  // already-shipped Claude Code session's timeline rendering exactly as it
+  // did before this change, rather than blanking out on a field those docs
+  // never had a chance to set.
+  it('falls back to the pre-#645 claude-code gate when renderable is absent', () => {
+    expect(isSessionRenderable({ agent: 'claude-code' })).toBe(true);
+    expect(isSessionRenderable({ agent: 'codex' })).toBe(false);
+    expect(isSessionRenderable({})).toBe(true);
   });
 });

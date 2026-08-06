@@ -22,9 +22,9 @@ export interface RunnerConfig extends Pick<
    * (the host watcher's multi-root override) has no bearing on runner mode;
    * claude.yml's "Start telemetry sidecar" step also passes
    * `--projects-dir "$HOME/.claude/projects"` explicitly and defensively.
-   * Runner mode has no allowlist concept (see `runner.ts`'s
-   * `RUNNER_ALLOWLIST`), so this is the only discovery knob that matters
-   * here. */
+   * Runner mode has no allowlist concept (see `@agent-lcars/telemetry`'s
+   * `runnerWatchRoots` doc comment), so this is the only discovery knob
+   * that matters here. */
   claudeProjectsDir: string;
   /** Root to discover Codex transcripts under, defaulting to
    * `defaultCodexSessionsDir()` (`~/.codex/sessions`, optionally overridden

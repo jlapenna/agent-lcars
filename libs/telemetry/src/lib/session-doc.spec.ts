@@ -357,6 +357,64 @@ describe('buildSessionDoc', () => {
     expect(doc).not.toHaveProperty('repo');
   });
 
+  it('sets renderable: true on an issue-agent doc archiving a claude-code transcript', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent', agent: 'claude-code' }),
+      'ended',
+      {
+        runId: 'run-123',
+        transcriptGcsUri:
+          'gs://bucket/runs/run-123/claude-code/session-1.jsonl',
+      },
+    );
+    expect(doc).toMatchObject({ renderable: true });
+  });
+
+  // parseTranscriptTimeline (the console's raw-transcript renderer) has no
+  // parser for Codex's rollout JSONL shape, even though codexAdapter itself
+  // reduces it fine for stats - see isRenderableTranscriptAgent's doc
+  // comment. This is the case Bug 3 (agent-lcars#645) got wrong: the
+  // console used to gate on a registry that already disagreed with this.
+  it('sets renderable: false on an issue-agent doc archiving a codex transcript', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent', agent: 'codex' }),
+      'ended',
+      {
+        runId: 'run-123',
+        transcriptGcsUri: 'gs://bucket/runs/run-123/codex/session-1.jsonl',
+      },
+    );
+    expect(doc).toMatchObject({ renderable: false });
+  });
+
+  it('defaults renderable to the claude-code assumption when the summary has no agent field (legacy reducer output)', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent' }),
+      'ended',
+      {
+        runId: 'run-123',
+        transcriptGcsUri: 'gs://bucket/runs/run-123/session-1.jsonl',
+      },
+    );
+    expect(doc).toMatchObject({ renderable: true });
+  });
+
+  it('omits renderable entirely when there is no transcriptGcsUri to describe', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent', agent: 'claude-code' }),
+      'ended',
+      { runId: 'run-123' },
+    );
+    expect(doc).not.toHaveProperty('renderable');
+  });
+
+  it('never carries renderable onto a cli doc even when transcriptGcsUri is passed by mistake', () => {
+    const doc = buildSessionDoc(baseSummary({ source: 'cli' }), 'live', {
+      transcriptGcsUri: 'gs://bucket/runs/1/session.jsonl',
+    });
+    expect(doc).not.toHaveProperty('renderable');
+  });
+
   it('never carries options.repo onto a cli doc', () => {
     // BuildSessionDocOptions doesn't discriminate by source, so a caller
     // could pass repo alongside a cli summary — the builder itself must
