@@ -244,6 +244,12 @@ test('opencode uses the published action with a bounded trajectory contract', as
   assert.match(source, /^\s+variant:\s+minimal\s*$/mu);
   assert.match(source, /first durable\s+artifact/u);
   assert.match(source, /exactly one\s+of: PR <url>, REVIEW/u);
+  assert.match(source, /Authenticate published OpenCode action API calls/u);
+  assert.match(
+    source,
+    /api\.github\.com\/repos\/anomalyco\/opencode\/releases\/latest/u,
+  );
+  assert.match(source, /Authorization: Bearer \$\{GITHUB_TOKEN/u);
 });
 
 test('workers expose one canonical dispatch and lane-configuration contract', async () => {
