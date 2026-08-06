@@ -189,7 +189,7 @@ export function QueueWorkspace({
     isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)),
   );
   const selectedCard = selectedItemKey
-    ? visibleCards.find(
+    ? cards.find(
         ({ item }) => repoItemKey(item.repo, item.number) === selectedItemKey,
       )
     : visibleCards[0];

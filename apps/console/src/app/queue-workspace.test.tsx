@@ -147,6 +147,21 @@ describe('QueueWorkspace', () => {
     );
   });
 
+  it('keeps an explicit selection available when it no longer matches the filter', () => {
+    mockSearch = 'reason=review-requested&item=agent%2Flcars%23249';
+    renderWorkspace([makeCard()], 'agent/lcars#249');
+
+    expect(screen.getByTestId('selected-detail')).toHaveTextContent(
+      'Detail #249',
+    );
+    expect(
+      screen.queryByRole('heading', { name: 'Item unavailable' }),
+    ).toBeNull();
+    expect(
+      screen.getByText('No “Review requested” items right now.'),
+    ).toBeTruthy();
+  });
+
   it('filters the Inbox without adding another navigation layer', async () => {
     renderWorkspace([
       makeCard(),
