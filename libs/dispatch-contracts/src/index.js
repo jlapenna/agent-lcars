@@ -33,8 +33,31 @@ export {
  * @typedef {import('./pipelines.js').PipelineContract} PipelineContract
  * @typedef {import('./pipelines.js').AgentPipelineContract} AgentPipelineContract
  * @typedef {import('./marker.js').AttemptMarker} AttemptMarker
+ * @typedef {import('./ledger.js').DispatchLedger} DispatchLedger
+ * @typedef {import('./ledger.js').LedgerTaskRef} LedgerTaskRef
+ * @typedef {import('./ledger.js').LedgerGeneration} LedgerGeneration
+ * @typedef {import('./ledger.js').LedgerGenerationState} LedgerGenerationState
+ * @typedef {import('./ledger.js').LedgerRunAttempt} LedgerRunAttempt
+ * @typedef {import('./ledger.js').LedgerSource} LedgerSource
+ * @typedef {import('./ledger.js').LedgerAnomaly} LedgerAnomaly
+ * @typedef {import('./ledger.js').LedgerControl} LedgerControl
+ * @typedef {import('./ledger.js').LedgerCommentExtraction} LedgerCommentExtraction
  */
 
+export {
+  extractLedgerComment,
+  hasLedgerMarker,
+  isPlainObject,
+  isWellFormedAnomaly,
+  isWellFormedGeneration,
+  isWellFormedLedger,
+  isWellFormedSource,
+  LEDGER_ACTIVE_GENERATION_STATES,
+  LEDGER_GENERATION_STATES,
+  LEDGER_MARKER,
+  LEDGER_SCHEMA,
+  renderLedgerComment,
+} from './ledger.js';
 export {
   displayTitleMatchesAttempt,
   formatDispatchMarker,
