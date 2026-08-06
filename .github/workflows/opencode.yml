@@ -200,6 +200,18 @@ jobs:
           service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
           issue: ${{ inputs.issue }}
 
+      # The published action resolves its cache key with an unauthenticated
+      # GitHub Releases API request. Shared runners can exhaust that IP-based
+      # limit even when this job has a valid token, so make curl authenticate
+      # that request (and leave the token in the ephemeral runner only).
+      - name: Authenticate published OpenCode action API calls
+        env:
+          GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
+        run: |
+          umask 077
+          printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" > "$RUNNER_TEMP/.curlrc"
+          echo "CURL_HOME=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Run OpenCode
         id: agent
         # #51: two dispatches against #44 retried a persistent LiteLLM 429
