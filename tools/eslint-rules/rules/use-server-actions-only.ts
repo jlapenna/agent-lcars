@@ -13,12 +13,17 @@ type ProgramStatement = TSESTree.Program['body'][number];
 function useServerDirective(
   body: TSESTree.Program['body'],
 ): TSESTree.ExpressionStatement | undefined {
-  return body.find(
-    (statement): statement is TSESTree.ExpressionStatement =>
-      statement.type === AST_NODE_TYPES.ExpressionStatement &&
-      statement.expression.type === AST_NODE_TYPES.Literal &&
-      statement.expression.value === 'use server',
-  );
+  for (const statement of body) {
+    if (
+      statement.type !== AST_NODE_TYPES.ExpressionStatement ||
+      statement.expression.type !== AST_NODE_TYPES.Literal ||
+      typeof statement.expression.value !== 'string'
+    ) {
+      return undefined;
+    }
+    if (statement.expression.value === 'use server') return statement;
+  }
+  return undefined;
 }
 
 function isActionModule(filename: string): boolean {

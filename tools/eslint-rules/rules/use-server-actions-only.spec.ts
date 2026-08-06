@@ -101,4 +101,13 @@ describe('use-server-actions-only', () => {
   ])('ignores modules without a file-level directive', (code) => {
     expect(lint(code, 'apps/console/src/app/page.tsx')).toEqual([]);
   });
+
+  it('ignores a string after the directive prologue', () => {
+    expect(
+      lint(
+        "import { helper } from './helper';\n'use server';\nexport const value = helper;\n",
+        'apps/console/src/app/actions.ts',
+      ),
+    ).toEqual([]);
+  });
 });
