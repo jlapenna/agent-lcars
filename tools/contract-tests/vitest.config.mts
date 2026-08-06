@@ -11,7 +11,17 @@ import { defineConfig } from 'vitest/config';
 // `nx run-many -t test`.
 export default defineConfig({
   root: path.resolve(__dirname, '../..'),
-  plugins: [tsconfigPaths()],
+  plugins: [
+    tsconfigPaths({
+      projects: [
+        path.resolve(__dirname, '../../apps/console/tsconfig.typecheck.json'),
+        path.resolve(__dirname, '../../libs/util-server/tsconfig.lib.json'),
+        path.resolve(__dirname, '../../libs/util/tsconfig.lib.json'),
+        path.resolve(__dirname, '../../libs/logging/tsconfig.lib.json'),
+        path.resolve(__dirname, '../../libs/env-vars/tsconfig.lib.json'),
+      ],
+    }),
+  ],
   resolve: {
     // Keep standalone contract tests aligned with the workspace-wide Vitest
     // config: server modules remain marked for Next.js, while Node-based test

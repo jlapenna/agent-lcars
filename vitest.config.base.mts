@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import tsconfigPaths from 'vite-tsconfig-paths';
@@ -35,6 +36,11 @@ export function createVitestConfig(options: {
     .relative(__dirname, dirname)
     .split(path.sep)
     .join('/');
+  const tsconfigProjects = [
+    path.join(__dirname, 'tsconfig.base.json'),
+    path.join(dirname, 'tsconfig.typecheck.json'),
+    path.join(dirname, 'tsconfig.json'),
+  ].filter(existsSync);
 
   const setupFiles = [
     // Both firestore-jest-mock and jest-fetch-mock's default export only
@@ -75,7 +81,7 @@ export function createVitestConfig(options: {
       // Test runs do not emit distributable assets. Production assets remain
       // owned by each project's Nx build target.
       publicDir: false,
-      plugins: [tsconfigPaths()],
+      plugins: [tsconfigPaths({ projects: tsconfigProjects })],
       resolve: {
         // Mirrors jest.preset.js's workspace-wide `server-only` ->
         // server-only-mock.js moduleNameMapper entry. Without this, any
