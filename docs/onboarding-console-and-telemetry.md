@@ -170,6 +170,13 @@ approval, use a dedicated worktree, add regression coverage, review the
 complete plan before applying, and verify a clean post-apply plan. Never work
 around Terraform ownership with a hand-rolled `gcloud` grant.
 
+Codex also needs a repository-specific service account and rotating credential
+secret. Repository-local Actions concurrency cannot protect a credential shared
+across repositories, so never grant a new repository access to another repo's
+Codex service account or copy its `auth.json`. Provision a distinct secret
+container through Terraform; a maintainer must populate it with an independently
+minted credential through the approved secret-value workflow.
+
 ## 3. Console config
 
 Tell this console the new repo exists via `AGENT_LCARS_WATCHED_REPOS`

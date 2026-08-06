@@ -241,8 +241,37 @@ resource "google_service_account_iam_member" "codex_agent_impersonation" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
+# Codex rotates its subscription credential on every run. GitHub Actions
+# concurrency is repository-local, so Homelab must not share Agent LCARS's
+# service account or CODEX_AUTH_JSON secret: overlapping runs could restore the
+# same version and persist mutually invalid refreshes.
+resource "google_secret_manager_secret" "homelab_codex_auth" {
+  secret_id = "HOMELAB_CODEX_AUTH_JSON"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_service_account" "homelab_codex_agent" {
+  account_id   = "homelab-codex-agent"
+  display_name = "Homelab Codex issue agent"
+}
+
+resource "google_secret_manager_secret_iam_member" "homelab_codex_auth_accessor" {
+  secret_id = google_secret_manager_secret.homelab_codex_auth.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.homelab_codex_agent.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "homelab_codex_auth_version_adder" {
+  secret_id = google_secret_manager_secret.homelab_codex_auth.id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${google_service_account.homelab_codex_agent.email}"
+}
+
 resource "google_service_account_iam_member" "homelab_codex_agent_impersonation" {
-  service_account_id = google_service_account.codex_agent.name
+  service_account_id = google_service_account.homelab_codex_agent.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }

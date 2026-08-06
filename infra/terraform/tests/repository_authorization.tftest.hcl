@@ -25,6 +25,24 @@ variables {
 run "renders_exact_repository_authorization" {
   command = plan
 
+  override_resource {
+    target          = google_service_account.codex_agent
+    override_during = plan
+    values = {
+      email = "codex-agent@agent-lcars.iam.gserviceaccount.com"
+      name  = "projects/agent-lcars/serviceAccounts/codex-agent@agent-lcars.iam.gserviceaccount.com"
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.homelab_codex_agent
+    override_during = plan
+    values = {
+      email = "homelab-codex-agent@agent-lcars.iam.gserviceaccount.com"
+      name  = "projects/agent-lcars/serviceAccounts/homelab-codex-agent@agent-lcars.iam.gserviceaccount.com"
+    }
+  }
+
   assert {
     condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab']"
     error_message = "The WIF provider must authorize exactly Agent LCARS, Sprinkles, and Homelab."
@@ -58,6 +76,26 @@ run "renders_exact_repository_authorization" {
   assert {
     condition     = google_service_account_iam_member.homelab_codex_agent_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/homelab"
     error_message = "The Homelab Codex grant must use the exact repository principal."
+  }
+
+  assert {
+    condition     = google_service_account_iam_member.homelab_codex_agent_impersonation.service_account_id == google_service_account.homelab_codex_agent.name && google_service_account_iam_member.homelab_codex_agent_impersonation.service_account_id != google_service_account.codex_agent.name
+    error_message = "Homelab must use its own Codex service account so rotating credentials cannot race across repositories."
+  }
+
+  assert {
+    condition     = google_secret_manager_secret.homelab_codex_auth.secret_id == "HOMELAB_CODEX_AUTH_JSON"
+    error_message = "Homelab must use its own rotating Codex credential secret."
+  }
+
+  assert {
+    condition     = google_secret_manager_secret_iam_member.homelab_codex_auth_accessor.role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.homelab_codex_auth_accessor.member == "serviceAccount:${google_service_account.homelab_codex_agent.email}"
+    error_message = "The Homelab Codex service account must be able to read only its dedicated secret."
+  }
+
+  assert {
+    condition     = google_secret_manager_secret_iam_member.homelab_codex_auth_version_adder.role == "roles/secretmanager.secretVersionAdder" && google_secret_manager_secret_iam_member.homelab_codex_auth_version_adder.member == "serviceAccount:${google_service_account.homelab_codex_agent.email}"
+    error_message = "The Homelab Codex service account must be able to append refreshed versions to its dedicated secret."
   }
 
   assert {
