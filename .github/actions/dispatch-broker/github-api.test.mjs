@@ -7,6 +7,7 @@ import {
   renderLedgerComment,
 } from './broker.mjs';
 import {
+  agentWorkerPipelines,
   API_VERSION,
   brokerConcurrencyGroup,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
@@ -102,6 +103,7 @@ test('dispatch requires 200 with same-repository run details', () => {
 });
 
 test('worker pipeline resolves to exactly one worker workflow file, including the #307 canary', () => {
+  assert.deepEqual(agentWorkerPipelines, ['claude', 'codex', 'opencode']);
   assert.equal(workerWorkflow('claude'), 'claude.yml');
   assert.equal(workerWorkflow('codex'), 'codex.yml');
   assert.equal(workerWorkflow('opencode'), 'opencode.yml');

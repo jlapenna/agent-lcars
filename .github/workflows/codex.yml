@@ -21,7 +21,7 @@ name: Codex Issue Agent
 # This workflow is workflow_dispatch-only (agent-router.yml owns the event
 # triggers). Keep the console's leading issue-number join key and add the
 # immutable broker marker used for interrupted-bind reconciliation.
-run-name: 'codex #${{ inputs.issue }}: [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
+run-name: '#${{ inputs.issue }}: Codex issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
 
 on:
   workflow_dispatch:
@@ -69,7 +69,7 @@ jobs:
   codex:
     # The centralized router authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
     # Serialize every subscription-authenticated run: two agents must never
     # rotate the same auth.json refresh token concurrently. This belongs on
     # the job, not the workflow — issue_comment creates a workflow run
@@ -90,27 +90,19 @@ jobs:
     # agent step costs).
     timeout-minutes: 90
     env:
+      # Lane-specific values. The common lifecycle below must use these
+      # rather than repeat Codex literals in individual steps.
+      AGENT_NAME: Codex
+      WORKER_WORKFLOW: codex.yml
+      AGENT_GIT_LOGIN: agent-lcars[bot]
+      EXPECTED_COMMENT_LOGIN: agent-lcars[bot]
+      EXCLUDE_PR_AUTHOR: claude[bot]
+      AGENT_LABEL: agent:codex
+      REDISPATCH_COMMAND: /codex
       npm_config_store_dir: /tmp/runner/pnpm-store
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
-      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
-      # asserted here - job placement onto a runner happens before any step
-      # runs, so an empty/unset value already fails the job loudly on its
-      # own before this step could ever fire.
-      - name: Assert required repo variables are set
-        env:
-          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
-        run: |
-          missing=""
-          [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing AGENT_FLEET_LOGIN"
-          [ -z "$MAINTAINER_LOGIN" ] && missing="$missing MAINTAINER_LOGIN"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing required repo variable(s):$missing"
-            exit 1
-          fi
-
       # A minimal checkout, before broker verification and the minted-token
       # checkout below: "Verify broker binding" is now a local composite
       # action (`uses: ./.github/actions/...`), and GitHub Actions can only
@@ -118,6 +110,28 @@ jobs:
       # out - a platform constraint, not a preference.
       - name: Bootstrap checkout for broker preflight
         uses: actions/checkout@v7
+
+      # The agent step below has unrestricted Bash on this same checkout,
+      # so the post-agent gates (verify-deliverable, report-failure,
+      # telemetry-finalize) must run from a copy frozen now, while the tree
+      # is still exactly what the trusted dispatched ref checked out - and
+      # via `run:` from $RUNNER_TEMP, never `uses:`, at gate time. Snapshot
+      # before broker preflight and token mint so failure reporting remains
+      # trusted even if either prerequisite fails.
+      - name: Snapshot post-agent enforcement scripts
+        uses: ./.github/actions/snapshot-enforcement-scripts
+
+      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
+      # asserted here - job placement onto a runner happens before any step
+      # runs, so an empty/unset value already fails the job loudly on its
+      # own before this step could ever fire. This check follows checkout
+      # because a local composite action cannot be resolved before then.
+      - name: Assert required repo variables are set
+        uses: ./.github/actions/assert-repo-vars
+        with:
+          vars: |
+            AGENT_FLEET_LOGIN=${{ vars.AGENT_FLEET_LOGIN }}
+            MAINTAINER_LOGIN=${{ vars.MAINTAINER_LOGIN }}
 
       # The worker is untrusted until its own Actions run ID is durably bound
       # to this exact task/generation/intent/token in the serialized ledger.
@@ -144,7 +158,7 @@ jobs:
         uses: ./.github/actions/claim-issue
         with:
           token: ${{ steps.agent-lcars-token.outputs.token }}
-          issue: ${{ github.event.inputs.issue }}
+          issue: ${{ inputs.issue }}
           claim-login: ${{ vars.AGENT_FLEET_LOGIN }}
 
       # The real checkout, now that the App token exists: this one carries
@@ -158,37 +172,28 @@ jobs:
           token: ${{ steps.agent-lcars-token.outputs.token }}
           persist-credentials: true
 
-      # The agent step below has unrestricted Bash on this same checkout,
-      # so the post-agent gates (verify-deliverable, report-failure,
-      # telemetry-finalize) must run from a copy frozen now, while the tree
-      # is still exactly what the trusted dispatched ref checked out - and
-      # via `run:` from $RUNNER_TEMP, never `uses:`, at gate time. The full
-      # rationale lives in snapshot-enforcement-scripts/action.yml.
-      - name: Snapshot post-agent enforcement scripts
-        uses: ./.github/actions/snapshot-enforcement-scripts
-
       - name: Shared agent setup
         id: agent-setup
         uses: ./.github/actions/agent-setup
         with:
-          agent-login: agent-lcars[bot]
+          agent-login: ${{ env.AGENT_GIT_LOGIN }}
 
       - name: Verify agent identity
         uses: ./.github/actions/verify-agent-identity
         with:
           token: ${{ steps.agent-lcars-token.outputs.token }}
-          agent: Codex
+          agent: ${{ env.AGENT_NAME }}
           app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
 
       - name: Prepare dispatch context
         uses: ./.github/actions/prepare-agent-dispatch
         with:
-          agent: Codex
-          issue: ${{ github.event.inputs.issue }}
-          mode: ${{ github.event.inputs.mode }}
-          reply: ${{ github.event.inputs.reply }}
-          runbook: ${{ github.event.inputs.runbook }}
-          context: ${{ github.event.inputs.context }}
+          agent: ${{ env.AGENT_NAME }}
+          issue: ${{ inputs.issue }}
+          mode: ${{ inputs.mode }}
+          reply: ${{ inputs.reply }}
+          runbook: ${{ inputs.runbook }}
+          context: ${{ inputs.context }}
 
       # Two distinct GCP identities are used by this job, deliberately kept
       # separate:
@@ -234,7 +239,7 @@ jobs:
         with:
           workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
           service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
-          issue: ${{ github.event.inputs.issue }}
+          issue: ${{ inputs.issue }}
 
       - name: Install Codex CLI
         # npm's prefix in the runner image is /usr, so a bare `npm install
@@ -341,7 +346,7 @@ jobs:
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
           RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.inputs.issue }}
+          NUM: ${{ inputs.issue }}
         run: bash "$RUNNER_TEMP/trusted-actions/telemetry-finalize/telemetry-finalize.sh"
 
       # Same gate claude.yml/opencode.yml use (agent-protocol.md §5): an
@@ -361,12 +366,12 @@ jobs:
           # HTTP 401 on the failure report). The job token lives for the
           # whole job; attribution shifts to github-actions[bot].
           GH_TOKEN: ${{ github.token }}
-          AGENT: Codex
+          AGENT: ${{ env.AGENT_NAME }}
           REPO: ${{ github.repository }}
-          NUM: ${{ github.event.inputs.issue }}
+          NUM: ${{ inputs.issue }}
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
-          MODE: ${{ github.event.inputs.mode }}
-          EXPECTED_COMMENT_LOGIN: agent-lcars[bot]
+          MODE: ${{ inputs.mode }}
+          EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}
           # Guards against crediting a concurrently dispatched claude run's
           # PR on the same issue (a testing artifact, not normal usage - the
           # router enforces exactly one agent label per issue). Cannot also
@@ -374,8 +379,22 @@ jobs:
           # agent-lcars[bot] push identity, an existing, accepted limitation
           # unrelated to this dedup. verify-deliverable.sh itself skips this
           # exclusion on a reply dispatch, where the anchor is explicit.
-          EXCLUDE_PR_AUTHOR: claude[bot]
+          EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}
         run: bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"
+
+      - name: Determine failure reason
+        id: failure-reason
+        if: failure() || cancelled()
+        run: |
+          REASON=""
+          if [ "${NO_DELIVERABLE:-}" = "1" ]; then
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by re-adding the `'"$AGENT_LABEL"$'` label or replying `'"$REDISPATCH_COMMAND"$'`, and remind it to push or communicate a final result.'
+          fi
+          {
+            echo "reason<<REASON_EOF"
+            echo "$REASON"
+            echo "REASON_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # MUST cover cancelled(): a job-level timeout-minutes kill sets the
       # conclusion to `cancelled`, not `failure`, so `if: failure()` alone
@@ -393,12 +412,12 @@ jobs:
           # HTTP 401 on the failure report). The job token lives for the
           # whole job; attribution shifts to github-actions[bot].
           GH_TOKEN: ${{ github.token }}
-          AGENT: Codex
-          MESSAGE_PREFIX: '⚠️ '
+          AGENT: ${{ env.AGENT_NAME }}
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
-          ISSUE_NUM: ${{ github.event.inputs.issue }}
+          ISSUE_NUM: ${{ inputs.issue }}
+          REASON: ${{ steps.failure-reason.outputs.reason }}
           JOB_STATUS: ${{ job.status }}
           MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
         run: bash "$RUNNER_TEMP/trusted-actions/report-failure/report-failure.sh"
@@ -415,4 +434,4 @@ jobs:
           generation: ${{ inputs.broker_generation }}
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
-          worker-workflow: codex.yml
+          worker-workflow: ${{ env.WORKER_WORKFLOW }}
