@@ -61,6 +61,7 @@
     ]
   },
   "devDependencies": {
+    "@eslint-react/eslint-plugin": "5.18.0",
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.1",
     "@naxodev/gonx": "4.1.1",
@@ -91,7 +92,9 @@
     "dotenv-cli": "^11.0.0",
     "esbuild": "^0.28.0",
     "eslint": "^10.2.1",
+    "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-playwright": "^2.10.1",
+    "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-simple-import-sort": "^14.0.0",
     "eslint-plugin-unused-imports": "^4.4.1",
     "firebase-tools": "^15.15.0",

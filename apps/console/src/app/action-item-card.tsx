@@ -559,6 +559,9 @@ export function ActionItemCard({
               placeholder={
                 replyMention ? `Reply with ${replyMention}…` : 'Reply…'
               }
+              // The reply field is conditionally mounted after an explicit
+              // user action, so focusing it is intentional here.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus={primaryAction?.kind !== 'reply'}
               style={{ flex: 1, minWidth: 200 }}
             />
