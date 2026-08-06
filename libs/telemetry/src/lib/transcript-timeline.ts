@@ -1,8 +1,42 @@
+import { SessionAgent } from './types';
 import { asArray, asBoolean, asRecord, asString } from './unknown-value';
 
 /** ~2KB - roomy enough to read a real tool call/result at a glance, small
  * enough that one enormous Bash output or file read can't blow up the page. */
 const MAX_BLOCK_CHARS = 2000;
+
+/**
+ * Agents whose raw transcript lines {@link parseTranscriptTimeline} actually
+ * understands. Claude Code only, today: Codex's raw rollout JSONL uses an
+ * entirely different line shape (`session_meta`/`turn_context`/`event_msg`
+ * envelopes wrapping a `payload` — see `codex-transcript-adapter.ts`) than
+ * this parser's `message.role`/`message.content` walk expects, even though
+ * `codexAdapter` (`transcript-adapter.ts`) already reduces that same raw
+ * format into a working `SessionSummary` for the stats gauges. Those are two
+ * different consumers of the same raw file: `TRANSCRIPT_ADAPTERS` answers
+ * "can we summarize this?" (yes, for Codex), this list answers "can we
+ * render every line as a timeline?" (not yet) — conflating the two was
+ * exactly Bug 3 in agent-lcars#645 (the console gated timeline rendering on
+ * a literal `=== 'claude-code'` check that happened to match this list's
+ * current contents by coincidence, not by reading it).
+ *
+ * `isRenderableTranscriptAgent` is this list's read side, and
+ * `session-doc.ts`'s `buildSessionDoc` is its one write side — see that
+ * function's `renderable` field. Extend this list only alongside a genuine
+ * parsing branch for the new format below, backed by real fixtures of that
+ * agent's raw lines (see `transcript-timeline.spec.ts`) — never just to flip
+ * the flag on and hope the existing Claude-Code-shaped parsing happens to
+ * produce something plausible for a format it was never written to read.
+ */
+export const RENDERABLE_TRANSCRIPT_AGENTS: readonly SessionAgent[] = [
+  'claude-code',
+];
+
+/** Whether {@link parseTranscriptTimeline} can render this agent's raw
+ * transcript lines as a timeline — see {@link RENDERABLE_TRANSCRIPT_AGENTS}. */
+export function isRenderableTranscriptAgent(agent: SessionAgent): boolean {
+  return RENDERABLE_TRANSCRIPT_AGENTS.includes(agent);
+}
 
 function truncate(text: string, max = MAX_BLOCK_CHARS): string {
   if (text.length <= max) {

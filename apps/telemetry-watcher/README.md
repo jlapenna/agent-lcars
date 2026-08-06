@@ -27,7 +27,8 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
 --issue-number <n> --projects-dir "$HOME/.claude/projects"` — for the
    duration of "Run Claude Code". It reuses `WatcherDaemon` wholesale (see
    `src/lib/runner.ts`'s `startSidecar`) on a ~10s tick with **no
-   allowlist restriction** (`RUNNER_ALLOWLIST = ['*']`) — a runner container
+   allowlist restriction** (`@agent-lcars/telemetry`'s `runnerWatchRoots`
+   allowlists both roots with `['*']`) — a runner container
    is single-purpose and destroyed after one job, unlike a workstation with
    many unrelated Claude Code projects under the same
    `~/.claude/projects` root, so there's no privacy boundary to enforce the

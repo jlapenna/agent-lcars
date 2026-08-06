@@ -102,6 +102,38 @@ describe('ArchivedSessionTranscript', () => {
     expect(screen.queryByTestId('transcript-timeline')).toBeNull();
   });
 
+  it('reads doc.renderable rather than re-deriving it from agent (#645 Bug 3)', () => {
+    renderWithProvider(
+      <ArchivedSessionTranscript
+        doc={agentDoc({
+          agent: 'codex',
+          renderable: true,
+          transcriptGcsUri: 'gs://bucket/runs/1/codex/session.jsonl',
+        })}
+        transcript={{ events: [] }}
+      />,
+    );
+
+    expect(screen.getByTestId('transcript-timeline')).toBeInTheDocument();
+    expect(screen.queryByTestId('session-archive-note')).toBeNull();
+  });
+
+  it('renders the archive note when doc.renderable is explicitly false, even for claude-code', () => {
+    renderWithProvider(
+      <ArchivedSessionTranscript
+        doc={agentDoc({
+          agent: 'claude-code',
+          renderable: false,
+          transcriptGcsUri: 'gs://bucket/runs/1/session.jsonl',
+        })}
+        transcript={{ events: [] }}
+      />,
+    );
+
+    expect(screen.getByTestId('session-archive-note')).toBeInTheDocument();
+    expect(screen.queryByTestId('transcript-timeline')).toBeNull();
+  });
+
   it('renders the archive note for a non-claude-code agent even when a transcript happens to be present', () => {
     // Defensive: session-detail.ts never fetches a transcript for a
     // non-claude-code doc, but this component must not render it as a

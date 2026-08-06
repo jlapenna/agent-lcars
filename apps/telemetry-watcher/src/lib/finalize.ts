@@ -1,7 +1,11 @@
 import {
   buildSessionDoc,
   getTranscriptAdapter,
+  RUNNER_CAPTURE_AGENTS,
+  runnerWatchRoots,
+  SessionAgent,
   SessionSummary,
+  transcriptObjectPath,
 } from '@agent-lcars/telemetry';
 import { logger } from '@repo/logging';
 import * as fs from 'fs';
@@ -40,14 +44,6 @@ function annotateWarning(message: string): void {
     .replace(/\n/g, '%0A');
   console.log(`::warning::${escaped}`);
 }
-
-/** Mirrors `runner.ts`'s `RUNNER_ALLOWLIST` — see that constant's doc
- * comment for why a runner container's single checkout needs no scoping. */
-const RUNNER_ALLOWLIST = ['*'];
-
-/** Mirrors `runner.ts`'s `RUNNER_CODEX_CWD_ALLOWLIST` — see that constant's
- * doc comment. */
-const RUNNER_CODEX_CWD_ALLOWLIST = ['*'];
 
 export interface FinalizeSidecarOptions {
   config: RunnerConfig;
@@ -92,26 +88,28 @@ export async function finalizeSidecar(
   const resolveGitRepo = options.resolveGitRepo ?? defaultResolveGitRepo;
   const uploadTranscript = options.uploadTranscript ?? defaultUploadTranscript;
 
-  // Mirrors startSidecar's roots exactly (see runner.ts): finalize is the
+  // The single runner-mode watch-root contract (@agent-lcars/telemetry,
+  // #645) — the same function `startSidecar` (runner.ts) calls. Before
+  // #645 this was a second, hand-copied array with a comment admitting it
+  // "must mirror startSidecar's roots exactly"; finalize is the
   // authoritative last write, so a root the sidecar watched but this pass
   // didn't would leave that session stuck on its final `live`/`idle`
-  // snapshot, never marked `ended` and never given a transcriptGcsUri.
+  // snapshot, never marked `ended` and never given a transcriptGcsUri —
+  // importing one definition instead of two hand-copies makes that drift
+  // structurally impossible rather than merely commented against.
   const discovered = discoverAcrossRoots(
-    [
-      {
-        path: config.claudeProjectsDir,
-        adapter: 'claude-code',
-        projectDirAllowlist: RUNNER_ALLOWLIST,
-      },
-      {
-        path: config.codexSessionsDir,
-        adapter: 'codex',
-        recursive: true,
-        cwdAllowlist: RUNNER_CODEX_CWD_ALLOWLIST,
-      },
-    ],
+    runnerWatchRoots({
+      claudeProjectsDir: config.claudeProjectsDir,
+      codexSessionsDir: config.codexSessionsDir,
+    }),
     discover,
   );
+
+  // Counts sessions actually reduced (not just files discovered) across
+  // every watch root, so the zero-shipped check below fires whenever this
+  // run produced no telemetry for any reason, not only a missing root — see
+  // that check's own comment.
+  let shippedCount = 0;
 
   for (const { file, root } of discovered) {
     const adapter = getTranscriptAdapter(root.adapter);
@@ -142,7 +140,8 @@ export async function finalizeSidecar(
     }
 
     for (const summary of summaries) {
-      await finalizeSummary(summary, content, {
+      shippedCount++;
+      await finalizeSummary(summary, content, root.adapter, {
         config,
         store,
         resolveGitBranch,
@@ -151,11 +150,31 @@ export async function finalizeSidecar(
       });
     }
   }
+
+  if (shippedCount === 0) {
+    // Bug 2 (agent-lcars#645): before this check, a run whose agent has no
+    // registered runner-mode watch root/adapter — OpenCode today, see
+    // RUNNER_CAPTURE_AGENTS — authenticated telemetry, started and stopped
+    // the sidecar, and both steps reported success, while shipping zero
+    // session docs with no warning anywhere. This pass has no reliable way
+    // to know which agent's workflow invoked it (runnerWatchRoots is
+    // deliberately agent-agnostic — see its own doc comment), so this fires
+    // for ANY zero-session finalize pass, not only OpenCode's: a genuinely
+    // idle Claude/Codex run is rare enough that the extra visibility is
+    // worth having there too, and it costs nothing when it's a false
+    // positive (see annotateWarning above).
+    const message =
+      `agent-lcars-telemetry-watcher: finalize discovered zero sessions across every configured watch root (run ${config.runId ?? 'unknown'}) — this run's telemetry did not ship. ` +
+      `Runner mode only has a watch root for ${RUNNER_CAPTURE_AGENTS.join(', ')}; expected when this run's agent isn't one of those (e.g. OpenCode, whose local session store is a single SQLite database rather than a per-session file this pass can discover), a real gap otherwise.`;
+    logger.warn(message);
+    annotateWarning(message);
+  }
 }
 
 async function finalizeSummary(
   summary: SessionSummary,
   rawContent: string,
+  adapter: SessionAgent,
   deps: {
     config: RunnerConfig;
     store: SessionStore;
@@ -175,7 +194,15 @@ async function finalizeSummary(
 
   let transcriptGcsUri: string | undefined;
   if (config.transcriptsBucket) {
-    const object = `runs/${config.runId ?? 'unknown'}/claude-code/${summary.sessionId}.jsonl`;
+    // A function of the watch root's own declared adapter, not a hardcoded
+    // 'claude-code' literal (the fix for Bug 1, agent-lcars#645) — every
+    // Codex transcript used to archive under the claude-code/ prefix
+    // regardless of which agent actually produced it.
+    const object = transcriptObjectPath({
+      runId: config.runId,
+      adapter,
+      sessionId: summary.sessionId,
+    });
     try {
       await deps.uploadTranscript({
         projectId: config.firestoreProjectId,

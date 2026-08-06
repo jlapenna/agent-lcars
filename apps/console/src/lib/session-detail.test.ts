@@ -133,6 +133,48 @@ describe('getSessionDetail', () => {
     expect(result.status).toBe('ok');
   });
 
+  it('reads doc.renderable rather than re-deriving it from agent (#645 Bug 3)', async () => {
+    // A synthetic case that would be impossible from buildSessionDoc today
+    // (renderable is always false for a non-claude-code agent - see
+    // session-doc.spec.ts), but it proves the gate is actually reading the
+    // field and not silently falling back to a `sessionAgent(doc) ===
+    // 'claude-code'` check re-derived here - that re-derivation, against a
+    // registry (TRANSCRIPT_ADAPTERS) that already disagreed with it, was
+    // exactly Bug 3.
+    (getSessionDoc as Mock).mockResolvedValue(
+      agentDoc({
+        agent: 'codex',
+        renderable: true,
+        transcriptGcsUri: 'gs://bucket/runs/1/codex/a.jsonl',
+      }),
+    );
+    (getSessionTranscript as Mock).mockResolvedValue({ events: [] });
+
+    const result = await getSessionDetail('agent-1');
+
+    expect(getSessionTranscript).toHaveBeenCalledWith(
+      'gs://bucket/runs/1/codex/a.jsonl',
+    );
+    expect(result.status).toBe('ok');
+    expect(result).toMatchObject({ transcript: { events: [] } });
+  });
+
+  it('does not fetch a transcript when doc.renderable is explicitly false, even for claude-code', async () => {
+    (getSessionDoc as Mock).mockResolvedValue(
+      agentDoc({
+        agent: 'claude-code',
+        renderable: false,
+        transcriptGcsUri: 'gs://bucket/runs/1/a.jsonl',
+      }),
+    );
+
+    const result = await getSessionDetail('agent-1');
+
+    expect(getSessionTranscript).not.toHaveBeenCalled();
+    expect(result.status).toBe('ok');
+    expect(result).not.toHaveProperty('transcript');
+  });
+
   it('does not fetch a transcript for a non-claude-code agent even when transcriptGcsUri is set (#3123 phase 2)', async () => {
     (getSessionDoc as Mock).mockResolvedValue(
       agentDoc({

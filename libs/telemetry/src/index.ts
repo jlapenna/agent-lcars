@@ -3,6 +3,7 @@ export * from './lib/codex-transcript-adapter';
 export * from './lib/liveness';
 export * from './lib/reducer';
 export * from './lib/run-status-classifier';
+export * from './lib/runner-capture';
 export * from './lib/session-doc';
 export * from './lib/stub-summary';
 export * from './lib/tokens';

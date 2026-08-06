@@ -204,7 +204,8 @@ describe('startSidecar', () => {
       now: () => '2026-07-19T10:00:01.000Z',
       discover: (rootPath, allowlist) => {
         // Only the Claude root's allowlist: the Codex root declares its own
-        // (`RUNNER_CODEX_CWD_ALLOWLIST`), asserted separately below.
+        // `cwdAllowlist` (see runnerWatchRoots in @agent-lcars/telemetry),
+        // asserted separately below.
         if (rootPath.includes('.claude')) seenAllowlist = allowlist;
         return Object.keys(files).filter((f) => f.startsWith(rootPath));
       },
