@@ -239,7 +239,7 @@ test('opencode uses the published action with a bounded trajectory contract', as
     /uses:\s+anomalyco\/opencode\/github@[0-9a-f]{40}\s+#/u,
     'opencode.yml must use a pinned published OpenCode action',
   );
-  assert.match(source, /timeout-minutes:\s*30\s*$/mu);
+  assert.match(source, /timeout-minutes:\s*120\s*$/mu);
   assert.match(source, /^\s+agent:\s+build\s*$/mu);
   assert.match(source, /^\s+variant:\s+minimal\s*$/mu);
   assert.match(source, /first durable\s+artifact/u);

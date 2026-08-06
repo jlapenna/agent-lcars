@@ -84,7 +84,7 @@ jobs:
     # Backstop only - the real bound is the per-step timeout on Run OpenCode
     # below. Keep enough room for telemetry, failure reporting, and the broker
     # callback after the agent's bounded execution window.
-    timeout-minutes: 45
+    timeout-minutes: 135
     env:
       npm_config_store_dir: /tmp/runner/pnpm-store
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
@@ -215,7 +215,7 @@ jobs:
         # which, in both original hangs, was the only notification that
         # ever arrived. The job-level backstop stays 15 minutes clear of this
         # so it never fires first.
-        timeout-minutes: 30
+        timeout-minutes: 120
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # use_github_token needs this passed explicitly - it does not
@@ -241,14 +241,14 @@ jobs:
             headless run: follow the protocol's synchronous-work, parking,
             and visible-deliverable requirements exactly.
 
-            This run has a hard 30-minute execution budget. Do not spend the
-            run on open-ended reconnaissance or repeated summaries. Within
-            the first 5 minutes, read the anchor and latest prior attempt,
-            state the diagnosis and smallest implementation plan, and begin
-            the targeted work. By 15 minutes, produce the first durable
-            artifact: a source edit, a pushed branch/PR, or a protocol-safe
-            park/no-op comment. By 25 minutes, stop expanding scope and
-            finalize the artifact.
+            This run has a hard 2-hour execution budget. Do not spend the run
+            on open-ended reconnaissance or repeated summaries. Within the
+            first 5 minutes, read the anchor and latest prior attempt, state
+            the diagnosis and smallest implementation plan, and begin the
+            targeted work. By 30 minutes, produce the first durable artifact:
+            a source edit, a pushed branch/PR, or a protocol-safe park/no-op
+            comment. By 90 minutes, stop expanding scope and finalize the
+            artifact.
 
             Every dispatch must end with visible GitHub state. A summary in
             the model response alone is not a deliverable. For implement
