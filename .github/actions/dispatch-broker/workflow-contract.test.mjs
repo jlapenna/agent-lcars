@@ -229,6 +229,23 @@ test('workers are dispatch-only and cannot subscribe directly to issue events', 
   }
 });
 
+test('opencode uses the published action with a bounded trajectory contract', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'opencode.yml'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /uses:\s+anomalyco\/opencode\/github@[0-9a-f]{40}\s+#/u,
+    'opencode.yml must use a pinned published OpenCode action',
+  );
+  assert.match(source, /timeout-minutes:\s*120\s*$/mu);
+  assert.match(source, /^\s+agent:\s+build\s*$/mu);
+  assert.match(source, /^\s+variant:\s+minimal\s*$/mu);
+  assert.match(source, /first durable\s+artifact/u);
+  assert.match(source, /exactly one\s+of: PR <url>, REVIEW/u);
+});
+
 test('workers expose one canonical dispatch and lane-configuration contract', async () => {
   const sources = await workflowSources();
   const expectedInputs = [
