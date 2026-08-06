@@ -21,9 +21,7 @@ function titleMatchesIssue(title, issueNumber, parentIssueNumber = null) {
   if (typeof title !== 'string') return false;
   const normalizedTitle = title.trim();
   if (parentIssueNumber !== null) {
-    return new RegExp(`^${parentIssueNumber}\\*(?:\\s|$)`).test(
-      normalizedTitle,
-    );
+    return new RegExp(`^${parentIssueNumber}(?:\\s|$)`).test(normalizedTitle);
   }
   return new RegExp(`^${issueNumber}(?:\\s|$)`).test(normalizedTitle);
 }
@@ -108,7 +106,7 @@ function runHook(input, dependencies) {
       additionalContext: [
         `${PROJECT_NAME}-dev guardrail violation:`,
         ...violations.map((violation) => `- ${violation}`),
-        'Claim the issue and pin this tmux window title before continuing hands-on work.',
+        'Before continuing hands-on work, claim the issue, post a session takeover comment, and pin this tmux window title.',
       ].join('\n'),
     },
   };
