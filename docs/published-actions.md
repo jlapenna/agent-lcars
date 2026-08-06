@@ -53,22 +53,22 @@ have their own setup actions; do not adopt.
 
 ## Referencing from a consumer repo
 
-Every consumer must pin the action repository by its full commit SHA and keep
-the corresponding immutable release tag as a human-readable comment:
+Every consumer should reference the action repository's `main` branch to
+always receive the latest published action:
 
 ```yaml
-- uses: jlapenna/agent-lcars/.github/actions/<name>@<full-sha> # vX.Y.Z
+- uses: jlapenna/agent-lcars/.github/actions/<name>@main # latest
 ```
 
-Do not use `@main` or a mutable version-only reference. Renovate's
-`github-actions` manager updates the SHA and version comment together, while a
-consumer-specific package rule groups Agent LCARS action updates and leaves
-them for manual review.
+There is no special `@latest` syntax in GitHub Actions: `@main` is the
+moving branch reference. This intentionally trades immutable, reviewable
+action versions for automatically receiving the newest `agent-lcars` commit.
 
-Release tags are plain annotated `vX.Y.Z` tags and never move. A compatible
-fix is a patch release, a new optional input or action is a minor release, and
-a removed or renamed input or a changed default requires a major release. The
-contract-test manifest diff in review is the "this needs a major bump" signal.
+Release tags remain available for consumers that need immutable versions. A
+compatible fix is a patch release, a new optional input or action is a minor
+release, and a removed or renamed input or a changed default requires a major
+release. The contract-test manifest diff in review is the "this needs a major
+bump" signal.
 
 ### The whole-repo-download caveat
 

@@ -30,7 +30,7 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
   ```yaml
   - name: Prepare dispatch context
     id: dispatch
-    uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@a0d16ba1b31fdf897b5d49626d53c511072170db # v1.0.0
+    uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@main # latest
     with:
       agent: Claude
       issue: ${{ github.event.inputs.issue }}
