@@ -1,3 +1,5 @@
+import { AGENT_BOT_LOGINS } from '@agent-lcars/dispatch-contracts';
+
 import { agentFleetLogin, maintainerLogin } from './deployment';
 import { type DispatchLedger } from './dispatch-ledger';
 import {
@@ -438,15 +440,16 @@ function classifyIssue(
 const BOARD_LABELS = ['status:needs-human', 'status:ready-for-agent'];
 
 /** REST-shaped logins (docs/bot-identity-formats.md) of every pipeline that
- * opens PRs under its own identity - kept in sync with the
- * `AGENT_BOT_LOGINS` repo variable `agent-automerge.yml` reads. Belt and
- * suspenders, same reasoning as `BOARD_LABELS`: the assignee-based ownership
- * spine (#2783) is the primary signal, but it depends on `jclaw-bot`
- * actually holding assignable (triage+) repo access, and an agent-authored
- * PR must not go invisible the moment that assignment silently no-ops or
- * every other signal (a label, a still-open review request) has cleared
- * (#216). */
-const AGENT_AUTHOR_LOGINS = ['claude[bot]', 'agent-lcars[bot]'];
+ * opens PRs under its own identity, from dispatch-contracts' shared pipeline
+ * registry - it is now the `AGENT_BOT_LOGINS` repo variable
+ * `agent-automerge.yml` reads that must be kept in sync with that registry,
+ * not this constant. Belt and suspenders, same reasoning as `BOARD_LABELS`:
+ * the assignee-based ownership spine (#2783) is the primary signal, but it
+ * depends on `jclaw-bot` actually holding assignable (triage+) repo access,
+ * and an agent-authored PR must not go invisible the moment that assignment
+ * silently no-ops or every other signal (a label, a still-open review
+ * request) has cleared (#216). */
+const AGENT_AUTHOR_LOGINS = AGENT_BOT_LOGINS;
 
 /**
  * The open-item predicate, replacing the old per-qualifier search queries

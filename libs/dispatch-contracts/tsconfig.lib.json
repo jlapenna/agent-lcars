@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.lib.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "composite": true,
+    "types": ["node"],
+    // The source of truth is plain ESM JavaScript so `.github/actions/
+    // dispatch-broker`'s bare-node runtime can import it without a build step;
+    // `checkJs` is what keeps its JSDoc types honest rather than decorative.
+    "allowJs": true,
+    "checkJs": true,
+    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo"
+  },
+  "include": ["src/**/*.js", "src/**/*.d.ts"],
+  "references": []
+}

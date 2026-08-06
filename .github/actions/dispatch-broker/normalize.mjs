@@ -1,42 +1,22 @@
 import crypto from 'node:crypto';
 
+import {
+  AGENT_LABELS,
+  GENERIC_REPLY_COMMAND,
+  REPLY_COMMANDS,
+  REVIEW_LABELS,
+  WORKER_WORKFLOW_FILES,
+} from '../../../libs/dispatch-contracts/src/index.js';
 import { digest } from './broker.mjs';
 
-const AGENT_LABELS = new Map([
-  ['agent:claude', 'claude'],
-  ['agent:codex', 'codex'],
-  ['agent:opencode', 'opencode'],
-]);
 // `null` is a sentinel, not a pipeline: `@agent` (#573) doesn't name a
 // specific integration, it defers to whichever `agent:*` label the issue
 // already carries at comment-normalization time. Every other command
 // keeps requiring an exact match against that label -- this only adds a
 // second way to say "the one that's already selected", it doesn't relax
 // the existing ones.
-// A pull request only: review:* drives `mode: 'review'` (leave a review,
-// don't push), independent of and coexistable with agent:* on the same PR,
-// which drives `mode: 'implement'` (take the PR over and keep iterating on
-// its branch). The two label families are never contradictory with each
-// other -- only within their own namespace, the same self-heal-or-fail-
-// closed contract agent:* already has alone.
-const REVIEW_LABELS = new Map([
-  ['review:claude', 'claude'],
-  ['review:codex', 'codex'],
-  ['review:opencode', 'opencode'],
-]);
-const COMMANDS = new Map([
-  ['@claude', 'claude'],
-  ['/codex', 'codex'],
-  ['/opencode', 'opencode'],
-  ['/oc', 'opencode'],
-  ['@agent', null],
-]);
-const WORKER_WORKFLOWS = new Set([
-  'claude.yml',
-  'codex.yml',
-  'opencode.yml',
-  'agent-dispatch-canary.yml',
-]);
+const COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
+const WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
 const QUICK_TASK_MARKER =
   /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) digest=([0-9a-f]{64}) -->/gu;
 const UUID =
@@ -269,7 +249,7 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
     // permission), and unlike the manual `intent` path below, `pipeline`
     // is hardcoded to 'canary' here rather than caller-supplied, so this
     // can never be used to smuggle an unauthorized claude/codex/opencode
-    // dispatch. broker.mjs's PIPELINES gate and normalize.mjs's own
+    // dispatch. broker.mjs's isDispatchPipeline gate and normalize.mjs's own
     // WORKER_WORKFLOWS gate independently pin this to the dedicated no-op
     // agent-dispatch-canary.yml worker.
     const sourceId = resolveCallerSourceId(inputs, context, 'Canary dispatch');

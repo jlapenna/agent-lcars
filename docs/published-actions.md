@@ -77,10 +77,12 @@ into the runner's `_actions` directory — not just the action directory.
 That is load-bearing, not incidental: `prepare-agent-dispatch` resolves
 the fleet protocol document via
 `$GITHUB_ACTION_PATH/../../../.agents/skills/agent-protocol/agent-protocol.md`,
-and `snapshot-enforcement-scripts` copies sibling action directories from
-`$GITHUB_ACTION_PATH/..`. Repo-relative paths above the action directory
-are a supported pattern here, but each action that relies on one must say
-so in its `action.yml`.
+`snapshot-enforcement-scripts` copies sibling action directories from
+`$GITHUB_ACTION_PATH/..`, and `dispatch-broker` imports the shared
+[`libs/dispatch-contracts`](../libs/dispatch-contracts/) package from the
+repo root. Repo-relative paths above the action directory are a supported
+pattern here, but each action that relies on one must say so in its
+`action.yml`.
 
 ## Security: post-agent gates run from a pre-agent snapshot
 

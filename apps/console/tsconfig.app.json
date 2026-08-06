@@ -43,6 +43,9 @@
     },
     {
       "path": "../../libs/telemetry/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/dispatch-contracts/tsconfig.lib.json"
     }
   ]
 }
