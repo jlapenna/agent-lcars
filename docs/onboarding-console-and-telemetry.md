@@ -159,14 +159,16 @@ healthy agent run red. The finalize step is not optional: skip it and a
 session doc freezes at whatever `live`/`idle` snapshot the sidecar last
 wrote, with no browsable archived transcript.
 
-### 2c. IAM grant (needs a human — Terraform lives here, not touched casually)
+### 2c. IAM grant (requires explicit maintainer approval)
 
 The `telemetry-writer` service account's WIF principal set needs the new
 repo added so its Actions runs can mint a token for that SA. This repo's
-own `AGENTS.md`/`lcars-protocol.md` rule — **never touch
-`infra/terraform` from an agent run** — applies here: this step is a
-maintainer action, not something to script around. Flag it and wait
-rather than trying to work around it with a hand-rolled `gcloud` grant.
+own `AGENTS.md`/`lcars-protocol.md` rules deny Terraform and IAM changes by
+default. The named maintainer may explicitly approve a specific issue,
+operation, and target; without that approval, flag the step and wait. With
+approval, use a dedicated worktree, add regression coverage, review the
+complete plan before applying, and verify a clean post-apply plan. Never work
+around Terraform ownership with a hand-rolled `gcloud` grant.
 
 ## 3. Console config
 

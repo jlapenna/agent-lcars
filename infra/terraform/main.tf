@@ -9,6 +9,11 @@ locals {
     "secretmanager.googleapis.com", "serviceusage.googleapis.com",
     "storage.googleapis.com", "sts.googleapis.com",
   ])
+  github_repositories = [
+    "${var.github_owner}/${var.github_repository}",
+    var.sprinkles_repository,
+    var.homelab_repository,
+  ]
 }
 
 data "google_project" "this" {
@@ -134,7 +139,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "google.subject"       = "assertion.sub"
     "attribute.repository" = "assertion.repository"
   }
-  attribute_condition = "assertion.repository in ['${var.github_owner}/${var.github_repository}', '${var.sprinkles_repository}']"
+  attribute_condition = "assertion.repository in [${join(", ", [for repository in local.github_repositories : "'${repository}'"])}]"
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
 
@@ -161,6 +166,12 @@ resource "google_service_account_iam_member" "agent_lcars_writer_impersonation" 
   service_account_id = google_service_account.telemetry_writer.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
+resource "google_service_account_iam_member" "homelab_writer_impersonation" {
+  service_account_id = google_service_account.telemetry_writer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }
 
 resource "google_secret_manager_secret" "runtime" {
@@ -228,6 +239,12 @@ resource "google_service_account_iam_member" "codex_agent_impersonation" {
   service_account_id = google_service_account.codex_agent.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
+resource "google_service_account_iam_member" "homelab_codex_agent_impersonation" {
+  service_account_id = google_service_account.codex_agent.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }
 
 resource "google_billing_budget" "monthly" {

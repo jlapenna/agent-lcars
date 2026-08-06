@@ -13,10 +13,18 @@ variable "billing_account" {
 variable "github_owner" {
   type    = string
   default = "jlapenna"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.github_owner))
+    error_message = "github_owner must be one exact GitHub owner without wildcards."
+  }
 }
 variable "github_repository" {
   type    = string
   default = "agent-lcars"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must be one exact GitHub repository without wildcards."
+  }
 }
 # Full "owner/repo", not this repo's github_owner/github_repository pair -
 # this is a different owner entirely. Kept as one variable (not split into
@@ -28,6 +36,18 @@ variable "github_repository" {
 variable "sprinkles_repository" {
   type    = string
   default = "supersprinklesracing/sprinkles"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.sprinkles_repository))
+    error_message = "sprinkles_repository must be one exact owner/repository pair without wildcards."
+  }
+}
+variable "homelab_repository" {
+  type    = string
+  default = "jlapenna/homelab"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.homelab_repository))
+    error_message = "homelab_repository must be one exact owner/repository pair without wildcards."
+  }
 }
 variable "budget_notification_channels" {
   type    = list(string)
