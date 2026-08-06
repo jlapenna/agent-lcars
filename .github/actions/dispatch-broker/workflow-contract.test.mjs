@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { agentWorkerPipelines, workerWorkflow } from './github-api.mjs';
+
 const tests = [];
 function test(name, run) {
   tests.push({ name, run });
@@ -21,6 +23,100 @@ async function workflowSources() {
       source: await fs.readFile(path.join(workflowsDirectory, name), 'utf8'),
     })),
   );
+}
+
+const workerWorkflowNames = agentWorkerPipelines.map(workerWorkflow);
+
+function dispatchInputNames(source) {
+  const lines = source.split(/\r?\n/gu);
+  const start = lines.findIndex((line) => /^ {4}inputs:\s*$/u.test(line));
+  assert.notEqual(start, -1, 'workflow_dispatch inputs block is missing');
+  const names = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\S/u.test(line)) break;
+    const match = /^ {6}([a-z0-9_]+):\s*$/u.exec(line);
+    if (match) names.push(match[1]);
+  }
+  return names;
+}
+
+function assertOrderedSteps(steps, workflow, stepNames) {
+  let previous = -1;
+  for (const stepName of stepNames) {
+    const matches = steps
+      .map((step, index) => ({ step, index }))
+      .filter(({ step }) => step.name === stepName);
+    assert.equal(
+      matches.length,
+      1,
+      `${workflow} must have one ${stepName} step`,
+    );
+    const [{ index }] = matches;
+    assert.ok(
+      index > previous,
+      `${workflow} must run ${stepName} after the preceding common step`,
+    );
+    previous = index;
+  }
+}
+
+function laneValue(source, workflow, field) {
+  const match = new RegExp(`^ {6}${field}:\\s+(.+)$`, 'mu').exec(source);
+  assert.ok(match, `${workflow} must declare ${field} as lane data`);
+  return match[1].replace(/^(['"])(.*)\1$/u, '$2');
+}
+
+function stepBlocks(source) {
+  const starts = [...source.matchAll(/^ {6}- name: (.+)$/gmu)];
+  return starts.map((match, index) => ({
+    name: match[1],
+    source: source.slice(
+      match.index,
+      starts[index + 1]?.index ?? source.length,
+    ),
+  }));
+}
+
+function namedStep(steps, workflow, name) {
+  const matches = steps.filter((step) => step.name === name);
+  assert.equal(matches.length, 1, `${workflow} must have one ${name} step`);
+  return matches[0];
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function stepField(field, value, indentation = 8) {
+  return new RegExp(
+    `^ {${indentation}}${escapeRegex(field)}:\\s+${escapeRegex(value)}` +
+      '(?:\\s+#.*)?$',
+    'mu',
+  );
+}
+
+function actionStep(steps, workflow, action) {
+  const matches = steps.filter((step) =>
+    stepField('uses', action).test(step.source),
+  );
+  assert.equal(
+    matches.length,
+    1,
+    `${workflow} must invoke ${action} in exactly one step`,
+  );
+  return matches[0];
+}
+
+function agentAdapterStep(steps, workflow) {
+  const matches = steps.filter((step) =>
+    stepField('id', 'agent').test(step.source),
+  );
+  assert.equal(
+    matches.length,
+    1,
+    `${workflow} must expose exactly one adapter as steps.agent`,
+  );
+  return matches[0];
 }
 
 function concurrencyGroups(source) {
@@ -130,6 +226,230 @@ test('workers are dispatch-only and cannot subscribe directly to issue events', 
     )?.source;
     assert.ok(source, `${worker} is missing`);
     assert.doesNotMatch(source, /^\s+(issues|issue_comment):\s*$/mu);
+  }
+});
+
+test('workers expose one canonical dispatch and lane-configuration contract', async () => {
+  const sources = await workflowSources();
+  const expectedInputs = [
+    'issue',
+    'mode',
+    'reply',
+    'runbook',
+    'context',
+    'broker_intent_id',
+    'broker_generation',
+    'broker_dispatch_token',
+  ];
+  for (const workflow of workerWorkflowNames) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    const agent = laneValue(source, workflow, 'AGENT_NAME');
+    assert.deepEqual(dispatchInputNames(source), expectedInputs);
+    assert.equal(
+      /^run-name:\s+(.+)$/mu.exec(source)?.[1],
+      "'#${{ inputs.issue }}: " +
+        `${agent} issue agent ` +
+        "[dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'",
+      `${workflow} must derive its run name from canonical inputs and lane data`,
+    );
+    assert.doesNotMatch(source, /github\.event\.inputs/u);
+    assert.doesNotMatch(source, /missing=""/u);
+    assert.equal(
+      laneValue(source, workflow, 'WORKER_WORKFLOW'),
+      workflow,
+      `${workflow} must identify itself to the broker`,
+    );
+    for (const field of [
+      'AGENT_GIT_LOGIN',
+      'EXPECTED_COMMENT_LOGIN',
+      'EXCLUDE_PR_AUTHOR',
+      'REDISPATCH_COMMAND',
+    ]) {
+      assert.ok(
+        laneValue(source, workflow, field),
+        `${workflow} must declare nonempty ${field} lane data`,
+      );
+    }
+    for (const use of [
+      'agent-login: ${{ env.AGENT_GIT_LOGIN }}',
+      'agent: ${{ env.AGENT_NAME }}',
+      'EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}',
+      'EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}',
+      '$REDISPATCH_COMMAND',
+    ]) {
+      assert.ok(
+        source.includes(use),
+        `${workflow} must consume lane data instead of repeating ${use}`,
+      );
+    }
+    assert.doesNotMatch(source, /post-pickup-comment:/u);
+    assert.doesNotMatch(source, /MESSAGE_PREFIX:/u);
+    assert.doesNotMatch(source, /EXCLUDE_COMMENT_ID:/u);
+  }
+});
+
+test('workers share one lifecycle skeleton around their adapter step', async () => {
+  const sources = await workflowSources();
+  for (const workflow of workerWorkflowNames) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    const steps = stepBlocks(source);
+    const adapter = agentAdapterStep(steps, workflow);
+    const checkout = steps.find((step) =>
+      stepField('uses', 'actions/checkout@v7').test(step.source),
+    );
+    assert.ok(checkout, `${workflow} must check out its trusted workflow ref`);
+    assertOrderedSteps(steps, workflow, [
+      checkout.name,
+      'Snapshot post-agent enforcement scripts',
+      'Assert required repo variables are set',
+      'Verify broker binding',
+      'Mint agent token',
+      'Claim the issue as the agent fleet',
+      'Shared agent setup',
+      'Prepare dispatch context',
+      'Start telemetry sidecar',
+      adapter.name,
+      'Finalize telemetry sidecar',
+      'Verify a deliverable exists',
+      'Determine failure reason',
+      'Report failure on the issue',
+      'Return completion observation to the broker',
+    ]);
+
+    const snapshot = actionStep(
+      steps,
+      workflow,
+      './.github/actions/snapshot-enforcement-scripts',
+    );
+    const repoVars = actionStep(
+      steps,
+      workflow,
+      './.github/actions/assert-repo-vars',
+    );
+    const preflight = namedStep(steps, workflow, 'Verify broker binding');
+    const mint = actionStep(
+      steps,
+      workflow,
+      './.github/actions/mint-agent-token',
+    );
+    const claim = actionStep(steps, workflow, './.github/actions/claim-issue');
+    const telemetryStart = actionStep(
+      steps,
+      workflow,
+      './.github/actions/telemetry-start',
+    );
+    const telemetryFinalize = namedStep(
+      steps,
+      workflow,
+      'Finalize telemetry sidecar',
+    );
+    const deliverable = namedStep(
+      steps,
+      workflow,
+      'Verify a deliverable exists',
+    );
+    const failureReason = namedStep(
+      steps,
+      workflow,
+      'Determine failure reason',
+    );
+    const failureReport = namedStep(
+      steps,
+      workflow,
+      'Report failure on the issue',
+    );
+    const completion = namedStep(
+      steps,
+      workflow,
+      'Return completion observation to the broker',
+    );
+
+    assert.match(checkout.source, stepField('uses', 'actions/checkout@v7'));
+    assert.match(
+      snapshot.source,
+      stepField('uses', './.github/actions/snapshot-enforcement-scripts'),
+    );
+    assert.match(
+      repoVars.source,
+      stepField('uses', './.github/actions/assert-repo-vars'),
+    );
+    assert.match(
+      preflight.source,
+      stepField('uses', './.github/actions/dispatch-broker'),
+    );
+    assert.match(preflight.source, stepField('operation', 'preflight', 10));
+    assert.match(
+      mint.source,
+      stepField('uses', './.github/actions/mint-agent-token'),
+    );
+    assert.match(
+      claim.source,
+      stepField('uses', './.github/actions/claim-issue'),
+    );
+    assert.doesNotMatch(claim.source, /post-pickup-comment:/u);
+    assert.doesNotMatch(claim.source, /message-prefix:/u);
+
+    assert.match(telemetryStart.source, stepField('if', 'always()'));
+    assert.match(telemetryFinalize.source, stepField('if', 'always()'));
+    assert.match(
+      telemetryFinalize.source,
+      stepField('continue-on-error', 'true'),
+    );
+    assert.match(
+      telemetryFinalize.source,
+      stepField(
+        'run',
+        'bash "$RUNNER_TEMP/trusted-actions/telemetry-finalize/telemetry-finalize.sh"',
+      ),
+    );
+    assert.match(deliverable.source, stepField('if', 'success()'));
+    assert.match(
+      deliverable.source,
+      stepField(
+        'run',
+        'bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"',
+      ),
+    );
+    assert.match(failureReason.source, stepField('id', 'failure-reason'));
+    assert.match(
+      failureReason.source,
+      stepField('if', 'failure() || cancelled()'),
+    );
+    assert.match(
+      failureReport.source,
+      stepField('if', 'failure() || cancelled()'),
+    );
+    assert.match(
+      failureReport.source,
+      stepField('REASON', '${{ steps.failure-reason.outputs.reason }}', 10),
+    );
+    assert.match(
+      failureReport.source,
+      stepField(
+        'run',
+        'bash "$RUNNER_TEMP/trusted-actions/report-failure/report-failure.sh"',
+      ),
+    );
+    assert.match(completion.source, stepField('if', 'always()'));
+    assert.match(completion.source, stepField('continue-on-error', 'true'));
+    assert.match(
+      completion.source,
+      stepField('uses', './.github/actions/dispatch-broker'),
+    );
+    assert.match(
+      completion.source,
+      stepField('operation', 'completion-callback', 10),
+    );
+    assert.match(
+      completion.source,
+      stepField('worker-workflow', '${{ env.WORKER_WORKFLOW }}', 10),
+    );
   }
 });
 

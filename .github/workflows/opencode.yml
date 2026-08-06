@@ -1,23 +1,18 @@
 name: OpenCode Issue Agent
 
-# EXPERIMENTAL second issue-agent pipeline, parallel to claude.yml. Adding
-# the `agent:opencode` label to an issue runs the open-source anomalyco/opencode
-# agent on the same self-hosted runner fleet as the `agent:claude` label, but
-# pointed at the homelab LiteLLM gateway (llm.lan.jlapenna.net) instead of
-# the Anthropic API - see opencode.json at repo root for the
-# provider/model config. Reply with `/opencode` or `/oc` to continue a
-# conversation on an issue that already carries the label.
+# Third issue-agent pipeline, alongside claude.yml and codex.yml. The
+# centralized router dispatches this workflow when an issue carries the
+# `agent:opencode` label. It runs anomalyco/opencode against the homelab
+# LiteLLM provider/model configured in opencode.json. Reply with `/opencode`
+# or `/oc` to continue a conversation on an issue that already carries the
+# label.
 #
 # See .agents/skills/agent-protocol/agent-protocol.md and
-# .agents/skills/lcars/lcars-protocol.md for the conventions this agent
-# follows, and members/.github/workflows/opencode.yml (the sibling private
-# repo this was ported from) for the incident history behind the
-# deliverable-verification gate below: an agent can reason to a genuine
-# conclusion and just stop without ever posting it, so this workflow does
-# not trust a bare "success" conclusion and the prompt explicitly forbids
-# ending without a communicated `gh` action.
+# .agents/skills/lcars/lcars-protocol.md for the agent conventions. The
+# deliverable-verification gate below intentionally does not trust a bare
+# agent success conclusion: the agent must communicate a visible result.
 
-run-name: 'opencode #${{ inputs.issue }}: OpenCode [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
+run-name: '#${{ inputs.issue }}: OpenCode issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
 
 on:
   workflow_dispatch:
@@ -79,7 +74,7 @@ jobs:
   opencode:
     # The centralized router authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
     # claude-agent-lcars is registered in jlapenna/homelab's
     # github-runner-autoscaler/orchestrator.yml as
     # homelab-autoscale-claude-agent-lcars (homelab#97). Do NOT point this
@@ -96,24 +91,13 @@ jobs:
       npm_config_store_dir: /tmp/runner/pnpm-store
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
+      AGENT_NAME: OpenCode
+      WORKER_WORKFLOW: opencode.yml
+      AGENT_GIT_LOGIN: agent-lcars[bot]
+      EXPECTED_COMMENT_LOGIN: agent-lcars[bot]
+      EXCLUDE_PR_AUTHOR: claude[bot]
+      REDISPATCH_COMMAND: /opencode
     steps:
-      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
-      # asserted here - job placement onto a runner happens before any step
-      # runs, so an empty/unset value already fails the job loudly on its
-      # own before this step could ever fire.
-      - name: Assert required repo variables are set
-        env:
-          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
-        run: |
-          missing=""
-          [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing AGENT_FLEET_LOGIN"
-          [ -z "$MAINTAINER_LOGIN" ] && missing="$missing MAINTAINER_LOGIN"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing required repo variable(s):$missing"
-            exit 1
-          fi
-
       # A minimal checkout, before broker verification and the minted-token
       # checkout below: "Verify broker binding" is now a local composite
       # action (`uses: ./.github/actions/...`), and GitHub Actions can only
@@ -121,6 +105,25 @@ jobs:
       # out - a platform constraint, not a preference.
       - name: Bootstrap checkout for broker preflight
         uses: actions/checkout@v7
+
+      # The agent step below has unrestricted Bash, so the post-agent gates
+      # must run from scripts frozen in $RUNNER_TEMP before the first
+      # fallible broker or credential operation. They execute via `run:`,
+      # never `uses:`, after the agent runs.
+      - name: Snapshot post-agent enforcement scripts
+        uses: ./.github/actions/snapshot-enforcement-scripts
+
+      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
+      # asserted here - job placement onto a runner happens before any step
+      # runs, so an empty/unset value already fails the job loudly on its
+      # own before this step could ever fire. This check follows checkout
+      # because a local composite action cannot be resolved before then.
+      - name: Assert required repo variables are set
+        uses: ./.github/actions/assert-repo-vars
+        with:
+          vars: |
+            AGENT_FLEET_LOGIN=${{ vars.AGENT_FLEET_LOGIN }}
+            MAINTAINER_LOGIN=${{ vars.MAINTAINER_LOGIN }}
 
       # The worker is untrusted until its own Actions run ID is durably bound
       # to this exact task/generation/intent/token in the serialized ledger.
@@ -143,15 +146,11 @@ jobs:
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 
       - name: Claim the issue as the agent fleet
-        id: claim
         uses: ./.github/actions/claim-issue
         with:
           token: ${{ steps.agent-lcars-token.outputs.token }}
-          issue: ${{ github.event.inputs.issue }}
+          issue: ${{ inputs.issue }}
           claim-login: ${{ vars.AGENT_FLEET_LOGIN }}
-          post-pickup-comment: 'true'
-          agent: OpenCode
-          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       # The real checkout, now that the App token exists: this one carries
       # fetch-depth: 0 and the minted token, so OpenCode's eventual raw
@@ -164,37 +163,28 @@ jobs:
           token: ${{ steps.agent-lcars-token.outputs.token }}
           persist-credentials: true
 
-      # The agent step below has unrestricted Bash on this same checkout,
-      # so the post-agent gates (verify-deliverable, report-failure,
-      # telemetry-finalize) must run from a copy frozen now, while the tree
-      # is still exactly what the trusted dispatched ref checked out - and
-      # via `run:` from $RUNNER_TEMP, never `uses:`, at gate time. The full
-      # rationale lives in snapshot-enforcement-scripts/action.yml.
-      - name: Snapshot post-agent enforcement scripts
-        uses: ./.github/actions/snapshot-enforcement-scripts
-
       - name: Shared agent setup
         id: agent-setup
         uses: ./.github/actions/agent-setup
         with:
-          agent-login: agent-lcars[bot]
+          agent-login: ${{ env.AGENT_GIT_LOGIN }}
 
       - name: Verify agent identity
         uses: ./.github/actions/verify-agent-identity
         with:
           token: ${{ steps.agent-lcars-token.outputs.token }}
-          agent: OpenCode
+          agent: ${{ env.AGENT_NAME }}
           app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
 
       - name: Prepare dispatch context
         uses: ./.github/actions/prepare-agent-dispatch
         with:
-          agent: OpenCode
-          issue: ${{ github.event.inputs.issue }}
-          mode: ${{ github.event.inputs.mode }}
-          reply: ${{ github.event.inputs.reply }}
-          runbook: ${{ github.event.inputs.runbook }}
-          context: ${{ github.event.inputs.context }}
+          agent: ${{ env.AGENT_NAME }}
+          issue: ${{ inputs.issue }}
+          mode: ${{ inputs.mode }}
+          reply: ${{ inputs.reply }}
+          runbook: ${{ inputs.runbook }}
+          context: ${{ inputs.context }}
 
       # Avoid the official composite action's unauthenticated release lookup:
       # anonymous GitHub API traffic is shared across runners and can exhaust
@@ -206,8 +196,7 @@ jobs:
         with:
           github-token: ${{ steps.agent-lcars-token.outputs.token }}
 
-      # New for opencode.yml (it previously had no telemetry at all) - mirrors
-      # claude.yml/codex.yml exactly, including export_environment_variables:
+      # Mirrors claude.yml/codex.yml, including export_environment_variables:
       # false. The WIF provider var and telemetry-writer SA are repo-level,
       # shared with the other two pipelines.
       - name: Start telemetry sidecar
@@ -220,9 +209,10 @@ jobs:
         with:
           workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
           service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
-          issue: ${{ github.event.inputs.issue }}
+          issue: ${{ inputs.issue }}
 
       - name: Run OpenCode
+        id: agent
         # #51: two dispatches against #44 retried a persistent LiteLLM 429
         # with a backoff growing from seconds to tens of minutes and never
         # gave up - no comment, no label, no PR - until a human cancelled at
@@ -258,7 +248,6 @@ jobs:
             parking, and visible-deliverable requirements exactly.
         run: opencode github run
 
-      # New for opencode.yml - mirrors claude.yml/codex.yml's finalize.
       # Runs from the pre-agent snapshot ($RUNNER_TEMP), not
       # `uses: ./.github/actions/telemetry-finalize`: this step executes
       # AFTER "Run OpenCode", which has unrestricted Bash and could have
@@ -270,17 +259,14 @@ jobs:
         env:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
           RUN_ID: ${{ github.run_id }}
-          NUM: ${{ github.event.inputs.issue }}
+          NUM: ${{ inputs.issue }}
         run: bash "$RUNNER_TEMP/trusted-actions/telemetry-finalize/telemetry-finalize.sh"
 
       # Same gate claude.yml/codex.yml use (agent-protocol.md §5): an agent
       # can reason to a genuine conclusion and stop without ever posting it,
-      # so a bare "success" conclusion is not trusted. NOTE: this run's
-      # comment clause is now mode-gated (reply only), matching claude.yml -
-      # previously any bot comment counted regardless of mode, including
-      # this pipeline's own early takeover/plan comment, which proves
-      # nothing about a completed implement dispatch. exclude-comment-id
-      # still drops the scripted pickup comment from the claim step. Runs
+      # so a bare "success" conclusion is not trusted. The comment clause is
+      # mode-gated (reply only), so an earlier status comment cannot prove a
+      # completed implement dispatch. Runs
       # from the pre-agent snapshot ($RUNNER_TEMP), not
       # `uses: ./.github/actions/verify-deliverable`: this is the gate
       # meant to catch an OpenCode run that did nothing real, so it must
@@ -295,12 +281,12 @@ jobs:
           # HTTP 401 on the failure report). The job token lives for the
           # whole job; attribution shifts to github-actions[bot].
           GH_TOKEN: ${{ github.token }}
-          AGENT: OpenCode
+          AGENT: ${{ env.AGENT_NAME }}
           REPO: ${{ github.repository }}
-          NUM: ${{ github.event.inputs.issue }}
+          NUM: ${{ inputs.issue }}
           STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
-          MODE: ${{ github.event.inputs.mode }}
-          EXPECTED_COMMENT_LOGIN: agent-lcars[bot]
+          MODE: ${{ inputs.mode }}
+          EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}
           # Guards against crediting a concurrently dispatched claude run's
           # PR on the same issue (a testing artifact, not normal usage - the
           # router enforces exactly one agent label per issue). Cannot also
@@ -308,8 +294,7 @@ jobs:
           # agent-lcars[bot] push identity, an existing, accepted limitation
           # unrelated to this dedup. verify-deliverable.sh itself skips this
           # exclusion on a reply dispatch, where the anchor is explicit.
-          EXCLUDE_PR_AUTHOR: claude[bot]
-          EXCLUDE_COMMENT_ID: ${{ steps.claim.outputs['pickup-comment-id'] }}
+          EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}
         run: bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"
 
       - name: Determine failure reason
@@ -318,7 +303,7 @@ jobs:
         run: |
           REASON=""
           if [ "${NO_DELIVERABLE:-}" = "1" ]; then
-            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `/opencode`, and consider whether the prompt needs to be even more explicit for this issue.'
+            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by replying `'"$REDISPATCH_COMMAND"$'`, and consider whether the prompt needs to be even more explicit for this issue.'
           fi
           {
             echo "reason<<REASON_EOF"
@@ -339,11 +324,11 @@ jobs:
           # HTTP 401 on the failure report). The job token lives for the
           # whole job; attribution shifts to github-actions[bot].
           GH_TOKEN: ${{ github.token }}
-          AGENT: OpenCode
+          AGENT: ${{ env.AGENT_NAME }}
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
-          ISSUE_NUM: ${{ github.event.inputs.issue }}
+          ISSUE_NUM: ${{ inputs.issue }}
           REASON: ${{ steps.failure-reason.outputs.reason }}
           JOB_STATUS: ${{ job.status }}
           MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
@@ -361,4 +346,4 @@ jobs:
           generation: ${{ inputs.broker_generation }}
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
-          worker-workflow: opencode.yml
+          worker-workflow: ${{ env.WORKER_WORKFLOW }}

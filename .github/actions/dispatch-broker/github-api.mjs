@@ -658,16 +658,27 @@ async function pinLedgerWhenUnoccupied(api, loaded, isPullRequest) {
   }
 }
 
-function workerWorkflow(pipeline) {
-  const workflow = {
-    claude: 'claude.yml',
-    codex: 'codex.yml',
-    opencode: 'opencode.yml',
+const workerConfigurations = Object.freeze({
+  claude: Object.freeze({ workflow: 'claude.yml', contract: 'agent' }),
+  codex: Object.freeze({ workflow: 'codex.yml', contract: 'agent' }),
+  opencode: Object.freeze({ workflow: 'opencode.yml', contract: 'agent' }),
+  canary: Object.freeze({
     // #307's no-op production canary pipeline -- see broker.mjs's PIPELINES
     // comment and normalize.mjs's `kind: 'canary'` branch for why this is
     // the only worker that pipeline can ever resolve to.
-    canary: 'agent-dispatch-canary.yml',
-  }[pipeline];
+    workflow: 'agent-dispatch-canary.yml',
+    contract: 'canary',
+  }),
+});
+
+const agentWorkerPipelines = Object.freeze(
+  Object.entries(workerConfigurations)
+    .filter(([, configuration]) => configuration.contract === 'agent')
+    .map(([pipeline]) => pipeline),
+);
+
+function workerWorkflow(pipeline) {
+  const workflow = workerConfigurations[pipeline]?.workflow;
   if (!workflow) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
   return workflow;
 }
@@ -918,6 +929,7 @@ async function ensureNeedsHumanParked(api, task, maintainer) {
 }
 
 export {
+  agentWorkerPipelines,
   API_VERSION,
   brokerConcurrencyGroup,
   BrokerConcurrencyMismatchError,
