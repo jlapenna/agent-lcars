@@ -1,4 +1,6 @@
 name: Agent Issue Router
+# Control-plane runner policy: keep normalization and broker admission
+# independent from the shared worker fleet.
 
 # Every transport is normalized read-only before one job-level concurrency
 # queue serializes control-plane writes for the canonical repository/issue.
