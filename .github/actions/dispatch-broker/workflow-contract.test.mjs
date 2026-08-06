@@ -496,6 +496,18 @@ test('router serializes issue and pull-request lifecycle through one normalized 
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
 });
 
+test('router control-plane jobs use GitHub-hosted runners', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-router.yml'),
+    'utf8',
+  );
+  assert.equal(
+    (source.match(/^\s+runs-on:\s+ubuntu-latest\s*$/gmu) ?? []).length,
+    2,
+  );
+  assert.doesNotMatch(source, /DEFAULT_RUNNER_LABEL/u);
+});
+
 test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-dispatch-canary.yml'),
