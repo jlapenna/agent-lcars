@@ -214,14 +214,17 @@ ending your turn with a PR open.
 ## Hard limits specific to this repo
 
 The universal limits (never `--no-verify`, never force-push without
-`--force-with-lease`, never edit `.github/workflows/*`, never deploy, never
-touch IAM) are agent-protocol.md §11; the canonical statement of this
-repo's own additions (never touch `infra/terraform`, never run `firebase
-deploy` yourself, keep this repo independent from the
-`supersprinklesracing` source tree, never write to Firestore directly) is
-[agent-lcars-dev/SKILL.md](../agent-lcars-dev/SKILL.md#hard-guardrails),
-restated there so headless runbooks and prompts have one place to point to
-without loading the full skill.
+`--force-with-lease`, and never edit `.github/workflows/*` without owner
+permission) are in agent-protocol.md §11. That section also makes deployment
+and IAM changes conditional on an explicit approval exception in trusted repo
+policy. For this repo, direct deployment, Terraform-managed resource changes,
+and direct Firestore writes are denied by default and require the named
+maintainer's explicit approval for the specific operation and target, as
+defined in
+[agent-lcars-dev/SKILL.md](../agent-lcars-dev/SKILL.md#hard-guardrails).
+Credential values remain absolutely prohibited in Terraform-managed files,
+and the `supersprinklesracing` source-tree independence rule has no approval
+exception.
 
 ## Session-resume script
 

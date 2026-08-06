@@ -27,8 +27,9 @@ If a skill is not discoverable, read its `SKILL.md` and `references/`
 files directly from `.agents/skills/<name>/`.
 
 > [!IMPORTANT]
-> Git and deployment guardrails (worktrees mandatory, no `--no-verify`,
-> never deploy or touch Terraform/Firestore directly) live in
+> Git and deployment guardrails (worktrees mandatory, no `--no-verify`, and
+> explicit maintainer approval required for direct deployment or
+> Terraform/Firestore access) live in
 > [`.agents/skills/agent-lcars-dev/SKILL.md`](.agents/skills/agent-lcars-dev/SKILL.md#hard-guardrails).
 > Read them there — this section intentionally does not restate them.
 
