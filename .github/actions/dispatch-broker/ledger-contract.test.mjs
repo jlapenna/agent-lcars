@@ -15,8 +15,6 @@
  */
 import assert from 'node:assert/strict';
 
-import test from 'vitest';
-
 import {
   extractLedgerComment,
   isWellFormedLedger,
@@ -32,6 +30,16 @@ import {
   observeCompletion,
   renderLedgerComment,
 } from './broker.mjs';
+
+// A local collector rather than `node:test`, matching every sibling file in
+// this directory. That convention is load-bearing: the repo's eslint config
+// enables @vitest/eslint-plugin's recommended rules, whose autofix rewrites a
+// `node:test` import to `vitest` — which then throws under `node --test`, the
+// command ci.yml actually runs these with.
+const tests = [];
+function test(name, run) {
+  tests.push({ name, run });
+}
 
 const task = {
   repositoryId: 123,
@@ -178,3 +186,15 @@ test('every field the writer emits is described by the shared contract', () => {
     'occurredAt',
   ]);
 });
+
+let failures = 0;
+for (const { name, run } of tests) {
+  try {
+    await run();
+    process.stdout.write(`ok - ${name}\n`);
+  } catch (error) {
+    failures += 1;
+    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
+  }
+}
+if (failures > 0) process.exitCode = 1;
