@@ -107,6 +107,31 @@ describe('the comment envelope', () => {
     expect(hasLedgerMarker(`prefix ${LEDGER_MARKER} suffix`)).toBe(true);
     expect(hasLedgerMarker('no marker here')).toBe(false);
   });
+
+  it('tolerates whitespace padding inside the fence', () => {
+    // The block regex deliberately captures the fence contents verbatim
+    // rather than padding the capture with `\s*` on both sides, which would
+    // be a polynomial ReDoS. Parity has to hold for padded bodies, since
+    // that is what the broker actually writes.
+    const body = `${LEDGER_MARKER}\ns\n\n\`\`\`json   \n  {"schema":"x"}  \n \`\`\``;
+    const extracted = extractLedgerComment(body);
+    expect(extracted).toEqual({ ok: true, ledger: { schema: 'x' } });
+  });
+
+  it('does not backtrack on an unterminated fence full of whitespace', () => {
+    // js/polynomial-redos: a comment body is attacker-controlled and the
+    // console parses it server-side while rendering. The old
+    // /```json\s*([\s\S]*?)\s*```/ let `\s*` and the lazy capture both match
+    // the same run of spaces, giving quadratically many ways to split them.
+    const evil = `${LEDGER_MARKER}\n\`\`\`json${' '.repeat(50_000)}`;
+    const started = performance.now();
+    expect(extractLedgerComment(evil)).toEqual({
+      ok: false,
+      reason: 'block-count',
+      blocks: 0,
+    });
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 });
 
 describe('the state vocabulary', () => {

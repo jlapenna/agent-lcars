@@ -184,7 +184,18 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
  * dozens, and "exactly one JSON block" is how both sides refuse to guess when
  * a comment has been tampered with or a second marker has appeared.
  */
-const LEDGER_JSON_BLOCK_RE = /```json\s*([\s\S]*?)\s*```/gu;
+// No `\s*` padding around the capture, deliberately. The obvious spelling —
+// /```json\s*([\s\S]*?)\s*```/ — is a polynomial-ReDoS (CodeQL
+// js/polynomial-redos): `\s*` and the lazy `[\s\S]*?` can both match the same
+// whitespace, so a body starting with "```json" followed by many spaces gives
+// the engine quadratically many ways to split them. That matters here because
+// the input is a GitHub comment body — attacker-controlled, and parsed
+// server-side by the console while rendering a dashboard.
+//
+// Capturing the fence contents verbatim is unambiguous and equivalent:
+// JSON.parse ignores leading and trailing whitespace, so the padding was never
+// load-bearing.
+const LEDGER_JSON_BLOCK_RE = /```json([\s\S]*?)```/gu;
 
 /**
  * Render a ledger comment. `summary` is the human-readable line shown above
