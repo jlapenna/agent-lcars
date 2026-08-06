@@ -2,6 +2,10 @@ import {
   rule as noServerOnlyImportsInClient,
   RULE_NAME as noServerOnlyImportsInClientName,
 } from './rules/no-server-only-imports-in-client';
+import {
+  rule as useServerActionsOnly,
+  RULE_NAME as useServerActionsOnlyName,
+} from './rules/use-server-actions-only';
 /**
  * Import your custom workspace rules at the top of this file.
  *
@@ -27,5 +31,8 @@ module.exports = {
    *  [myCustomRuleName]: myCustomRule
    * }
    */
-  rules: { [noServerOnlyImportsInClientName]: noServerOnlyImportsInClient },
+  rules: {
+    [noServerOnlyImportsInClientName]: noServerOnlyImportsInClient,
+    [useServerActionsOnlyName]: useServerActionsOnly,
+  },
 };
