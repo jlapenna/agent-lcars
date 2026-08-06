@@ -2,7 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-import { displayTitleMatchesAttempt } from '../../../libs/dispatch-contracts/src/index.js';
+import {
+  classifyFailure,
+  displayTitleMatchesAttempt,
+} from '../../../libs/dispatch-contracts/src/index.js';
 import {
   acceptIntent,
   ACTIVE_STATES,
@@ -164,10 +167,35 @@ async function reconcileActive(client, loaded) {
     active,
   );
   if (matchingRuns.length > 1) {
-    addAnomaly(loaded.ledger, 'duplicate-attempt', {
-      generation: active.generation,
-      runIds: matchingRuns.map((run) => run.id),
-    });
+    addAnomaly(
+      loaded.ledger,
+      'duplicate-attempt',
+      {
+        generation: active.generation,
+        runIds: matchingRuns.map((run) => run.id),
+      },
+      undefined,
+      // The reconciler is what noticed this, but the state that is wrong --
+      // "at most one worker run bound to a generation" -- is the ledger's
+      // own invariant, so the controller (its state authority) owns it, not
+      // whichever of the two GitHub Actions runs happens to be the
+      // duplicate. No reason code in the vocabulary names "two runs matched
+      // one generation" specifically (#645's audit table never hit this
+      // case), so this falls back to `internal_error`, the vocabulary's own
+      // catch-all for exactly that gap. `never`, not `manual`: re-running
+      // the broker on the next event re-derives the same duplicate-run
+      // snapshot and throws again -- retrying cannot resolve it, and
+      // dispatching a fresh attempt to "fix" it would only add a third
+      // duplicate. Only a human fixing the underlying divergence (cancel a
+      // run, or correct the ledger) out of band lets the next reconcile
+      // pass see a clean state again.
+      classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'controller',
+        reason: 'internal_error',
+        retryDisposition: 'never',
+      }),
+    );
     await saveLedger(client, loaded);
     throw new Error('Multiple worker runs match one dispatch generation');
   }
@@ -303,6 +331,29 @@ async function trackMissingRun(client, loaded, generation, now) {
       ageMs,
     },
     now,
+    // A `dispatching`/`dispatch-unknown` generation with no bound run after
+    // its grace period is the delayed confirmation of exactly what
+    // `dispatch-unknown`/`markDispatchUnknown` already names: the
+    // controller does not know whether its own dispatch POST landed. That
+    // makes the controller the owning system even though one of the two
+    // root causes #305's audit named (a worker crashing before ever
+    // registering) is technically a worker failure -- the ledger state
+    // being reconciled here is the controller's own bookkeeping, and the
+    // reconciler cannot distinguish the two causes from a bare zero-match
+    // observation. `backoff`, not `manual`: this is still inside the
+    // bounded-retry window (`RECONCILE_MISSING_RUN_MAX_ATTEMPTS`) --
+    // trackMissingRun's own next scheduled pass, at least
+    // `RECONCILE_MISSING_RUN_MIN_INTERVAL_MS` later, is the retry, and
+    // `retryBudget` mirrors the attempts this same counter has left before
+    // `reconcile-parked` (below) takes over.
+    classifyFailure({
+      phase: 'reconciliation',
+      owningSystem: 'controller',
+      reason: 'launch_response_lost',
+      retryDisposition: 'backoff',
+      retryBudget: Math.max(0, RECONCILE_MISSING_RUN_MAX_ATTEMPTS - attempt),
+      evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`,
+    }),
   );
   if (reachedBound) {
     addAnomaly(
@@ -313,6 +364,21 @@ async function trackMissingRun(client, loaded, generation, now) {
         reason: 'missing-run-bound-exhausted',
       },
       now,
+      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // just run, and the guard at the top of this function turns every
+      // later pass into a no-op, so nothing further happens automatically.
+      // Same underlying reason as the `reconcile-missing-run` observations
+      // that led here -- exhausting the retry budget doesn't change *why*
+      // the run went missing, only that automated backoff has given up on
+      // it -- so `retryDisposition` moves from `backoff` to `manual` while
+      // `reason` stays `launch_response_lost`.
+      classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'controller',
+        reason: 'launch_response_lost',
+        retryDisposition: 'manual',
+        evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
+      }),
     );
   }
   await saveLedger(client, loaded);
@@ -492,6 +558,24 @@ async function reconcileLedger(
         generation: pending.generation,
       },
       now,
+      // "Should be unreachable through broker.mjs's own transitions" is
+      // this vocabulary's own definition of `internal_error` -- a defensive
+      // check catching corrupted-looking ledger state, not a failure any
+      // known external cause (a lost signal, a lost launch response, a
+      // provider outage, ...) explains. The ledger this invariant is about
+      // is the controller's own state, so it -- not whichever system
+      // produced the generations in question -- is the explicit owner
+      // reconciliation-phase failures require. `manual`: the guard above
+      // (reconcileAnomaliesFor(...).length === 0) makes every later pass a
+      // no-op once this fires, identical to reconcile-parked's own
+      // idempotent stop -- nothing about this resolves itself, a human has
+      // to look at the ledger and decide what actually happened.
+      classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'controller',
+        reason: 'internal_error',
+        retryDisposition: 'manual',
+      }),
     );
     await saveLedger(client, loaded);
     return;

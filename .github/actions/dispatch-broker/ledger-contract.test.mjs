@@ -16,6 +16,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  classifyFailure,
   extractLedgerComment,
   isWellFormedLedger,
 } from '../../../libs/dispatch-contracts/src/index.js';
@@ -95,6 +96,17 @@ function completedLedger() {
     'duplicate-attempt',
     { generation: 1, runIds: [42, 43] },
     baseTime,
+    // Exercises the writer's real classification path (main.mjs's own
+    // duplicate-attempt call site), not a hand-rolled stand-in -- this is
+    // the fixture the "every field the writer emits" test below pins keys
+    // against, so it needs to carry a real `failure` field, not merely a
+    // plausible one.
+    classifyFailure({
+      phase: 'reconciliation',
+      owningSystem: 'controller',
+      reason: 'internal_error',
+      retryDisposition: 'never',
+    }),
   );
   return ledger;
 }
@@ -182,8 +194,16 @@ test('every field the writer emits is described by the shared contract', () => {
 
   assert.deepEqual(Object.keys(ledger.anomalies[0]).sort(), [
     'detail',
+    'failure',
     'kind',
     'occurredAt',
+  ]);
+
+  assert.deepEqual(Object.keys(ledger.anomalies[0].failure).sort(), [
+    'owningSystem',
+    'phase',
+    'reason',
+    'retryDisposition',
   ]);
 });
 

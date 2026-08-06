@@ -183,6 +183,11 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
  *   carries its own detail shape, and a consumer must render one without
  *   assuming that shape.
  * @property {string} occurredAt
+ * @property {import('./failure.js').FailureClassification} [failure] The
+ *   owning-system/phase/reason/retry vocabulary (#645), layered onto the
+ *   pre-existing free-form `kind`/`detail` rather than replacing them.
+ *   Optional because every anomaly recorded before this field existed has
+ *   none, and `isWellFormedAnomaly` must keep accepting those unchanged.
  */
 
 /**
@@ -364,7 +369,21 @@ export function isWellFormedSource(value) {
  */
 export function isWellFormedAnomaly(value) {
   if (!isPlainObject(value)) return false;
-  return isNonEmptyString(value.kind) && isNonEmptyString(value.occurredAt);
+  if (!isNonEmptyString(value.kind) || !isNonEmptyString(value.occurredAt)) {
+    return false;
+  }
+  // `failure` is optional -- every anomaly recorded before #645 has none,
+  // and that must keep reading as well-formed rather than rejecting older
+  // ledgers. When present, only its gross shape is checked: a non-object
+  // would crash a consumer that reads `failure.owningSystem` etc. unguarded
+  // (describeLedgerAnomaly in the console). Full vocabulary validation
+  // (are `owningSystem`/`phase`/`reason` actually known values?) is the
+  // writer's job -- `classifyFailure` already refuses to construct an
+  // invalid one -- not this read-side structural gate's.
+  if (value.failure !== undefined && !isPlainObject(value.failure)) {
+    return false;
+  }
+  return true;
 }
 
 /**

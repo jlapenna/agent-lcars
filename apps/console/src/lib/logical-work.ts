@@ -1,4 +1,9 @@
 import {
+  type FailureClassification,
+  formatFailure,
+} from '@agent-lcars/dispatch-contracts';
+
+import {
   type AgentPipeline,
   type AgentRun,
   attemptMarkerFromDisplayTitle,
@@ -260,6 +265,30 @@ function duplicateAttemptAnomalies(
 }
 
 /**
+ * Guards `anomaly.failure` the same way the rest of this function guards
+ * `detail`: a ledger comment is untrusted input (hand-edited, written by an
+ * older broker, or - once #645 lands - foreign JSON that merely happens to
+ * carry a `failure` key), so this checks the four fields `formatFailure`
+ * actually reads rather than trusting the `FailureClassification` type,
+ * which only binds at compile time. `isWellFormedAnomaly` (the shared
+ * package's own read-side gate) already applies a shallower version of this
+ * same check before a ledger reaches here; this one is stricter because,
+ * unlike that gate, this file goes on to interpolate the fields into UI
+ * text rather than just deciding whether to keep the ledger at all.
+ */
+function isRenderableFailureClassification(
+  value: unknown,
+): value is FailureClassification {
+  return (
+    isPlainObject(value) &&
+    typeof value.owningSystem === 'string' &&
+    typeof value.phase === 'string' &&
+    typeof value.reason === 'string' &&
+    typeof value.retryDisposition === 'string'
+  );
+}
+
+/**
  * Turns one raw `ledger.anomalies` entry into readable text without
  * assuming its `detail` shape - `detail` is broker-kind-specific and
  * untyped (see `LedgerAnomaly`'s own doc comment). `duplicate-attempt` (the
@@ -269,22 +298,34 @@ function duplicateAttemptAnomalies(
  * kinds a future broker change adds (e.g. #305's reconciler introduces
  * `reconcile-missing-run`/`reconcile-parked`/`reconcile-invariant-violation`)
  * - still renders instead of being silently dropped or crashing.
+ *
+ * #645 layers a `failure` classification (owning system, phase, reason
+ * code, retry disposition) onto an anomaly alongside its pre-existing
+ * `kind`/`detail`. When present, its `formatFailure` one-liner is appended
+ * verbatim - reusing the same rendering the broker's own logs/annotations
+ * use rather than re-deriving a second layout that could drift from it.
+ * Older ledgers (recorded before this field existed) carry no `failure` at
+ * all, and this must keep rendering exactly as it did before for those.
  */
 function describeLedgerAnomaly(anomaly: LedgerAnomaly): string {
-  if (
-    anomaly.kind === 'duplicate-attempt' &&
-    isPlainObject(anomaly.detail) &&
-    Number.isSafeInteger(anomaly.detail.generation) &&
-    Array.isArray(anomaly.detail.runIds)
-  ) {
-    const runIds = anomaly.detail.runIds.join(', ');
-    return `The dispatch ledger recorded a duplicate-attempt anomaly for generation ${anomaly.detail.generation}: runs ${runIds} were both bound to it.`;
-  }
-  const detail =
-    isPlainObject(anomaly.detail) || Array.isArray(anomaly.detail)
-      ? ` ${JSON.stringify(anomaly.detail)}`
-      : '';
-  return `The dispatch ledger recorded a "${anomaly.kind}" anomaly at ${anomaly.occurredAt}.${detail}`;
+  const message = (() => {
+    if (
+      anomaly.kind === 'duplicate-attempt' &&
+      isPlainObject(anomaly.detail) &&
+      Number.isSafeInteger(anomaly.detail.generation) &&
+      Array.isArray(anomaly.detail.runIds)
+    ) {
+      const runIds = anomaly.detail.runIds.join(', ');
+      return `The dispatch ledger recorded a duplicate-attempt anomaly for generation ${anomaly.detail.generation}: runs ${runIds} were both bound to it.`;
+    }
+    const detail =
+      isPlainObject(anomaly.detail) || Array.isArray(anomaly.detail)
+        ? ` ${JSON.stringify(anomaly.detail)}`
+        : '';
+    return `The dispatch ledger recorded a "${anomaly.kind}" anomaly at ${anomaly.occurredAt}.${detail}`;
+  })();
+  if (!isRenderableFailureClassification(anomaly.failure)) return message;
+  return `${message} ${formatFailure(anomaly.failure)}`;
 }
 
 /**

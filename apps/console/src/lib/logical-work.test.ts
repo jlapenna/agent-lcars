@@ -1,3 +1,7 @@
+import {
+  classifyFailure,
+  formatFailure,
+} from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
 
 import type { AgentRun } from './agent-activity';
@@ -381,6 +385,91 @@ describe('deriveLogicalWork - ledger-recorded anomalies (#364 review)', () => {
       taskMeta: new Map([[KEY, makeTaskMeta()]]),
     });
     expect(work[0].anomalies).toEqual([]);
+  });
+
+  it('appends the #645 failure classification to a ledger anomaly, reusing formatFailure rather than re-deriving its layout', () => {
+    const failure = classifyFailure({
+      phase: 'reconciliation',
+      owningSystem: 'controller',
+      reason: 'launch_response_lost',
+      retryDisposition: 'backoff',
+      retryBudget: 1,
+    });
+    const ledger = makeLedger({
+      anomalies: [
+        {
+          kind: 'reconcile-missing-run',
+          detail: { generation: 1, attempt: 2, ageMs: 900000 },
+          occurredAt: '2026-07-07T00:05:00Z',
+          failure,
+        },
+      ],
+    });
+
+    const { work } = deriveLogicalWork({
+      attempts: [],
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    const ledgerAnomalies = work[0].anomalies.filter(
+      (a) => a.kind === 'ledger-recorded',
+    );
+    expect(ledgerAnomalies).toHaveLength(1);
+    // Exact substring match against formatFailure's own output, not a
+    // hand-written expectation of what that string looks like - this is
+    // what would catch the two renderings drifting apart.
+    expect(ledgerAnomalies[0].detail).toContain(formatFailure(failure));
+  });
+
+  it('renders a ledger anomaly with no failure classification exactly as it did before #645 (regression guard)', () => {
+    // Every anomaly recorded by a pre-#645 broker has no `failure` field.
+    // Appending anything here - even an empty suffix - for those would be a
+    // visible, silent behavior change on every existing ledger.
+    const withoutFailure = makeLedger({
+      anomalies: [
+        {
+          kind: 'reconcile-missing-run',
+          detail: { generation: 1, attempt: 2, ageMs: 900000 },
+          occurredAt: '2026-07-07T00:05:00Z',
+        },
+      ],
+    });
+    const { work } = deriveLogicalWork({
+      attempts: [],
+      ledgers: new Map([[KEY, withoutFailure]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+    expect(work[0].anomalies[0].detail).toBe(
+      'The dispatch ledger recorded a "reconcile-missing-run" anomaly at 2026-07-07T00:05:00Z. {"generation":1,"attempt":2,"ageMs":900000}',
+    );
+  });
+
+  it('degrades a malformed failure field to the plain anomaly message instead of crashing or rendering "undefined"', () => {
+    // A hand-edited or foreign comment could carry any JSON under `failure`.
+    // isWellFormedAnomaly (the shared read-side gate) only checks it's an
+    // object; this is the stricter check that keeps a garbage object from
+    // reaching formatFailure and interpolating "undefined" into the UI.
+    const ledger = makeLedger({
+      anomalies: [
+        {
+          kind: 'reconcile-parked',
+          detail: { generation: 1, reason: 'missing-run-bound-exhausted' },
+          occurredAt: '2026-07-07T00:05:00Z',
+          failure: 'manual' as unknown as ReturnType<typeof classifyFailure>,
+        },
+      ],
+    });
+    const { work } = deriveLogicalWork({
+      attempts: [],
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+    const detail = work[0].anomalies[0].detail;
+    expect(detail).toBe(
+      'The dispatch ledger recorded a "reconcile-parked" anomaly at 2026-07-07T00:05:00Z. {"generation":1,"reason":"missing-run-bound-exhausted"}',
+    );
+    expect(detail).not.toContain('undefined');
   });
 });
 
