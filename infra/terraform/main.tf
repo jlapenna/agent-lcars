@@ -9,6 +9,11 @@ locals {
     "secretmanager.googleapis.com", "serviceusage.googleapis.com",
     "storage.googleapis.com", "sts.googleapis.com",
   ])
+  github_repositories = [
+    "${var.github_owner}/${var.github_repository}",
+    var.sprinkles_repository,
+    var.homelab_repository,
+  ]
 }
 
 data "google_project" "this" {
@@ -134,7 +139,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "google.subject"       = "assertion.sub"
     "attribute.repository" = "assertion.repository"
   }
-  attribute_condition = "assertion.repository in ['${var.github_owner}/${var.github_repository}', '${var.sprinkles_repository}']"
+  attribute_condition = "assertion.repository in [${join(", ", [for repository in local.github_repositories : "'${repository}'"])}]"
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
 
@@ -161,6 +166,12 @@ resource "google_service_account_iam_member" "agent_lcars_writer_impersonation" 
   service_account_id = google_service_account.telemetry_writer.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
+resource "google_service_account_iam_member" "homelab_writer_impersonation" {
+  service_account_id = google_service_account.telemetry_writer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }
 
 resource "google_secret_manager_secret" "runtime" {
@@ -228,6 +239,41 @@ resource "google_service_account_iam_member" "codex_agent_impersonation" {
   service_account_id = google_service_account.codex_agent.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
+# Codex rotates its subscription credential on every run. GitHub Actions
+# concurrency is repository-local, so Homelab must not share Agent LCARS's
+# service account or CODEX_AUTH_JSON secret: overlapping runs could restore the
+# same version and persist mutually invalid refreshes.
+resource "google_secret_manager_secret" "homelab_codex_auth" {
+  secret_id = "HOMELAB_CODEX_AUTH_JSON"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_service_account" "homelab_codex_agent" {
+  account_id   = "homelab-codex-agent"
+  display_name = "Homelab Codex issue agent"
+}
+
+resource "google_secret_manager_secret_iam_member" "homelab_codex_auth_accessor" {
+  secret_id = google_secret_manager_secret.homelab_codex_auth.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.homelab_codex_agent.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "homelab_codex_auth_version_adder" {
+  secret_id = google_secret_manager_secret.homelab_codex_auth.id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${google_service_account.homelab_codex_agent.email}"
+}
+
+resource "google_service_account_iam_member" "homelab_codex_agent_impersonation" {
+  service_account_id = google_service_account.homelab_codex_agent.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }
 
 resource "google_billing_budget" "monthly" {
