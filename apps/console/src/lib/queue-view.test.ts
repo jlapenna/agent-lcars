@@ -44,7 +44,7 @@ function activity(liveRuns: AgentRun[] = []): AgentActivity {
 }
 
 describe('buildQueueView', () => {
-  it('keeps the Inbox and Command Deck ownership buckets mutually exclusive', () => {
+  it('keeps the Inbox and Bridge ownership buckets mutually exclusive', () => {
     const view = buildQueueView(
       [
         item(1, ['needs-human']),

@@ -14,7 +14,7 @@ export interface QueueView {
 }
 
 /**
- * Builds the shared ownership/priority view used by both the Command Deck and
+ * Builds the shared ownership/priority view used by both the Bridge and
  * the standalone Decision Inbox. Keeping the joins here makes moving the
  * Inbox a routing concern rather than two subtly different classifications.
  */

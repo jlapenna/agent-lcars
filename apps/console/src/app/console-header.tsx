@@ -62,7 +62,7 @@ function navHref(
 }
 
 /**
- * Shared top-of-page chrome for the five console destinations (Command Deck,
+ * Shared top-of-page chrome for the five console destinations (Bridge,
  * Inbox, agents, sessions, costs): title/subtitle row and the LCARS pill nav rail
  * (the one page every page can jump from/to). The session detail page (a
  * drill-down, not a nav destination) keeps its own lighter back-link header

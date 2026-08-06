@@ -4,7 +4,7 @@ import { Anchor, Group, Text } from '@mantine/core';
 import Link from 'next/link';
 
 /**
- * The Command Deck's one-line answer to "does anything need me?" - the
+ * The Bridge's one-line answer to "does anything need me?" - the
  * Deck already computes `queueView.yourQueue` for its joins but never
  * rendered it, so the only way to learn the Inbox had work was to leave
  * the Deck. Deliberately a plain landmark-free Group (no `role="alert"`,

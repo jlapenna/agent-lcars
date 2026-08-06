@@ -6,7 +6,7 @@ import type { ActionItem } from '../lib/action-items';
 import type { CliSession } from '../lib/cli-sessions';
 import {
   type BoardCard,
-  CommandDeckSections,
+  BridgeSections,
   DecisionInbox,
 } from './action-items-board';
 
@@ -101,7 +101,7 @@ function renderBoard({
 }) {
   render(
     <MantineProvider>
-      <CommandDeckSections
+      <BridgeSections
         waitingOnDeploy={waitingOnDeploy.map(card)}
         rest={rest.map(card)}
         cliSessions={cliSessions}
@@ -110,7 +110,7 @@ function renderBoard({
   );
 }
 
-describe('Decision Inbox and Command Deck surfaces', () => {
+describe('Decision Inbox and Bridge surfaces', () => {
   it('says so when both Deck sections are empty instead of rendering nothing', () => {
     renderBoard({});
     expect(screen.getByTestId('deck-sections-empty')).toBeTruthy();
@@ -150,7 +150,7 @@ describe('Decision Inbox and Command Deck surfaces', () => {
     expect(screen.getByTestId('full-card')).toHaveTextContent('#1 Answer me');
   });
 
-  it('renders only compact secondary tiers on the Command Deck', () => {
+  it('renders only compact secondary tiers on the Bridge', () => {
     renderBoard({
       waitingOnDeploy: [
         makeItem({

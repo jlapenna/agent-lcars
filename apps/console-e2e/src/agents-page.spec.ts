@@ -64,9 +64,7 @@ test.describe('/agents page @smoke', () => {
     // "Deck" pill, see console-header.tsx).
     await header.getByRole('link', { name: 'Deck' }).click();
     await page.waitForURL('/');
-    await expect(
-      page.getByRole('heading', { name: 'Command Deck' }),
-    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Bridge' })).toBeVisible();
   });
 
   test('uses the compact operational hierarchy on desktop', async ({

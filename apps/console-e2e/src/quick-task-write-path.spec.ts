@@ -66,7 +66,7 @@ async function stubRequestId(page: Page, uuid: string) {
   }, uuid);
 }
 
-/** The single visible "Quick task" button on the Command Deck - two
+/** The single visible "Quick task" button on the Bridge - two
  * responsive variants are actually mounted (desktop/mobile, see page.tsx),
  * but Playwright's role locator only matches the accessible (non
  * `display:none`) one at the current viewport, so this never needs
