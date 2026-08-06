@@ -138,25 +138,18 @@ test('no other workflow declares the broker reserved namespace', async () => {
   assert.deepEqual(occurrences, []);
 });
 
-test('queue max is paired with noncancelling serialized execution only', async () => {
+test('unsupported queue policies are absent and serialized jobs do not cancel', async () => {
   for (const workflow of await workflowSources()) {
     const queues = [
       ...workflow.source.matchAll(/^\s*queue:\s*(\S+)\s*$/gmu),
     ].map((match) => match[1]);
-    assert.equal(
-      queues.every((queue) => ['single', 'max'].includes(queue)),
-      true,
+    assert.deepEqual(
+      queues,
+      [],
       `${workflow.name} declares an unsupported queue policy`,
     );
     if (['agent-router.yml', 'codex.yml'].includes(workflow.name)) {
-      assert.deepEqual(queues, ['max']);
       assert.match(workflow.source, /^\s*cancel-in-progress:\s*false\s*$/mu);
-    } else {
-      assert.equal(
-        queues.length,
-        0,
-        `${workflow.name} unexpectedly declares a queue policy`,
-      );
     }
   }
 });
