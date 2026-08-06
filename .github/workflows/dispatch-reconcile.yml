@@ -62,7 +62,9 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    # Reconciliation is control-plane work and must remain available when
+    # the shared self-hosted fleet is saturated or offline.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout trusted broker revision

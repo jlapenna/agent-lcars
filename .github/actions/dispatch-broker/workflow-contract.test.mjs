@@ -508,6 +508,15 @@ test('router control-plane jobs use GitHub-hosted runners', async () => {
   assert.doesNotMatch(source, /DEFAULT_RUNNER_LABEL/u);
 });
 
+test('dispatch reconciler uses a GitHub-hosted control-plane runner', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'dispatch-reconcile.yml'),
+    'utf8',
+  );
+  assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
+  assert.doesNotMatch(source, /DEFAULT_RUNNER_LABEL/u);
+});
+
 test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-dispatch-canary.yml'),
