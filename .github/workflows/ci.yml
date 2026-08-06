@@ -58,6 +58,7 @@ jobs:
         with:
           go-version-file: apps/runner-autoscaler/go.mod
           cache-dependency-path: apps/runner-autoscaler/go.mod
+          cache: false
 
       - name: Validate GitHub Actions workflows
         run: |
@@ -175,16 +176,3 @@ jobs:
       # actually matters.
       - name: Run console e2e suite
         run: ./tools/e2e-local.sh
-
-      # always(), not failure(): the populated-page captures
-      # (populated-dashboard.spec.ts, #40) are attached to this report and
-      # exist to be looked at after a *passing* run. Uploading only on
-      # failure would mean the one artifact they live in is thrown away
-      # exactly when they're useful.
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report
-          path: apps/console-e2e/test-output/playwright-report
-          retention-days: 7

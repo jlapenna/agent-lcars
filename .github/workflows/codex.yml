@@ -79,10 +79,6 @@ jobs:
     concurrency:
       group: codex-subscription-auth
       cancel-in-progress: false
-      # This second queue is repository-global because every Codex task
-      # rotates the same subscription credential. The task broker prevents
-      # duplicate semantics; this queue prevents cross-task token races.
-      queue: max
     runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
     # 90, matching claude.yml/opencode.yml and the console's
     # RUN_TIMEOUT_MINUTES. The real bound is the per-step timeout on `Run

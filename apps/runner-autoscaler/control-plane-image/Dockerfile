@@ -1,0 +1,33 @@
+# Small, socketless image for the fleet control plane.
+#
+# Control-plane jobs only need the Actions runner, git/checkout, Node for the
+# local JavaScript broker action, and gh for the few shell-based routers. They
+# do not need Docker, Buildx, Python, pnpm, the telemetry sidecar, or the
+# developer toolchain baked into homelab-runner:jit-node24.
+ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+
+FROM ${RUNNER_BASE}
+
+USER root
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg git; \
+    install -m 0755 -d /etc/apt/keyrings; \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nodejs gh; \
+    node --version; \
+    gh --version; \
+    rm -rf /var/lib/apt/lists/*
+
+USER runner
+ENTRYPOINT ["/home/runner/run.sh"]

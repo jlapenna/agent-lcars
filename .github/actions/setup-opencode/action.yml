@@ -1,5 +1,5 @@
 name: Setup OpenCode
-description: Resolve, cache, and install a versioned OpenCode CLI for an agent workflow.
+description: Resolve and install a versioned OpenCode CLI for an agent workflow.
 
 inputs:
   github-token:
@@ -28,15 +28,7 @@ runs:
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
 
-    - name: Cache OpenCode
-      id: cache
-      uses: actions/cache@v6
-      with:
-        path: ~/.opencode/bin
-        key: opencode-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
-
     - name: Install OpenCode
-      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         OPENCODE_VERSION: ${{ steps.version.outputs.version }}

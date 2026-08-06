@@ -62,7 +62,9 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    # Reconciliation is control-plane work: use the protected, always-warm
+    # self-hosted control-plane pool.
+    runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
     timeout-minutes: 5
     steps:
       - name: Checkout trusted broker revision

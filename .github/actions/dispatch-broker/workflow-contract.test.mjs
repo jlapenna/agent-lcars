@@ -138,25 +138,18 @@ test('no other workflow declares the broker reserved namespace', async () => {
   assert.deepEqual(occurrences, []);
 });
 
-test('queue max is paired with noncancelling serialized execution only', async () => {
+test('unsupported queue policies are absent and serialized jobs do not cancel', async () => {
   for (const workflow of await workflowSources()) {
     const queues = [
       ...workflow.source.matchAll(/^\s*queue:\s*(\S+)\s*$/gmu),
     ].map((match) => match[1]);
-    assert.equal(
-      queues.every((queue) => ['single', 'max'].includes(queue)),
-      true,
+    assert.deepEqual(
+      queues,
+      [],
       `${workflow.name} declares an unsupported queue policy`,
     );
     if (['agent-router.yml', 'codex.yml'].includes(workflow.name)) {
-      assert.deepEqual(queues, ['max']);
       assert.match(workflow.source, /^\s*cancel-in-progress:\s*false\s*$/mu);
-    } else {
-      assert.equal(
-        queues.length,
-        0,
-        `${workflow.name} unexpectedly declares a queue policy`,
-      );
     }
   }
 });
@@ -494,6 +487,40 @@ test('router serializes issue and pull-request lifecycle through one normalized 
     /^\s+types:\s+\[closed, reopened, labeled, unlabeled\]\s*$/mu,
   );
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
+});
+
+test('router control-plane jobs use the protected self-hosted control pool', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-router.yml'),
+    'utf8',
+  );
+  assert.equal(
+    (
+      source.match(
+        /^\s+runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/gmu,
+      ) ?? []
+    ).length,
+    2,
+  );
+  assert.doesNotMatch(
+    source,
+    /ubuntu-latest|DEFAULT_RUNNER_LABEL|CI_RUNNER_LABEL/u,
+  );
+});
+
+test('dispatch reconciler uses the protected self-hosted control pool', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'dispatch-reconcile.yml'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /^\s+runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/mu,
+  );
+  assert.doesNotMatch(
+    source,
+    /ubuntu-latest|DEFAULT_RUNNER_LABEL|CI_RUNNER_LABEL/u,
+  );
 });
 
 test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {
