@@ -4,7 +4,7 @@
   "private": true,
   "sideEffects": false,
   "dependencies": {
-    "@repo/util": "workspace:*",
-    "@repo/util-server": "workspace:*"
+    "@agent-lcars/util": "workspace:*",
+    "@agent-lcars/util-server": "workspace:*"
   }
 }

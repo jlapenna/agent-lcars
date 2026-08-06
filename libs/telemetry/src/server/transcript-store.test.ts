@@ -19,8 +19,8 @@ vi.mock('@google-cloud/storage', () => ({
   }),
 }));
 
-vi.mock('@repo/util-server', async () => ({
-  ...(await vi.importActual('@repo/util-server')),
+vi.mock('@agent-lcars/util-server', async () => ({
+  ...(await vi.importActual('@agent-lcars/util-server')),
   getProjectId: vi.fn().mockReturnValue('test-project'),
 }));
 

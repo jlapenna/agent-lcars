@@ -1,4 +1,4 @@
-import { assertNotBrowser } from '@repo/util';
+import { assertNotBrowser } from '@agent-lcars/util';
 
 assertNotBrowser();
 

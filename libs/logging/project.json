@@ -1,5 +1,5 @@
 {
-  "name": "@repo/logging",
+  "name": "@agent-lcars/logging",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/logging/src",
   "projectType": "library",

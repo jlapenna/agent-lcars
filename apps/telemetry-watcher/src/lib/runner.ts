@@ -1,5 +1,5 @@
+import { logger } from '@agent-lcars/logging';
 import { runnerWatchRoots } from '@agent-lcars/telemetry';
-import { logger } from '@repo/logging';
 
 import { WatcherDaemon } from './daemon';
 import { RunnerConfig } from './runner-config';

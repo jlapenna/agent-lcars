@@ -1,6 +1,6 @@
 /**
  * Pure repo-identity types/helpers, deliberately split out of
- * github-client.ts: that file imports `@repo/util-server` (env/secrets
+ * github-client.ts: that file imports `@agent-lcars/util-server` (env/secrets
  * access, `assertNotBrowser()`-guarded), so anything importing it - even
  * for just these types - gets pulled into a 'use client' component's
  * browser bundle and fails to build (Node-only deps like firebase-admin

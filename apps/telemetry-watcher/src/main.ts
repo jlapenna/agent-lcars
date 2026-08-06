@@ -1,4 +1,4 @@
-import { logger } from '@repo/logging';
+import { logger } from '@agent-lcars/logging';
 import chokidar from 'chokidar';
 
 import { loadConfig } from './lib/config';

@@ -6,7 +6,7 @@ import { defineConfig, mergeConfig, type UserConfig } from 'vitest/config';
 
 // Shared factory for every migrated project's vitest.config.mts, mirroring
 // jest.preset.js's role for Jest projects. Each project config stays a
-// one-liner: `createVitestConfig({ dirname: __dirname, projectName: '@repo/x' })`.
+// one-liner: `createVitestConfig({ dirname: __dirname, projectName: '@agent-lcars/x' })`.
 export function createVitestConfig(options: {
   dirname: string;
   projectName: string;

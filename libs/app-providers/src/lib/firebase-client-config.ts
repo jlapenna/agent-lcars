@@ -5,7 +5,7 @@ import {
   getNextPublicFirebaseMessagingSenderId,
   getNextPublicFirebaseProjectId,
   getNextPublicFirebaseStorageBucket,
-} from '@repo/util/browser';
+} from '@agent-lcars/util/browser';
 
 /**
  * Firebase client SDK config, shared across every app that initializes a

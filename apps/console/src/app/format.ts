@@ -98,5 +98,5 @@ export function formatCost(usd: number): string {
 
 /* `shareArtifactUrl` moved to lib/deployment.ts: its base URL is
  * deployment config, and reading server-only config from this module would
- * drag @repo/util-server into the client bundles that import it
+ * drag @agent-lcars/util-server into the client bundles that import it
  * (refresh-button.tsx, action-item-card.tsx). */

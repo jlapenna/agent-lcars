@@ -1,6 +1,10 @@
 import 'server-only';
 
-import { isE2eTesting, isOnGoogleCloud, required } from '@repo/util-server';
+import {
+  isE2eTesting,
+  isOnGoogleCloud,
+  required,
+} from '@agent-lcars/util-server';
 import { headers } from 'next/headers';
 import type { Session } from 'next-auth';
 import NextAuth from 'next-auth';

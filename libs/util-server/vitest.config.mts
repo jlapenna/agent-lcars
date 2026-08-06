@@ -2,5 +2,5 @@ import { createVitestConfig } from '../../vitest.config.base.mts';
 
 export default createVitestConfig({
   dirname: __dirname,
-  projectName: '@repo/util-server',
+  projectName: '@agent-lcars/util-server',
 });

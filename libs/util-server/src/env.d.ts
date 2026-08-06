@@ -1,4 +1,4 @@
-import type { EnvVars } from '@repo/env';
+import type { EnvVars } from '@agent-lcars/env';
 
 declare global {
   namespace NodeJS {

@@ -1,9 +1,9 @@
 {
-  "name": "@repo/logging",
+  "name": "@agent-lcars/logging",
   "version": "0.0.1",
   "private": true,
   "sideEffects": false,
   "dependencies": {
-    "@repo/env": "workspace:*"
+    "@agent-lcars/env": "workspace:*"
   }
 }

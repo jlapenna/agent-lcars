@@ -1,5 +1,5 @@
+import { logger } from '@agent-lcars/logging';
 import { SessionDoc, SessionSummary } from '@agent-lcars/telemetry';
-import { logger } from '@repo/logging';
 import { describe, expect, it, vi } from 'vitest';
 
 import { WatcherDaemon } from './daemon';

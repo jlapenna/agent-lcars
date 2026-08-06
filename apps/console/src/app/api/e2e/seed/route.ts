@@ -8,7 +8,7 @@ import {
   SESSIONS_COLLECTION,
   upsertSession,
 } from '@agent-lcars/telemetry/server';
-import { isE2eTesting } from '@repo/util-server';
+import { isE2eTesting } from '@agent-lcars/util-server';
 import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 

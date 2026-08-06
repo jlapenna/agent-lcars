@@ -1,6 +1,6 @@
 /** Handle special cases in env dotfiles. */
 
-import { isOnGoogleCloud, isTrue, optional, required } from '@repo/env';
+import { isOnGoogleCloud, isTrue, optional, required } from '@agent-lcars/env';
 
 export { isOnGoogleCloud, optional, required };
 

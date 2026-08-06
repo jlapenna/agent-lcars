@@ -7,7 +7,7 @@ violations=0
 
 while IFS= read -r manifest; do
   offending_deps=$(jq -r \
-    '(.dependencies // {}) + (.devDependencies // {}) | keys[] | select((startswith("@repo/") or startswith("@agent-lcars/")) | not)' \
+    '(.dependencies // {}) + (.devDependencies // {}) | keys[] | select(startswith("@agent-lcars/") | not)' \
     "$manifest")
   if [ -n "$offending_deps" ]; then
     echo "External dependencies must be declared in the root package.json: $manifest"

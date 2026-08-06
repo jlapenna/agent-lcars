@@ -1,7 +1,7 @@
 'use client';
 
+import { AppProviders } from '@agent-lcars/app-providers';
 import { MantineColorScheme } from '@mantine/core';
-import { AppProviders } from '@repo/app-providers';
 
 import { theme } from './theme';
 

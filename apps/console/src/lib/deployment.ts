@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { optional } from '@repo/util-server';
+import { optional } from '@agent-lcars/util-server';
 
 /**
  * Every value that describes *this particular deployment* of the console
@@ -20,7 +20,7 @@ import { optional } from '@repo/util-server';
  * deleting the fallbacks is the stricter follow-up; it needs every test and
  * CI surface to supply them first.)
  *
- * Server-only: `@repo/util-server` must never reach a client bundle. Client
+ * Server-only: `@agent-lcars/util-server` must never reach a client bundle. Client
  * components that need one of these take it as a prop from a server
  * component — see `shareArtifactUrl`'s callers.
  */
