@@ -153,6 +153,15 @@ async function IndexBody({
         }
       />
 
+      <AgentActivityPanel
+        activity={filteredActivity}
+        cliSessions={filteredCliSessions}
+        itemsByRunId={itemsByRunId}
+        sessionsByRunId={sessionsByRunId}
+        recentRunsCapped={activity.recentRuns.length >= RECENT_RUN_LIMIT}
+        cliSessionsCapped={cliSessions.length >= MAX_SESSIONS}
+      />
+
       <CommandDeckSections
         waitingOnDeploy={queueView.waitingOnDeploy
           .filter((i) => matchesFilter(i.repo))
@@ -161,15 +170,6 @@ async function IndexBody({
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}
         cliSessions={filteredCliSessions}
-      />
-
-      <AgentActivityPanel
-        activity={filteredActivity}
-        cliSessions={filteredCliSessions}
-        itemsByRunId={itemsByRunId}
-        sessionsByRunId={sessionsByRunId}
-        recentRunsCapped={activity.recentRuns.length >= RECENT_RUN_LIMIT}
-        cliSessionsCapped={cliSessions.length >= MAX_SESSIONS}
       />
     </>
   );
