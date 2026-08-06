@@ -33,7 +33,11 @@ function makeLedger(overrides: Partial<DispatchLedger> = {}): DispatchLedger {
   return {
     schema: 'agent-lcars.dispatch-ledger/v1',
     revision: 1,
-    task: { repository: 'supersprinklesracing/sprinkles', issue: 42 },
+    task: {
+      repositoryId: 1001,
+      repository: 'supersprinklesracing/sprinkles',
+      issue: 42,
+    },
     createdAt: '2026-07-07T00:00:00Z',
     updatedAt: '2026-07-07T00:00:00Z',
     control: { closed: false },

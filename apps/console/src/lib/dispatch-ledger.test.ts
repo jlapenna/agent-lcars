@@ -12,7 +12,11 @@ function ledgerJson(overrides: Partial<DispatchLedger> = {}): DispatchLedger {
   return {
     schema: 'agent-lcars.dispatch-ledger/v1',
     revision: 3,
-    task: { repository: 'supersprinklesracing/sprinkles', issue: 42 },
+    task: {
+      repositoryId: 1001,
+      repository: 'supersprinklesracing/sprinkles',
+      issue: 42,
+    },
     createdAt: '2026-07-01T00:00:00Z',
     updatedAt: '2026-07-01T00:10:00Z',
     control: { closed: false },
@@ -142,7 +146,11 @@ describe('parseDispatchLedger', () => {
   // parsed ledger's own `task` field.
   it('rejects a structurally valid ledger whose task field points at a different issue', () => {
     const ledger = ledgerJson({
-      task: { repository: 'supersprinklesracing/sprinkles', issue: 999 },
+      task: {
+        repositoryId: 1001,
+        repository: 'supersprinklesracing/sprinkles',
+        issue: 999,
+      },
     });
     const result = parseDispatchLedger(
       commentWithLedger(ledger),
@@ -155,7 +163,11 @@ describe('parseDispatchLedger', () => {
 
   it('rejects a structurally valid ledger whose task field points at a different repository', () => {
     const ledger = ledgerJson({
-      task: { repository: 'someone-else/other-repo', issue: 42 },
+      task: {
+        repositoryId: 1002,
+        repository: 'someone-else/other-repo',
+        issue: 42,
+      },
     });
     const result = parseDispatchLedger(
       commentWithLedger(ledger),
@@ -168,7 +180,11 @@ describe('parseDispatchLedger', () => {
 
   it('matches the task repository case-insensitively (mirrors broker.mjs)', () => {
     const ledger = ledgerJson({
-      task: { repository: 'SuperSprinklesRacing/Sprinkles', issue: 42 },
+      task: {
+        repositoryId: 1001,
+        repository: 'SuperSprinklesRacing/Sprinkles',
+        issue: 42,
+      },
     });
     const result = parseDispatchLedger(
       commentWithLedger(ledger),

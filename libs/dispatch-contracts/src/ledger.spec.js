@@ -5,6 +5,7 @@ import {
   hasLedgerMarker,
   isWellFormedGeneration,
   isWellFormedLedger,
+  isWellFormedSource,
   LEDGER_ACTIVE_GENERATION_STATES,
   LEDGER_GENERATION_STATES,
   LEDGER_MARKER,
@@ -171,6 +172,35 @@ describe('isWellFormedLedger', () => {
     expect(isWellFormedLedger(ledgerFixture(overrides))).toBe(false);
   });
 
+  it('rejects a task missing its repositoryId', () => {
+    // The type guard promises a numeric LedgerTaskRef.repositoryId. Letting
+    // one through without it hands every downstream consumer `undefined`
+    // from a field the compiler said was a number -- and it is the field
+    // that survives a repository rename, which the `repository` string
+    // cannot do. The writer's assertTaskRef has always required it.
+    expect(
+      isWellFormedLedger(
+        ledgerFixture({
+          task: { repository: 'jlapenna/agent-lcars', issue: 645 },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects a non-positive repositoryId', () => {
+    expect(
+      isWellFormedLedger(
+        ledgerFixture({
+          task: {
+            repositoryId: 0,
+            repository: 'jlapenna/agent-lcars',
+            issue: 645,
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it('rejects a generation naming an unknown pipeline', () => {
     expect(
       isWellFormedGeneration({
@@ -194,6 +224,37 @@ describe('isWellFormedLedger', () => {
         pipeline: 'canary',
         state: 'active',
       }),
+    ).toBe(true);
+  });
+
+  it('accepts both authorization variants a source entry can carry', () => {
+    // The broker persists two genuinely different shapes: a decision
+    // (`authorized`, from a label or comment) and an observation
+    // (`observed`, from a completion callback, close/reopen, reconciliation,
+    // or label self-heal) that carries no decision at all. Modelling only
+    // the first would tell a consumer that `authorized` exists on records
+    // that never had it.
+    const decision = {
+      sourceKind: 'labeled',
+      sourceId: 's1',
+      occurredAt: 'now',
+      authorization: {
+        authorized: true,
+        actor: 'jlapenna',
+        configuredMaintainer: 'jlapenna',
+        rule: 'manual-maintainer',
+      },
+    };
+    const observation = {
+      sourceKind: 'completion-callback',
+      sourceId: 's2',
+      occurredAt: 'now',
+      authorization: { observed: true, workflow: 'codex.yml' },
+    };
+    expect(isWellFormedSource(decision)).toBe(true);
+    expect(isWellFormedSource(observation)).toBe(true);
+    expect(
+      isWellFormedLedger(ledgerFixture({ sources: [decision, observation] })),
     ).toBe(true);
   });
 

@@ -142,10 +142,38 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
  */
 
 /**
- * @typedef {object} LedgerAuthorization
+ * A real authorization decision: some actor did something, and policy either
+ * admitted it or did not.
+ *
+ * @typedef {object} LedgerAuthorizationDecision
  * @property {boolean} authorized
  * @property {string} [actor] The login whose action produced the signal.
- * @property {string} [rule] Which policy clause admitted it.
+ * @property {string} [configuredMaintainer] The maintainer login `authorized`
+ *   was evaluated against, kept so an old decision stays auditable after the
+ *   configured maintainer changes.
+ * @property {string} [rule] Which policy clause decided it.
+ */
+
+/**
+ * Evidence that something *happened*, carrying no decision at all.
+ *
+ * Completion callbacks, close/reopen, reconciliation, and label self-heal
+ * record what was observed rather than what was permitted — the broker
+ * persists `{ observed: true, ... }` with no `authorized` key. Keeping this a
+ * separate variant is the point: collapsing the two would tell a consumer
+ * that `authorized` exists on records that never had it, and hide the
+ * `workflow`/`actor` evidence that is the only thing these records carry.
+ * Discriminate on `observed` before reading `authorized`.
+ *
+ * @typedef {object} LedgerAuthorizationObservation
+ * @property {true} observed
+ * @property {string} [actor] The login or component that observed it.
+ * @property {string} [workflow] The worker workflow a completion callback
+ *   arrived from.
+ */
+
+/**
+ * @typedef {LedgerAuthorizationDecision | LedgerAuthorizationObservation} LedgerAuthorization
  */
 
 /**
@@ -360,6 +388,16 @@ export function isWellFormedLedger(value) {
   if (!isPlainObject(value.task)) return false;
   if (!isNonEmptyString(value.task.repository)) return false;
   if (!isPositiveInteger(value.task.issue)) return false;
+  // `repositoryId` is checked for presence and shape, not identity. The type
+  // guard declares a `LedgerTaskRef` with a required numeric `repositoryId`,
+  // so letting a ledger without one through would hand every downstream
+  // consumer `undefined` from a field the compiler promised was a number --
+  // and it is the field that survives a repository rename, which is the one
+  // job the `repository` string cannot do. Cross-checking it against the
+  // task the caller expected stays the caller's decision; the writer's
+  // `assertTaskRef` has always required it, so nothing the broker has ever
+  // written is rejected by this.
+  if (!isPositiveInteger(value.task.repositoryId)) return false;
   if (!Array.isArray(value.sources) || !Array.isArray(value.generations)) {
     return false;
   }
