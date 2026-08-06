@@ -1,6 +1,6 @@
 name: Agent Issue Router
-# Control-plane runner policy: keep normalization and broker admission
-# independent from the shared worker fleet.
+# Control-plane runner policy: keep normalization and broker admission on the
+# dedicated self-hosted CI pool, separate from the agent worker fleet.
 
 # Every transport is normalized read-only before one job-level concurrency
 # queue serializes control-plane writes for the canonical repository/issue.
@@ -65,10 +65,11 @@ permissions:
 
 jobs:
   normalize:
-    # The control plane is intentionally GitHub-hosted: normalization only
-    # reads the event and broker metadata, and must remain available when the
-    # shared self-hosted worker fleet is saturated or offline.
-    runs-on: ubuntu-latest
+    # Control-plane work has a protected, always-warm self-hosted pool.
+    runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
+    concurrency:
+      group: ${{ github.repository }}-control-plane-normalize
+      cancel-in-progress: false
     timeout-minutes: 2
     outputs:
       eligible: ${{ steps.normalize.outputs.eligible }}
@@ -98,16 +99,14 @@ jobs:
   broker:
     needs: normalize
     if: needs.normalize.outputs.eligible == 'true'
-    # Broker writes are also control-plane work and must not consume a worker
-    # runner slot or wait for the shared self-hosted fleet to recover.
-    runs-on: ubuntu-latest
+    # Broker writes stay on the protected self-hosted control-plane pool.
+    runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
     timeout-minutes: 5
     concurrency:
       # Reserved repository-wide prefix; contract test proves no other job or
       # workflow can case-fold into this broker namespace.
       group: ${{ needs.normalize.outputs.group }}
       cancel-in-progress: false
-      queue: max
     steps:
       - name: Checkout trusted broker revision
         uses: actions/checkout@v7

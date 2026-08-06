@@ -226,6 +226,7 @@ jobs:
         with:
           go-version-file: apps/runner-autoscaler/go.mod
           cache-dependency-path: apps/runner-autoscaler/go.mod
+          cache: false
 
       - uses: ./.github/actions/setup-node-pnpm
 
@@ -429,6 +430,46 @@ jobs:
           docker buildx imagetools create \
             --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:latest \
             ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/runner-autoscaler:${{ github.sha }}
+
+      # The router/reconciler pool intentionally has its own image. Keep it
+      # adjacent to the normal autoscaler image so a control-plane Dockerfile
+      # change follows the same staged-build, scan, and promotion contract.
+      - name: Build and push control-plane runner image (staging)
+        if: steps.plan.outputs.control-plane == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: apps/runner-autoscaler/control-plane-image
+          file: apps/runner-autoscaler/control-plane-image/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/control-plane-runner:${{ github.sha }}
+          cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/control-plane-runner:buildcache
+          cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/control-plane-runner:buildcache,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Scan control-plane runner image (linux/amd64)
+        if: steps.plan.outputs.control-plane == 'true'
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/control-plane-runner:${{ github.sha }}
+          platform: linux/amd64
+          category: control-plane-runner-linux-amd64
+
+      - name: Scan control-plane runner image (linux/arm64)
+        if: steps.plan.outputs.control-plane == 'true'
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/control-plane-runner:${{ github.sha }}
+          platform: linux/arm64
+          category: control-plane-runner-linux-arm64
+
+      - name: Promote control-plane runner image to :latest
+        if: steps.plan.outputs.control-plane == 'true'
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/control-plane-runner:latest \
+            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/control-plane-runner:${{ github.sha }}
 
       # Pushed to the staging tag (:<sha>) first, same reason as the
       # control-plane image above. The FINAL tag name is unaffected and

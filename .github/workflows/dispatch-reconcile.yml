@@ -62,9 +62,9 @@ concurrency:
 
 jobs:
   scan:
-    # Reconciliation is control-plane work and must remain available when
-    # the shared self-hosted fleet is saturated or offline.
-    runs-on: ubuntu-latest
+    # Reconciliation is control-plane work: use the protected, always-warm
+    # self-hosted control-plane pool.
+    runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
     timeout-minutes: 5
     steps:
       - name: Checkout trusted broker revision
