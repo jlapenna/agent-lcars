@@ -202,15 +202,24 @@ jobs:
 
       # The published action resolves its cache key with an unauthenticated
       # GitHub Releases API request. Shared runners can exhaust that IP-based
-      # limit even when this job has a valid token, so make curl authenticate
-      # that request (and leave the token in the ephemeral runner only).
+      # limit even when this job has a valid token, so scope authentication to
+      # that one URL without putting the token in a process-wide curl config.
       - name: Authenticate published OpenCode action API calls
-        env:
-          GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
         run: |
           umask 077
-          printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" > "$RUNNER_TEMP/.curlrc"
-          echo "CURL_HOME=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/opencode-curl-bin"
+          cat > "$RUNNER_TEMP/opencode-curl-bin/curl" <<'CURL_WRAPPER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          for argument in "$@"; do
+            if [[ "$argument" == 'https://api.github.com/repos/anomalyco/opencode/releases/latest' ]]; then
+              exec /usr/bin/curl -H "Authorization: Bearer ${GITHUB_TOKEN:?}" "$@"
+            fi
+          done
+          exec /usr/bin/curl "$@"
+          CURL_WRAPPER
+          chmod 700 "$RUNNER_TEMP/opencode-curl-bin/curl"
+          echo "$RUNNER_TEMP/opencode-curl-bin" >> "$GITHUB_PATH"
 
       - name: Run OpenCode
         id: agent
