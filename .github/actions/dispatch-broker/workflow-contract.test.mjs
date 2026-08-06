@@ -243,7 +243,7 @@ test('opencode uses the published action with a bounded trajectory contract', as
   assert.match(source, /^\s+agent:\s+build\s*$/mu);
   assert.match(source, /^\s+variant:\s+minimal\s*$/mu);
   assert.match(source, /first durable\s+artifact/u);
-  assert.match(source, /exactly one\s+of: PR <url>, PARK/u);
+  assert.match(source, /exactly one\s+of: PR <url>, REVIEW/u);
 });
 
 test('workers expose one canonical dispatch and lane-configuration contract', async () => {

@@ -246,20 +246,22 @@ jobs:
             first 5 minutes, read the anchor and latest prior attempt, state
             the diagnosis and smallest implementation plan, and begin the
             targeted work. By 30 minutes, produce the first durable artifact:
-            a source edit, a pushed branch/PR, or a protocol-safe park/no-op
-            comment. By 90 minutes, stop expanding scope and finalize the
+            a committed and pushed edit, a PR, or a protocol-safe park/no-op
+            comment. A local source edit alone is not durable on an ephemeral
+            runner. By 90 minutes, stop expanding scope and finalize the
             artifact.
 
             Every dispatch must end with visible GitHub state. A summary in
             the model response alone is not a deliverable. For implement
-            work, push the focused change and open/update the PR; for a real
+            work, push the focused change and open/update the PR; for review
+            work, submit the required pull-request review; for a real
             blocker, park using the protocol's exact comment, label, and
             maintainer-assignee recipe; for an already-resolved request, post
             the evidence-backed no-op. If the diagnosis is not proven after
             one targeted action, stop and park with the evidence rather than
             retrying the same approach. End your response with exactly one
-            of: PR <url>, PARK <blocker and resume trigger>, or NO-OP
-            <evidence>.
+            of: PR <url>, REVIEW <evidence>, PARK <blocker and resume
+            trigger>, or NO-OP <evidence>.
 
       # Runs from the pre-agent snapshot ($RUNNER_TEMP), not
       # `uses: ./.github/actions/telemetry-finalize`: this step executes
