@@ -64,18 +64,21 @@ These override any default behavior:
 - **Never commit credentials.** Runtime secrets belong in GCP Secret
   Manager and the host writer credential belongs in the encrypted homelab
   secret store. Terraform owns secret _containers_ here, never secret
-  _values_ — do not add, remove, or restructure Terraform-managed
-  resources, and never put a real secret value in a file Terraform
-  touches. **Never touch `infra/terraform`** beyond that.
+  _values_. Terraform changes require explicit maintainer approval for the
+  specific issue and operation; without that approval, do not add, remove,
+  or restructure Terraform-managed resources. Never put a real secret value
+  in a file Terraform touches.
 
-- **Never run `firebase deploy` (or any other direct deploy command)
-  yourself.** Deployment is `.github/workflows/deploy-console.yml`'s job —
-  it fires automatically off a green `CI` run on `main`. Getting your PR
-  merged is as far as your responsibility goes; do not try to push a
-  deploy to make a change "live" faster.
+- **Do not run `firebase deploy` (or any other direct deploy command) without
+  explicit maintainer approval for that specific command and target.** The
+  normal deployment path is `.github/workflows/deploy-console.yml` — it fires
+  automatically off a green `CI` run on `main`. Without explicit approval,
+  getting your PR merged is as far as your responsibility goes; do not try to
+  push a deploy to make a change "live" faster.
 
-- **Never write to this repo's Firestore database directly** from an agent
-  run — go through the application code paths the console itself uses.
+- **Do not write to this repo's Firestore database directly without explicit
+  maintainer approval for the specific operation.** Without that approval,
+  go through the application code paths the console itself uses.
 
 - **Keep this repo independent from the `supersprinklesracing` source
   tree.** No cross-repository source imports or shared build contexts.
