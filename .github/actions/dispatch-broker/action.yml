@@ -1,5 +1,10 @@
 name: Serialized dispatch broker
 description: Normalize, serialize, bind, and verify durable agent dispatch intents.
+# main.mjs imports the shared libs/dispatch-contracts package via a
+# repo-relative path above this action directory
+# (../../../libs/dispatch-contracts/src/index.js), so a cross-repo `uses:`
+# of this action requires the whole-repo checkout the caller downloads by
+# default -- see docs/published-actions.md's "whole-repo-download caveat".
 
 inputs:
   operation:

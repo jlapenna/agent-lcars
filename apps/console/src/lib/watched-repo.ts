@@ -5,11 +5,20 @@
  * for just these types - gets pulled into a 'use client' component's
  * browser bundle and fails to build (Node-only deps like firebase-admin
  * can't bundle for the browser). This file has zero server dependencies
- * and is safe to import from client components.
+ * and is safe to import from client components - which is also why the
+ * pipeline facts below come from `@agent-lcars/dispatch-contracts`
+ * (itself zero-dependency, see its own header comment) rather than from
+ * anything in this repo that touches the server.
  */
 
+import {
+  AGENT_PIPELINES,
+  type AgentPipeline as SharedAgentPipeline,
+  agentPipelineContract,
+} from '@agent-lcars/dispatch-contracts';
+
 /** Coding-agent pipelines understood by the current console UI. */
-export type AgentPipeline = 'claude' | 'codex' | 'opencode';
+export type AgentPipeline = SharedAgentPipeline;
 
 export interface AgentIntegration {
   /** Workflow dispatched through the repository's agent router. */
@@ -22,27 +31,32 @@ export interface AgentIntegration {
   replyTriggerAliases?: string[];
 }
 
+/** Builds the standard `AgentIntegration` for one pipeline from the shared
+ * contract, omitting `replyTriggerAliases` entirely when the pipeline has
+ * none rather than carrying an empty array - matches how the hand-written
+ * table used to be shaped, and callers like `backend-actions.ts`'s
+ * `replyTriggers` already treat "absent" and "empty" the same via `?? []`. */
+function integrationFromContract(pipeline: AgentPipeline): AgentIntegration {
+  const contract = agentPipelineContract(pipeline);
+  return {
+    workflowFile: contract.workflowFile,
+    label: contract.label,
+    replyTrigger: contract.replyTrigger,
+    ...(contract.replyTriggerAliases.length > 0
+      ? { replyTriggerAliases: [...contract.replyTriggerAliases] }
+      : {}),
+  };
+}
+
 export const DEFAULT_AGENT_INTEGRATIONS: Record<
   AgentPipeline,
   AgentIntegration
-> = {
-  claude: {
-    workflowFile: 'claude.yml',
-    label: 'agent:claude',
-    replyTrigger: '@claude',
-  },
-  codex: {
-    workflowFile: 'codex.yml',
-    label: 'agent:codex',
-    replyTrigger: '/codex',
-  },
-  opencode: {
-    workflowFile: 'opencode.yml',
-    label: 'agent:opencode',
-    replyTrigger: '/oc',
-    replyTriggerAliases: ['/opencode'],
-  },
-};
+> = Object.fromEntries(
+  AGENT_PIPELINES.map((pipeline) => [
+    pipeline,
+    integrationFromContract(pipeline),
+  ]),
+) as Record<AgentPipeline, AgentIntegration>;
 
 /** Canonical GitHub repository identity. Cosmetic configuration and agent
  * integration metadata never participate in identity. */

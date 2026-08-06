@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
+import { displayTitleMatchesAttempt } from '../../../libs/dispatch-contracts/src/index.js';
 import {
   acceptIntent,
   ACTIVE_STATES,
@@ -143,12 +144,11 @@ function activeGeneration(ledger) {
 }
 
 function assertWorkerRun(run, task, generation, expectedWorkflow) {
-  const marker = `[dispatch:g${generation.generation}:${generation.intentId}]`;
   if (
     run.repository?.id !== task.repositoryId ||
     run.event !== 'workflow_dispatch' ||
     run.path !== `.github/workflows/${expectedWorkflow}` ||
-    !run.display_title?.includes(marker)
+    !displayTitleMatchesAttempt(run.display_title, generation)
   ) {
     throw new Error('Worker run identity does not match its ledger binding');
   }

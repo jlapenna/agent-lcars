@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  excludedPullRequestAuthors,
+  formatDispatchMarker,
+  PIPELINE_CONTRACTS,
+} from '../../../libs/dispatch-contracts/src/index.js';
 import { agentWorkerPipelines, workerWorkflow } from './github-api.mjs';
 
 const tests = [];
@@ -257,39 +262,60 @@ test('workers expose one canonical dispatch and lane-configuration contract', as
     'broker_generation',
     'broker_dispatch_token',
   ];
-  for (const workflow of workerWorkflowNames) {
+  for (const pipeline of agentWorkerPipelines) {
+    const workflow = workerWorkflow(pipeline);
+    const contract = PIPELINE_CONTRACTS[pipeline];
     const source = sources.find(
       (candidate) => candidate.name === workflow,
     )?.source;
     assert.ok(source, `${workflow} is missing`);
-    const agent = laneValue(source, workflow, 'AGENT_NAME');
     assert.deepEqual(dispatchInputNames(source), expectedInputs);
     assert.equal(
       /^run-name:\s+(.+)$/mu.exec(source)?.[1],
       "'#${{ inputs.issue }}: " +
-        `${agent} issue agent ` +
-        "[dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'",
+        `${contract.runNameLabel} ` +
+        `${formatDispatchMarker({
+          generation: '${{ inputs.broker_generation }}',
+          intentId: '${{ inputs.broker_intent_id }}',
+        })}'`,
       `${workflow} must derive its run name from canonical inputs and lane data`,
     );
     assert.doesNotMatch(source, /github\.event\.inputs/u);
     assert.doesNotMatch(source, /missing=""/u);
     assert.equal(
+      laneValue(source, workflow, 'AGENT_NAME'),
+      contract.displayName,
+      `${workflow} must declare its display name as lane data`,
+    );
+    assert.equal(
       laneValue(source, workflow, 'WORKER_WORKFLOW'),
-      workflow,
+      contract.workflowFile,
       `${workflow} must identify itself to the broker`,
     );
-    for (const field of [
-      'AGENT_GIT_LOGIN',
-      'EXPECTED_COMMENT_LOGIN',
-      'EXCLUDE_PR_AUTHOR',
-      'AGENT_LABEL',
-      'REDISPATCH_COMMAND',
-    ]) {
-      assert.ok(
-        laneValue(source, workflow, field),
-        `${workflow} must declare nonempty ${field} lane data`,
-      );
-    }
+    assert.equal(
+      laneValue(source, workflow, 'EXPECTED_COMMENT_LOGIN'),
+      contract.botLogin,
+      `${workflow} must declare its bot login as lane data`,
+    );
+    assert.equal(
+      laneValue(source, workflow, 'EXCLUDE_PR_AUTHOR'),
+      excludedPullRequestAuthors(pipeline)[0],
+      `${workflow} must declare its excluded PR author as lane data`,
+    );
+    assert.equal(
+      laneValue(source, workflow, 'AGENT_LABEL'),
+      contract.label,
+      `${workflow} must declare its agent:* label as lane data`,
+    );
+    assert.equal(
+      laneValue(source, workflow, 'REDISPATCH_COMMAND'),
+      contract.redispatchCommand,
+      `${workflow} must declare its redispatch command as lane data`,
+    );
+    assert.ok(
+      laneValue(source, workflow, 'AGENT_GIT_LOGIN'),
+      `${workflow} must declare nonempty AGENT_GIT_LOGIN lane data`,
+    );
     for (const use of [
       'agent-login: ${{ env.AGENT_GIT_LOGIN }}',
       'agent: ${{ env.AGENT_NAME }}',

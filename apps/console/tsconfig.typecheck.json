@@ -20,6 +20,9 @@
       "@repo/util-server": ["libs/util-server/src/index.ts"],
       "@repo/util-server/*": ["libs/util-server/src/*"],
       "@repo/app-providers": ["libs/app-providers/src/index.ts"],
+      "@agent-lcars/dispatch-contracts": [
+        "libs/dispatch-contracts/src/index.js"
+      ],
       "@agent-lcars/telemetry": ["libs/telemetry/src/index.ts"],
       "@agent-lcars/telemetry/server": ["libs/telemetry/src/server/index.ts"]
     }

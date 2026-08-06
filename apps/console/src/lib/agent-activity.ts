@@ -1,3 +1,4 @@
+import { parseDispatchMarker } from '@agent-lcars/dispatch-contracts';
 import type { Octokit } from '@octokit/rest';
 
 import {
@@ -135,29 +136,24 @@ export function issueNumberFromDisplayTitle(
  * the serialized dispatch broker's own reconciliation marker
  * (`.github/actions/dispatch-broker/broker.mjs` and `github-api.mjs` render
  * the identical `[dispatch:g${generation}:${intentId}]` string when binding
- * a run). Parsing it back out lets the console attribute a raw workflow run
- * to the exact ledger generation/intent that dispatched it (see
- * `logical-work.ts`'s `toExecutionAttempt`) instead of only knowing the
- * issue it worked. Undefined for runs that predate the broker rollout, or
- * any run dispatched by hand outside it (a manual `workflow_dispatch` leaves
- * the input blank, which GitHub Actions renders as an empty
- * `[dispatch:g:]`) - both cases fall back to title/issue-number attribution
- * only.
+ * a run, both via `@agent-lcars/dispatch-contracts`' `formatDispatchMarker`).
+ * Parsing it back out lets the console attribute a raw workflow run to the
+ * exact ledger generation/intent that dispatched it (see `logical-work.ts`'s
+ * `toExecutionAttempt`) instead of only knowing the issue it worked.
+ * Undefined for runs that predate the broker rollout, or any run dispatched
+ * by hand outside it (a manual `workflow_dispatch` leaves the input blank,
+ * which GitHub Actions renders as an empty `[dispatch:g:]`) - both cases
+ * fall back to title/issue-number attribution only.
  */
-const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:-]+)\]/;
+export type AttemptMarker = NonNullable<ReturnType<typeof parseDispatchMarker>>;
 
-export interface AttemptMarker {
-  generation: number;
-  intentId: string;
-}
-
+/** Thin wrapper over the shared package's `parseDispatchMarker`, kept under
+ * this name and signature because `tools/contract-tests/run-name-console-
+ * join.test.ts` imports it directly to exercise this exact join. */
 export function attemptMarkerFromDisplayTitle(
   displayTitle: string,
 ): AttemptMarker | undefined {
-  const match = displayTitle.match(DISPATCH_MARKER_RE);
-  return match
-    ? { generation: Number(match[1]), intentId: match[2] }
-    : undefined;
+  return parseDispatchMarker(displayTitle);
 }
 
 const PIPELINE_TITLE_PREFIX_RE = /^(?:codex|opencode)\s+/;

@@ -239,6 +239,8 @@ importers:
 
   apps/console-e2e: {}
 
+  libs/dispatch-contracts: {}
+
   libs/env-vars: {}
 
   libs/logging:

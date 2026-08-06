@@ -1,4 +1,10 @@
 import {
+  AGENT_PIPELINES,
+  DISPATCH_LABELS,
+  displayTitleMatchesAttempt,
+  workerWorkflow,
+} from '../../../libs/dispatch-contracts/src/index.js';
+import {
   createLedger,
   LEDGER_MARKER,
   parseLedgerComment,
@@ -505,24 +511,14 @@ async function mapWithConcurrency(items, limit, worker) {
   return results;
 }
 
-// The six `agent:*`/`review:*` labels dispatch-capable issues/PRs carry
-// (normalize.mjs owns the authoritative AGENT_LABELS/REVIEW_LABELS maps
-// keyed the other direction; this is a small, stable literal duplication
-// rather than a new cross-module export for six constants). GitHub's
-// issues-list-by-label filter is an AND across a comma-separated `labels`
-// value, so discovering "any agent:*/review:* label" requires one query per
-// label rather than one combined query -- each is independently cheap and
-// reliably paginated (no search-index replication lag), unlike a full-text
-// search over the ledger's hidden marker comment, which the epic design
-// audit (#301) explicitly rejected as a discovery mechanism.
-const RECONCILE_DISCOVERY_LABELS = [
-  'agent:claude',
-  'agent:codex',
-  'agent:opencode',
-  'review:claude',
-  'review:codex',
-  'review:opencode',
-];
+// The six `agent:*`/`review:*` labels dispatch-capable issues/PRs carry.
+// GitHub's issues-list-by-label filter is an AND across a comma-separated
+// `labels` value, so discovering "any agent:*/review:* label" requires one
+// query per label rather than one combined query -- each is independently
+// cheap and reliably paginated (no search-index replication lag), unlike a
+// full-text search over the ledger's hidden marker comment, which the epic
+// design audit (#301) explicitly rejected as a discovery mechanism.
+const RECONCILE_DISCOVERY_LABELS = DISPATCH_LABELS;
 
 // Read-only discovery for dispatch-reconcile.yml's scan job (#305): every
 // currently open issue or pull request carrying any `agent:*`/`review:*`
@@ -658,30 +654,13 @@ async function pinLedgerWhenUnoccupied(api, loaded, isPullRequest) {
   }
 }
 
-const workerConfigurations = Object.freeze({
-  claude: Object.freeze({ workflow: 'claude.yml', contract: 'agent' }),
-  codex: Object.freeze({ workflow: 'codex.yml', contract: 'agent' }),
-  opencode: Object.freeze({ workflow: 'opencode.yml', contract: 'agent' }),
-  canary: Object.freeze({
-    // #307's no-op production canary pipeline -- see broker.mjs's PIPELINES
-    // comment and normalize.mjs's `kind: 'canary'` branch for why this is
-    // the only worker that pipeline can ever resolve to.
-    workflow: 'agent-dispatch-canary.yml',
-    contract: 'canary',
-  }),
-});
-
-const agentWorkerPipelines = Object.freeze(
-  Object.entries(workerConfigurations)
-    .filter(([, configuration]) => configuration.contract === 'agent')
-    .map(([pipeline]) => pipeline),
-);
-
-function workerWorkflow(pipeline) {
-  const workflow = workerConfigurations[pipeline]?.workflow;
-  if (!workflow) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
-  return workflow;
-}
+// workerConfigurations/agentWorkerPipelines/workerWorkflow used to be
+// github-api.mjs's own hand-copied worker registry. They now come straight
+// from the shared libs/dispatch-contracts/src/pipelines.js definitions
+// (AGENT_PIPELINES/workerWorkflow, imported above), re-exported under their
+// original names so existing importers (main.mjs, workflow-contract.test.mjs,
+// github-api.test.mjs) don't churn.
+const agentWorkerPipelines = AGENT_PIPELINES;
 
 function validateDispatchResponse(response, task) {
   if (response.status !== 200) {
@@ -802,7 +781,6 @@ function createdAtOrAfterFilter(generation) {
 async function findRunsForGeneration(api, task, generation) {
   const workflow = workerWorkflow(generation.pipeline);
   const root = repositoryPath(task);
-  const marker = `[dispatch:g${generation.generation}:${generation.intentId}]`;
   const createdFilter = createdAtOrAfterFilter(generation);
   const matches = [];
   for (let page = 1; page <= FIND_RUNS_FOR_GENERATION_MAX_PAGES; page += 1) {
@@ -811,7 +789,9 @@ async function findRunsForGeneration(api, task, generation) {
     );
     const runs = data.workflow_runs ?? [];
     for (const run of runs) {
-      if (run.display_title?.includes(marker)) matches.push(run);
+      if (displayTitleMatchesAttempt(run.display_title, generation)) {
+        matches.push(run);
+      }
     }
     if (runs.length < 100) break;
   }
