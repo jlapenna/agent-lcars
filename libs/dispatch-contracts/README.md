@@ -49,7 +49,7 @@ are therefore pinned by contract test instead of by import, and both must be
 edited alongside this package:
 
 - the four worker workflows' `run-name:` and per-lane `env:` values —
-  `.github/actions/dispatch-broker/workflow-contract.test.mjs` derives every
+  `apps/dispatch-broker/src/workflow-contract.spec.ts` derives every
   expected value from this registry;
 - the `AGENT_BOT_LOGINS` repo variable that `agent-automerge.yml` reads, which
   must equal this package's `AGENT_BOT_LOGINS`.

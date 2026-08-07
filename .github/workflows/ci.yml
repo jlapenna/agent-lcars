@@ -73,14 +73,8 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
-      - name: Test dispatch broker canary lifecycle (#307)
-        run: node --test .github/actions/run-dispatch-canary/*.test.mjs
-
       - name: Test image publish path-based routing (#441)
         run: node --test .github/actions/plan-image-publish/*.test.mjs
-
-      - name: Test infra-killed CI run detection and rerun (#536)
-        run: node --test .github/actions/rerun-infra-killed-runs/*.test.mjs
 
       - name: Test deliverable verification
         run: bash .github/actions/verify-deliverable/verify-deliverable.test.sh
@@ -120,10 +114,26 @@ jobs:
       # behavior with no signal anything is wrong. Rebuilding here and
       # diffing against what is committed turns that into a loud CI
       # failure instead.
-      - name: Check dispatch-broker bundle matches its source
+      #
+      # run-dispatch-canary/dist/run.mjs is the same pattern, built by the
+      # sibling `build-canary` target from apps/dispatch-broker/src/canary --
+      # checked here too, not just dispatch-broker/dist: this exact class of
+      # drift (source moved, committed bundle/import left stale) is what let
+      # run-dispatch-canary's action silently break for six straight
+      # scheduled runs with nothing in CI to catch it.
+      #
+      # rerun-infra-killed-runs/dist/main.mjs is the same pattern again,
+      # built by the sibling `build-rerun-infra-killed-runs` target from
+      # apps/dispatch-broker/src/rerun-infra-killed-runs -- checked here
+      # too: the exact same drift broke this action as well (five straight
+      # scheduled-run failures), so two actions -- not one -- broke this
+      # way with nothing in CI to catch it.
+      - name: Check dispatch-broker, run-dispatch-canary, and rerun-infra-killed-runs bundles match their source
         run: |
           pnpm nx build @agent-lcars/dispatch-broker
-          git diff --exit-code -- .github/actions/dispatch-broker/dist
+          pnpm nx build-canary @agent-lcars/dispatch-broker
+          pnpm nx build-rerun-infra-killed-runs @agent-lcars/dispatch-broker
+          git diff --exit-code -- .github/actions/dispatch-broker/dist .github/actions/run-dispatch-canary/dist .github/actions/rerun-infra-killed-runs/dist
 
       - name: Check formatting
         run: pnpm format:check

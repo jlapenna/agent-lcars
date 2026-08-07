@@ -230,10 +230,18 @@ test('snapshot-enforcement-scripts default gate list is guarded', async () => {
     if (!entry) break;
     entries.push(entry[1]);
   }
+  // post-agent-gates is the orchestrator that now invokes the other three, so
+  // it has to be snapshotted too: leave it out and an agent could rewrite
+  // post-agent-gates.sh in the workspace and neutralize all three gates at
+  // once, which is exactly what snapshotting into $RUNNER_TEMP prevents. It
+  // was added to the action's default list when the orchestrator landed, but
+  // this expectation was not updated -- and the mismatch went unnoticed
+  // because an earlier CI step was aborting the job before this test ran.
   assert.deepEqual(entries, [
     'verify-deliverable',
     'report-failure',
     'telemetry-finalize',
+    'post-agent-gates',
   ]);
 });
 

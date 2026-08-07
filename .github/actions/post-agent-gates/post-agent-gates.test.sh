@@ -77,10 +77,11 @@ chmod +x "$fake_bin/gh"
 export PATH="$fake_bin:$PATH"
 
 # Common env every case starts from; each case overrides what it needs.
-# WRITER_CREDENTIALS_FILE is deliberately left empty -- telemetry-finalize.sh
-# only consults the real sidecar wrapper at a fixed absolute path, which
-# does not exist in this test environment, so it always takes its
-# "Sidecar tooling not found" fallback branch regardless of this value.
+# WRITER_CREDENTIALS_FILE is deliberately left empty: telemetry-finalize.sh
+# either cannot find the sidecar wrapper at all, or finds it and stops on the
+# missing credentials. Both are non-shipping outcomes, which is what these
+# cases want -- see assert_telemetry_finalize_ran for why the branch taken
+# depends on where the suite runs.
 base_env() {
   export GH_TOKEN=test-token
   export AGENT="Test Agent"
@@ -121,6 +122,31 @@ fail() {
   exit 1
 }
 
+# telemetry-finalize.sh execs a hardcoded absolute path,
+# /usr/local/lib/agent-lcars/sidecar-lifecycle.sh, which this repo bakes into
+# its own runner image (apps/runner-autoscaler/runner-image/Dockerfile). So
+# which branch it takes depends on where the test runs: absent on a
+# workstation ("Sidecar tooling not found"), present on the fleet's runners,
+# where it reaches sidecar-lifecycle.sh and stops on the empty
+# WRITER_CREDENTIALS_FILE instead. Asserting either single message makes the
+# suite pass in one environment and fail in the other -- which it did, silently,
+# until an unrelated fix reordered CI enough for this step to finally run.
+#
+# What these cases actually care about is that telemetry-finalize ran at all,
+# and both messages prove exactly that. So accept either, and still fail loudly
+# if neither appears -- that is the regression worth catching.
+#
+# Deliberately not fixed by making the path an env override: post-agent-gates
+# runs after the agent step, and agents can write to $GITHUB_ENV, so an
+# env-controlled exec path here would hand them arbitrary code execution in a
+# later trusted step.
+assert_telemetry_finalize_ran() {
+  case "$output" in
+    *"Sidecar tooling not found"* | *"skipping telemetry finalize"*) ;;
+    *) fail "$1" ;;
+  esac
+}
+
 # --- Case 1: JOB_STATUS success, deliverable found - happy path. No
 # comment, no label/assignee mutation, exit 0. Telemetry-finalize's own
 # fallback message still appears (if: always() equivalent). ---
@@ -133,10 +159,7 @@ fail() {
 JSON
   run_case success-deliverable-found
   test "$status" = 0 || fail "a found deliverable must exit 0"
-  case "$output" in
-    *"Sidecar tooling not found"*) ;;
-    *) fail "telemetry-finalize must always run, even on the happy path" ;;
-  esac
+  assert_telemetry_finalize_ran "telemetry-finalize must always run, even on the happy path"
   if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
     fail "a found deliverable must never post a failure comment"
   fi
@@ -268,10 +291,7 @@ SCAN
   base_env
   export JOB_STATUS=success
   run_case telemetry-runs-on-clean-success
-  case "$output" in
-    *"Sidecar tooling not found"*) ;;
-    *) fail "telemetry-finalize must run unconditionally" ;;
-  esac
+  assert_telemetry_finalize_ran "telemetry-finalize must run unconditionally"
 )
 
 # --- Case 10: the real claude-log-scan.sh (not a fake stand-in) detects a

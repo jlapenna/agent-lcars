@@ -61,9 +61,9 @@ permissions:
 # dedup/serialization is the broker's job now: agent-router.yml's own
 # job-level concurrency group (agent-lcars-dispatch-v1-<repoId>-<issue>)
 # already serializes every ledger write for one issue, and within that,
-# dispatch-broker/broker.mjs enforces at most one ACTIVE generation per
+# apps/dispatch-broker/src/broker.ts enforces at most one ACTIVE generation per
 # issue at a time - beginDispatch() throws "Another generation is active"
-# (broker.mjs) and acceptIntent()'s duplicate/pending handling means a
+# (broker.ts) and acceptIntent()'s duplicate/pending handling means a
 # second router run for the same issue is either a no-op or queued in the
 # ledger, never a second worker dispatch. A workflow-level group here would
 # be actively harmful on top of that: GitHub keeps exactly ONE pending run

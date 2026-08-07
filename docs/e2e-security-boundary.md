@@ -30,9 +30,9 @@ completion callback -- is separately, continuously verified in production by
 `.github/workflows/post-deploy-smoke.yml` (chained off `deploy-console.yml`
 completing). Both share `.github/actions/run-dispatch-canary`, which creates
 a dedicated, clearly-marked issue, dispatches it through
-`agent-router.yml`'s real broker (`dispatch-broker/normalize.mjs`'s
+`agent-router.yml`'s real broker (`apps/dispatch-broker/src/normalize.ts`'s
 `kind: 'canary'` intent, a fourth pipeline alongside claude/codex/opencode --
-see `dispatch-broker/broker.mjs`), and drives it to a dedicated no-op worker,
+see `apps/dispatch-broker/src/broker.ts`), and drives it to a dedicated no-op worker,
 `agent-dispatch-canary.yml`.
 
 That worker is structurally incapable of invoking a paid model or a

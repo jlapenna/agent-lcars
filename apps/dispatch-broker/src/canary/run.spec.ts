@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 
-import {
-  createLedger,
-  LEDGER_MARKER,
-  renderLedgerComment,
-} from '../dispatch-broker/broker.mjs';
-import { createGitHubApi } from '../dispatch-broker/github-api.mjs';
+import { test } from 'vitest';
+
+import { createLedger, LEDGER_MARKER, renderLedgerComment } from '../broker.js';
+import { createGitHubApi } from '../github-api.js';
 import {
   CANARY_SWEEP_CONCURRENCY,
   closeCanaryIssue,
@@ -17,14 +15,9 @@ import {
   probeLiveUrl,
   runDispatchCanary,
   sweepStaleCanaries,
-} from './run.mjs';
+} from './run.js';
 
 const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
-
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
 
 const repository = 'jlapenna/agent-lcars';
 const task = { repositoryId: 123, repository, issue: 900 };
@@ -745,15 +738,3 @@ test('sweepStaleCanaries bounds concurrent per-issue cleanup to CANARY_SWEEP_CON
 test('the canary ledger comment marker matches the real broker ledger marker', () => {
   assert.equal(LEDGER_MARKER, '<!-- agent-lcars:dispatch-ledger:v1 -->');
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;

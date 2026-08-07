@@ -55,4 +55,4 @@ runs:
         DEPLOY_RUN_URL: ${{ inputs.deploy-run-url }}
         LIVE_URL: ${{ inputs.live-url }}
         SWEEP_STALE: ${{ inputs.sweep-stale-canaries }}
-      run: node "$GITHUB_ACTION_PATH/run.mjs"
+      run: node "$GITHUB_ACTION_PATH/dist/run.mjs"
