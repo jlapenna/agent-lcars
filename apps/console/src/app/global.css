@@ -1043,7 +1043,6 @@
     gap: 0;
     color: var(--mantine-color-text);
     background: var(--mantine-color-dark-9);
-    border-bottom: 1px solid var(--mantine-color-dark-4);
   }
 
   .console-header:is(
@@ -1282,7 +1281,6 @@
     margin: 0 !important;
     color: var(--mantine-color-text);
     background: var(--mantine-color-dark-9);
-    border-bottom: 1px solid var(--mantine-color-dark-4);
   }
 
   .console-header:is(
