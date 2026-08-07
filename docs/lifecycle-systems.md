@@ -60,6 +60,7 @@ section.
 | What you observe                                                                                                                                                                        | Owning system                                                                                                                                                                                                                          | Look here first                                                                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Issue carries the right `agent:*` label but nothing dispatches; `agent-router.yml` runs show `cancelled` with **zero steps executed**                                                   | Dispatch controller                                                                                                                                                                                                                    | The run's own step list (0 steps = evicted, not failed) — see worked incident below                                                             |
+| Issue carries the right `agent:*` label but nothing dispatches, and `gh run list --workflow agent-router.yml` shows **no run at all** for the event                                     | Dispatch controller (event-trigger path) — **not** Runner platform: runner selection happens only after GitHub creates the run, so an absent run was never queued anywhere                                                             | Whether the event reached GitHub and matched `agent-router.yml`'s trigger filters at all (webhook delivery, event type, label)                  |
 | `agent-router.yml` or `dispatch-reconcile.yml` jobs sit **queued**, never even starting                                                                                                 | Runner platform                                                                                                                                                                                                                        | `gh api repos/<owner>/<repo>/actions/runners` for a runner carrying `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}`                                    |
 | A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                                                  | Runner platform                                                                                                                                                                                                                        | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                            |
 | A published action (`run-dispatch-canary`, `rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                                                                                                                                                                                    | The failing step's raw log, before assuming an authorization/ordering bug                                                                       |
@@ -157,8 +158,11 @@ broker's own logic executes.
 2. `gh run list --workflow agent-router.yml` for the issue — a `cancelled`
    run with **zero steps executed** is a concurrency eviction (see the
    worked incident), not a real failure; a run that executed and then
-   failed is a genuine error; no run at all points at Runner platform
-   instead (see the symptom table).
+   failed is a genuine error; **no run at all** is neither — runner
+   selection happens only after GitHub creates the run, so an absent run
+   means the event never reached this workflow in the first place, which
+   is still this system's problem, not Runner platform's (see the symptom
+   table).
 3. If a published action is involved, read its own step log first —
    `ERR_MODULE_NOT_FOUND` or any other load-time error means the code never
    ran at all, which rules out an authorization/ordering explanation before
@@ -191,8 +195,10 @@ pressure, and runner loss — across the shared Docker host pool.
   `github_http.go`, `github_app_token.go`.
 - `apps/runner-autoscaler/runner-image/` — the JIT worker image
   (`Dockerfile`, `entrypoint.sh`, `externals-health.sh`) — this is also
-  where `apps/telemetry-watcher`'s bundle gets baked in, the one sanctioned
-  cross-repo integration point (see `AGENTS.md`).
+  where `apps/telemetry-watcher`'s bundle gets baked in, built fresh from
+  this repo's own `main` at image-build time — the one sanctioned
+  **same-repo** image-build integration point, not a cross-repo one (see
+  `AGENTS.md`).
 - `apps/runner-autoscaler/control-plane-image/Dockerfile` — a separate
   image for the control-plane pool specifically.
 - `apps/runner-autoscaler/README.md` — build/test, live-reload (`SIGHUP`),
@@ -323,6 +329,26 @@ is a controller problem or a finalizer problem — a bootstrap failure still
 reaches finalization and projection (worker-token minting failing is an
 explicit acceptance scenario in #645), and a provider failure is bounded,
 worker-owned retry, never controller-level retry.
+
+**That "still reaches finalization" guarantee has a gap at the very start
+of bootstrap.** Each worker's post-agent step runs
+`bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"`
+unconditionally (`if: always()`), but that script is written to
+`$RUNNER_TEMP` only by the earlier "Snapshot post-agent enforcement
+scripts" step (`.github/actions/snapshot-enforcement-scripts`), which in
+turn depends on checkout having already succeeded (it's a local composite
+action, resolvable only once the repo is on disk). If checkout or that
+snapshot step itself fails, `post-agent-gates.sh` was never written, so the
+`if: always()` step fails on a missing file instead of running
+verify-deliverable/report-failure — no finalizer report reaches the issue.
+"Return completion observation to the broker" doesn't cover this either:
+it's also `uses: ./.github/actions/dispatch-broker`, a checkout-local
+composite action GitHub Actions cannot resolve without a successful
+checkout. So a failure in checkout or the enforcement-script snapshot — the
+first two bootstrap steps in `claude.yml`/`codex.yml`/`opencode.yml` — is
+the one bootstrap-failure shape that reaches neither finalization nor the
+controller's completion callback; it surfaces only as a red job with no
+comment, label, or ledger update.
 
 **First three things to check:**
 
