@@ -137,23 +137,39 @@ broker reads and writes the ledger comment with, so handing it to agent code
 would let that code rewrite the control plane's own state
 ([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
 
-So this is a **classic PAT at `public_repo` scope** — the narrowest classic
-scope that can rerun a workflow on this repository, which is public.
+So this is a **classic PAT at `public_repo` scope, issued from the
+`jclaw-bot` machine account** — not the maintainer's. `public_repo` is the
+narrowest classic scope that can rerun a workflow here, and this repository
+is public, so it suffices.
 
-**Be clear about what that does and does not buy.** Classic scopes cannot
-express "actions: write and nothing else": `public_repo` also grants
-`issues: write`, so this token _can_ edit the ledger comment. The boundary
-this achieves is therefore narrower than it first appears — it is
-"not the job's own token", not "cannot reach the control plane". What is
-genuinely gained is that it is a separate, independently revocable identity
-that does not carry the job's `id-token` or its authority over anything
-else, and whose use is attributable to a distinct actor.
+**The machine account is what makes the containment real rather than
+nominal.** `public_repo` grants write across the _token owner's_ accessible
+public repositories. Issued from `jclaw-bot` that is effectively this
+repository alone, and the fleet's private repos (`jlapenna/homelab`,
+`supersprinklesracing/sprinkles`) are unreachable — verified: they answer
+`404`, not `403`, so the token cannot even observe that they exist. The same
+scope issued from a maintainer account would have spanned every public
+repository that account can write.
+
+**What it still does not buy.** Classic scopes cannot express "actions:
+write and nothing else": `public_repo` also carries `issues: write` on the
+repositories it does reach, so this token _can_ edit the ledger comment on
+this one. The boundary is "a separate, attributable, independently revocable
+identity, confined to this public repository" — not "cannot reach the
+control plane".
 
 Two alternatives were considered and rejected. A **fine-grained** PAT would
 express exactly `Actions: write` and nothing more, but does not work here. A
 minted **App installation token** is genuinely narrow, but expires after an
 hour while an opencode agent step may run for two — the agent would lose the
 capability partway through the runs most likely to need it.
+
+**A consuming private repo cannot copy this verbatim.** `public_repo` grants
+nothing on a private repository, so `jlapenna/homelab` or
+`supersprinklesracing/sprinkles` would each need full `repo` scope. Issue
+those as separate per-repository tokens rather than widening this one: a
+single shared `repo`-scoped PAT would let an agent running here — in a
+public repo — reach private infrastructure it otherwise has no path to.
 
 That residue is not a gap to be closed by better credential hygiene. An
 agent that comments on issues needs `issues: write`, and the ledger _is_ an
