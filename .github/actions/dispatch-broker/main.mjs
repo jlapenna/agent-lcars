@@ -6,6 +6,7 @@ import {
   classifyFailure,
   displayTitleMatchesAttempt,
   formatAttemptId,
+  formatFailure,
 } from '../../../libs/dispatch-contracts/src/index.js';
 import {
   acceptIntent,
@@ -87,6 +88,84 @@ function contextFor(event, inputs) {
   };
 }
 
+// Module failure isolation (#645 Phase 2): wraps one fallible controller
+// step so its own exception is classified by phase, recorded, and only THEN
+// rethrown. Before this, a module's throw (the concrete regression: a Quick
+// Task digest mismatch crashing the entire signal-normalization step) had no
+// attributed cause anywhere -- it just propagated as a bare, unclassified
+// exception until something outside the controller (the Actions job itself)
+// finally failed on it.
+//
+// This does not change fail-closed behavior: `step()`'s own exception is
+// always what gets rethrown, unchanged, once recording is attempted. It only
+// adds a classified, attributed record of the failure before that happens.
+//
+// Recording has two independent layers:
+//  - a GitHub Actions `::error::` annotation carrying `formatFailure(...)`,
+//    always emitted. This is the one record that survives when no ledger
+//    could be loaded at all -- the failure may be *why* it couldn't load
+//    (normalize() runs before any ledger exists for this event at all; see
+//    its own call below), so this can never depend on ledger availability.
+//  - a classified ledger anomaly, only when `ledgerContext` (a
+//    `{ client, loaded }` pair) is supplied, i.e. only from within broker(),
+//    the one serialized job allowed to write the ledger.
+//
+// A failure in EITHER recording layer must never replace or swallow the
+// original error -- the failure that triggered recording may be exactly why
+// recording itself fails (a broken client, a ledger that can no longer be
+// saved). Both layers are therefore independently best-effort: the
+// annotation write can't meaningfully fail, and a `saveLedger` failure here
+// is caught, logged as its own secondary `::error::`, and discarded rather
+// than thrown.
+//
+// `reason: 'internal_error'` / `retryDisposition: 'manual'` are the generic,
+// conservative pairing already used elsewhere in this file (see
+// reconcileActive's duplicate-attempt anomaly and reconcileLedger's
+// invariant-violation anomaly) for exactly this situation: an exception this
+// generic wrapper catches by construction cannot know a step's own specific
+// FAILURE_REASONS code, and guessing one from the error message would risk
+// exactly the "typo'd reason code that silently reaches a dashboard" failure.js
+// warns against. The `phase` -- always caller-supplied, never guessed -- is
+// what makes this still useful: every failure it catches is at least
+// attributed to which controller step produced it.
+async function runPhase(ledgerContext, phase, step) {
+  try {
+    return await step();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failure = classifyFailure({
+      phase,
+      owningSystem: 'controller',
+      reason: 'internal_error',
+      retryDisposition: 'manual',
+      detail: message,
+    });
+    console.log(`::error::${formatFailure(failure)}: ${message}`);
+    if (ledgerContext) {
+      try {
+        addAnomaly(
+          ledgerContext.loaded.ledger,
+          'phase-failure',
+          { phase, message },
+          undefined,
+          failure,
+        );
+        await saveLedger(ledgerContext.client, ledgerContext.loaded);
+      } catch (recordingError) {
+        const recordingMessage =
+          recordingError instanceof Error
+            ? recordingError.message
+            : String(recordingError);
+        console.log(
+          `::error::Failed to record the above ${phase} phase failure to ` +
+            `the dispatch ledger: ${recordingMessage}`,
+        );
+      }
+    }
+    throw error;
+  }
+}
+
 async function normalize() {
   const event = JSON.parse(await fs.readFile(env('GITHUB_EVENT_PATH'), 'utf8'));
   const eventName = env('GITHUB_EVENT_NAME');
@@ -118,14 +197,24 @@ async function normalize() {
       `${repositoryPath({ repository: context.repository })}/issues/${numbered.number}/timeline?per_page=100`,
     );
   }
-  const normalized = normalizeEvent({
-    eventName,
-    event,
-    inputs,
-    context,
-    timeline,
-    maintainer: env('MAINTAINER_LOGIN'),
-  });
+  // No ledger exists yet at this point in the workflow -- normalize() runs
+  // in its own job, before broker() ever loads (or creates) one -- so
+  // `ledgerContext` is always undefined here. A throw from normalizeEvent()
+  // (the concrete regression: a Quick Task digest mismatch, see
+  // quickTaskRequest in normalize.mjs) is still classified as a `signal`
+  // phase failure and surfaced via the `::error::` annotation before it
+  // fails this job closed, rather than propagating as a bare, unattributed
+  // crash.
+  const normalized = await runPhase(undefined, 'signal', () =>
+    normalizeEvent({
+      eventName,
+      event,
+      inputs,
+      context,
+      timeline,
+      maintainer: env('MAINTAINER_LOGIN'),
+    }),
+  );
   const issue =
     normalized.task?.issue ?? event.issue?.number ?? Number(inputs.issue);
   await output('eligible', normalized.kind === 'ignored' ? 'false' : 'true');
@@ -649,12 +738,14 @@ async function dispatchAccepted(client, loaded) {
       (candidate) => candidate.state === 'accepted',
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
-    beginDispatch(
-      loaded.ledger,
-      generation.generation,
-      crypto.randomBytes(24).toString('base64url'),
-    );
-    await saveLedger(client, loaded);
+    await runPhase({ client, loaded }, 'scheduling', async () => {
+      beginDispatch(
+        loaded.ledger,
+        generation.generation,
+        crypto.randomBytes(24).toString('base64url'),
+      );
+      await saveLedger(client, loaded);
+    });
     try {
       const binding = await dispatchWorker(
         client,
@@ -666,14 +757,25 @@ async function dispatchAccepted(client, loaded) {
       return;
     } catch (error) {
       if (isDefiniteDispatchRejection(error)) {
-        markDispatchRejected(
-          loaded.ledger,
-          generation.generation,
-          `HTTP ${error.status}`,
-        );
-        await saveLedger(client, loaded);
-        throw error;
+        // Definite: the dispatch POST itself was rejected, so this
+        // generation is not ambiguously in flight -- unlike the
+        // markDispatchUnknown branch below, this is a genuine launch
+        // failure, worth classifying and recording before it escalates.
+        await runPhase({ client, loaded }, 'launch', async () => {
+          markDispatchRejected(
+            loaded.ledger,
+            generation.generation,
+            `HTTP ${error.status}`,
+          );
+          await saveLedger(client, loaded);
+          throw error;
+        });
       }
+      // Ambiguous (e.g. a timeout after the POST may have already landed
+      // server-side): deliberately NOT run through runPhase. This is not
+      // yet a confirmed failure -- the reconciler resolves it later -- so
+      // recording it here would misrepresent an unresolved outcome as an
+      // attributed one.
       markDispatchUnknown(
         loaded.ledger,
         generation.generation,
@@ -992,7 +1094,9 @@ async function broker() {
   try {
     await reconcileActive(client, loaded);
     if (normalized.kind === 'intent') {
-      const accepted = acceptIntent(loaded.ledger, normalized.intent);
+      const accepted = await runPhase({ client, loaded }, 'intent', () =>
+        acceptIntent(loaded.ledger, normalized.intent),
+      );
       await saveLedger(client, loaded);
       // Before dispatching: remove any stale agent:* label a dual-label
       // self-heal identified (#304 audit item 4) -- but only when this
@@ -1013,7 +1117,9 @@ async function broker() {
     } else if (normalized.kind === 'completion') {
       await handleCompletion(client, loaded, normalized);
     } else if (normalized.kind === 'reconcile') {
-      await reconcileLedger(client, loaded, new Date().toISOString(), runId);
+      await runPhase({ client, loaded }, 'reconciliation', () =>
+        reconcileLedger(client, loaded, new Date().toISOString(), runId),
+      );
     } else {
       throw new Error(`Unsupported normalized event kind: ${normalized.kind}`);
     }
@@ -1037,39 +1143,48 @@ async function preflight() {
     runId: Number(env('GITHUB_RUN_ID')),
   };
   const client = api();
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const loaded = await loadLedger(client, task, 'github-actions[bot]', {
-      createIfMissing: false,
-    });
-    if (loaded && verifyPreflight(loaded.ledger, expected)) {
-      const generation = loaded.ledger.generations.find(
-        (candidate) => candidate.generation === expected.generation,
-      );
-      const run = await getWorkflowRun(client, task, expected.runId);
-      assertWorkerRun(
-        run,
-        task,
-        generation,
-        workerWorkflow(generation.pipeline),
-      );
-      await output('authorized', 'true');
-      // Derived from the same generation/intentId preflight just verified,
-      // not a new workflow input -- see action.yml's `attempt-id` output for
-      // why a new required workflow_dispatch input would be both redundant
-      // and a cross-repo drift hazard.
-      await output(
-        'attempt-id',
-        formatAttemptId({
-          generation: expected.generation,
-          intentId: expected.intentId,
-        }),
-      );
-      return;
+  // This job (a worker run's own preflight step) never writes the ledger --
+  // control-plane writes are only ever made from the serialized broker job
+  // (see healStaleAgentLabels' comment for the same invariant) -- so
+  // `ledgerContext` stays undefined here even though a ledger IS read below;
+  // a failure here is recorded only via the `::error::` annotation.
+  await runPhase(undefined, 'authorization', async () => {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const loaded = await loadLedger(client, task, 'github-actions[bot]', {
+        createIfMissing: false,
+      });
+      if (loaded && verifyPreflight(loaded.ledger, expected)) {
+        const generation = loaded.ledger.generations.find(
+          (candidate) => candidate.generation === expected.generation,
+        );
+        const run = await getWorkflowRun(client, task, expected.runId);
+        assertWorkerRun(
+          run,
+          task,
+          generation,
+          workerWorkflow(generation.pipeline),
+        );
+        await output('authorized', 'true');
+        // Derived from the same generation/intentId preflight just verified,
+        // not a new workflow input -- see action.yml's `attempt-id` output for
+        // why a new required workflow_dispatch input would be both redundant
+        // and a cross-repo drift hazard.
+        await output(
+          'attempt-id',
+          formatAttemptId({
+            generation: expected.generation,
+            intentId: expected.intentId,
+          }),
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-  }
-  throw new Error('Worker preflight could not verify an exact broker binding');
+    throw new Error(
+      'Worker preflight could not verify an exact broker binding',
+    );
+  });
 }
 
 async function completionCallback() {
@@ -1186,5 +1301,6 @@ export {
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
+  runPhase,
   wasSupersededEviction,
 };

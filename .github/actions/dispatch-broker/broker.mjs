@@ -2,18 +2,46 @@ import crypto from 'node:crypto';
 
 import {
   extractLedgerComment,
-  formatAttemptId,
-  isDispatchPipeline,
-  LEDGER_ACTIVE_GENERATION_STATES,
   LEDGER_MARKER,
   LEDGER_SCHEMA,
   renderLedgerComment as renderLedgerCommentContract,
 } from '../../../libs/dispatch-contracts/src/index.js';
+// #645 Phase 2: intent acceptance/ordering and the generation state machine
+// now live in their own modules, over the ledger primitives in
+// modules/ledger-core.mjs. broker.mjs imports all three back here purely to
+// re-export under the names this file has always exported, so every existing
+// importer (main.mjs, broker.test.mjs, ledger-contract.test.mjs,
+// workflow-contract.test.mjs) keeps working unchanged.
+//
+// The dependency runs one way on purpose. Having intent/scheduler import
+// their primitives back out of this file would be an ESM cycle that happens
+// to work -- it survives only while nothing reads an imported binding at
+// module-evaluation time, and one ordinary top-level `const` in either module
+// would turn it into a temporal-dead-zone crash at import time, in the
+// control plane. ledger-core.mjs exists so that cannot happen.
+import {
+  acceptIntent,
+  compareIntentOrder,
+  validateIntent,
+} from './modules/intent.mjs';
+import {
+  ACTIVE_STATES,
+  assertTaskRef,
+  createLedger,
+  mutate,
+  validateLedger,
+} from './modules/ledger-core.mjs';
+import {
+  awaitTerminal,
+  beginDispatch,
+  bindRun,
+  completeRun,
+  markDispatchRejected,
+  markDispatchUnknown,
+  observeCompletion,
+  verifyPreflight,
+} from './modules/scheduler.mjs';
 
-// Alias to minimise churn below: every existing `ACTIVE_STATES` reference in
-// this file (and `main.mjs`'s imported one) keeps working unchanged.
-const ACTIVE_STATES = LEDGER_ACTIVE_GENERATION_STATES;
-const TERMINAL_RUN_STATUSES = new Set(['completed']);
 // 'canary' (#307) is a dedicated, structurally-no-op fourth pipeline: it
 // exists purely to prove the broker's own claim/dispatch/completion-
 // callback path in production without ever invoking a paid model or a
@@ -34,72 +62,6 @@ function canonicalJson(value) {
 
 function digest(value) {
   return crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
-}
-
-function compareIntentOrder(left, right) {
-  const byTime = left.occurredAt.localeCompare(right.occurredAt);
-  return byTime || left.sourceId.localeCompare(right.sourceId);
-}
-
-function assertTaskRef(task) {
-  if (
-    !task ||
-    !Number.isSafeInteger(task.repositoryId) ||
-    task.repositoryId <= 0 ||
-    !/^[^/]+\/[^/]+$/u.test(task.repository) ||
-    !Number.isSafeInteger(task.issue) ||
-    task.issue <= 0
-  ) {
-    throw new Error('Invalid canonical TaskRef');
-  }
-}
-
-function createLedger(task, now = new Date().toISOString()) {
-  assertTaskRef(task);
-  return {
-    schema: LEDGER_SCHEMA,
-    revision: 0,
-    task: structuredClone(task),
-    createdAt: now,
-    updatedAt: now,
-    control: { closed: false },
-    sources: [],
-    generations: [],
-    anomalies: [],
-  };
-}
-
-function validateLedger(ledger, task) {
-  if (!ledger || ledger.schema !== LEDGER_SCHEMA) {
-    throw new Error('Malformed dispatch ledger: unsupported schema');
-  }
-  assertTaskRef(ledger.task);
-  assertTaskRef(task);
-  if (
-    ledger.task.repositoryId !== task.repositoryId ||
-    ledger.task.repository.toLowerCase() !== task.repository.toLowerCase() ||
-    ledger.task.issue !== task.issue
-  ) {
-    throw new Error('Malformed dispatch ledger: canonical TaskRef mismatch');
-  }
-  if (!Number.isSafeInteger(ledger.revision) || ledger.revision < 0) {
-    throw new Error('Malformed dispatch ledger: invalid revision');
-  }
-  if (!Array.isArray(ledger.sources) || !Array.isArray(ledger.generations)) {
-    throw new Error('Malformed dispatch ledger: missing history');
-  }
-  const active = ledger.generations.filter((generation) =>
-    ACTIVE_STATES.has(generation.state),
-  );
-  const pending = ledger.generations.filter(
-    (generation) => generation.state === 'pending',
-  );
-  if (active.length > 1 || pending.length > 1) {
-    throw new Error(
-      'Malformed dispatch ledger: invalid active/pending cardinality',
-    );
-  }
-  return ledger;
 }
 
 function parseLedgerComment(body, task) {
@@ -138,332 +100,6 @@ function visibleSummary(ledger) {
 
 function renderLedgerComment(ledger) {
   return renderLedgerCommentContract(ledger, visibleSummary(ledger));
-}
-
-function mutate(ledger, now, callback) {
-  callback();
-  ledger.revision += 1;
-  ledger.updatedAt = now;
-  validateLedger(ledger, ledger.task);
-  return ledger;
-}
-
-function sourceEvidence(intent) {
-  return {
-    intentId: intent.intentId,
-    sourceKind: intent.sourceKind,
-    sourceId: intent.sourceId,
-    transportRunId: intent.transportRunId,
-    occurredAt: intent.occurredAt,
-    digest: intent.digest,
-    authorization: intent.authorization,
-  };
-}
-
-function validateIntent(intent, task) {
-  assertTaskRef(intent?.task);
-  assertTaskRef(task);
-  if (
-    intent.task.repositoryId !== task.repositoryId ||
-    intent.task.repository.toLowerCase() !== task.repository.toLowerCase() ||
-    intent.task.issue !== task.issue
-  ) {
-    throw new Error('Intent TaskRef mismatch');
-  }
-  if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(intent.intentId ?? '')) {
-    throw new Error('Invalid intent ID');
-  }
-  if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(intent.sourceId ?? '')) {
-    throw new Error('Invalid source ID');
-  }
-  if (
-    !Number.isSafeInteger(intent.transportRunId) ||
-    intent.transportRunId <= 0
-  ) {
-    throw new Error('Invalid transport run ID');
-  }
-  if (Number.isNaN(Date.parse(intent.occurredAt))) {
-    throw new Error('Invalid intent occurrence time');
-  }
-  if (!isDispatchPipeline(intent.pipeline))
-    throw new Error('Unsupported pipeline');
-  if (!intent.authorization?.authorized) throw new Error('Unauthorized intent');
-}
-
-function generationForIntent(ledger, intentId) {
-  return ledger.generations.find(
-    (generation) => generation.intentId === intentId,
-  );
-}
-
-function acceptIntent(ledger, intent, now = new Date().toISOString()) {
-  validateLedger(ledger, intent.task);
-  validateIntent(intent, ledger.task);
-
-  const sourceDuplicate = ledger.sources.some(
-    (source) =>
-      source.sourceKind === intent.sourceKind &&
-      source.sourceId === intent.sourceId,
-  );
-  const transportDuplicate = ledger.sources.some(
-    (source) => source.transportRunId === intent.transportRunId,
-  );
-  if (sourceDuplicate || transportDuplicate) {
-    return { outcome: 'duplicate', ledger };
-  }
-
-  const existing = generationForIntent(ledger, intent.intentId);
-  if (existing) {
-    if (existing.digest !== intent.digest) {
-      throw new Error('Semantic intent ID was reused with a different digest');
-    }
-    mutate(ledger, now, () => ledger.sources.push(sourceEvidence(intent)));
-    return {
-      outcome: 'semantic-duplicate',
-      generation: existing.generation,
-      ledger,
-    };
-  }
-
-  const generation = {
-    generation: ledger.generations.length + 1,
-    intentId: intent.intentId,
-    sourceId: intent.sourceId,
-    occurredAt: intent.occurredAt,
-    pipeline: intent.pipeline,
-    mode: intent.mode,
-    runbook: intent.runbook,
-    context: intent.context,
-    reply: intent.reply,
-    digest: intent.digest,
-    state: 'accepted',
-  };
-
-  let outcome = 'dispatch';
-  mutate(ledger, now, () => {
-    ledger.sources.push(sourceEvidence(intent));
-    ledger.generations.push(generation);
-    if (intent.dispatchable === false) {
-      generation.state = 'superseded';
-      outcome = 'stale-control-state';
-      return;
-    }
-    if (ledger.control.closed) {
-      generation.state = 'superseded-by-close';
-      outcome = 'closed';
-      return;
-    }
-    const active = ledger.generations.find(
-      (candidate) =>
-        candidate !== generation && ACTIVE_STATES.has(candidate.state),
-    );
-    const pending = ledger.generations.find(
-      (candidate) => candidate !== generation && candidate.state === 'pending',
-    );
-    const newestDesired = pending ?? active;
-    if (newestDesired && compareIntentOrder(intent, newestDesired) <= 0) {
-      generation.state = 'superseded';
-      outcome = 'stale';
-      return;
-    }
-    if (active) {
-      if (pending) pending.state = 'superseded';
-      generation.state = 'pending';
-      outcome = 'pending';
-      return;
-    }
-    if (pending) pending.state = 'superseded';
-    generation.state = 'accepted';
-  });
-  return { outcome, generation: generation.generation, ledger };
-}
-
-function beginDispatch(
-  ledger,
-  generationNumber,
-  token,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
-  if (!generation || !['accepted', 'pending'].includes(generation.state)) {
-    throw new Error('Generation is not dispatchable');
-  }
-  if (ledger.control.closed) throw new Error('Closed anchor cannot dispatch');
-  if (
-    ledger.generations.some((candidate) => ACTIVE_STATES.has(candidate.state))
-  ) {
-    throw new Error('Another generation is active');
-  }
-  if (!/^[A-Za-z0-9_-]{16,200}$/u.test(token))
-    throw new Error('Invalid dispatch token');
-  return mutate(ledger, now, () => {
-    generation.state = 'dispatching';
-    // `attemptId` is identity, `token` is proof, and they are deliberately
-    // different things: the ID is public (it is the run title's marker) while
-    // the token is the bearer capability preflight checks. Persisting the ID
-    // rather than re-deriving it at each read is what makes it immutable --
-    // a later reader sees the value written here, not one recomputed from
-    // fields that a repair could in principle touch.
-    generation.attempt = {
-      attemptId: formatAttemptId(generation),
-      token,
-      dispatchStartedAt: now,
-    };
-  });
-}
-
-function markDispatchUnknown(
-  ledger,
-  generationNumber,
-  reason,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
-  if (!generation || generation.state !== 'dispatching') {
-    throw new Error('Generation is not dispatching');
-  }
-  return mutate(ledger, now, () => {
-    generation.state = 'dispatch-unknown';
-    generation.attempt.unknownAt = now;
-    generation.attempt.unknownReason = reason;
-  });
-}
-
-function markDispatchRejected(
-  ledger,
-  generationNumber,
-  reason,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
-  if (!generation || generation.state !== 'dispatching') {
-    throw new Error('Generation is not dispatching');
-  }
-  let promoted;
-  mutate(ledger, now, () => {
-    generation.state = 'dispatch-rejected';
-    generation.attempt.rejectedAt = now;
-    generation.attempt.rejectionReason = reason;
-    if (!ledger.control.closed) {
-      promoted = ledger.generations.find(
-        (candidate) => candidate.state === 'pending',
-      );
-      if (promoted) promoted.state = 'accepted';
-    }
-  });
-  return { ledger, promotedGeneration: promoted?.generation };
-}
-
-function bindRun(
-  ledger,
-  generationNumber,
-  binding,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
-  if (
-    !generation ||
-    !['dispatching', 'dispatch-unknown'].includes(generation.state)
-  ) {
-    throw new Error('Generation is not awaiting a run binding');
-  }
-  if (
-    !Number.isSafeInteger(binding.runId) ||
-    binding.runId <= 0 ||
-    typeof binding.runUrl !== 'string' ||
-    typeof binding.htmlUrl !== 'string'
-  ) {
-    throw new Error('Invalid workflow run binding');
-  }
-  return mutate(ledger, now, () => {
-    generation.state = 'active';
-    Object.assign(generation.attempt, binding, { boundAt: now });
-  });
-}
-
-function observeCompletion(
-  ledger,
-  generationNumber,
-  runId,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
-  if (
-    !generation ||
-    !['active', 'completion-observed', 'completion-awaiting-terminal'].includes(
-      generation.state,
-    ) ||
-    generation.attempt?.runId !== runId
-  ) {
-    throw new Error('Completion does not match the active run');
-  }
-  return mutate(ledger, now, () => {
-    generation.state = 'completion-observed';
-    generation.attempt.completionObservedAt ??= now;
-  });
-}
-
-function awaitTerminal(
-  ledger,
-  generationNumber,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
-  if (!generation || generation.state !== 'completion-observed') {
-    throw new Error('Completion has not been observed');
-  }
-  return mutate(ledger, now, () => {
-    generation.state = 'completion-awaiting-terminal';
-    generation.attempt.lastObservedAt = now;
-  });
-}
-
-function completeRun(
-  ledger,
-  generationNumber,
-  observation,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
-  if (
-    !generation ||
-    !['active', 'completion-observed', 'completion-awaiting-terminal'].includes(
-      generation.state,
-    ) ||
-    generation.attempt?.runId !== observation.runId ||
-    !TERMINAL_RUN_STATUSES.has(observation.status) ||
-    typeof observation.conclusion !== 'string'
-  ) {
-    throw new Error('Invalid terminal run observation');
-  }
-  let promoted;
-  mutate(ledger, now, () => {
-    generation.state = 'completed';
-    generation.attempt.status = observation.status;
-    generation.attempt.conclusion = observation.conclusion;
-    generation.attempt.completedAt = observation.completedAt ?? now;
-    if (!ledger.control.closed) {
-      promoted = ledger.generations.find(
-        (candidate) => candidate.state === 'pending',
-      );
-      if (promoted) promoted.state = 'accepted';
-    }
-  });
-  return { ledger, promotedGeneration: promoted?.generation };
 }
 
 function applyAnchorControl(ledger, control, now = new Date().toISOString()) {
@@ -513,22 +149,6 @@ function recordControlEvidence(
   return { outcome: 'recorded', ledger };
 }
 
-function verifyPreflight(ledger, expected) {
-  validateLedger(ledger, expected.task);
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === expected.generation,
-  );
-  return Boolean(
-    generation &&
-    ['active', 'completion-observed', 'completion-awaiting-terminal'].includes(
-      generation.state,
-    ) &&
-    generation.intentId === expected.intentId &&
-    generation.attempt?.token === expected.token &&
-    generation.attempt?.runId === expected.runId,
-  );
-}
-
 /**
  * `failure` is an optional `FailureClassification` (#645's
  * owning-system/phase/reason/retry vocabulary from
@@ -562,6 +182,7 @@ export {
   ACTIVE_STATES,
   addAnomaly,
   applyAnchorControl,
+  assertTaskRef,
   awaitTerminal,
   beginDispatch,
   bindRun,
@@ -574,6 +195,7 @@ export {
   LEDGER_SCHEMA,
   markDispatchRejected,
   markDispatchUnknown,
+  mutate,
   observeCompletion,
   parseLedgerComment,
   recordControlEvidence,
