@@ -170,6 +170,7 @@ test('every field the writer emits is described by the shared contract', () => {
   ]);
 
   assert.deepEqual(Object.keys(ledger.generations[0].attempt).sort(), [
+    'attemptId',
     'boundAt',
     'completedAt',
     'completionObservedAt',

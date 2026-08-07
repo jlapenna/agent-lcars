@@ -23,6 +23,10 @@
  */
 const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:-]+)\]/u;
 
+/** The same shape as the marker's interior, anchored so a bare attempt ID is
+ * matched in full rather than found inside a longer string. */
+const ATTEMPT_ID_RE = /^g(\d+):([A-Za-z0-9._:-]+)$/u;
+
 /**
  * @typedef {object} AttemptMarker
  * @property {number} generation
@@ -30,7 +34,51 @@ const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:-]+)\]/u;
  */
 
 /**
+ * The attempt's stable identity: `g<generation>:<intentId>`.
+ *
+ * #645 asks for "one immutable attemptId and workflow-run binding" per
+ * attempt. This derives it from the intent and generation rather than minting
+ * a fresh random value, for a specific reason: GitHub's API does not return a
+ * run's dispatch-time inputs on the run object, so `display_title` is the only
+ * channel a bound run and a ledger entry actually share. A minted ID would
+ * therefore have to be encoded into the run title anyway — at which point it
+ * is a second identifier that can disagree with the marker already there.
+ *
+ * Deriving it makes the two the same fact by construction: the marker is
+ * literally this string in brackets, and immutability comes free, because
+ * `intentId` and `generation` are both immutable once a generation exists.
+ *
+ * This is identity, not proof. `attempt.token` remains the separate bearer
+ * capability the worker echoes back at preflight — an attemptId is public
+ * (it is in the run title) and must never be accepted in its place.
+ *
+ * @param {{ generation: number | string, intentId: string }} attempt
+ * @returns {string}
+ */
+export function formatAttemptId({ generation, intentId }) {
+  return `g${generation}:${intentId}`;
+}
+
+/**
+ * Recover the attempt an ID names. Returns `undefined` for anything that is
+ * not a well-formed attempt ID, including the empty `g:` a hand-triggered
+ * `workflow_dispatch` produces.
+ *
+ * @param {string | undefined | null} attemptId
+ * @returns {AttemptMarker | undefined}
+ */
+export function parseAttemptId(attemptId) {
+  const match = attemptId?.match(ATTEMPT_ID_RE);
+  return match
+    ? { generation: Number(match[1]), intentId: match[2] }
+    : undefined;
+}
+
+/**
  * Render the marker for a generation.
+ *
+ * The marker is the attempt ID in brackets — one definition, so the two can
+ * never disagree about what identifies an attempt.
  *
  * Accepts strings as well as numbers so the workflow-contract tests can render
  * it with GitHub Actions' own `${{ inputs.broker_generation }}` expressions
@@ -40,8 +88,8 @@ const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:-]+)\]/u;
  * @param {{ generation: number | string, intentId: string }} attempt
  * @returns {string}
  */
-export function formatDispatchMarker({ generation, intentId }) {
-  return `[dispatch:g${generation}:${intentId}]`;
+export function formatDispatchMarker(attempt) {
+  return `[dispatch:${formatAttemptId(attempt)}]`;
 }
 
 /**

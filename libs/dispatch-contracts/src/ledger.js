@@ -82,6 +82,12 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
  * how far the attempt got.
  *
  * @typedef {object} LedgerRunAttempt
+ * @property {string} [attemptId] The attempt's stable public identity,
+ *   `g<generation>:<intentId>` (see marker.js's `formatAttemptId`). Written
+ *   once at `beginDispatch` and never rewritten. This is what the run title's
+ *   marker encodes, so it is the join key between a ledger entry and the
+ *   GitHub Actions run that executed it. Absent on attempts recorded before
+ *   this field existed.
  * @property {string} [token] Immutable dispatch token minted at
  *   `beginDispatch`, echoed back by the worker's preflight to prove the run
  *   is the one this generation dispatched.
