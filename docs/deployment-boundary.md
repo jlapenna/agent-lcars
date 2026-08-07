@@ -137,11 +137,29 @@ broker reads and writes the ledger comment with, so handing it to agent code
 would let that code rewrite the control plane's own state
 ([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
 
-So this is a **fine-grained PAT scoped to this repository with only
-`Actions: write`**, and nothing else. A minted App installation token is
-equally narrow but expires after an hour, while an opencode agent step may
-run for two — the agent would lose the capability mid-run, which is why this
-is a PAT rather than another `mint-agent-token` call.
+So this is a **classic PAT at `public_repo` scope** — the narrowest classic
+scope that can rerun a workflow on this repository, which is public.
+
+**Be clear about what that does and does not buy.** Classic scopes cannot
+express "actions: write and nothing else": `public_repo` also grants
+`issues: write`, so this token _can_ edit the ledger comment. The boundary
+this achieves is therefore narrower than it first appears — it is
+"not the job's own token", not "cannot reach the control plane". What is
+genuinely gained is that it is a separate, independently revocable identity
+that does not carry the job's `id-token` or its authority over anything
+else, and whose use is attributable to a distinct actor.
+
+Two alternatives were considered and rejected. A **fine-grained** PAT would
+express exactly `Actions: write` and nothing more, but does not work here. A
+minted **App installation token** is genuinely narrow, but expires after an
+hour while an opencode agent step may run for two — the agent would lose the
+capability partway through the runs most likely to need it.
+
+That residue is not a gap to be closed by better credential hygiene. An
+agent that comments on issues needs `issues: write`, and the ledger _is_ an
+issue comment — which is the argument for moving control-plane state
+somewhere a repository-scoped token cannot reach at all
+([#645](https://github.com/jlapenna/agent-lcars/issues/645) Phase 5).
 
 Fails **loudly, not closed**: each worker warns if the secret is unset, and
 the agent simply cannot rerun. That is deliberate — an empty

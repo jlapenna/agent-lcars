@@ -246,8 +246,7 @@ jobs:
           if [ -z "$ACTIONS_RERUN_TOKEN" ]; then
             echo "::warning::AGENT_CI_RERUN_TOKEN is unset - the agent will \
           not be able to rerun its own failed CI (agent-protocol.md §8). \
-          Expected a fine-grained PAT scoped to this repository with only \
-          Actions: write."
+          Expected a classic PAT with public_repo scope."
           fi
         env:
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
@@ -275,11 +274,10 @@ jobs:
           GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           # Same CI-rerun affordance claude.yml grants its agent (see
           # agent-protocol.md §8): the recipe silently no-ops when this is
-          # unset, which is why the step above warns instead. A
-          # fine-grained PAT scoped to this repository with only
-          # Actions: write - NOT github.token, which is the ledger-writing
-          # control-plane credential, and not a minted App token either,
-          # since those expire after an hour and this step may run two.
+          # unset, which is why the step above warns instead. A classic
+          # PAT at public_repo scope -- NOT github.token. Classic scopes
+          # cannot express "actions: write only", so this is a weaker
+          # boundary than it looks: see claude.yml's fuller note above.
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
         uses: anomalyco/opencode/github@def7220bfc65b84046e597e9be772eae81f663ff # published action source, pinned
         with:

@@ -306,8 +306,7 @@ jobs:
           if [ -z "$ACTIONS_RERUN_TOKEN" ]; then
             echo "::warning::AGENT_CI_RERUN_TOKEN is unset - the agent will \
           not be able to rerun its own failed CI (agent-protocol.md §8). \
-          Expected a fine-grained PAT scoped to this repository with only \
-          Actions: write."
+          Expected a classic PAT with public_repo scope."
           fi
         env:
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
@@ -325,10 +324,10 @@ jobs:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           # Same CI-rerun affordance claude.yml grants its agent (see
-          # agent-protocol.md §8). A fine-grained PAT scoped to this
-          # repository with only Actions: write - NOT github.token, which
-          # is the ledger-writing control-plane credential, and not a
-          # minted App token either, since those expire after an hour.
+          # agent-protocol.md §8). A classic PAT at public_repo scope --
+          # NOT github.token. Classic scopes cannot express "actions:
+          # write only", so this is a weaker boundary than it looks: see
+          # claude.yml's fuller note above.
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
           CODEX_PROMPT: >-
             Work the routed anchor in the JSON brief at

@@ -246,8 +246,7 @@ jobs:
           if [ -z "$ACTIONS_RERUN_TOKEN" ]; then
             echo "::warning::AGENT_CI_RERUN_TOKEN is unset - the agent will \
           not be able to rerun its own failed CI (agent-protocol.md §8). \
-          Expected a fine-grained PAT scoped to this repository with only \
-          Actions: write."
+          Expected a classic PAT with public_repo scope."
           fi
         env:
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
@@ -273,11 +272,15 @@ jobs:
           # same credential dispatch-broker uses to read and write the
           # ledger comment - handing it to the agent would let agent
           # code rewrite the ledger and act as the controller (#645).
-          # Use AGENT_CI_RERUN_TOKEN instead: a fine-grained PAT scoped
-          # to this repository with only Actions: write. A minted App
-          # token would have been narrow too, but installation tokens
-          # expire after an hour while this step may run for two, so
-          # the agent would lose the capability mid-run. The agent
+          # Use AGENT_CI_RERUN_TOKEN instead: a classic PAT with the
+          # narrowest scope that can rerun a workflow here (public_repo).
+          # Note what that does NOT buy -- classic scopes cannot express
+          # "actions: write only", so this token can also write issue
+          # comments, i.e. the ledger. It is still not github.token: it is
+          # a separate, independently revocable identity that does not
+          # carry the job's id-token or its authority over other repos.
+          # A minted App token would be genuinely narrow, but expires
+          # after an hour while this step may run for two. The agent
           # uses it as
           # `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun ...` (GH_TOKEN
           # outranks GITHUB_TOKEN in gh) - see agent-protocol.md §8.

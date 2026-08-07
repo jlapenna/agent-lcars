@@ -185,8 +185,11 @@ converging and is indistinguishable, from the outside, from a stuck run.
   contents/issues/pull-requests write grant and is the same credential the
   dispatch broker uses to read and write the ledger comment, so handing it
   to an agent would let agent-authored code rewrite the control plane's own
-  state (agent-lcars#645). It is a credential scoped to `actions: write`
-  and nothing else — enough to rerun a workflow, enough for nothing else.
+  state (agent-lcars#645). It is a separate, independently revocable
+  credential granted the narrowest scope that can still rerun a workflow.
+  Depending on what the platform can express, that scope may still be wider
+  than "rerun only" — treat it as a credential you were given for one
+  purpose, and use it for that purpose.
 - **Platform fact:** GitHub holds the Actions run resulting from a
   bot-authored push (or a PR opened by one) as `action_required` with
   **zero check runs minted**, regardless of billing state or fork status.

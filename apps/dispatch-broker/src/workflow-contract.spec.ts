@@ -561,8 +561,8 @@ test('worker agent steps never receive github.token under any name (#645 Phase 3
       adapter.source,
       /ACTIONS_RERUN_TOKEN:\s+\$\{\{\s*secrets\.AGENT_CI_RERUN_TOKEN\s*\}\}/u,
       `${workflow} must grant the CI-rerun affordance through the ` +
-        'dedicated AGENT_CI_RERUN_TOKEN secret -- a fine-grained PAT with ' +
-        'only Actions: write. A minted App token is equally narrow but ' +
+        'dedicated AGENT_CI_RERUN_TOKEN secret. Not github.token, and not ' +
+        'a minted App token either -- the latter is genuinely narrow but ' +
         'expires after an hour, and this step can run for two.',
     );
 
