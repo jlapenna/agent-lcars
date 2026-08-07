@@ -24,8 +24,8 @@ vi.mock('firebase-admin/firestore', async () => ({
   Timestamp: (await vi.importActual('@google-cloud/firestore')).Timestamp,
 }));
 
-vi.mock('@repo/util-server', async () => ({
-  ...(await vi.importActual('@repo/util-server')),
+vi.mock('@agent-lcars/util-server', async () => ({
+  ...(await vi.importActual('@agent-lcars/util-server')),
   isEmulator: vi.fn().mockReturnValue(false),
   getProjectId: vi.fn().mockReturnValue('test-project'),
   getFirestoreEmulatorHost: vi.fn().mockReturnValue(undefined),

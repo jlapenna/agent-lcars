@@ -1,10 +1,10 @@
+import { logger } from '@agent-lcars/logging';
 import {
   buildSessionDoc,
   computeLiveness,
   getTranscriptAdapter,
   SessionSummary,
 } from '@agent-lcars/telemetry';
-import { logger } from '@repo/logging';
 import * as fs from 'fs';
 import * as path from 'path';
 

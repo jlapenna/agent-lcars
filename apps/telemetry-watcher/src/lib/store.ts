@@ -1,6 +1,6 @@
+import { logger } from '@agent-lcars/logging';
 import { SessionDoc } from '@agent-lcars/telemetry';
 import { Firestore, Timestamp } from '@google-cloud/firestore';
-import { logger } from '@repo/logging';
 
 const AGENT_TELEMETRY_DATABASE_ID =
   process.env['AGENT_TELEMETRY_DATABASE_ID'] ?? '(default)';

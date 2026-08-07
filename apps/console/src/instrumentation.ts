@@ -1,5 +1,5 @@
-import { reportServerError } from '@repo/logging/error-reporting';
-import { initNodeLogging } from '@repo/logging/server';
+import { reportServerError } from '@agent-lcars/logging/error-reporting';
+import { initNodeLogging } from '@agent-lcars/logging/server';
 import type { Instrumentation } from 'next';
 
 export function register() {

@@ -2,12 +2,12 @@ import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
 import './global.css';
 
+import { BrowserErrorReporter } from '@agent-lcars/app-providers';
 import {
   ColorSchemeScript,
   MantineColorScheme,
   mantineHtmlProps,
 } from '@mantine/core';
-import { BrowserErrorReporter } from '@repo/app-providers';
 import type { Viewport } from 'next';
 import { cookies, headers } from 'next/headers';
 import { Suspense } from 'react';

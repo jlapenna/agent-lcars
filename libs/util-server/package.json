@@ -1,13 +1,13 @@
 {
-  "name": "@repo/util-server",
+  "name": "@agent-lcars/util-server",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "main": "./src/index.js",
   "types": "./src/index.d.ts",
   "dependencies": {
-    "@repo/util": "workspace:*",
-    "@repo/logging": "workspace:*",
-    "@repo/env": "workspace:*"
+    "@agent-lcars/util": "workspace:*",
+    "@agent-lcars/logging": "workspace:*",
+    "@agent-lcars/env": "workspace:*"
   }
 }

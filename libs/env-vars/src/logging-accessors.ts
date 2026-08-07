@@ -1,10 +1,10 @@
 import { isTrue, optional } from './env-util';
 
 /**
- * Dependency-free home for the handful of env accessors `@repo/logging`
- * needs. `@repo/logging` can't depend on `@repo/util-server` (which already
- * depends on `@repo/logging`), so these used to be hand-copied byte-for-byte
- * into `libs/logging/src/env.ts` (#2129). `@repo/util-server` re-exports the
+ * Dependency-free home for the handful of env accessors `@agent-lcars/logging`
+ * needs. `@agent-lcars/logging` can't depend on `@agent-lcars/util-server` (which already
+ * depends on `@agent-lcars/logging`), so these used to be hand-copied byte-for-byte
+ * into `libs/logging/src/env.ts` (#2129). `@agent-lcars/util-server` re-exports the
  * same functions so external behavior is unchanged.
  */
 export function isOnGoogleCloud(): boolean {

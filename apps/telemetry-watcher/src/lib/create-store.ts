@@ -1,4 +1,4 @@
-import { logger } from '@repo/logging';
+import { logger } from '@agent-lcars/logging';
 
 import { WatcherConfig } from './config';
 import {

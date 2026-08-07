@@ -1,1 +1,1 @@
-export { clientErrorReportRoute as POST } from '@repo/logging/error-reporting';
+export { clientErrorReportRoute as POST } from '@agent-lcars/logging/error-reporting';

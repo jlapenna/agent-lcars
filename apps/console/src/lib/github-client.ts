@@ -1,9 +1,9 @@
 import 'server-only';
 
+import { optional, required } from '@agent-lcars/util-server';
 import { retry } from '@octokit/plugin-retry';
 import { throttling } from '@octokit/plugin-throttling';
 import { Octokit } from '@octokit/rest';
-import { optional, required } from '@repo/util-server';
 
 import {
   type AgentIntegration,
@@ -16,7 +16,7 @@ import {
 
 // Re-exported for existing importers - this file used to define these
 // itself, but they now live in watched-repo.ts (a client-bundle-safe file
-// with no @repo/util-server dependency) so client components can import
+// with no @agent-lcars/util-server dependency) so client components can import
 // them without accidentally pulling this file's server-only deps
 // (firebase-admin, google-auth-library, ...) into a browser bundle.
 export {

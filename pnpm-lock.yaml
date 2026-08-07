@@ -245,16 +245,16 @@ importers:
 
   libs/logging:
     dependencies:
-      '@repo/env':
+      '@agent-lcars/env':
         specifier: workspace:*
         version: link:../env-vars
 
   libs/telemetry:
     dependencies:
-      '@repo/util':
+      '@agent-lcars/util':
         specifier: workspace:*
         version: link:../util
-      '@repo/util-server':
+      '@agent-lcars/util-server':
         specifier: workspace:*
         version: link:../util-server
 
@@ -262,13 +262,13 @@ importers:
 
   libs/util-server:
     dependencies:
-      '@repo/env':
+      '@agent-lcars/env':
         specifier: workspace:*
         version: link:../env-vars
-      '@repo/logging':
+      '@agent-lcars/logging':
         specifier: workspace:*
         version: link:../logging
-      '@repo/util':
+      '@agent-lcars/util':
         specifier: workspace:*
         version: link:../util
 

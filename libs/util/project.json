@@ -1,5 +1,5 @@
 {
-  "name": "@repo/util",
+  "name": "@agent-lcars/util",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/util/src",
   "projectType": "library",

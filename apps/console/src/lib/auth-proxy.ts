@@ -20,7 +20,7 @@ export function createAuthProxy(
     const e2eUser = request.headers.get('x-e2e-auth-user');
     // The three-var check (not NODE_ENV: the E2E suite runs the standalone
     // `next build` server, which is already NODE_ENV=production) mirrors
-    // @repo/util-server's isOnGoogleCloud() inline, since importing that
+    // @agent-lcars/util-server's isOnGoogleCloud() inline, since importing that
     // package here isn't safe for this file's Edge Middleware runtime.
     // K_SERVICE/K_REVISION/CLOUD_RUN_JOB are Cloud Run container-contract
     // vars, reserved and non-overridable, present only on a real deployed

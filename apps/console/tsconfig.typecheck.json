@@ -9,17 +9,19 @@
     "types": ["node", "react", "react-dom"],
     "paths": {
       "@/*": ["apps/console/src/*"],
-      "@repo/util": ["libs/util/src/index.ts"],
-      "@repo/util/*": ["libs/util/src/*"],
-      "@repo/logging": ["libs/logging/src/index.ts"],
-      "@repo/logging/browser": ["libs/logging/src/browser/index.ts"],
-      "@repo/logging/error-reporting": ["libs/logging/src/error-reporting.ts"],
-      "@repo/logging/server": ["libs/logging/src/server/index.ts"],
-      "@repo/test-utils/*": ["libs/test-utils/src/*"],
-      "@repo/env": ["libs/env-vars/src/index.ts"],
-      "@repo/util-server": ["libs/util-server/src/index.ts"],
-      "@repo/util-server/*": ["libs/util-server/src/*"],
-      "@repo/app-providers": ["libs/app-providers/src/index.ts"],
+      "@agent-lcars/util": ["libs/util/src/index.ts"],
+      "@agent-lcars/util/*": ["libs/util/src/*"],
+      "@agent-lcars/logging": ["libs/logging/src/index.ts"],
+      "@agent-lcars/logging/browser": ["libs/logging/src/browser/index.ts"],
+      "@agent-lcars/logging/error-reporting": [
+        "libs/logging/src/error-reporting.ts"
+      ],
+      "@agent-lcars/logging/server": ["libs/logging/src/server/index.ts"],
+      "@agent-lcars/test-utils/*": ["libs/test-utils/src/*"],
+      "@agent-lcars/env": ["libs/env-vars/src/index.ts"],
+      "@agent-lcars/util-server": ["libs/util-server/src/index.ts"],
+      "@agent-lcars/util-server/*": ["libs/util-server/src/*"],
+      "@agent-lcars/app-providers": ["libs/app-providers/src/index.ts"],
       "@agent-lcars/dispatch-contracts": [
         "libs/dispatch-contracts/src/index.js"
       ],

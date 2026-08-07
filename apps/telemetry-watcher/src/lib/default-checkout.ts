@@ -1,4 +1,4 @@
-import { optional } from '@repo/env';
+import { optional } from '@agent-lcars/env';
 import * as path from 'path';
 
 const ROOTS_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOTS';

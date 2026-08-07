@@ -233,8 +233,8 @@ jobs:
       # Whole workspace, not a per-project list. AGENTS.md requires the
       # affected test/typecheck/build targets before publishing, and the
       # published artifacts pull in far more than the two app directories:
-      # the daemon bundle inlines @repo/logging, @repo/env, @repo/util,
-      # @repo/util-server and @agent-lcars/telemetry. `nx run-many -p <app>`
+      # the daemon bundle inlines @agent-lcars/logging, @agent-lcars/env, @agent-lcars/util,
+      # @agent-lcars/util-server and @agent-lcars/telemetry. `nx run-many -p <app>`
       # runs only that project's own targets -- a dependency's specs would
       # be skipped while its code shipped, which is exactly the trigger this
       # workflow's paths filter was just widened to catch.

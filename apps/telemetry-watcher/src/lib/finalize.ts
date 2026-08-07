@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import {
   buildSessionDoc,
   getTranscriptAdapter,
@@ -7,7 +8,6 @@ import {
   SessionSummary,
   transcriptObjectPath,
 } from '@agent-lcars/telemetry';
-import { logger } from '@repo/logging';
 import * as fs from 'fs';
 
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
@@ -29,7 +29,7 @@ import {
  * because the failure never showed up anywhere but plain step output).
  * Only fires under `GITHUB_ACTIONS=true` (unset in local/test runs) and
  * deliberately writes straight to stdout rather than through `logger.warn`
- * — the structured/JSON logging mode `@repo/logging` can switch to would
+ * — the structured/JSON logging mode `@agent-lcars/logging` can switch to would
  * bury the `::warning::` prefix Actions parses for annotations. `%`/CR/LF
  * are escaped per Actions' workflow-command format so a multi-line error
  * message can't break the single-line annotation.

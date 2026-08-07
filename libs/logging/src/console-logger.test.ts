@@ -2,7 +2,7 @@ import {
   forceStructuredLogging,
   getLogLevel,
   isOnGoogleCloud,
-} from '@repo/env';
+} from '@agent-lcars/env';
 import {
   afterEach,
   beforeEach,
@@ -17,8 +17,8 @@ import {
 import { Logger, setLogDefaults } from './console-logger';
 import { LogLevel } from './log-level';
 
-vi.mock('@repo/env', async () => ({
-  ...(await vi.importActual<object>('@repo/env')),
+vi.mock('@agent-lcars/env', async () => ({
+  ...(await vi.importActual<object>('@agent-lcars/env')),
   getLogLevel: vi.fn(),
   isOnGoogleCloud: vi.fn(),
   forceStructuredLogging: vi.fn(),

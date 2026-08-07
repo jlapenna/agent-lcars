@@ -37,7 +37,7 @@ Each falls back to this deployment's value, so nothing breaks when a var is
 unset. `apphosting.yaml` sets them explicitly anyway, so what production
 runs with is visible in config rather than only in source.
 
-Server-only. `@repo/util-server` must never reach a client bundle, which is
+Server-only. `@agent-lcars/util-server` must never reach a client bundle, which is
 why `shareArtifactUrl` lives here rather than in `format.ts` — that module
 is imported by client components.
 

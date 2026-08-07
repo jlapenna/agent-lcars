@@ -1,4 +1,4 @@
-import { forceStructuredLogging, isOnGoogleCloud } from '@repo/env';
+import { forceStructuredLogging, isOnGoogleCloud } from '@agent-lcars/env';
 
 import { Logger } from './console-logger';
 

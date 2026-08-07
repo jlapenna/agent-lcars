@@ -1,5 +1,5 @@
+import { optional } from '@agent-lcars/env';
 import { SESSION_AGENTS, SessionAgent } from '@agent-lcars/telemetry';
-import { optional } from '@repo/env';
 import * as os from 'os';
 import * as path from 'path';
 

@@ -1,7 +1,7 @@
 import {
   getNextPublicFirebaseAuthEmulatorHost,
   getNextPublicFirestoreEmulatorHost,
-} from '@repo/util/browser';
+} from '@agent-lcars/util/browser';
 import { FirebaseApp, getApp, getApps, initializeApp } from 'firebase/app';
 import {
   Auth,

@@ -464,7 +464,7 @@ function addServerPrefix(
   }
 
   // A project/package boundary knows how to permit an explicit safe entry
-  // point. A narrower marker-only alias (for example @repo/logging/server)
+  // point. A narrower marker-only alias (for example @agent-lcars/logging/server)
   // remains server-only throughout its own namespace.
   if (
     existing.safeSubpathsRequireExplicitAlias &&

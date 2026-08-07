@@ -1,4 +1,4 @@
-import { isE2eTesting } from '@repo/util-server';
+import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
 import {

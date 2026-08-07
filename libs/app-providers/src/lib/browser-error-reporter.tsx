@@ -1,6 +1,6 @@
 'use client';
 
-import { installBrowserErrorReporter } from '@repo/logging/browser';
+import { installBrowserErrorReporter } from '@agent-lcars/logging/browser';
 import { useEffect } from 'react';
 
 export interface BrowserErrorReporterProps {

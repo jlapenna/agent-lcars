@@ -8,4 +8,4 @@ export {
   getLogLevel,
   getSlackLogLevel,
   isOnGoogleCloud,
-} from '@repo/env';
+} from '@agent-lcars/env';
