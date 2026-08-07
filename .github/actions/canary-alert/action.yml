@@ -1,0 +1,58 @@
+name: Alert on canary failure / resolve on recovery
+description: >-
+  Track dispatch-canary.yml's health as one durable issue instead of noise:
+  on failure, open (or comment on) the tracked alert issue carrying the
+  `<!-- agent-lcars:canary-alert:v1 -->` marker with the failing run URL,
+  UTC timestamp, and a consecutive-failure count derived live from the
+  canary workflow's own run history; on success, close it with a recovery
+  comment if one is open. See canary-alert.sh for the lookup/count logic.
+
+inputs:
+  token:
+    description: Token used for the gh/API calls. Pass github.token - no new secret.
+    required: true
+  canary-status:
+    description: >-
+      The canary job's own conclusion - success, failure, or cancelled
+      (GitHub reports a job-level timeout-minutes kill as cancelled, not
+      failure). Pass job.status when this step runs inside the canary job
+      itself, or needs.<job>.result when it runs from a separate dependent
+      job (the required shape here: a job-level timeout terminates the
+      canary job outright, so an in-job trailing step - even one marked
+      if: always() - never starts). Branches the whole script.
+    required: true
+  workflow-file:
+    description: >-
+      Filename of the canary workflow under .github/workflows/, used to
+      query /actions/workflows/<file>/runs for the consecutive-failure count.
+    required: true
+  maintainer:
+    description: Login assigned on a newly created alert issue.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # This is the alerting for a canary that (per #307's original incident)
+    # can go dark with nobody noticing - so the caller's step MUST be
+    # `if: always()` (evaluate after both a passing and a failing canary
+    # run) and this inner step MUST be `continue-on-error: true`: a broken
+    # alert path (a transient API hiccup) logs loudly (see canary-alert.sh's
+    # ::error:: annotations) but can never turn a healthy canary run red.
+    # It also can never turn a failing run green - the canary's own earlier
+    # step already fixed the job's real conclusion before this one runs;
+    # continue-on-error only stops THIS step's own outcome from being able
+    # to override that.
+    - name: Alert on canary failure / resolve on recovery
+      shell: bash
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        SERVER_URL: ${{ github.server_url }}
+        RUN_ID: ${{ github.run_id }}
+        CANARY_STATUS: ${{ inputs.canary-status }}
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        WORKFLOW_NAME: ${{ github.workflow }}
+        MAINTAINER: ${{ inputs.maintainer }}
+      run: bash "$GITHUB_ACTION_PATH/canary-alert.sh"

@@ -30,10 +30,19 @@ permissions:
   issues: write
 
 concurrency:
-  # Repo-wide, canary-only group: prevents two overlapping scheduled/manual
-  # runs from creating two canary issues at once. Harmless if it ever
-  # happened (each is independently verified and cleaned up), but no reason
-  # to pay for it.
+  # Repo-wide, canary-only group. Defined at the WORKFLOW level (here, above
+  # `jobs:`), not on an individual job -- that scope is what makes it
+  # serialize whole RUNS of this workflow (the canary job, then its
+  # dependent alert job, run to completion before a second triggered run's
+  # jobs are allowed to start; see GitHub's own "only one workflow using the
+  # same concurrency group... will run at a time" semantics). That in turn
+  # is what keeps two `alert` jobs from ever racing each other across
+  # overlapping scheduled/manual runs -- there is no need for a job-level
+  # concurrency group on `alert` itself, since a second run's `alert` job
+  # cannot even start until this run's `alert` job (and the `canary` job it
+  # depends on) has already finished. Harmless if two alert jobs somehow DID
+  # overlap (canary-alert.sh resolves duplicates deterministically to the
+  # oldest open issue), but no reason to pay for it.
   group: dispatch-canary-run
   cancel-in-progress: false
 
@@ -50,6 +59,18 @@ jobs:
     # headroom well beyond the old 15 min: the self-hosted broker hops this
     # canary waits on can queue for several minutes under fleet contention
     # (#436).
+    #
+    # A job-level timeout-minutes TERMINATES the job the instant it's hit --
+    # every remaining step, `if: always()` included, is simply never
+    # started (this is why alerting cannot live in a trailing step of THIS
+    # job; see the dependent `alert` job below). A hung canary that trips
+    # this limit reports job conclusion `cancelled` to `needs.canary.result`
+    # below, not `failure` -- same distinction report-failure.sh's own
+    # `job-status` input draws, confirmed against this repo's real run
+    # history (e.g. Post-Deploy Smoke's own timeout-minutes kills report
+    # conclusion `cancelled`) and against GitHub's documented
+    # `jobs.<job_id>.result` values (success/failure/cancelled/skipped --
+    # no separate "timed_out" outcome reaches that context).
     timeout-minutes: 35
     steps:
       - name: Assert required repo variables are set
@@ -73,3 +94,53 @@ jobs:
           maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
           source: scheduled
           sweep-stale-canaries: 'true'
+
+  # A canary nobody hears is not a canary: this run's own failed 7
+  # consecutive scheduled runs with zero notification is what this job
+  # closes. A SEPARATE job, not a trailing step of `canary` above, is
+  # load-bearing: `canary`'s own timeout-minutes (above) kills that job
+  # outright on a genuine hang, and GitHub never starts a killed job's
+  # remaining steps -- not even ones marked `if: always()`. A dependent job
+  # is the only shape that still runs after `canary` concludes regardless of
+  # *how* it concluded (success, failure, cancellation, or this job-level
+  # timeout).
+  alert:
+    needs: canary
+    if: always()
+    # Deliberately ubuntu-latest, matching `canary` above: the alert must
+    # keep working even when the self-hosted control plane -- the thing
+    # dispatch-canary.yml exists to watch -- is itself the thing that's
+    # dead.
+    runs-on: ubuntu-latest
+    # Short and independent of `canary`'s own 35-minute budget: this job
+    # only ever makes a handful of `gh` calls, and it must never itself
+    # become the thing silently hanging with nobody notified.
+    timeout-minutes: 5
+    # Explicit and narrower than the workflow-level grant above (which
+    # `canary` still relies on for its own `actions: write` dispatch call):
+    # this job only ever reads issue/run-history state and writes an issue.
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      # A local `uses: ./...` action resolves from the checked-out working
+      # tree -- this job gets none of `canary`'s checkout for free, since
+      # each job runs on its own fresh runner.
+      - name: Checkout trusted broker revision
+        uses: actions/checkout@v7
+
+      # No step-level if: always() needed here -- the job itself already
+      # carries if: always() above, and if checkout above fails there is no
+      # checked-out canary-alert.sh for this step to run anyway.
+      # canary-alert's own step is continue-on-error: true (see its
+      # action.yml) so a broken alert path can never turn a healthy canary
+      # red, and can never turn a failing one green either - `canary`
+      # already fixed its own conclusion before this job ever starts.
+      - name: Alert on canary failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          canary-status: ${{ needs.canary.result }}
+          workflow-file: dispatch-canary.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}
