@@ -596,6 +596,101 @@ test('router serializes issue and pull-request lifecycle through one normalized 
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
 });
 
+test('agent-router.yml scopes id-token: write to the broker job alone, restating every other permission it uses (#645 Phase 6)', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-router.yml'),
+    'utf8',
+  );
+  const brokerSection = source.slice(source.search(/^ {2}broker:\s*$/mu));
+  assert.ok(brokerSection, 'agent-router.yml must have a broker job');
+
+  // Job-level `permissions:` replaces the workflow-level block entirely for
+  // this job, so broker must restate everything its own steps use.
+  const permissionsStart = brokerSection.search(/^\s+permissions:\s*$/mu);
+  assert.notEqual(
+    permissionsStart,
+    -1,
+    'broker must declare its own job-level permissions block',
+  );
+  const concurrencyStart = brokerSection.search(/^\s+concurrency:\s*$/mu);
+  assert.notEqual(concurrencyStart, -1);
+  const brokerPermissions = brokerSection.slice(
+    permissionsStart,
+    concurrencyStart,
+  );
+  assert.match(brokerPermissions, /^\s+contents:\s+read(?:\s+#.*)?$/mu);
+  assert.match(brokerPermissions, /^\s+issues:\s+write(?:\s+#.*)?$/mu);
+  assert.match(brokerPermissions, /^\s+actions:\s+write(?:\s+#.*)?$/mu);
+  assert.match(brokerPermissions, /^\s+id-token:\s+write(?:\s+#.*)?$/mu);
+  // Broker's own request()/requestOk() call sites (github-api.ts) never
+  // touch /pulls/*, only /issues/* and /actions/* -- pull-requests: write
+  // (present in the workflow-level block normalize inherits, asserted
+  // above) is deliberately not restated here.
+  assert.doesNotMatch(brokerPermissions, /pull-requests/u);
+
+  // normalize must not gain id-token: write: the only id-token: write in
+  // the whole file is the one just proven to sit inside broker's own
+  // job-level block, not the workflow-level block normalize inherits.
+  assert.equal(
+    [...source.matchAll(/^\s+id-token:\s+write\s*$/gmu)].length,
+    1,
+    'id-token: write must appear exactly once, scoped to the broker job',
+  );
+});
+
+test('agent-router.yml gates dispatch-storage GCP auth on shadow mode and wires the token/mode into the broker action (#645 Phase 6)', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-router.yml'),
+    'utf8',
+  );
+  const steps = stepBlocks(source);
+  const auth = namedStep(
+    steps,
+    'agent-router.yml',
+    'Authenticate to GCP for dispatch storage shadow observation',
+  );
+  assert.match(auth.source, stepField('id', 'gcp-auth'));
+  assert.match(
+    auth.source,
+    stepField('if', "vars.DISPATCH_STORAGE_MODE == 'shadow'"),
+    'the auth step must be conditional on shadow mode, so an off run mints no token at all',
+  );
+  assert.match(auth.source, stepField('uses', 'google-github-actions/auth@v3'));
+  assert.match(
+    auth.source,
+    stepField('workload_identity_provider', '${{ vars.GCP_WIF_PROVIDER }}', 10),
+  );
+  assert.match(
+    auth.source,
+    stepField('service_account', '${{ vars.GCP_DISPATCH_BROKER_SA }}', 10),
+  );
+  assert.match(auth.source, stepField('token_format', 'access_token', 10));
+
+  const brokerStep = namedStep(
+    steps,
+    'agent-router.yml',
+    'Apply serialized broker transition',
+  );
+  assert.match(
+    brokerStep.source,
+    stepField('DISPATCH_STORAGE_MODE', '${{ vars.DISPATCH_STORAGE_MODE }}', 10),
+  );
+  assert.match(
+    brokerStep.source,
+    stepField(
+      'DISPATCH_STORAGE_TOKEN',
+      '${{ steps.gcp-auth.outputs.access_token }}',
+      10,
+    ),
+  );
+  assert.match(
+    brokerStep.source,
+    stepField('GCP_PROJECT_ID', '${{ vars.GCP_PROJECT_ID }}', 10),
+  );
+
+  assertOrderedSteps(steps, 'agent-router.yml', [auth.name, brokerStep.name]);
+});
+
 test('router run-name embeds the router-group marker for every trigger type (#545)', async () => {
   // findConflictingRouterRun (github-api.mjs) identifies a conflicting
   // in-progress agent-router.yml run by matching this marker on the

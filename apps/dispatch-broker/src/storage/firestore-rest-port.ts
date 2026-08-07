@@ -7,10 +7,17 @@
  * correctness under real contention is exactly the property a mock cannot
  * prove.
  *
- * Deliberately NOT imported from `main.ts`, `canary/run.ts`, or
- * `rerun-infra-killed-runs/main.ts` -- same reason `./firestore-port.ts`
- * gives its own header for the same rule: wiring a durable backend into the
- * live dispatch path is separate work this file does not do.
+ * `main.ts` imports this class as of #645 Phase 6 (shadow mode) --
+ * `createShadowStoragePort` there is the one place it is constructed, and
+ * only when `DISPATCH_STORAGE_MODE` is `'shadow'` (see `./shadow.ts`'s
+ * header for the inertness argument). That is observation only: the
+ * comment ledger stays sole authority, and this class is never consulted
+ * to decide anything about a live dispatch, only written to and diffed
+ * against afterward. Still deliberately NOT imported from `canary/run.ts`
+ * or `rerun-infra-killed-runs/main.ts` -- neither has a shadow-mode
+ * observation step of its own -- and `./firestore-port.ts` (the client-
+ * library adapter) stays unimported everywhere in the live dispatch path
+ * for the bundle-size reason its own header gives.
  *
  * ## Why REST, not the client library
  *
