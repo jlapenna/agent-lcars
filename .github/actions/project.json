@@ -1,0 +1,9 @@
+{
+  "name": "github-actions",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": ".github/actions",
+  "projectType": "library",
+  "tags": ["platform:tooling", "scope:shared"],
+  "// why": "The composite actions' JavaScript was invisible to `pnpm lint`. Nx lint targets are per-project and `.github/actions` belonged to no project, so `nx run-many -t lint --all` (what ci.yml gates on) and `nx affected -t lint` (what the pre-push hook runs) both skipped roughly 4,000 lines of dispatch-broker control-plane code. Nothing was ignoring it; nobody was asking for it. This project exists so the @nx/eslint plugin infers a lint target here like anywhere else.",
+  "targets": {}
+}
