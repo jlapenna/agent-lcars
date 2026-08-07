@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   excludedPullRequestAuthors,
   formatDispatchMarker,
+  formatRouterGroupMarker,
   PIPELINE_CONTRACTS,
 } from '../../../libs/dispatch-contracts/src/index.js';
 import { agentWorkerPipelines, workerWorkflow } from './github-api.mjs';
@@ -513,6 +514,32 @@ test('router serializes issue and pull-request lifecycle through one normalized 
     /^\s+types:\s+\[closed, reopened, labeled, unlabeled\]\s*$/mu,
   );
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
+});
+
+test('router run-name embeds the router-group marker for every trigger type (#545)', async () => {
+  // findConflictingRouterRun (github-api.mjs) identifies a conflicting
+  // in-progress agent-router.yml run by matching this marker on the
+  // reliable run listing instead of fetching each candidate's unreliable
+  // concurrency_groups sub-resource. It must be derived from the shared
+  // formatter, not a second hand-written copy of the same literal -- follow
+  // how the assertion above already pins worker run-names to
+  // formatDispatchMarker.
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-router.yml'),
+    'utf8',
+  );
+  const marker = formatRouterGroupMarker({
+    repositoryId: '${{ github.repository_id }}',
+    issue:
+      '${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}',
+  });
+  assert.ok(
+    source.includes(marker),
+    'agent-router.yml run-name must embed the router-group marker via ' +
+      'formatRouterGroupMarker, derived from the same issue-number fallback ' +
+      'chain (event issue -> event PR -> manual input) the run-name prefix ' +
+      'already uses, so it is set unconditionally for every trigger type.',
+  );
 });
 
 test('router control-plane jobs use the protected self-hosted control pool', async () => {

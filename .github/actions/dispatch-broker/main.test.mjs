@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { formatRouterGroupMarker } from '../../../libs/dispatch-contracts/src/index.js';
 import {
   acceptIntent,
   beginDispatch,
@@ -1728,13 +1729,26 @@ test('an old dispatch buried past 100 newer unrelated runs is found and bound, n
   );
 });
 
+// Run 9002's display_title carries the router-group marker (#545) -- what
+// makes it, from `findConflictingRouterRun`'s point of view, a genuine
+// conflict for `task`'s group -- AND is still checked against
+// `/actions/runs/9002/concurrency_groups` -- what `findSupersedingRouterRun`
+// (unchanged by #545) separately still needs to positively corroborate an
+// eviction. `holds` controls only the latter.
 function supersedingClient(group, { holds = true } = {}) {
+  const marker = formatRouterGroupMarker({
+    repositoryId: task.repositoryId,
+    issue: task.issue,
+  });
   return {
     requestOk: async (path) => {
       if (path.includes('/workflows/agent-router.yml/runs?')) {
         return {
           workflow_runs: [
-            { id: 9002, display_title: 'route #304: labeled agent:codex' },
+            {
+              id: 9002,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
           ],
         };
       }
@@ -1749,13 +1763,14 @@ function supersedingClient(group, { holds = true } = {}) {
 }
 
 // Drives the REAL verifyBrokerConcurrency (dispatch path, #348) against a
-// fake API where a genuinely newer router run (9002) holds this run's
-// (9001) expected group -- indistinguishable, from the dispatch run's own
-// perspective, from ordinary contention. Retries exhaust into a retryable
-// BrokerConcurrencyMismatchError, proving #348's indirect verification path
-// feeds the exact same error shape #345/#347's eviction handling already
-// expects, regardless of which path (event-triggered listing vs.
-// dispatch-triggered indirect corroboration) produced it.
+// fake API where a genuinely newer router run (9002) carries this run's
+// (9001) expected group's router-group marker (#545) -- indistinguishable,
+// from the dispatch run's own perspective, from ordinary contention.
+// Retries exhaust into a retryable BrokerConcurrencyMismatchError, proving
+// #348's indirect verification path feeds the exact same error shape
+// #345/#347's eviction handling already expects, regardless of which
+// concrete signal (previously per-run concurrency_groups self-listing,
+// now the router-group marker) produced it.
 async function exhaustedDispatchConflictError(group) {
   const client = supersedingClient(group);
   const sleeps = [];

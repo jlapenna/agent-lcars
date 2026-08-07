@@ -5,9 +5,19 @@ name: Agent Issue Router
 # Every transport is normalized read-only before one job-level concurrency
 # queue serializes control-plane writes for the canonical repository/issue.
 # The ledger, not queue arrival, decides semantic ordering.
+#
+# The trailing [router-group:...] marker (formatRouterGroupMarker,
+# libs/dispatch-contracts/src/marker.js) is what lets
+# findConflictingRouterRun (.github/actions/dispatch-broker/github-api.mjs)
+# identify a conflicting run straight off the run listing (#545) instead of
+# fetching each candidate's unreliable /concurrency_groups sub-resource.
+# GitHub Actions evaluates run-name unconditionally for every trigger type,
+# so this fallback chain (event issue -> event PR -> manual input) must keep
+# covering all four: issues, issue_comment, pull_request, workflow_dispatch.
 run-name: >-
   route #${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}:
   ${{ github.event.issue.title || github.event.pull_request.title || inputs.kind || 'manual' }}
+  [router-group:${{ github.repository_id }}:${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}]
 
 on:
   issues:
