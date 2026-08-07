@@ -145,6 +145,27 @@ add the repository maintainer as an assignee. These updates are additive: keep
 the selected `agent:*` label for explicit redispatch, preserve an independent
 `status:blocked` label, and never remove an existing assignee.
 
+**Stamp the deliverable with your attempt's claim marker.** A finalizer that
+only infers a deliverable from a time window and a shared bot login cannot
+tell your run's own PR/comment/review apart from an unrelated one touched by
+the same identity during the same window. Include this exact hidden marker,
+literally, somewhere in the body of the specific artifact that fulfills this
+rule — the PR description, the evidence/summary comment, the review body, or
+the comment accompanying an issue close:
+
+```
+<!-- attempt-claim:$ATTEMPT_ID -->
+```
+
+Substitute your run's own `$ATTEMPT_ID` value (exported to your environment
+by your dispatch workflow) in place of the literal text `$ATTEMPT_ID`. If it
+is unset, skip the marker entirely rather than inventing a value — an older
+or hand-triggered dispatch has none, and a finalizer that supports this
+marker falls back to the time-window/bot-login inference above when no
+marker is found. Stamp only the artifact that IS your deliverable, never your
+takeover or progress comment (§1, §3): the marker is a claim of authorship
+over one specific object, not a running commentary tag.
+
 ## 6. Push early — never hold finished work locally
 
 Commit and push as soon as the smallest coherent slice of work exists (it

@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest';
 import {
   displayTitleMatchesAttempt,
   formatAttemptId,
+  formatClaimMarker,
   formatDispatchMarker,
   formatRouterGroupMarker,
   parseAttemptId,
+  parseClaimMarker,
   parseDispatchMarker,
   parseRouterGroupMarker,
+  textCarriesClaim,
 } from './marker';
 
 describe('formatDispatchMarker', () => {
@@ -181,5 +184,56 @@ describe('parseRouterGroupMarker', () => {
   it('tolerates a missing title', () => {
     expect(parseRouterGroupMarker(undefined)).toBe(undefined);
     expect(parseRouterGroupMarker(null)).toBe(undefined);
+  });
+});
+
+describe('formatClaimMarker', () => {
+  it('renders a hidden HTML-comment marker carrying the attempt ID', () => {
+    expect(formatClaimMarker('g1:intent-a')).toBe(
+      '<!-- attempt-claim:g1:intent-a -->',
+    );
+  });
+});
+
+describe('parseClaimMarker', () => {
+  it('recovers the attempt ID out of arbitrary artifact text', () => {
+    const marker = formatClaimMarker('g7:issue-645.g7');
+    expect(parseClaimMarker(`Fixed the widget.\n\n${marker}\n`)).toBe(
+      'g7:issue-645.g7',
+    );
+  });
+
+  it('returns undefined for text carrying no marker at all', () => {
+    expect(parseClaimMarker('Fixed the widget.')).toBe(undefined);
+  });
+
+  it('tolerates missing text', () => {
+    expect(parseClaimMarker(undefined)).toBe(undefined);
+    expect(parseClaimMarker(null)).toBe(undefined);
+  });
+});
+
+describe('textCarriesClaim', () => {
+  it('matches text carrying this exact attempt id', () => {
+    const body = `Evidence comment.\n\n${formatClaimMarker('g2:intent-a')}`;
+    expect(textCarriesClaim(body, 'g2:intent-a')).toBe(true);
+  });
+
+  it('rejects a marker naming a different attempt - the whole point of an exact claim', () => {
+    // A marker for some OTHER attempt must never satisfy this one, or a
+    // stray/stale marker from an earlier or sibling run could certify a
+    // run that produced nothing - exactly what #645 Phase 4 exists to rule
+    // out.
+    const body = `Evidence comment.\n\n${formatClaimMarker('g2:intent-b')}`;
+    expect(textCarriesClaim(body, 'g2:intent-a')).toBe(false);
+  });
+
+  it('rejects text with no marker at all', () => {
+    expect(textCarriesClaim('Evidence comment.', 'g2:intent-a')).toBe(false);
+  });
+
+  it('tolerates missing text', () => {
+    expect(textCarriesClaim(undefined, 'g2:intent-a')).toBe(false);
+    expect(textCarriesClaim(null, 'g2:intent-a')).toBe(false);
   });
 });

@@ -8,6 +8,7 @@ import type {
   FailurePhase,
   LedgerGeneration,
   LedgerTaskRef,
+  OwningSystem,
 } from '@agent-lcars/dispatch-contracts';
 import {
   classifyFailure,
@@ -36,7 +37,6 @@ import {
   createGitHubApi,
   dispatchRouterEvent,
   dispatchWorker,
-  ensureNeedsHumanParked,
   failClosed,
   findRunsForGeneration,
   findSupersedingRouterRun,
@@ -48,13 +48,17 @@ import {
   loadLedger,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
-  removeIssueLabel,
   repositoryPath,
   saveLedger,
   verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api.js';
 import type { Intent } from './modules/intent.js';
+import {
+  projectNeedsHumanPark,
+  recordProjectionStatus,
+  removeIssueLabel,
+} from './modules/projector.js';
 import type { PreflightExpectation } from './modules/scheduler.js';
 import type {
   AnchorControlEvent,
@@ -253,10 +257,25 @@ function contextFor(
 // warns against. The `phase` -- always caller-supplied, never guessed -- is
 // what makes this still useful: every failure it catches is at least
 // attributed to which controller step produced it.
+//
+// `owningSystem` defaults to `'controller'`, matching every call site below
+// unchanged (all six omit it) -- this repo's own controller phases
+// (signal/authorization/intent/scheduling/launch/reconciliation) are all
+// genuinely controller-owned, including `reconciliation`, whose default
+// `classifyFailure` refuses to infer (see failure.ts's `PHASE_OWNERS`
+// comment) and which is exactly why this wrapper has always passed an
+// explicit value here rather than omitting it. #645 Phase 4 reuses this same
+// wrapper for the projector's own `reporting`-phase failures (see
+// modules/projector.ts's header comment on why it does not build a second,
+// parallel classify/record/rethrow mechanism of its own) by passing
+// `'projector'` explicitly at those call sites -- this parameter is what
+// makes that reuse correct instead of misattributing a projection failure to
+// the controller.
 async function runPhase<T>(
   ledgerContext: LedgerContext | undefined,
   phase: FailurePhase,
   step: () => T | Promise<T>,
+  owningSystem: OwningSystem = 'controller',
 ): Promise<T> {
   try {
     return await step();
@@ -264,7 +283,7 @@ async function runPhase<T>(
     const message = error instanceof Error ? error.message : String(error);
     const failure = classifyFailure({
       phase,
-      owningSystem: 'controller',
+      owningSystem,
       reason: 'internal_error',
       retryDisposition: 'manual',
       detail: message,
@@ -578,15 +597,39 @@ async function trackMissingRun(
 
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  // Computed up front, once, so the park gate below and the
+  // 'reconcile-parked' anomaly further down share exactly one description
+  // of "why parked" rather than two independently-written literals that
+  // could drift. Exhausting the retry budget doesn't change *why* the run
+  // went missing, only that automated backoff has given up on it, so
+  // `retryDisposition` moves from `backoff` (the 'reconcile-missing-run'
+  // observation below) to `manual` while `reason` stays
+  // `launch_response_lost`. `undefined` when the bound has not been
+  // reached -- there is nothing to park yet.
+  const parkFailure = reachedBound
+    ? classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'controller',
+        reason: 'launch_response_lost',
+        retryDisposition: 'manual',
+        evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
+      })
+    : undefined;
   // Apply the (idempotent, verify-then-decide) GitHub-side park BEFORE
   // recording it in the ledger: if the mutation throws, the ledger must
   // stay exactly as it was so the next pass retries at the same attempt
-  // count, rather than claiming a park that never actually landed.
-  if (reachedBound) {
-    await ensureNeedsHumanParked(
+  // count, rather than claiming a park that never actually landed. Routed
+  // through the projector's own needsMaintainer gate (#645 Phase 4) rather
+  // than calling ensureNeedsHumanParked directly -- parkFailure's `manual`
+  // disposition always satisfies that gate here, so this changes nothing
+  // observable; it is now the projector, not this reconciler, that owns
+  // the needs-human decision.
+  if (parkFailure) {
+    await projectNeedsHumanPark(
       client,
       ledger.task,
       env('MAINTAINER_LOGIN', false),
+      parkFailure,
     );
   }
   addAnomaly(
@@ -625,7 +668,7 @@ async function trackMissingRun(
       evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`,
     }),
   );
-  if (reachedBound) {
+  if (parkFailure) {
     addAnomaly(
       ledger,
       'reconcile-parked',
@@ -634,21 +677,10 @@ async function trackMissingRun(
         reason: 'missing-run-bound-exhausted',
       },
       now,
-      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // The genuine human handoff: `projectNeedsHumanPark` (above) has
       // just run, and the guard at the top of this function turns every
       // later pass into a no-op, so nothing further happens automatically.
-      // Same underlying reason as the `reconcile-missing-run` observations
-      // that led here -- exhausting the retry budget doesn't change *why*
-      // the run went missing, only that automated backoff has given up on
-      // it -- so `retryDisposition` moves from `backoff` to `manual` while
-      // `reason` stays `launch_response_lost`.
-      classifyFailure({
-        phase: 'reconciliation',
-        owningSystem: 'controller',
-        reason: 'launch_response_lost',
-        retryDisposition: 'manual',
-        evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
-      }),
+      parkFailure,
     );
   }
   await saveLedger(client, loaded);
@@ -744,16 +776,37 @@ async function trackStuckRun(
 
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_STUCK_RUN_MAX_ATTEMPTS;
+  // Computed up front, once -- see trackMissingRun's own parkFailure for
+  // why (shared between the park gate and the 'reconcile-stuck-run-parked'
+  // anomaly below rather than two independently-written literals).
+  // Exhausting the observation budget doesn't change *why* the run stopped
+  // progressing, only that automated waiting has given up on it, so
+  // `retryDisposition` moves from `backoff` (the 'reconcile-stuck-run'
+  // observation below) to `manual` while `owningSystem`/`reason` stay
+  // `runner`/`runner_lost`.
+  const parkFailure = reachedBound
+    ? classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'runner',
+        reason: 'runner_lost',
+        retryDisposition: 'manual',
+        evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`,
+      })
+    : undefined;
   // Apply the (idempotent, verify-then-decide) GitHub-side park BEFORE
   // recording it in the ledger: if the mutation throws, the ledger must
   // stay exactly as it was so the next pass retries at the same attempt
   // count, rather than claiming a park that never actually landed. Same
-  // ordering trackMissingRun uses, for the same reason.
-  if (reachedBound) {
-    await ensureNeedsHumanParked(
+  // ordering trackMissingRun uses, for the same reason, and the same
+  // projector needs-human gate (#645 Phase 4) -- parkFailure's `manual`
+  // disposition always satisfies it here, so this changes nothing
+  // observable.
+  if (parkFailure) {
+    await projectNeedsHumanPark(
       client,
       ledger.task,
       env('MAINTAINER_LOGIN', false),
+      parkFailure,
     );
   }
   addAnomaly(
@@ -792,7 +845,7 @@ async function trackStuckRun(
       evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${RECONCILE_STUCK_RUN_MAX_ATTEMPTS})`,
     }),
   );
-  if (reachedBound) {
+  if (parkFailure) {
     addAnomaly(
       ledger,
       // Distinct kind from trackMissingRun's own 'reconcile-parked' so the
@@ -807,21 +860,10 @@ async function trackStuckRun(
         reason: 'stuck-run-bound-exhausted',
       },
       now,
-      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // The genuine human handoff: `projectNeedsHumanPark` (above) has
       // just run, and the guard at the top of this function turns every
       // later pass into a no-op, so nothing further happens automatically.
-      // Same underlying reason as the `reconcile-stuck-run` observations
-      // that led here -- exhausting the observation budget doesn't change
-      // *why* the run stopped progressing, only that automated waiting has
-      // given up on it -- so `retryDisposition` moves from `backoff` to
-      // `manual` while `owningSystem`/`reason` stay `runner`/`runner_lost`.
-      classifyFailure({
-        phase: 'reconciliation',
-        owningSystem: 'runner',
-        reason: 'runner_lost',
-        retryDisposition: 'manual',
-        evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`,
-      }),
+      parkFailure,
     );
   }
   await saveLedger(client, loaded);
@@ -996,14 +1038,36 @@ async function reconcileLedger(
     // promotes pending -- see completeRun/markDispatchRejected). Surfacing
     // it loudly rather than guessing/promoting is #305's "never silently
     // discard evidence" requirement applied to ledger data that itself
-    // looks corrupted. Mutation-before-ledger-write (same ordering as
-    // trackMissingRun above) so a failed park never leaves the ledger
-    // falsely claiming one landed; the anomaly check above makes a repeat
-    // pass, once parked, a true no-op.
-    await ensureNeedsHumanParked(
+    // looks corrupted. "Should be unreachable through broker.mjs's own
+    // transitions" is this vocabulary's own definition of `internal_error`
+    // -- a defensive check catching corrupted-looking ledger state, not a
+    // failure any known external cause (a lost signal, a lost launch
+    // response, a provider outage, ...) explains. The ledger this invariant
+    // is about is the controller's own state, so it -- not whichever system
+    // produced the generations in question -- is the explicit owner
+    // reconciliation-phase failures require. `manual`: the guard above
+    // (reconcileAnomaliesFor(...).length === 0) makes every later pass a
+    // no-op once this fires, identical to reconcile-parked's own idempotent
+    // stop -- nothing about this resolves itself, a human has to look at
+    // the ledger and decide what actually happened.
+    const parkFailure = classifyFailure({
+      phase: 'reconciliation',
+      owningSystem: 'controller',
+      reason: 'internal_error',
+      retryDisposition: 'manual',
+    });
+    // Mutation-before-ledger-write (same ordering as trackMissingRun above)
+    // so a failed park never leaves the ledger falsely claiming one landed;
+    // the anomaly check above makes a repeat pass, once parked, a true
+    // no-op. Routed through the projector's own needsMaintainer gate (#645
+    // Phase 4) rather than calling ensureNeedsHumanParked directly --
+    // parkFailure's `manual` disposition always satisfies that gate here,
+    // so this changes nothing observable.
+    await projectNeedsHumanPark(
       client,
       ledger.task,
       env('MAINTAINER_LOGIN', false),
+      parkFailure,
     );
     addAnomaly(
       ledger,
@@ -1013,24 +1077,7 @@ async function reconcileLedger(
         generation: pending.generation,
       },
       now,
-      // "Should be unreachable through broker.mjs's own transitions" is
-      // this vocabulary's own definition of `internal_error` -- a defensive
-      // check catching corrupted-looking ledger state, not a failure any
-      // known external cause (a lost signal, a lost launch response, a
-      // provider outage, ...) explains. The ledger this invariant is about
-      // is the controller's own state, so it -- not whichever system
-      // produced the generations in question -- is the explicit owner
-      // reconciliation-phase failures require. `manual`: the guard above
-      // (reconcileAnomaliesFor(...).length === 0) makes every later pass a
-      // no-op once this fires, identical to reconcile-parked's own
-      // idempotent stop -- nothing about this resolves itself, a human has
-      // to look at the ledger and decide what actually happened.
-      classifyFailure({
-        phase: 'reconciliation',
-        owningSystem: 'controller',
-        reason: 'internal_error',
-        retryDisposition: 'manual',
-      }),
+      parkFailure,
     );
     await saveLedger(client, loaded);
     return;
@@ -1588,6 +1635,30 @@ async function broker(): Promise<void> {
       );
     }
     await dispatchAccepted(client, loaded);
+    // Projector convergence checkpoint (#645 Phase 4 §5): by this point,
+    // every GitHub-facing write this pass required (a needs-human park, a
+    // stale-label removal) has already either succeeded or thrown -- a
+    // throw would already have propagated out of this try block, so
+    // reaching this line means whatever the projector owed GitHub this
+    // pass, it delivered. Recording that here is what makes "has GitHub
+    // caught up with the ledger" answerable from `loaded.ledger.projection`
+    // without re-deriving it from the anomaly log.
+    //
+    // Deliberately isolated in its own try/catch rather than folded into
+    // the block above: recording (or persisting) this checkpoint is itself
+    // a projector/reporting concern, and #645 §5 is explicit that a
+    // reporting failure must never turn an otherwise-successful pass into a
+    // failed job or an extra fail-closed park -- so a failure here is
+    // logged and discarded, never rethrown, and never reaches `failClosed`.
+    try {
+      recordProjectionStatus(loaded.ledger, true);
+      await saveLedger(client, loaded);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
+      );
+    }
   } catch (error) {
     await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
   }

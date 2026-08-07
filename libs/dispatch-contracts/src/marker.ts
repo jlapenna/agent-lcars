@@ -194,3 +194,87 @@ export function parseRouterGroupMarker(
     ? { repositoryId: Number(match[1]), issue: Number(match[2]) }
     : undefined;
 }
+
+/**
+ * The attempt-scoped artifact-claim marker: `<!-- attempt-claim:<attemptId> -->`.
+ *
+ * #645 Phase 4's exit criterion is "agents cannot certify themselves,
+ * unrelated artifacts cannot satisfy a run". Today, `verify-deliverable.sh`
+ * proves a deliverable exists by inference: an open/updated PR referencing
+ * the anchor, touched inside this run's time window, under a bot login that
+ * is not always unique to one pipeline (codex and opencode both push as
+ * `agent-lcars[bot]`, an acknowledged limitation — see
+ * `excludedPullRequestAuthors`). A time window plus a shared identity is not
+ * proof: an unrelated PR touched during the window by the same shared login
+ * can satisfy a run that produced nothing.
+ *
+ * This marker replaces inference with an exact claim for the artifacts that
+ * can carry a body: an agent stamps it, hidden in an HTML comment so it does
+ * not clutter what a human reviewer sees, into the body of the exact PR,
+ * comment, or review it creates (agent-protocol.md #5). The finalizer then
+ * looks for this exact string on the artifacts it can reach, rather than
+ * reasoning about who touched what during which window.
+ *
+ * `attemptId` is `formatAttemptId`'s output — there is no second identity
+ * here, only a second surface (artifact bodies, not run titles) the same
+ * identity gets embedded into.
+ */
+const CLAIM_MARKER_RE = /<!--\s*attempt-claim:([A-Za-z0-9._:-]+)\s*-->/u;
+
+/**
+ * The kinds of artifact a claim can name — the deliverable shapes
+ * agent-protocol.md #5 recognizes as a visible dispatch outcome that can
+ * carry a body, minus the "park" case (a park is a `status:needs-human`
+ * label/assignee pair, not an artifact a marker can be stamped into).
+ */
+export type ClaimArtifactType = 'pr' | 'comment' | 'review' | 'close';
+
+/**
+ * #645's Shared contracts section: "AgentResultClaim: attempt ID and exact
+ * artifact type/ID/URL." Worker runtime emits these; the finalizer treats
+ * them as untrusted until it independently re-fetches the named artifact and
+ * confirms the marker is actually present on it — this type alone proves
+ * nothing, it is what gets validated.
+ */
+export interface AgentResultClaim {
+  attemptId: string;
+  artifactType: ClaimArtifactType;
+  /** The artifact's own identifier — a PR/issue number, a comment ID, or a
+   *  review ID — always as a string so a numeric and a URL-shaped identifier
+   *  share one field type. */
+  artifactId: string;
+  /** The artifact's `html_url`, when known. */
+  artifactUrl?: string;
+}
+
+/**
+ * Render the marker for an attempt.
+ */
+export function formatClaimMarker(attemptId: string): string {
+  return `<!-- attempt-claim:${attemptId} -->`;
+}
+
+/**
+ * Recover the attempt ID a piece of artifact text claims, if any.
+ *
+ * Returns `undefined` for text with no marker at all, so a caller can tell
+ * "no claim" apart from "claim present but for some other attempt" instead
+ * of collapsing both to the same falsy result.
+ */
+export function parseClaimMarker(
+  text: string | undefined | null,
+): string | undefined {
+  return text?.match(CLAIM_MARKER_RE)?.[1];
+}
+
+/**
+ * Whether artifact text carries THIS exact attempt's marker — not merely a
+ * marker for some other attempt. This is the whole point of the exact-claim
+ * check: a marker naming a different attempt must not satisfy this one.
+ */
+export function textCarriesClaim(
+  text: string | undefined | null,
+  attemptId: string,
+): boolean {
+  return Boolean(text?.includes(formatClaimMarker(attemptId)));
+}

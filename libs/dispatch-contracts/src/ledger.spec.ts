@@ -175,6 +175,38 @@ describe('isWellFormedLedger', () => {
     expect(isWellFormedLedger(ledgerFixture(overrides))).toBe(false);
   });
 
+  it('accepts a ledger with no projection status at all (predates the projector module)', () => {
+    expect(isWellFormedLedger(ledgerFixture({ projection: undefined }))).toBe(
+      true,
+    );
+  });
+
+  it('accepts a ledger carrying a well-formed projection status', () => {
+    expect(
+      isWellFormedLedger(
+        ledgerFixture({
+          projection: {
+            desiredRevision: 3,
+            observedRevision: 3,
+            state: 'converged',
+            observedAt: '2026-08-06T00:05:00.000Z',
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a ledger carrying a malformed projection status', () => {
+    // Same defense as anomalies[].failure: a hand-edited or corrupted
+    // comment must not hand a consumer a `projection` field that looks like
+    // real convergence data but isn't.
+    expect(
+      isWellFormedLedger(
+        ledgerFixture({ projection: { state: 'not-a-real-state' } }),
+      ),
+    ).toBe(false);
+  });
+
   it('rejects a task missing its repositoryId', () => {
     // The type guard promises a numeric LedgerTaskRef.repositoryId. Letting
     // one through without it hands every downstream consumer `undefined`

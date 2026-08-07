@@ -53,15 +53,23 @@ export {
   LEDGER_SCHEMA,
   renderLedgerComment,
 } from './ledger';
-export type { AttemptMarker, RouterGroupIdentity } from './marker';
+export type {
+  AgentResultClaim,
+  AttemptMarker,
+  ClaimArtifactType,
+  RouterGroupIdentity,
+} from './marker';
 export {
   displayTitleMatchesAttempt,
   formatAttemptId,
+  formatClaimMarker,
   formatDispatchMarker,
   formatRouterGroupMarker,
   parseAttemptId,
+  parseClaimMarker,
   parseDispatchMarker,
   parseRouterGroupMarker,
+  textCarriesClaim,
 } from './marker';
 export type {
   AgentPipeline,
@@ -87,6 +95,14 @@ export {
   WORKER_WORKFLOW_FILES,
   workerWorkflow,
 } from './pipelines';
+export type {
+  ProjectionConvergenceState,
+  ProjectionStatus,
+} from './projection';
+export {
+  isWellFormedProjectionStatus,
+  PROJECTION_CONVERGENCE_STATES,
+} from './projection';
 export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,

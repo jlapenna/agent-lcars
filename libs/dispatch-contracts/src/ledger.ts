@@ -24,6 +24,8 @@ import type { FailureClassification } from './failure';
 import { isWellFormedFailureClassification } from './failure';
 import type { DispatchPipeline } from './pipelines';
 import { isDispatchPipeline } from './pipelines';
+import type { ProjectionStatus } from './projection';
+import { isWellFormedProjectionStatus } from './projection';
 
 export const LEDGER_MARKER = '<!-- agent-lcars:dispatch-ledger:v1 -->';
 export const LEDGER_SCHEMA = 'agent-lcars.dispatch-ledger/v1';
@@ -244,6 +246,15 @@ export interface DispatchLedger {
   sources: LedgerSource[];
   generations: LedgerGeneration[];
   anomalies: LedgerAnomaly[];
+  /** The projector's own convergence checkpoint (#645 Phase 4 §5) —
+   *  whether GitHub-facing state has caught up with this ledger. Optional
+   *  because every ledger written before the projector module existed has
+   *  none, and reading one must not treat that absence as an error: it
+   *  means "no convergence attempt has been recorded yet", the same as an
+   *  explicit `state: 'pending'` would. Deliberately NOT read by any
+   *  dispatch/outcome logic — see dispatch-broker's modules/projector.ts,
+   *  which is the only writer. */
+  projection?: ProjectionStatus;
 }
 
 /**
@@ -434,5 +445,16 @@ export function isWellFormedLedger(value: unknown): value is DispatchLedger {
   if (!value.generations.every(isWellFormedGeneration)) return false;
   if (!value.sources.every(isWellFormedSource)) return false;
   if (!value.anomalies.every(isWellFormedAnomaly)) return false;
+  // `projection` is optional for the same reason `anomalies[].failure` is
+  // (see isWellFormedAnomaly above): every ledger written before it existed
+  // must keep reading as well-formed, but a present-and-malformed value —
+  // hand-edited or corrupted — must not reach a consumer as though it were
+  // real convergence data.
+  if (
+    value.projection !== undefined &&
+    !isWellFormedProjectionStatus(value.projection)
+  ) {
+    return false;
+  }
   return true;
 }

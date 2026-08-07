@@ -24,6 +24,19 @@ if [ "$1" != "api" ]; then
   exit 64
 fi
 path="$2"
+shift 2
+# Understand the flags the real script uses, so a test exercises the real
+# jq filter rather than a stub that quietly ignores it. --paginate is a
+# no-op here (fixtures are a single page) but must be accepted, since the
+# script passes it and an unrecognised flag would otherwise pass silently.
+jq_filter=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paginate) shift ;;
+    --jq) jq_filter="$2"; shift 2 ;;
+    *) echo "fake gh: unsupported flag: $1" >&2; exit 64 ;;
+  esac
+done
 case "$path" in
   *"/reviews?"*) key=reviews ;;
   *"/comments?"*) key=comments ;;
@@ -41,12 +54,22 @@ if [ -f "$FAKE_GH_DIR/$key.fail" ]; then
 fi
 
 if [ -f "$FAKE_GH_DIR/$key.json" ]; then
-  cat "$FAKE_GH_DIR/$key.json"
+  if [ -n "$jq_filter" ]; then
+    jq -r "$jq_filter" < "$FAKE_GH_DIR/$key.json"
+  else
+    cat "$FAKE_GH_DIR/$key.json"
+  fi
 else
   case "$key" in
-    pulls | comments | reviews) echo "[]" ;;
-    issue) echo '{"state":"open","closed_at":null,"labels":[]}' ;;
+    pulls | comments | reviews) default='[]' ;;
+    issue) default='{"state":"open","closed_at":null,"labels":[]}' ;;
+    *) default='' ;;
   esac
+  if [ -n "$jq_filter" ]; then
+    printf '%s' "$default" | jq -r "$jq_filter"
+  else
+    printf '%s\n' "$default"
+  fi
 fi
 FAKE_GH
 chmod +x "$fake_bin/gh"
@@ -379,6 +402,189 @@ JSON
   case "$output" in
     *"closed at 2024-01-02T00:00:00Z"*) ;;
     *) fail "expected the issue-closed evidence message" ;;
+  esac
+)
+
+# --- Case 10: clause (0) - an exact attempt-claim marker on a PR passes,
+# WITHOUT going through clause (a)'s inference at all. The PR is built so
+# clause (a) would reject it on every one of its own grounds (updated
+# BEFORE STARTED_AT, author on the exclusion list, no "#42" reference and
+# not #NUM itself) - if this still passes, only clause (0) could have found
+# it ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  export EXCLUDE_PR_AUTHOR="agent-lcars[bot]"
+  case_dir="$test_root/claim-marker-on-pr"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case claim-marker-on-pr
+  test "$status" = 0 || fail "an exact attempt-claim marker on a PR should pass"
+  case "$output" in
+    *"::notice::"*"verified via EXACT attempt-claim marker"*) ;;
+    *) fail "expected the EXACT-path notice" ;;
+  esac
+  case "$output" in
+    *"Deliverable evidence: PR carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
+    *) fail "clause (0) PR message missing expected text" ;;
+  esac
+  case "$output" in
+    *"PR referencing #42"*) fail "should not have gone through clause (a)'s inference message" ;;
+  esac
+)
+
+# --- Case 11: clause (0) - an exact attempt-claim marker on a comment
+# passes even in implement mode, where clause (d)'s bare-comment inference
+# is never evaluated at all ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  export MODE=implement
+  case_dir="$test_root/claim-marker-on-comment"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
+JSON
+  run_case claim-marker-on-comment
+  test "$status" = 0 || fail "an exact attempt-claim marker on a comment should pass, even in implement mode"
+  case "$output" in
+    *"::notice::"*"verified via EXACT attempt-claim marker"*) ;;
+    *) fail "expected the EXACT-path notice" ;;
+  esac
+  case "$output" in
+    *"Deliverable evidence: comment carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
+    *) fail "clause (0) comment message missing expected text" ;;
+  esac
+)
+
+# --- Case 12: clause (0) - an exact attempt-claim marker on a PR review
+# passes in review mode, without needing submitted_at >= STARTED_AT the way
+# clause (e)'s inference does ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  export MODE=review
+  case_dir="$test_root/claim-marker-on-review"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/reviews.json" <<'JSON'
+[{"user":{"login":"someone-else"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
+JSON
+  run_case claim-marker-on-review
+  test "$status" = 0 || fail "an exact attempt-claim marker on a review should pass"
+  case "$output" in
+    *"::notice::"*"verified via EXACT attempt-claim marker"*) ;;
+    *) fail "expected the EXACT-path notice" ;;
+  esac
+  case "$output" in
+    *"Deliverable evidence: pull request review carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
+    *) fail "clause (0) review message missing expected text" ;;
+  esac
+)
+
+# --- Case 13: a claim marker naming a DIFFERENT attempt must NOT satisfy
+# this run - that is the whole point of an exact claim. A PR and a comment
+# both carry a foreign attempt's marker; with no other evidence, the run
+# must still fail as a genuine no-deliverable ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  case_dir="$test_root/claim-marker-wrong-attempt"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g9:someone-elses-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g9:someone-elses-intent -->"}]
+JSON
+  run_case claim-marker-wrong-attempt
+  test "$status" = 1 || fail "a marker naming a different attempt must not satisfy this run"
+  case "$output" in
+    *"verified via EXACT attempt-claim marker"*) fail "a foreign attempt's marker must not be reported as this run's exact evidence" ;;
+  esac
+  case "$output" in
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a foreign marker with no other evidence must still be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 14: ATTEMPT_ID is set but no artifact carries a claim marker -
+# clause (0) no-ops and the run still passes via the existing inference
+# clause (a), exactly as it did before clause (0) existed ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  case_dir="$test_root/attempt-id-set-inference-still-works"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case attempt-id-set-inference-still-works
+  test "$status" = 0 || fail "inference should still pass when ATTEMPT_ID is set but unclaimed"
+  case "$output" in
+    *"::notice::"*"verified via INFERENCE"*) ;;
+    *) fail "expected the INFERENCE-path notice" ;;
+  esac
+  case "$output" in
+    *"Deliverable evidence: PR referencing #42"*) ;;
+    *) fail "expected clause (a)'s own evidence message" ;;
+  esac
+)
+
+# --- Case 15: ATTEMPT_ID is set, no claim marker anywhere, and no inference
+# evidence either - genuine no-deliverable, same as the no-ATTEMPT_ID case ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  run_case attempt-id-set-neither-found
+  test "$status" = 1 || fail "neither exact nor inferred evidence must still fail"
+  case "$output" in
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1 even with ATTEMPT_ID set"
+)
+
+# --- Case 16: in implement mode a transient comment-lookup failure must be
+# reported as inconclusive, NOT as a confirmed absence. Clause (d) only runs
+# for reply mode or a runbook dispatch, so nothing else re-queries comments
+# here -- letting clause 0's failure fall through silently would turn "we
+# could not tell" into NO_DELIVERABLE=1 and blame the agent for a network
+# blip. ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  export MODE=implement
+  case_dir="$test_root/attempt-claim-comment-lookup-failure"
+  mkdir -p "$case_dir"
+  : > "$case_dir/comments.fail"
+  run_case attempt-claim-comment-lookup-failure
+  test "$status" = 1 || fail "a failed comment lookup must not pass"
+  case "$output" in
+    *"FAILED lookup"*) ;;
+    *) fail "expected the failed-lookup message, not a genuine-absence one" ;;
+  esac
+  if grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" 2>/dev/null; then
+    fail "an inconclusive lookup must NOT be recorded as a confirmed missing deliverable"
+  fi
+)
+
+# --- Case 17: the same failure in reply mode falls through as designed,
+# because clause (d) does repeat the lookup and owns the distinction. ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  export MODE=reply
+  case_dir="$test_root/attempt-claim-comment-failure-reply-mode"
+  mkdir -p "$case_dir"
+  : > "$case_dir/comments.fail"
+  run_case attempt-claim-comment-failure-reply-mode
+  test "$status" = 1 || fail "a failed comment lookup must not pass in reply mode either"
+  case "$output" in
+    *"FAILED lookup"*) ;;
+    *) fail "clause (d) should have recorded the failed lookup" ;;
   esac
 )
 
