@@ -1,3 +1,4 @@
+import { parseQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -219,13 +220,10 @@ export async function POST(
       labels?: string[];
       title?: string;
     };
-    const requestMarker =
-      /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f-]{36}) digest=([0-9a-f]{64}) -->/u.exec(
-        body.body ?? '',
-      );
+    const requestMarker = parseQuickTaskMarker(body.body);
     const claimSha = requestMarker
       ? getQuickTaskClaimRefSha(
-          `tags/agent-lcars/quick-task/${requestMarker[1]}`,
+          `tags/agent-lcars/quick-task/${requestMarker.requestId}`,
         )
       : undefined;
     const claim = claimSha ? getQuickTaskClaimTag(claimSha) : undefined;
@@ -238,8 +236,8 @@ export async function POST(
         claim.message.slice('agent-lcars:quick-task-claim:v1 '.length),
       ) as Record<string, unknown>;
       hasMatchingClaim =
-        persisted['requestId'] === requestMarker[1] &&
-        persisted['digest'] === requestMarker[2] &&
+        persisted['requestId'] === requestMarker.requestId &&
+        persisted['digest'] === requestMarker.digest &&
         typeof persisted['claimantId'] === 'string' &&
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
           persisted['claimantId'],

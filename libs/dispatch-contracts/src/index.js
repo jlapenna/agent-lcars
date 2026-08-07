@@ -47,6 +47,7 @@ export {
  * @typedef {import('./failure.js').FailureReason} FailureReason
  * @typedef {import('./failure.js').RetryDisposition} RetryDisposition
  * @typedef {import('./failure.js').FailureClassification} FailureClassification
+ * @typedef {import('./quick-task.js').QuickTaskIdentity} QuickTaskIdentity
  */
 
 export {
@@ -83,3 +84,10 @@ export {
   parseAttemptId,
   parseDispatchMarker,
 } from './marker.js';
+export {
+  formatQuickTaskMarker,
+  parseQuickTaskMarker,
+  QUICK_TASK_MARKER_RE,
+  quickTaskDigest,
+  quickTaskMarkerMatcher,
+} from './quick-task.js';

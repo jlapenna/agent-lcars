@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import {
   AGENT_LABELS,
   GENERIC_REPLY_COMMAND,
+  quickTaskDigest,
+  quickTaskMarkerMatcher,
   REPLY_COMMANDS,
   REVIEW_LABELS,
   WORKER_WORKFLOW_FILES,
@@ -17,10 +19,10 @@ import { digest } from './broker.mjs';
 // the existing ones.
 const COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
 const WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
-const QUICK_TASK_MARKER =
-  /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) digest=([0-9a-f]{64}) -->/gu;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const sha256Hex = (input) =>
+  crypto.createHash('sha256').update(input).digest('hex');
 
 function labelsOf(issue) {
   return (issue.labels ?? []).map((label) =>
@@ -61,8 +63,7 @@ function parseExactCommand(body) {
 
 function quickTaskRequest(issue, repository, pipeline) {
   const body = issue.body ?? '';
-  const matches = [...body.matchAll(QUICK_TASK_MARKER)];
-  QUICK_TASK_MARKER.lastIndex = 0;
+  const matches = [...body.matchAll(quickTaskMarkerMatcher())];
   if (matches.length === 0) {
     if (body.includes('<!-- agent-lcars:quick-task-request:v1')) {
       throw new Error('Malformed Quick Task marker');
@@ -107,11 +108,8 @@ function quickTaskRequest(issue, repository, pipeline) {
   return { requestId, digest: persistedDigest };
 }
 
-function digestQuickTask({ repository, pipeline, title, description }) {
-  return crypto
-    .createHash('sha256')
-    .update(JSON.stringify({ repository, pipeline, title, description }))
-    .digest('hex');
+function digestQuickTask(identity) {
+  return quickTaskDigest(identity, sha256Hex);
 }
 
 function timelineSource(timeline, eventName, event) {
