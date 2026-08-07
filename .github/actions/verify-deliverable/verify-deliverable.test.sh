@@ -275,6 +275,30 @@ JSON
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a stale park must still be a genuine (not errored) no-deliverable"
 )
 
+# --- Case 4e: clause (c) - the label WAS applied during this run but has
+# since been REMOVED (the run became unblocked, or a human unparked it).
+# A `labeled` timeline event is permanent, so recency alone would keep
+# satisfying the gate forever even though the issue is no longer parked.
+# Both halves are required: applied by THIS run, and still parked now. ---
+(
+  base_env
+  case_dir="$test_root/needs-human-label-applied-then-removed"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/issue.json" <<'JSON'
+{"state":"open","closed_at":null,"labels":[]}
+JSON
+  cat > "$case_dir/timeline.json" <<'JSON'
+[{"event":"labeled","label":{"name":"status:needs-human"},"created_at":"2024-01-02T00:00:00Z"},
+ {"event":"unlabeled","label":{"name":"status:needs-human"},"created_at":"2024-01-02T01:00:00Z"}]
+JSON
+  run_case needs-human-label-applied-then-removed
+  test "$status" = 1 || fail "a park applied then removed must not satisfy clause (c)"
+  case "$output" in
+    *"status:needs-human label applied"*) fail "a removed park must not be reported as evidence" ;;
+    *) ;;
+  esac
+)
+
 # --- Case 4c: clause (c) - the label is absent entirely (current default
 # behaviour, unchanged by the recency fix) ---
 (
