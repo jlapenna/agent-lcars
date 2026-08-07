@@ -1,0 +1,2603 @@
+// apps/dispatch-broker/src/main.ts
+import crypto3 from "node:crypto";
+import fs from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+
+// libs/dispatch-contracts/src/failure.ts
+var OWNING_SYSTEMS = Object.freeze([
+  "controller",
+  "runner",
+  "worker",
+  "finalizer",
+  "projector"
+]);
+var FAILURE_PHASES = [
+  "signal",
+  "authorization",
+  "intent",
+  "scheduling",
+  "launch",
+  "runner_allocation",
+  "bootstrap",
+  "provider_admission",
+  "provider_execution",
+  "agent_execution",
+  "validation",
+  "reporting",
+  "telemetry",
+  "reconciliation"
+];
+var PHASE_OWNERS = Object.freeze({
+  signal: "controller",
+  authorization: "controller",
+  intent: "controller",
+  scheduling: "controller",
+  launch: "controller",
+  runner_allocation: "runner",
+  bootstrap: "worker",
+  provider_admission: "worker",
+  provider_execution: "worker",
+  agent_execution: "worker",
+  validation: "finalizer",
+  reporting: "projector",
+  telemetry: "projector",
+  // Every system reconciles the state it owns, so this phase alone cannot
+  // name its owner from the phase. `classifyFailure` requires an explicit
+  // owningSystem when the phase is `reconciliation`; this default is the
+  // most common case, not an assumption the classifier is allowed to make
+  // silently.
+  reconciliation: "controller"
+});
+var RETRY_DISPOSITIONS = [
+  "never",
+  "immediate",
+  "backoff",
+  "after_health_change",
+  "after_configuration_change",
+  "manual"
+];
+var FAILURE_REASONS = [
+  // controller / signal + reconciliation
+  "signal_lost",
+  "signal_evicted",
+  "signal_unverifiable",
+  "quick_task_digest_mismatch",
+  "concurrency_group_unverifiable",
+  // controller / authorization + intent + scheduling + launch
+  "unauthorized_actor",
+  "ambiguous_pipeline_selection",
+  "intent_superseded",
+  "launch_response_lost",
+  "launch_rejected",
+  // runner
+  "runner_allocation_timeout",
+  "runner_lost",
+  // worker / bootstrap
+  "work_token_mint_failed",
+  "checkout_failed",
+  "tool_setup_failed",
+  // worker / provider + agent
+  "provider_admission_denied",
+  "provider_graph_allocation_failed",
+  "provider_unavailable",
+  "agent_turn_budget_exhausted",
+  "agent_exited_nonzero",
+  // finalizer
+  "deliverable_absent",
+  "deliverable_lookup_failed",
+  "deliverable_unattributable",
+  // projector
+  "github_write_failed",
+  "telemetry_upload_failed",
+  "telemetry_absent",
+  // any system
+  "internal_error"
+];
+var PHASES = new Set(FAILURE_PHASES);
+var REASONS = new Set(FAILURE_REASONS);
+var DISPOSITIONS = new Set(RETRY_DISPOSITIONS);
+var SYSTEMS = new Set(OWNING_SYSTEMS);
+function classifyFailure({
+  phase,
+  reason,
+  retryDisposition,
+  owningSystem,
+  retryBudget,
+  evidence,
+  detail
+}) {
+  if (!PHASES.has(phase)) {
+    throw new Error(`Unknown failure phase: ${phase}`);
+  }
+  if (!REASONS.has(reason)) {
+    throw new Error(`Unknown failure reason code: ${reason}`);
+  }
+  if (!DISPOSITIONS.has(retryDisposition)) {
+    throw new Error(`Unknown retry disposition: ${retryDisposition}`);
+  }
+  if (owningSystem !== void 0 && !SYSTEMS.has(owningSystem)) {
+    throw new Error(`Unknown owning system: ${owningSystem}`);
+  }
+  if (phase === "reconciliation" && owningSystem === void 0) {
+    throw new Error(
+      "Reconciliation failures must name their owning system: every system reconciles the state it owns"
+    );
+  }
+  if (retryBudget !== void 0 && (!Number.isSafeInteger(retryBudget) || retryBudget < 0)) {
+    throw new Error(`Invalid retry budget: ${retryBudget}`);
+  }
+  return {
+    owningSystem: owningSystem ?? PHASE_OWNERS[phase],
+    phase,
+    reason,
+    retryDisposition,
+    ...retryBudget === void 0 ? {} : { retryBudget },
+    ...evidence === void 0 ? {} : { evidence },
+    ...detail === void 0 ? {} : { detail }
+  };
+}
+function formatFailure(failure) {
+  const budget = failure.retryBudget === void 0 ? "" : ` budget=${failure.retryBudget}`;
+  return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
+}
+
+// libs/dispatch-contracts/src/pipelines.ts
+var PIPELINE_CONTRACTS = Object.freeze({
+  claude: Object.freeze({
+    pipeline: "claude",
+    contract: "agent",
+    workflowFile: "claude.yml",
+    displayName: "Claude",
+    runNameLabel: "Claude issue agent",
+    label: "agent:claude",
+    reviewLabel: "review:claude",
+    replyTrigger: "@claude",
+    replyTriggerAliases: Object.freeze([]),
+    redispatchCommand: "@claude",
+    botLogin: "claude[bot]"
+  }),
+  codex: Object.freeze({
+    pipeline: "codex",
+    contract: "agent",
+    workflowFile: "codex.yml",
+    displayName: "Codex",
+    runNameLabel: "Codex issue agent",
+    label: "agent:codex",
+    reviewLabel: "review:codex",
+    replyTrigger: "/codex",
+    replyTriggerAliases: Object.freeze([]),
+    redispatchCommand: "/codex",
+    botLogin: "agent-lcars[bot]"
+  }),
+  opencode: Object.freeze({
+    pipeline: "opencode",
+    contract: "agent",
+    workflowFile: "opencode.yml",
+    displayName: "OpenCode",
+    runNameLabel: "OpenCode issue agent",
+    label: "agent:opencode",
+    reviewLabel: "review:opencode",
+    replyTrigger: "/oc",
+    replyTriggerAliases: Object.freeze(["/opencode"]),
+    redispatchCommand: "/opencode",
+    botLogin: "agent-lcars[bot]"
+  }),
+  canary: Object.freeze({
+    // #307's no-op production canary. It carries no label, no reply command,
+    // and no bot login because nothing may ever select it from an issue: the
+    // only way to produce a `canary` intent is normalize.mjs's dedicated
+    // workflow_dispatch `kind: 'canary'` branch, fired exclusively by this
+    // repo's own trusted dispatch-canary.yml/post-deploy-smoke.yml.
+    pipeline: "canary",
+    contract: "canary",
+    workflowFile: "agent-dispatch-canary.yml",
+    displayName: "Dispatch canary",
+    runNameLabel: "Dispatch canary worker",
+    replyTriggerAliases: Object.freeze([])
+  })
+});
+var DISPATCH_PIPELINES = Object.freeze(
+  Object.keys(PIPELINE_CONTRACTS)
+);
+var AGENT_PIPELINES = Object.freeze(
+  DISPATCH_PIPELINES.filter(
+    (pipeline) => PIPELINE_CONTRACTS[pipeline].contract === "agent"
+  )
+);
+var WORKER_WORKFLOW_FILES = Object.freeze(
+  new Set(
+    DISPATCH_PIPELINES.map(
+      (pipeline) => PIPELINE_CONTRACTS[pipeline].workflowFile
+    )
+  )
+);
+var AGENT_LABELS = new Map(
+  AGENT_PIPELINES.map((pipeline) => [
+    PIPELINE_CONTRACTS[pipeline].label,
+    pipeline
+  ])
+);
+var REVIEW_LABELS = new Map(
+  AGENT_PIPELINES.map((pipeline) => [
+    PIPELINE_CONTRACTS[pipeline].reviewLabel,
+    pipeline
+  ])
+);
+var DISPATCH_LABELS = Object.freeze([
+  ...AGENT_LABELS.keys(),
+  ...REVIEW_LABELS.keys()
+]);
+var REPLY_COMMANDS = new Map(
+  AGENT_PIPELINES.flatMap((pipeline) => {
+    const contract = PIPELINE_CONTRACTS[pipeline];
+    return [
+      contract.replyTrigger,
+      ...contract.replyTriggerAliases
+    ].map((command) => [command, pipeline]);
+  })
+);
+var GENERIC_REPLY_COMMAND = "@agent";
+var AGENT_BOT_LOGINS = Object.freeze([
+  ...new Set(
+    AGENT_PIPELINES.map(
+      (pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin
+    )
+  )
+]);
+function isDispatchPipeline(pipeline) {
+  return Object.hasOwn(PIPELINE_CONTRACTS, pipeline);
+}
+function pipelineContract(pipeline) {
+  const contract = PIPELINE_CONTRACTS[pipeline];
+  if (!contract) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
+  return contract;
+}
+function workerWorkflow(pipeline) {
+  return pipelineContract(pipeline).workflowFile;
+}
+
+// libs/dispatch-contracts/src/ledger.ts
+var LEDGER_MARKER = "<!-- agent-lcars:dispatch-ledger:v1 -->";
+var LEDGER_SCHEMA = "agent-lcars.dispatch-ledger/v1";
+var LEDGER_GENERATION_STATES = [
+  "accepted",
+  "pending",
+  "dispatching",
+  "dispatch-unknown",
+  "dispatch-rejected",
+  "active",
+  "completion-observed",
+  "completion-awaiting-terminal",
+  "completed",
+  "superseded",
+  "superseded-by-close"
+];
+var LEDGER_ACTIVE_GENERATION_STATES = /* @__PURE__ */ new Set([
+  "dispatching",
+  "dispatch-unknown",
+  "active",
+  "completion-observed",
+  "completion-awaiting-terminal"
+]);
+var LEDGER_JSON_BLOCK_RE = /```json([\s\S]*?)```/gu;
+function renderLedgerComment(ledger, summary) {
+  return `${LEDGER_MARKER}
+${summary}
+
+<details><summary>Machine state</summary>
+
+\`\`\`json
+${JSON.stringify(ledger)}
+\`\`\`
+
+</details>`;
+}
+function extractLedgerComment(body) {
+  if (typeof body !== "string" || !body.includes(LEDGER_MARKER)) {
+    return { ok: false, reason: "no-marker" };
+  }
+  const matches = [...body.matchAll(LEDGER_JSON_BLOCK_RE)];
+  if (matches.length !== 1) {
+    return { ok: false, reason: "block-count", blocks: matches.length };
+  }
+  try {
+    return { ok: true, ledger: JSON.parse(matches[0][1]) };
+  } catch {
+    return { ok: false, reason: "invalid-json" };
+  }
+}
+var GENERATION_STATES = new Set(
+  LEDGER_GENERATION_STATES
+);
+
+// libs/dispatch-contracts/src/marker.ts
+function formatAttemptId({ generation, intentId }) {
+  return `g${generation}:${intentId}`;
+}
+function formatDispatchMarker(attempt) {
+  return `[dispatch:${formatAttemptId(attempt)}]`;
+}
+function displayTitleMatchesAttempt(displayTitle, attempt) {
+  return Boolean(displayTitle?.includes(formatDispatchMarker(attempt)));
+}
+var ROUTER_GROUP_MARKER_RE = /\[router-group:(\d+):(\d+)\]/u;
+function parseRouterGroupMarker(displayTitle) {
+  const match = displayTitle?.match(ROUTER_GROUP_MARKER_RE);
+  return match ? { repositoryId: Number(match[1]), issue: Number(match[2]) } : void 0;
+}
+
+// libs/dispatch-contracts/src/quick-task.ts
+function serializeIdentity({
+  repository,
+  pipeline,
+  title,
+  description
+}) {
+  return JSON.stringify({ repository, pipeline, title, description });
+}
+function quickTaskDigest(identity, sha256Hex2) {
+  return sha256Hex2(serializeIdentity(identity));
+}
+var QUICK_TASK_MARKER_SOURCE = "<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) digest=([0-9a-f]{64}) -->";
+var QUICK_TASK_MARKER_RE = new RegExp(QUICK_TASK_MARKER_SOURCE, "u");
+function quickTaskMarkerMatcher() {
+  return new RegExp(QUICK_TASK_MARKER_SOURCE, "gu");
+}
+
+// apps/dispatch-broker/src/broker.ts
+import crypto from "node:crypto";
+
+// apps/dispatch-broker/src/modules/ledger-core.ts
+var ACTIVE_STATES = LEDGER_ACTIVE_GENERATION_STATES;
+function assertTaskRef(task) {
+  const candidate = task;
+  if (!candidate || !Number.isSafeInteger(candidate.repositoryId) || candidate.repositoryId <= 0 || // .test() coerces a non-string argument via ToString same as this cast
+  // would -- the cast changes no behavior, it only satisfies the compiler.
+  !/^[^/]+\/[^/]+$/u.test(candidate.repository) || !Number.isSafeInteger(candidate.issue) || candidate.issue <= 0) {
+    throw new Error("Invalid canonical TaskRef");
+  }
+}
+function createLedger(task, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  assertTaskRef(task);
+  return {
+    schema: LEDGER_SCHEMA,
+    revision: 0,
+    task: structuredClone(task),
+    createdAt: now,
+    updatedAt: now,
+    control: { closed: false },
+    sources: [],
+    generations: [],
+    anomalies: []
+  };
+}
+function validateLedger(ledger, task) {
+  const candidate = ledger;
+  if (!candidate || candidate.schema !== LEDGER_SCHEMA) {
+    throw new Error("Malformed dispatch ledger: unsupported schema");
+  }
+  assertTaskRef(candidate.task);
+  assertTaskRef(task);
+  if (candidate.task.repositoryId !== task.repositoryId || candidate.task.repository.toLowerCase() !== task.repository.toLowerCase() || candidate.task.issue !== task.issue) {
+    throw new Error("Malformed dispatch ledger: canonical TaskRef mismatch");
+  }
+  if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) {
+    throw new Error("Malformed dispatch ledger: invalid revision");
+  }
+  if (!Array.isArray(candidate.sources) || !Array.isArray(candidate.generations)) {
+    throw new Error("Malformed dispatch ledger: missing history");
+  }
+  const active = candidate.generations.filter(
+    (generation) => ACTIVE_STATES.has(generation.state)
+  );
+  const pending = candidate.generations.filter(
+    (generation) => generation.state === "pending"
+  );
+  if (active.length > 1 || pending.length > 1) {
+    throw new Error(
+      "Malformed dispatch ledger: invalid active/pending cardinality"
+    );
+  }
+  return candidate;
+}
+function mutate(ledger, now, callback) {
+  callback();
+  ledger.revision += 1;
+  ledger.updatedAt = now;
+  validateLedger(ledger, ledger.task);
+  return ledger;
+}
+
+// apps/dispatch-broker/src/modules/intent.ts
+function compareIntentOrder(left, right) {
+  const byTime = left.occurredAt.localeCompare(right.occurredAt);
+  return byTime || left.sourceId.localeCompare(right.sourceId);
+}
+function sourceEvidence(intent) {
+  return {
+    intentId: intent.intentId,
+    sourceKind: intent.sourceKind,
+    sourceId: intent.sourceId,
+    transportRunId: intent.transportRunId,
+    occurredAt: intent.occurredAt,
+    digest: intent.digest,
+    authorization: intent.authorization
+  };
+}
+function validateIntent(intent, task) {
+  assertTaskRef(intent?.task);
+  assertTaskRef(task);
+  if (intent.task.repositoryId !== task.repositoryId || intent.task.repository.toLowerCase() !== task.repository.toLowerCase() || intent.task.issue !== task.issue) {
+    throw new Error("Intent TaskRef mismatch");
+  }
+  if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(intent.intentId ?? "")) {
+    throw new Error("Invalid intent ID");
+  }
+  if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(intent.sourceId ?? "")) {
+    throw new Error("Invalid source ID");
+  }
+  if (!Number.isSafeInteger(intent.transportRunId) || intent.transportRunId <= 0) {
+    throw new Error("Invalid transport run ID");
+  }
+  if (Number.isNaN(Date.parse(intent.occurredAt))) {
+    throw new Error("Invalid intent occurrence time");
+  }
+  if (!isDispatchPipeline(intent.pipeline))
+    throw new Error("Unsupported pipeline");
+  if (!intent.authorization?.authorized) throw new Error("Unauthorized intent");
+}
+function generationForIntent(ledger, intentId) {
+  return ledger.generations.find(
+    (generation) => generation.intentId === intentId
+  );
+}
+function acceptIntent(ledger, intent, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  validateLedger(ledger, intent.task);
+  validateIntent(intent, ledger.task);
+  const sourceDuplicate = ledger.sources.some(
+    (source) => source.sourceKind === intent.sourceKind && source.sourceId === intent.sourceId
+  );
+  const transportDuplicate = ledger.sources.some(
+    (source) => source.transportRunId === intent.transportRunId
+  );
+  if (sourceDuplicate || transportDuplicate) {
+    return { outcome: "duplicate", ledger };
+  }
+  const existing = generationForIntent(ledger, intent.intentId);
+  if (existing) {
+    if (existing.digest !== intent.digest) {
+      throw new Error("Semantic intent ID was reused with a different digest");
+    }
+    mutate(ledger, now, () => ledger.sources.push(sourceEvidence(intent)));
+    return {
+      outcome: "semantic-duplicate",
+      generation: existing.generation,
+      ledger
+    };
+  }
+  const generation = {
+    generation: ledger.generations.length + 1,
+    intentId: intent.intentId,
+    sourceId: intent.sourceId,
+    occurredAt: intent.occurredAt,
+    pipeline: intent.pipeline,
+    mode: intent.mode,
+    runbook: intent.runbook,
+    context: intent.context,
+    reply: intent.reply,
+    digest: intent.digest,
+    state: "accepted"
+  };
+  let outcome = "dispatch";
+  mutate(ledger, now, () => {
+    ledger.sources.push(sourceEvidence(intent));
+    ledger.generations.push(generation);
+    if (intent.dispatchable === false) {
+      generation.state = "superseded";
+      outcome = "stale-control-state";
+      return;
+    }
+    if (ledger.control.closed) {
+      generation.state = "superseded-by-close";
+      outcome = "closed";
+      return;
+    }
+    const active = ledger.generations.find(
+      (candidate) => candidate !== generation && ACTIVE_STATES.has(candidate.state)
+    );
+    const pending = ledger.generations.find(
+      (candidate) => candidate !== generation && candidate.state === "pending"
+    );
+    const newestDesired = pending ?? active;
+    if (newestDesired && compareIntentOrder(intent, newestDesired) <= 0) {
+      generation.state = "superseded";
+      outcome = "stale";
+      return;
+    }
+    if (active) {
+      if (pending) pending.state = "superseded";
+      generation.state = "pending";
+      outcome = "pending";
+      return;
+    }
+    if (pending) pending.state = "superseded";
+    generation.state = "accepted";
+  });
+  return { outcome, generation: generation.generation, ledger };
+}
+
+// apps/dispatch-broker/src/modules/scheduler.ts
+var TERMINAL_RUN_STATUSES = /* @__PURE__ */ new Set(["completed"]);
+function findGeneration(ledger, generationNumber) {
+  return ledger.generations.find(
+    (candidate) => candidate.generation === generationNumber
+  );
+}
+function attemptOf(generation) {
+  const { attempt } = generation;
+  if (!attempt) {
+    throw new Error(`Generation ${generation.generation} has no attempt`);
+  }
+  return attempt;
+}
+function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["accepted", "pending"].includes(generation.state)) {
+    throw new Error("Generation is not dispatchable");
+  }
+  if (ledger.control.closed) throw new Error("Closed anchor cannot dispatch");
+  if (ledger.generations.some((candidate) => ACTIVE_STATES.has(candidate.state))) {
+    throw new Error("Another generation is active");
+  }
+  if (!/^[A-Za-z0-9_-]{16,200}$/u.test(token))
+    throw new Error("Invalid dispatch token");
+  return mutate(ledger, now, () => {
+    generation.state = "dispatching";
+    generation.attempt = {
+      attemptId: formatAttemptId(generation),
+      token,
+      dispatchStartedAt: now
+    };
+  });
+}
+function markDispatchUnknown(ledger, generationNumber, reason, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || generation.state !== "dispatching") {
+    throw new Error("Generation is not dispatching");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "dispatch-unknown";
+    const attempt = attemptOf(generation);
+    attempt.unknownAt = now;
+    attempt.unknownReason = reason;
+  });
+}
+function markDispatchRejected(ledger, generationNumber, reason, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || generation.state !== "dispatching") {
+    throw new Error("Generation is not dispatching");
+  }
+  let promoted;
+  mutate(ledger, now, () => {
+    generation.state = "dispatch-rejected";
+    const attempt = attemptOf(generation);
+    attempt.rejectedAt = now;
+    attempt.rejectionReason = reason;
+    if (!ledger.control.closed) {
+      promoted = ledger.generations.find(
+        (candidate) => candidate.state === "pending"
+      );
+      if (promoted) promoted.state = "accepted";
+    }
+  });
+  return { ledger, promotedGeneration: promoted?.generation };
+}
+function bindRun(ledger, generationNumber, binding, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state)) {
+    throw new Error("Generation is not awaiting a run binding");
+  }
+  if (!Number.isSafeInteger(binding.runId) || binding.runId <= 0 || typeof binding.runUrl !== "string" || typeof binding.htmlUrl !== "string") {
+    throw new Error("Invalid workflow run binding");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "active";
+    Object.assign(attemptOf(generation), binding, { boundAt: now });
+  });
+}
+function observeCompletion(ledger, generationNumber, runId, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["active", "completion-observed", "completion-awaiting-terminal"].includes(
+    generation.state
+  ) || generation.attempt?.runId !== runId) {
+    throw new Error("Completion does not match the active run");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "completion-observed";
+    attemptOf(generation).completionObservedAt ??= now;
+  });
+}
+function awaitTerminal(ledger, generationNumber, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || generation.state !== "completion-observed") {
+    throw new Error("Completion has not been observed");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "completion-awaiting-terminal";
+    attemptOf(generation).lastObservedAt = now;
+  });
+}
+function completeRun(ledger, generationNumber, observation, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["active", "completion-observed", "completion-awaiting-terminal"].includes(
+    generation.state
+  ) || generation.attempt?.runId !== observation.runId || !TERMINAL_RUN_STATUSES.has(observation.status) || typeof observation.conclusion !== "string") {
+    throw new Error("Invalid terminal run observation");
+  }
+  const conclusion = observation.conclusion;
+  let promoted;
+  mutate(ledger, now, () => {
+    generation.state = "completed";
+    const attempt = attemptOf(generation);
+    attempt.status = observation.status;
+    attempt.conclusion = conclusion;
+    attempt.completedAt = observation.completedAt ?? now;
+    if (!ledger.control.closed) {
+      promoted = ledger.generations.find(
+        (candidate) => candidate.state === "pending"
+      );
+      if (promoted) promoted.state = "accepted";
+    }
+  });
+  return { ledger, promotedGeneration: promoted?.generation };
+}
+function verifyPreflight(ledger, expected) {
+  validateLedger(ledger, expected.task);
+  const generation = findGeneration(ledger, expected.generation);
+  return Boolean(
+    generation && ["active", "completion-observed", "completion-awaiting-terminal"].includes(
+      generation.state
+    ) && generation.intentId === expected.intentId && generation.attempt?.token === expected.token && generation.attempt?.runId === expected.runId
+  );
+}
+
+// apps/dispatch-broker/src/broker.ts
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+function digest(value) {
+  return crypto.createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+function parseLedgerComment(body, task) {
+  const extraction = extractLedgerComment(body);
+  if (!extraction.ok) {
+    if (extraction.reason === "no-marker") {
+      throw new Error("Dispatch ledger marker missing");
+    }
+    if (extraction.reason === "block-count") {
+      throw new Error("Malformed dispatch ledger: expected one JSON block");
+    }
+    throw new Error("Malformed dispatch ledger: invalid JSON");
+  }
+  return validateLedger(extraction.ledger, task);
+}
+function visibleSummary(ledger) {
+  const active = ledger.generations.find(
+    (generation) => ACTIVE_STATES.has(generation.state)
+  );
+  const pending = ledger.generations.find(
+    (generation) => generation.state === "pending"
+  );
+  const closed = ledger.control.closed ? " \xB7 anchor closed" : "";
+  if (active) {
+    const run = active.attempt?.runId ? ` \xB7 run ${active.attempt.runId}` : "";
+    const queued = pending ? ` \xB7 pending g${pending.generation}` : "";
+    return `Dispatch broker: g${active.generation} ${active.pipeline} is ${active.state}${run}${queued}${closed}.`;
+  }
+  const latest = ledger.generations.at(-1);
+  return latest ? `Dispatch broker: g${latest.generation} is ${latest.state}${closed}.` : `Dispatch broker: waiting for an authorized intent${closed}.`;
+}
+function renderLedgerComment2(ledger) {
+  return renderLedgerComment(ledger, visibleSummary(ledger));
+}
+function applyAnchorControl(ledger, control, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  if (!["closed", "reopened"].includes(control.kind))
+    throw new Error("Invalid anchor control");
+  if (!control.sourceId) throw new Error("Anchor control source ID missing");
+  if (ledger.sources.some((source) => source.sourceId === control.sourceId)) {
+    return { outcome: "duplicate", ledger };
+  }
+  mutate(ledger, now, () => {
+    ledger.sources.push({
+      sourceKind: control.kind,
+      sourceId: control.sourceId,
+      transportRunId: control.transportRunId,
+      occurredAt: control.occurredAt,
+      authorization: control.authorization
+    });
+    ledger.control = {
+      closed: control.kind === "closed",
+      sourceId: control.sourceId,
+      occurredAt: control.occurredAt,
+      merged: control.kind === "closed" && Boolean(control.merged)
+    };
+    if (control.kind === "closed") {
+      for (const generation of ledger.generations) {
+        if (generation.state === "pending" || generation.state === "accepted") {
+          generation.state = "superseded-by-close";
+        }
+      }
+    }
+  });
+  return { outcome: control.kind, ledger };
+}
+function recordControlEvidence(ledger, evidence, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const duplicate = ledger.sources.some(
+    (source) => source.sourceKind === evidence.sourceKind && source.sourceId === evidence.sourceId
+  );
+  if (duplicate) return { outcome: "duplicate", ledger };
+  mutate(ledger, now, () => ledger.sources.push(structuredClone(evidence)));
+  return { outcome: "recorded", ledger };
+}
+function addAnomaly(ledger, kind, detail, now = (/* @__PURE__ */ new Date()).toISOString(), failure) {
+  return mutate(ledger, now, () => {
+    ledger.anomalies.push({
+      kind,
+      detail,
+      occurredAt: now,
+      ...failure === void 0 ? {} : { failure }
+    });
+  });
+}
+
+// apps/dispatch-broker/src/github-api.ts
+var API_VERSION = "2026-03-10";
+var CONCURRENCY_VERIFY_MAX_ATTEMPTS = 5;
+var CONCURRENCY_VERIFY_RETRY_DELAY_MS = 3e3;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+var GitHubApiError = class extends Error {
+  status;
+  data;
+  constructor(message, status, data) {
+    super(message);
+    this.name = "GitHubApiError";
+    this.status = status;
+    this.data = data;
+  }
+};
+var BrokerConcurrencyMismatchError = class extends Error {
+  retryable;
+  constructor(message, { retryable = false } = {}) {
+    super(message);
+    this.name = "BrokerConcurrencyMismatchError";
+    this.retryable = retryable;
+  }
+};
+function createGitHubApi({
+  token,
+  fetchImpl = fetch,
+  baseUrl = "https://api.github.com"
+}) {
+  async function request(path, { method = "GET", body, timeoutMs = 3e4 } = {}) {
+    let response;
+    try {
+      response = await fetchImpl(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-GitHub-Api-Version": API_VERSION
+        },
+        ...body !== void 0 && { body: JSON.stringify(body) },
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch (error) {
+      throw new GitHubApiError(
+        // Genuinely untrusted here -- whatever fetchImpl rejected with, of
+        // any shape. Every real fetch failure is Error-shaped; same
+        // assumption the untyped original made without checking.
+        `GitHub request transport failure: ${error.message}`,
+        void 0
+      );
+    }
+    const text = await response.text();
+    let data;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { malformedBody: text.slice(0, 500) };
+      }
+    }
+    return { status: response.status, data, headers: response.headers };
+  }
+  async function requestOk(path, options) {
+    const response = await request(path, options);
+    if (response.status < 200 || response.status >= 300) {
+      throw new GitHubApiError(
+        `GitHub request failed with HTTP ${response.status}`,
+        response.status,
+        response.data
+      );
+    }
+    return response.data;
+  }
+  return { request, requestOk };
+}
+function splitRepository(repository) {
+  const [owner, repo, extra] = repository.split("/");
+  if (!owner || !repo || extra) throw new Error("Invalid repository identity");
+  return { owner, repo };
+}
+function repositoryPath(task) {
+  const { owner, repo } = splitRepository(task.repository);
+  return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+function brokerConcurrencyGroup(task) {
+  if (!Number.isSafeInteger(task?.repositoryId) || task.repositoryId <= 0 || !Number.isSafeInteger(task?.issue) || task.issue <= 0) {
+    throw new Error("Cannot derive broker concurrency group from TaskRef");
+  }
+  return `agent-lcars-dispatch-v1-${task.repositoryId}-${task.issue}`;
+}
+function assertSuppliedGroupMatches(suppliedGroup, expected) {
+  if (suppliedGroup !== expected) {
+    throw new BrokerConcurrencyMismatchError(
+      "Broker concurrency output does not match its TaskRef"
+    );
+  }
+}
+function groupMembershipHolds(response, expected) {
+  return (response?.concurrency_groups ?? []).filter(
+    (group) => typeof group?.group_name === "string" && group.group_name.toLowerCase() === expected.toLowerCase()
+  );
+}
+function concurrencyGroupsPath(root, runId) {
+  return `${root}/actions/runs/${runId}/concurrency_groups?per_page=100`;
+}
+var ROUTER_BROKER_JOB_NAME = "broker";
+async function findConflictingRouterRun(api2, task, runId) {
+  const root = repositoryPath(task);
+  const data = await api2.requestOk(
+    `${root}/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100`
+  );
+  const candidates = (data.workflow_runs ?? []).filter((run) => {
+    if (!Number.isSafeInteger(run?.id) || run.id === runId) return false;
+    const marker = parseRouterGroupMarker(run.display_title);
+    return marker !== void 0 && marker.repositoryId === task.repositoryId && marker.issue === task.issue;
+  });
+  for (const candidate of candidates) {
+    const jobs = await api2.requestOk(
+      `${root}/actions/runs/${candidate.id}/jobs?per_page=100`
+    );
+    const holdsGroup = (jobs.jobs ?? []).some(
+      (job) => job?.name === ROUTER_BROKER_JOB_NAME && job.status === "in_progress"
+    );
+    if (holdsGroup) return candidate;
+  }
+  return void 0;
+}
+async function checkIndirectBrokerConcurrency(api2, task, runId, suppliedGroup) {
+  const expected = brokerConcurrencyGroup(task);
+  assertSuppliedGroupMatches(suppliedGroup, expected);
+  const conflicting = await findConflictingRouterRun(api2, task, runId);
+  if (conflicting) {
+    throw new BrokerConcurrencyMismatchError(
+      `Another in-progress agent-router.yml run (${conflicting.id}) carries this task's router-group marker for broker concurrency group ${expected}`,
+      { retryable: true }
+    );
+  }
+  return { group_name: expected, group_members: [] };
+}
+async function verifyBrokerConcurrency(api2, task, runId, suppliedGroup, {
+  maxAttempts = CONCURRENCY_VERIFY_MAX_ATTEMPTS,
+  retryDelayMs = CONCURRENCY_VERIFY_RETRY_DELAY_MS,
+  sleepImpl = sleep,
+  eventName
+} = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const result = await checkIndirectBrokerConcurrency(
+        api2,
+        task,
+        runId,
+        suppliedGroup
+      );
+      console.log(
+        `::notice::Broker run ${runId}${eventName ? ` (event: ${eventName})` : ""} verified concurrency group ${suppliedGroup} indirectly, via its router-group marker on the run listing (#545). No other in-progress agent-router.yml run currently carries it.`
+      );
+      return result;
+    } catch (error) {
+      const candidate = error;
+      const canRetry = candidate.retryable === true && attempt < maxAttempts;
+      if (!canRetry) {
+        if (attempt > 1) {
+          candidate.message = `${candidate.message} (after ${attempt} attempts)`;
+        }
+        throw error;
+      }
+      await sleepImpl(retryDelayMs);
+    }
+  }
+  throw new BrokerConcurrencyMismatchError(
+    "Broker run does not report the expected concurrency group"
+  );
+}
+var SUPERSEDING_RUN_CANDIDATE_LIMIT = 5;
+async function findSupersedingRouterRun(api2, task, runId) {
+  const expected = brokerConcurrencyGroup(task);
+  const root = repositoryPath(task);
+  const data = await api2.requestOk(
+    `${root}/actions/workflows/agent-router.yml/runs?per_page=100`
+  );
+  const marker = `route #${task.issue}:`;
+  const candidates = (data.workflow_runs ?? []).filter(
+    (run) => Number.isSafeInteger(run?.id) && run.id > runId && typeof run.display_title === "string" && run.display_title.startsWith(marker)
+  ).sort((left, right) => right.id - left.id).slice(0, SUPERSEDING_RUN_CANDIDATE_LIMIT);
+  const inspections = await Promise.all(
+    candidates.map(async (candidate) => {
+      try {
+        const response = await api2.requestOk(
+          concurrencyGroupsPath(root, candidate.id)
+        );
+        return groupMembershipHolds(response, expected).length > 0 ? candidate : void 0;
+      } catch {
+        return void 0;
+      }
+    })
+  );
+  return inspections.find(Boolean);
+}
+async function listAll(api2, path) {
+  const all = [];
+  for (let page = 1; page <= 100; page += 1) {
+    const separator = path.includes("?") ? "&" : "?";
+    const data = await api2.requestOk(
+      `${path}${separator}per_page=100&page=${page}`
+    );
+    if (!Array.isArray(data))
+      throw new Error("GitHub pagination response is not an array");
+    all.push(...data);
+    if (data.length < 100) return all;
+  }
+  throw new Error("GitHub pagination exceeded safety bound");
+}
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function runNext() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        results[index] = {
+          status: "fulfilled",
+          value: await worker(items[index], index)
+        };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < Math.min(limit, items.length); i += 1) {
+    workers.push(runNext());
+  }
+  await Promise.all(workers);
+  return results;
+}
+var RECONCILE_DISCOVERY_LABELS = DISPATCH_LABELS;
+async function listOpenAgentLabeledIssues(api2, task) {
+  const root = repositoryPath(task);
+  const byNumber = /* @__PURE__ */ new Map();
+  for (const label of RECONCILE_DISCOVERY_LABELS) {
+    const items = await listAll(
+      api2,
+      `${root}/issues?state=open&labels=${encodeURIComponent(label)}`
+    );
+    for (const item of items) {
+      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
+    }
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number
+  );
+}
+async function listOpenIssuesAssignedTo(api2, task, login) {
+  if (!login) return [];
+  const root = repositoryPath(task);
+  return listAll(
+    api2,
+    `${root}/issues?state=open&assignee=${encodeURIComponent(login)}`
+  );
+}
+async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", { createIfMissing = true } = {}) {
+  const root = repositoryPath(task);
+  const comments = await listAll(
+    api2,
+    `${root}/issues/${task.issue}/comments`
+  );
+  const candidates = comments.filter(
+    (comment2) => comment2.body?.includes(LEDGER_MARKER)
+  );
+  if (candidates.length > 1) {
+    throw new Error("Duplicate dispatch ledger comments");
+  }
+  if (candidates.length === 1) {
+    const comment2 = candidates[0];
+    if (comment2.user?.login !== workflowIdentity || comment2.user?.type !== "Bot") {
+      throw new Error("Dispatch ledger author is not the workflow identity");
+    }
+    return {
+      comment: comment2,
+      ledger: parseLedgerComment(comment2.body, task),
+      created: false
+    };
+  }
+  if (!createIfMissing) return void 0;
+  const ledger = createLedger(task);
+  const comment = await api2.requestOk(
+    `${root}/issues/${task.issue}/comments`,
+    {
+      method: "POST",
+      body: { body: renderLedgerComment2(ledger) }
+    }
+  );
+  if (!Number.isSafeInteger(comment?.id)) {
+    throw new Error("GitHub did not return the created ledger comment ID");
+  }
+  return { comment, ledger, created: true, existingComments: comments };
+}
+async function saveLedger(api2, loaded) {
+  const root = repositoryPath(loaded.ledger.task);
+  const comment = await api2.requestOk(
+    `${root}/issues/comments/${loaded.comment.id}`,
+    {
+      method: "PATCH",
+      body: { body: renderLedgerComment2(loaded.ledger) }
+    }
+  );
+  loaded.comment = comment;
+  return loaded;
+}
+async function pinLedgerWhenUnoccupied(api2, loaded, isPullRequest) {
+  if (!loaded.created || isPullRequest)
+    return { pinned: false, reason: "ineligible" };
+  const { existingComments } = loaded;
+  if (!existingComments) {
+    throw new Error(
+      "LoadedLedger.existingComments missing despite created=true"
+    );
+  }
+  if (existingComments.some((comment) => comment.pin)) {
+    return { pinned: false, reason: "occupied" };
+  }
+  const root = repositoryPath(loaded.ledger.task);
+  try {
+    await api2.requestOk(`${root}/issues/comments/${loaded.comment.id}/pin`, {
+      method: "PUT"
+    });
+    return { pinned: true };
+  } catch (error) {
+    return {
+      pinned: false,
+      // Every requestOk failure throws a GitHubApiError (see request()
+      // above); this mirrors the untyped original's own optional-chained
+      // `error.status` read for anything else.
+      reason: `best-effort-failed:${error instanceof GitHubApiError ? error.status ?? "transport" : "transport"}`
+    };
+  }
+}
+function validateDispatchResponse(response, task) {
+  if (response.status !== 200) {
+    throw new GitHubApiError(
+      `Workflow dispatch returned HTTP ${response.status}`,
+      response.status,
+      response.data
+    );
+  }
+  const data = response.data;
+  const runId = data?.workflow_run_id;
+  const runUrl = data?.run_url;
+  const htmlUrl = data?.html_url;
+  const { owner, repo } = splitRepository(task.repository);
+  const expectedRunUrl = `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`;
+  const expectedHtmlUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
+  if (!Number.isSafeInteger(runId) || // isSafeInteger's signature accepts `unknown` but does not narrow it --
+  // same posture as ledger-core.ts's assertTaskRef, which casts for the
+  // same reason immediately after an identical guard.
+  runId <= 0 || typeof runUrl !== "string" || runUrl !== expectedRunUrl || typeof htmlUrl !== "string" || htmlUrl !== expectedHtmlUrl) {
+    throw new GitHubApiError(
+      "Workflow dispatch returned malformed run details",
+      200,
+      response.data
+    );
+  }
+  return { runId, runUrl, htmlUrl };
+}
+async function dispatchRouterEvent(api2, task, inputs) {
+  const response = await api2.request(
+    `${repositoryPath(task)}/actions/workflows/agent-router.yml/dispatches`,
+    {
+      method: "POST",
+      body: { ref: "main", inputs }
+    }
+  );
+  return validateDispatchResponse(response, task);
+}
+function attemptOf2(generation) {
+  const { attempt } = generation;
+  if (!attempt) {
+    throw new Error(`Generation ${generation.generation} has no attempt`);
+  }
+  return attempt;
+}
+async function dispatchWorker(api2, generation, task) {
+  const workflow = workerWorkflow(generation.pipeline);
+  const root = repositoryPath(task);
+  const response = await api2.request(
+    `${root}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
+    {
+      method: "POST",
+      body: {
+        ref: "main",
+        inputs: {
+          issue: String(task.issue),
+          mode: generation.mode,
+          reply: generation.reply ?? "",
+          runbook: generation.runbook ?? "",
+          context: generation.context ?? "",
+          broker_intent_id: generation.intentId,
+          broker_generation: String(generation.generation),
+          // `beginDispatch` (modules/scheduler.mjs) always sets `attempt`
+          // together with the `dispatching` state a generation is in by
+          // the time dispatchAccepted (main.mjs) calls this -- same
+          // assumption the untyped original made without checking.
+          broker_dispatch_token: attemptOf2(generation).token
+        }
+      }
+    }
+  );
+  return { ...validateDispatchResponse(response, task), workflow };
+}
+async function getWorkflowRun(api2, task, runId) {
+  return api2.requestOk(
+    `${repositoryPath(task)}/actions/runs/${runId}`
+  );
+}
+var FIND_RUNS_FOR_GENERATION_MAX_PAGES = 5;
+var FIND_RUNS_FOR_GENERATION_CREATED_BUFFER_MS = 5 * 60 * 1e3;
+function createdAtOrAfterFilter(generation) {
+  const dispatchedAt = generation.attempt?.dispatchStartedAt ?? generation.occurredAt;
+  const parsed = Date.parse(dispatchedAt);
+  if (Number.isNaN(parsed)) return "";
+  const scoped = new Date(
+    parsed - FIND_RUNS_FOR_GENERATION_CREATED_BUFFER_MS
+  ).toISOString();
+  return `&created=${encodeURIComponent(`>=${scoped}`)}`;
+}
+async function findRunsForGeneration(api2, task, generation) {
+  const workflow = workerWorkflow(generation.pipeline);
+  const root = repositoryPath(task);
+  const createdFilter = createdAtOrAfterFilter(generation);
+  const matches = [];
+  for (let page = 1; page <= FIND_RUNS_FOR_GENERATION_MAX_PAGES; page += 1) {
+    const data = await api2.requestOk(
+      `${root}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch${createdFilter}&per_page=100&page=${page}`
+    );
+    const runs = data.workflow_runs ?? [];
+    for (const run of runs) {
+      if (displayTitleMatchesAttempt(run.display_title, generation)) {
+        matches.push(run);
+      }
+    }
+    if (runs.length < 100) break;
+  }
+  return matches;
+}
+async function removeIssueLabel(api2, task, label) {
+  const root = repositoryPath(task);
+  const response = await api2.request(
+    `${root}/issues/${task.issue}/labels/${encodeURIComponent(label)}`,
+    { method: "DELETE" }
+  );
+  if (response.status === 404) return { removed: false };
+  if (response.status < 200 || response.status >= 300) {
+    throw new GitHubApiError(
+      `Failed to remove stale label ${label}: HTTP ${response.status}`,
+      response.status,
+      response.data
+    );
+  }
+  return { removed: true };
+}
+async function failClosed(api2, task, maintainer, error) {
+  const originalError = error instanceof Error ? error : new Error(String(error));
+  let fallbackError;
+  try {
+    await ensureNeedsHumanParked(api2, task, maintainer);
+  } catch (parkingError) {
+    fallbackError = parkingError instanceof Error ? parkingError : new Error(String(parkingError));
+  }
+  if (fallbackError) {
+    throw new AggregateError(
+      [originalError, fallbackError],
+      `Dispatch broker failed (${originalError.message}); fail-closed parking also failed (${fallbackError.message})`,
+      { cause: originalError }
+    );
+  }
+  throw originalError;
+}
+async function issueHasLabel(api2, task, label) {
+  const issue = await api2.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`
+  );
+  return (issue.labels ?? []).some(
+    (entry) => (typeof entry === "string" ? entry : entry.name) === label
+  );
+}
+async function issueHasAssignee(api2, task, login) {
+  const issue = await api2.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`
+  );
+  return (issue.assignees ?? []).some((assignee) => assignee.login === login);
+}
+async function mutateOrVerify(mutate2, verify) {
+  try {
+    await mutate2();
+  } catch (error) {
+    if (!await verify()) throw error;
+  }
+}
+async function ensureNeedsHumanParked(api2, task, maintainer) {
+  const root = repositoryPath(task);
+  await mutateOrVerify(
+    () => api2.requestOk(`${root}/issues/${task.issue}/labels`, {
+      method: "POST",
+      body: { labels: ["status:needs-human"] }
+    }),
+    () => issueHasLabel(api2, task, "status:needs-human")
+  );
+  if (!maintainer) return;
+  await mutateOrVerify(
+    () => api2.requestOk(`${root}/issues/${task.issue}/assignees`, {
+      method: "POST",
+      body: { assignees: [maintainer] }
+    }),
+    () => issueHasAssignee(api2, task, maintainer)
+  );
+}
+
+// apps/dispatch-broker/src/normalize.ts
+import crypto2 from "node:crypto";
+
+// apps/dispatch-broker/src/modules/authorization.ts
+var AUTHORIZATION_RULES = Object.freeze({
+  MANUAL_MAINTAINER: "manual-maintainer",
+  OWNER_COMMENT: "owner-comment",
+  MAINTAINER_ISSUE_EVENT: "maintainer-issue-event",
+  CANARY_SCHEDULED_DISPATCH: "canary-scheduled-dispatch",
+  RECONCILE_LABEL_REPAIR: "reconcile-label-repair"
+});
+function authorization(actor, maintainer, rule, extra = {}) {
+  return {
+    authorized: actor === maintainer,
+    actor,
+    configuredMaintainer: maintainer,
+    rule,
+    ...extra
+  };
+}
+
+// apps/dispatch-broker/src/normalize.ts
+var COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
+var WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+var sha256Hex = (input) => crypto2.createHash("sha256").update(input).digest("hex");
+function labelsOf(issue) {
+  return (issue.labels ?? []).map(
+    (label) => typeof label === "string" ? label : label.name
+  );
+}
+function selectedPipelineFrom(labels, labelMap) {
+  const selected = labels.filter((label) => labelMap.has(label)).map((label) => labelMap.get(label));
+  return selected.length === 1 ? selected[0] : void 0;
+}
+function selectedPipeline(issue) {
+  return selectedPipelineFrom(labelsOf(issue), AGENT_LABELS);
+}
+function parseExactCommand(body) {
+  let fenced = false;
+  const matches = [];
+  for (const rawLine of body.split(/\r?\n/gu)) {
+    const line = rawLine.trim();
+    if (line.startsWith("```")) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || line.startsWith(">")) continue;
+    for (const [command, pipeline] of COMMANDS) {
+      if (line === command || line.startsWith(`${command} `)) {
+        matches.push({ command, pipeline });
+      }
+    }
+  }
+  if (matches.length !== 1) return void 0;
+  return matches[0];
+}
+function quickTaskRequest(issue, repository, pipeline) {
+  const body = issue.body ?? "";
+  const matches = [...body.matchAll(quickTaskMarkerMatcher())];
+  if (matches.length === 0) {
+    if (body.includes("<!-- agent-lcars:quick-task-request:v1")) {
+      throw new Error("Malformed Quick Task marker");
+    }
+    return void 0;
+  }
+  if (matches.length !== 1 || !pipeline) {
+    throw new Error("Malformed Quick Task marker or agent-label selection");
+  }
+  const [marker, requestId, persistedDigest] = matches[0];
+  const description = body.slice(0, matches[0].index).trim();
+  const originalPipeline = [...AGENT_LABELS.values()].find(
+    (candidate) => digestQuickTask({
+      repository,
+      pipeline: candidate,
+      title: issue.title,
+      description
+    }) === persistedDigest
+  );
+  if (!originalPipeline) {
+    throw new Error("Quick Task marker digest mismatch");
+  }
+  const matchIndex = matches[0].index;
+  if (matchIndex === void 0) {
+    throw new Error("Quick Task marker match unexpectedly missing its index");
+  }
+  if (body.slice(matchIndex + marker.length).trim()) {
+    throw new Error("Quick Task marker must be the final body element");
+  }
+  if (originalPipeline !== pipeline) return void 0;
+  return { requestId, digest: persistedDigest };
+}
+function digestQuickTask(identity) {
+  return quickTaskDigest(identity, sha256Hex);
+}
+function timelineSource(timeline, eventName, event) {
+  const action = event.action;
+  const numbered = event.issue ?? event.pull_request;
+  if (!numbered) {
+    throw new Error(
+      `${eventName}:${action} timeline lookup missing issue/pull_request`
+    );
+  }
+  const targetTime = Date.parse(numbered.updated_at);
+  const candidates = timeline.filter((candidate) => {
+    if (candidate.event !== action) return false;
+    if (["labeled", "unlabeled"].includes(action)) {
+      if (candidate.label?.name !== event.label?.name) return false;
+      if (candidate.actor?.login !== event.sender?.login) return false;
+    }
+    const occurredAt = Date.parse(candidate.created_at);
+    return Number.isFinite(targetTime) && Number.isFinite(occurredAt) && Math.abs(occurredAt - targetTime) <= 1e4;
+  });
+  if (candidates.length !== 1 || !candidates[0].id) {
+    throw new Error(`Ambiguous ${eventName}:${action} timeline event`);
+  }
+  return {
+    sourceId: `timeline:${candidates[0].id}`,
+    occurredAt: candidates[0].created_at
+  };
+}
+function resolveCallerSourceId(inputs, context, label) {
+  const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
+  if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
+    throw new Error(`${label} caller ID must be a UUID`);
+  }
+  return sourceId;
+}
+function taskRef(context, issue) {
+  const repository = context.repository;
+  const repositoryId = Number(context.repositoryId);
+  const issueNumber = Number(issue?.number ?? context.issue);
+  return { repositoryId, repository, issue: issueNumber };
+}
+function makeIntent(base) {
+  const normalizedPayload = {
+    task: base.task,
+    pipeline: base.pipeline,
+    mode: base.mode,
+    reply: base.reply ?? "",
+    runbook: base.runbook ?? "",
+    context: base.context ?? ""
+  };
+  return {
+    ...base,
+    ...normalizedPayload,
+    digest: digest(normalizedPayload),
+    intentId: base.intentId ?? `intent:${digest({ ...normalizedPayload, sourceId: base.sourceId })}`
+  };
+}
+function normalizeWorkflowDispatch({
+  inputs,
+  context,
+  maintainer
+}) {
+  const task = taskRef(context, void 0);
+  if (inputs.kind === "reconcile") {
+    return { kind: "reconcile", task };
+  }
+  if (inputs.kind === "completion") {
+    let completion;
+    try {
+      completion = JSON.parse(
+        Buffer.from(inputs.completion_payload, "base64url").toString(
+          "utf8"
+        )
+      );
+    } catch {
+      throw new Error("Completion payload is malformed");
+    }
+    const candidate = completion;
+    if (!Number.isSafeInteger(candidate.workerRunId) || candidate.workerRunId <= 0 || !Number.isSafeInteger(candidate.generation) || candidate.generation <= 0 || !/^[A-Za-z0-9._:-]{1,200}$/u.test(candidate.intentId ?? "") || !/^[A-Za-z0-9_-]{16,200}$/u.test(candidate.token ?? "") || !WORKER_WORKFLOWS.has(candidate.workflow)) {
+      throw new Error("Completion payload has invalid binding fields");
+    }
+    return {
+      kind: "completion",
+      task,
+      sourceKind: "completion",
+      sourceId: `worker-run:${candidate.workerRunId}`,
+      transportRunId: context.runId,
+      workerRunId: candidate.workerRunId,
+      generation: candidate.generation,
+      intentId: candidate.intentId,
+      token: candidate.token,
+      workflow: candidate.workflow
+    };
+  }
+  if (inputs.kind === "canary") {
+    const sourceId2 = resolveCallerSourceId(inputs, context, "Canary dispatch");
+    return {
+      kind: "intent",
+      intent: makeIntent({
+        task,
+        sourceKind: "canary",
+        sourceId: sourceId2,
+        transportRunId: context.runId,
+        occurredAt: context.now,
+        pipeline: "canary",
+        mode: "implement",
+        reply: "",
+        runbook: "",
+        context: "",
+        authorization: {
+          authorized: true,
+          actor: context.actor,
+          configuredMaintainer: maintainer,
+          rule: AUTHORIZATION_RULES.CANARY_SCHEDULED_DISPATCH
+        }
+      })
+    };
+  }
+  const sourceId = resolveCallerSourceId(inputs, context, "Manual dispatch");
+  const auth = authorization(
+    context.actor,
+    maintainer,
+    AUTHORIZATION_RULES.MANUAL_MAINTAINER
+  );
+  if (!auth.authorized) throw new Error("Unauthorized manual dispatch");
+  if (!AGENT_LABELS.has(`agent:${inputs.pipeline}`)) {
+    throw new Error("Unsupported manual dispatch pipeline");
+  }
+  return {
+    kind: "intent",
+    intent: makeIntent({
+      task,
+      sourceKind: "manual",
+      sourceId,
+      transportRunId: context.runId,
+      occurredAt: context.now,
+      // Validated two lines up: AGENT_LABELS' keys are exactly
+      // `agent:claude`/`agent:codex`/`agent:opencode`, so the has() check
+      // above already proved inputs.pipeline is one of those three names.
+      pipeline: inputs.pipeline,
+      mode: inputs.mode || "implement",
+      reply: inputs.reply || "",
+      runbook: inputs.runbook || "",
+      context: inputs.context || "",
+      authorization: auth
+    })
+  };
+}
+function normalizeEvent({
+  eventName,
+  event,
+  inputs = {},
+  context,
+  timeline = [],
+  maintainer
+}) {
+  if (eventName === "workflow_dispatch") {
+    return normalizeWorkflowDispatch({ inputs, context, maintainer });
+  }
+  const issue = event.issue ?? event.pull_request;
+  if (!issue) return { kind: "ignored", reason: "event has no issue" };
+  const task = taskRef(context, issue);
+  const pipeline = selectedPipeline(issue);
+  if (eventName === "issue_comment" && event.action === "created") {
+    const parsed = parseExactCommand(event.comment?.body ?? "");
+    if (!parsed) return { kind: "ignored", reason: "no exact agent command" };
+    const resolvedPipeline = parsed.pipeline ?? pipeline;
+    if (!resolvedPipeline) {
+      throw new Error(
+        "Generic @agent command has no unambiguous agent:* label to resolve against"
+      );
+    }
+    const isPullRequest = Boolean(issue.pull_request);
+    if (pipeline !== resolvedPipeline && !(isPullRequest && resolvedPipeline === "claude")) {
+      throw new Error(
+        "Comment command does not match the selected integration"
+      );
+    }
+    const comment = event.comment;
+    if (!comment) {
+      throw new Error("issue_comment:created event missing comment");
+    }
+    const auth2 = authorization(
+      event.sender?.login,
+      maintainer,
+      AUTHORIZATION_RULES.OWNER_COMMENT,
+      {
+        association: comment.author_association,
+        userType: comment.user?.type
+      }
+    );
+    if (!auth2.authorized || auth2.association !== "OWNER" || auth2.userType === "Bot") {
+      throw new Error("Unauthorized comment dispatch");
+    }
+    return {
+      kind: "intent",
+      intent: makeIntent({
+        task,
+        sourceKind: "comment",
+        sourceId: `comment:${comment.id}`,
+        transportRunId: context.runId,
+        occurredAt: comment.created_at,
+        pipeline: resolvedPipeline,
+        mode: "reply",
+        reply: comment.body,
+        runbook: "",
+        context: "",
+        authorization: auth2
+      })
+    };
+  }
+  if (eventName === "pull_request") {
+    if (["closed", "reopened"].includes(event.action)) {
+      if (!issue.id || Number.isNaN(Date.parse(issue.updated_at))) {
+        throw new Error("Malformed pull request anchor event");
+      }
+      return {
+        kind: "anchor-control",
+        task,
+        control: {
+          // Array.prototype.includes() doesn't narrow a string the way an
+          // === chain does; the check two lines up already restricts
+          // event.action to exactly these two values.
+          kind: event.action,
+          sourceId: `pull-request:${issue.id}:${event.action}:${issue.updated_at}`,
+          occurredAt: issue.updated_at,
+          transportRunId: context.runId,
+          authorization: { observed: true, actor: event.sender?.login },
+          merged: event.action === "closed" && Boolean(issue.merged)
+        }
+      };
+    }
+    if (!["labeled", "unlabeled"].includes(event.action)) {
+      return { kind: "ignored", reason: "unsupported pull request action" };
+    }
+  }
+  if (!["issues", "pull_request"].includes(eventName))
+    return { kind: "ignored", reason: "unsupported event" };
+  const auth = authorization(
+    event.sender?.login,
+    maintainer,
+    AUTHORIZATION_RULES.MAINTAINER_ISSUE_EVENT
+  );
+  if (event.action === "opened") {
+    const quickTask = quickTaskRequest(issue, context.repository, pipeline);
+    if (!quickTask) return { kind: "ignored", reason: "ordinary opened issue" };
+    if (!auth.authorized)
+      throw new Error("Unauthorized Quick Task opened event");
+    return {
+      kind: "intent",
+      intent: makeIntent({
+        task,
+        intentId: `quick:${quickTask.requestId}:${quickTask.digest}`,
+        sourceKind: "opened",
+        sourceId: `issue:${issue.id}`,
+        transportRunId: context.runId,
+        occurredAt: issue.created_at,
+        // quickTaskRequest() above only ever returns a result when its own
+        // `pipeline` argument (this same variable) was truthy -- otherwise
+        // it throws before returning -- so `pipeline` is proven defined by
+        // `quickTask` having a value at all.
+        pipeline,
+        mode: "implement",
+        reply: "",
+        runbook: "",
+        context: "",
+        authorization: auth
+      })
+    };
+  }
+  if (["labeled", "unlabeled", "closed", "reopened"].includes(event.action)) {
+    const source = timelineSource(timeline, eventName, event);
+    if (event.action === "closed" || event.action === "reopened") {
+      return {
+        kind: "anchor-control",
+        task,
+        control: {
+          kind: event.action,
+          ...source,
+          transportRunId: context.runId,
+          authorization: { observed: true, actor: event.sender?.login },
+          merged: Boolean(issue.pull_request && issue.merged_at)
+        }
+      };
+    }
+    const labelName = event.label?.name;
+    const isReviewLabel = eventName === "pull_request" && Boolean(labelName?.startsWith("review:"));
+    if (!labelName?.startsWith("agent:") && !isReviewLabel) {
+      return { kind: "ignored", reason: "non-agent label event" };
+    }
+    if (!labelName) {
+      throw new Error("Label event missing its own label name");
+    }
+    const labelMap = isReviewLabel ? REVIEW_LABELS : AGENT_LABELS;
+    const labelKind = isReviewLabel ? "review" : "agent";
+    if (event.action === "unlabeled") {
+      return {
+        kind: "control-evidence",
+        task,
+        evidence: {
+          sourceKind: "unlabeled",
+          ...source,
+          transportRunId: context.runId,
+          label: labelName,
+          authorization: { observed: true, actor: event.sender?.login }
+        }
+      };
+    }
+    if (!auth.authorized) throw new Error("Unauthorized label dispatch");
+    const eventPipeline = labelMap.get(labelName);
+    if (!eventPipeline)
+      return { kind: "ignored", reason: `unknown ${labelKind} label` };
+    const selectedLabelsInNamespace = labelsOf(issue).filter(
+      (label) => labelMap.has(label)
+    );
+    let effectivePipeline = selectedPipelineFrom(labelsOf(issue), labelMap);
+    let staleAgentLabels;
+    if (selectedLabelsInNamespace.length > 1) {
+      const otherLabelsInNamespace = selectedLabelsInNamespace.filter(
+        (label) => label !== labelName
+      );
+      if (!selectedLabelsInNamespace.includes(labelName) || otherLabelsInNamespace.length !== 1) {
+        throw new Error(`Issue has contradictory ${labelKind} labels`);
+      }
+      staleAgentLabels = otherLabelsInNamespace;
+      effectivePipeline = eventPipeline;
+    }
+    const quickTask = quickTaskRequest(
+      issue,
+      context.repository,
+      effectivePipeline
+    );
+    return {
+      kind: "intent",
+      intent: makeIntent({
+        task,
+        ...quickTask && {
+          intentId: `quick:${quickTask.requestId}:${quickTask.digest}`
+        },
+        sourceKind: "labeled",
+        ...source,
+        transportRunId: context.runId,
+        pipeline: eventPipeline,
+        mode: isReviewLabel ? "review" : "implement",
+        reply: "",
+        runbook: "",
+        context: "",
+        dispatchable: effectivePipeline === eventPipeline,
+        ...staleAgentLabels && { staleAgentLabels },
+        authorization: auth
+      })
+    };
+  }
+  return { kind: "ignored", reason: "unsupported issue action" };
+}
+
+// apps/dispatch-broker/src/main.ts
+function env(name, required = true) {
+  const value = process.env[name];
+  if (required && !value) throw new Error(`${name} is required`);
+  return value ?? "";
+}
+function output(name, value) {
+  const path = env("GITHUB_OUTPUT");
+  return fs.appendFile(path, `${name}=${value}
+`, "utf8");
+}
+function encode(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+function decode(value) {
+  return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+}
+function api() {
+  return createGitHubApi({ token: env("GITHUB_TOKEN") });
+}
+function contextFor(event, inputs) {
+  return {
+    repository: event.repository?.full_name ?? env("GITHUB_REPOSITORY"),
+    repositoryId: event.repository?.id ?? Number(env("GITHUB_REPOSITORY_ID")),
+    issue: inputs.issue,
+    runId: Number(env("GITHUB_RUN_ID")),
+    actor: env("GITHUB_ACTOR"),
+    now: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+async function runPhase(ledgerContext, phase, step) {
+  try {
+    return await step();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failure = classifyFailure({
+      phase,
+      owningSystem: "controller",
+      reason: "internal_error",
+      retryDisposition: "manual",
+      detail: message
+    });
+    console.log(`::error::${formatFailure(failure)}: ${message}`);
+    if (ledgerContext) {
+      try {
+        addAnomaly(
+          ledgerContext.loaded.ledger,
+          "phase-failure",
+          { phase, message },
+          void 0,
+          failure
+        );
+        await saveLedger(ledgerContext.client, ledgerContext.loaded);
+      } catch (recordingError) {
+        const recordingMessage = recordingError instanceof Error ? recordingError.message : String(recordingError);
+        console.log(
+          `::error::Failed to record the above ${phase} phase failure to the dispatch ledger: ${recordingMessage}`
+        );
+      }
+    }
+    throw error;
+  }
+}
+async function normalize() {
+  const event = JSON.parse(
+    await fs.readFile(env("GITHUB_EVENT_PATH"), "utf8")
+  );
+  const eventName = env("GITHUB_EVENT_NAME");
+  const inputs = event.inputs ?? {};
+  const context = contextFor(event, inputs);
+  const client = api();
+  if (eventName === "workflow_dispatch") {
+    const issue2 = await client.requestOk(
+      `${repositoryPath({ repository: context.repository })}/issues/${inputs.issue}`
+    );
+    event.issue = issue2;
+  }
+  let timeline = [];
+  const wantsTimeline = eventName === "issues" && ["labeled", "unlabeled", "closed", "reopened"].includes(event.action) || eventName === "pull_request" && ["labeled", "unlabeled"].includes(event.action);
+  if (wantsTimeline) {
+    const numbered = event.issue ?? event.pull_request;
+    if (!numbered) {
+      throw new Error(
+        `Event ${eventName}/${event.action} claimed a timeline but carried neither issue nor pull_request`
+      );
+    }
+    timeline = await client.requestOk(
+      `${repositoryPath({ repository: context.repository })}/issues/${numbered.number}/timeline?per_page=100`
+    );
+  }
+  const normalized = await runPhase(
+    void 0,
+    "signal",
+    () => normalizeEvent({
+      eventName,
+      event,
+      inputs,
+      context,
+      timeline,
+      maintainer: env("MAINTAINER_LOGIN")
+    })
+  );
+  const normalizedTask = "task" in normalized ? normalized.task : void 0;
+  const normalizedReason = "reason" in normalized ? normalized.reason : void 0;
+  const issue = normalizedTask?.issue ?? event.issue?.number ?? Number(inputs.issue);
+  await output("eligible", normalized.kind === "ignored" ? "false" : "true");
+  await output("issue", String(issue || ""));
+  await output("repository-id", String(context.repositoryId));
+  await output(
+    "group",
+    issue ? `agent-lcars-dispatch-v1-${context.repositoryId}-${issue}`.toLowerCase() : ""
+  );
+  await output("payload", encode(normalized));
+  await output("reason", normalizedReason ?? "");
+}
+function activeGeneration(ledger) {
+  return ledger.generations.find(
+    (generation) => ACTIVE_STATES.has(generation.state)
+  );
+}
+function assertWorkerRun(run, task, generation, expectedWorkflow) {
+  if (run.repository?.id !== task.repositoryId || run.event !== "workflow_dispatch" || run.path !== `.github/workflows/${expectedWorkflow}` || !displayTitleMatchesAttempt(run.display_title, generation)) {
+    throw new Error("Worker run identity does not match its ledger binding");
+  }
+}
+async function reconcileActive(client, loaded) {
+  let active = activeGeneration(loaded.ledger);
+  if (!active) return;
+  const expectedWorkflow = workerWorkflow(active.pipeline);
+  const matchingRuns = await findRunsForGeneration(
+    client,
+    loaded.ledger.task,
+    active
+  );
+  if (matchingRuns.length > 1) {
+    addAnomaly(
+      loaded.ledger,
+      "duplicate-attempt",
+      {
+        generation: active.generation,
+        runIds: matchingRuns.map((run2) => run2.id)
+      },
+      void 0,
+      // The reconciler is what noticed this, but the state that is wrong --
+      // "at most one worker run bound to a generation" -- is the ledger's
+      // own invariant, so the controller (its state authority) owns it, not
+      // whichever of the two GitHub Actions runs happens to be the
+      // duplicate. No reason code in the vocabulary names "two runs matched
+      // one generation" specifically (#645's audit table never hit this
+      // case), so this falls back to `internal_error`, the vocabulary's own
+      // catch-all for exactly that gap. `never`, not `manual`: re-running
+      // the broker on the next event re-derives the same duplicate-run
+      // snapshot and throws again -- retrying cannot resolve it, and
+      // dispatching a fresh attempt to "fix" it would only add a third
+      // duplicate. Only a human fixing the underlying divergence (cancel a
+      // run, or correct the ledger) out of band lets the next reconcile
+      // pass see a clean state again.
+      classifyFailure({
+        phase: "reconciliation",
+        owningSystem: "controller",
+        reason: "internal_error",
+        retryDisposition: "never"
+      })
+    );
+    await saveLedger(client, loaded);
+    throw new Error("Multiple worker runs match one dispatch generation");
+  }
+  if (["dispatching", "dispatch-unknown"].includes(active.state) && matchingRuns.length === 1) {
+    const run2 = matchingRuns[0];
+    assertWorkerRun(run2, loaded.ledger.task, active, expectedWorkflow);
+    bindRun(loaded.ledger, active.generation, {
+      runId: run2.id,
+      runUrl: run2.url,
+      htmlUrl: run2.html_url,
+      workflow: expectedWorkflow
+    });
+    await saveLedger(client, loaded);
+    active = activeGeneration(loaded.ledger);
+  }
+  if (!active?.attempt?.runId) return;
+  const run = await getWorkflowRun(
+    client,
+    loaded.ledger.task,
+    active.attempt.runId
+  );
+  assertWorkerRun(run, loaded.ledger.task, active, expectedWorkflow);
+  if (run.status === "completed") {
+    completeRun(loaded.ledger, active.generation, {
+      runId: run.id,
+      status: run.status,
+      conclusion: run.conclusion,
+      completedAt: run.updated_at
+    });
+    await saveLedger(client, loaded);
+  }
+}
+var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
+var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
+var RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
+function reconcileAnomaliesFor(ledger, generationNumber, kind) {
+  return ledger.anomalies.filter(
+    (anomaly) => anomaly.kind === kind && // `detail` is deliberately untyped on LedgerAnomaly (each kind owns
+    // its own shape) -- every `addAnomaly` call below that records one of
+    // these two kinds always includes a numeric `generation` field.
+    anomaly.detail?.generation === generationNumber
+  );
+}
+async function trackMissingRun(client, loaded, generation, now) {
+  const ledger = loaded.ledger;
+  if (reconcileAnomaliesFor(ledger, generation.generation, "reconcile-parked").length > 0) {
+    return;
+  }
+  const startedAt = Date.parse(
+    generation.attempt?.dispatchStartedAt ?? generation.occurredAt
+  );
+  const ageMs = Date.parse(now) - startedAt;
+  if (!(ageMs >= RECONCILE_MISSING_RUN_GRACE_MS)) return;
+  const priorObservations = reconcileAnomaliesFor(
+    ledger,
+    generation.generation,
+    "reconcile-missing-run"
+  );
+  const last = priorObservations.at(-1);
+  if (last && Date.parse(now) - Date.parse(last.occurredAt) < RECONCILE_MISSING_RUN_MIN_INTERVAL_MS) {
+    return;
+  }
+  const attempt = priorObservations.length + 1;
+  const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  if (reachedBound) {
+    await ensureNeedsHumanParked(
+      client,
+      ledger.task,
+      env("MAINTAINER_LOGIN", false)
+    );
+  }
+  addAnomaly(
+    ledger,
+    "reconcile-missing-run",
+    {
+      generation: generation.generation,
+      intentId: generation.intentId,
+      pipeline: generation.pipeline,
+      state: generation.state,
+      attempt,
+      ageMs
+    },
+    now,
+    // A `dispatching`/`dispatch-unknown` generation with no bound run after
+    // its grace period is the delayed confirmation of exactly what
+    // `dispatch-unknown`/`markDispatchUnknown` already names: the
+    // controller does not know whether its own dispatch POST landed. That
+    // makes the controller the owning system even though one of the two
+    // root causes #305's audit named (a worker crashing before ever
+    // registering) is technically a worker failure -- the ledger state
+    // being reconciled here is the controller's own bookkeeping, and the
+    // reconciler cannot distinguish the two causes from a bare zero-match
+    // observation. `backoff`, not `manual`: this is still inside the
+    // bounded-retry window (`RECONCILE_MISSING_RUN_MAX_ATTEMPTS`) --
+    // trackMissingRun's own next scheduled pass, at least
+    // `RECONCILE_MISSING_RUN_MIN_INTERVAL_MS` later, is the retry, and
+    // `retryBudget` mirrors the attempts this same counter has left before
+    // `reconcile-parked` (below) takes over.
+    classifyFailure({
+      phase: "reconciliation",
+      owningSystem: "controller",
+      reason: "launch_response_lost",
+      retryDisposition: "backoff",
+      retryBudget: Math.max(0, RECONCILE_MISSING_RUN_MAX_ATTEMPTS - attempt),
+      evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`
+    })
+  );
+  if (reachedBound) {
+    addAnomaly(
+      ledger,
+      "reconcile-parked",
+      {
+        generation: generation.generation,
+        reason: "missing-run-bound-exhausted"
+      },
+      now,
+      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // just run, and the guard at the top of this function turns every
+      // later pass into a no-op, so nothing further happens automatically.
+      // Same underlying reason as the `reconcile-missing-run` observations
+      // that led here -- exhausting the retry budget doesn't change *why*
+      // the run went missing, only that automated backoff has given up on
+      // it -- so `retryDisposition` moves from `backoff` to `manual` while
+      // `reason` stays `launch_response_lost`.
+      classifyFailure({
+        phase: "reconciliation",
+        owningSystem: "controller",
+        reason: "launch_response_lost",
+        retryDisposition: "manual",
+        evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
+      })
+    );
+  }
+  await saveLedger(client, loaded);
+}
+async function repairMissingIntentFromLabel(client, loaded, now, runId) {
+  const ledger = loaded.ledger;
+  const task = ledger.task;
+  const root = repositoryPath(task);
+  const issue = await client.requestOk(
+    `${root}/issues/${task.issue}`
+  );
+  let pipeline = selectedPipeline(issue);
+  let mode = "implement";
+  let labelName = pipeline && `agent:${pipeline}`;
+  if (!pipeline && issue.pull_request) {
+    const issueLabels = (issue.labels ?? []).map(
+      (label) => typeof label === "string" ? label : label.name
+    );
+    pipeline = selectedPipelineFrom(issueLabels, REVIEW_LABELS);
+    mode = "review";
+    labelName = pipeline && `review:${pipeline}`;
+  }
+  if (!pipeline) return;
+  const maintainer = env("MAINTAINER_LOGIN", false);
+  const timeline = await listAll(
+    client,
+    `${root}/issues/${task.issue}/timeline`
+  );
+  const labelApplications = timeline.filter(
+    (event) => event.event === "labeled" && event.label?.name === labelName
+  ).sort(
+    (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)
+  );
+  const mostRecent = labelApplications[0];
+  if (!mostRecent) return;
+  const actor = mostRecent.actor;
+  if (!actor || actor.login !== maintainer) return;
+  const quickTask = quickTaskRequest(issue, task.repository, pipeline);
+  const intent = makeIntent({
+    task,
+    ...quickTask && {
+      intentId: `quick:${quickTask.requestId}:${quickTask.digest}`
+    },
+    sourceKind: "reconcile-label-repair",
+    sourceId: `reconcile-label-repair:${issue.id}`,
+    transportRunId: runId,
+    occurredAt: now,
+    pipeline,
+    mode,
+    reply: "",
+    runbook: "",
+    context: "",
+    authorization: {
+      authorized: true,
+      // mostRecent.actor is proven defined by the guard just above: if it
+      // were undefined, `mostRecent.actor?.login` would be `undefined`,
+      // which cannot equal `maintainer` there without already returning.
+      actor: actor.login,
+      configuredMaintainer: maintainer,
+      rule: "reconcile-label-repair"
+    }
+  });
+  acceptIntent(ledger, intent, now);
+  await saveLedger(client, loaded);
+}
+async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId) {
+  const ledger = loaded.ledger;
+  if (ledger.generations.length === 0) {
+    await repairMissingIntentFromLabel(client, loaded, now, runId);
+    return;
+  }
+  const active = activeGeneration(ledger);
+  const pending = ledger.generations.find(
+    (candidate) => candidate.state === "pending"
+  );
+  if (pending && !active && reconcileAnomaliesFor(
+    ledger,
+    pending.generation,
+    "reconcile-invariant-violation"
+  ).length === 0) {
+    await ensureNeedsHumanParked(
+      client,
+      ledger.task,
+      env("MAINTAINER_LOGIN", false)
+    );
+    addAnomaly(
+      ledger,
+      "reconcile-invariant-violation",
+      {
+        detail: "pending generation with no contemporaneous active generation",
+        generation: pending.generation
+      },
+      now,
+      // "Should be unreachable through broker.mjs's own transitions" is
+      // this vocabulary's own definition of `internal_error` -- a defensive
+      // check catching corrupted-looking ledger state, not a failure any
+      // known external cause (a lost signal, a lost launch response, a
+      // provider outage, ...) explains. The ledger this invariant is about
+      // is the controller's own state, so it -- not whichever system
+      // produced the generations in question -- is the explicit owner
+      // reconciliation-phase failures require. `manual`: the guard above
+      // (reconcileAnomaliesFor(...).length === 0) makes every later pass a
+      // no-op once this fires, identical to reconcile-parked's own
+      // idempotent stop -- nothing about this resolves itself, a human has
+      // to look at the ledger and decide what actually happened.
+      classifyFailure({
+        phase: "reconciliation",
+        owningSystem: "controller",
+        reason: "internal_error",
+        retryDisposition: "manual"
+      })
+    );
+    await saveLedger(client, loaded);
+    return;
+  }
+  if (!active || !["dispatching", "dispatch-unknown"].includes(active.state)) {
+    return;
+  }
+  if (active.attempt?.runId) return;
+  await trackMissingRun(client, loaded, active, now);
+}
+var RECONCILE_DISPATCH_CONCURRENCY = 5;
+async function dispatchReconcileScan(client, repository, issueNumbers) {
+  const task = { repository };
+  const outcomes = await mapWithConcurrency(
+    issueNumbers,
+    RECONCILE_DISPATCH_CONCURRENCY,
+    (issueNumber) => dispatchRouterEvent(client, task, {
+      kind: "reconcile",
+      issue: String(issueNumber)
+    })
+  );
+  const results = { dispatched: 0, failed: [] };
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === "fulfilled") {
+      results.dispatched += 1;
+    } else {
+      results.failed.push({
+        issue: issueNumbers[index],
+        // Assumed Error-shaped, exactly as the untyped original assumed --
+        // mapWithConcurrency's `reason` is whatever the worker callback
+        // threw, unchanged.
+        message: outcome.reason.message
+      });
+    }
+  });
+  return results;
+}
+function isDefiniteDispatchRejection(error) {
+  return error instanceof GitHubApiError && Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status);
+}
+async function dispatchAccepted(client, loaded) {
+  while (!loaded.ledger.control.closed) {
+    const generation = loaded.ledger.generations.find(
+      (candidate) => candidate.state === "accepted"
+    );
+    if (!generation || activeGeneration(loaded.ledger)) return;
+    await runPhase({ client, loaded }, "scheduling", async () => {
+      beginDispatch(
+        loaded.ledger,
+        generation.generation,
+        crypto3.randomBytes(24).toString("base64url")
+      );
+      await saveLedger(client, loaded);
+    });
+    try {
+      const binding = await dispatchWorker(client, generation, loaded.ledger.task);
+      bindRun(loaded.ledger, generation.generation, binding);
+      await saveLedger(client, loaded);
+      return;
+    } catch (error) {
+      if (isDefiniteDispatchRejection(error)) {
+        await runPhase({ client, loaded }, "launch", async () => {
+          markDispatchRejected(
+            loaded.ledger,
+            generation.generation,
+            `HTTP ${error.status}`
+          );
+          await saveLedger(client, loaded);
+          throw error;
+        });
+      }
+      markDispatchUnknown(
+        loaded.ledger,
+        generation.generation,
+        // Assumed Error-shaped, exactly as the untyped original assumed.
+        error.message.slice(0, 300)
+      );
+      await saveLedger(client, loaded);
+      return;
+    }
+  }
+}
+function completionMatches(generation, normalized, run) {
+  return generation && generation.intentId === normalized.intentId && generation.attempt?.token === normalized.token && generation.attempt?.runId === normalized.workerRunId && run.id === normalized.workerRunId;
+}
+async function handleCompletion(client, loaded, normalized) {
+  const generation = loaded.ledger.generations.find(
+    (candidate) => candidate.generation === normalized.generation
+  );
+  let run = await getWorkflowRun(
+    client,
+    normalized.task,
+    normalized.workerRunId
+  );
+  const expectedWorkflow = workerWorkflow(
+    generation?.pipeline
+  );
+  assertWorkerRun(
+    run,
+    normalized.task,
+    generation,
+    expectedWorkflow
+  );
+  if (!generation) {
+    throw new Error(`Generation ${normalized.generation} not found`);
+  }
+  if (normalized.workflow !== expectedWorkflow || !completionMatches(generation, normalized, run)) {
+    throw new Error("Completion callback does not match the bound worker run");
+  }
+  const evidence = recordControlEvidence(loaded.ledger, {
+    sourceKind: "completion",
+    sourceId: normalized.sourceId,
+    transportRunId: normalized.transportRunId,
+    occurredAt: (/* @__PURE__ */ new Date()).toISOString(),
+    runId: normalized.workerRunId,
+    authorization: { observed: true, workflow: expectedWorkflow }
+  });
+  if (generation.state === "completed") {
+    if (evidence.outcome === "recorded") await saveLedger(client, loaded);
+    return;
+  }
+  if (generation.state === "active") {
+    observeCompletion(loaded.ledger, generation.generation, run.id);
+  }
+  await saveLedger(client, loaded);
+  const deadline = Date.now() + 12e4;
+  let delay = 2e3;
+  while (run.status !== "completed" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(delay * 2, 15e3);
+    try {
+      run = await getWorkflowRun(
+        client,
+        normalized.task,
+        normalized.workerRunId
+      );
+      assertWorkerRun(
+        run,
+        normalized.task,
+        generation,
+        expectedWorkflow
+      );
+    } catch (error) {
+      if (error instanceof GitHubApiError && (error.status === 404 || error.status >= 500)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (run.status !== "completed") {
+    if (generation.state === "completion-observed") {
+      awaitTerminal(loaded.ledger, generation.generation);
+      await saveLedger(client, loaded);
+    }
+    return;
+  }
+  completeRun(loaded.ledger, generation.generation, {
+    runId: run.id,
+    status: run.status,
+    conclusion: run.conclusion,
+    completedAt: run.updated_at
+  });
+  await saveLedger(client, loaded);
+}
+function resolveTask(normalized) {
+  return normalized.kind === "intent" ? normalized.intent.task : (
+    // Ignored events are filtered out by broker() before this is ever
+    // called; the cast documents that, matching the untyped original's own
+    // unguarded `.task` read for every other kind.
+    normalized.task
+  );
+}
+var EVICTION_TOLERANT_KINDS = /* @__PURE__ */ new Set(["control-evidence", "reconcile"]);
+async function wasSupersededEviction(client, task, runId, group, kind, error) {
+  const candidate = error;
+  if (candidate?.name !== "BrokerConcurrencyMismatchError" || !candidate.retryable) {
+    return false;
+  }
+  const superseding = await findSupersedingRouterRun(
+    client,
+    task,
+    runId
+  );
+  if (!superseding) return false;
+  if (!EVICTION_TOLERANT_KINDS.has(kind)) {
+    throw new Error(
+      `Broker run ${runId} (group ${group}, issue #${task.issue}) was evicted from its concurrency queue by newer run ${superseding.id}, but this event carries a '${kind}' payload. Only observational control-evidence/reconcile pings may be dropped on a corroborated eviction (#344, #305); a superseding run does not carry this event's '${kind}' payload forward, since it corresponds to a different triggering event. This event's payload is presumed permanently lost -- a maintainer must manually re-dispatch it to recover.`,
+      { cause: error }
+    );
+  }
+  console.log(
+    `::notice::Broker run ${runId} (group ${group}, issue #${task.issue}) was evicted from its concurrency queue by newer run ${superseding.id}, which now reports the expected group. Treating this run as superseded rather than failing (#344/#305): this run's own '${kind}' payload for its triggering event is not recorded in the ledger -- the superseding run already carries the issue forward correctly.`
+  );
+  return true;
+}
+var FRESH_INTENT_OUTCOMES = /* @__PURE__ */ new Set(["dispatch", "pending"]);
+async function healStaleAgentLabels(client, loaded, intent) {
+  const staleLabels = intent.staleAgentLabels;
+  if (!staleLabels?.length) return;
+  const task = loaded.ledger.task;
+  const eventLabel = `${intent.mode === "review" ? "review" : "agent"}:${intent.pipeline}`;
+  const issue = await client.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`
+  );
+  const currentLabels = new Set(
+    (issue.labels ?? []).map(
+      (label) => typeof label === "string" ? label : label.name
+    )
+  );
+  const removable = [];
+  const skipped = [];
+  for (const label of staleLabels) {
+    if (currentLabels.has(label) && currentLabels.has(eventLabel)) {
+      removable.push(label);
+    } else {
+      skipped.push(label);
+    }
+  }
+  if (skipped.length > 0) {
+    console.log(
+      `::notice::Skipping stale-label self-heal for ${skipped.join(", ")} on issue #${task.issue}: live labels no longer match the dual-label snapshot this intent was normalized from (current: ${[...currentLabels].join(", ") || "none"}).`
+    );
+  }
+  if (removable.length === 0) return;
+  for (const label of removable) {
+    await removeIssueLabel(client, task, label);
+  }
+  const evidence = recordControlEvidence(loaded.ledger, {
+    sourceKind: "label-self-heal",
+    sourceId: `label-self-heal:${intent.sourceId}`,
+    transportRunId: intent.transportRunId,
+    occurredAt: (/* @__PURE__ */ new Date()).toISOString(),
+    labels: removable,
+    authorization: { observed: true, actor: "dispatch-broker" }
+  });
+  if (evidence.outcome === "recorded") await saveLedger(client, loaded);
+}
+async function loadBrokerLedger(client, task, normalized, isPullRequest) {
+  const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
+  return loadLedger(client, task, void 0, {
+    createIfMissing: !untrackedPullRequestControl
+  });
+}
+async function applyAnchorControlTransition(client, loaded, control) {
+  applyAnchorControl(loaded.ledger, control);
+  await saveLedger(client, loaded);
+}
+async function broker() {
+  const normalized = decode(env("BROKER_PAYLOAD"));
+  if (normalized.kind === "ignored") return;
+  const task = resolveTask(normalized);
+  const client = api();
+  const isPullRequest = env("ANCHOR_IS_PR", false) === "true";
+  const runId = Number(env("GITHUB_RUN_ID"));
+  const group = env("BROKER_GROUP");
+  const eventName = env("GITHUB_EVENT_NAME", false);
+  try {
+    await verifyBrokerConcurrency(client, task, runId, group, { eventName });
+  } catch (error) {
+    if (await wasSupersededEviction(
+      client,
+      task,
+      runId,
+      group,
+      normalized.kind,
+      error
+    )) {
+      return;
+    }
+    throw error;
+  }
+  let loaded;
+  try {
+    loaded = await loadBrokerLedger(client, task, normalized, isPullRequest);
+  } catch (error) {
+    await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
+  }
+  if (!loaded) {
+    console.log(
+      // Only reachable when loadBrokerLedger's own untrackedPullRequestControl
+      // gate fired, i.e. normalized.kind === 'anchor-control' -- same
+      // assumption the untyped original made without checking.
+      `::notice::Ignoring ${normalized.control.kind} for untracked pull request #${task.issue}; no dispatch ledger exists.`
+    );
+    return;
+  }
+  await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
+  try {
+    await reconcileActive(client, loaded);
+    if (normalized.kind === "intent") {
+      const accepted = await runPhase(
+        { client, loaded },
+        "intent",
+        () => acceptIntent(loaded.ledger, normalized.intent)
+      );
+      await saveLedger(client, loaded);
+      if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
+        await healStaleAgentLabels(client, loaded, normalized.intent);
+      }
+    } else if (normalized.kind === "anchor-control") {
+      await applyAnchorControlTransition(client, loaded, normalized.control);
+    } else if (normalized.kind === "control-evidence") {
+      recordControlEvidence(loaded.ledger, normalized.evidence);
+      await saveLedger(client, loaded);
+    } else if (normalized.kind === "completion") {
+      await handleCompletion(client, loaded, normalized);
+    } else if (normalized.kind === "reconcile") {
+      await runPhase(
+        { client, loaded },
+        "reconciliation",
+        () => reconcileLedger(client, loaded, (/* @__PURE__ */ new Date()).toISOString(), runId)
+      );
+    } else {
+      throw new Error(
+        `Unsupported normalized event kind: ${normalized.kind}`
+      );
+    }
+    await dispatchAccepted(client, loaded);
+  } catch (error) {
+    await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
+  }
+}
+async function preflight() {
+  const task = {
+    repositoryId: Number(env("GITHUB_REPOSITORY_ID")),
+    repository: env("GITHUB_REPOSITORY"),
+    issue: Number(env("BROKER_ISSUE"))
+  };
+  const expected = {
+    task,
+    generation: Number(env("BROKER_GENERATION")),
+    intentId: env("BROKER_INTENT_ID"),
+    token: env("BROKER_DISPATCH_TOKEN"),
+    runId: Number(env("GITHUB_RUN_ID"))
+  };
+  const client = api();
+  await runPhase(void 0, "authorization", async () => {
+    const deadline = Date.now() + 6e4;
+    while (Date.now() < deadline) {
+      const loaded = await loadLedger(
+        client,
+        task,
+        "github-actions[bot]",
+        { createIfMissing: false }
+      );
+      if (loaded && verifyPreflight(loaded.ledger, expected)) {
+        const generation = loaded.ledger.generations.find(
+          (candidate) => candidate.generation === expected.generation
+        );
+        const run = await getWorkflowRun(
+          client,
+          task,
+          expected.runId
+        );
+        assertWorkerRun(
+          run,
+          task,
+          generation,
+          workerWorkflow(generation.pipeline)
+        );
+        await output("authorized", "true");
+        await output(
+          "attempt-id",
+          formatAttemptId({
+            generation: expected.generation,
+            intentId: expected.intentId
+          })
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2e3));
+    }
+    throw new Error(
+      "Worker preflight could not verify an exact broker binding"
+    );
+  });
+}
+async function completionCallback() {
+  const client = api();
+  const task = {
+    repositoryId: Number(env("GITHUB_REPOSITORY_ID")),
+    repository: env("GITHUB_REPOSITORY"),
+    issue: Number(env("BROKER_ISSUE"))
+  };
+  const completionPayload = encode({
+    workerRunId: Number(env("GITHUB_RUN_ID")),
+    generation: Number(env("BROKER_GENERATION")),
+    intentId: env("BROKER_INTENT_ID"),
+    token: env("BROKER_DISPATCH_TOKEN"),
+    workflow: env("BROKER_WORKER_WORKFLOW")
+  });
+  await dispatchRouterEvent(client, task, {
+    kind: "completion",
+    issue: String(task.issue),
+    completion_payload: completionPayload
+  });
+}
+async function discoverReconcileCandidates(client, repository, fleetLogin) {
+  const task = { repository };
+  const [labeled, assigned] = await Promise.all([
+    listOpenAgentLabeledIssues(client, task),
+    listOpenIssuesAssignedTo(client, task, fleetLogin)
+  ]);
+  const byNumber = /* @__PURE__ */ new Map();
+  for (const issue of [...labeled, ...assigned]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number
+  );
+}
+async function scanReconcile() {
+  const client = api();
+  const repository = env("GITHUB_REPOSITORY");
+  const candidates = await discoverReconcileCandidates(
+    client,
+    repository,
+    env("AGENT_FLEET_LOGIN", false)
+  );
+  const issueNumbers = candidates.map((issue) => issue.number);
+  const results = await dispatchReconcileScan(client, repository, issueNumbers);
+  console.log(
+    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${issueNumbers.length} open agent-labeled or fleet-assigned issue(s).`
+  );
+  for (const failure of results.failed) {
+    console.log(
+      `::error::dispatch-reconcile: failed to dispatch reconcile for #${failure.issue}: ${failure.message}`
+    );
+  }
+  await output("candidates", String(issueNumbers.length));
+  await output("dispatched", String(results.dispatched));
+  if (results.failed.length > 0) {
+    throw new Error(
+      `Reconcile scan failed to dispatch ${results.failed.length}/${issueNumbers.length} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
+    );
+  }
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const operation = process.argv[2];
+  if (operation === "normalize") await normalize();
+  else if (operation === "broker") await broker();
+  else if (operation === "preflight") await preflight();
+  else if (operation === "completion-callback") await completionCallback();
+  else if (operation === "reconcile") await scanReconcile();
+  else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
+}
+export {
+  FRESH_INTENT_OUTCOMES,
+  RECONCILE_DISPATCH_CONCURRENCY,
+  RECONCILE_MISSING_RUN_GRACE_MS,
+  RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
+  RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
+  applyAnchorControlTransition,
+  assertWorkerRun,
+  completionMatches,
+  contextFor,
+  decode,
+  discoverReconcileCandidates,
+  dispatchReconcileScan,
+  encode,
+  handleCompletion,
+  healStaleAgentLabels,
+  isDefiniteDispatchRejection,
+  loadBrokerLedger,
+  reconcileActive,
+  reconcileLedger,
+  repairMissingIntentFromLabel,
+  resolveTask,
+  runPhase,
+  wasSupersededEviction
+};

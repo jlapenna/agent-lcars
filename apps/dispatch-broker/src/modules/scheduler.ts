@@ -14,20 +14,74 @@
  * does -- see the comment there.
  */
 
-import { formatAttemptId } from '../../../../libs/dispatch-contracts/src/index.js';
-import { ACTIVE_STATES, mutate, validateLedger } from './ledger-core.mjs';
+import type {
+  DispatchLedger,
+  LedgerGeneration,
+  LedgerRunAttempt,
+  LedgerTaskRef,
+} from '@agent-lcars/dispatch-contracts';
+import { formatAttemptId } from '@agent-lcars/dispatch-contracts';
+
+import { ACTIVE_STATES, mutate, validateLedger } from './ledger-core.js';
 
 const TERMINAL_RUN_STATUSES = new Set(['completed']);
 
-function beginDispatch(
-  ledger,
-  generationNumber,
-  token,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
+/** What `bindRun` needs to know about the workflow run it is binding to a
+ *  generation. `workflow` is carried through unchanged but is not part of
+ *  `LedgerRunAttempt` -- see the comment on `Object.assign` below. */
+interface RunBinding {
+  runId: number;
+  runUrl: string;
+  htmlUrl: string;
+  workflow?: string;
+}
+
+/** What `completeRun` needs from a terminal run observation. */
+interface RunObservation {
+  runId: number;
+  status: string;
+  conclusion: string | null;
+  completedAt?: string;
+}
+
+/** `verifyPreflight`'s expected binding -- what a worker's own preflight
+ *  step claims about the run it is executing as, checked against the
+ *  ledger's authoritative state. See main.mjs's `preflight()`. */
+export interface PreflightExpectation {
+  task: LedgerTaskRef;
+  generation: number;
+  intentId: string;
+  token: string;
+  runId: number;
+}
+
+function findGeneration(
+  ledger: DispatchLedger,
+  generationNumber: number,
+): LedgerGeneration | undefined {
+  return ledger.generations.find(
     (candidate) => candidate.generation === generationNumber,
   );
+}
+
+/** The generation states these transitions accept all guarantee an attempt
+ * exists; this makes that invariant explicit and fails loudly if it is ever
+ * violated, rather than dereferencing undefined and blaming the caller. */
+function attemptOf(generation: LedgerGeneration): LedgerRunAttempt {
+  const { attempt } = generation;
+  if (!attempt) {
+    throw new Error(`Generation ${generation.generation} has no attempt`);
+  }
+  return attempt;
+}
+
+function beginDispatch(
+  ledger: DispatchLedger,
+  generationNumber: number,
+  token: string,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || !['accepted', 'pending'].includes(generation.state)) {
     throw new Error('Generation is not dispatchable');
   }
@@ -56,41 +110,43 @@ function beginDispatch(
 }
 
 function markDispatchUnknown(
-  ledger,
-  generationNumber,
-  reason,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
+  ledger: DispatchLedger,
+  generationNumber: number,
+  reason: string,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || generation.state !== 'dispatching') {
     throw new Error('Generation is not dispatching');
   }
   return mutate(ledger, now, () => {
     generation.state = 'dispatch-unknown';
-    generation.attempt.unknownAt = now;
-    generation.attempt.unknownReason = reason;
+    // `attempt` is guaranteed set: the `dispatching` state above is only
+    // ever reached via beginDispatch(), which always sets it in the same
+    // mutate() before advancing the generation into that state.
+    const attempt = attemptOf(generation);
+    attempt.unknownAt = now;
+    attempt.unknownReason = reason;
   });
 }
 
 function markDispatchRejected(
-  ledger,
-  generationNumber,
-  reason,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
+  ledger: DispatchLedger,
+  generationNumber: number,
+  reason: string,
+  now: string = new Date().toISOString(),
+): { ledger: DispatchLedger; promotedGeneration?: number } {
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || generation.state !== 'dispatching') {
     throw new Error('Generation is not dispatching');
   }
-  let promoted;
+  let promoted: LedgerGeneration | undefined;
   mutate(ledger, now, () => {
     generation.state = 'dispatch-rejected';
-    generation.attempt.rejectedAt = now;
-    generation.attempt.rejectionReason = reason;
+    // Same guarantee as markDispatchUnknown above.
+    const attempt = attemptOf(generation);
+    attempt.rejectedAt = now;
+    attempt.rejectionReason = reason;
     if (!ledger.control.closed) {
       promoted = ledger.generations.find(
         (candidate) => candidate.state === 'pending',
@@ -102,14 +158,12 @@ function markDispatchRejected(
 }
 
 function bindRun(
-  ledger,
-  generationNumber,
-  binding,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
+  ledger: DispatchLedger,
+  generationNumber: number,
+  binding: RunBinding,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
   if (
     !generation ||
     !['dispatching', 'dispatch-unknown'].includes(generation.state)
@@ -126,19 +180,20 @@ function bindRun(
   }
   return mutate(ledger, now, () => {
     generation.state = 'active';
-    Object.assign(generation.attempt, binding, { boundAt: now });
+    // Same attempt-is-set guarantee as markDispatchUnknown above. `binding`
+    // carries `workflow`, which is not part of `LedgerRunAttempt` -- it
+    // lands on the attempt object the same as it always has, unchanged.
+    Object.assign(attemptOf(generation), binding, { boundAt: now });
   });
 }
 
 function observeCompletion(
-  ledger,
-  generationNumber,
-  runId,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
+  ledger: DispatchLedger,
+  generationNumber: number,
+  runId: number,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
   if (
     !generation ||
     !['active', 'completion-observed', 'completion-awaiting-terminal'].includes(
@@ -150,36 +205,32 @@ function observeCompletion(
   }
   return mutate(ledger, now, () => {
     generation.state = 'completion-observed';
-    generation.attempt.completionObservedAt ??= now;
+    attemptOf(generation).completionObservedAt ??= now;
   });
 }
 
 function awaitTerminal(
-  ledger,
-  generationNumber,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
+  ledger: DispatchLedger,
+  generationNumber: number,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || generation.state !== 'completion-observed') {
     throw new Error('Completion has not been observed');
   }
   return mutate(ledger, now, () => {
     generation.state = 'completion-awaiting-terminal';
-    generation.attempt.lastObservedAt = now;
+    attemptOf(generation).lastObservedAt = now;
   });
 }
 
 function completeRun(
-  ledger,
-  generationNumber,
-  observation,
-  now = new Date().toISOString(),
-) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber,
-  );
+  ledger: DispatchLedger,
+  generationNumber: number,
+  observation: RunObservation,
+  now: string = new Date().toISOString(),
+): { ledger: DispatchLedger; promotedGeneration?: number } {
+  const generation = findGeneration(ledger, generationNumber);
   if (
     !generation ||
     !['active', 'completion-observed', 'completion-awaiting-terminal'].includes(
@@ -191,12 +242,18 @@ function completeRun(
   ) {
     throw new Error('Invalid terminal run observation');
   }
-  let promoted;
+  // Narrowed once here rather than re-read inside the closure below: a
+  // `typeof` check on a parameter does not survive into a callback defined
+  // afterward, so re-reading `observation.conclusion` there would still see
+  // the wider `string | null` this same check already ruled out.
+  const conclusion = observation.conclusion;
+  let promoted: LedgerGeneration | undefined;
   mutate(ledger, now, () => {
     generation.state = 'completed';
-    generation.attempt.status = observation.status;
-    generation.attempt.conclusion = observation.conclusion;
-    generation.attempt.completedAt = observation.completedAt ?? now;
+    const attempt = attemptOf(generation);
+    attempt.status = observation.status;
+    attempt.conclusion = conclusion;
+    attempt.completedAt = observation.completedAt ?? now;
     if (!ledger.control.closed) {
       promoted = ledger.generations.find(
         (candidate) => candidate.state === 'pending',
@@ -207,11 +264,12 @@ function completeRun(
   return { ledger, promotedGeneration: promoted?.generation };
 }
 
-function verifyPreflight(ledger, expected) {
+function verifyPreflight(
+  ledger: DispatchLedger,
+  expected: PreflightExpectation,
+): boolean {
   validateLedger(ledger, expected.task);
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === expected.generation,
-  );
+  const generation = findGeneration(ledger, expected.generation);
   return Boolean(
     generation &&
     ['active', 'completion-observed', 'completion-awaiting-terminal'].includes(

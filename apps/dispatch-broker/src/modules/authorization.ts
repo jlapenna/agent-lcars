@@ -14,6 +14,8 @@
  * imported, tested, and reasoned about on its own.
  */
 
+import type { LedgerAuthorizationDecision } from '@agent-lcars/dispatch-contracts';
+
 /**
  * Stable identifiers for which policy clause produced a decision. Every
  * caller names one of these rather than a hand-typed string literal, so a
@@ -36,13 +38,20 @@ export const AUTHORIZATION_RULES = Object.freeze({
  * are never a bare actor-equals-maintainer comparison) runs through this one
  * function.
  *
- * @param {string|undefined} actor
- * @param {string|undefined} maintainer
- * @param {string} rule One of AUTHORIZATION_RULES.
- * @param {Record<string, unknown>} [extra] Additional evidence fields (e.g.
+ * @param actor
+ * @param maintainer
+ * @param rule One of AUTHORIZATION_RULES.
+ * @param extra Additional evidence fields (e.g.
  *   comment author association) folded into the decision for audit purposes.
  */
-export function authorization(actor, maintainer, rule, extra = {}) {
+export function authorization<
+  Extra extends Record<string, unknown> = Record<string, never>,
+>(
+  actor: string | undefined,
+  maintainer: string | undefined,
+  rule: string,
+  extra: Extra = {} as Extra,
+): LedgerAuthorizationDecision & Extra {
   return {
     authorized: actor === maintainer,
     actor,

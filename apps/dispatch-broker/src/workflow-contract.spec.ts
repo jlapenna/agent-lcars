@@ -1,21 +1,27 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   excludedPullRequestAuthors,
   formatDispatchMarker,
   formatRouterGroupMarker,
   PIPELINE_CONTRACTS,
-} from '../../../libs/dispatch-contracts/src/index.js';
-import { agentWorkerPipelines, workerWorkflow } from './github-api.mjs';
+} from '@agent-lcars/dispatch-contracts';
+import { test } from 'vitest';
 
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
+import { agentWorkerPipelines, workerWorkflow } from './github-api.js';
 
-const workflowsDirectory = path.resolve('.github/workflows');
+// Resolved from this file's own location, not from `process.cwd()`. These
+// assertions are about workflow YAML that lives at the workspace root while
+// the suite now runs with the project directory as its working directory --
+// a cwd-relative path silently pointed at apps/dispatch-broker/.github.
+const workspaceRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../..',
+);
+const workflowsDirectory = path.join(workspaceRoot, '.github/workflows');
 const brokerPrefix = 'agent-lcars-dispatch-v1-';
 const expectedGroup = '${{ needs.normalize.outputs.group }}';
 
@@ -200,7 +206,7 @@ test('workers carry no per-issue concurrency group; the broker owns that dedup (
 test('codex.yml has no disabled legacy queue hand-off step (#307)', async () => {
   // The v1 broker's dispatchAccepted() (main.mjs) now owns promoting and
   // re-dispatching a queued generation once the active one completes -- see
-  // broker.mjs's completeRun/markDispatchRejected. The old in-workflow
+  // broker.js's completeRun/markDispatchRejected. The old in-workflow
   // "dispatch the next unclaimed codex issue" step this repo carried as a
   // permanently `if: false` compatibility placeholder is gone; guard against
   // it quietly coming back.
@@ -698,15 +704,3 @@ test('every worker captures the verified attempt ID and publishes it', async () 
     );
   }
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;

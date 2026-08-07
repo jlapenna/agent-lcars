@@ -19,7 +19,9 @@ import {
   classifyFailure,
   extractLedgerComment,
   isWellFormedLedger,
-} from '../../../libs/dispatch-contracts/src/index.js';
+} from '@agent-lcars/dispatch-contracts';
+import { test } from 'vitest';
+
 import {
   acceptIntent,
   addAnomaly,
@@ -30,17 +32,13 @@ import {
   digest,
   observeCompletion,
   renderLedgerComment,
-} from './broker.mjs';
+} from './broker.js';
 
 // A local collector rather than `node:test`, matching every sibling file in
 // this directory. That convention is load-bearing: the repo's eslint config
 // enables @vitest/eslint-plugin's recommended rules, whose autofix rewrites a
 // `node:test` import to `vitest` — which then throws under `node --test`, the
 // command ci.yml actually runs these with.
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
 
 const task = {
   repositoryId: 123,
@@ -96,7 +94,7 @@ function completedLedger() {
     'duplicate-attempt',
     { generation: 1, runIds: [42, 43] },
     baseTime,
-    // Exercises the writer's real classification path (main.mjs's own
+    // Exercises the writer's real classification path (main.js's own
     // duplicate-attempt call site), not a hand-rolled stand-in -- this is
     // the fixture the "every field the writer emits" test below pins keys
     // against, so it needs to carry a real `failure` field, not merely a
@@ -207,15 +205,3 @@ test('every field the writer emits is described by the shared contract', () => {
     'retryDisposition',
   ]);
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;

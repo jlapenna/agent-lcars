@@ -22,36 +22,25 @@ Covered today:
 | Pipeline identity registry             | `normalize.mjs`, `github-api.mjs` (twice), `broker.mjs`, console `watched-repo.ts`, console `action-items.ts`, and the four worker workflows' `env:` blocks |
 | Dispatch marker `[dispatch:g<n>:<id>]` | `main.mjs`, `github-api.mjs`, console `agent-activity.ts`, and four `run-name:` YAML strings                                                                |
 
-## Why it is plain JavaScript
+## Why it has zero dependencies
 
-`.github/actions/dispatch-broker` runs under bare `node` with no build step
-(`ci.yml` runs `node --test .github/actions/dispatch-broker/*.test.mjs`). A
-TypeScript source could not be a shared definition for it — only a re-derived
-copy, which is the thing this package exists to retire.
-
-So the source is plain ESM JavaScript and the types come from JSDoc, checked
-by `checkJs`. TypeScript consumers get full inference from the same file the
-broker executes:
+This package is TypeScript now — `.github/actions/dispatch-broker`'s old
+bare-`node`-with-no-build-step constraint, which once forced a plain-JS +
+JSDoc source so a real TypeScript file could not be a shared definition for
+it, is gone. The broker is `apps/dispatch-broker`, an Nx app bundled by
+esbuild before it ever runs, and it imports this package the same way any
+other consumer does:
 
 ```ts
-// apps/console — resolved through the tsconfig path alias
+// apps/console and apps/dispatch-broker — resolved through the tsconfig
+// path alias
 import { PIPELINE_CONTRACTS } from '@agent-lcars/dispatch-contracts';
 ```
 
-```js
-// .github/actions/dispatch-broker — resolved relative to the repo root
-import { PIPELINE_CONTRACTS } from '../../../libs/dispatch-contracts/src/index.js';
-```
-
-The relative form is a sanctioned pattern: a cross-repo `uses:` downloads the
-whole repository, and any action relying on a path above its own directory
-says so in its `action.yml` — see
-[docs/published-actions.md](../../docs/published-actions.md)'s "whole-repo-download
-caveat".
-
-This package must keep **zero dependencies**, including node builtins. The
-console imports it from `watched-repo.ts`, which is deliberately client-safe;
-one server-only import would break a `'use client'` bundle.
+What survives that change is the reason this package must keep **zero
+dependencies**, including node builtins. The console imports it from
+`watched-repo.ts`, which is deliberately client-safe; one server-only import
+would break a `'use client'` bundle.
 
 ## What cannot import it
 
@@ -67,7 +56,7 @@ edited alongside this package:
 
 ## Adding a pipeline
 
-Add one entry to `PIPELINE_CONTRACTS` in `src/pipelines.js`, then add the
+Add one entry to `PIPELINE_CONTRACTS` in `src/pipelines.ts`, then add the
 worker workflow itself and update the `AGENT_BOT_LOGINS` repo variable if the
 new pipeline pushes under a login no existing pipeline uses. Everything else —
 labels, reply commands, reconcile discovery, deliverable author exclusion,

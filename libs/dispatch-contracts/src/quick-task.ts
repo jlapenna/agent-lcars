@@ -28,13 +28,14 @@
 /**
  * The fields that define a Quick Task's identity. Two requests with the same
  * values are the same task, however many times the console retried.
- *
- * @typedef {object} QuickTaskIdentity
- * @property {string} repository `owner/name`.
- * @property {string} pipeline
- * @property {string} title
- * @property {string} description
  */
+export interface QuickTaskIdentity {
+  /** `owner/name`. */
+  repository: string;
+  pipeline: string;
+  title: string;
+  description: string;
+}
 
 /**
  * Serialize identity fields for hashing.
@@ -51,11 +52,13 @@
  * greenfield; it is not, and migrating live markers is not worth it. Instead
  * `quick-task.spec.js` pins the digest of a fixed input, so a reorder fails
  * loudly in tests instead of silently in production.
- *
- * @param {QuickTaskIdentity} identity
- * @returns {string}
  */
-function serializeIdentity({ repository, pipeline, title, description }) {
+function serializeIdentity({
+  repository,
+  pipeline,
+  title,
+  description,
+}: QuickTaskIdentity): string {
   return JSON.stringify({ repository, pipeline, title, description });
 }
 
@@ -68,12 +71,13 @@ function serializeIdentity({ repository, pipeline, title, description }) {
  * pipelines.js's header — a node builtin here would break a `'use client'`
  * bundle).
  *
- * @param {QuickTaskIdentity} identity
- * @param {(input: string) => string} sha256Hex Hashes a UTF-8 string to
+ * @param sha256Hex Hashes a UTF-8 string to
  *   lowercase hex.
- * @returns {string}
  */
-export function quickTaskDigest(identity, sha256Hex) {
+export function quickTaskDigest(
+  identity: QuickTaskIdentity,
+  sha256Hex: (input: string) => string,
+): string {
   return sha256Hex(serializeIdentity(identity));
 }
 
@@ -95,30 +99,30 @@ export const QUICK_TASK_MARKER_RE = new RegExp(QUICK_TASK_MARKER_SOURCE, 'u');
  * A fresh global-flagged matcher. Returned as a new object each call rather
  * than shared, because a global regex carries mutable `lastIndex` — a shared
  * instance silently skips matches depending on who used it last.
- *
- * @returns {RegExp}
  */
-export function quickTaskMarkerMatcher() {
+export function quickTaskMarkerMatcher(): RegExp {
   return new RegExp(QUICK_TASK_MARKER_SOURCE, 'gu');
 }
 
 /**
  * Render the marker.
- *
- * @param {{ requestId: string, digest: string }} request
- * @returns {string}
  */
-export function formatQuickTaskMarker({ requestId, digest }) {
+export function formatQuickTaskMarker({
+  requestId,
+  digest,
+}: {
+  requestId: string;
+  digest: string;
+}): string {
   return `<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${digest} -->`;
 }
 
 /**
  * Recover a marker's request ID and digest.
- *
- * @param {string | undefined | null} body
- * @returns {{ requestId: string, digest: string } | undefined}
  */
-export function parseQuickTaskMarker(body) {
+export function parseQuickTaskMarker(
+  body: string | undefined | null,
+): { requestId: string; digest: string } | undefined {
   const match = body?.match(QUICK_TASK_MARKER_RE);
   return match ? { requestId: match[1], digest: match[2] } : undefined;
 }

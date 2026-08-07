@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
+import { test } from 'vitest';
+
 import {
   acceptIntent,
   applyAnchorControl,
@@ -16,12 +18,7 @@ import {
   parseLedgerComment,
   renderLedgerComment,
   verifyPreflight,
-} from './broker.mjs';
-
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
+} from './broker.js';
 
 const task = {
   repositoryId: 123,
@@ -467,15 +464,3 @@ test('dispatch tokens are cryptographically unique fixture values', () => {
   );
   assert.equal(tokens.size, 100);
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;

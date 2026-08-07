@@ -24,12 +24,11 @@
  * The five operational systems. A failure belongs to exactly one — the system
  * whose state authority, credentials, or failure containment is implicated,
  * not merely the one that noticed.
- *
- * @typedef {'controller' | 'runner' | 'worker' | 'finalizer' | 'projector'} OwningSystem
  */
+export type OwningSystem =
+  'controller' | 'runner' | 'worker' | 'finalizer' | 'projector';
 
-/** @type {readonly OwningSystem[]} */
-export const OWNING_SYSTEMS = Object.freeze([
+export const OWNING_SYSTEMS: readonly OwningSystem[] = Object.freeze([
   'controller',
   'runner',
   'worker',
@@ -41,10 +40,8 @@ export const OWNING_SYSTEMS = Object.freeze([
  * The lifecycle phase a failure occurred in. These are deliberately finer
  * than the systems: the ten-stage lifecycle the earlier draft described is
  * still worth naming, it just does not need ten deployments.
- *
- * @typedef {(typeof FAILURE_PHASES)[number]} FailurePhase
  */
-export const FAILURE_PHASES = /** @type {const} */ ([
+export const FAILURE_PHASES = [
   'signal',
   'authorization',
   'intent',
@@ -59,18 +56,18 @@ export const FAILURE_PHASES = /** @type {const} */ ([
   'reporting',
   'telemetry',
   'reconciliation',
-]);
+] as const;
+
+export type FailurePhase = (typeof FAILURE_PHASES)[number];
 
 /**
  * Which system owns each phase. This is the mapping that stops a provider
  * error from being recorded as a dispatch failure — the phase is observable
  * at the point of failure, and the owner follows from it rather than from
  * whoever happened to catch the exception.
- *
- * @type {Readonly<Record<FailurePhase, OwningSystem>>}
  */
-export const PHASE_OWNERS = Object.freeze(
-  /** @type {Record<FailurePhase, OwningSystem>} */ ({
+export const PHASE_OWNERS: Readonly<Record<FailurePhase, OwningSystem>> =
+  Object.freeze({
     signal: 'controller',
     authorization: 'controller',
     intent: 'controller',
@@ -90,8 +87,7 @@ export const PHASE_OWNERS = Object.freeze(
     // most common case, not an assumption the classifier is allowed to make
     // silently.
     reconciliation: 'controller',
-  }),
-);
+  } as Record<FailurePhase, OwningSystem>);
 
 /**
  * When a failure may be retried, and by whom.
@@ -102,30 +98,26 @@ export const PHASE_OWNERS = Object.freeze(
  * - `after_health_change` — blocked until a dependency reports healthy.
  * - `after_configuration_change` — blocked until a human changes config.
  * - `manual` — a human must decide.
- *
- * @typedef {(typeof RETRY_DISPOSITIONS)[number]} RetryDisposition
  */
-export const RETRY_DISPOSITIONS = /** @type {const} */ ([
+export const RETRY_DISPOSITIONS = [
   'never',
   'immediate',
   'backoff',
   'after_health_change',
   'after_configuration_change',
   'manual',
-]);
+] as const;
+
+export type RetryDisposition = (typeof RETRY_DISPOSITIONS)[number];
 
 /**
  * Dispositions under which an automated retry is permitted at all. The
  * remaining three are gated on something outside the failing system changing
  * first, which is exactly the distinction that keeps a retry loop from
  * spinning against a condition it cannot affect.
- *
- * @type {ReadonlySet<string>}
  */
-export const AUTOMATICALLY_RETRYABLE_DISPOSITIONS = new Set([
-  'immediate',
-  'backoff',
-]);
+export const AUTOMATICALLY_RETRYABLE_DISPOSITIONS: ReadonlySet<string> =
+  new Set(['immediate', 'backoff']);
 
 /**
  * Stable reason codes. Stable is the operative word: these are joined on by
@@ -134,10 +126,8 @@ export const AUTOMATICALLY_RETRYABLE_DISPOSITIONS = new Set([
  *
  * Seeded from the failures #645's audit table actually maps, so every row of
  * that table has a code to land on rather than a free-text string.
- *
- * @typedef {(typeof FAILURE_REASONS)[number]} FailureReason
  */
-export const FAILURE_REASONS = /** @type {const} */ ([
+export const FAILURE_REASONS = [
   // controller / signal + reconciliation
   'signal_lost',
   'signal_evicted',
@@ -173,30 +163,33 @@ export const FAILURE_REASONS = /** @type {const} */ ([
   'telemetry_absent',
   // any system
   'internal_error',
-]);
+] as const;
 
-const PHASES = /** @type {ReadonlySet<string>} */ (new Set(FAILURE_PHASES));
-const REASONS = /** @type {ReadonlySet<string>} */ (new Set(FAILURE_REASONS));
-const DISPOSITIONS = /** @type {ReadonlySet<string>} */ (
-  new Set(RETRY_DISPOSITIONS)
-);
-const SYSTEMS = /** @type {ReadonlySet<string>} */ (new Set(OWNING_SYSTEMS));
+export type FailureReason = (typeof FAILURE_REASONS)[number];
+
+const PHASES: ReadonlySet<string> = new Set(FAILURE_PHASES);
+const REASONS: ReadonlySet<string> = new Set(FAILURE_REASONS);
+const DISPOSITIONS: ReadonlySet<string> = new Set(RETRY_DISPOSITIONS);
+const SYSTEMS: ReadonlySet<string> = new Set(OWNING_SYSTEMS);
 
 /**
  * A classified failure.
- *
- * @typedef {object} FailureClassification
- * @property {OwningSystem} owningSystem
- * @property {FailurePhase} phase
- * @property {FailureReason} reason
- * @property {RetryDisposition} retryDisposition
- * @property {number} [retryBudget] Retries remaining. Absent means unbounded
- *   was never intended — a disposition that permits retry should carry one.
- * @property {string} [evidence] What makes a retry safe. #645 requires this
- *   alongside the disposition: "retry is fine" with no stated reason is how a
- *   retry at the wrong layer duplicates agent side effects.
- * @property {string} [detail] Free-text context. Never parsed.
  */
+export interface FailureClassification {
+  owningSystem: OwningSystem;
+  phase: FailurePhase;
+  reason: FailureReason;
+  retryDisposition: RetryDisposition;
+  /** Retries remaining. Absent means unbounded
+   *   was never intended — a disposition that permits retry should carry one. */
+  retryBudget?: number;
+  /** What makes a retry safe. #645 requires this
+   *   alongside the disposition: "retry is fine" with no stated reason is how a
+   *   retry at the wrong layer duplicates agent side effects. */
+  evidence?: string;
+  /** Free-text context. Never parsed. */
+  detail?: string;
+}
 
 /**
  * Build a classified failure, deriving the owning system from the phase.
@@ -205,17 +198,9 @@ const SYSTEMS = /** @type {ReadonlySet<string>} */ (new Set(OWNING_SYSTEMS));
  * code that silently reaches a dashboard is worse than no code at all,
  * because it reads as a real category nobody is alerting on.
  *
- * @param {object} input
- * @param {FailurePhase} input.phase
- * @param {FailureReason} input.reason
- * @param {RetryDisposition} input.retryDisposition
- * @param {OwningSystem} [input.owningSystem] Overrides the phase's default
+ * @param input.owningSystem Overrides the phase's default
  *   owner. Required when `phase` is `reconciliation`, which every system does
  *   for the state it owns.
- * @param {number} [input.retryBudget]
- * @param {string} [input.evidence]
- * @param {string} [input.detail]
- * @returns {FailureClassification}
  */
 export function classifyFailure({
   phase,
@@ -225,7 +210,15 @@ export function classifyFailure({
   retryBudget,
   evidence,
   detail,
-}) {
+}: {
+  phase: FailurePhase;
+  reason: FailureReason;
+  retryDisposition: RetryDisposition;
+  owningSystem?: OwningSystem;
+  retryBudget?: number;
+  evidence?: string;
+  detail?: string;
+}): FailureClassification {
   if (!PHASES.has(phase)) {
     throw new Error(`Unknown failure phase: ${phase}`);
   }
@@ -266,11 +259,10 @@ export function classifyFailure({
  * Both conditions matter and neither implies the other: a disposition can
  * permit retry while the budget is spent, and a budget can remain while the
  * disposition says a human or a health change must come first.
- *
- * @param {FailureClassification} failure
- * @returns {boolean}
  */
-export function isAutomaticallyRetryable(failure) {
+export function isAutomaticallyRetryable(
+  failure: FailureClassification,
+): boolean {
   if (!AUTOMATICALLY_RETRYABLE_DISPOSITIONS.has(failure.retryDisposition)) {
     return false;
   }
@@ -284,11 +276,8 @@ export function isAutomaticallyRetryable(failure) {
  * #645 is explicit that the label means `nextOwner=maintainer`, and that
  * mapping every infrastructure failure to it is a projector anti-pattern.
  * A retryable runner or provider incident stays owned by its own system.
- *
- * @param {FailureClassification} failure
- * @returns {boolean}
  */
-export function needsMaintainer(failure) {
+export function needsMaintainer(failure: FailureClassification): boolean {
   return (
     failure.retryDisposition === 'manual' ||
     failure.retryDisposition === 'after_configuration_change' ||
@@ -299,11 +288,8 @@ export function needsMaintainer(failure) {
 
 /**
  * A single-line, greppable rendering for logs and GitHub Actions annotations.
- *
- * @param {FailureClassification} failure
- * @returns {string}
  */
-export function formatFailure(failure) {
+export function formatFailure(failure: FailureClassification): string {
   const budget =
     failure.retryBudget === undefined ? '' : ` budget=${failure.retryBudget}`;
   return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
@@ -322,15 +308,14 @@ export function formatFailure(failure) {
  *
  * So the read side re-validates against the same vocabularies, exactly as it
  * already does for a generation's `pipeline` and `state`.
- *
- * @param {unknown} value
- * @returns {value is FailureClassification}
  */
-export function isWellFormedFailureClassification(value) {
+export function isWellFormedFailureClassification(
+  value: unknown,
+): value is FailureClassification {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
-  const candidate = /** @type {Record<string, unknown>} */ (value);
+  const candidate = value as Record<string, unknown>;
   if (
     typeof candidate.owningSystem !== 'string' ||
     !SYSTEMS.has(candidate.owningSystem)

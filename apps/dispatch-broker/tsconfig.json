@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "files": [],
+  "include": [],
+  // Only the app project is referenced, so `nx typecheck` covers the
+  // production sources strictly and stops there.
+  //
+  // The specs are deliberately outside it. They exist in large part to prove
+  // the runtime validators reject malformed input, so they pass shapes that
+  // are invalid by construction -- `{ generations: [null] }`, a task with no
+  // repositoryId, an unknown reason code, a non-object `failure`. Those are
+  // not implicit-any errors that a looser flag can silence; they are
+  // TS2339/TS2322 mismatches, which is exactly what you would expect from
+  // code whose job is to hand a validator something it should refuse.
+  // Satisfying tsc would mean a cast on nearly every such fixture, and a file
+  // where every line is cast is a file where a cast has stopped meaning
+  // anything.
+  //
+  // What still covers them: vitest runs all 185 assertions, so a spec that
+  // does not execute correctly fails loudly, and eslint lints them like any
+  // other file. What is genuinely given up is compile-time checking of test
+  // code against source signatures -- a real cost, taken knowingly, and
+  // reversible per-file by tightening a fixture and moving it back.
+  "references": [{ "path": "./tsconfig.app.json" }],
+  "compilerOptions": {
+    "esModuleInterop": true
+  }
+}

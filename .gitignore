@@ -14,6 +14,15 @@ dist
 out-tsc
 __pycache__/
 
+# dispatch-broker/dist is a committed build artifact, not throwaway compiled
+# output: action.yml runs it directly (there is no build step at Action-run
+# time), so it must be tracked despite the blanket `dist` ignore above. A
+# directory match above still hides everything under it from git even with
+# a file-level negation, so both the directory and its contents need their
+# own negation.
+!.github/actions/dispatch-broker/dist
+!.github/actions/dispatch-broker/dist/**
+
 # dependencies
 node_modules
 # pnpm falls back to a project-local store here when run inside

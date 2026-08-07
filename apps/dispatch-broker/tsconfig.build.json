@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "tsBuildInfoFile": "dist/tsconfig.build.tsbuildinfo",
+    "rootDir": "src"
+  },
+  "references": [{ "path": "../../libs/dispatch-contracts/tsconfig.lib.json" }]
+}

@@ -4,6 +4,6 @@
   "sourceRoot": ".github/actions",
   "projectType": "library",
   "tags": ["platform:tooling", "scope:shared"],
-  "// why": "The composite actions' JavaScript was invisible to `pnpm lint`. Nx lint targets are per-project and `.github/actions` belonged to no project, so `nx run-many -t lint --all` (what ci.yml gates on) and `nx affected -t lint` (what the pre-push hook runs) both skipped roughly 4,000 lines of dispatch-broker control-plane code. Nothing was ignoring it; nobody was asking for it. This project exists so the @nx/eslint plugin infers a lint target here like anywhere else.",
+  "// why": "Nx lint targets are per-project, and .github/actions belonged to no project -- so both gates that matter (ci.yml's `pnpm lint`, and the pre-push hook's `nx affected -t lint`) skipped every composite action's JavaScript. Nothing was ignoring it; nobody was asking for it. The dispatch broker has since moved to apps/dispatch-broker, but plan-image-publish, rerun-infra-killed-runs and run-dispatch-canary still live here, and this project is what keeps them linted.",
   "targets": {}
 }

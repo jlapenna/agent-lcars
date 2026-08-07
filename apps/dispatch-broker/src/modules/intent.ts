@@ -17,20 +17,69 @@
  * that shape (rather than each side owning disjoint state) is safe.
  */
 
-import { isDispatchPipeline } from '../../../../libs/dispatch-contracts/src/index.js';
+import type {
+  DispatchLedger,
+  DispatchPipeline,
+  LedgerAuthorizationDecision,
+  LedgerGeneration,
+  LedgerSource,
+  LedgerTaskRef,
+} from '@agent-lcars/dispatch-contracts';
+import { isDispatchPipeline } from '@agent-lcars/dispatch-contracts';
+
 import {
   ACTIVE_STATES,
   assertTaskRef,
   mutate,
   validateLedger,
-} from './ledger-core.mjs';
+} from './ledger-core.js';
 
-function compareIntentOrder(left, right) {
+/**
+ * A normalized, already-authorized dispatch signal -- normalize.mjs's
+ * `makeIntent()` output, and what `acceptIntent()` below turns into a ledger
+ * generation (or recognizes as a duplicate of one). `intentId`/`digest` are
+ * always populated by `makeIntent()` itself, regardless of which event kind
+ * produced the rest of the fields; every other field is common to every
+ * `makeIntent()` call site across normalize.mjs and main.mjs.
+ */
+export interface Intent {
+  task: LedgerTaskRef;
+  sourceKind: string;
+  sourceId: string;
+  transportRunId: number;
+  occurredAt: string;
+  pipeline: DispatchPipeline;
+  mode: string;
+  reply: string;
+  runbook: string;
+  context: string;
+  authorization: LedgerAuthorizationDecision;
+  intentId: string;
+  digest: string;
+  /** Set only by normalize.mjs's `labeled` branch: whether this label event
+   *  still reflects the issue's live agent:* / review:* selection, or has
+   *  already been superseded by a later relabel. */
+  dispatchable?: boolean;
+  /** Set only by normalize.mjs's labeled-event self-heal (#304 audit item
+   *  4): the other same-namespace label(s) a disambiguated relabel leaves
+   *  stale on the issue. */
+  staleAgentLabels?: string[];
+}
+
+/** The two fields `compareIntentOrder` actually needs -- it is called with
+ *  an `Intent` on one side and a `LedgerGeneration` on the other, and both
+ *  shapes carry these. */
+interface Orderable {
+  occurredAt: string;
+  sourceId: string;
+}
+
+function compareIntentOrder(left: Orderable, right: Orderable): number {
   const byTime = left.occurredAt.localeCompare(right.occurredAt);
   return byTime || left.sourceId.localeCompare(right.sourceId);
 }
 
-function sourceEvidence(intent) {
+function sourceEvidence(intent: Intent): LedgerSource {
   return {
     intentId: intent.intentId,
     sourceKind: intent.sourceKind,
@@ -42,7 +91,7 @@ function sourceEvidence(intent) {
   };
 }
 
-function validateIntent(intent, task) {
+function validateIntent(intent: Intent, task: LedgerTaskRef): void {
   assertTaskRef(intent?.task);
   assertTaskRef(task);
   if (
@@ -72,13 +121,36 @@ function validateIntent(intent, task) {
   if (!intent.authorization?.authorized) throw new Error('Unauthorized intent');
 }
 
-function generationForIntent(ledger, intentId) {
+function generationForIntent(
+  ledger: DispatchLedger,
+  intentId: string,
+): LedgerGeneration | undefined {
   return ledger.generations.find(
     (generation) => generation.intentId === intentId,
   );
 }
 
-function acceptIntent(ledger, intent, now = new Date().toISOString()) {
+/** Every outcome `acceptIntent()` can report. */
+export type AcceptIntentOutcome =
+  | 'duplicate'
+  | 'semantic-duplicate'
+  | 'dispatch'
+  | 'pending'
+  | 'stale'
+  | 'stale-control-state'
+  | 'closed';
+
+export interface AcceptIntentResult {
+  outcome: AcceptIntentOutcome;
+  ledger: DispatchLedger;
+  generation?: number;
+}
+
+function acceptIntent(
+  ledger: DispatchLedger,
+  intent: Intent,
+  now: string = new Date().toISOString(),
+): AcceptIntentResult {
   validateLedger(ledger, intent.task);
   validateIntent(intent, ledger.task);
 
@@ -107,7 +179,7 @@ function acceptIntent(ledger, intent, now = new Date().toISOString()) {
     };
   }
 
-  const generation = {
+  const generation: LedgerGeneration = {
     generation: ledger.generations.length + 1,
     intentId: intent.intentId,
     sourceId: intent.sourceId,
@@ -121,7 +193,7 @@ function acceptIntent(ledger, intent, now = new Date().toISOString()) {
     state: 'accepted',
   };
 
-  let outcome = 'dispatch';
+  let outcome: AcceptIntentOutcome = 'dispatch';
   mutate(ledger, now, () => {
     ledger.sources.push(sourceEvidence(intent));
     ledger.generations.push(generation);

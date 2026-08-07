@@ -16,7 +16,7 @@ import {
   REVIEW_LABELS,
   WORKER_WORKFLOW_FILES,
   workerWorkflow,
-} from './pipelines.js';
+} from './pipelines';
 
 // These assert the literal values the registry replaced, on purpose. The
 // point of the package is that six files stopped hand-writing these; the
@@ -88,7 +88,7 @@ describe('pipeline registry', () => {
   it('resolves a worker workflow and rejects an unknown pipeline', () => {
     expect(workerWorkflow('opencode')).toBe('opencode.yml');
     expect(workerWorkflow('canary')).toBe('agent-dispatch-canary.yml');
-    expect(() => workerWorkflow(/** @type {never} */ ('gemini'))).toThrowError(
+    expect(() => workerWorkflow('gemini' as never)).toThrowError(
       /Unsupported worker pipeline/u,
     );
   });
@@ -113,9 +113,9 @@ describe('the canary pipeline', () => {
   });
 
   it('is rejected by the narrowed agent accessor', () => {
-    expect(() =>
-      agentPipelineContract(/** @type {never} */ ('canary')),
-    ).toThrowError(/Not an agent pipeline/u);
+    expect(() => agentPipelineContract('canary' as never)).toThrowError(
+      /Not an agent pipeline/u,
+    );
   });
 
   it('is excluded from the discovery labels and bot logins', () => {

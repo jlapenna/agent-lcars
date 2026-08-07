@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict';
 
+import { test } from 'vitest';
+
 import {
   digestQuickTask,
   normalizeEvent,
   parseExactCommand,
   timelineSource,
-} from './normalize.mjs';
-
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
+} from './normalize.js';
 
 const context = {
   repository: 'jlapenna/agent-lcars',
@@ -837,15 +834,3 @@ test('completion payload rejects malformed or fabricated binding fields', () => 
     );
   }
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;
