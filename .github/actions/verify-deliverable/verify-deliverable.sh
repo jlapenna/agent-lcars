@@ -78,21 +78,29 @@ found=""
 found_via=""
 errors=()
 
-# (0) Exact attempt-claim marker - see header comment above. A lookup
-# failure here is deliberately NOT added to `errors`: it simply leaves
-# `found` empty and falls through to clauses (a)-(e), which perform the
-# equivalent lookups themselves and are the ones responsible for the
-# failed-lookup-vs-genuine-absence distinction.
+# (0) Exact attempt-claim marker - see header comment above.
+#
+# Every lookup here paginates. Unlike clause (a), which is a deliberately
+# recency-scoped query, these have no sort and no time filter -- the marker
+# IS the identity check - so "the first page" is an arbitrary slice, and a
+# marker one page deep would read as a genuine absence.
+#
+# A lookup failure here falls through to clauses (a)-(e) rather than being
+# recorded, BUT only where one of them actually repeats the same lookup.
+# That holds for PRs (clause (a) always runs) and for reviews (clause (e)
+# is gated on MODE=review, exactly as the review lookup below is). It does
+# NOT hold for comments: clause (d) only runs for reply mode or a runbook
+# dispatch, so in implement mode nothing re-queries them, and a transient
+# failure would silently become NO_DELIVERABLE=1 -- an inconclusive lookup
+# misreported as a confirmed absence. That one case is recorded here.
 if [ -n "$ATTEMPT_ID" ]; then
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
 
   # PRs: any PR (regardless of author or update time - the marker itself is
   # the identity check) whose title or body carries this exact marker.
-  if claim_pr_json=$(gh api "repos/$REPO/pulls?state=all&per_page=50" 2>&1); then
-    claim_pr_hit=$(jq -r --arg marker "$claim_marker" \
-      '[.[] | select(((.title // "") + "\n" + (.body // "")) | contains($marker))] | length' \
-      <<<"$claim_pr_json")
-    if [ "${claim_pr_hit:-0}" -gt 0 ]; then
+  if claim_pr_hits=$(gh api "repos/$REPO/pulls?state=all&per_page=100" --paginate \
+    --jq ".[] | select(((.title // \"\") + \"\\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number" 2>&1); then
+    if [ -n "$claim_pr_hits" ]; then
       found="PR carrying this run's attempt-claim marker ($ATTEMPT_ID)"
       found_via="exact"
     fi
@@ -101,14 +109,17 @@ if [ -n "$ATTEMPT_ID" ]; then
   # Comments: not gated on MODE the way clause (d) is - a marker stamped on
   # a comment is exact evidence regardless of dispatch mode.
   if [ -z "$found" ]; then
-    if claim_comments_json=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" 2>&1); then
-      claim_comment_hit=$(jq -r --arg marker "$claim_marker" \
-        '[.[] | select((.body // "") | contains($marker))] | length' \
-        <<<"$claim_comments_json")
-      if [ "${claim_comment_hit:-0}" -ge 1 ]; then
+    if claim_comment_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
+      --jq ".[] | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
+      if [ -n "$claim_comment_hits" ]; then
         found="comment carrying this run's attempt-claim marker ($ATTEMPT_ID)"
         found_via="exact"
       fi
+    elif [ "$MODE" != "reply" ] && [ -z "$RUNBOOK" ]; then
+      # Clause (d) will not run for this dispatch, so nothing else repeats
+      # this lookup: record the failure rather than letting an inconclusive
+      # result be reported as a confirmed absence.
+      errors+=("Attempt-claim comment lookup (gh api repos/$REPO/issues/$NUM/comments) failed: $claim_comment_hits")
     fi
   fi
 
@@ -116,11 +127,9 @@ if [ -n "$ATTEMPT_ID" ]; then
   # 404s when #NUM is not a pull request, and review mode is the one case
   # this script already knows #NUM is one.
   if [ -z "$found" ] && [ "$MODE" = "review" ]; then
-    if claim_reviews_json=$(gh api "repos/$REPO/pulls/$NUM/reviews?per_page=100" 2>&1); then
-      claim_review_hit=$(jq -r --arg marker "$claim_marker" \
-        '[.[] | select((.body // "") | contains($marker))] | length' \
-        <<<"$claim_reviews_json")
-      if [ "${claim_review_hit:-0}" -ge 1 ]; then
+    if claim_review_hits=$(gh api "repos/$REPO/pulls/$NUM/reviews?per_page=100" --paginate \
+      --jq ".[] | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
+      if [ -n "$claim_review_hits" ]; then
         found="pull request review carrying this run's attempt-claim marker ($ATTEMPT_ID)"
         found_via="exact"
       fi

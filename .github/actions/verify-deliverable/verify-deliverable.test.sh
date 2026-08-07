@@ -24,6 +24,19 @@ if [ "$1" != "api" ]; then
   exit 64
 fi
 path="$2"
+shift 2
+# Understand the flags the real script uses, so a test exercises the real
+# jq filter rather than a stub that quietly ignores it. --paginate is a
+# no-op here (fixtures are a single page) but must be accepted, since the
+# script passes it and an unrecognised flag would otherwise pass silently.
+jq_filter=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paginate) shift ;;
+    --jq) jq_filter="$2"; shift 2 ;;
+    *) echo "fake gh: unsupported flag: $1" >&2; exit 64 ;;
+  esac
+done
 case "$path" in
   *"/reviews?"*) key=reviews ;;
   *"/comments?"*) key=comments ;;
@@ -41,12 +54,22 @@ if [ -f "$FAKE_GH_DIR/$key.fail" ]; then
 fi
 
 if [ -f "$FAKE_GH_DIR/$key.json" ]; then
-  cat "$FAKE_GH_DIR/$key.json"
+  if [ -n "$jq_filter" ]; then
+    jq -r "$jq_filter" < "$FAKE_GH_DIR/$key.json"
+  else
+    cat "$FAKE_GH_DIR/$key.json"
+  fi
 else
   case "$key" in
-    pulls | comments | reviews) echo "[]" ;;
-    issue) echo '{"state":"open","closed_at":null,"labels":[]}' ;;
+    pulls | comments | reviews) default='[]' ;;
+    issue) default='{"state":"open","closed_at":null,"labels":[]}' ;;
+    *) default='' ;;
   esac
+  if [ -n "$jq_filter" ]; then
+    printf '%s' "$default" | jq -r "$jq_filter"
+  else
+    printf '%s\n' "$default"
+  fi
 fi
 FAKE_GH
 chmod +x "$fake_bin/gh"
@@ -522,6 +545,47 @@ JSON
     *) fail "expected the no-deliverable message" ;;
   esac
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1 even with ATTEMPT_ID set"
+)
+
+# --- Case 16: in implement mode a transient comment-lookup failure must be
+# reported as inconclusive, NOT as a confirmed absence. Clause (d) only runs
+# for reply mode or a runbook dispatch, so nothing else re-queries comments
+# here -- letting clause 0's failure fall through silently would turn "we
+# could not tell" into NO_DELIVERABLE=1 and blame the agent for a network
+# blip. ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  export MODE=implement
+  case_dir="$test_root/attempt-claim-comment-lookup-failure"
+  mkdir -p "$case_dir"
+  : > "$case_dir/comments.fail"
+  run_case attempt-claim-comment-lookup-failure
+  test "$status" = 1 || fail "a failed comment lookup must not pass"
+  case "$output" in
+    *"FAILED lookup"*) ;;
+    *) fail "expected the failed-lookup message, not a genuine-absence one" ;;
+  esac
+  if grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" 2>/dev/null; then
+    fail "an inconclusive lookup must NOT be recorded as a confirmed missing deliverable"
+  fi
+)
+
+# --- Case 17: the same failure in reply mode falls through as designed,
+# because clause (d) does repeat the lookup and owns the distinction. ---
+(
+  base_env
+  export ATTEMPT_ID="g1:test-intent"
+  export MODE=reply
+  case_dir="$test_root/attempt-claim-comment-failure-reply-mode"
+  mkdir -p "$case_dir"
+  : > "$case_dir/comments.fail"
+  run_case attempt-claim-comment-failure-reply-mode
+  test "$status" = 1 || fail "a failed comment lookup must not pass in reply mode either"
+  case "$output" in
+    *"FAILED lookup"*) ;;
+    *) fail "clause (d) should have recorded the failed lookup" ;;
+  esac
 )
 
 echo "verify-deliverable.test.sh: all cases passed"
