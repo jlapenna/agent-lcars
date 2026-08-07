@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 
-import { formatRouterGroupMarker } from '../../../libs/dispatch-contracts/src/index.js';
+import { formatRouterGroupMarker } from '@agent-lcars/dispatch-contracts';
+import { test } from 'vitest';
+
 import {
   acceptIntent,
   beginDispatch,
@@ -10,13 +12,13 @@ import {
   markDispatchUnknown,
   recordControlEvidence,
   renderLedgerComment,
-} from './broker.mjs';
+} from './broker.js';
 import {
   BrokerConcurrencyMismatchError,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   GitHubApiError,
   verifyBrokerConcurrency,
-} from './github-api.mjs';
+} from './github-api.js';
 import {
   applyAnchorControlTransition,
   assertWorkerRun,
@@ -40,13 +42,8 @@ import {
   resolveTask,
   runPhase,
   wasSupersededEviction,
-} from './main.mjs';
-import { digestQuickTask, normalizeEvent } from './normalize.mjs';
-
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
+} from './main.js';
+import { digestQuickTask, normalizeEvent } from './normalize.js';
 
 const task = {
   repositoryId: 123,
@@ -692,7 +689,7 @@ test('broker()-style gating: a fresh intent heals, a redelivered/duplicate inten
 
 test('a self-healed dual-label intent produces only a benign follow-on unlabeled control-evidence event -- no loop (#304)', async () => {
   // End-to-end regression using the real normalizeEvent() -- the exact
-  // shape main.mjs's broker() consumes. A manual relabel produces a
+  // shape main.js's broker() consumes. A manual relabel produces a
   // self-heal intent carrying staleAgentLabels; healStaleAgentLabels
   // removes the stale label via the API, which fires a genuine `unlabeled`
   // webhook for that same label back through the router. Feeding that
@@ -1448,7 +1445,7 @@ test('reconcileLedger no-ops once a generation is already bound (active state, n
 test('reconcileLedger surfaces and parks a pending generation stranded with no contemporaneous active generation (defensive invariant)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {
-    // Construct the otherwise-unreachable state directly: broker.mjs's own
+    // Construct the otherwise-unreachable state directly: broker.js's own
     // transitions never leave a `pending` generation without a
     // contemporaneous active one, so this simulates ledger data corruption
     // (or a future bug) rather than a reachable live sequence.
@@ -2066,7 +2063,7 @@ test('runPhase attributes and records a Quick Task digest mismatch instead of le
   // normalize.mjs) used to crash normalize()'s call to normalizeEvent() as
   // a bare, unattributed exception -- no phase, no owning system, no record
   // anywhere. This drives the REAL normalizeEvent() through the REAL
-  // runPhase() wrapper main.mjs's normalize() now uses at that exact call
+  // runPhase() wrapper main.js's normalize() now uses at that exact call
   // site, with no ledger available -- exactly like the real job, since no
   // ledger exists yet at normalization time (see the comment on that call
   // site in main.mjs).
@@ -2194,15 +2191,3 @@ test('runPhase never lets a failed recording attempt replace or swallow the orig
   assert.match(errorLogs[0], /\[controller\/scheduling\]/u);
   assert.match(errorLogs[1], /Failed to record/u);
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;

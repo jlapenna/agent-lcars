@@ -27,11 +27,17 @@ const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:-]+)\]/u;
  * matched in full rather than found inside a longer string. */
 const ATTEMPT_ID_RE = /^g(\d+):([A-Za-z0-9._:-]+)$/u;
 
-/**
- * @typedef {object} AttemptMarker
- * @property {number} generation
- * @property {string} intentId
- */
+export interface AttemptMarker {
+  generation: number;
+  intentId: string;
+}
+
+/** An attempt's generation and intent ID, accepted as either a number or the
+ * literal Actions expression string used to render one before substitution. */
+interface AttemptLike {
+  generation: number | string;
+  intentId: string;
+}
 
 /**
  * The attempt's stable identity: `g<generation>:<intentId>`.
@@ -51,11 +57,8 @@ const ATTEMPT_ID_RE = /^g(\d+):([A-Za-z0-9._:-]+)$/u;
  * This is identity, not proof. `attempt.token` remains the separate bearer
  * capability the worker echoes back at preflight — an attemptId is public
  * (it is in the run title) and must never be accepted in its place.
- *
- * @param {{ generation: number | string, intentId: string }} attempt
- * @returns {string}
  */
-export function formatAttemptId({ generation, intentId }) {
+export function formatAttemptId({ generation, intentId }: AttemptLike): string {
   return `g${generation}:${intentId}`;
 }
 
@@ -63,11 +66,10 @@ export function formatAttemptId({ generation, intentId }) {
  * Recover the attempt an ID names. Returns `undefined` for anything that is
  * not a well-formed attempt ID, including the empty `g:` a hand-triggered
  * `workflow_dispatch` produces.
- *
- * @param {string | undefined | null} attemptId
- * @returns {AttemptMarker | undefined}
  */
-export function parseAttemptId(attemptId) {
+export function parseAttemptId(
+  attemptId: string | undefined | null,
+): AttemptMarker | undefined {
   const match = attemptId?.match(ATTEMPT_ID_RE);
   return match
     ? { generation: Number(match[1]), intentId: match[2] }
@@ -84,11 +86,8 @@ export function parseAttemptId(attemptId) {
  * it with GitHub Actions' own `${{ inputs.broker_generation }}` expressions
  * substituted in, and assert the YAML template against this same function
  * instead of against another copy of the literal.
- *
- * @param {{ generation: number | string, intentId: string }} attempt
- * @returns {string}
  */
-export function formatDispatchMarker(attempt) {
+export function formatDispatchMarker(attempt: AttemptLike): string {
   return `[dispatch:${formatAttemptId(attempt)}]`;
 }
 
@@ -100,11 +99,10 @@ export function formatDispatchMarker(attempt) {
  * inputs blank, which GitHub Actions renders as an empty `[dispatch:g:]` that
  * deliberately does not match. Both cases fall back to issue-number
  * attribution only.
- *
- * @param {string | undefined | null} displayTitle
- * @returns {AttemptMarker | undefined}
  */
-export function parseDispatchMarker(displayTitle) {
+export function parseDispatchMarker(
+  displayTitle: string | undefined | null,
+): AttemptMarker | undefined {
   const match = displayTitle?.match(DISPATCH_MARKER_RE);
   return match
     ? { generation: Number(match[1]), intentId: match[2] }
@@ -113,12 +111,11 @@ export function parseDispatchMarker(displayTitle) {
 
 /**
  * Whether a run title carries this exact generation's marker.
- *
- * @param {string | undefined | null} displayTitle
- * @param {{ generation: number | string, intentId: string }} attempt
- * @returns {boolean}
  */
-export function displayTitleMatchesAttempt(displayTitle, attempt) {
+export function displayTitleMatchesAttempt(
+  displayTitle: string | undefined | null,
+  attempt: AttemptLike,
+): boolean {
   return Boolean(displayTitle?.includes(formatDispatchMarker(attempt)));
 }
 
@@ -155,11 +152,10 @@ export function displayTitleMatchesAttempt(displayTitle, attempt) {
  */
 const ROUTER_GROUP_MARKER_RE = /\[router-group:(\d+):(\d+)\]/u;
 
-/**
- * @typedef {object} RouterGroupIdentity
- * @property {number} repositoryId
- * @property {number} issue
- */
+export interface RouterGroupIdentity {
+  repositoryId: number;
+  issue: number;
+}
 
 /**
  * Render the marker `agent-router.yml`'s `run-name:` embeds.
@@ -171,11 +167,14 @@ const ROUTER_GROUP_MARKER_RE = /\[router-group:(\d+):(\d+)\]/u;
  * this same function instead of against a second copy of the literal --
  * exactly as `formatDispatchMarker` already does for worker `run-name:`
  * templates.
- *
- * @param {{ repositoryId: number | string, issue: number | string }} identity
- * @returns {string}
  */
-export function formatRouterGroupMarker({ repositoryId, issue }) {
+export function formatRouterGroupMarker({
+  repositoryId,
+  issue,
+}: {
+  repositoryId: number | string;
+  issue: number | string;
+}): string {
   return `[router-group:${repositoryId}:${issue}]`;
 }
 
@@ -186,11 +185,10 @@ export function formatRouterGroupMarker({ repositoryId, issue }) {
  * predates this change, or (defensively) a malformed one -- so a caller can
  * tell "no marker" apart from "marker present but for a different task"
  * rather than treating both the same.
- *
- * @param {string | undefined | null} displayTitle
- * @returns {RouterGroupIdentity | undefined}
  */
-export function parseRouterGroupMarker(displayTitle) {
+export function parseRouterGroupMarker(
+  displayTitle: string | undefined | null,
+): RouterGroupIdentity | undefined {
   const match = displayTitle?.match(ROUTER_GROUP_MARKER_RE);
   return match
     ? { repositoryId: Number(match[1]), issue: Number(match[2]) }

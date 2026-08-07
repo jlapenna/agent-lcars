@@ -1,16 +1,23 @@
+import type {
+  LedgerGeneration,
+  LedgerRunAttempt,
+  LedgerTaskRef,
+} from '@agent-lcars/dispatch-contracts';
+import type { DispatchLedger } from '@agent-lcars/dispatch-contracts';
 import {
   AGENT_PIPELINES,
   DISPATCH_LABELS,
   displayTitleMatchesAttempt,
   parseRouterGroupMarker,
   workerWorkflow,
-} from '../../../libs/dispatch-contracts/src/index.js';
+} from '@agent-lcars/dispatch-contracts';
+
 import {
   createLedger,
   LEDGER_MARKER,
   parseLedgerComment,
   renderLedgerComment,
-} from './broker.mjs';
+} from './broker.js';
 
 const API_VERSION = '2026-03-10';
 
@@ -28,12 +35,15 @@ const API_VERSION = '2026-03-10';
 const CONCURRENCY_VERIFY_MAX_ATTEMPTS = 5;
 const CONCURRENCY_VERIFY_RETRY_DELAY_MS = 3_000;
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 class GitHubApiError extends Error {
-  constructor(message, status, data) {
+  status: number | undefined;
+  data: unknown;
+
+  constructor(message: string, status?: number, data?: unknown) {
     super(message);
     this.name = 'GitHubApiError';
     this.status = status;
@@ -69,23 +79,152 @@ class GitHubApiError extends Error {
 // the issue's dispatch state forward correctly, so nothing is lost except
 // this one event's audit trail entry.
 class BrokerConcurrencyMismatchError extends Error {
-  constructor(message, { retryable = false } = {}) {
+  retryable: boolean;
+
+  constructor(
+    message: string,
+    { retryable = false }: { retryable?: boolean } = {},
+  ) {
     super(message);
     this.name = 'BrokerConcurrencyMismatchError';
     this.retryable = retryable;
   }
 }
 
+// --- GitHub REST shapes this file reads/writes. One set covering every
+// endpoint this file calls -- issue/comment/timeline/run listings and the
+// dispatch/response envelopes -- each function below reads only the fields
+// it actually needs, exactly as the untyped original did. ---
+
+/** The minimal shape `request()` below actually reads off a fetch response
+ *  -- narrower than the real DOM/undici `Response` so a test's minimal mock
+ *  (`{ status, headers, text }`) is exactly what this function depends on,
+ *  not everything `fetch` happens to also return. The real global `fetch`
+ *  satisfies this structurally, since `Response` is a strict superset. */
+interface FetchLikeResponse {
+  status: number;
+  headers: Headers;
+  text: () => Promise<string>;
+}
+
+type FetchImpl = (url: string, init: RequestInit) => Promise<FetchLikeResponse>;
+
+interface RequestOptions {
+  method?: string;
+  body?: unknown;
+  timeoutMs?: number;
+}
+
+interface RawResponse {
+  status: number;
+  data: unknown;
+  headers: Headers;
+}
+
+/** `createGitHubApi()`'s return shape. `requestOk` is generic because its
+ *  return shape is entirely endpoint-dependent; each call site names the
+ *  shape it expects, exactly as main.mjs's own copy of this interface
+ *  does. */
+interface GitHubApi {
+  request: (path: string, options?: RequestOptions) => Promise<RawResponse>;
+  requestOk: <T = unknown>(
+    path: string,
+    options?: RequestOptions,
+  ) => Promise<T>;
+}
+
+interface CreateGitHubApiOptions {
+  token: string;
+  fetchImpl?: FetchImpl;
+  baseUrl?: string;
+}
+
+/** The narrowest TaskRef slice `repositoryPath` and its callers that never
+ *  touch `repositoryId`/`issue` (`dispatchRouterEvent`,
+ *  `listOpenAgentLabeledIssues`, `listOpenIssuesAssignedTo`,
+ *  `validateDispatchResponse`) actually need -- dispatch-reconcile.yml's
+ *  scan job calls several of these with a bare `{ repository }`, not a full
+ *  canonical TaskRef. */
+type RepositoryRef = Pick<LedgerTaskRef, 'repository'>;
+
+interface GitHubUserRef {
+  login?: string;
+  type?: string;
+}
+
+interface GitHubLabelRef {
+  name: string;
+}
+
+interface GitHubIssueComment {
+  id: number;
+  body: string;
+  created_at: string;
+  author_association?: string;
+  user?: GitHubUserRef;
+  pin?: boolean;
+}
+
+interface GitHubIssueDetail {
+  id: number;
+  number: number;
+  title: string;
+  body?: string | null;
+  labels?: (string | GitHubLabelRef)[];
+  assignees?: GitHubUserRef[];
+  pull_request?: unknown;
+  created_at: string;
+  updated_at: string;
+  merged?: boolean;
+  merged_at?: string | null;
+}
+
+/** A GitHub Actions workflow run, as returned by both the single-run GET
+ *  and the runs-list endpoints this file reads. */
+interface WorkflowRun {
+  id: number;
+  url: string;
+  html_url: string;
+  status: string;
+  conclusion: string | null;
+  updated_at: string;
+  display_title?: string;
+  repository?: { id: number };
+  event?: string;
+  path?: string;
+}
+
+interface WorkflowRunsListResponse {
+  workflow_runs?: WorkflowRun[];
+}
+
+interface RunJobsResponse {
+  jobs?: { name?: string; status?: string }[];
+}
+
+interface ConcurrencyGroupsResponse {
+  concurrency_groups?: { group_name?: unknown }[];
+}
+
+/** `loadLedger()`/`saveLedger()`'s return shape -- the ledger paired with
+ *  the GitHub comment carrying it. */
+interface LoadedLedger {
+  ledger: DispatchLedger;
+  comment: GitHubIssueComment;
+  created: boolean;
+  existingComments?: GitHubIssueComment[];
+}
+
 function createGitHubApi({
   token,
   fetchImpl = fetch,
   baseUrl = 'https://api.github.com',
-}) {
+}: CreateGitHubApiOptions): GitHubApi {
   async function request(
-    path,
-    { method = 'GET', body, timeoutMs = 30_000 } = {},
-  ) {
-    let response;
+    path: string,
+    { method = 'GET', body, timeoutMs = 30_000 }: RequestOptions = {},
+  ): Promise<RawResponse> {
+    let response: FetchLikeResponse;
     try {
       response = await fetchImpl(`${baseUrl}${path}`, {
         method,
@@ -100,12 +239,15 @@ function createGitHubApi({
       });
     } catch (error) {
       throw new GitHubApiError(
-        `GitHub request transport failure: ${error.message}`,
+        // Genuinely untrusted here -- whatever fetchImpl rejected with, of
+        // any shape. Every real fetch failure is Error-shaped; same
+        // assumption the untyped original made without checking.
+        `GitHub request transport failure: ${(error as Error).message}`,
         undefined,
       );
     }
     const text = await response.text();
-    let data;
+    let data: unknown;
     if (text) {
       try {
         data = JSON.parse(text);
@@ -116,7 +258,10 @@ function createGitHubApi({
     return { status: response.status, data, headers: response.headers };
   }
 
-  async function requestOk(path, options) {
+  async function requestOk<T = unknown>(
+    path: string,
+    options?: RequestOptions,
+  ): Promise<T> {
     const response = await request(path, options);
     if (response.status < 200 || response.status >= 300) {
       throw new GitHubApiError(
@@ -125,24 +270,28 @@ function createGitHubApi({
         response.data,
       );
     }
-    return response.data;
+    // Every caller names the shape it expects via T; GitHub's actual
+    // response body is never validated against it here, same trust
+    // boundary the untyped original had (the caller is on the hook for
+    // reading only fields it can tolerate being wrong).
+    return response.data as T;
   }
 
   return { request, requestOk };
 }
 
-function splitRepository(repository) {
+function splitRepository(repository: string): { owner: string; repo: string } {
   const [owner, repo, extra] = repository.split('/');
   if (!owner || !repo || extra) throw new Error('Invalid repository identity');
   return { owner, repo };
 }
 
-function repositoryPath(task) {
+function repositoryPath(task: RepositoryRef): string {
   const { owner, repo } = splitRepository(task.repository);
   return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
 
-function brokerConcurrencyGroup(task) {
+function brokerConcurrencyGroup(task: LedgerTaskRef): string {
   if (
     !Number.isSafeInteger(task?.repositoryId) ||
     task.repositoryId <= 0 ||
@@ -162,7 +311,10 @@ function brokerConcurrencyGroup(task) {
 // direct/own-listing check's equivalent entry point, before #348's third
 // round retired that path entirely (see the comment above
 // findConflictingRouterRun below).
-function assertSuppliedGroupMatches(suppliedGroup, expected) {
+function assertSuppliedGroupMatches(
+  suppliedGroup: string,
+  expected: string,
+): void {
   if (suppliedGroup !== expected) {
     throw new BrokerConcurrencyMismatchError(
       'Broker concurrency output does not match its TaskRef',
@@ -176,7 +328,10 @@ function assertSuppliedGroupMatches(suppliedGroup, expected) {
 // just a boolean); the caller only ever cares whether it is non-empty.
 // #545 removed the other caller (findConflictingRouterRun no longer fetches
 // this endpoint at all -- see the comment above it).
-function groupMembershipHolds(response, expected) {
+function groupMembershipHolds(
+  response: ConcurrencyGroupsResponse | undefined,
+  expected: string,
+): { group_name?: unknown }[] {
   return (response?.concurrency_groups ?? []).filter(
     (group) =>
       typeof group?.group_name === 'string' &&
@@ -195,7 +350,7 @@ function groupMembershipHolds(response, expected) {
 // newer run that can positively confirm eviction, and per its own
 // fail-closed contract a miss here is "still unexplained", never treated
 // as disproof (see the comment above it).
-function concurrencyGroupsPath(root, runId) {
+function concurrencyGroupsPath(root: string, runId: number): string {
   return `${root}/actions/runs/${runId}/concurrency_groups?per_page=100`;
 }
 
@@ -304,9 +459,13 @@ function concurrencyGroupsPath(root, runId) {
 // conflict.
 const ROUTER_BROKER_JOB_NAME = 'broker';
 
-async function findConflictingRouterRun(api, task, runId) {
+async function findConflictingRouterRun(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  runId: number,
+): Promise<WorkflowRun | undefined> {
   const root = repositoryPath(task);
-  const data = await api.requestOk(
+  const data = await api.requestOk<WorkflowRunsListResponse>(
     `${root}/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100`,
   );
   const candidates = (data.workflow_runs ?? []).filter((run) => {
@@ -321,7 +480,7 @@ async function findConflictingRouterRun(api, task, runId) {
   for (const candidate of candidates) {
     // Fails closed: a jobs-listing error propagates rather than being read
     // as "no conflict", same as the runs listing above.
-    const jobs = await api.requestOk(
+    const jobs = await api.requestOk<RunJobsResponse>(
       `${root}/actions/runs/${candidate.id}/jobs?per_page=100`,
     );
     const holdsGroup = (jobs.jobs ?? []).some(
@@ -333,7 +492,12 @@ async function findConflictingRouterRun(api, task, runId) {
   return undefined;
 }
 
-async function checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup) {
+async function checkIndirectBrokerConcurrency(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  runId: number,
+  suppliedGroup: string,
+): Promise<{ group_name: string; group_members: unknown[] }> {
   const expected = brokerConcurrencyGroup(task);
   // Same config-mismatch defense as the direct path: never explained by
   // eventual consistency, so never retryable.
@@ -355,6 +519,13 @@ async function checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup) {
   return { group_name: expected, group_members: [] };
 }
 
+interface VerifyBrokerConcurrencyOptions {
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  sleepImpl?: (ms: number) => Promise<void>;
+  eventName?: string;
+}
+
 // #348's third round (2026-08-04) removed the previous allowlist of
 // "reliable" trigger types (see the comment above `findConflictingRouterRun`
 // for why): every event name now verifies indirectly, unconditionally, with
@@ -365,17 +536,17 @@ async function checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup) {
 // parameter purely for the diagnostic `::notice::` log line below -- it does
 // not select between verification paths.
 async function verifyBrokerConcurrency(
-  api,
-  task,
-  runId,
-  suppliedGroup,
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  runId: number,
+  suppliedGroup: string,
   {
     maxAttempts = CONCURRENCY_VERIFY_MAX_ATTEMPTS,
     retryDelayMs = CONCURRENCY_VERIFY_RETRY_DELAY_MS,
     sleepImpl = sleep,
     eventName,
-  } = {},
-) {
+  }: VerifyBrokerConcurrencyOptions = {},
+): Promise<{ group_name: string; group_members: unknown[] }> {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const result = await checkIndirectBrokerConcurrency(
@@ -393,10 +564,17 @@ async function verifyBrokerConcurrency(
       );
       return result;
     } catch (error) {
-      const canRetry = error.retryable === true && attempt < maxAttempts;
+      // Genuinely untrusted here -- whatever checkIndirectBrokerConcurrency
+      // threw. Every real caller only ever throws a
+      // BrokerConcurrencyMismatchError or a GitHubApiError, but this reads
+      // the same duck-typed fields the untyped original did rather than
+      // narrowing to one class, so a differently-shaped error (a test
+      // double, say) is handled identically to before.
+      const candidate = error as { retryable?: boolean; message?: string };
+      const canRetry = candidate.retryable === true && attempt < maxAttempts;
       if (!canRetry) {
         if (attempt > 1) {
-          error.message = `${error.message} (after ${attempt} attempts)`;
+          candidate.message = `${candidate.message} (after ${attempt} attempts)`;
         }
         throw error;
       }
@@ -422,10 +600,14 @@ async function verifyBrokerConcurrency(
 // "not evicted".
 const SUPERSEDING_RUN_CANDIDATE_LIMIT = 5;
 
-async function findSupersedingRouterRun(api, task, runId) {
+async function findSupersedingRouterRun(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  runId: number,
+): Promise<WorkflowRun | undefined> {
   const expected = brokerConcurrencyGroup(task);
   const root = repositoryPath(task);
-  const data = await api.requestOk(
+  const data = await api.requestOk<WorkflowRunsListResponse>(
     `${root}/actions/workflows/agent-router.yml/runs?per_page=100`,
   );
   const marker = `route #${task.issue}:`;
@@ -444,7 +626,7 @@ async function findSupersedingRouterRun(api, task, runId) {
   const inspections = await Promise.all(
     candidates.map(async (candidate) => {
       try {
-        const response = await api.requestOk(
+        const response = await api.requestOk<ConcurrencyGroupsResponse>(
           concurrencyGroupsPath(root, candidate.id),
         );
         // An unrelated fetch failure for one candidate doesn't disprove
@@ -461,8 +643,8 @@ async function findSupersedingRouterRun(api, task, runId) {
   return inspections.find(Boolean);
 }
 
-async function listAll(api, path) {
-  const all = [];
+async function listAll<T>(api: GitHubApi, path: string): Promise<T[]> {
+  const all: T[] = [];
   for (let page = 1; page <= 100; page += 1) {
     const separator = path.includes('?') ? '&' : '?';
     const data = await api.requestOk(
@@ -492,10 +674,26 @@ async function listAll(api, path) {
 // Promise.allSettled's per-item `{status, value}` / `{status, reason}`
 // result shape (in the same order as `items`) so callers built around that
 // shape don't need to change.
-async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
+interface ConcurrencyFulfilled<R> {
+  status: 'fulfilled';
+  value: R;
+}
+
+interface ConcurrencyRejected {
+  status: 'rejected';
+  reason: unknown;
+}
+
+type ConcurrencyOutcome<R> = ConcurrencyFulfilled<R> | ConcurrencyRejected;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<ConcurrencyOutcome<R>[]> {
+  const results: ConcurrencyOutcome<R>[] = new Array(items.length);
   let cursor = 0;
-  async function runNext() {
+  async function runNext(): Promise<void> {
     while (cursor < items.length) {
       const index = cursor;
       cursor += 1;
@@ -509,7 +707,7 @@ async function mapWithConcurrency(items, limit, worker) {
       }
     }
   }
-  const workers = [];
+  const workers: Promise<void>[] = [];
   for (let i = 0; i < Math.min(limit, items.length); i += 1) {
     workers.push(runNext());
   }
@@ -539,11 +737,14 @@ const RECONCILE_DISCOVERY_LABELS = DISPATCH_LABELS;
 // inside the 1,000 requests/hour GITHUB_TOKEN budget even at a 30-minute
 // cadence, before adding one workflow_dispatch call per discovered
 // candidate (see dispatchReconcileScan in main.mjs).
-async function listOpenAgentLabeledIssues(api, task) {
+async function listOpenAgentLabeledIssues(
+  api: GitHubApi,
+  task: RepositoryRef,
+): Promise<GitHubIssueDetail[]> {
   const root = repositoryPath(task);
-  const byNumber = new Map();
+  const byNumber = new Map<number, GitHubIssueDetail>();
   for (const label of RECONCILE_DISCOVERY_LABELS) {
-    const items = await listAll(
+    const items = await listAll<GitHubIssueDetail>(
       api,
       `${root}/issues?state=open&labels=${encodeURIComponent(label)}`,
     );
@@ -576,23 +777,34 @@ async function listOpenAgentLabeledIssues(api, task) {
 // reconcile pass over an issue with no active/pending generation is a fast
 // no-op (see reconcileLedger), just spending a little extra scan/dispatch
 // budget rather than missing evidence.
-async function listOpenIssuesAssignedTo(api, task, login) {
+async function listOpenIssuesAssignedTo(
+  api: GitHubApi,
+  task: RepositoryRef,
+  login: string,
+): Promise<GitHubIssueDetail[]> {
   if (!login) return [];
   const root = repositoryPath(task);
-  return listAll(
+  return listAll<GitHubIssueDetail>(
     api,
     `${root}/issues?state=open&assignee=${encodeURIComponent(login)}`,
   );
 }
 
+interface LoadLedgerOptions {
+  createIfMissing?: boolean;
+}
+
 async function loadLedger(
-  api,
-  task,
+  api: GitHubApi,
+  task: LedgerTaskRef,
   workflowIdentity = 'github-actions[bot]',
-  { createIfMissing = true } = {},
-) {
+  { createIfMissing = true }: LoadLedgerOptions = {},
+): Promise<LoadedLedger | undefined> {
   const root = repositoryPath(task);
-  const comments = await listAll(api, `${root}/issues/${task.issue}/comments`);
+  const comments = await listAll<GitHubIssueComment>(
+    api,
+    `${root}/issues/${task.issue}/comments`,
+  );
   const candidates = comments.filter((comment) =>
     comment.body?.includes(LEDGER_MARKER),
   );
@@ -617,19 +829,25 @@ async function loadLedger(
   if (!createIfMissing) return undefined;
 
   const ledger = createLedger(task);
-  const comment = await api.requestOk(`${root}/issues/${task.issue}/comments`, {
-    method: 'POST',
-    body: { body: renderLedgerComment(ledger) },
-  });
+  const comment = await api.requestOk<GitHubIssueComment>(
+    `${root}/issues/${task.issue}/comments`,
+    {
+      method: 'POST',
+      body: { body: renderLedgerComment(ledger) },
+    },
+  );
   if (!Number.isSafeInteger(comment?.id)) {
     throw new Error('GitHub did not return the created ledger comment ID');
   }
   return { comment, ledger, created: true, existingComments: comments };
 }
 
-async function saveLedger(api, loaded) {
+async function saveLedger(
+  api: GitHubApi,
+  loaded: LoadedLedger,
+): Promise<LoadedLedger> {
   const root = repositoryPath(loaded.ledger.task);
-  const comment = await api.requestOk(
+  const comment = await api.requestOk<GitHubIssueComment>(
     `${root}/issues/comments/${loaded.comment.id}`,
     {
       method: 'PATCH',
@@ -640,10 +858,28 @@ async function saveLedger(api, loaded) {
   return loaded;
 }
 
-async function pinLedgerWhenUnoccupied(api, loaded, isPullRequest) {
+interface PinResult {
+  pinned: boolean;
+  reason?: string;
+}
+
+async function pinLedgerWhenUnoccupied(
+  api: GitHubApi,
+  loaded: LoadedLedger,
+  isPullRequest: boolean,
+): Promise<PinResult> {
   if (!loaded.created || isPullRequest)
     return { pinned: false, reason: 'ineligible' };
-  if (loaded.existingComments.some((comment) => comment.pin)) {
+  // `existingComments` is only ever unset when `created` is false -- see
+  // loadLedger's own construction, which always pairs the two -- and the
+  // guard above already proved `created` is true.
+  const { existingComments } = loaded;
+  if (!existingComments) {
+    throw new Error(
+      'LoadedLedger.existingComments missing despite created=true',
+    );
+  }
+  if (existingComments.some((comment) => comment.pin)) {
     return { pinned: false, reason: 'occupied' };
   }
   const root = repositoryPath(loaded.ledger.task);
@@ -655,7 +891,10 @@ async function pinLedgerWhenUnoccupied(api, loaded, isPullRequest) {
   } catch (error) {
     return {
       pinned: false,
-      reason: `best-effort-failed:${error.status ?? 'transport'}`,
+      // Every requestOk failure throws a GitHubApiError (see request()
+      // above); this mirrors the untyped original's own optional-chained
+      // `error.status` read for anything else.
+      reason: `best-effort-failed:${error instanceof GitHubApiError ? (error.status ?? 'transport') : 'transport'}`,
     };
   }
 }
@@ -668,7 +907,18 @@ async function pinLedgerWhenUnoccupied(api, loaded, isPullRequest) {
 // github-api.test.mjs) don't churn.
 const agentWorkerPipelines = AGENT_PIPELINES;
 
-function validateDispatchResponse(response, task) {
+/** What GitHub's own workflow-dispatch response body must decode to;
+ *  validated field by field below before any field is trusted. */
+interface DispatchResponseData {
+  workflow_run_id?: unknown;
+  run_url?: unknown;
+  html_url?: unknown;
+}
+
+function validateDispatchResponse(
+  response: { status: number; data: unknown },
+  task: RepositoryRef,
+): { runId: number; runUrl: string; htmlUrl: string } {
   if (response.status !== 200) {
     throw new GitHubApiError(
       `Workflow dispatch returned HTTP ${response.status}`,
@@ -676,15 +926,21 @@ function validateDispatchResponse(response, task) {
       response.data,
     );
   }
-  const runId = response.data?.workflow_run_id;
-  const runUrl = response.data?.run_url;
-  const htmlUrl = response.data?.html_url;
+  // Genuinely untrusted -- GitHub's POST .../dispatches response body,
+  // checked field by field below before any field is trusted.
+  const data = response.data as DispatchResponseData | null | undefined;
+  const runId = data?.workflow_run_id;
+  const runUrl = data?.run_url;
+  const htmlUrl = data?.html_url;
   const { owner, repo } = splitRepository(task.repository);
   const expectedRunUrl = `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`;
   const expectedHtmlUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
   if (
     !Number.isSafeInteger(runId) ||
-    runId <= 0 ||
+    // isSafeInteger's signature accepts `unknown` but does not narrow it --
+    // same posture as ledger-core.ts's assertTaskRef, which casts for the
+    // same reason immediately after an identical guard.
+    (runId as number) <= 0 ||
     typeof runUrl !== 'string' ||
     runUrl !== expectedRunUrl ||
     typeof htmlUrl !== 'string' ||
@@ -696,7 +952,7 @@ function validateDispatchResponse(response, task) {
       response.data,
     );
   }
-  return { runId, runUrl, htmlUrl };
+  return { runId: runId as number, runUrl, htmlUrl };
 }
 
 // Shared by main.mjs's completionCallback/dispatchReconcileScan and
@@ -705,7 +961,11 @@ function validateDispatchResponse(response, task) {
 // (ref: 'main', a caller-supplied `inputs` object naming the `kind`) and
 // then validates the same response contract via validateDispatchResponse.
 // Only the `inputs` payload differs per caller.
-async function dispatchRouterEvent(api, task, inputs) {
+async function dispatchRouterEvent(
+  api: GitHubApi,
+  task: RepositoryRef,
+  inputs: Record<string, string>,
+): Promise<{ runId: number; runUrl: string; htmlUrl: string }> {
   const response = await api.request(
     `${repositoryPath(task)}/actions/workflows/agent-router.yml/dispatches`,
     {
@@ -716,7 +976,28 @@ async function dispatchRouterEvent(api, task, inputs) {
   return validateDispatchResponse(response, task);
 }
 
-async function dispatchWorker(api, generation, task) {
+/** `beginDispatch` (modules/scheduler.mjs) always sets `attempt` together
+ *  with the `dispatching` state a generation is in by the time
+ *  dispatchAccepted (main.mjs) calls this -- this makes that invariant
+ *  explicit rather than dereferencing undefined and blaming the caller. */
+function attemptOf(generation: LedgerGeneration): LedgerRunAttempt {
+  const { attempt } = generation;
+  if (!attempt) {
+    throw new Error(`Generation ${generation.generation} has no attempt`);
+  }
+  return attempt;
+}
+
+async function dispatchWorker(
+  api: GitHubApi,
+  generation: LedgerGeneration,
+  task: LedgerTaskRef,
+): Promise<{
+  runId: number;
+  runUrl: string;
+  htmlUrl: string;
+  workflow: string;
+}> {
   const workflow = workerWorkflow(generation.pipeline);
   const root = repositoryPath(task);
   const response = await api.request(
@@ -733,7 +1014,11 @@ async function dispatchWorker(api, generation, task) {
           context: generation.context ?? '',
           broker_intent_id: generation.intentId,
           broker_generation: String(generation.generation),
-          broker_dispatch_token: generation.attempt.token,
+          // `beginDispatch` (modules/scheduler.mjs) always sets `attempt`
+          // together with the `dispatching` state a generation is in by
+          // the time dispatchAccepted (main.mjs) calls this -- same
+          // assumption the untyped original made without checking.
+          broker_dispatch_token: attemptOf(generation).token,
         },
       },
     },
@@ -741,8 +1026,14 @@ async function dispatchWorker(api, generation, task) {
   return { ...validateDispatchResponse(response, task), workflow };
 }
 
-async function getWorkflowRun(api, task, runId) {
-  return api.requestOk(`${repositoryPath(task)}/actions/runs/${runId}`);
+async function getWorkflowRun(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  runId: number,
+): Promise<WorkflowRun> {
+  return api.requestOk<WorkflowRun>(
+    `${repositoryPath(task)}/actions/runs/${runId}`,
+  );
 }
 
 // Runs list responses are sorted newest-first, and a single `per_page=100`
@@ -770,7 +1061,7 @@ async function getWorkflowRun(api, task, runId) {
 const FIND_RUNS_FOR_GENERATION_MAX_PAGES = 5;
 const FIND_RUNS_FOR_GENERATION_CREATED_BUFFER_MS = 5 * 60 * 1000;
 
-function createdAtOrAfterFilter(generation) {
+function createdAtOrAfterFilter(generation: LedgerGeneration): string {
   const dispatchedAt =
     generation.attempt?.dispatchStartedAt ?? generation.occurredAt;
   const parsed = Date.parse(dispatchedAt);
@@ -784,13 +1075,17 @@ function createdAtOrAfterFilter(generation) {
   return `&created=${encodeURIComponent(`>=${scoped}`)}`;
 }
 
-async function findRunsForGeneration(api, task, generation) {
+async function findRunsForGeneration(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  generation: LedgerGeneration,
+): Promise<WorkflowRun[]> {
   const workflow = workerWorkflow(generation.pipeline);
   const root = repositoryPath(task);
   const createdFilter = createdAtOrAfterFilter(generation);
-  const matches = [];
+  const matches: WorkflowRun[] = [];
   for (let page = 1; page <= FIND_RUNS_FOR_GENERATION_MAX_PAGES; page += 1) {
-    const data = await api.requestOk(
+    const data = await api.requestOk<WorkflowRunsListResponse>(
       `${root}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch${createdFilter}&per_page=100&page=${page}`,
     );
     const runs = data.workflow_runs ?? [];
@@ -811,7 +1106,11 @@ async function findRunsForGeneration(api, task, generation) {
 // success rather than an error, since the desired end state (the label is
 // gone) already holds. Any other non-2xx status is a real failure and
 // propagates so the broker falls back to its normal fail-closed path.
-async function removeIssueLabel(api, task, label) {
+async function removeIssueLabel(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  label: string,
+): Promise<{ removed: boolean }> {
   const root = repositoryPath(task);
   const response = await api.request(
     `${root}/issues/${task.issue}/labels/${encodeURIComponent(label)}`,
@@ -828,10 +1127,15 @@ async function removeIssueLabel(api, task, label) {
   return { removed: true };
 }
 
-async function failClosed(api, task, maintainer, error) {
+async function failClosed(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  maintainer: string,
+  error: unknown,
+): Promise<never> {
   const originalError =
     error instanceof Error ? error : new Error(String(error));
-  let fallbackError;
+  let fallbackError: Error | undefined;
   try {
     await ensureNeedsHumanParked(api, task, maintainer);
   } catch (parkingError) {
@@ -854,8 +1158,12 @@ async function failClosed(api, task, maintainer, error) {
   throw originalError;
 }
 
-async function issueHasLabel(api, task, label) {
-  const issue = await api.requestOk(
+async function issueHasLabel(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  label: string,
+): Promise<boolean> {
+  const issue = await api.requestOk<GitHubIssueDetail>(
     `${repositoryPath(task)}/issues/${task.issue}`,
   );
   return (issue.labels ?? []).some(
@@ -863,8 +1171,12 @@ async function issueHasLabel(api, task, label) {
   );
 }
 
-async function issueHasAssignee(api, task, login) {
-  const issue = await api.requestOk(
+async function issueHasAssignee(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  login: string,
+): Promise<boolean> {
+  const issue = await api.requestOk<GitHubIssueDetail>(
     `${repositoryPath(task)}/issues/${task.issue}`,
   );
   return (issue.assignees ?? []).some((assignee) => assignee.login === login);
@@ -885,7 +1197,10 @@ async function issueHasAssignee(api, task, login) {
 // did not land (see the ensureNeedsHumanParked comment above for why a
 // failure here can still mean success). The bash equivalent of this same
 // pattern is report-failure.sh's `mutate_or_verify`.
-async function mutateOrVerify(mutate, verify) {
+async function mutateOrVerify(
+  mutate: () => Promise<unknown>,
+  verify: () => Promise<boolean>,
+): Promise<void> {
   try {
     await mutate();
   } catch (error) {
@@ -893,7 +1208,11 @@ async function mutateOrVerify(mutate, verify) {
   }
 }
 
-async function ensureNeedsHumanParked(api, task, maintainer) {
+async function ensureNeedsHumanParked(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  maintainer: string,
+): Promise<void> {
   const root = repositoryPath(task);
   await mutateOrVerify(
     () =>

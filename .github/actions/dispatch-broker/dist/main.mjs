@@ -1,140 +1,9 @@
-// .github/actions/dispatch-broker/main.mjs
+// apps/dispatch-broker/src/main.ts
 import crypto3 from "node:crypto";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-// libs/dispatch-contracts/src/pipelines.js
-var PIPELINE_CONTRACTS = Object.freeze(
-  /** @type {Record<DispatchPipeline, PipelineContract>} */
-  {
-    claude: Object.freeze({
-      pipeline: "claude",
-      contract: "agent",
-      workflowFile: "claude.yml",
-      displayName: "Claude",
-      runNameLabel: "Claude issue agent",
-      label: "agent:claude",
-      reviewLabel: "review:claude",
-      replyTrigger: "@claude",
-      replyTriggerAliases: Object.freeze([]),
-      redispatchCommand: "@claude",
-      botLogin: "claude[bot]"
-    }),
-    codex: Object.freeze({
-      pipeline: "codex",
-      contract: "agent",
-      workflowFile: "codex.yml",
-      displayName: "Codex",
-      runNameLabel: "Codex issue agent",
-      label: "agent:codex",
-      reviewLabel: "review:codex",
-      replyTrigger: "/codex",
-      replyTriggerAliases: Object.freeze([]),
-      redispatchCommand: "/codex",
-      botLogin: "agent-lcars[bot]"
-    }),
-    opencode: Object.freeze({
-      pipeline: "opencode",
-      contract: "agent",
-      workflowFile: "opencode.yml",
-      displayName: "OpenCode",
-      runNameLabel: "OpenCode issue agent",
-      label: "agent:opencode",
-      reviewLabel: "review:opencode",
-      replyTrigger: "/oc",
-      replyTriggerAliases: Object.freeze(["/opencode"]),
-      redispatchCommand: "/opencode",
-      botLogin: "agent-lcars[bot]"
-    }),
-    canary: Object.freeze({
-      // #307's no-op production canary. It carries no label, no reply command,
-      // and no bot login because nothing may ever select it from an issue: the
-      // only way to produce a `canary` intent is normalize.mjs's dedicated
-      // workflow_dispatch `kind: 'canary'` branch, fired exclusively by this
-      // repo's own trusted dispatch-canary.yml/post-deploy-smoke.yml.
-      pipeline: "canary",
-      contract: "canary",
-      workflowFile: "agent-dispatch-canary.yml",
-      displayName: "Dispatch canary",
-      runNameLabel: "Dispatch canary worker",
-      replyTriggerAliases: Object.freeze([])
-    })
-  }
-);
-var DISPATCH_PIPELINES = Object.freeze(
-  /** @type {DispatchPipeline[]} */
-  Object.keys(PIPELINE_CONTRACTS)
-);
-var AGENT_PIPELINES = Object.freeze(
-  /** @type {AgentPipeline[]} */
-  DISPATCH_PIPELINES.filter(
-    (pipeline) => PIPELINE_CONTRACTS[pipeline].contract === "agent"
-  )
-);
-var WORKER_WORKFLOW_FILES = Object.freeze(
-  new Set(
-    DISPATCH_PIPELINES.map(
-      (pipeline) => PIPELINE_CONTRACTS[pipeline].workflowFile
-    )
-  )
-);
-var AGENT_LABELS = new Map(
-  AGENT_PIPELINES.map((pipeline) => [
-    /** @type {string} */
-    PIPELINE_CONTRACTS[pipeline].label,
-    pipeline
-  ])
-);
-var REVIEW_LABELS = new Map(
-  AGENT_PIPELINES.map((pipeline) => [
-    /** @type {string} */
-    PIPELINE_CONTRACTS[pipeline].reviewLabel,
-    pipeline
-  ])
-);
-var DISPATCH_LABELS = Object.freeze([
-  ...AGENT_LABELS.keys(),
-  ...REVIEW_LABELS.keys()
-]);
-var REPLY_COMMANDS = new Map(
-  AGENT_PIPELINES.flatMap((pipeline) => {
-    const contract = PIPELINE_CONTRACTS[pipeline];
-    return [
-      /** @type {string} */
-      contract.replyTrigger,
-      ...contract.replyTriggerAliases
-    ].map(
-      (command) => (
-        /** @type {[string, AgentPipeline]} */
-        [command, pipeline]
-      )
-    );
-  })
-);
-var GENERIC_REPLY_COMMAND = "@agent";
-var AGENT_BOT_LOGINS = Object.freeze([
-  ...new Set(
-    AGENT_PIPELINES.map(
-      (pipeline) => (
-        /** @type {string} */
-        PIPELINE_CONTRACTS[pipeline].botLogin
-      )
-    )
-  )
-]);
-function isDispatchPipeline(pipeline) {
-  return Object.hasOwn(PIPELINE_CONTRACTS, pipeline);
-}
-function pipelineContract(pipeline) {
-  const contract = PIPELINE_CONTRACTS[pipeline];
-  if (!contract) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
-  return contract;
-}
-function workerWorkflow(pipeline) {
-  return pipelineContract(pipeline).workflowFile;
-}
-
-// libs/dispatch-contracts/src/failure.js
+// libs/dispatch-contracts/src/failure.ts
 var OWNING_SYSTEMS = Object.freeze([
   "controller",
   "runner",
@@ -142,116 +11,92 @@ var OWNING_SYSTEMS = Object.freeze([
   "finalizer",
   "projector"
 ]);
-var FAILURE_PHASES = (
-  /** @type {const} */
-  [
-    "signal",
-    "authorization",
-    "intent",
-    "scheduling",
-    "launch",
-    "runner_allocation",
-    "bootstrap",
-    "provider_admission",
-    "provider_execution",
-    "agent_execution",
-    "validation",
-    "reporting",
-    "telemetry",
-    "reconciliation"
-  ]
-);
-var PHASE_OWNERS = Object.freeze(
-  /** @type {Record<FailurePhase, OwningSystem>} */
-  {
-    signal: "controller",
-    authorization: "controller",
-    intent: "controller",
-    scheduling: "controller",
-    launch: "controller",
-    runner_allocation: "runner",
-    bootstrap: "worker",
-    provider_admission: "worker",
-    provider_execution: "worker",
-    agent_execution: "worker",
-    validation: "finalizer",
-    reporting: "projector",
-    telemetry: "projector",
-    // Every system reconciles the state it owns, so this phase alone cannot
-    // name its owner from the phase. `classifyFailure` requires an explicit
-    // owningSystem when the phase is `reconciliation`; this default is the
-    // most common case, not an assumption the classifier is allowed to make
-    // silently.
-    reconciliation: "controller"
-  }
-);
-var RETRY_DISPOSITIONS = (
-  /** @type {const} */
-  [
-    "never",
-    "immediate",
-    "backoff",
-    "after_health_change",
-    "after_configuration_change",
-    "manual"
-  ]
-);
-var FAILURE_REASONS = (
-  /** @type {const} */
-  [
-    // controller / signal + reconciliation
-    "signal_lost",
-    "signal_evicted",
-    "signal_unverifiable",
-    "quick_task_digest_mismatch",
-    "concurrency_group_unverifiable",
-    // controller / authorization + intent + scheduling + launch
-    "unauthorized_actor",
-    "ambiguous_pipeline_selection",
-    "intent_superseded",
-    "launch_response_lost",
-    "launch_rejected",
-    // runner
-    "runner_allocation_timeout",
-    "runner_lost",
-    // worker / bootstrap
-    "work_token_mint_failed",
-    "checkout_failed",
-    "tool_setup_failed",
-    // worker / provider + agent
-    "provider_admission_denied",
-    "provider_graph_allocation_failed",
-    "provider_unavailable",
-    "agent_turn_budget_exhausted",
-    "agent_exited_nonzero",
-    // finalizer
-    "deliverable_absent",
-    "deliverable_lookup_failed",
-    "deliverable_unattributable",
-    // projector
-    "github_write_failed",
-    "telemetry_upload_failed",
-    "telemetry_absent",
-    // any system
-    "internal_error"
-  ]
-);
-var PHASES = (
-  /** @type {ReadonlySet<string>} */
-  new Set(FAILURE_PHASES)
-);
-var REASONS = (
-  /** @type {ReadonlySet<string>} */
-  new Set(FAILURE_REASONS)
-);
-var DISPOSITIONS = (
-  /** @type {ReadonlySet<string>} */
-  new Set(RETRY_DISPOSITIONS)
-);
-var SYSTEMS = (
-  /** @type {ReadonlySet<string>} */
-  new Set(OWNING_SYSTEMS)
-);
+var FAILURE_PHASES = [
+  "signal",
+  "authorization",
+  "intent",
+  "scheduling",
+  "launch",
+  "runner_allocation",
+  "bootstrap",
+  "provider_admission",
+  "provider_execution",
+  "agent_execution",
+  "validation",
+  "reporting",
+  "telemetry",
+  "reconciliation"
+];
+var PHASE_OWNERS = Object.freeze({
+  signal: "controller",
+  authorization: "controller",
+  intent: "controller",
+  scheduling: "controller",
+  launch: "controller",
+  runner_allocation: "runner",
+  bootstrap: "worker",
+  provider_admission: "worker",
+  provider_execution: "worker",
+  agent_execution: "worker",
+  validation: "finalizer",
+  reporting: "projector",
+  telemetry: "projector",
+  // Every system reconciles the state it owns, so this phase alone cannot
+  // name its owner from the phase. `classifyFailure` requires an explicit
+  // owningSystem when the phase is `reconciliation`; this default is the
+  // most common case, not an assumption the classifier is allowed to make
+  // silently.
+  reconciliation: "controller"
+});
+var RETRY_DISPOSITIONS = [
+  "never",
+  "immediate",
+  "backoff",
+  "after_health_change",
+  "after_configuration_change",
+  "manual"
+];
+var FAILURE_REASONS = [
+  // controller / signal + reconciliation
+  "signal_lost",
+  "signal_evicted",
+  "signal_unverifiable",
+  "quick_task_digest_mismatch",
+  "concurrency_group_unverifiable",
+  // controller / authorization + intent + scheduling + launch
+  "unauthorized_actor",
+  "ambiguous_pipeline_selection",
+  "intent_superseded",
+  "launch_response_lost",
+  "launch_rejected",
+  // runner
+  "runner_allocation_timeout",
+  "runner_lost",
+  // worker / bootstrap
+  "work_token_mint_failed",
+  "checkout_failed",
+  "tool_setup_failed",
+  // worker / provider + agent
+  "provider_admission_denied",
+  "provider_graph_allocation_failed",
+  "provider_unavailable",
+  "agent_turn_budget_exhausted",
+  "agent_exited_nonzero",
+  // finalizer
+  "deliverable_absent",
+  "deliverable_lookup_failed",
+  "deliverable_unattributable",
+  // projector
+  "github_write_failed",
+  "telemetry_upload_failed",
+  "telemetry_absent",
+  // any system
+  "internal_error"
+];
+var PHASES = new Set(FAILURE_PHASES);
+var REASONS = new Set(FAILURE_REASONS);
+var DISPOSITIONS = new Set(RETRY_DISPOSITIONS);
+var SYSTEMS = new Set(OWNING_SYSTEMS);
 function classifyFailure({
   phase,
   reason,
@@ -296,25 +141,137 @@ function formatFailure(failure) {
   return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
 }
 
-// libs/dispatch-contracts/src/ledger.js
+// libs/dispatch-contracts/src/pipelines.ts
+var PIPELINE_CONTRACTS = Object.freeze({
+  claude: Object.freeze({
+    pipeline: "claude",
+    contract: "agent",
+    workflowFile: "claude.yml",
+    displayName: "Claude",
+    runNameLabel: "Claude issue agent",
+    label: "agent:claude",
+    reviewLabel: "review:claude",
+    replyTrigger: "@claude",
+    replyTriggerAliases: Object.freeze([]),
+    redispatchCommand: "@claude",
+    botLogin: "claude[bot]"
+  }),
+  codex: Object.freeze({
+    pipeline: "codex",
+    contract: "agent",
+    workflowFile: "codex.yml",
+    displayName: "Codex",
+    runNameLabel: "Codex issue agent",
+    label: "agent:codex",
+    reviewLabel: "review:codex",
+    replyTrigger: "/codex",
+    replyTriggerAliases: Object.freeze([]),
+    redispatchCommand: "/codex",
+    botLogin: "agent-lcars[bot]"
+  }),
+  opencode: Object.freeze({
+    pipeline: "opencode",
+    contract: "agent",
+    workflowFile: "opencode.yml",
+    displayName: "OpenCode",
+    runNameLabel: "OpenCode issue agent",
+    label: "agent:opencode",
+    reviewLabel: "review:opencode",
+    replyTrigger: "/oc",
+    replyTriggerAliases: Object.freeze(["/opencode"]),
+    redispatchCommand: "/opencode",
+    botLogin: "agent-lcars[bot]"
+  }),
+  canary: Object.freeze({
+    // #307's no-op production canary. It carries no label, no reply command,
+    // and no bot login because nothing may ever select it from an issue: the
+    // only way to produce a `canary` intent is normalize.mjs's dedicated
+    // workflow_dispatch `kind: 'canary'` branch, fired exclusively by this
+    // repo's own trusted dispatch-canary.yml/post-deploy-smoke.yml.
+    pipeline: "canary",
+    contract: "canary",
+    workflowFile: "agent-dispatch-canary.yml",
+    displayName: "Dispatch canary",
+    runNameLabel: "Dispatch canary worker",
+    replyTriggerAliases: Object.freeze([])
+  })
+});
+var DISPATCH_PIPELINES = Object.freeze(
+  Object.keys(PIPELINE_CONTRACTS)
+);
+var AGENT_PIPELINES = Object.freeze(
+  DISPATCH_PIPELINES.filter(
+    (pipeline) => PIPELINE_CONTRACTS[pipeline].contract === "agent"
+  )
+);
+var WORKER_WORKFLOW_FILES = Object.freeze(
+  new Set(
+    DISPATCH_PIPELINES.map(
+      (pipeline) => PIPELINE_CONTRACTS[pipeline].workflowFile
+    )
+  )
+);
+var AGENT_LABELS = new Map(
+  AGENT_PIPELINES.map((pipeline) => [
+    PIPELINE_CONTRACTS[pipeline].label,
+    pipeline
+  ])
+);
+var REVIEW_LABELS = new Map(
+  AGENT_PIPELINES.map((pipeline) => [
+    PIPELINE_CONTRACTS[pipeline].reviewLabel,
+    pipeline
+  ])
+);
+var DISPATCH_LABELS = Object.freeze([
+  ...AGENT_LABELS.keys(),
+  ...REVIEW_LABELS.keys()
+]);
+var REPLY_COMMANDS = new Map(
+  AGENT_PIPELINES.flatMap((pipeline) => {
+    const contract = PIPELINE_CONTRACTS[pipeline];
+    return [
+      contract.replyTrigger,
+      ...contract.replyTriggerAliases
+    ].map((command) => [command, pipeline]);
+  })
+);
+var GENERIC_REPLY_COMMAND = "@agent";
+var AGENT_BOT_LOGINS = Object.freeze([
+  ...new Set(
+    AGENT_PIPELINES.map(
+      (pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin
+    )
+  )
+]);
+function isDispatchPipeline(pipeline) {
+  return Object.hasOwn(PIPELINE_CONTRACTS, pipeline);
+}
+function pipelineContract(pipeline) {
+  const contract = PIPELINE_CONTRACTS[pipeline];
+  if (!contract) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
+  return contract;
+}
+function workerWorkflow(pipeline) {
+  return pipelineContract(pipeline).workflowFile;
+}
+
+// libs/dispatch-contracts/src/ledger.ts
 var LEDGER_MARKER = "<!-- agent-lcars:dispatch-ledger:v1 -->";
 var LEDGER_SCHEMA = "agent-lcars.dispatch-ledger/v1";
-var LEDGER_GENERATION_STATES = (
-  /** @type {const} */
-  [
-    "accepted",
-    "pending",
-    "dispatching",
-    "dispatch-unknown",
-    "dispatch-rejected",
-    "active",
-    "completion-observed",
-    "completion-awaiting-terminal",
-    "completed",
-    "superseded",
-    "superseded-by-close"
-  ]
-);
+var LEDGER_GENERATION_STATES = [
+  "accepted",
+  "pending",
+  "dispatching",
+  "dispatch-unknown",
+  "dispatch-rejected",
+  "active",
+  "completion-observed",
+  "completion-awaiting-terminal",
+  "completed",
+  "superseded",
+  "superseded-by-close"
+];
 var LEDGER_ACTIVE_GENERATION_STATES = /* @__PURE__ */ new Set([
   "dispatching",
   "dispatch-unknown",
@@ -349,12 +306,11 @@ function extractLedgerComment(body) {
     return { ok: false, reason: "invalid-json" };
   }
 }
-var GENERATION_STATES = (
-  /** @type {ReadonlySet<string>} */
-  new Set(LEDGER_GENERATION_STATES)
+var GENERATION_STATES = new Set(
+  LEDGER_GENERATION_STATES
 );
 
-// libs/dispatch-contracts/src/marker.js
+// libs/dispatch-contracts/src/marker.ts
 function formatAttemptId({ generation, intentId }) {
   return `g${generation}:${intentId}`;
 }
@@ -370,8 +326,13 @@ function parseRouterGroupMarker(displayTitle) {
   return match ? { repositoryId: Number(match[1]), issue: Number(match[2]) } : void 0;
 }
 
-// libs/dispatch-contracts/src/quick-task.js
-function serializeIdentity({ repository, pipeline, title, description }) {
+// libs/dispatch-contracts/src/quick-task.ts
+function serializeIdentity({
+  repository,
+  pipeline,
+  title,
+  description
+}) {
   return JSON.stringify({ repository, pipeline, title, description });
 }
 function quickTaskDigest(identity, sha256Hex2) {
@@ -383,13 +344,16 @@ function quickTaskMarkerMatcher() {
   return new RegExp(QUICK_TASK_MARKER_SOURCE, "gu");
 }
 
-// .github/actions/dispatch-broker/broker.mjs
+// apps/dispatch-broker/src/broker.ts
 import crypto from "node:crypto";
 
-// .github/actions/dispatch-broker/modules/ledger-core.mjs
+// apps/dispatch-broker/src/modules/ledger-core.ts
 var ACTIVE_STATES = LEDGER_ACTIVE_GENERATION_STATES;
 function assertTaskRef(task) {
-  if (!task || !Number.isSafeInteger(task.repositoryId) || task.repositoryId <= 0 || !/^[^/]+\/[^/]+$/u.test(task.repository) || !Number.isSafeInteger(task.issue) || task.issue <= 0) {
+  const candidate = task;
+  if (!candidate || !Number.isSafeInteger(candidate.repositoryId) || candidate.repositoryId <= 0 || // .test() coerces a non-string argument via ToString same as this cast
+  // would -- the cast changes no behavior, it only satisfies the compiler.
+  !/^[^/]+\/[^/]+$/u.test(candidate.repository) || !Number.isSafeInteger(candidate.issue) || candidate.issue <= 0) {
     throw new Error("Invalid canonical TaskRef");
   }
 }
@@ -408,24 +372,25 @@ function createLedger(task, now = (/* @__PURE__ */ new Date()).toISOString()) {
   };
 }
 function validateLedger(ledger, task) {
-  if (!ledger || ledger.schema !== LEDGER_SCHEMA) {
+  const candidate = ledger;
+  if (!candidate || candidate.schema !== LEDGER_SCHEMA) {
     throw new Error("Malformed dispatch ledger: unsupported schema");
   }
-  assertTaskRef(ledger.task);
+  assertTaskRef(candidate.task);
   assertTaskRef(task);
-  if (ledger.task.repositoryId !== task.repositoryId || ledger.task.repository.toLowerCase() !== task.repository.toLowerCase() || ledger.task.issue !== task.issue) {
+  if (candidate.task.repositoryId !== task.repositoryId || candidate.task.repository.toLowerCase() !== task.repository.toLowerCase() || candidate.task.issue !== task.issue) {
     throw new Error("Malformed dispatch ledger: canonical TaskRef mismatch");
   }
-  if (!Number.isSafeInteger(ledger.revision) || ledger.revision < 0) {
+  if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) {
     throw new Error("Malformed dispatch ledger: invalid revision");
   }
-  if (!Array.isArray(ledger.sources) || !Array.isArray(ledger.generations)) {
+  if (!Array.isArray(candidate.sources) || !Array.isArray(candidate.generations)) {
     throw new Error("Malformed dispatch ledger: missing history");
   }
-  const active = ledger.generations.filter(
+  const active = candidate.generations.filter(
     (generation) => ACTIVE_STATES.has(generation.state)
   );
-  const pending = ledger.generations.filter(
+  const pending = candidate.generations.filter(
     (generation) => generation.state === "pending"
   );
   if (active.length > 1 || pending.length > 1) {
@@ -433,7 +398,7 @@ function validateLedger(ledger, task) {
       "Malformed dispatch ledger: invalid active/pending cardinality"
     );
   }
-  return ledger;
+  return candidate;
 }
 function mutate(ledger, now, callback) {
   callback();
@@ -443,7 +408,7 @@ function mutate(ledger, now, callback) {
   return ledger;
 }
 
-// .github/actions/dispatch-broker/modules/intent.mjs
+// apps/dispatch-broker/src/modules/intent.ts
 function compareIntentOrder(left, right) {
   const byTime = left.occurredAt.localeCompare(right.occurredAt);
   return byTime || left.sourceId.localeCompare(right.sourceId);
@@ -561,12 +526,22 @@ function acceptIntent(ledger, intent, now = (/* @__PURE__ */ new Date()).toISOSt
   return { outcome, generation: generation.generation, ledger };
 }
 
-// .github/actions/dispatch-broker/modules/scheduler.mjs
+// apps/dispatch-broker/src/modules/scheduler.ts
 var TERMINAL_RUN_STATUSES = /* @__PURE__ */ new Set(["completed"]);
-function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const generation = ledger.generations.find(
+function findGeneration(ledger, generationNumber) {
+  return ledger.generations.find(
     (candidate) => candidate.generation === generationNumber
   );
+}
+function attemptOf(generation) {
+  const { attempt } = generation;
+  if (!attempt) {
+    throw new Error(`Generation ${generation.generation} has no attempt`);
+  }
+  return attempt;
+}
+function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["accepted", "pending"].includes(generation.state)) {
     throw new Error("Generation is not dispatchable");
   }
@@ -586,30 +561,28 @@ function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ n
   });
 }
 function markDispatchUnknown(ledger, generationNumber, reason, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber
-  );
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || generation.state !== "dispatching") {
     throw new Error("Generation is not dispatching");
   }
   return mutate(ledger, now, () => {
     generation.state = "dispatch-unknown";
-    generation.attempt.unknownAt = now;
-    generation.attempt.unknownReason = reason;
+    const attempt = attemptOf(generation);
+    attempt.unknownAt = now;
+    attempt.unknownReason = reason;
   });
 }
 function markDispatchRejected(ledger, generationNumber, reason, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber
-  );
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || generation.state !== "dispatching") {
     throw new Error("Generation is not dispatching");
   }
   let promoted;
   mutate(ledger, now, () => {
     generation.state = "dispatch-rejected";
-    generation.attempt.rejectedAt = now;
-    generation.attempt.rejectionReason = reason;
+    const attempt = attemptOf(generation);
+    attempt.rejectedAt = now;
+    attempt.rejectionReason = reason;
     if (!ledger.control.closed) {
       promoted = ledger.generations.find(
         (candidate) => candidate.state === "pending"
@@ -620,9 +593,7 @@ function markDispatchRejected(ledger, generationNumber, reason, now = (/* @__PUR
   return { ledger, promotedGeneration: promoted?.generation };
 }
 function bindRun(ledger, generationNumber, binding, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber
-  );
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state)) {
     throw new Error("Generation is not awaiting a run binding");
   }
@@ -631,13 +602,11 @@ function bindRun(ledger, generationNumber, binding, now = (/* @__PURE__ */ new D
   }
   return mutate(ledger, now, () => {
     generation.state = "active";
-    Object.assign(generation.attempt, binding, { boundAt: now });
+    Object.assign(attemptOf(generation), binding, { boundAt: now });
   });
 }
 function observeCompletion(ledger, generationNumber, runId, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber
-  );
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["active", "completion-observed", "completion-awaiting-terminal"].includes(
     generation.state
   ) || generation.attempt?.runId !== runId) {
@@ -645,36 +614,34 @@ function observeCompletion(ledger, generationNumber, runId, now = (/* @__PURE__ 
   }
   return mutate(ledger, now, () => {
     generation.state = "completion-observed";
-    generation.attempt.completionObservedAt ??= now;
+    attemptOf(generation).completionObservedAt ??= now;
   });
 }
 function awaitTerminal(ledger, generationNumber, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber
-  );
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || generation.state !== "completion-observed") {
     throw new Error("Completion has not been observed");
   }
   return mutate(ledger, now, () => {
     generation.state = "completion-awaiting-terminal";
-    generation.attempt.lastObservedAt = now;
+    attemptOf(generation).lastObservedAt = now;
   });
 }
 function completeRun(ledger, generationNumber, observation, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === generationNumber
-  );
+  const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["active", "completion-observed", "completion-awaiting-terminal"].includes(
     generation.state
   ) || generation.attempt?.runId !== observation.runId || !TERMINAL_RUN_STATUSES.has(observation.status) || typeof observation.conclusion !== "string") {
     throw new Error("Invalid terminal run observation");
   }
+  const conclusion = observation.conclusion;
   let promoted;
   mutate(ledger, now, () => {
     generation.state = "completed";
-    generation.attempt.status = observation.status;
-    generation.attempt.conclusion = observation.conclusion;
-    generation.attempt.completedAt = observation.completedAt ?? now;
+    const attempt = attemptOf(generation);
+    attempt.status = observation.status;
+    attempt.conclusion = conclusion;
+    attempt.completedAt = observation.completedAt ?? now;
     if (!ledger.control.closed) {
       promoted = ledger.generations.find(
         (candidate) => candidate.state === "pending"
@@ -686,9 +653,7 @@ function completeRun(ledger, generationNumber, observation, now = (/* @__PURE__ 
 }
 function verifyPreflight(ledger, expected) {
   validateLedger(ledger, expected.task);
-  const generation = ledger.generations.find(
-    (candidate) => candidate.generation === expected.generation
-  );
+  const generation = findGeneration(ledger, expected.generation);
   return Boolean(
     generation && ["active", "completion-observed", "completion-awaiting-terminal"].includes(
       generation.state
@@ -696,11 +661,12 @@ function verifyPreflight(ledger, expected) {
   );
 }
 
-// .github/actions/dispatch-broker/broker.mjs
+// apps/dispatch-broker/src/broker.ts
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+    const record = value;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
 }
@@ -789,7 +755,7 @@ function addAnomaly(ledger, kind, detail, now = (/* @__PURE__ */ new Date()).toI
   });
 }
 
-// .github/actions/dispatch-broker/github-api.mjs
+// apps/dispatch-broker/src/github-api.ts
 var API_VERSION = "2026-03-10";
 var CONCURRENCY_VERIFY_MAX_ATTEMPTS = 5;
 var CONCURRENCY_VERIFY_RETRY_DELAY_MS = 3e3;
@@ -797,6 +763,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 var GitHubApiError = class extends Error {
+  status;
+  data;
   constructor(message, status, data) {
     super(message);
     this.name = "GitHubApiError";
@@ -805,6 +773,7 @@ var GitHubApiError = class extends Error {
   }
 };
 var BrokerConcurrencyMismatchError = class extends Error {
+  retryable;
   constructor(message, { retryable = false } = {}) {
     super(message);
     this.name = "BrokerConcurrencyMismatchError";
@@ -832,6 +801,9 @@ function createGitHubApi({
       });
     } catch (error) {
       throw new GitHubApiError(
+        // Genuinely untrusted here -- whatever fetchImpl rejected with, of
+        // any shape. Every real fetch failure is Error-shaped; same
+        // assumption the untyped original made without checking.
         `GitHub request transport failure: ${error.message}`,
         void 0
       );
@@ -890,16 +862,27 @@ function groupMembershipHolds(response, expected) {
 function concurrencyGroupsPath(root, runId) {
   return `${root}/actions/runs/${runId}/concurrency_groups?per_page=100`;
 }
+var ROUTER_BROKER_JOB_NAME = "broker";
 async function findConflictingRouterRun(api2, task, runId) {
   const root = repositoryPath(task);
   const data = await api2.requestOk(
     `${root}/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100`
   );
-  return (data.workflow_runs ?? []).find((run) => {
+  const candidates = (data.workflow_runs ?? []).filter((run) => {
     if (!Number.isSafeInteger(run?.id) || run.id === runId) return false;
     const marker = parseRouterGroupMarker(run.display_title);
     return marker !== void 0 && marker.repositoryId === task.repositoryId && marker.issue === task.issue;
   });
+  for (const candidate of candidates) {
+    const jobs = await api2.requestOk(
+      `${root}/actions/runs/${candidate.id}/jobs?per_page=100`
+    );
+    const holdsGroup = (jobs.jobs ?? []).some(
+      (job) => job?.name === ROUTER_BROKER_JOB_NAME && job.status === "in_progress"
+    );
+    if (holdsGroup) return candidate;
+  }
+  return void 0;
 }
 async function checkIndirectBrokerConcurrency(api2, task, runId, suppliedGroup) {
   const expected = brokerConcurrencyGroup(task);
@@ -932,10 +915,11 @@ async function verifyBrokerConcurrency(api2, task, runId, suppliedGroup, {
       );
       return result;
     } catch (error) {
-      const canRetry = error.retryable === true && attempt < maxAttempts;
+      const candidate = error;
+      const canRetry = candidate.retryable === true && attempt < maxAttempts;
       if (!canRetry) {
         if (attempt > 1) {
-          error.message = `${error.message} (after ${attempt} attempts)`;
+          candidate.message = `${candidate.message} (after ${attempt} attempts)`;
         }
         throw error;
       }
@@ -1036,7 +1020,10 @@ async function listOpenIssuesAssignedTo(api2, task, login) {
 }
 async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", { createIfMissing = true } = {}) {
   const root = repositoryPath(task);
-  const comments = await listAll(api2, `${root}/issues/${task.issue}/comments`);
+  const comments = await listAll(
+    api2,
+    `${root}/issues/${task.issue}/comments`
+  );
   const candidates = comments.filter(
     (comment2) => comment2.body?.includes(LEDGER_MARKER)
   );
@@ -1056,10 +1043,13 @@ async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", 
   }
   if (!createIfMissing) return void 0;
   const ledger = createLedger(task);
-  const comment = await api2.requestOk(`${root}/issues/${task.issue}/comments`, {
-    method: "POST",
-    body: { body: renderLedgerComment2(ledger) }
-  });
+  const comment = await api2.requestOk(
+    `${root}/issues/${task.issue}/comments`,
+    {
+      method: "POST",
+      body: { body: renderLedgerComment2(ledger) }
+    }
+  );
   if (!Number.isSafeInteger(comment?.id)) {
     throw new Error("GitHub did not return the created ledger comment ID");
   }
@@ -1080,7 +1070,13 @@ async function saveLedger(api2, loaded) {
 async function pinLedgerWhenUnoccupied(api2, loaded, isPullRequest) {
   if (!loaded.created || isPullRequest)
     return { pinned: false, reason: "ineligible" };
-  if (loaded.existingComments.some((comment) => comment.pin)) {
+  const { existingComments } = loaded;
+  if (!existingComments) {
+    throw new Error(
+      "LoadedLedger.existingComments missing despite created=true"
+    );
+  }
+  if (existingComments.some((comment) => comment.pin)) {
     return { pinned: false, reason: "occupied" };
   }
   const root = repositoryPath(loaded.ledger.task);
@@ -1092,7 +1088,10 @@ async function pinLedgerWhenUnoccupied(api2, loaded, isPullRequest) {
   } catch (error) {
     return {
       pinned: false,
-      reason: `best-effort-failed:${error.status ?? "transport"}`
+      // Every requestOk failure throws a GitHubApiError (see request()
+      // above); this mirrors the untyped original's own optional-chained
+      // `error.status` read for anything else.
+      reason: `best-effort-failed:${error instanceof GitHubApiError ? error.status ?? "transport" : "transport"}`
     };
   }
 }
@@ -1104,13 +1103,17 @@ function validateDispatchResponse(response, task) {
       response.data
     );
   }
-  const runId = response.data?.workflow_run_id;
-  const runUrl = response.data?.run_url;
-  const htmlUrl = response.data?.html_url;
+  const data = response.data;
+  const runId = data?.workflow_run_id;
+  const runUrl = data?.run_url;
+  const htmlUrl = data?.html_url;
   const { owner, repo } = splitRepository(task.repository);
   const expectedRunUrl = `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`;
   const expectedHtmlUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
-  if (!Number.isSafeInteger(runId) || runId <= 0 || typeof runUrl !== "string" || runUrl !== expectedRunUrl || typeof htmlUrl !== "string" || htmlUrl !== expectedHtmlUrl) {
+  if (!Number.isSafeInteger(runId) || // isSafeInteger's signature accepts `unknown` but does not narrow it --
+  // same posture as ledger-core.ts's assertTaskRef, which casts for the
+  // same reason immediately after an identical guard.
+  runId <= 0 || typeof runUrl !== "string" || runUrl !== expectedRunUrl || typeof htmlUrl !== "string" || htmlUrl !== expectedHtmlUrl) {
     throw new GitHubApiError(
       "Workflow dispatch returned malformed run details",
       200,
@@ -1129,6 +1132,13 @@ async function dispatchRouterEvent(api2, task, inputs) {
   );
   return validateDispatchResponse(response, task);
 }
+function attemptOf2(generation) {
+  const { attempt } = generation;
+  if (!attempt) {
+    throw new Error(`Generation ${generation.generation} has no attempt`);
+  }
+  return attempt;
+}
 async function dispatchWorker(api2, generation, task) {
   const workflow = workerWorkflow(generation.pipeline);
   const root = repositoryPath(task);
@@ -1146,7 +1156,11 @@ async function dispatchWorker(api2, generation, task) {
           context: generation.context ?? "",
           broker_intent_id: generation.intentId,
           broker_generation: String(generation.generation),
-          broker_dispatch_token: generation.attempt.token
+          // `beginDispatch` (modules/scheduler.mjs) always sets `attempt`
+          // together with the `dispatching` state a generation is in by
+          // the time dispatchAccepted (main.mjs) calls this -- same
+          // assumption the untyped original made without checking.
+          broker_dispatch_token: attemptOf2(generation).token
         }
       }
     }
@@ -1154,7 +1168,9 @@ async function dispatchWorker(api2, generation, task) {
   return { ...validateDispatchResponse(response, task), workflow };
 }
 async function getWorkflowRun(api2, task, runId) {
-  return api2.requestOk(`${repositoryPath(task)}/actions/runs/${runId}`);
+  return api2.requestOk(
+    `${repositoryPath(task)}/actions/runs/${runId}`
+  );
 }
 var FIND_RUNS_FOR_GENERATION_MAX_PAGES = 5;
 var FIND_RUNS_FOR_GENERATION_CREATED_BUFFER_MS = 5 * 60 * 1e3;
@@ -1259,10 +1275,10 @@ async function ensureNeedsHumanParked(api2, task, maintainer) {
   );
 }
 
-// .github/actions/dispatch-broker/normalize.mjs
+// apps/dispatch-broker/src/normalize.ts
 import crypto2 from "node:crypto";
 
-// .github/actions/dispatch-broker/modules/authorization.mjs
+// apps/dispatch-broker/src/modules/authorization.ts
 var AUTHORIZATION_RULES = Object.freeze({
   MANUAL_MAINTAINER: "manual-maintainer",
   OWNER_COMMENT: "owner-comment",
@@ -1280,7 +1296,7 @@ function authorization(actor, maintainer, rule, extra = {}) {
   };
 }
 
-// .github/actions/dispatch-broker/normalize.mjs
+// apps/dispatch-broker/src/normalize.ts
 var COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
 var WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
 var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -1341,7 +1357,11 @@ function quickTaskRequest(issue, repository, pipeline) {
   if (!originalPipeline) {
     throw new Error("Quick Task marker digest mismatch");
   }
-  if (body.slice(matches[0].index + marker.length).trim()) {
+  const matchIndex = matches[0].index;
+  if (matchIndex === void 0) {
+    throw new Error("Quick Task marker match unexpectedly missing its index");
+  }
+  if (body.slice(matchIndex + marker.length).trim()) {
     throw new Error("Quick Task marker must be the final body element");
   }
   if (originalPipeline !== pipeline) return void 0;
@@ -1352,7 +1372,13 @@ function digestQuickTask(identity) {
 }
 function timelineSource(timeline, eventName, event) {
   const action = event.action;
-  const targetTime = Date.parse((event.issue ?? event.pull_request).updated_at);
+  const numbered = event.issue ?? event.pull_request;
+  if (!numbered) {
+    throw new Error(
+      `${eventName}:${action} timeline lookup missing issue/pull_request`
+    );
+  }
+  const targetTime = Date.parse(numbered.updated_at);
   const candidates = timeline.filter((candidate) => {
     if (candidate.event !== action) return false;
     if (["labeled", "unlabeled"].includes(action)) {
@@ -1399,7 +1425,11 @@ function makeIntent(base) {
     intentId: base.intentId ?? `intent:${digest({ ...normalizedPayload, sourceId: base.sourceId })}`
   };
 }
-function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
+function normalizeWorkflowDispatch({
+  inputs,
+  context,
+  maintainer
+}) {
   const task = taskRef(context, void 0);
   if (inputs.kind === "reconcile") {
     return { kind: "reconcile", task };
@@ -1408,25 +1438,28 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
     let completion;
     try {
       completion = JSON.parse(
-        Buffer.from(inputs.completion_payload, "base64url").toString("utf8")
+        Buffer.from(inputs.completion_payload, "base64url").toString(
+          "utf8"
+        )
       );
     } catch {
       throw new Error("Completion payload is malformed");
     }
-    if (!Number.isSafeInteger(completion.workerRunId) || completion.workerRunId <= 0 || !Number.isSafeInteger(completion.generation) || completion.generation <= 0 || !/^[A-Za-z0-9._:-]{1,200}$/u.test(completion.intentId ?? "") || !/^[A-Za-z0-9_-]{16,200}$/u.test(completion.token ?? "") || !WORKER_WORKFLOWS.has(completion.workflow)) {
+    const candidate = completion;
+    if (!Number.isSafeInteger(candidate.workerRunId) || candidate.workerRunId <= 0 || !Number.isSafeInteger(candidate.generation) || candidate.generation <= 0 || !/^[A-Za-z0-9._:-]{1,200}$/u.test(candidate.intentId ?? "") || !/^[A-Za-z0-9_-]{16,200}$/u.test(candidate.token ?? "") || !WORKER_WORKFLOWS.has(candidate.workflow)) {
       throw new Error("Completion payload has invalid binding fields");
     }
     return {
       kind: "completion",
       task,
       sourceKind: "completion",
-      sourceId: `worker-run:${completion.workerRunId}`,
+      sourceId: `worker-run:${candidate.workerRunId}`,
       transportRunId: context.runId,
-      workerRunId: completion.workerRunId,
-      generation: completion.generation,
-      intentId: completion.intentId,
-      token: completion.token,
-      workflow: completion.workflow
+      workerRunId: candidate.workerRunId,
+      generation: candidate.generation,
+      intentId: candidate.intentId,
+      token: candidate.token,
+      workflow: candidate.workflow
     };
   }
   if (inputs.kind === "canary") {
@@ -1471,6 +1504,9 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
       sourceId,
       transportRunId: context.runId,
       occurredAt: context.now,
+      // Validated two lines up: AGENT_LABELS' keys are exactly
+      // `agent:claude`/`agent:codex`/`agent:opencode`, so the has() check
+      // above already proved inputs.pipeline is one of those three names.
       pipeline: inputs.pipeline,
       mode: inputs.mode || "implement",
       reply: inputs.reply || "",
@@ -1510,13 +1546,17 @@ function normalizeEvent({
         "Comment command does not match the selected integration"
       );
     }
+    const comment = event.comment;
+    if (!comment) {
+      throw new Error("issue_comment:created event missing comment");
+    }
     const auth2 = authorization(
       event.sender?.login,
       maintainer,
       AUTHORIZATION_RULES.OWNER_COMMENT,
       {
-        association: event.comment.author_association,
-        userType: event.comment.user?.type
+        association: comment.author_association,
+        userType: comment.user?.type
       }
     );
     if (!auth2.authorized || auth2.association !== "OWNER" || auth2.userType === "Bot") {
@@ -1527,12 +1567,12 @@ function normalizeEvent({
       intent: makeIntent({
         task,
         sourceKind: "comment",
-        sourceId: `comment:${event.comment.id}`,
+        sourceId: `comment:${comment.id}`,
         transportRunId: context.runId,
-        occurredAt: event.comment.created_at,
+        occurredAt: comment.created_at,
         pipeline: resolvedPipeline,
         mode: "reply",
-        reply: event.comment.body,
+        reply: comment.body,
         runbook: "",
         context: "",
         authorization: auth2
@@ -1548,6 +1588,9 @@ function normalizeEvent({
         kind: "anchor-control",
         task,
         control: {
+          // Array.prototype.includes() doesn't narrow a string the way an
+          // === chain does; the check two lines up already restricts
+          // event.action to exactly these two values.
           kind: event.action,
           sourceId: `pull-request:${issue.id}:${event.action}:${issue.updated_at}`,
           occurredAt: issue.updated_at,
@@ -1582,6 +1625,10 @@ function normalizeEvent({
         sourceId: `issue:${issue.id}`,
         transportRunId: context.runId,
         occurredAt: issue.created_at,
+        // quickTaskRequest() above only ever returns a result when its own
+        // `pipeline` argument (this same variable) was truthy -- otherwise
+        // it throws before returning -- so `pipeline` is proven defined by
+        // `quickTask` having a value at all.
         pipeline,
         mode: "implement",
         reply: "",
@@ -1611,6 +1658,9 @@ function normalizeEvent({
     if (!labelName?.startsWith("agent:") && !isReviewLabel) {
       return { kind: "ignored", reason: "non-agent label event" };
     }
+    if (!labelName) {
+      throw new Error("Label event missing its own label name");
+    }
     const labelMap = isReviewLabel ? REVIEW_LABELS : AGENT_LABELS;
     const labelKind = isReviewLabel ? "review" : "agent";
     if (event.action === "unlabeled") {
@@ -1621,13 +1671,13 @@ function normalizeEvent({
           sourceKind: "unlabeled",
           ...source,
           transportRunId: context.runId,
-          label: event.label.name,
+          label: labelName,
           authorization: { observed: true, actor: event.sender?.login }
         }
       };
     }
     if (!auth.authorized) throw new Error("Unauthorized label dispatch");
-    const eventPipeline = labelMap.get(event.label.name);
+    const eventPipeline = labelMap.get(labelName);
     if (!eventPipeline)
       return { kind: "ignored", reason: `unknown ${labelKind} label` };
     const selectedLabelsInNamespace = labelsOf(issue).filter(
@@ -1637,9 +1687,9 @@ function normalizeEvent({
     let staleAgentLabels;
     if (selectedLabelsInNamespace.length > 1) {
       const otherLabelsInNamespace = selectedLabelsInNamespace.filter(
-        (label) => label !== event.label.name
+        (label) => label !== labelName
       );
-      if (!selectedLabelsInNamespace.includes(event.label.name) || otherLabelsInNamespace.length !== 1) {
+      if (!selectedLabelsInNamespace.includes(labelName) || otherLabelsInNamespace.length !== 1) {
         throw new Error(`Issue has contradictory ${labelKind} labels`);
       }
       staleAgentLabels = otherLabelsInNamespace;
@@ -1674,7 +1724,7 @@ function normalizeEvent({
   return { kind: "ignored", reason: "unsupported issue action" };
 }
 
-// .github/actions/dispatch-broker/main.mjs
+// apps/dispatch-broker/src/main.ts
 function env(name, required = true) {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);
@@ -1738,7 +1788,9 @@ async function runPhase(ledgerContext, phase, step) {
   }
 }
 async function normalize() {
-  const event = JSON.parse(await fs.readFile(env("GITHUB_EVENT_PATH"), "utf8"));
+  const event = JSON.parse(
+    await fs.readFile(env("GITHUB_EVENT_PATH"), "utf8")
+  );
   const eventName = env("GITHUB_EVENT_NAME");
   const inputs = event.inputs ?? {};
   const context = contextFor(event, inputs);
@@ -1753,6 +1805,11 @@ async function normalize() {
   const wantsTimeline = eventName === "issues" && ["labeled", "unlabeled", "closed", "reopened"].includes(event.action) || eventName === "pull_request" && ["labeled", "unlabeled"].includes(event.action);
   if (wantsTimeline) {
     const numbered = event.issue ?? event.pull_request;
+    if (!numbered) {
+      throw new Error(
+        `Event ${eventName}/${event.action} claimed a timeline but carried neither issue nor pull_request`
+      );
+    }
     timeline = await client.requestOk(
       `${repositoryPath({ repository: context.repository })}/issues/${numbered.number}/timeline?per_page=100`
     );
@@ -1769,7 +1826,9 @@ async function normalize() {
       maintainer: env("MAINTAINER_LOGIN")
     })
   );
-  const issue = normalized.task?.issue ?? event.issue?.number ?? Number(inputs.issue);
+  const normalizedTask = "task" in normalized ? normalized.task : void 0;
+  const normalizedReason = "reason" in normalized ? normalized.reason : void 0;
+  const issue = normalizedTask?.issue ?? event.issue?.number ?? Number(inputs.issue);
   await output("eligible", normalized.kind === "ignored" ? "false" : "true");
   await output("issue", String(issue || ""));
   await output("repository-id", String(context.repositoryId));
@@ -1778,7 +1837,7 @@ async function normalize() {
     issue ? `agent-lcars-dispatch-v1-${context.repositoryId}-${issue}`.toLowerCase() : ""
   );
   await output("payload", encode(normalized));
-  await output("reason", normalized.reason ?? "");
+  await output("reason", normalizedReason ?? "");
 }
 function activeGeneration(ledger) {
   return ledger.generations.find(
@@ -1866,7 +1925,10 @@ var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
 function reconcileAnomaliesFor(ledger, generationNumber, kind) {
   return ledger.anomalies.filter(
-    (anomaly) => anomaly.kind === kind && anomaly.detail?.generation === generationNumber
+    (anomaly) => anomaly.kind === kind && // `detail` is deliberately untyped on LedgerAnomaly (each kind owns
+    // its own shape) -- every `addAnomaly` call below that records one of
+    // these two kinds always includes a numeric `generation` field.
+    anomaly.detail?.generation === generationNumber
   );
 }
 async function trackMissingRun(client, loaded, generation, now) {
@@ -1965,7 +2027,9 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   const ledger = loaded.ledger;
   const task = ledger.task;
   const root = repositoryPath(task);
-  const issue = await client.requestOk(`${root}/issues/${task.issue}`);
+  const issue = await client.requestOk(
+    `${root}/issues/${task.issue}`
+  );
   let pipeline = selectedPipeline(issue);
   let mode = "implement";
   let labelName = pipeline && `agent:${pipeline}`;
@@ -1989,7 +2053,9 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)
   );
   const mostRecent = labelApplications[0];
-  if (!mostRecent || mostRecent.actor?.login !== maintainer) return;
+  if (!mostRecent) return;
+  const actor = mostRecent.actor;
+  if (!actor || actor.login !== maintainer) return;
   const quickTask = quickTaskRequest(issue, task.repository, pipeline);
   const intent = makeIntent({
     task,
@@ -2007,7 +2073,10 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     context: "",
     authorization: {
       authorized: true,
-      actor: mostRecent.actor.login,
+      // mostRecent.actor is proven defined by the guard just above: if it
+      // were undefined, `mostRecent.actor?.login` would be `undefined`,
+      // which cannot equal `maintainer` there without already returning.
+      actor: actor.login,
       configuredMaintainer: maintainer,
       rule: "reconcile-label-repair"
     }
@@ -2089,6 +2158,9 @@ async function dispatchReconcileScan(client, repository, issueNumbers) {
     } else {
       results.failed.push({
         issue: issueNumbers[index],
+        // Assumed Error-shaped, exactly as the untyped original assumed --
+        // mapWithConcurrency's `reason` is whatever the worker callback
+        // threw, unchanged.
         message: outcome.reason.message
       });
     }
@@ -2113,11 +2185,7 @@ async function dispatchAccepted(client, loaded) {
       await saveLedger(client, loaded);
     });
     try {
-      const binding = await dispatchWorker(
-        client,
-        generation,
-        loaded.ledger.task
-      );
+      const binding = await dispatchWorker(client, generation, loaded.ledger.task);
       bindRun(loaded.ledger, generation.generation, binding);
       await saveLedger(client, loaded);
       return;
@@ -2136,6 +2204,7 @@ async function dispatchAccepted(client, loaded) {
       markDispatchUnknown(
         loaded.ledger,
         generation.generation,
+        // Assumed Error-shaped, exactly as the untyped original assumed.
         error.message.slice(0, 300)
       );
       await saveLedger(client, loaded);
@@ -2155,8 +2224,18 @@ async function handleCompletion(client, loaded, normalized) {
     normalized.task,
     normalized.workerRunId
   );
-  const expectedWorkflow = workerWorkflow(generation?.pipeline);
-  assertWorkerRun(run, normalized.task, generation, expectedWorkflow);
+  const expectedWorkflow = workerWorkflow(
+    generation?.pipeline
+  );
+  assertWorkerRun(
+    run,
+    normalized.task,
+    generation,
+    expectedWorkflow
+  );
+  if (!generation) {
+    throw new Error(`Generation ${normalized.generation} not found`);
+  }
   if (normalized.workflow !== expectedWorkflow || !completionMatches(generation, normalized, run)) {
     throw new Error("Completion callback does not match the bound worker run");
   }
@@ -2187,7 +2266,12 @@ async function handleCompletion(client, loaded, normalized) {
         normalized.task,
         normalized.workerRunId
       );
-      assertWorkerRun(run, normalized.task, generation, expectedWorkflow);
+      assertWorkerRun(
+        run,
+        normalized.task,
+        generation,
+        expectedWorkflow
+      );
     } catch (error) {
       if (error instanceof GitHubApiError && (error.status === 404 || error.status >= 500)) {
         continue;
@@ -2211,14 +2295,24 @@ async function handleCompletion(client, loaded, normalized) {
   await saveLedger(client, loaded);
 }
 function resolveTask(normalized) {
-  return normalized.kind === "intent" ? normalized.intent.task : normalized.task;
+  return normalized.kind === "intent" ? normalized.intent.task : (
+    // Ignored events are filtered out by broker() before this is ever
+    // called; the cast documents that, matching the untyped original's own
+    // unguarded `.task` read for every other kind.
+    normalized.task
+  );
 }
 var EVICTION_TOLERANT_KINDS = /* @__PURE__ */ new Set(["control-evidence", "reconcile"]);
 async function wasSupersededEviction(client, task, runId, group, kind, error) {
-  if (error?.name !== "BrokerConcurrencyMismatchError" || !error.retryable) {
+  const candidate = error;
+  if (candidate?.name !== "BrokerConcurrencyMismatchError" || !candidate.retryable) {
     return false;
   }
-  const superseding = await findSupersedingRouterRun(client, task, runId);
+  const superseding = await findSupersedingRouterRun(
+    client,
+    task,
+    runId
+  );
   if (!superseding) return false;
   if (!EVICTION_TOLERANT_KINDS.has(kind)) {
     throw new Error(
@@ -2315,6 +2409,9 @@ async function broker() {
   }
   if (!loaded) {
     console.log(
+      // Only reachable when loadBrokerLedger's own untrackedPullRequestControl
+      // gate fired, i.e. normalized.kind === 'anchor-control' -- same
+      // assumption the untyped original made without checking.
       `::notice::Ignoring ${normalized.control.kind} for untracked pull request #${task.issue}; no dispatch ledger exists.`
     );
     return;
@@ -2346,7 +2443,9 @@ async function broker() {
         () => reconcileLedger(client, loaded, (/* @__PURE__ */ new Date()).toISOString(), runId)
       );
     } else {
-      throw new Error(`Unsupported normalized event kind: ${normalized.kind}`);
+      throw new Error(
+        `Unsupported normalized event kind: ${normalized.kind}`
+      );
     }
     await dispatchAccepted(client, loaded);
   } catch (error) {
@@ -2370,14 +2469,21 @@ async function preflight() {
   await runPhase(void 0, "authorization", async () => {
     const deadline = Date.now() + 6e4;
     while (Date.now() < deadline) {
-      const loaded = await loadLedger(client, task, "github-actions[bot]", {
-        createIfMissing: false
-      });
+      const loaded = await loadLedger(
+        client,
+        task,
+        "github-actions[bot]",
+        { createIfMissing: false }
+      );
       if (loaded && verifyPreflight(loaded.ledger, expected)) {
         const generation = loaded.ledger.generations.find(
           (candidate) => candidate.generation === expected.generation
         );
-        const run = await getWorkflowRun(client, task, expected.runId);
+        const run = await getWorkflowRun(
+          client,
+          task,
+          expected.runId
+        );
         assertWorkerRun(
           run,
           task,

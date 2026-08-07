@@ -8,7 +8,7 @@ import {
   parseAttemptId,
   parseDispatchMarker,
   parseRouterGroupMarker,
-} from './marker.js';
+} from './marker';
 
 describe('formatDispatchMarker', () => {
   it('renders the marker the worker run-name embeds', () => {

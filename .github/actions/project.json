@@ -4,35 +4,6 @@
   "sourceRoot": ".github/actions",
   "projectType": "library",
   "tags": ["platform:tooling", "scope:shared"],
-  "// why": "The composite actions' JavaScript was invisible to `pnpm lint`. Nx lint targets are per-project and `.github/actions` belonged to no project, so `nx run-many -t lint --all` (what ci.yml gates on) and `nx affected -t lint` (what the pre-push hook runs) both skipped roughly 4,000 lines of dispatch-broker control-plane code. Nothing was ignoring it; nobody was asking for it. This project exists so the @nx/eslint plugin infers a lint target here like anywhere else.",
-  "targets": {
-    "build": {
-      "// why": "Stage 1 of the dispatch-broker TS migration (language change comes in Stage 2). dispatch-broker/action.yml runs from a committed, dependency-free bundle instead of loose source files -- the runners it dispatches on never run `pnpm install` (agent-router.yml goes straight from checkout to this action; claude.yml verifies the broker binding before any Node setup), so a bundle that inlines everything at build time is the only way to run code that imports the workspace-local libs/dispatch-contracts package there. `nx build github-actions` (this target) is how the committed bundle at dispatch-broker/dist/main.mjs gets (re)produced; ci.yml's Verify job reruns it and diffs the result against what is committed to catch drift.",
-      "executor": "@nx/esbuild:esbuild",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "main": ".github/actions/dispatch-broker/main.mjs",
-        "outputPath": ".github/actions/dispatch-broker/dist",
-        "tsConfig": ".github/actions/dispatch-broker/tsconfig.bundle.json",
-        "platform": "node",
-        // Matches this repo's own Node engine (package.json `engines.node`)
-        // and setup-node-pnpm's default node-version -- the runner that
-        // executes the bundle at Action-run time is guaranteed to be at
-        // least this version.
-        "target": "node24",
-        "format": ["esm"],
-        "bundle": true,
-        "thirdParty": true,
-        "skipTypeCheck": true,
-        "esbuildOptions": {
-          "sourcemap": false,
-          // Without this, esbuild's ESM default output extension is `.js`
-          // (see @nx/esbuild's getOutExtension) -- action.yml's `run:`
-          // targets `dist/main.mjs` explicitly, matching the source
-          // entry's own `.mjs` extension.
-          "outExtension": { ".js": ".mjs" }
-        }
-      }
-    }
-  }
+  "// why": "Nx lint targets are per-project, and .github/actions belonged to no project -- so both gates that matter (ci.yml's `pnpm lint`, and the pre-push hook's `nx affected -t lint`) skipped every composite action's JavaScript. Nothing was ignoring it; nobody was asking for it. The dispatch broker has since moved to apps/dispatch-broker, but plan-image-publish, rerun-infra-killed-runs and run-dispatch-canary still live here, and this project is what keeps them linted.",
+  "targets": {}
 }

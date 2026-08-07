@@ -2,12 +2,21 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
+import type {
+  DispatchLedger,
+  DispatchPipeline,
+  FailurePhase,
+  LedgerGeneration,
+  LedgerTaskRef,
+} from '@agent-lcars/dispatch-contracts';
 import {
   classifyFailure,
   displayTitleMatchesAttempt,
   formatAttemptId,
   formatFailure,
-} from '../../../libs/dispatch-contracts/src/index.js';
+} from '@agent-lcars/dispatch-contracts';
+
+import type { AnchorControl } from './broker.js';
 import {
   acceptIntent,
   ACTIVE_STATES,
@@ -22,7 +31,7 @@ import {
   observeCompletion,
   recordControlEvidence,
   verifyPreflight,
-} from './broker.mjs';
+} from './broker.js';
 import {
   createGitHubApi,
   dispatchRouterEvent,
@@ -44,7 +53,15 @@ import {
   saveLedger,
   verifyBrokerConcurrency,
   workerWorkflow,
-} from './github-api.mjs';
+} from './github-api.js';
+import type { Intent } from './modules/intent.js';
+import type { PreflightExpectation } from './modules/scheduler.js';
+import type {
+  AnchorControlEvent,
+  CompletionEvent,
+  NormalizeContext,
+  NormalizedEvent,
+} from './normalize.js';
 import {
   makeIntent,
   normalizeEvent,
@@ -52,32 +69,140 @@ import {
   REVIEW_LABELS,
   selectedPipeline,
   selectedPipelineFrom,
-} from './normalize.mjs';
+} from './normalize.js';
 
-function env(name, required = true) {
+// --- GitHub webhook/REST shapes main.mjs reads. One set covering every
+// endpoint this file calls: the raw event payload off disk (normalize()),
+// issue/comment/timeline REST responses, and workflow run details. ---
+
+interface GitHubUserRef {
+  login?: string;
+  type?: string;
+}
+
+interface GitHubLabelRef {
+  name: string;
+}
+
+interface GitHubIssueComment {
+  id: number;
+  body: string;
+  created_at: string;
+  author_association?: string;
+  user?: GitHubUserRef;
+  pin?: boolean;
+}
+
+interface GitHubIssueDetail {
+  id: number;
+  number: number;
+  title: string;
+  body?: string | null;
+  labels?: (string | GitHubLabelRef)[];
+  assignees?: GitHubUserRef[];
+  pull_request?: unknown;
+  created_at: string;
+  updated_at: string;
+  merged?: boolean;
+  merged_at?: string | null;
+}
+
+interface GitHubTimelineEvent {
+  event?: string;
+  label?: { name?: string };
+  actor?: GitHubUserRef;
+  created_at: string;
+  id?: number;
+}
+
+/** The raw `GITHUB_EVENT_PATH` payload -- one shape covering every
+ *  `eventName` this action handles, exactly as the untyped original read
+ *  it. `inputs` is only present for `workflow_dispatch`. */
+interface GitHubEventPayload {
+  repository?: { full_name: string; id: number };
+  inputs?: Record<string, string>;
+  action: string;
+  issue?: GitHubIssueDetail;
+  pull_request?: GitHubIssueDetail;
+  comment?: GitHubIssueComment;
+  sender?: GitHubUserRef;
+  label?: GitHubLabelRef;
+}
+
+interface WorkflowRun {
+  id: number;
+  url: string;
+  html_url: string;
+  status: string;
+  conclusion: string | null;
+  updated_at: string;
+  display_title?: string;
+  repository?: { id: number };
+  event?: string;
+  path?: string;
+}
+
+interface GitHubApiRequestOptions {
+  method?: string;
+  body?: unknown;
+  timeoutMs?: number;
+}
+
+/** `createGitHubApi()`'s return shape -- see github-api.mjs. `requestOk` is
+ *  generic because its return shape is entirely endpoint-dependent; each
+ *  call site here names the shape it expects. */
+interface GitHubApiClient {
+  request: (
+    path: string,
+    options?: GitHubApiRequestOptions,
+  ) => Promise<{ status: number; data: unknown; headers: Headers }>;
+  requestOk: <T = unknown>(
+    path: string,
+    options?: GitHubApiRequestOptions,
+  ) => Promise<T>;
+}
+
+/** `loadLedger()`/`loadBrokerLedger()`'s return shape -- the ledger paired
+ *  with the GitHub comment carrying it. */
+interface LoadedLedger {
+  ledger: DispatchLedger;
+  comment: GitHubIssueComment;
+  created: boolean;
+  existingComments?: GitHubIssueComment[];
+}
+
+interface LedgerContext {
+  client: GitHubApiClient;
+  loaded: LoadedLedger;
+}
+
+function env(name: string, required = true): string {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);
   return value ?? '';
 }
 
-function output(name, value) {
+function output(name: string, value: unknown): Promise<void> {
   const path = env('GITHUB_OUTPUT');
   return fs.appendFile(path, `${name}=${value}\n`, 'utf8');
 }
 
-function encode(value) {
+function encode(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function decode(value) {
+function decode(value: string): unknown {
   return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
 }
 
-function api() {
+function api(): GitHubApiClient {
   return createGitHubApi({ token: env('GITHUB_TOKEN') });
 }
 
-function contextFor(event, inputs) {
+function contextFor(
+  event: GitHubEventPayload,
+  inputs: Record<string, string>,
+): NormalizeContext {
   return {
     repository: event.repository?.full_name ?? env('GITHUB_REPOSITORY'),
     repositoryId: event.repository?.id ?? Number(env('GITHUB_REPOSITORY_ID')),
@@ -128,7 +253,11 @@ function contextFor(event, inputs) {
 // warns against. The `phase` -- always caller-supplied, never guessed -- is
 // what makes this still useful: every failure it catches is at least
 // attributed to which controller step produced it.
-async function runPhase(ledgerContext, phase, step) {
+async function runPhase<T>(
+  ledgerContext: LedgerContext | undefined,
+  phase: FailurePhase,
+  step: () => T | Promise<T>,
+): Promise<T> {
   try {
     return await step();
   } catch (error) {
@@ -166,19 +295,21 @@ async function runPhase(ledgerContext, phase, step) {
   }
 }
 
-async function normalize() {
-  const event = JSON.parse(await fs.readFile(env('GITHUB_EVENT_PATH'), 'utf8'));
+async function normalize(): Promise<void> {
+  const event: GitHubEventPayload = JSON.parse(
+    await fs.readFile(env('GITHUB_EVENT_PATH'), 'utf8'),
+  );
   const eventName = env('GITHUB_EVENT_NAME');
-  const inputs = event.inputs ?? {};
+  const inputs: Record<string, string> = event.inputs ?? {};
   const context = contextFor(event, inputs);
   const client = api();
   if (eventName === 'workflow_dispatch') {
-    const issue = await client.requestOk(
+    const issue = await client.requestOk<GitHubIssueDetail>(
       `${repositoryPath({ repository: context.repository })}/issues/${inputs.issue}`,
     );
     event.issue = issue;
   }
-  let timeline = [];
+  let timeline: GitHubTimelineEvent[] = [];
   // The Issue Timeline API also covers pull requests (a PR number IS an
   // issue number under the hood), so a pull_request labeled/unlabeled event
   // -- the review-dispatch counterpart to an issue's labeled/unlabeled --
@@ -192,8 +323,16 @@ async function normalize() {
     (eventName === 'pull_request' &&
       ['labeled', 'unlabeled'].includes(event.action));
   if (wantsTimeline) {
+    // wantsTimeline is only true for an `issues`/`pull_request` event, both
+    // of which always carry one of the two -- recomputed independently here
+    // exactly as the original did.
     const numbered = event.issue ?? event.pull_request;
-    timeline = await client.requestOk(
+    if (!numbered) {
+      throw new Error(
+        `Event ${eventName}/${event.action} claimed a timeline but carried neither issue nor pull_request`,
+      );
+    }
+    timeline = await client.requestOk<GitHubTimelineEvent[]>(
       `${repositoryPath({ repository: context.repository })}/issues/${numbered.number}/timeline?per_page=100`,
     );
   }
@@ -215,8 +354,14 @@ async function normalize() {
       maintainer: env('MAINTAINER_LOGIN'),
     }),
   );
+  // Only some NormalizedEvent kinds carry `task`/`reason` at all; the `in`
+  // checks are the typed equivalent of the original's bare optional-chained
+  // property reads on a dynamically-shaped object.
+  const normalizedTask = 'task' in normalized ? normalized.task : undefined;
+  const normalizedReason =
+    'reason' in normalized ? normalized.reason : undefined;
   const issue =
-    normalized.task?.issue ?? event.issue?.number ?? Number(inputs.issue);
+    normalizedTask?.issue ?? event.issue?.number ?? Number(inputs.issue);
   await output('eligible', normalized.kind === 'ignored' ? 'false' : 'true');
   await output('issue', String(issue || ''));
   await output('repository-id', String(context.repositoryId));
@@ -227,16 +372,23 @@ async function normalize() {
       : '',
   );
   await output('payload', encode(normalized));
-  await output('reason', normalized.reason ?? '');
+  await output('reason', normalizedReason ?? '');
 }
 
-function activeGeneration(ledger) {
+function activeGeneration(
+  ledger: DispatchLedger,
+): LedgerGeneration | undefined {
   return ledger.generations.find((generation) =>
     ACTIVE_STATES.has(generation.state),
   );
 }
 
-function assertWorkerRun(run, task, generation, expectedWorkflow) {
+function assertWorkerRun(
+  run: WorkflowRun,
+  task: LedgerTaskRef,
+  generation: LedgerGeneration,
+  expectedWorkflow: string,
+): void {
   if (
     run.repository?.id !== task.repositoryId ||
     run.event !== 'workflow_dispatch' ||
@@ -247,11 +399,14 @@ function assertWorkerRun(run, task, generation, expectedWorkflow) {
   }
 }
 
-async function reconcileActive(client, loaded) {
+async function reconcileActive(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+): Promise<void> {
   let active = activeGeneration(loaded.ledger);
   if (!active) return;
   const expectedWorkflow = workerWorkflow(active.pipeline);
-  const matchingRuns = await findRunsForGeneration(
+  const matchingRuns: WorkflowRun[] = await findRunsForGeneration(
     client,
     loaded.ledger.task,
     active,
@@ -305,7 +460,7 @@ async function reconcileActive(client, loaded) {
     active = activeGeneration(loaded.ledger);
   }
   if (!active?.attempt?.runId) return;
-  const run = await getWorkflowRun(
+  const run: WorkflowRun = await getWorkflowRun(
     client,
     loaded.ledger.task,
     active.attempt.runId,
@@ -343,10 +498,19 @@ const RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1000;
 // retrying forever.
 const RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
 
-function reconcileAnomaliesFor(ledger, generationNumber, kind) {
+function reconcileAnomaliesFor(
+  ledger: DispatchLedger,
+  generationNumber: number,
+  kind: string,
+) {
   return ledger.anomalies.filter(
     (anomaly) =>
-      anomaly.kind === kind && anomaly.detail?.generation === generationNumber,
+      anomaly.kind === kind &&
+      // `detail` is deliberately untyped on LedgerAnomaly (each kind owns
+      // its own shape) -- every `addAnomaly` call below that records one of
+      // these two kinds always includes a numeric `generation` field.
+      (anomaly.detail as { generation?: number } | undefined)?.generation ===
+        generationNumber,
   );
 }
 
@@ -368,7 +532,12 @@ function reconcileAnomaliesFor(ledger, generationNumber, kind) {
 // 'reconcile-parked' check below short-circuits every later pass into a
 // true no-op once the bound is hit, and the age/interval gates prevent
 // double-counting a rapid re-run.
-async function trackMissingRun(client, loaded, generation, now) {
+async function trackMissingRun(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  generation: LedgerGeneration,
+  now: string,
+): Promise<void> {
   const ledger = loaded.ledger;
   if (
     reconcileAnomaliesFor(ledger, generation.generation, 'reconcile-parked')
@@ -530,11 +699,18 @@ async function trackMissingRun(client, loaded, generation, now) {
 // single-page read can find and trust a stale entry instead -- wrong in
 // either direction (authorizing on a superseded maintainer application,
 // or rejecting on a superseded non-maintainer one).
-async function repairMissingIntentFromLabel(client, loaded, now, runId) {
+async function repairMissingIntentFromLabel(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  now: string,
+  runId: number,
+): Promise<void> {
   const ledger = loaded.ledger;
   const task = ledger.task;
   const root = repositoryPath(task);
-  const issue = await client.requestOk(`${root}/issues/${task.issue}`);
+  const issue = await client.requestOk<GitHubIssueDetail>(
+    `${root}/issues/${task.issue}`,
+  );
   // review:* only ever applies to a pull request (normalize.mjs), and only
   // if the issue carries no agent:* label to repair from first -- the two
   // namespaces coexist, but a stuck agent:* dispatch takes priority since
@@ -553,7 +729,7 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   }
   if (!pipeline) return;
   const maintainer = env('MAINTAINER_LOGIN', false);
-  const timeline = await listAll(
+  const timeline: GitHubTimelineEvent[] = await listAll(
     client,
     `${root}/issues/${task.issue}/timeline`,
   );
@@ -566,7 +742,9 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
         Date.parse(right.created_at) - Date.parse(left.created_at),
     );
   const mostRecent = labelApplications[0];
-  if (!mostRecent || mostRecent.actor?.login !== maintainer) return;
+  if (!mostRecent) return;
+  const actor = mostRecent.actor;
+  if (!actor || actor.login !== maintainer) return;
 
   const quickTask = quickTaskRequest(issue, task.repository, pipeline);
   const intent = makeIntent({
@@ -585,7 +763,10 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     context: '',
     authorization: {
       authorized: true,
-      actor: mostRecent.actor.login,
+      // mostRecent.actor is proven defined by the guard just above: if it
+      // were undefined, `mostRecent.actor?.login` would be `undefined`,
+      // which cannot equal `maintainer` there without already returning.
+      actor: actor.login,
       configuredMaintainer: maintainer,
       rule: 'reconcile-label-repair',
     },
@@ -602,11 +783,11 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
 // NOT duplicated here -- this only closes reconcileActive()'s one remaining
 // gap (a persistently runless dispatch) and one defensive invariant check.
 async function reconcileLedger(
-  client,
-  loaded,
-  now = new Date().toISOString(),
-  runId,
-) {
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  now: string = new Date().toISOString(),
+  runId: number,
+): Promise<void> {
   const ledger = loaded.ledger;
   if (ledger.generations.length === 0) {
     await repairMissingIntentFromLabel(client, loaded, now, runId);
@@ -697,42 +878,60 @@ async function reconcileLedger(
 // every candidate and keeps per-candidate failure isolation, just bounded.
 const RECONCILE_DISPATCH_CONCURRENCY = 5;
 
-async function dispatchReconcileScan(client, repository, issueNumbers) {
+type ConcurrencyOutcome<T> =
+  { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
+
+interface ReconcileScanResults {
+  dispatched: number;
+  failed: { issue: number; message: string }[];
+}
+
+async function dispatchReconcileScan(
+  client: GitHubApiClient,
+  repository: string,
+  issueNumbers: number[],
+): Promise<ReconcileScanResults> {
   const task = { repository };
-  const outcomes = await mapWithConcurrency(
+  const outcomes: ConcurrencyOutcome<unknown>[] = await mapWithConcurrency(
     issueNumbers,
     RECONCILE_DISPATCH_CONCURRENCY,
-    (issueNumber) =>
+    (issueNumber: number) =>
       dispatchRouterEvent(client, task, {
         kind: 'reconcile',
         issue: String(issueNumber),
       }),
   );
-  const results = { dispatched: 0, failed: [] };
+  const results: ReconcileScanResults = { dispatched: 0, failed: [] };
   outcomes.forEach((outcome, index) => {
     if (outcome.status === 'fulfilled') {
       results.dispatched += 1;
     } else {
       results.failed.push({
         issue: issueNumbers[index],
-        message: outcome.reason.message,
+        // Assumed Error-shaped, exactly as the untyped original assumed --
+        // mapWithConcurrency's `reason` is whatever the worker callback
+        // threw, unchanged.
+        message: (outcome.reason as Error).message,
       });
     }
   });
   return results;
 }
 
-function isDefiniteDispatchRejection(error) {
+function isDefiniteDispatchRejection(error: unknown): error is GitHubApiError {
   return (
     error instanceof GitHubApiError &&
     Number.isInteger(error.status) &&
-    error.status >= 400 &&
-    error.status < 500 &&
-    ![408, 409, 429].includes(error.status)
+    (error.status as number) >= 400 &&
+    (error.status as number) < 500 &&
+    ![408, 409, 429].includes(error.status as number)
   );
 }
 
-async function dispatchAccepted(client, loaded) {
+async function dispatchAccepted(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+): Promise<void> {
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
       (candidate) => candidate.state === 'accepted',
@@ -747,11 +946,12 @@ async function dispatchAccepted(client, loaded) {
       await saveLedger(client, loaded);
     });
     try {
-      const binding = await dispatchWorker(
-        client,
-        generation,
-        loaded.ledger.task,
-      );
+      const binding: {
+        runId: number;
+        runUrl: string;
+        htmlUrl: string;
+        workflow: string;
+      } = await dispatchWorker(client, generation, loaded.ledger.task);
       bindRun(loaded.ledger, generation.generation, binding);
       await saveLedger(client, loaded);
       return;
@@ -779,7 +979,8 @@ async function dispatchAccepted(client, loaded) {
       markDispatchUnknown(
         loaded.ledger,
         generation.generation,
-        error.message.slice(0, 300),
+        // Assumed Error-shaped, exactly as the untyped original assumed.
+        (error as Error).message.slice(0, 300),
       );
       await saveLedger(client, loaded);
       return;
@@ -787,7 +988,11 @@ async function dispatchAccepted(client, loaded) {
   }
 }
 
-function completionMatches(generation, normalized, run) {
+function completionMatches(
+  generation: LedgerGeneration | undefined,
+  normalized: CompletionEvent,
+  run: WorkflowRun,
+): boolean | undefined {
   return (
     generation &&
     generation.intentId === normalized.intentId &&
@@ -797,17 +1002,40 @@ function completionMatches(generation, normalized, run) {
   );
 }
 
-async function handleCompletion(client, loaded, normalized) {
+async function handleCompletion(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  normalized: CompletionEvent,
+): Promise<void> {
   const generation = loaded.ledger.generations.find(
     (candidate) => candidate.generation === normalized.generation,
   );
-  let run = await getWorkflowRun(
+  let run: WorkflowRun = await getWorkflowRun(
     client,
     normalized.task,
     normalized.workerRunId,
   );
-  const expectedWorkflow = workerWorkflow(generation?.pipeline);
-  assertWorkerRun(run, normalized.task, generation, expectedWorkflow);
+  // A missing generation crashes below exactly as it always did (originally
+  // via an undefined destructure inside displayTitleMatchesAttempt); these
+  // assertions add no new runtime check, they only name the same
+  // already-assumed invariant for the compiler.
+  const expectedWorkflow = workerWorkflow(
+    generation?.pipeline as DispatchPipeline,
+  );
+  assertWorkerRun(
+    run,
+    normalized.task,
+    generation as LedgerGeneration,
+    expectedWorkflow,
+  );
+  // assertWorkerRun above did not throw, and per the comment on `generation`
+  // above, that is only possible if `generation` was actually defined --
+  // displayTitleMatchesAttempt destructures it and would have thrown first
+  // otherwise. This makes that already-proven invariant explicit for the
+  // compiler instead of asserting past it at every site below.
+  if (!generation) {
+    throw new Error(`Generation ${normalized.generation} not found`);
+  }
   if (
     normalized.workflow !== expectedWorkflow ||
     !completionMatches(generation, normalized, run)
@@ -842,11 +1070,16 @@ async function handleCompletion(client, loaded, normalized) {
         normalized.task,
         normalized.workerRunId,
       );
-      assertWorkerRun(run, normalized.task, generation, expectedWorkflow);
+      assertWorkerRun(
+        run,
+        normalized.task,
+        generation as LedgerGeneration,
+        expectedWorkflow,
+      );
     } catch (error) {
       if (
         error instanceof GitHubApiError &&
-        (error.status === 404 || error.status >= 500)
+        (error.status === 404 || (error.status as number) >= 500)
       ) {
         continue;
       }
@@ -869,14 +1102,17 @@ async function handleCompletion(client, loaded, normalized) {
   await saveLedger(client, loaded);
 }
 
-function resolveTask(normalized) {
+function resolveTask(normalized: NormalizedEvent): LedgerTaskRef {
   // Every normalized kind carries a canonical TaskRef, but intents nest
   // theirs under `.intent.task` (see normalize.mjs's makeIntent) while
   // completion/anchor-control/control-evidence carry `.task` at the top
   // level. Resolve per kind so broker() reads one consistent value.
   return normalized.kind === 'intent'
     ? normalized.intent.task
-    : normalized.task;
+    : // Ignored events are filtered out by broker() before this is ever
+      // called; the cast documents that, matching the untyped original's own
+      // unguarded `.task` read for every other kind.
+      (normalized as { task: LedgerTaskRef }).task;
 }
 
 // Only a `retryable: true` mismatch is eligible: every other failure mode
@@ -908,11 +1144,30 @@ function resolveTask(normalized) {
 // maintainer knows to manually re-dispatch it.
 const EVICTION_TOLERANT_KINDS = new Set(['control-evidence', 'reconcile']);
 
-async function wasSupersededEviction(client, task, runId, group, kind, error) {
-  if (error?.name !== 'BrokerConcurrencyMismatchError' || !error.retryable) {
+async function wasSupersededEviction(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+  runId: number,
+  group: string,
+  kind: string,
+  error: unknown,
+): Promise<boolean> {
+  // Genuinely untrusted here: whatever verifyBrokerConcurrency's caller
+  // threw, of any shape. Every field is checked before use, same as the
+  // untyped original's own optional-chained reads.
+  const candidate = error as
+    { name?: string; retryable?: boolean } | null | undefined;
+  if (
+    candidate?.name !== 'BrokerConcurrencyMismatchError' ||
+    !candidate.retryable
+  ) {
     return false;
   }
-  const superseding = await findSupersedingRouterRun(client, task, runId);
+  const superseding: WorkflowRun | undefined = await findSupersedingRouterRun(
+    client,
+    task,
+    runId,
+  );
   if (!superseding) return false;
   if (!EVICTION_TOLERANT_KINDS.has(kind)) {
     throw new Error(
@@ -974,7 +1229,11 @@ const FRESH_INTENT_OUTCOMES = new Set(['dispatch', 'pending']);
 // same underlying event reuses the same evidence sourceId) means a
 // redelivered event only re-saves the ledger when it actually added new
 // evidence, matching the pattern `handleCompletion` already uses below.
-async function healStaleAgentLabels(client, loaded, intent) {
+async function healStaleAgentLabels(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  intent: Intent,
+): Promise<void> {
   const staleLabels = intent.staleAgentLabels;
   if (!staleLabels?.length) return;
   const task = loaded.ledger.task;
@@ -982,7 +1241,7 @@ async function healStaleAgentLabels(client, loaded, intent) {
   // self-heal, whose namespace (agent:* vs review:* -- never mixed, see
   // normalize.mjs) is exactly what produced this intent's own `mode`.
   const eventLabel = `${intent.mode === 'review' ? 'review' : 'agent'}:${intent.pipeline}`;
-  const issue = await client.requestOk(
+  const issue = await client.requestOk<GitHubIssueDetail>(
     `${repositoryPath(task)}/issues/${task.issue}`,
   );
   const currentLabels = new Set(
@@ -990,8 +1249,8 @@ async function healStaleAgentLabels(client, loaded, intent) {
       typeof label === 'string' ? label : label.name,
     ),
   );
-  const removable = [];
-  const skipped = [];
+  const removable: string[] = [];
+  const skipped: string[] = [];
   for (const label of staleLabels) {
     if (currentLabels.has(label) && currentLabels.has(eventLabel)) {
       removable.push(label);
@@ -1022,7 +1281,12 @@ async function healStaleAgentLabels(client, loaded, intent) {
   if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
 }
 
-async function loadBrokerLedger(client, task, normalized, isPullRequest) {
+async function loadBrokerLedger(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+  normalized: NormalizedEvent,
+  isPullRequest: boolean,
+): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
   // anchor; do not create ledger comments on ordinary PRs just because their
@@ -1036,13 +1300,21 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest) {
   });
 }
 
-async function applyAnchorControlTransition(client, loaded, control) {
+async function applyAnchorControlTransition(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  control: AnchorControl,
+): Promise<void> {
   applyAnchorControl(loaded.ledger, control);
   await saveLedger(client, loaded);
 }
 
-async function broker() {
-  const normalized = decode(env('BROKER_PAYLOAD'));
+async function broker(): Promise<void> {
+  // encode()/decode() round-trip a NormalizedEvent through a GitHub Actions
+  // output within this same action's own two jobs (normalize -> broker); no
+  // external tamper surface beyond GitHub's own output-passing, and the
+  // original decode() applied no validation here either.
+  const normalized = decode(env('BROKER_PAYLOAD')) as NormalizedEvent;
   if (normalized.kind === 'ignored') return;
   const task = resolveTask(normalized);
   const client = api();
@@ -1077,7 +1349,7 @@ async function broker() {
     }
     throw error;
   }
-  let loaded;
+  let loaded: LoadedLedger | undefined;
   try {
     loaded = await loadBrokerLedger(client, task, normalized, isPullRequest);
   } catch (error) {
@@ -1085,7 +1357,10 @@ async function broker() {
   }
   if (!loaded) {
     console.log(
-      `::notice::Ignoring ${normalized.control.kind} for untracked pull ` +
+      // Only reachable when loadBrokerLedger's own untrackedPullRequestControl
+      // gate fired, i.e. normalized.kind === 'anchor-control' -- same
+      // assumption the untyped original made without checking.
+      `::notice::Ignoring ${(normalized as AnchorControlEvent).control.kind} for untracked pull ` +
         `request #${task.issue}; no dispatch ledger exists.`,
     );
     return;
@@ -1121,7 +1396,12 @@ async function broker() {
         reconcileLedger(client, loaded, new Date().toISOString(), runId),
       );
     } else {
-      throw new Error(`Unsupported normalized event kind: ${normalized.kind}`);
+      // Unreachable given NormalizedEvent's current, exhaustively-handled
+      // kinds -- this branch only guards a future kind added without a
+      // matching arm here, same defensive intent as the untyped original.
+      throw new Error(
+        `Unsupported normalized event kind: ${(normalized as NormalizedEvent).kind}`,
+      );
     }
     await dispatchAccepted(client, loaded);
   } catch (error) {
@@ -1129,13 +1409,13 @@ async function broker() {
   }
 }
 
-async function preflight() {
-  const task = {
+async function preflight(): Promise<void> {
+  const task: LedgerTaskRef = {
     repositoryId: Number(env('GITHUB_REPOSITORY_ID')),
     repository: env('GITHUB_REPOSITORY'),
     issue: Number(env('BROKER_ISSUE')),
   };
-  const expected = {
+  const expected: PreflightExpectation = {
     task,
     generation: Number(env('BROKER_GENERATION')),
     intentId: env('BROKER_INTENT_ID'),
@@ -1151,19 +1431,28 @@ async function preflight() {
   await runPhase(undefined, 'authorization', async () => {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
-      const loaded = await loadLedger(client, task, 'github-actions[bot]', {
-        createIfMissing: false,
-      });
+      const loaded: LoadedLedger | undefined = await loadLedger(
+        client,
+        task,
+        'github-actions[bot]',
+        { createIfMissing: false },
+      );
       if (loaded && verifyPreflight(loaded.ledger, expected)) {
         const generation = loaded.ledger.generations.find(
           (candidate) => candidate.generation === expected.generation,
         );
-        const run = await getWorkflowRun(client, task, expected.runId);
+        const run: WorkflowRun = await getWorkflowRun(
+          client,
+          task,
+          expected.runId,
+        );
+        // verifyPreflight() just confirmed a matching generation exists;
+        // same assumption the untyped original made without re-checking.
         assertWorkerRun(
           run,
           task,
-          generation,
-          workerWorkflow(generation.pipeline),
+          generation as LedgerGeneration,
+          workerWorkflow((generation as LedgerGeneration).pipeline),
         );
         await output('authorized', 'true');
         // Derived from the same generation/intentId preflight just verified,
@@ -1187,9 +1476,9 @@ async function preflight() {
   });
 }
 
-async function completionCallback() {
+async function completionCallback(): Promise<void> {
   const client = api();
-  const task = {
+  const task: LedgerTaskRef = {
     repositoryId: Number(env('GITHUB_REPOSITORY_ID')),
     repository: env('GITHUB_REPOSITORY'),
     issue: Number(env('BROKER_ISSUE')),
@@ -1215,13 +1504,18 @@ async function completionCallback() {
 // left active after its last agent:* label was removed). Deduplicated by
 // issue number the same way listOpenAgentLabeledIssues dedupes across its
 // own per-label queries.
-async function discoverReconcileCandidates(client, repository, fleetLogin) {
+async function discoverReconcileCandidates(
+  client: GitHubApiClient,
+  repository: string,
+  fleetLogin: string,
+): Promise<GitHubIssueDetail[]> {
   const task = { repository };
-  const [labeled, assigned] = await Promise.all([
-    listOpenAgentLabeledIssues(client, task),
-    listOpenIssuesAssignedTo(client, task, fleetLogin),
-  ]);
-  const byNumber = new Map();
+  const [labeled, assigned]: [GitHubIssueDetail[], GitHubIssueDetail[]] =
+    await Promise.all([
+      listOpenAgentLabeledIssues(client, task),
+      listOpenIssuesAssignedTo(client, task, fleetLogin),
+    ]);
+  const byNumber = new Map<number, GitHubIssueDetail>();
   for (const issue of [...labeled, ...assigned]) {
     if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
   }
@@ -1238,7 +1532,7 @@ async function discoverReconcileCandidates(client, repository, fleetLogin) {
 // itself still fails loud afterwards (unlike an individual reconcile's own
 // bounded-retry parking, which stays green by design) so a systemic
 // dispatch problem (e.g. a bad token) is visible.
-async function scanReconcile() {
+async function scanReconcile(): Promise<void> {
   const client = api();
   const repository = env('GITHUB_REPOSITORY');
   const candidates = await discoverReconcileCandidates(

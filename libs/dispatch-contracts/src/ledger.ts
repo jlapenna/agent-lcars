@@ -20,10 +20,10 @@
  * builds it on this one set of definitions.
  */
 
-import { isWellFormedFailureClassification } from './failure.js';
-import { isDispatchPipeline } from './pipelines.js';
-
-/** @typedef {import('./pipelines.js').DispatchPipeline} DispatchPipeline */
+import type { FailureClassification } from './failure';
+import { isWellFormedFailureClassification } from './failure';
+import type { DispatchPipeline } from './pipelines';
+import { isDispatchPipeline } from './pipelines';
 
 export const LEDGER_MARKER = '<!-- agent-lcars:dispatch-ledger:v1 -->';
 export const LEDGER_SCHEMA = 'agent-lcars.dispatch-ledger/v1';
@@ -35,7 +35,7 @@ export const LEDGER_SCHEMA = 'agent-lcars.dispatch-ledger/v1';
  * rather than hand-listed a second time as a type — the same reason the
  * console's copy used to pair a `_LIST` with a `(typeof ...)[number]`.
  */
-export const LEDGER_GENERATION_STATES = /** @type {const} */ ([
+export const LEDGER_GENERATION_STATES = [
   'accepted',
   'pending',
   'dispatching',
@@ -47,17 +47,16 @@ export const LEDGER_GENERATION_STATES = /** @type {const} */ ([
   'completed',
   'superseded',
   'superseded-by-close',
-]);
+] as const;
 
-/** @typedef {(typeof LEDGER_GENERATION_STATES)[number]} LedgerGenerationState */
+export type LedgerGenerationState = (typeof LEDGER_GENERATION_STATES)[number];
 
 /**
  * The states in which a generation still has, or is about to have, a live
  * workflow attempt. The broker enforces at most one generation in this set at
  * a time, which is what makes "the active generation" well defined.
- * @type {ReadonlySet<string>}
  */
-export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
+export const LEDGER_ACTIVE_GENERATION_STATES: ReadonlySet<string> = new Set([
   'dispatching',
   'dispatch-unknown',
   'active',
@@ -69,97 +68,126 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
  * The canonical task a ledger belongs to. `repositoryId` is GitHub's numeric
  * repository ID: it is what makes the binding survive a repository rename,
  * which the `repository` string alone would not.
- *
- * @typedef {object} LedgerTaskRef
- * @property {number} repositoryId
- * @property {string} repository `owner/name`.
- * @property {number} issue
  */
+export interface LedgerTaskRef {
+  repositoryId: number;
+  /** `owner/name`. */
+  repository: string;
+  issue: number;
+}
 
 /**
  * One workflow attempt for a generation. Every field past `token` is written
  * by a specific broker transition, so their presence is itself the record of
  * how far the attempt got.
- *
- * @typedef {object} LedgerRunAttempt
- * @property {string} [attemptId] The attempt's stable public identity,
- *   `g<generation>:<intentId>` (see marker.js's `formatAttemptId`). Written
- *   once at `beginDispatch` and never rewritten. This is what the run title's
- *   marker encodes, so it is the join key between a ledger entry and the
- *   GitHub Actions run that executed it. Absent on attempts recorded before
- *   this field existed.
- * @property {string} [token] Immutable dispatch token minted at
- *   `beginDispatch`, echoed back by the worker's preflight to prove the run
- *   is the one this generation dispatched.
- * @property {string} [dispatchStartedAt] Set by `beginDispatch`.
- * @property {number} [runId] Set by `bindRun` once the run is identified.
- * @property {string} [runUrl] Set by `bindRun`.
- * @property {string} [htmlUrl] Set by `bindRun`.
- * @property {string} [boundAt] Set by `bindRun`.
- * @property {string} [unknownAt] Set by `markDispatchUnknown` when the
- *   dispatch response was lost and the run may or may not exist.
- * @property {string} [unknownReason] Set by `markDispatchUnknown`.
- * @property {string} [rejectedAt] Set by `markDispatchRejected` when the
- *   dispatch definitively did not start.
- * @property {string} [rejectionReason] Set by `markDispatchRejected`.
- * @property {string} [completionObservedAt] Set by `observeCompletion` from
- *   the worker's own callback — an observation, not yet authority.
- * @property {string} [lastObservedAt] Set by `awaitTerminal` each time the
- *   run was polled and was not yet terminal.
- * @property {string} [status] Authoritative run status at `completeRun`.
- * @property {string} [conclusion] Authoritative run conclusion.
- * @property {string} [completedAt] Authoritative terminal timestamp.
  */
+export interface LedgerRunAttempt {
+  /** The attempt's stable public identity,
+   *   `g<generation>:<intentId>` (see marker.js's `formatAttemptId`). Written
+   *   once at `beginDispatch` and never rewritten. This is what the run title's
+   *   marker encodes, so it is the join key between a ledger entry and the
+   *   GitHub Actions run that executed it. Absent on attempts recorded before
+   *   this field existed. */
+  attemptId?: string;
+  /** Immutable dispatch token minted at
+   *   `beginDispatch`, echoed back by the worker's preflight to prove the run
+   *   is the one this generation dispatched. */
+  token?: string;
+  /** Set by `beginDispatch`. */
+  dispatchStartedAt?: string;
+  /** Set by `bindRun` once the run is identified. */
+  runId?: number;
+  /** Set by `bindRun`. */
+  runUrl?: string;
+  /** Set by `bindRun`. */
+  htmlUrl?: string;
+  /** Set by `bindRun`. */
+  boundAt?: string;
+  /** Set by `markDispatchUnknown` when the
+   *   dispatch response was lost and the run may or may not exist. */
+  unknownAt?: string;
+  /** Set by `markDispatchUnknown`. */
+  unknownReason?: string;
+  /** Set by `markDispatchRejected` when the
+   *   dispatch definitively did not start. */
+  rejectedAt?: string;
+  /** Set by `markDispatchRejected`. */
+  rejectionReason?: string;
+  /** Set by `observeCompletion` from
+   *   the worker's own callback — an observation, not yet authority. */
+  completionObservedAt?: string;
+  /** Set by `awaitTerminal` each time the
+   *   run was polled and was not yet terminal. */
+  lastObservedAt?: string;
+  /** Authoritative run status at `completeRun`. */
+  status?: string;
+  /** Authoritative run conclusion. */
+  conclusion?: string;
+  /** Authoritative terminal timestamp. */
+  completedAt?: string;
+}
 
-/**
- * @typedef {object} LedgerGeneration
- * @property {number} generation 1-based, monotonic within a ledger.
- * @property {string} intentId
- * @property {string} sourceId Joins to the `sources` entry that caused it.
- * @property {string} occurredAt
- * @property {DispatchPipeline} pipeline
- * @property {string} [mode] `implement` or `review`.
- * @property {string} [runbook]
- * @property {string} [context] Routed issue context handed to the agent.
- * @property {string} [reply] The comment body that triggered a reply-mode run.
- * @property {string} [digest] Semantic digest; a repeat of the same intent ID
- *   with a different digest is a reuse error, not a duplicate.
- * @property {LedgerGenerationState} state
- * @property {LedgerRunAttempt} [attempt]
- */
+export interface LedgerGeneration {
+  /** 1-based, monotonic within a ledger. */
+  generation: number;
+  intentId: string;
+  /** Joins to the `sources` entry that caused it. */
+  sourceId: string;
+  occurredAt: string;
+  pipeline: DispatchPipeline;
+  /** `implement` or `review`. */
+  mode?: string;
+  runbook?: string;
+  /** Routed issue context handed to the agent. */
+  context?: string;
+  /** The comment body that triggered a reply-mode run. */
+  reply?: string;
+  /** Semantic digest; a repeat of the same intent ID
+   *   with a different digest is a reuse error, not a duplicate. */
+  digest?: string;
+  state: LedgerGenerationState;
+  attempt?: LedgerRunAttempt;
+}
 
 /**
  * The evidence for why a generation exists. This is the record the issue's
  * source-of-truth table calls "raw external signal and authorization
  * evidence", so it carries the authorization decision itself, not just a
  * pointer to one.
- *
- * @typedef {object} LedgerSource
- * @property {string} sourceKind A label add, a maintainer reply, the router's
- *   own `opened` event, and so on.
- * @property {string} sourceId
- * @property {string} [intentId] Joins this evidence to the generation it
- *   produced.
- * @property {number} [transportRunId]
- * @property {string} occurredAt
- * @property {string} [digest] Semantic digest of the intent this evidence
- *   carried, used to detect an intent ID reused with different content.
- * @property {LedgerAuthorization} [authorization] The decision that admitted
- *   this signal, retained as an audit record.
  */
+export interface LedgerSource {
+  /** A label add, a maintainer reply, the router's
+   *   own `opened` event, and so on. */
+  sourceKind: string;
+  sourceId: string;
+  /** Joins this evidence to the generation it
+   *   produced. */
+  intentId?: string;
+  transportRunId?: number;
+  occurredAt: string;
+  /** Semantic digest of the intent this evidence
+   *   carried, used to detect an intent ID reused with different content. */
+  digest?: string;
+  /** The decision that admitted
+   *   this signal, retained as an audit record. */
+  authorization?: LedgerAuthorization;
+}
 
 /**
  * A real authorization decision: some actor did something, and policy either
  * admitted it or did not.
- *
- * @typedef {object} LedgerAuthorizationDecision
- * @property {boolean} authorized
- * @property {string} [actor] The login whose action produced the signal.
- * @property {string} [configuredMaintainer] The maintainer login `authorized`
- *   was evaluated against, kept so an old decision stays auditable after the
- *   configured maintainer changes.
- * @property {string} [rule] Which policy clause decided it.
  */
+export interface LedgerAuthorizationDecision {
+  authorized: boolean;
+  /** The login whose action produced the signal. */
+  actor?: string;
+  /** The maintainer login `authorized`
+   *   was evaluated against, kept so an old decision stays auditable after the
+   *   configured maintainer changes. */
+  configuredMaintainer?: string;
+  /** Which policy clause decided it. */
+  rule?: string;
+}
 
 /**
  * Evidence that something *happened*, carrying no decision at all.
@@ -171,52 +199,52 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
  * that `authorized` exists on records that never had it, and hide the
  * `workflow`/`actor` evidence that is the only thing these records carry.
  * Discriminate on `observed` before reading `authorized`.
- *
- * @typedef {object} LedgerAuthorizationObservation
- * @property {true} observed
- * @property {string} [actor] The login or component that observed it.
- * @property {string} [workflow] The worker workflow a completion callback
- *   arrived from.
  */
+export interface LedgerAuthorizationObservation {
+  observed: true;
+  /** The login or component that observed it. */
+  actor?: string;
+  /** The worker workflow a completion callback
+   *   arrived from. */
+  workflow?: string;
+}
 
-/**
- * @typedef {LedgerAuthorizationDecision | LedgerAuthorizationObservation} LedgerAuthorization
- */
+export type LedgerAuthorization =
+  LedgerAuthorizationDecision | LedgerAuthorizationObservation;
 
-/**
- * @typedef {object} LedgerAnomaly
- * @property {string} kind
- * @property {unknown} [detail] Deliberately untyped: each anomaly kind
- *   carries its own detail shape, and a consumer must render one without
- *   assuming that shape.
- * @property {string} occurredAt
- * @property {import('./failure.js').FailureClassification} [failure] The
- *   owning-system/phase/reason/retry vocabulary (#645), layered onto the
- *   pre-existing free-form `kind`/`detail` rather than replacing them.
- *   Optional because every anomaly recorded before this field existed has
- *   none, and `isWellFormedAnomaly` must keep accepting those unchanged.
- */
+export interface LedgerAnomaly {
+  kind: string;
+  /** Deliberately untyped: each anomaly kind
+   *   carries its own detail shape, and a consumer must render one without
+   *   assuming that shape. */
+  detail?: unknown;
+  occurredAt: string;
+  /** The
+   *   owning-system/phase/reason/retry vocabulary (#645), layered onto the
+   *   pre-existing free-form `kind`/`detail` rather than replacing them.
+   *   Optional because every anomaly recorded before this field existed has
+   *   none, and `isWellFormedAnomaly` must keep accepting those unchanged. */
+  failure?: FailureClassification;
+}
 
-/**
- * @typedef {object} LedgerControl
- * @property {boolean} closed
- * @property {string} [sourceId]
- * @property {string} [occurredAt]
- * @property {boolean} [merged]
- */
+export interface LedgerControl {
+  closed: boolean;
+  sourceId?: string;
+  occurredAt?: string;
+  merged?: boolean;
+}
 
-/**
- * @typedef {object} DispatchLedger
- * @property {string} schema
- * @property {number} revision
- * @property {LedgerTaskRef} task
- * @property {string} createdAt
- * @property {string} updatedAt
- * @property {LedgerControl} control
- * @property {LedgerSource[]} sources
- * @property {LedgerGeneration[]} generations
- * @property {LedgerAnomaly[]} anomalies
- */
+export interface DispatchLedger {
+  schema: string;
+  revision: number;
+  task: LedgerTaskRef;
+  createdAt: string;
+  updatedAt: string;
+  control: LedgerControl;
+  sources: LedgerSource[];
+  generations: LedgerGeneration[];
+  anomalies: LedgerAnomaly[];
+}
 
 /**
  * The comment envelope. Both the marker and the fenced JSON block are part of
@@ -241,21 +269,19 @@ const LEDGER_JSON_BLOCK_RE = /```json([\s\S]*?)```/gu;
  * Render a ledger comment. `summary` is the human-readable line shown above
  * the collapsed machine state — the writer computes it, because what is worth
  * summarizing is broker policy, but the envelope around it is contract.
- *
- * @param {DispatchLedger} ledger
- * @param {string} summary
- * @returns {string}
  */
-export function renderLedgerComment(ledger, summary) {
+export function renderLedgerComment(
+  ledger: DispatchLedger,
+  summary: string,
+): string {
   return `${LEDGER_MARKER}\n${summary}\n\n<details><summary>Machine state</summary>\n\n\`\`\`json\n${JSON.stringify(ledger)}\n\`\`\`\n\n</details>`;
 }
 
-/**
- * @typedef {{ ok: true, ledger: unknown }
- *   | { ok: false, reason: 'no-marker' }
- *   | { ok: false, reason: 'block-count', blocks: number }
- *   | { ok: false, reason: 'invalid-json' }} LedgerCommentExtraction
- */
+export type LedgerCommentExtraction =
+  | { ok: true; ledger: unknown }
+  | { ok: false; reason: 'no-marker' }
+  | { ok: false; reason: 'block-count'; blocks: number }
+  | { ok: false; reason: 'invalid-json' };
 
 /**
  * Pull the machine state out of a ledger comment, without judging it.
@@ -264,11 +290,8 @@ export function renderLedgerComment(ledger, summary) {
  * broker turns any failure into a thrown error, the console turns each into a
  * distinct warning. `ledger` is `unknown` on success — extraction proves the
  * comment carried one JSON block, nothing about what is in it.
- *
- * @param {unknown} body
- * @returns {LedgerCommentExtraction}
  */
-export function extractLedgerComment(body) {
+export function extractLedgerComment(body: unknown): LedgerCommentExtraction {
   if (typeof body !== 'string' || !body.includes(LEDGER_MARKER)) {
     return { ok: false, reason: 'no-marker' };
   }
@@ -286,43 +309,30 @@ export function extractLedgerComment(body) {
 /**
  * Whether a comment body carries the ledger marker at all. An issue predating
  * the broker rollout is expected to have none, which is not an anomaly.
- *
- * @param {string} body
- * @returns {boolean}
  */
-export function hasLedgerMarker(body) {
+export function hasLedgerMarker(body: string): boolean {
   return body.includes(LEDGER_MARKER);
 }
 
-/**
- * @param {unknown} value
- * @returns {value is Record<string, unknown>}
- */
-export function isPlainObject(value) {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * @param {unknown} value
- * @returns {value is string}
- */
-function isNonEmptyString(value) {
+function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-/**
- * @param {unknown} value
- * @returns {value is number}
- */
-function isPositiveInteger(value) {
-  return Number.isSafeInteger(value) && /** @type {number} */ (value) > 0;
+function isPositiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
 }
 
 // Widened to `string` deliberately: this set exists to answer "is this
 // arbitrary parsed value one of the known states", which a `Set` of the
 // literal union would refuse to be asked.
-const GENERATION_STATES = /** @type {ReadonlySet<string>} */ (
-  new Set(LEDGER_GENERATION_STATES)
+const GENERATION_STATES: ReadonlySet<string> = new Set(
+  LEDGER_GENERATION_STATES,
 );
 
 /**
@@ -334,11 +344,10 @@ const GENERATION_STATES = /** @type {ReadonlySet<string>} */ (
  * shape. Verifying only that `generations` was an array let a ledger with
  * `generations: [null]`, or a generation missing `state`, through — and it
  * crashed rendering downstream instead of degrading.
- *
- * @param {unknown} value
- * @returns {value is LedgerGeneration}
  */
-export function isWellFormedGeneration(value) {
+export function isWellFormedGeneration(
+  value: unknown,
+): value is LedgerGeneration {
   if (!isPlainObject(value)) return false;
   if (!isPositiveInteger(value.generation)) return false;
   if (!isNonEmptyString(value.intentId)) return false;
@@ -361,20 +370,12 @@ export function isWellFormedGeneration(value) {
   return true;
 }
 
-/**
- * @param {unknown} value
- * @returns {value is LedgerSource}
- */
-export function isWellFormedSource(value) {
+export function isWellFormedSource(value: unknown): value is LedgerSource {
   if (!isPlainObject(value)) return false;
   return isNonEmptyString(value.sourceKind) && isNonEmptyString(value.sourceId);
 }
 
-/**
- * @param {unknown} value
- * @returns {value is LedgerAnomaly}
- */
-export function isWellFormedAnomaly(value) {
+export function isWellFormedAnomaly(value: unknown): value is LedgerAnomaly {
   if (!isPlainObject(value)) return false;
   if (!isNonEmptyString(value.kind) || !isNonEmptyString(value.occurredAt)) {
     return false;
@@ -405,11 +406,8 @@ export function isWellFormedAnomaly(value) {
  * active/pending cardinality or cross-check the numeric `repositoryId`, both
  * of which the broker must enforce and a read path has no cheap way to. A
  * caller that needs those layers them on top.
- *
- * @param {unknown} value
- * @returns {value is DispatchLedger}
  */
-export function isWellFormedLedger(value) {
+export function isWellFormedLedger(value: unknown): value is DispatchLedger {
   if (!isPlainObject(value)) return false;
   if (value.schema !== LEDGER_SCHEMA) return false;
   if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 0) {

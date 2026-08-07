@@ -5,12 +5,10 @@
     "outDir": "dist",
     "types": ["node"],
     "composite": true,
-    "allowJs": true,
-    "checkJs": true,
     "noPropertyAccessFromIndexSignature": false,
     "tsBuildInfoFile": "dist/tsconfig.spec.tsbuildinfo"
   },
-  "include": ["src/**/*.spec.js", "src/**/*.d.ts"],
+  "include": ["src/**/*.spec.ts", "src/**/*.d.ts"],
   "references": [
     {
       "path": "./tsconfig.lib.json"

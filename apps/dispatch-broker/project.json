@@ -1,0 +1,33 @@
+{
+  "name": "@agent-lcars/dispatch-broker",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/dispatch-broker/src",
+  "projectType": "application",
+  "tags": ["platform:server", "scope:shared"],
+  "// why": "The source lives here rather than under .github/actions because that directory is deployment surface: it holds action.yml and the committed bundle this target produces, and nothing else. Keeping the source in a normal Nx app is what gives it lint, typecheck, test and build targets on the same terms as every other project.",
+  "targets": {
+    "build": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "platform": "node",
+        "target": "node24",
+        "format": ["esm"],
+        "bundle": true,
+        "thirdParty": true,
+        "outputPath": ".github/actions/dispatch-broker/dist",
+        "outputFileName": "main.mjs",
+        "main": "apps/dispatch-broker/src/main.ts",
+        "tsConfig": "apps/dispatch-broker/tsconfig.build.json",
+        "generatePackageJson": false,
+        "skipTypeCheck": false,
+        "esbuildOptions": {
+          "sourcemap": false,
+          "outExtension": {
+            ".js": ".mjs"
+          }
+        }
+      }
+    }
+  }
+}

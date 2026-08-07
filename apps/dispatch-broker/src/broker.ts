@@ -1,11 +1,19 @@
 import crypto from 'node:crypto';
 
+import type {
+  DispatchLedger,
+  FailureClassification,
+  LedgerAuthorization,
+  LedgerSource,
+  LedgerTaskRef,
+} from '@agent-lcars/dispatch-contracts';
 import {
   extractLedgerComment,
   LEDGER_MARKER,
   LEDGER_SCHEMA,
   renderLedgerComment as renderLedgerCommentContract,
-} from '../../../libs/dispatch-contracts/src/index.js';
+} from '@agent-lcars/dispatch-contracts';
+
 // #645 Phase 2: intent acceptance/ordering and the generation state machine
 // now live in their own modules, over the ledger primitives in
 // modules/ledger-core.mjs. broker.mjs imports all three back here purely to
@@ -23,14 +31,14 @@ import {
   acceptIntent,
   compareIntentOrder,
   validateIntent,
-} from './modules/intent.mjs';
+} from './modules/intent.js';
 import {
   ACTIVE_STATES,
   assertTaskRef,
   createLedger,
   mutate,
   validateLedger,
-} from './modules/ledger-core.mjs';
+} from './modules/ledger-core.js';
 import {
   awaitTerminal,
   beginDispatch,
@@ -40,7 +48,7 @@ import {
   markDispatchUnknown,
   observeCompletion,
   verifyPreflight,
-} from './modules/scheduler.mjs';
+} from './modules/scheduler.js';
 
 // 'canary' (#307) is a dedicated, structurally-no-op fourth pipeline: it
 // exists purely to prove the broker's own claim/dispatch/completion-
@@ -49,22 +57,26 @@ import {
 // with the shared pipeline registry -- see
 // libs/dispatch-contracts/src/pipelines.js's canary contract.
 
-function canonicalJson(value) {
+function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value && typeof value === 'object') {
-    return `{${Object.keys(value)
+    // `typeof value === 'object'` proves an object, not that it is safe to
+    // index by arbitrary string keys -- Object.keys() below only ever hands
+    // back the object's own keys, so indexing with one of them is safe.
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
       .join(',')}}`;
   }
   return JSON.stringify(value);
 }
 
-function digest(value) {
+function digest(value: unknown): string {
   return crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
-function parseLedgerComment(body, task) {
+function parseLedgerComment(body: string, task: LedgerTaskRef): DispatchLedger {
   const extraction = extractLedgerComment(body);
   if (!extraction.ok) {
     if (extraction.reason === 'no-marker') {
@@ -79,7 +91,7 @@ function parseLedgerComment(body, task) {
   return validateLedger(extraction.ledger, task);
 }
 
-function visibleSummary(ledger) {
+function visibleSummary(ledger: DispatchLedger): string {
   const active = ledger.generations.find((generation) =>
     ACTIVE_STATES.has(generation.state),
   );
@@ -98,11 +110,31 @@ function visibleSummary(ledger) {
     : `Dispatch broker: waiting for an authorized intent${closed}.`;
 }
 
-function renderLedgerComment(ledger) {
+function renderLedgerComment(ledger: DispatchLedger): string {
   return renderLedgerCommentContract(ledger, visibleSummary(ledger));
 }
 
-function applyAnchorControl(ledger, control, now = new Date().toISOString()) {
+/**
+ * The anchor-control signal normalize.mjs produces for a pull request
+ * close/reopen or an issue closed/reopened event -- see its two
+ * `kind: 'anchor-control'` branches.
+ */
+export interface AnchorControl {
+  kind: 'closed' | 'reopened';
+  sourceId: string;
+  occurredAt: string;
+  transportRunId: number;
+  authorization: LedgerAuthorization;
+  merged: boolean;
+}
+
+export type AnchorControlOutcome = 'duplicate' | 'closed' | 'reopened';
+
+function applyAnchorControl(
+  ledger: DispatchLedger,
+  control: AnchorControl,
+  now: string = new Date().toISOString(),
+): { outcome: AnchorControlOutcome; ledger: DispatchLedger } {
   if (!['closed', 'reopened'].includes(control.kind))
     throw new Error('Invalid anchor control');
   if (!control.sourceId) throw new Error('Anchor control source ID missing');
@@ -134,11 +166,27 @@ function applyAnchorControl(ledger, control, now = new Date().toISOString()) {
   return { outcome: control.kind, ledger };
 }
 
+/**
+ * The evidence recorded for a completion callback or an unlabeled/label-
+ * repair event -- a `LedgerSource` plus the handful of extra fields those
+ * two call sites (main.mjs's `handleCompletion`, normalize.mjs's
+ * `unlabeled` branch) attach for their own audit purposes. Not part of the
+ * shared `LedgerSource` contract because nothing else reads them off a
+ * source record.
+ */
+export interface ControlEvidence extends LedgerSource {
+  runId?: number;
+  label?: string;
+  /** Set only by main.mjs's healStaleAgentLabels: the stale label(s) a
+   *  dual-label self-heal removed. */
+  labels?: string[];
+}
+
 function recordControlEvidence(
-  ledger,
-  evidence,
-  now = new Date().toISOString(),
-) {
+  ledger: DispatchLedger,
+  evidence: ControlEvidence,
+  now: string = new Date().toISOString(),
+): { outcome: 'duplicate' | 'recorded'; ledger: DispatchLedger } {
   const duplicate = ledger.sources.some(
     (source) =>
       source.sourceKind === evidence.sourceKind &&
@@ -161,12 +209,12 @@ function recordControlEvidence(
  * to this field existing.
  */
 function addAnomaly(
-  ledger,
-  kind,
-  detail,
-  now = new Date().toISOString(),
-  failure,
-) {
+  ledger: DispatchLedger,
+  kind: string,
+  detail: unknown,
+  now: string = new Date().toISOString(),
+  failure?: FailureClassification,
+): DispatchLedger {
   return mutate(ledger, now, () => {
     ledger.anomalies.push({
       kind,

@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 
-import { formatRouterGroupMarker } from '../../../libs/dispatch-contracts/src/index.js';
+import { formatRouterGroupMarker } from '@agent-lcars/dispatch-contracts';
+import { test } from 'vitest';
+
 import {
   acceptIntent,
   beginDispatch,
   createLedger,
   renderLedgerComment,
-} from './broker.mjs';
+} from './broker.js';
 import {
   agentWorkerPipelines,
   API_VERSION,
@@ -29,12 +31,7 @@ import {
   validateDispatchResponse,
   verifyBrokerConcurrency,
   workerWorkflow,
-} from './github-api.mjs';
-
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
+} from './github-api.js';
 
 const task = {
   repositoryId: 123,
@@ -1328,15 +1325,3 @@ test('mapWithConcurrency never starts more workers than there are items', async 
     [1, 2],
   );
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;

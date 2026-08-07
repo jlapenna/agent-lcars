@@ -8,10 +8,10 @@ import {
   QUICK_TASK_MARKER_RE,
   quickTaskDigest,
   quickTaskMarkerMatcher,
-} from './quick-task.js';
+} from './quick-task';
 
-/** @type {(input: string) => string} */
-const sha256Hex = (input) => createHash('sha256').update(input).digest('hex');
+const sha256Hex = (input: string): string =>
+  createHash('sha256').update(input).digest('hex');
 
 const identity = {
   repository: 'jlapenna/agent-lcars',

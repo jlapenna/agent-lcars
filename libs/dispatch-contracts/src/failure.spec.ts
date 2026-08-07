@@ -11,7 +11,7 @@ import {
   OWNING_SYSTEMS,
   PHASE_OWNERS,
   RETRY_DISPOSITIONS,
-} from './failure.js';
+} from './failure';
 
 describe('the vocabulary', () => {
   it('assigns every phase an owning system', () => {
@@ -47,15 +47,13 @@ describe('classifyFailure', () => {
     ).toBe('worker');
   });
 
-  it.each(
-    /** @type {const} */ ([
-      ['launch', 'controller'],
-      ['runner_allocation', 'runner'],
-      ['bootstrap', 'worker'],
-      ['validation', 'finalizer'],
-      ['reporting', 'projector'],
-    ]),
-  )('maps the %s phase to %s', (phase, owner) => {
+  it.each([
+    ['launch', 'controller'],
+    ['runner_allocation', 'runner'],
+    ['bootstrap', 'worker'],
+    ['validation', 'finalizer'],
+    ['reporting', 'projector'],
+  ] as const)('maps the %s phase to %s', (phase, owner) => {
     expect(
       classifyFailure({
         phase,
@@ -135,9 +133,7 @@ describe('classifyFailure', () => {
     // refuse them -- what is being asserted is the runtime guard that catches
     // the same mistake arriving from JSON, where no compiler was involved.
     expect(() =>
-      classifyFailure(
-        /** @type {Parameters<typeof classifyFailure>[0]} */ (input),
-      ),
+      classifyFailure(input as Parameters<typeof classifyFailure>[0]),
     ).toThrowError();
   });
 
@@ -196,10 +192,10 @@ describe('isAutomaticallyRetryable', () => {
   it('never retries a failure blocked on a health or config change', () => {
     // The distinction that keeps a retry loop from spinning against a
     // condition it cannot affect.
-    for (const retryDisposition of /** @type {const} */ ([
+    for (const retryDisposition of [
       'after_health_change',
       'after_configuration_change',
-    ])) {
+    ] as const) {
       expect(
         isAutomaticallyRetryable(
           classifyFailure({
@@ -232,10 +228,10 @@ describe('needsMaintainer', () => {
   });
 
   it('hands over anything needing a decision or a config change', () => {
-    for (const retryDisposition of /** @type {const} */ ([
+    for (const retryDisposition of [
       'manual',
       'after_configuration_change',
-    ])) {
+    ] as const) {
       expect(
         needsMaintainer(
           classifyFailure({
@@ -296,59 +292,57 @@ describe('the audited failures from #645 all have a classification', () => {
   // One row per line of the issue's "Mapping the audited failures" table.
   // If this vocabulary cannot express the failures that motivated it, it is
   // the wrong vocabulary.
-  it.each(
-    /** @type {const} */ ([
-      [
-        'Quick Task digest mismatch',
-        'intent',
-        'quick_task_digest_mismatch',
-        'controller',
-      ],
-      ['Queue-evicted label event', 'signal', 'signal_evicted', 'controller'],
-      [
-        'Concurrency-group listing unreliable',
-        'signal',
-        'concurrency_group_unverifiable',
-        'controller',
-      ],
-      [
-        'Self-hosted runner wait or loss',
-        'runner_allocation',
-        'runner_lost',
-        'runner',
-      ],
-      [
-        'Work-token mint failure',
-        'bootstrap',
-        'work_token_mint_failed',
-        'worker',
-      ],
-      [
-        'OpenCode graph allocation',
-        'provider_admission',
-        'provider_graph_allocation_failed',
-        'worker',
-      ],
-      [
-        'Clean CLI exit with no artifact',
-        'validation',
-        'deliverable_absent',
-        'finalizer',
-      ],
-      [
-        'Failure comment unavailable',
-        'reporting',
-        'github_write_failed',
-        'projector',
-      ],
-      [
-        'WIF transcript/archive failure',
-        'telemetry',
-        'telemetry_upload_failed',
-        'projector',
-      ],
-    ]),
-  )('%s', (_label, phase, reason, owner) => {
+  it.each([
+    [
+      'Quick Task digest mismatch',
+      'intent',
+      'quick_task_digest_mismatch',
+      'controller',
+    ],
+    ['Queue-evicted label event', 'signal', 'signal_evicted', 'controller'],
+    [
+      'Concurrency-group listing unreliable',
+      'signal',
+      'concurrency_group_unverifiable',
+      'controller',
+    ],
+    [
+      'Self-hosted runner wait or loss',
+      'runner_allocation',
+      'runner_lost',
+      'runner',
+    ],
+    [
+      'Work-token mint failure',
+      'bootstrap',
+      'work_token_mint_failed',
+      'worker',
+    ],
+    [
+      'OpenCode graph allocation',
+      'provider_admission',
+      'provider_graph_allocation_failed',
+      'worker',
+    ],
+    [
+      'Clean CLI exit with no artifact',
+      'validation',
+      'deliverable_absent',
+      'finalizer',
+    ],
+    [
+      'Failure comment unavailable',
+      'reporting',
+      'github_write_failed',
+      'projector',
+    ],
+    [
+      'WIF transcript/archive failure',
+      'telemetry',
+      'telemetry_upload_failed',
+      'projector',
+    ],
+  ] as const)('%s', (_label, phase, reason, owner) => {
     expect(
       classifyFailure({ phase, reason, retryDisposition: 'manual' })
         .owningSystem,

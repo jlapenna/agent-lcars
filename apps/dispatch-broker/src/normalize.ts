@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
 
+import type {
+  AgentPipeline,
+  LedgerTaskRef,
+  QuickTaskIdentity,
+} from '@agent-lcars/dispatch-contracts';
 import {
   AGENT_LABELS,
   GENERIC_REPLY_COMMAND,
@@ -8,12 +13,136 @@ import {
   REPLY_COMMANDS,
   REVIEW_LABELS,
   WORKER_WORKFLOW_FILES,
-} from '../../../libs/dispatch-contracts/src/index.js';
-import { digest } from './broker.mjs';
-import {
-  authorization,
-  AUTHORIZATION_RULES,
-} from './modules/authorization.mjs';
+} from '@agent-lcars/dispatch-contracts';
+
+import type { AnchorControl, ControlEvidence } from './broker.js';
+import { digest } from './broker.js';
+import { authorization, AUTHORIZATION_RULES } from './modules/authorization.js';
+import type { Intent } from './modules/intent.js';
+
+/** A GitHub `labels` entry: either the bare name (some webhook payloads) or
+ *  the full label object (the REST API's shape). */
+type GitHubLabel = string | { name: string };
+
+interface GitHubUser {
+  login?: string;
+  type?: string;
+}
+
+interface GitHubComment {
+  id: number;
+  body: string;
+  created_at: string;
+  author_association?: string;
+  user?: GitHubUser;
+}
+
+/** The fields read off an issue or a pull request -- normalize.mjs treats
+ *  both the same way everywhere except the few spots that check
+ *  `pull_request` for presence. */
+interface IssueOrPullRequest {
+  id: number;
+  number?: number;
+  title: string;
+  body?: string | null;
+  labels?: GitHubLabel[];
+  created_at: string;
+  updated_at: string;
+  pull_request?: unknown;
+  merged?: boolean;
+  merged_at?: string | null;
+}
+
+/** The webhook event body. One shape covering every `eventName` this file
+ *  handles (`issues`, `issue_comment`, `pull_request`) -- each branch reads
+ *  only the fields its own event actually carries, exactly as the
+ *  untyped original did. */
+interface WebhookEvent {
+  action: string;
+  issue?: IssueOrPullRequest;
+  pull_request?: IssueOrPullRequest;
+  comment?: GitHubComment;
+  sender?: GitHubUser;
+  label?: { name: string };
+}
+
+interface TimelineEvent {
+  event?: string;
+  label?: { name?: string };
+  actor?: { login?: string };
+  created_at: string;
+  id?: number;
+}
+
+/** The router's own event context (agent-router.yml's job env), common to
+ *  every `eventName` and to `workflow_dispatch`. */
+export interface NormalizeContext {
+  repository: string;
+  repositoryId: number | string;
+  issue?: number | string;
+  runId: number;
+  now: string;
+  actor?: string;
+}
+
+interface WorkflowDispatchInputs {
+  kind?: string;
+  completion_payload?: string;
+  caller_id?: string;
+  pipeline?: string;
+  mode?: string;
+  reply?: string;
+  runbook?: string;
+  context?: string;
+}
+
+export interface IgnoredEvent {
+  kind: 'ignored';
+  reason: string;
+}
+
+export interface ReconcileEvent {
+  kind: 'reconcile';
+  task: LedgerTaskRef;
+}
+
+export interface CompletionEvent {
+  kind: 'completion';
+  task: LedgerTaskRef;
+  sourceKind: 'completion';
+  sourceId: string;
+  transportRunId: number;
+  workerRunId: number;
+  generation: number;
+  intentId: string;
+  token: string;
+  workflow: string;
+}
+
+export interface IntentEvent {
+  kind: 'intent';
+  intent: Intent;
+}
+
+export interface AnchorControlEvent {
+  kind: 'anchor-control';
+  task: LedgerTaskRef;
+  control: AnchorControl;
+}
+
+export interface ControlEvidenceEvent {
+  kind: 'control-evidence';
+  task: LedgerTaskRef;
+  evidence: ControlEvidence;
+}
+
+export type NormalizedEvent =
+  | IgnoredEvent
+  | ReconcileEvent
+  | CompletionEvent
+  | IntentEvent
+  | AnchorControlEvent
+  | ControlEvidenceEvent;
 
 // `null` is a sentinel, not a pipeline: `@agent` (#573) doesn't name a
 // specific integration, it defers to whichever `agent:*` label the issue
@@ -25,29 +154,36 @@ const COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
 const WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const sha256Hex = (input) =>
+const sha256Hex = (input: string): string =>
   crypto.createHash('sha256').update(input).digest('hex');
 
-function labelsOf(issue) {
+function labelsOf(issue: IssueOrPullRequest): string[] {
   return (issue.labels ?? []).map((label) =>
     typeof label === 'string' ? label : label.name,
   );
 }
 
-function selectedPipelineFrom(labels, labelMap) {
+function selectedPipelineFrom(
+  labels: string[],
+  labelMap: ReadonlyMap<string, AgentPipeline>,
+): AgentPipeline | undefined {
   const selected = labels
     .filter((label) => labelMap.has(label))
     .map((label) => labelMap.get(label));
   return selected.length === 1 ? selected[0] : undefined;
 }
 
-function selectedPipeline(issue) {
+function selectedPipeline(
+  issue: IssueOrPullRequest,
+): AgentPipeline | undefined {
   return selectedPipelineFrom(labelsOf(issue), AGENT_LABELS);
 }
 
-function parseExactCommand(body) {
+function parseExactCommand(
+  body: string,
+): { command: string; pipeline: AgentPipeline | null } | undefined {
   let fenced = false;
-  const matches = [];
+  const matches: { command: string; pipeline: AgentPipeline | null }[] = [];
   for (const rawLine of body.split(/\r?\n/gu)) {
     const line = rawLine.trim();
     if (line.startsWith('```')) {
@@ -65,7 +201,11 @@ function parseExactCommand(body) {
   return matches[0];
 }
 
-function quickTaskRequest(issue, repository, pipeline) {
+function quickTaskRequest(
+  issue: IssueOrPullRequest,
+  repository: string,
+  pipeline: AgentPipeline | undefined,
+): { requestId: string; digest: string } | undefined {
   const body = issue.body ?? '';
   const matches = [...body.matchAll(quickTaskMarkerMatcher())];
   if (matches.length === 0) {
@@ -105,20 +245,40 @@ function quickTaskRequest(issue, repository, pipeline) {
   if (!originalPipeline) {
     throw new Error('Quick Task marker digest mismatch');
   }
-  if (body.slice(matches[0].index + marker.length).trim()) {
+  // A match produced by matchAll() always carries `.index`; the type only
+  // says "possibly absent" because RegExpMatchArray is shared with the
+  // exec()-with-no-match case, which this is not.
+  const matchIndex = matches[0].index;
+  if (matchIndex === undefined) {
+    throw new Error('Quick Task marker match unexpectedly missing its index');
+  }
+  if (body.slice(matchIndex + marker.length).trim()) {
     throw new Error('Quick Task marker must be the final body element');
   }
   if (originalPipeline !== pipeline) return undefined;
   return { requestId, digest: persistedDigest };
 }
 
-function digestQuickTask(identity) {
+function digestQuickTask(identity: QuickTaskIdentity): string {
   return quickTaskDigest(identity, sha256Hex);
 }
 
-function timelineSource(timeline, eventName, event) {
+function timelineSource(
+  timeline: TimelineEvent[],
+  eventName: string,
+  event: WebhookEvent,
+): { sourceId: string; occurredAt: string } {
   const action = event.action;
-  const targetTime = Date.parse((event.issue ?? event.pull_request).updated_at);
+  // Callers only ever reach here once `event.issue ?? event.pull_request`
+  // is already known non-null (each call site already returned "no issue"
+  // otherwise); recomputed independently here exactly as the original did.
+  const numbered = event.issue ?? event.pull_request;
+  if (!numbered) {
+    throw new Error(
+      `${eventName}:${action} timeline lookup missing issue/pull_request`,
+    );
+  }
+  const targetTime = Date.parse(numbered.updated_at);
   const candidates = timeline.filter((candidate) => {
     if (candidate.event !== action) return false;
     if (['labeled', 'unlabeled'].includes(action)) {
@@ -146,7 +306,11 @@ function timelineSource(timeline, eventName, event) {
 // sourceId (falling back to the actions run identity), and both must
 // validate it as a UUID when present -- differing only in the error
 // message's label.
-function resolveCallerSourceId(inputs, context, label) {
+function resolveCallerSourceId(
+  inputs: WorkflowDispatchInputs,
+  context: NormalizeContext,
+  label: string,
+): string {
   const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
   if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
     throw new Error(`${label} caller ID must be a UUID`);
@@ -154,14 +318,21 @@ function resolveCallerSourceId(inputs, context, label) {
   return sourceId;
 }
 
-function taskRef(context, issue) {
+function taskRef(
+  context: NormalizeContext,
+  issue: IssueOrPullRequest | undefined,
+): LedgerTaskRef {
   const repository = context.repository;
   const repositoryId = Number(context.repositoryId);
   const issueNumber = Number(issue?.number ?? context.issue);
   return { repositoryId, repository, issue: issueNumber };
 }
 
-function makeIntent(base) {
+/** What every `makeIntent()` call site supplies -- the same fields as
+ *  `Intent`, minus the two `makeIntent()` itself always computes. */
+type IntentBase = Omit<Intent, 'intentId' | 'digest'> & { intentId?: string };
+
+function makeIntent(base: IntentBase): Intent {
   const normalizedPayload = {
     task: base.task,
     pipeline: base.pipeline,
@@ -180,7 +351,25 @@ function makeIntent(base) {
   };
 }
 
-function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
+/** What a `completion` workflow_dispatch's base64url JSON payload must
+ *  decode to; validated field by field below before any field is trusted. */
+interface CompletionPayload {
+  workerRunId: number;
+  generation: number;
+  intentId: string;
+  token: string;
+  workflow: string;
+}
+
+function normalizeWorkflowDispatch({
+  inputs,
+  context,
+  maintainer,
+}: {
+  inputs: WorkflowDispatchInputs;
+  context: NormalizeContext;
+  maintainer: string | undefined;
+}): NormalizedEvent {
   const task = taskRef(context, undefined);
   // Fired by dispatch-reconcile.yml's scan job (#305), one workflow_dispatch
   // call per already-discovered open agent-labeled issue/PR -- see
@@ -199,22 +388,33 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
     return { kind: 'reconcile', task };
   }
   if (inputs.kind === 'completion') {
-    let completion;
+    let completion: unknown;
     try {
+      // Cast, not a coercion: whatever `completion_payload` actually is
+      // (including `undefined`) reaches Buffer.from() exactly as before --
+      // a non-string throws here, inside this same try, exactly as it
+      // always has.
       completion = JSON.parse(
-        Buffer.from(inputs.completion_payload, 'base64url').toString('utf8'),
+        Buffer.from(inputs.completion_payload as string, 'base64url').toString(
+          'utf8',
+        ),
       );
     } catch {
       throw new Error('Completion payload is malformed');
     }
+    // completion_payload is base64url-encoded JSON off a caller-supplied
+    // workflow_dispatch input -- genuinely untrusted, and every field below
+    // is checked before being trusted. This cast only grants property
+    // access; a non-object payload still throws exactly as it always has.
+    const candidate = completion as Partial<CompletionPayload>;
     if (
-      !Number.isSafeInteger(completion.workerRunId) ||
-      completion.workerRunId <= 0 ||
-      !Number.isSafeInteger(completion.generation) ||
-      completion.generation <= 0 ||
-      !/^[A-Za-z0-9._:-]{1,200}$/u.test(completion.intentId ?? '') ||
-      !/^[A-Za-z0-9_-]{16,200}$/u.test(completion.token ?? '') ||
-      !WORKER_WORKFLOWS.has(completion.workflow)
+      !Number.isSafeInteger(candidate.workerRunId) ||
+      (candidate.workerRunId as number) <= 0 ||
+      !Number.isSafeInteger(candidate.generation) ||
+      (candidate.generation as number) <= 0 ||
+      !/^[A-Za-z0-9._:-]{1,200}$/u.test(candidate.intentId ?? '') ||
+      !/^[A-Za-z0-9_-]{16,200}$/u.test(candidate.token ?? '') ||
+      !WORKER_WORKFLOWS.has(candidate.workflow as string)
     ) {
       throw new Error('Completion payload has invalid binding fields');
     }
@@ -222,13 +422,13 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
       kind: 'completion',
       task,
       sourceKind: 'completion',
-      sourceId: `worker-run:${completion.workerRunId}`,
+      sourceId: `worker-run:${candidate.workerRunId}`,
       transportRunId: context.runId,
-      workerRunId: completion.workerRunId,
-      generation: completion.generation,
-      intentId: completion.intentId,
-      token: completion.token,
-      workflow: completion.workflow,
+      workerRunId: candidate.workerRunId as number,
+      generation: candidate.generation as number,
+      intentId: candidate.intentId as string,
+      token: candidate.token as string,
+      workflow: candidate.workflow as string,
     };
   }
   if (inputs.kind === 'canary') {
@@ -285,7 +485,10 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
       sourceId,
       transportRunId: context.runId,
       occurredAt: context.now,
-      pipeline: inputs.pipeline,
+      // Validated two lines up: AGENT_LABELS' keys are exactly
+      // `agent:claude`/`agent:codex`/`agent:opencode`, so the has() check
+      // above already proved inputs.pipeline is one of those three names.
+      pipeline: inputs.pipeline as AgentPipeline,
       mode: inputs.mode || 'implement',
       reply: inputs.reply || '',
       runbook: inputs.runbook || '',
@@ -302,7 +505,14 @@ function normalizeEvent({
   context,
   timeline = [],
   maintainer,
-}) {
+}: {
+  eventName: string;
+  event: WebhookEvent;
+  inputs?: WorkflowDispatchInputs;
+  context: NormalizeContext;
+  timeline?: TimelineEvent[];
+  maintainer: string | undefined;
+}): NormalizedEvent {
   if (eventName === 'workflow_dispatch') {
     return normalizeWorkflowDispatch({ inputs, context, maintainer });
   }
@@ -334,13 +544,20 @@ function normalizeEvent({
         'Comment command does not match the selected integration',
       );
     }
+    // `event.comment` is guaranteed by eventName === 'issue_comment' &&
+    // event.action === 'created' -- the same real-GitHub-webhook guarantee
+    // the untyped original relied on without checking.
+    const comment = event.comment;
+    if (!comment) {
+      throw new Error('issue_comment:created event missing comment');
+    }
     const auth = authorization(
       event.sender?.login,
       maintainer,
       AUTHORIZATION_RULES.OWNER_COMMENT,
       {
-        association: event.comment.author_association,
-        userType: event.comment.user?.type,
+        association: comment.author_association,
+        userType: comment.user?.type,
       },
     );
     if (
@@ -355,12 +572,12 @@ function normalizeEvent({
       intent: makeIntent({
         task,
         sourceKind: 'comment',
-        sourceId: `comment:${event.comment.id}`,
+        sourceId: `comment:${comment.id}`,
         transportRunId: context.runId,
-        occurredAt: event.comment.created_at,
+        occurredAt: comment.created_at,
         pipeline: resolvedPipeline,
         mode: 'reply',
-        reply: event.comment.body,
+        reply: comment.body,
         runbook: '',
         context: '',
         authorization: auth,
@@ -377,7 +594,10 @@ function normalizeEvent({
         kind: 'anchor-control',
         task,
         control: {
-          kind: event.action,
+          // Array.prototype.includes() doesn't narrow a string the way an
+          // === chain does; the check two lines up already restricts
+          // event.action to exactly these two values.
+          kind: event.action as 'closed' | 'reopened',
           sourceId: `pull-request:${issue.id}:${event.action}:${issue.updated_at}`,
           occurredAt: issue.updated_at,
           transportRunId: context.runId,
@@ -419,7 +639,11 @@ function normalizeEvent({
         sourceId: `issue:${issue.id}`,
         transportRunId: context.runId,
         occurredAt: issue.created_at,
-        pipeline,
+        // quickTaskRequest() above only ever returns a result when its own
+        // `pipeline` argument (this same variable) was truthy -- otherwise
+        // it throws before returning -- so `pipeline` is proven defined by
+        // `quickTask` having a value at all.
+        pipeline: pipeline as AgentPipeline,
         mode: 'implement',
         reply: '',
         runbook: '',
@@ -453,6 +677,12 @@ function normalizeEvent({
     if (!labelName?.startsWith('agent:') && !isReviewLabel) {
       return { kind: 'ignored', reason: 'non-agent label event' };
     }
+    // labelName was already proven to start with 'agent:' or 'review:'
+    // above -- the only way past the guard just above; `isReviewLabel` can
+    // only be true when `labelName` is too.
+    if (!labelName) {
+      throw new Error('Label event missing its own label name');
+    }
     const labelMap = isReviewLabel ? REVIEW_LABELS : AGENT_LABELS;
     const labelKind = isReviewLabel ? 'review' : 'agent';
     if (event.action === 'unlabeled') {
@@ -463,13 +693,15 @@ function normalizeEvent({
           sourceKind: 'unlabeled',
           ...source,
           transportRunId: context.runId,
-          label: event.label.name,
+          label: labelName,
           authorization: { observed: true, actor: event.sender?.login },
         },
       };
     }
     if (!auth.authorized) throw new Error('Unauthorized label dispatch');
-    const eventPipeline = labelMap.get(event.label.name);
+    // labelName was already proven to start with 'agent:' or 'review:'
+    // above -- the only way past the `!labelName?.startsWith(...)` guard.
+    const eventPipeline = labelMap.get(labelName);
     if (!eventPipeline)
       return { kind: 'ignored', reason: `unknown ${labelKind} label` };
     const selectedLabelsInNamespace = labelsOf(issue).filter((label) =>
@@ -490,13 +722,13 @@ function normalizeEvent({
     // namespace -- stays genuinely ambiguous and fails closed, same as a
     // comment/dispatch arriving with no event label to disambiguate.
     let effectivePipeline = selectedPipelineFrom(labelsOf(issue), labelMap);
-    let staleAgentLabels;
+    let staleAgentLabels: string[] | undefined;
     if (selectedLabelsInNamespace.length > 1) {
       const otherLabelsInNamespace = selectedLabelsInNamespace.filter(
-        (label) => label !== event.label.name,
+        (label) => label !== labelName,
       );
       if (
-        !selectedLabelsInNamespace.includes(event.label.name) ||
+        !selectedLabelsInNamespace.includes(labelName) ||
         otherLabelsInNamespace.length !== 1
       ) {
         throw new Error(`Issue has contradictory ${labelKind} labels`);

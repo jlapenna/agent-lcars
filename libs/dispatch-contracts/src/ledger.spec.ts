@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { DispatchLedger } from './ledger';
 import {
   extractLedgerComment,
   hasLedgerMarker,
@@ -12,10 +13,11 @@ import {
   LEDGER_MARKER,
   LEDGER_SCHEMA,
   renderLedgerComment,
-} from './ledger.js';
+} from './ledger';
 
-/** @returns {import('./ledger.js').DispatchLedger} */
-function ledgerFixture(overrides = {}) {
+function ledgerFixture(
+  overrides: Record<string, unknown> = {},
+): DispatchLedger {
   return {
     schema: LEDGER_SCHEMA,
     revision: 3,
@@ -47,7 +49,7 @@ function ledgerFixture(overrides = {}) {
     ],
     anomalies: [],
     ...overrides,
-  };
+  } as DispatchLedger;
 }
 
 describe('the comment envelope', () => {

@@ -34,7 +34,7 @@
       "@agent-lcars/util-server/*": ["libs/util-server/src/*"],
       "@agent-lcars/app-providers": ["libs/app-providers/src/index.ts"],
       "@agent-lcars/dispatch-contracts": [
-        "libs/dispatch-contracts/src/index.js"
+        "libs/dispatch-contracts/src/index.ts"
       ],
       "@agent-lcars/telemetry": ["libs/telemetry/src/index.ts"],
       "@agent-lcars/telemetry/server": ["libs/telemetry/src/server/index.ts"]

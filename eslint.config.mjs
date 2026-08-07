@@ -127,25 +127,6 @@ export default [
     },
   },
   {
-    // The composite actions run under bare `node` on a GitHub Actions
-    // runner: no bundler, no tsconfig path mapping, no resolver of any kind
-    // (ci.yml runs `node --test .github/actions/dispatch-broker/*.test.mjs`
-    // directly). They therefore cannot spell an internal package as
-    // `@agent-lcars/...` -- a repo-relative path is the only thing Node can
-    // resolve, which is exactly why libs/dispatch-contracts is plain
-    // JavaScript rather than TypeScript, and why docs/published-actions.md
-    // sanctions paths above an action directory ("the whole-repo-download
-    // caveat").
-    //
-    // So this rule cannot apply here. Everything else does -- the point of
-    // giving .github/actions a project.json is that ~4,000 lines of
-    // control-plane code stop being invisible to `pnpm lint`.
-    files: ['.github/actions/**/*.{mjs,cjs,js}'],
-    rules: {
-      '@nx/enforce-module-boundaries': 'off',
-    },
-  },
-  {
     files: ['**/*.json'],
     languageOptions: { parser: jsoncParser },
   },
