@@ -61,6 +61,30 @@
           }
         }
       }
+    },
+    "build-rerun-infra-killed-runs": {
+      "// why": "Same committed-dependency-free-bundle pattern as `build-canary` above, for the sibling rerun-infra-killed-runs action -- see that target's own comment. rerun-infra-killed-runs/main.mjs used to import ../dispatch-broker/github-api.mjs directly, the SAME path #695 deleted; that broke this action outright too (five straight scheduled-run failures, silently killing the self-healing path that reruns infra-killed CI runs) with nothing to catch it. This target plus the drift check in ci.yml is the fix -- two actions broke this way, not one.",
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "platform": "node",
+        "target": "node24",
+        "format": ["esm"],
+        "bundle": true,
+        "thirdParty": true,
+        "outputPath": ".github/actions/rerun-infra-killed-runs/dist",
+        "outputFileName": "main.mjs",
+        "main": "apps/dispatch-broker/src/rerun-infra-killed-runs/main.ts",
+        "tsConfig": "apps/dispatch-broker/tsconfig.build.json",
+        "generatePackageJson": false,
+        "skipTypeCheck": false,
+        "esbuildOptions": {
+          "sourcemap": false,
+          "outExtension": {
+            ".js": ".mjs"
+          }
+        }
+      }
     }
   }
 }

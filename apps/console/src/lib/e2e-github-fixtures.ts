@@ -109,7 +109,7 @@ export const E2E_LEDGER_INTENT_ID = 'e2e-fixture-intent-9008';
 /**
  * A validated `agent-lcars.dispatch-ledger/v1` payload (see
  * dispatch-ledger.ts), standing in for what the dispatch broker
- * (`.github/actions/dispatch-broker/broker.mjs`) would have pinned to the
+ * (`apps/dispatch-broker/src/broker.ts`) would have pinned to the
  * issue. Only `E2E_RUN_IDS.running` is actually bound in the ledger's own
  * `attempt` field - `duplicateQueued` shares its marker but was never the
  * generation's recorded binding, mirroring a genuinely anomalous second

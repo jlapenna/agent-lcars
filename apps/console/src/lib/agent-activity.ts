@@ -134,7 +134,7 @@ export function issueNumberFromDisplayTitle(
  * claude.yml/codex.yml/opencode.yml's `run-name` templates all append
  * `[dispatch:g<generation>:<intentId>]` after the `#<issue>:` join key -
  * the serialized dispatch broker's own reconciliation marker
- * (`.github/actions/dispatch-broker/broker.mjs` and `github-api.mjs` render
+ * (`apps/dispatch-broker/src/broker.ts` and `github-api.ts` render
  * the identical `[dispatch:g${generation}:${intentId}]` string when binding
  * a run, both via `@agent-lcars/dispatch-contracts`' `formatDispatchMarker`).
  * Parsing it back out lets the console attribute a raw workflow run to the

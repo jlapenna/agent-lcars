@@ -11,6 +11,11 @@
 # Same generated-bundle exemption as dispatch-broker/dist above, produced
 # by apps/dispatch-broker's `build-canary` target instead of `build`.
 .github/actions/run-dispatch-canary/dist
+
+# Same generated-bundle exemption as dispatch-broker/dist above, produced
+# by apps/dispatch-broker's `build-rerun-infra-killed-runs` target instead
+# of `build`.
+.github/actions/rerun-infra-killed-runs/dist
 /.nx/cache
 /.nx/workspace-data
 

@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 
-import { scanAndRerun } from './main.mjs';
+import { test } from 'vitest';
 
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
+import { scanAndRerun } from './main.js';
 
 const REPO = 'jlapenna/agent-lcars';
 const ROOT = `/repos/${REPO}`;
@@ -278,15 +275,3 @@ test('paginates a jobs list past 100 entries so a later-page real failure blocks
     'the second jobs page must have been fetched',
   );
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;

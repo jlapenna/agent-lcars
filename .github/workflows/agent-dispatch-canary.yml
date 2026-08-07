@@ -6,7 +6,7 @@ name: Dispatch Canary Worker
 # credential, and -- unlike those three -- no self-hosted runner (runs-on:
 # ubuntu-latest, never vars.AGENT_RUNNER_LABEL). Dispatched exclusively by
 # agent-router.yml's broker job for the dedicated `canary` pipeline
-# (dispatch-broker/normalize.mjs's `kind: 'canary'` workflow_dispatch
+# (apps/dispatch-broker/src/normalize.ts's `kind: 'canary'` workflow_dispatch
 # branch -- see dispatch-canary.yml/post-deploy-smoke.yml, which are the
 # only trusted callers that can ever produce that intent), never subscribed
 # to issue events directly -- see workflow-contract.test.mjs's "workers are
@@ -70,7 +70,7 @@ permissions:
 jobs:
   canary:
     # agent-router.yml's broker job authorizes and dispatches this worker
-    # (dispatch-broker/normalize.mjs's `kind: 'canary'` branch, which never
+    # (apps/dispatch-broker/src/normalize.ts's `kind: 'canary'` branch, which never
     # requires per-actor authorization the way a manual claude/codex/
     # opencode dispatch does -- triggering that workflow_dispatch already
     # requires repo write access, and this worker's own preflight step

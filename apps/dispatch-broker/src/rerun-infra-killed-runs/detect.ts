@@ -13,12 +13,35 @@
 // ever masking a real failure: nothing here can match a run whose failure
 // is a real code/test problem.
 //
-// No network access in this file -- main.mjs supplies the already-fetched
+// No network access in this file -- main.ts supplies the already-fetched
 // GitHub API responses (a workflow run, its jobs, associated pull
 // requests) this operates on, so the decision logic is exercised directly
-// in detect.test.mjs without mocking HTTP.
+// in detect.spec.ts without mocking HTTP.
 
-function jobLooksInfraKilled(job) {
+interface JobStep {
+  name?: string;
+  status?: string;
+  conclusion: string | null;
+}
+
+interface WorkflowJob {
+  name?: string;
+  conclusion?: string | null;
+  steps?: JobStep[];
+}
+
+interface WorkflowRunSummary {
+  status?: string;
+  conclusion?: string | null;
+  run_attempt?: number;
+}
+
+interface PullRequestSummary {
+  number: number;
+  state: string;
+}
+
+function jobLooksInfraKilled(job: WorkflowJob | null | undefined): boolean {
   const steps = Array.isArray(job?.steps) ? job.steps : [];
   return (
     job?.conclusion === 'failure' &&
@@ -36,7 +59,7 @@ function jobLooksInfraKilled(job) {
 // isEligibleForRerun) is what stops any of this from looping, not this
 // function -- this function only decides whether a SINGLE pass looks safe
 // to retry.
-function runLooksInfraKilled(jobs) {
+function runLooksInfraKilled(jobs: WorkflowJob[] | undefined): boolean {
   const failedJobs = (jobs ?? []).filter(
     (job) => job?.conclusion === 'failure',
   );
@@ -55,7 +78,7 @@ function runLooksInfraKilled(jobs) {
 // reports run_attempt > 1 and skips it -- a run that fails the same
 // infra-killed-looking way twice in a row stays red instead of looping
 // forever.
-function isEligibleForRerun(run) {
+function isEligibleForRerun(run: WorkflowRunSummary | undefined): boolean {
   return (
     run?.status === 'completed' &&
     run?.conclusion === 'failure' &&
@@ -73,13 +96,24 @@ function isEligibleForRerun(run) {
 // back to whatever the API returned so a rerun on an already-merged/closed
 // PR still gets its audit-trail comment somewhere sensible rather than
 // silently nowhere.
-function selectAssociatedPullRequest(pulls) {
+function selectAssociatedPullRequest(
+  pulls: PullRequestSummary[] | undefined,
+): PullRequestSummary | undefined {
   const candidates = pulls ?? [];
   return candidates.find((pr) => pr.state === 'open') ?? candidates[0];
 }
 
-function buildRerunCommentBody({ runUrl, workflowName, jobNames }) {
-  const jobs = (jobNames ?? []).length > 0 ? jobNames.join(', ') : 'a job';
+function buildRerunCommentBody({
+  runUrl,
+  workflowName,
+  jobNames,
+}: {
+  runUrl: string;
+  workflowName?: string;
+  jobNames?: string[];
+}): string {
+  const names = jobNames ?? [];
+  const jobs = names.length > 0 ? names.join(', ') : 'a job';
   return (
     `${workflowName ?? 'CI'}'s ${jobs} failed with every step's conclusion ` +
     '`null` -- the runner was evicted/killed at the infrastructure level ' +
@@ -95,3 +129,4 @@ export {
   runLooksInfraKilled,
   selectAssociatedPullRequest,
 };
+export type { JobStep, PullRequestSummary, WorkflowJob, WorkflowRunSummary };

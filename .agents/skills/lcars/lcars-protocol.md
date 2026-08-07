@@ -39,7 +39,7 @@ jlapenna`), and use as the assignee in the parking recipe
   `MAINTAINER_LOGIN`.
 
 - **Dispatch:** the serialized dispatch broker
-  (`.github/actions/dispatch-broker/normalize.mjs`, invoked from
+  (`apps/dispatch-broker/src/normalize.ts`, invoked from
   `agent-router.yml`) normalizes every trigger into an intent for exactly one
   of `claude.yml`, `codex.yml`, or `opencode.yml`. There is no precedence
   order and no pipeline "stands down": an issue carrying more than one
@@ -149,9 +149,9 @@ every other trigger already goes through (the reserved
 `agent-lcars-dispatch-v1-<repositoryId>-<issue>` concurrency group, #349's
 indirect concurrency corroboration for workflow_dispatch-triggered runs, and
 the usual fail-closed → `status:needs-human` + maintainer parking path). See
-`.github/actions/dispatch-broker/main.mjs`'s `reconcileLedger` and
+`apps/dispatch-broker/src/main.ts`'s `reconcileLedger` and
 `trackMissingRun` for the pure repair logic and
-`.github/actions/dispatch-broker/main.test.mjs` for its interruption/
+`apps/dispatch-broker/src/main.spec.ts` for its interruption/
 idempotency test coverage.
 
 What it repairs, reusing the broker's own existing machinery wherever

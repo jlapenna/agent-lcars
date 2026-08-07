@@ -184,7 +184,7 @@ test('workers carry no per-issue concurrency group; the broker owns that dedup (
         `${worker} must not declare a per-issue concurrency group; GitHub ` +
           'keeps only one pending run per group, which silently kills a ' +
           'second queued run before its failure-report step can fire. ' +
-          'dispatch-broker/broker.mjs (beginDispatch/acceptIntent) now ' +
+          'apps/dispatch-broker/src/broker.ts (beginDispatch/acceptIntent) now ' +
           'owns dispatch dedup and serialization for one issue.',
       );
     }

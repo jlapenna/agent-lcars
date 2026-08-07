@@ -34,4 +34,4 @@ runs:
       shell: bash
       env:
         WORKFLOW_FILE: ${{ inputs.workflow-file }}
-      run: node "$GITHUB_ACTION_PATH/main.mjs"
+      run: node "$GITHUB_ACTION_PATH/dist/main.mjs"

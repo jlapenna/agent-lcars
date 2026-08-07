@@ -1,17 +1,14 @@
 import assert from 'node:assert/strict';
 
+import { test } from 'vitest';
+
 import {
   buildRerunCommentBody,
   isEligibleForRerun,
   jobLooksInfraKilled,
   runLooksInfraKilled,
   selectAssociatedPullRequest,
-} from './detect.mjs';
-
-const tests = [];
-function test(name, run) {
-  tests.push({ name, run });
-}
+} from './detect.js';
 
 function step(conclusion, overrides = {}) {
   return { name: 'a step', status: 'completed', conclusion, ...overrides };
@@ -211,15 +208,3 @@ test('buildRerunCommentBody names the failed job(s), links the run, and cites th
     /https:\/\/github\.com\/jlapenna\/agent-lcars\/actions\/runs\/30893470148/u,
   );
 });
-
-let failures = 0;
-for (const { name, run } of tests) {
-  try {
-    await run();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    failures += 1;
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-  }
-}
-if (failures > 0) process.exitCode = 1;
