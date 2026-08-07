@@ -41,6 +41,7 @@ case "$path" in
   *"/reviews?"*) key=reviews ;;
   *"/comments?"*) key=comments ;;
   *"/pulls?"*) key=pulls ;;
+  *"/timeline"*) key=timeline ;;
   *"/issues/"*) key=issue ;;
   *)
     echo "fake gh: unrecognized api path: $path" >&2
@@ -61,7 +62,7 @@ if [ -f "$FAKE_GH_DIR/$key.json" ]; then
   fi
 else
   case "$key" in
-    pulls | comments | reviews) default='[]' ;;
+    pulls | comments | reviews | timeline) default='[]' ;;
     issue) default='{"state":"open","closed_at":null,"labels":[]}' ;;
     *) default='' ;;
   esac
@@ -227,7 +228,8 @@ JSON
   esac
 )
 
-# --- Case 4: clause (c) - status:needs-human label present ---
+# --- Case 4: clause (c) - status:needs-human label present AND applied
+# during this run (timeline `labeled` event at/after STARTED_AT) ---
 (
   base_env
   case_dir="$test_root/needs-human-label"
@@ -235,12 +237,87 @@ JSON
   cat > "$case_dir/issue.json" <<'JSON'
 {"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
 JSON
+  cat > "$case_dir/timeline.json" <<'JSON'
+[{"event":"labeled","label":{"name":"status:needs-human"},"created_at":"2024-01-02T00:00:00Z"}]
+JSON
   run_case needs-human-label
-  test "$status" = 0 || fail "clause (c) should pass"
+  test "$status" = 0 || fail "clause (c) should pass when the label was applied during this run"
   case "$output" in
-    *"status:needs-human label applied"*) ;;
+    *"status:needs-human label applied on #42 since 2024-01-01T00:00:00Z"*) ;;
     *) fail "clause (c) message missing expected text" ;;
   esac
+)
+
+# --- Case 4b: clause (c) - the label is currently present but the
+# timeline's `labeled` event predates STARTED_AT (a stale, pre-existing
+# park from an earlier run) - must NOT satisfy the gate. Regression test
+# for the bug confirmed live on #650: a park from an earlier failed
+# generation let a later no-op generation's run report success. ---
+(
+  base_env
+  case_dir="$test_root/needs-human-label-stale"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/issue.json" <<'JSON'
+{"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
+JSON
+  cat > "$case_dir/timeline.json" <<'JSON'
+[{"event":"labeled","label":{"name":"status:needs-human"},"created_at":"2023-12-31T00:00:00Z"}]
+JSON
+  run_case needs-human-label-stale
+  test "$status" = 1 || fail "a stale, pre-existing park must not satisfy clause (c)"
+  case "$output" in
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message for a stale park" ;;
+  esac
+  case "$output" in
+    *"status:needs-human label applied"*) fail "a stale park must not be reported as evidence" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a stale park must still be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 4c: clause (c) - the label is absent entirely (current default
+# behaviour, unchanged by the recency fix) ---
+(
+  base_env
+  case_dir="$test_root/needs-human-label-absent"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/issue.json" <<'JSON'
+{"state":"open","closed_at":null,"labels":[]}
+JSON
+  run_case needs-human-label-absent
+  test "$status" = 1 || fail "no label at all must not satisfy clause (c)"
+  case "$output" in
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message when the label is absent" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a genuinely absent label must still be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 4d: clause (c) - the timeline lookup itself fails; this must be
+# reported as an inconclusive error, not silently treated as "no
+# deliverable" (this repo already fixed that class of bug once - see the
+# header comment's "A FAILED lookup is never silently treated as 'no
+# deliverable found'" rule - and it must not regress here). ---
+(
+  base_env
+  case_dir="$test_root/needs-human-timeline-lookup-fails"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/issue.json" <<'JSON'
+{"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
+JSON
+  : > "$case_dir/timeline.fail"
+  run_case needs-human-timeline-lookup-fails
+  test "$status" = 1 || fail "a failed timeline lookup must fail the step"
+  case "$output" in
+    *"FAILED lookup, distinct from 'no deliverable found'"*"Issue timeline lookup"*) ;;
+    *) fail "expected a distinct FAILED-lookup message naming the issue timeline lookup" ;;
+  esac
+  case "$output" in
+    *"produced no deliverable"*) fail "a failed timeline lookup must not be reported as a confirmed empty result" ;;
+  esac
+  if grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" 2>/dev/null; then
+    fail "an inconclusive (errored) timeline lookup must not set NO_DELIVERABLE=1"
+  fi
 )
 
 # --- Case 5: clause (d) - reply-mode comment, pickup comment excluded ---

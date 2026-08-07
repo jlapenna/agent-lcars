@@ -45,10 +45,21 @@ if [ "$1" != "api" ]; then
   exit 64
 fi
 path="$2"
+jq_filter=""
+args=("$@")
+i=0
+while [ "$i" -lt "${#args[@]}" ]; do
+  case "${args[$i]}" in
+    --paginate) : ;;
+    --jq) i=$((i + 1)); jq_filter="${args[$i]}" ;;
+  esac
+  i=$((i + 1))
+done
 case "$path" in
   *"/reviews?"*) key=reviews ;;
   *"/comments?"*) key=comments ;;
   *"/pulls?"*) key=pulls ;;
+  *"/timeline"*) key=timeline ;;
   */labels) key=labels ;;
   */assignees) key=assignees ;;
   *"/issues/"*) key=issue ;;
@@ -64,13 +75,24 @@ if [ -f "$FAKE_GH_DIR/$key.fail" ]; then
 fi
 
 if [ -f "$FAKE_GH_DIR/$key.json" ]; then
-  cat "$FAKE_GH_DIR/$key.json"
+  if [ -n "$jq_filter" ]; then
+    jq -r "$jq_filter" < "$FAKE_GH_DIR/$key.json"
+  else
+    cat "$FAKE_GH_DIR/$key.json"
+  fi
 else
   case "$key" in
-    pulls | comments | reviews) echo "[]" ;;
-    issue) echo '{"state":"open","closed_at":null,"labels":[],"assignees":[]}' ;;
-    labels | assignees) : ;; # -f mutation calls are --silent; no body needed
+    pulls | comments | reviews | timeline) default='[]' ;;
+    issue) default='{"state":"open","closed_at":null,"labels":[],"assignees":[]}' ;;
+    labels | assignees) default='' ;; # -f mutation calls are --silent; no body needed
   esac
+  if [ -n "$default" ]; then
+    if [ -n "$jq_filter" ]; then
+      printf '%s' "$default" | jq -r "$jq_filter"
+    else
+      printf '%s\n' "$default"
+    fi
+  fi
 fi
 FAKE_GH
 chmod +x "$fake_bin/gh"
