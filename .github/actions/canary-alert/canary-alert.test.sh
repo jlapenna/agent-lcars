@@ -75,7 +75,23 @@ done
 
 case "$path" in
   *"/issues?"*) key=open-issues ;;
-  *"/actions/workflows/"*"/runs?"*) key=runs ;;
+  *"/actions/workflows/"*"/runs?"*)
+    # Pagination-aware: the real script now requests explicit page=N. A case
+    # that cares about a specific page defines runs.pageN.json (or
+    # runs.pageN.fail); everything else - including every pre-pagination
+    # test case below, which only ever defines a bare runs.json/runs.fail -
+    # falls back to the single unpaginated "runs" key so those cases don't
+    # need to know pagination exists at all.
+    # Anchored on a leading '?' or '&' so "per_page=100" - itself already
+    # present in this same query string - can never be mismatched as the
+    # "page=" param.
+    page_num="$(printf '%s' "$path" | grep -oE '[?&]page=[0-9]+' | head -n1 | cut -d= -f2 || true)"
+    if [ -n "$page_num" ] && { [ -f "$FAKE_GH_DIR/runs.page$page_num.json" ] || [ -f "$FAKE_GH_DIR/runs.page$page_num.fail" ]; }; then
+      key="runs.page$page_num"
+    else
+      key=runs
+    fi
+    ;;
   *)
     echo "fake gh: unrecognized api path: $path" >&2
     exit 64
@@ -338,6 +354,86 @@ JSON
     *"::notice::"*"Found 2 open issues"*) ;;
     *) fail "expected a ::notice:: flagging the unexpected duplicate" ;;
   esac
+)
+
+# --- Case 10: CANARY_STATUS=cancelled (the value a job-level timeout-minutes
+# kill surfaces as - GitHub reports the killed job's own conclusion/result as
+# "cancelled", never "failure") must alert exactly like an ordinary failure -
+# same "anything but success" branch, same issue creation. This is the
+# script-level half of the timeout-alerting fix; the workflow-structure half
+# (a separate `alert` job with `needs: canary` / `if: always()`, since a
+# job-level timeout terminates the canary job before any of its own trailing
+# steps - if: always() included - can start) lives in dispatch-canary.yml
+# and isn't exercisable from this script-only harness. ---
+(
+  base_env
+  export CANARY_STATUS=cancelled
+  case_dir="$test_root/cancelled-alerts"
+  mkdir -p "$case_dir"
+  echo '[]' > "$case_dir/open-issues.json"
+  echo '{"workflow_runs":[]}' > "$case_dir/runs.json"
+  run_case cancelled-alerts
+  test "$status" = 0 || fail "a cancelled canary should still exit 0 after alerting"
+  grep -q 'issue create' "$FAKE_GH_DIR/calls" || fail "expected a cancelled canary to create an alert issue, same as a failure"
+  grep -q 'Consecutive failures: 1' "$FAKE_GH_DIR/calls" || fail "expected a consecutive-failure count of 1"
+)
+
+# --- Case 11: a streak longer than one page of run history. Before
+# pagination, a flat per_page=50 single request could only ever see the
+# newest 50 completed runs, so a streak past that point reported "51"
+# forever. This fixture spreads 100 consecutive failures across page 1 and 5
+# more (then the bounding success) across page 2 - > PER_PAGE(100) total
+# runs inspected - to prove the script actually walks page 2 rather than
+# stopping at page 1's own page_run_count == PER_PAGE. ---
+(
+  base_env
+  case_dir="$test_root/pagination-multi-page"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/open-issues.json" <<'JSON'
+[{"number":55,"body":"<!-- agent-lcars:canary-alert:v1 -->"}]
+JSON
+  jq -n '{workflow_runs: [range(0;100) | {id: (300000 + .), conclusion: "failure"}]}' \
+    > "$case_dir/runs.page1.json"
+  jq -n '{workflow_runs: ([range(0;5) | {id: (400000 + .), conclusion: "failure"}] + [{id: 400900, conclusion: "success"}] + [{id: 400901, conclusion: "failure"}])}' \
+    > "$case_dir/runs.page2.json"
+  run_case pagination-multi-page
+  test "$status" = 0 || fail "a streak spanning two pages should still exit 0"
+  grep -q 'issue comment 55' "$FAKE_GH_DIR/calls" || fail "expected a comment on the existing alert issue #55"
+  grep -q 'Consecutive failures: 106' "$FAKE_GH_DIR/calls" || fail "expected a consecutive-failure count of 106 (100 from page 1 + 5 from page 2 + this run, stopping at page 2's success)"
+  if grep -q 'page=3' "$FAKE_GH_DIR/calls"; then
+    fail "must stop paging once the bounding success is found on page 2 - a page 3 request means the loop kept going past it"
+  fi
+)
+
+# --- Case 12: the pathological-history bound. Ten full pages (MAX_PAGES),
+# every single one unhealthy, no success anywhere in the (synthetic) entire
+# history - must stop at the bound rather than paging forever, and must
+# report the count as a floor ("at least N"), never a falsely precise exact
+# number, since the real streak's bounding success (if it even exists) is
+# still unseen beyond page 10. ---
+(
+  base_env
+  case_dir="$test_root/pagination-bound"
+  mkdir -p "$case_dir"
+  echo '[]' > "$case_dir/open-issues.json"
+  # Base offset per page starts well clear of RUN_ID (2002, from base_env)
+  # so no page's ids ever collide with the current run's own id - a
+  # collision would make the .id != RUN_ID exclusion trim exactly one
+  # entry from that page's raw item count, which is the real-world edge
+  # case raw_count (see canary-alert.sh) exists to stay correct under, but
+  # deliberately isn't what THIS case is testing.
+  for p in $(seq 1 10); do
+    jq -n --argjson base "$((p * 100000))" \
+      '{workflow_runs: [range(0;100) | {id: ($base + .), conclusion: "failure"}]}' \
+      > "$case_dir/runs.page$p.json"
+  done
+  run_case pagination-bound
+  test "$status" = 0 || fail "hitting the pagination bound should still exit 0 (an alert still gets posted)"
+  grep -q 'issue create' "$FAKE_GH_DIR/calls" || fail "expected an alert issue to still be created"
+  grep -q 'Consecutive failures: at least 1001' "$FAKE_GH_DIR/calls" || fail "expected a floor-qualified count ('at least 1001': 10 pages * 100 + this run), not a falsely exact number"
+  if grep -q 'page=11' "$FAKE_GH_DIR/calls"; then
+    fail "must not query beyond MAX_PAGES=10 - a page 11 request means the bound wasn't enforced"
+  fi
 )
 
 echo "canary-alert.test.sh: all cases passed"

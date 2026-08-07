@@ -13,8 +13,13 @@ inputs:
     required: true
   canary-status:
     description: >-
-      The canary job's status context value (job.status) as of this step -
-      success, failure, or cancelled. Branches the whole script.
+      The canary job's own conclusion - success, failure, or cancelled
+      (GitHub reports a job-level timeout-minutes kill as cancelled, not
+      failure). Pass job.status when this step runs inside the canary job
+      itself, or needs.<job>.result when it runs from a separate dependent
+      job (the required shape here: a job-level timeout terminates the
+      canary job outright, so an in-job trailing step - even one marked
+      if: always() - never starts). Branches the whole script.
     required: true
   workflow-file:
     description: >-

@@ -91,32 +91,91 @@ fi
 # all of them mean "the canary was not healthy", which is what a human
 # staring at a run of dead canaries actually cares about, not the
 # fine-grained conclusion label.
-if ! prior_conclusions=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs?status=completed&per_page=50" \
-  --jq '[.workflow_runs[] | select(.id != '"$RUN_ID"') | .conclusion]' 2>&1); then
-  echo "::error::Consecutive-failure count lookup (gh api repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs) failed: $prior_conclusions"
-  exit 1
-fi
+#
+# Paginated: a single page (previously a flat per_page=50, one request) only
+# ever sees the newest 50 completed runs, so once the canary has failed more
+# than 50 consecutive times this reported "51" forever, even as the real
+# streak - and the still-unseen success that bounds it - kept growing.
+# PER_PAGE uses GitHub's own max (100) to minimize round-trips; MAX_PAGES
+# bounds the worst case (1000 runs - ~41 days of an hourly canary) so a
+# pathological streak can't spin this loop forever. If that bound is hit
+# without finding a bounding success (or running out of history entirely),
+# the count is reported as a floor ("at least N"), never as a falsely
+# precise exact number.
+PER_PAGE=100
+MAX_PAGES=10
 
 consecutive_prior=0
-while IFS= read -r concl; do
-  [ -z "$concl" ] && continue
-  [ "$concl" = "success" ] && break
-  consecutive_prior=$((consecutive_prior + 1))
-done < <(jq -r '.[]' <<<"$prior_conclusions")
+found_success=0
+ran_out_of_history=0
+page=1
+while [ "$page" -le "$MAX_PAGES" ]; do
+  # raw_count is this page's actual API item count, BEFORE the .id !=
+  # RUN_ID exclusion below - "was this a short (i.e. last) page" must be
+  # judged against what the API actually returned, not against the
+  # filtered count. Otherwise the one run in the whole history that could
+  # ever match RUN_ID (which, per the comment above, should never happen
+  # server-side anyway - status=completed already excludes it) would make a
+  # genuinely full page look short by exactly one and stop pagination a
+  # page early.
+  if ! page_payload=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs?status=completed&per_page=$PER_PAGE&page=$page" \
+    --jq '{raw_count: (.workflow_runs | length), conclusions: [.workflow_runs[] | select(.id != '"$RUN_ID"') | .conclusion]}' 2>&1); then
+    echo "::error::Consecutive-failure count lookup (gh api repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs, page $page) failed: $page_payload"
+    exit 1
+  fi
+
+  raw_count=$(jq -r '.raw_count' <<<"$page_payload")
+  if [ "$raw_count" -eq 0 ]; then
+    # No runs at all on this page - prior pages already exhausted the
+    # workflow's entire history without a success in sight.
+    ran_out_of_history=1
+    break
+  fi
+
+  while IFS= read -r concl; do
+    [ -z "$concl" ] && continue
+    if [ "$concl" = "success" ]; then
+      found_success=1
+      break
+    fi
+    consecutive_prior=$((consecutive_prior + 1))
+  done < <(jq -r '.conclusions[]' <<<"$page_payload")
+
+  if [ "$found_success" -eq 1 ]; then
+    break
+  fi
+
+  if [ "$raw_count" -lt "$PER_PAGE" ]; then
+    # A short page is the API's own signal that this was the last one.
+    ran_out_of_history=1
+    break
+  fi
+
+  page=$((page + 1))
+done
 count=$((consecutive_prior + 1))
+
+if [ "$found_success" -eq 0 ] && [ "$ran_out_of_history" -eq 0 ]; then
+  # Hit MAX_PAGES with every conclusion so far unhealthy and history not yet
+  # exhausted - the true streak (and its bounding success, if any) is still
+  # unseen beyond this point. Report a floor, not a wrong exact number.
+  count_label="at least $count"
+else
+  count_label="$count"
+fi
 
 body="$WORKFLOW_NAME failed.
 
 - Run: $RUN_URL
 - Time (UTC): $TIMESTAMP
-- Consecutive failures: $count"
+- Consecutive failures: $count_label"
 
 if [ -n "$open_issue_num" ]; then
   if ! comment_output=$(gh issue comment "$open_issue_num" --repo "$REPO" --body "$body" 2>&1); then
     echo "::error::Failed to comment on existing alert issue #$open_issue_num: $comment_output"
     exit 1
   fi
-  echo "::notice::Commented on existing alert issue #$open_issue_num ($count consecutive failure(s))."
+  echo "::notice::Commented on existing alert issue #$open_issue_num ($count_label consecutive failure(s))."
   exit 0
 fi
 
@@ -132,4 +191,4 @@ if ! create_output=$(gh issue create --repo "$REPO" \
   echo "::error::Failed to create alert issue: $create_output"
   exit 1
 fi
-echo "::notice::Created alert issue for $count consecutive failure(s): $create_output"
+echo "::notice::Created alert issue for $count_label consecutive failure(s): $create_output"
