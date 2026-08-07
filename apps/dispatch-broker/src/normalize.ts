@@ -51,6 +51,12 @@ interface IssueOrPullRequest {
   pull_request?: unknown;
   merged?: boolean;
   merged_at?: string | null;
+  /** GitHub's own `open`/`closed`. Only read by the `workflow_dispatch`
+   *  `reconcile` branch below -- main.mjs's normalize() already fetches the
+   *  live issue for every workflow_dispatch kind (see its own header
+   *  comment), so this is present whenever a reconcile ping is normalized,
+   *  with no extra request of its own. */
+  state?: string;
 }
 
 /** The webhook event body. One shape covering every `eventName` this file
@@ -104,6 +110,15 @@ export interface IgnoredEvent {
 export interface ReconcileEvent {
   kind: 'reconcile';
   task: LedgerTaskRef;
+  /** The issue/PR's live open/closed state at normalize time, absent only
+   *  if the live issue somehow carried neither `open` nor `closed` -- see
+   *  IssueOrPullRequest's own `state` field above. Threading this through
+   *  the normalized payload, rather than reconcileLedger() (main.mjs)
+   *  fetching the issue a second time itself, is what lets closed-issue
+   *  convergence (reconcileControlState in main.mjs) stay a pure
+   *  ledger-state comparison with no GitHub call of its own -- see that
+   *  function's own header for why that matters. */
+  issueClosed?: boolean;
 }
 
 export interface CompletionEvent {
@@ -365,10 +380,16 @@ function normalizeWorkflowDispatch({
   inputs,
   context,
   maintainer,
+  issue,
 }: {
   inputs: WorkflowDispatchInputs;
   context: NormalizeContext;
   maintainer: string | undefined;
+  /** main.mjs's normalize() already fetches the live issue for every
+   *  workflow_dispatch kind before calling normalizeEvent() -- see its own
+   *  header comment -- so this is the same fetch, not a second one. Only
+   *  the `reconcile` branch below reads it. */
+  issue?: IssueOrPullRequest;
 }): NormalizedEvent {
   const task = taskRef(context, undefined);
   // Fired by dispatch-reconcile.yml's scan job (#305), one workflow_dispatch
@@ -385,7 +406,18 @@ function normalizeWorkflowDispatch({
   // scheduled trigger only ever comes from this repo's own trusted
   // dispatch-reconcile.yml job.
   if (inputs.kind === 'reconcile') {
-    return { kind: 'reconcile', task };
+    return {
+      kind: 'reconcile',
+      task,
+      // Omit the key entirely rather than `issueClosed: undefined` when the
+      // live state can't be read -- a manual/forensic dispatch that somehow
+      // reaches here without a fetched issue must fall back to
+      // reconcileControlState's own "unknown" handling (main.mjs), not a
+      // stray explicit `undefined` that changes this object's own shape.
+      ...(issue?.state === 'open' || issue?.state === 'closed'
+        ? { issueClosed: issue.state === 'closed' }
+        : {}),
+    };
   }
   if (inputs.kind === 'completion') {
     let completion: unknown;
@@ -514,7 +546,12 @@ function normalizeEvent({
   maintainer: string | undefined;
 }): NormalizedEvent {
   if (eventName === 'workflow_dispatch') {
-    return normalizeWorkflowDispatch({ inputs, context, maintainer });
+    return normalizeWorkflowDispatch({
+      inputs,
+      context,
+      maintainer,
+      issue: event.issue,
+    });
   }
   const issue = event.issue ?? event.pull_request;
   if (!issue) return { kind: 'ignored', reason: 'event has no issue' };

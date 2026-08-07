@@ -181,9 +181,22 @@ possible:
   (parked, never silently resolved or auto-canceled) the moment more than
   one worker run matches a single dispatch generation.
 
-Out of scope for this pass (documented, not silently dropped): closed/merged
-anchors, cross-repository discovery, and a run that is genuinely still
-in-progress well past its worker timeout — the worker's own
+A **recently closed** anchor is now in scope, but only to converge control
+state — never to dispatch. Discovery adds a bounded `state=closed` sweep
+(24h window) alongside the open lanes, because a closed anchor otherwise
+drops off the candidate list the moment it closes and its ledger can never
+be repaired again. That matters on the success path: GitHub does not trigger
+workflow runs from events created by `GITHUB_TOKEN`, so when the fleet's own
+auto-merge closes an anchor — via a PR's `Fixes #N` keyword or
+`agent-automerge.yml`'s own `gh issue close` calls — no `issues: closed`
+event ever reaches the router, and `control.closed` stays `false` forever.
+Reconciling such an anchor writes control state through the same
+`applyAnchorControl` a live close event uses, and returns before the only
+branch that can create a generation.
+
+Out of scope for this pass (documented, not silently dropped): anchors closed
+longer ago than that window, cross-repository discovery, and a run that is
+genuinely still in-progress well past its worker timeout — the worker's own
 `timeout-minutes` bound already forces those to a terminal GitHub Actions
 conclusion well inside any reasonable reconcile cadence.
 

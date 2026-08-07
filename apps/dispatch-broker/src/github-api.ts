@@ -737,7 +737,10 @@ const RECONCILE_DISCOVERY_LABELS = DISPATCH_LABELS;
 // -- a healthy dispatch backlog is a handful of issues, not hundreds), well
 // inside the 1,000 requests/hour GITHUB_TOKEN budget even at a 30-minute
 // cadence, before adding one workflow_dispatch call per discovered
-// candidate (see dispatchReconcileScan in main.mjs).
+// candidate (see dispatchReconcileScan in main.mjs). Plus up to 6 more
+// paginated `state=closed&since=<CLOSED_SWEEP_WINDOW_MS ago>&labels=...`
+// requests for the bounded closed-issue sweep just below -- same shape,
+// same per-label cost, still comfortably inside budget.
 async function listOpenAgentLabeledIssues(
   api: GitHubApi,
   task: RepositoryRef,
@@ -748,6 +751,59 @@ async function listOpenAgentLabeledIssues(
     const items = await listAll<GitHubIssueDetail>(
       api,
       `${root}/issues?state=open&labels=${encodeURIComponent(label)}`,
+    );
+    for (const item of items) {
+      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
+    }
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number,
+  );
+}
+
+// Bounded closed-issue sweep: converges a ledger's `control.closed` copy
+// for an issue/PR GitHub already closed but whose live `closed` event
+// never reached agent-router.yml. Both ways an anchor closes in this repo
+// go through GITHUB_TOKEN -- an automerge-linked PR auto-closing its
+// `Fixes #N` issue, and agent-automerge.yml's own explicit `gh issue close`
+// backstop sweep -- and GitHub's documented recursion guard drops any
+// workflow trigger an event caused by GITHUB_TOKEN would otherwise fire.
+// `listOpenAgentLabeledIssues` above can never find these: they are no
+// longer open. This is the discovery half of the fix; the write side
+// (reconcileControlState) lives in main.mjs, next to the exact
+// applyAnchorControl call a genuine live close event already uses.
+//
+// Bounded by `since` (the REST issues-list endpoint's own "updated at or
+// after" filter) rather than the whole repository's closed-issue history,
+// which an unbounded closed-state sweep would otherwise walk forever --
+// exactly the cost blowup the comment above warns a naive version of this
+// would risk. Only an issue whose own state changed inside the window can
+// plausibly have drifted: dispatch-reconcile.yml runs every 30 minutes, so
+// 24 hours gives roughly 48 scheduled passes a chance at any single closed
+// issue before it ages out of the window -- generous headroom for a missed
+// run or a transient GitHub outage, while still being a small, fixed
+// multiple of "one day" rather than "forever". An issue that somehow
+// drifts for longer than that is not silently lost: reconcileControlState
+// converges on live state unconditionally whenever it's known, independent
+// of how the candidate was discovered, so a maintainer can always force one
+// through by hand with a manual `workflow_dispatch` (`kind: reconcile`,
+// that issue number).
+const CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+async function listRecentlyClosedAgentLabeledIssues(
+  api: GitHubApi,
+  task: RepositoryRef,
+  now: Date | string = new Date(),
+): Promise<GitHubIssueDetail[]> {
+  const root = repositoryPath(task);
+  const since = new Date(
+    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS,
+  ).toISOString();
+  const byNumber = new Map<number, GitHubIssueDetail>();
+  for (const label of RECONCILE_DISCOVERY_LABELS) {
+    const items = await listAll<GitHubIssueDetail>(
+      api,
+      `${root}/issues?state=closed&since=${encodeURIComponent(since)}&labels=${encodeURIComponent(label)}`,
     );
     for (const item of items) {
       if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
@@ -1239,6 +1295,7 @@ export {
   API_VERSION,
   brokerConcurrencyGroup,
   BrokerConcurrencyMismatchError,
+  CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
@@ -1254,6 +1311,7 @@ export {
   listAll,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
+  listRecentlyClosedAgentLabeledIssues,
   loadLedger,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,

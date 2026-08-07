@@ -25,6 +25,7 @@ import {
   completionMatches,
   decode,
   discoverReconcileCandidates,
+  dispatchAccepted,
   dispatchReconcileScan,
   encode,
   FRESH_INTENT_OUTCOMES,
@@ -40,6 +41,7 @@ import {
   RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
   RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   reconcileActive,
+  reconcileControlState,
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
@@ -1794,6 +1796,221 @@ test('reconcileLedger surfaces and parks a pending generation stranded with no c
     );
     assert.ok(calls.some((call) => call.path.endsWith('/labels')));
     assert.ok(calls.some((call) => call.path.endsWith('/assignees')));
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+// --- reconcileControlState / closed-anchor convergence (#663) -----------
+//
+// The success-path bug: GitHub closes an anchor (an automerge-linked PR's
+// `Fixes #N` auto-close, or agent-automerge.yml's own `gh issue close`
+// backstop) using GITHUB_TOKEN, whose recursion guard drops the resulting
+// `issues.closed`/`pull_request.closed` webhook before agent-router.yml
+// ever sees it -- so applyAnchorControlTransition (the live path's own
+// write) never runs and `control.closed` stays stale forever. These tests
+// exercise the read-and-catch-up half: `issueClosed`, threaded from
+// normalize.mjs's ReconcileEvent, is what a bounded closed-issue sweep
+// (listRecentlyClosedAgentLabeledIssues, github-api.mjs) puts back in front
+// of a reconcile pass.
+
+function completedLedger() {
+  const ledger = boundLedger();
+  completeRun(ledger, 1, {
+    runId: 42,
+    status: 'completed',
+    conclusion: 'success',
+  });
+  return ledger;
+}
+
+test('reconcileControlState converges a closed issue whose ledger still says control.closed: false, writing through the same applyAnchorControl path a live close event uses (#663)', async () => {
+  const ledger = completedLedger();
+  assert.equal(ledger.control.closed, false);
+  const revisionBefore = ledger.revision;
+  const { client, calls } = reconcileStubClient();
+  const isClosed = await reconcileControlState(
+    client,
+    { ledger, comment: { id: 9 } },
+    true,
+    '2026-08-07T19:00:00.000Z',
+    30990000,
+  );
+  assert.equal(isClosed, true);
+  assert.equal(ledger.control.closed, true);
+  assert.ok(
+    ledger.revision > revisionBefore,
+    'a genuine convergence must write the ledger',
+  );
+  assert.ok(
+    ledger.sources.some(
+      (source) =>
+        source.sourceKind === 'closed' &&
+        source.sourceId.startsWith('reconcile-control:'),
+    ),
+    'must record evidence through the same source vocabulary a live close event uses',
+  );
+  assert.ok(
+    calls.some((call) => call.path.includes('/issues/comments/9')),
+    'a genuine convergence must save the ledger comment',
+  );
+});
+
+test('reconcileControlState is a no-op when the ledger already agrees with the live closed state: no ledger write, no revision churn (#663)', async () => {
+  const ledger = completedLedger();
+  // Converge once, as an earlier reconcile pass would have.
+  await reconcileControlState(
+    reconcileStubClient().client,
+    { ledger, comment: { id: 9 } },
+    true,
+    '2026-08-07T19:00:00.000Z',
+    30990000,
+  );
+  assert.equal(ledger.control.closed, true);
+  const revisionAfterFirstConvergence = ledger.revision;
+
+  // A second pass observing the same live state must change nothing.
+  const { client, calls } = reconcileStubClient();
+  const isClosed = await reconcileControlState(
+    client,
+    { ledger, comment: { id: 9 } },
+    true,
+    '2026-08-07T19:30:00.000Z',
+    30990001,
+  );
+  assert.equal(isClosed, true);
+  assert.equal(ledger.revision, revisionAfterFirstConvergence);
+  assert.equal(
+    calls.length,
+    0,
+    'an already-converged closed issue must not touch the ledger at all',
+  );
+});
+
+test("reconcileControlState falls back to the ledger's own last-known control.closed when the live issue state is unknown (issueClosed undefined)", async () => {
+  const openLedger = boundLedger();
+  const { client, calls } = reconcileStubClient();
+  const result = await reconcileControlState(
+    client,
+    { ledger: openLedger, comment: { id: 9 } },
+    undefined,
+    '2026-08-07T19:00:00.000Z',
+    30990000,
+  );
+  assert.equal(result, false);
+  assert.equal(calls.length, 0);
+
+  const closedLedger = completedLedger();
+  closedLedger.control = { closed: true };
+  const result2 = await reconcileControlState(
+    client,
+    { ledger: closedLedger, comment: { id: 9 } },
+    undefined,
+    '2026-08-07T19:00:00.000Z',
+    30990000,
+  );
+  assert.equal(result2, true);
+});
+
+test('reconcileControlState converges a reopened issue whose ledger still says control.closed: true, mirroring the closed direction (#663)', async () => {
+  const ledger = completedLedger();
+  await reconcileControlState(
+    reconcileStubClient().client,
+    { ledger, comment: { id: 9 } },
+    true,
+    '2026-08-07T19:00:00.000Z',
+    30990000,
+  );
+  assert.equal(ledger.control.closed, true);
+
+  const { client, calls } = reconcileStubClient();
+  const isClosed = await reconcileControlState(
+    client,
+    { ledger, comment: { id: 9 } },
+    false,
+    '2026-08-07T20:00:00.000Z',
+    30990002,
+  );
+  assert.equal(isClosed, false);
+  assert.equal(ledger.control.closed, false);
+  assert.ok(ledger.sources.some((source) => source.sourceKind === 'reopened'));
+  assert.ok(calls.some((call) => call.path.includes('/issues/comments/9')));
+});
+
+test('reconciling a closed issue never dispatches a new generation, whatever its labels say -- even an empty ledger with an unambiguous, maintainer-applied agent:* label the #520 repair would otherwise act on (#663)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    // Exactly the fixture 'reconcileLedger repairs a queue-evicted labeled
+    // intent' (#520, above) uses to PROVE repairMissingIntentFromLabel DOES
+    // create a fresh 'accepted' generation for an open issue -- the only
+    // difference here is `issueClosed: true`.
+    const { client, calls } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: maintainerLabelTimeline(),
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+      /* issueClosed */ true,
+    );
+
+    assert.equal(
+      ledger.generations.length,
+      0,
+      'a closed issue must never gain a fresh generation, regardless of its live labels',
+    );
+    assert.equal(ledger.control.closed, true);
+    assert.equal(
+      calls.some((call) => call.path.includes('/issues/304/timeline')),
+      false,
+      'must never even consult the label timeline once the issue is known closed',
+    );
+
+    // Second, independent layer: even if a generation had somehow been
+    // created anyway, dispatchAccepted's own gate must refuse to dispatch
+    // it once control.closed is true -- prove that directly with a client
+    // that throws on any call at all, so a dispatch attempt fails the test
+    // loudly instead of silently succeeding.
+    const explosiveClient = {
+      requestOk: async (path) => {
+        throw new Error(`Must never call GitHub while closed: ${path}`);
+      },
+      request: async (path) => {
+        throw new Error(`Must never dispatch while closed: ${path}`);
+      },
+    };
+    await dispatchAccepted(explosiveClient, { ledger, comment: { id: 9 } });
+    assert.equal(ledger.generations.length, 0);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger with issueClosed: false (the live, common case for an open issue) still repairs a queue-evicted labeled intent exactly as before -- open-issue reconcile behavior is unchanged (#663)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { client } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: maintainerLabelTimeline(),
+    });
+    const now = '2026-08-04T06:00:00.000Z';
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      now,
+      30880000,
+      /* issueClosed */ false,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    assert.equal(ledger.generations[0].pipeline, 'codex');
+    assert.equal(ledger.generations[0].state, 'accepted');
+    assert.equal(ledger.control.closed, false);
   } finally {
     delete process.env.MAINTAINER_LOGIN;
   }
