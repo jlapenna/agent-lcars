@@ -246,11 +246,31 @@ jobs:
       # reduce. So the benign line is present *precisely in the case that
       # must fail*, and treating it as an all-clear would mask the failures
       # this step exists to catch.
+      #
+      # The ADC line is the second permitted one, and it is routine rather
+      # than an exception: create-store.ts logs it at info level on every
+      # runner-mode start, because runner mode resolves the WIF-minted
+      # short-lived credentials file through Application Default Credentials
+      # by design (apps/telemetry-watcher/README.md documents it as the
+      # sanctioned third credential path). It is not a fallback away from a
+      # healthier path. Omitting it is why this canary failed every run from
+      # the moment it was added.
+      #
+      # Keeping this an allowlist -- rather than flagging only ::warning::
+      # and ::error:: lines -- is deliberate. The watcher reports its most
+      # serious failures with NO annotation at all ("runner finalize failed
+      # (ignored...)", "uncaught exception in runner finalize (ignored)"),
+      # precisely because telemetry must never fail a real agent run. A
+      # severity-based filter would therefore miss exactly the failures this
+      # step exists to catch. The cost is that a genuinely new benign line
+      # turns this red until it is allowlisted, which is the correct
+      # direction to be wrong in for a component engineered to fail quietly.
       - name: Verify telemetry finalize completed without a reported failure
         run: |
           LOG="$RUNNER_TEMP/telemetry-finalize.log"
           unexpected="$(grep 'agent-lcars-telemetry-watcher:' "$LOG" \
-            | grep -v 'finalize discovered zero sessions' || true)"
+            | grep -v 'finalize discovered zero sessions' \
+            | grep -v 'using ambient Application Default Credentials' || true)"
           if [ -n "$unexpected" ]; then
             echo "::error::Telemetry finalize reported a failure:"
             printf '%s\n' "$unexpected"
