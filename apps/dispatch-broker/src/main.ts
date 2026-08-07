@@ -45,6 +45,8 @@ import {
   listAll,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
+  listRecentlyClosedAgentLabeledIssues,
+  listRecentlyClosedIssuesAssignedTo,
   loadLedger,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
@@ -1001,6 +1003,93 @@ async function repairMissingIntentFromLabel(
   await saveLedger(client, loaded);
 }
 
+// Converges a ledger's `control.closed` copy against the issue/PR's live
+// open/closed state -- the fix for the success-path bug where GitHub
+// closes an anchor (an automerge-linked auto-close via a PR's `Fixes #N`,
+// or this repo's own `gh issue close` sweep in agent-automerge.yml) using
+// GITHUB_TOKEN. GitHub's documented recursion guard drops any workflow
+// trigger an event caused by GITHUB_TOKEN would otherwise fire, so
+// agent-router.yml's own live `issues: [closed]`/`pull_request: [closed]`
+// triggers never run and applyAnchorControlTransition (broker()'s write for
+// a genuine live close event, below) never gets a chance to record it. This
+// is the read-and-catch-up half: dispatch-reconcile.yml's bounded closed-
+// issue sweep (discoverRecentlyClosedReconcileCandidates, below) puts a
+// closed, still agent-labeled OR fleet-assigned issue back in front of a
+// reconcile pass, and `issueClosed` -- threaded from main.mjs's own
+// normalize() step through ReconcileEvent (normalize.mjs) -- carries the
+// one fact only GitHub has: its real current state. Nothing here fetches
+// anything itself; a second GET here (on top of normalize()'s own,
+// already-unconditional fetch for every workflow_dispatch) would only
+// re-earn a fact this pass already has, and would turn every reconcile
+// pass -- including the ones a dispatching generation's own grace period
+// must stay silent through -- into one that always calls out to GitHub.
+//
+// broker() (below) calls this directly, ahead of reconcileActive(), for
+// every `reconcile` event -- not only indirectly through reconcileLedger's
+// own call further down (#715 review: reconcileActive() can throw on an
+// anomaly entirely unrelated to whether the anchor is closed, and used to
+// run first, so control-state convergence could never outrun it). The
+// second call this same pass makes, inside reconcileLedger, is therefore
+// always a no-op by the time it runs -- see that function's own header.
+//
+// `issueClosed === undefined` means the live state genuinely couldn't be
+// determined (main.mjs's normalize() didn't -- or couldn't -- fetch the
+// issue); falls back to the ledger's own last-recorded copy rather than
+// guessing, so a stale-but-unknown-either-way pass changes nothing.
+//
+// When the two disagree, this writes through applyAnchorControl -- the
+// exact function a genuine live `issues.closed`/`pull_request.closed`
+// webhook already uses (see applyAnchorControlTransition below) -- so
+// revisioning, sourceId dedup, and superseding any `pending`/`accepted`
+// generation on close all stay the single mechanism they already were.
+// Nothing here ever calls acceptIntent/beginDispatch or otherwise creates a
+// generation.
+//
+// Returns whether the issue IS closed (whether or not this call is what
+// converged it) so reconcileLedger can skip every generation-repair branch
+// below for a closed anchor -- including repairMissingIntentFromLabel, the
+// one branch that CAN create a fresh generation. That return-and-skip is
+// what makes "reconciling a closed issue never dispatches a new
+// generation" structural: this function itself contains no path that
+// creates a generation, and even if it did, dispatchAccepted's own
+// `while (!ledger.control.closed)` gate -- already what the live-close path
+// depends on -- reads this same field again immediately afterward, in the
+// same broker() pass.
+async function reconcileControlState(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  issueClosed: boolean | undefined,
+  now: string,
+  runId: number,
+): Promise<boolean> {
+  const ledger = loaded.ledger;
+  if (issueClosed === undefined) return ledger.control.closed;
+  if (issueClosed !== ledger.control.closed) {
+    applyAnchorControl(
+      ledger,
+      {
+        kind: issueClosed ? 'closed' : 'reopened',
+        sourceId: `reconcile-control:${ledger.task.issue}:${issueClosed ? 'closed' : 'reopened'}:${now}`,
+        occurredAt: now,
+        transportRunId: runId,
+        authorization: { observed: true, actor: 'dispatch-broker' },
+        // A reconcile pass only carries the issue's own open/closed state
+        // (see ReconcileEvent/`issueClosed` in normalize.mjs), not the
+        // richer merge signal a live `issues`/`pull_request` webhook
+        // payload carries -- unlike control.closed, nothing reads
+        // control.merged today (grep finds only its two writers), so
+        // recording it as unknown-here rather than threading a second
+        // field through purely to populate descriptive metadata is a
+        // deliberate simplification, not an oversight.
+        merged: false,
+      },
+      now,
+    );
+    await saveLedger(client, loaded);
+  }
+  return issueClosed;
+}
+
 // The `reconcile` normalized kind's own repair (#305), invoked from
 // broker() after reconcileActive() has already had its normal chance to
 // bind/complete the current active generation. Everything reconcileActive()
@@ -1008,13 +1097,35 @@ async function repairMissingIntentFromLabel(
 // anomaly+fail-closed a genuine duplicate-run collision) is intentionally
 // NOT duplicated here -- this only closes reconcileActive()'s one remaining
 // gap (a persistently runless dispatch) and one defensive invariant check.
+//
+// `issueClosed` (from ReconcileEvent, normalize.mjs) is checked first, via
+// reconcileControlState, before any of the generation-repair logic below --
+// see that function's own header for why a closed anchor returns
+// immediately rather than falling through. broker() (#715) already made
+// this exact reconcileControlState call itself, ahead of reconcileActive(),
+// before ever reaching this function -- so by the time reconcileLedger runs
+// at all, this call is normally a no-op re-observation of an
+// already-converged ledger; it stays here (rather than being removed) so
+// reconcileLedger keeps converging control state correctly on its own for
+// every other caller, direct test included. A reopened anchor (`issueClosed
+// === false` while the ledger still says closed) converges the same way but
+// does NOT return early: an issue reopened after a stale close is ordinary
+// open-issue territory, and the discovery lane that would have found it in
+// the first place is the existing open/fleet-assignee one
+// (discoverReconcileCandidates) -- a reopened anchor still carries
+// whichever agent:*/assignee signal got it discovered, so no dedicated
+// "reopened sweep" is needed alongside the closed one.
 async function reconcileLedger(
   client: GitHubApiClient,
   loaded: LoadedLedger,
   now: string = new Date().toISOString(),
   runId: number,
+  issueClosed?: boolean,
 ): Promise<void> {
   const ledger = loaded.ledger;
+  if (await reconcileControlState(client, loaded, issueClosed, now, runId)) {
+    return;
+  }
   if (ledger.generations.length === 0) {
     await repairMissingIntentFromLabel(client, loaded, now, runId);
     return;
@@ -1598,6 +1709,39 @@ async function broker(): Promise<void> {
   }
   await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
+    // #715 (Codex P2 review of #645/#663): converge the anchor's live
+    // closed/reopened state -- for a `reconcile` event, the only kind that
+    // carries it (`issueClosed`, threaded from ReconcileEvent in
+    // normalize.mjs) -- BEFORE giving reconcileActive() below any chance to
+    // run at all. reconcileActive() can throw on an anomaly in the
+    // anchor's OWN active generation that has nothing to do with whether
+    // the anchor itself is closed -- most deterministically, a genuine
+    // duplicate-attempt collision when more than one worker run matches
+    // one generation. Previously that throw ran ahead of reconcileLedger()
+    // (and therefore its own reconcileControlState() call) below, so a
+    // duplicate-attempt anomaly on a closed anchor's active generation
+    // permanently starved control-state convergence: every later reconcile
+    // pass re-observed the identical anomaly, reconcileActive() threw
+    // again before reconcileLedger() was ever reached, and control.closed
+    // never became true -- the same repair-defeated-by-something-unrelated
+    // shape as the outage this whole PR set out to fix. This still writes
+    // through the exact same applyAnchorControl call reconcileControlState
+    // (and a genuine live close event) already use -- not a second way to
+    // record the fact -- and reconcileLedger's own reconcileControlState()
+    // call further below simply observes an already-converged ledger and
+    // no-ops, so an OPEN anchor's generation-repair work (the entire reason
+    // reconcileLedger runs) still happens exactly as before.
+    if (normalized.kind === 'reconcile') {
+      await runPhase({ client, loaded }, 'reconciliation', () =>
+        reconcileControlState(
+          client,
+          loaded,
+          normalized.issueClosed,
+          new Date().toISOString(),
+          runId,
+        ),
+      );
+    }
     await reconcileActive(client, loaded);
     if (normalized.kind === 'intent') {
       const accepted = await runPhase({ client, loaded }, 'intent', () =>
@@ -1624,7 +1768,13 @@ async function broker(): Promise<void> {
       await handleCompletion(client, loaded, normalized);
     } else if (normalized.kind === 'reconcile') {
       await runPhase({ client, loaded }, 'reconciliation', () =>
-        reconcileLedger(client, loaded, new Date().toISOString(), runId),
+        reconcileLedger(
+          client,
+          loaded,
+          new Date().toISOString(),
+          runId,
+          normalized.issueClosed,
+        ),
       );
     } else {
       // Unreachable given NormalizedEvent's current, exhaustively-handled
@@ -1779,27 +1929,76 @@ async function discoverReconcileCandidates(
   );
 }
 
+// Closed counterpart to discoverReconcileCandidates (#715 review of
+// #645/#663): the bounded closed-issue sweep needs the identical two-lane
+// union its open counterpart already has, not just the labeled half. An
+// anchor whose last agent:*/review:* label was removed while its worker was
+// still active -- the exact case the fleet-assignee lane exists to cover on
+// the open side, see listOpenIssuesAssignedTo's own header -- stays
+// undiscoverable by listRecentlyClosedAgentLabeledIssues alone once
+// GITHUB_TOKEN closes it, so without this lane such an anchor's
+// control.closed would stay stale forever, permanently, exactly like the
+// labeled gap #645 fixed. Deduplicated by issue number the same way
+// discoverReconcileCandidates and each individual lane already dedupe their
+// own per-label queries.
+async function discoverRecentlyClosedReconcileCandidates(
+  client: GitHubApiClient,
+  repository: string,
+  fleetLogin: string,
+  now: Date | string = new Date(),
+): Promise<GitHubIssueDetail[]> {
+  const task = { repository };
+  const [labeled, assigned]: [GitHubIssueDetail[], GitHubIssueDetail[]] =
+    await Promise.all([
+      listRecentlyClosedAgentLabeledIssues(client, task, now),
+      listRecentlyClosedIssuesAssignedTo(client, task, fleetLogin, now),
+    ]);
+  const byNumber = new Map<number, GitHubIssueDetail>();
+  for (const issue of [...labeled, ...assigned]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number,
+  );
+}
+
 // dispatch-reconcile.yml's scan job (#305): read-only discovery of every
-// open agent-labeled or fleet-assigned issue/PR (discoverReconcileCandidates),
-// then one `kind: reconcile` workflow_dispatch call per candidate via
-// dispatchReconcileScan(). A per-issue dispatch failure never blocks the
-// other candidates -- every candidate always gets an attempt -- but the job
-// itself still fails loud afterwards (unlike an individual reconcile's own
-// bounded-retry parking, which stays green by design) so a systemic
+// open agent-labeled or fleet-assigned issue/PR (discoverReconcileCandidates)
+// UNION'd with its closed counterpart, the bounded closed-issue sweep
+// (discoverRecentlyClosedReconcileCandidates, above -- the closed-anchor
+// convergence fix, broadened by #715's review to the same label +
+// fleet-assignee two-lane shape the open side already had; see
+// reconcileControlState above for what a closed candidate's own reconcile
+// pass then does), deduplicated by issue number the same way each
+// individual lane already dedupes its own per-label queries. Every
+// resulting candidate, open or closed, gets exactly one `kind: reconcile`
+// workflow_dispatch call via dispatchReconcileScan() -- the closed lane
+// needs no separate dispatch kind of its own, since reconcileLedger's own
+// live-state check (threaded through from normalize.mjs's ReconcileEvent)
+// is what tells the two apart. A per-issue dispatch failure never blocks
+// the other candidates -- every candidate always gets an attempt -- but the
+// job itself still fails loud afterwards (unlike an individual reconcile's
+// own bounded-retry parking, which stays green by design) so a systemic
 // dispatch problem (e.g. a bad token) is visible.
 async function scanReconcile(): Promise<void> {
   const client = api();
   const repository = env('GITHUB_REPOSITORY');
-  const candidates = await discoverReconcileCandidates(
-    client,
-    repository,
-    env('AGENT_FLEET_LOGIN', false),
-  );
-  const issueNumbers = candidates.map((issue) => issue.number);
+  const fleetLogin = env('AGENT_FLEET_LOGIN', false);
+  const [openCandidates, closedCandidates] = await Promise.all([
+    discoverReconcileCandidates(client, repository, fleetLogin),
+    discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin),
+  ]);
+  const byNumber = new Map<number, GitHubIssueDetail>();
+  for (const issue of [...openCandidates, ...closedCandidates]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  const issueNumbers = [...byNumber.keys()].sort((left, right) => left - right);
   const results = await dispatchReconcileScan(client, repository, issueNumbers);
   console.log(
     `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/` +
-      `${issueNumbers.length} open agent-labeled or fleet-assigned issue(s).`,
+      `${issueNumbers.length} candidate(s) (${openCandidates.length} open ` +
+      `agent-labeled/fleet-assigned, ${closedCandidates.length} recently-closed ` +
+      `agent-labeled/fleet-assigned).`,
   );
   for (const failure of results.failed) {
     console.log(
@@ -1834,7 +2033,9 @@ export {
   completionMatches,
   contextFor,
   decode,
+  discoverRecentlyClosedReconcileCandidates,
   discoverReconcileCandidates,
+  dispatchAccepted,
   dispatchReconcileScan,
   encode,
   FRESH_INTENT_OUTCOMES,
@@ -1850,6 +2051,7 @@ export {
   RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
   RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   reconcileActive,
+  reconcileControlState,
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,

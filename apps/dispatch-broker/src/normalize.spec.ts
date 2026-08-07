@@ -153,6 +153,44 @@ test('reconcile dispatch normalizes to a bare TaskRef ping, carrying no evidence
   assert.equal(fromCollaborator.kind, 'reconcile');
 });
 
+// #663: main.mjs's normalize() already fetches the live issue for every
+// workflow_dispatch (see its own header comment) -- a `reconcile` ping
+// threads that fetch's `state` through as `issueClosed` so main.mjs's
+// reconcileControlState can converge a stale `control.closed` without a
+// second GET of its own. Both directions, and the "state truly unknown"
+// fallback above, are covered here.
+test("reconcile dispatch threads the live issue's open/closed state through as issueClosed (#663)", () => {
+  const closed = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: { issue: { ...baseIssue, state: 'closed' } },
+    inputs: { kind: 'reconcile', issue: '304' },
+    context: { ...context, actor: 'github-actions[bot]' },
+    maintainer: 'jlapenna',
+  });
+  assert.equal(closed.issueClosed, true);
+
+  const open = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: { issue: { ...baseIssue, state: 'open' } },
+    inputs: { kind: 'reconcile', issue: '304' },
+    context: { ...context, actor: 'github-actions[bot]' },
+    maintainer: 'jlapenna',
+  });
+  assert.equal(open.issueClosed, false);
+
+  // An unrecognized/missing state must not be coerced into a claim either
+  // way -- `issueClosed` stays entirely absent from the normalized event
+  // (not `undefined`-valued), matching the no-`event.issue` case above.
+  const unknown = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: { issue: { ...baseIssue, state: undefined } },
+    inputs: { kind: 'reconcile', issue: '304' },
+    context: { ...context, actor: 'github-actions[bot]' },
+    maintainer: 'jlapenna',
+  });
+  assert.equal('issueClosed' in unknown, false);
+});
+
 test('Actions-tab dispatch falls back to stable workflow run identity', () => {
   const normalized = normalizeEvent({
     eventName: 'workflow_dispatch',

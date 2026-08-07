@@ -1013,12 +1013,43 @@ async function listOpenAgentLabeledIssues(api2, task) {
     (left, right) => left.number - right.number
   );
 }
+var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
+async function listRecentlyClosedAgentLabeledIssues(api2, task, now = /* @__PURE__ */ new Date()) {
+  const root = repositoryPath(task);
+  const since = new Date(
+    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
+  ).toISOString();
+  const byNumber = /* @__PURE__ */ new Map();
+  for (const label of RECONCILE_DISCOVERY_LABELS) {
+    const items = await listAll(
+      api2,
+      `${root}/issues?state=closed&since=${encodeURIComponent(since)}&labels=${encodeURIComponent(label)}`
+    );
+    for (const item of items) {
+      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
+    }
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number
+  );
+}
 async function listOpenIssuesAssignedTo(api2, task, login) {
   if (!login) return [];
   const root = repositoryPath(task);
   return listAll(
     api2,
     `${root}/issues?state=open&assignee=${encodeURIComponent(login)}`
+  );
+}
+async function listRecentlyClosedIssuesAssignedTo(api2, task, login, now = /* @__PURE__ */ new Date()) {
+  if (!login) return [];
+  const root = repositoryPath(task);
+  const since = new Date(
+    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
+  ).toISOString();
+  return listAll(
+    api2,
+    `${root}/issues?state=closed&since=${encodeURIComponent(since)}&assignee=${encodeURIComponent(login)}`
   );
 }
 async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", { createIfMissing = true } = {}) {
@@ -1450,11 +1481,21 @@ function makeIntent(base) {
 function normalizeWorkflowDispatch({
   inputs,
   context,
-  maintainer
+  maintainer,
+  issue
 }) {
   const task = taskRef(context, void 0);
   if (inputs.kind === "reconcile") {
-    return { kind: "reconcile", task };
+    return {
+      kind: "reconcile",
+      task,
+      // Omit the key entirely rather than `issueClosed: undefined` when the
+      // live state can't be read -- a manual/forensic dispatch that somehow
+      // reaches here without a fetched issue must fall back to
+      // reconcileControlState's own "unknown" handling (main.mjs), not a
+      // stray explicit `undefined` that changes this object's own shape.
+      ...issue?.state === "open" || issue?.state === "closed" ? { issueClosed: issue.state === "closed" } : {}
+    };
   }
   if (inputs.kind === "completion") {
     let completion;
@@ -1547,7 +1588,12 @@ function normalizeEvent({
   maintainer
 }) {
   if (eventName === "workflow_dispatch") {
-    return normalizeWorkflowDispatch({ inputs, context, maintainer });
+    return normalizeWorkflowDispatch({
+      inputs,
+      context,
+      maintainer,
+      issue: event.issue
+    });
   }
   const issue = event.issue ?? event.pull_request;
   if (!issue) return { kind: "ignored", reason: "event has no issue" };
@@ -2207,8 +2253,39 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   acceptIntent(ledger, intent, now);
   await saveLedger(client, loaded);
 }
-async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId) {
+async function reconcileControlState(client, loaded, issueClosed, now, runId) {
   const ledger = loaded.ledger;
+  if (issueClosed === void 0) return ledger.control.closed;
+  if (issueClosed !== ledger.control.closed) {
+    applyAnchorControl(
+      ledger,
+      {
+        kind: issueClosed ? "closed" : "reopened",
+        sourceId: `reconcile-control:${ledger.task.issue}:${issueClosed ? "closed" : "reopened"}:${now}`,
+        occurredAt: now,
+        transportRunId: runId,
+        authorization: { observed: true, actor: "dispatch-broker" },
+        // A reconcile pass only carries the issue's own open/closed state
+        // (see ReconcileEvent/`issueClosed` in normalize.mjs), not the
+        // richer merge signal a live `issues`/`pull_request` webhook
+        // payload carries -- unlike control.closed, nothing reads
+        // control.merged today (grep finds only its two writers), so
+        // recording it as unknown-here rather than threading a second
+        // field through purely to populate descriptive metadata is a
+        // deliberate simplification, not an oversight.
+        merged: false
+      },
+      now
+    );
+    await saveLedger(client, loaded);
+  }
+  return issueClosed;
+}
+async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId, issueClosed) {
+  const ledger = loaded.ledger;
+  if (await reconcileControlState(client, loaded, issueClosed, now, runId)) {
+    return;
+  }
   if (ledger.generations.length === 0) {
     await repairMissingIntentFromLabel(client, loaded, now, runId);
     return;
@@ -2531,6 +2608,19 @@ async function broker() {
   }
   await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
+    if (normalized.kind === "reconcile") {
+      await runPhase(
+        { client, loaded },
+        "reconciliation",
+        () => reconcileControlState(
+          client,
+          loaded,
+          normalized.issueClosed,
+          (/* @__PURE__ */ new Date()).toISOString(),
+          runId
+        )
+      );
+    }
     await reconcileActive(client, loaded);
     if (normalized.kind === "intent") {
       const accepted = await runPhase(
@@ -2553,7 +2643,13 @@ async function broker() {
       await runPhase(
         { client, loaded },
         "reconciliation",
-        () => reconcileLedger(client, loaded, (/* @__PURE__ */ new Date()).toISOString(), runId)
+        () => reconcileLedger(
+          client,
+          loaded,
+          (/* @__PURE__ */ new Date()).toISOString(),
+          runId,
+          normalized.issueClosed
+        )
       );
     } else {
       throw new Error(
@@ -2663,18 +2759,36 @@ async function discoverReconcileCandidates(client, repository, fleetLogin) {
     (left, right) => left.number - right.number
   );
 }
+async function discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
+  const task = { repository };
+  const [labeled, assigned] = await Promise.all([
+    listRecentlyClosedAgentLabeledIssues(client, task, now),
+    listRecentlyClosedIssuesAssignedTo(client, task, fleetLogin, now)
+  ]);
+  const byNumber = /* @__PURE__ */ new Map();
+  for (const issue of [...labeled, ...assigned]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number
+  );
+}
 async function scanReconcile() {
   const client = api();
   const repository = env("GITHUB_REPOSITORY");
-  const candidates = await discoverReconcileCandidates(
-    client,
-    repository,
-    env("AGENT_FLEET_LOGIN", false)
-  );
-  const issueNumbers = candidates.map((issue) => issue.number);
+  const fleetLogin = env("AGENT_FLEET_LOGIN", false);
+  const [openCandidates, closedCandidates] = await Promise.all([
+    discoverReconcileCandidates(client, repository, fleetLogin),
+    discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin)
+  ]);
+  const byNumber = /* @__PURE__ */ new Map();
+  for (const issue of [...openCandidates, ...closedCandidates]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  const issueNumbers = [...byNumber.keys()].sort((left, right) => left - right);
   const results = await dispatchReconcileScan(client, repository, issueNumbers);
   console.log(
-    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${issueNumbers.length} open agent-labeled or fleet-assigned issue(s).`
+    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${issueNumbers.length} candidate(s) (${openCandidates.length} open agent-labeled/fleet-assigned, ${closedCandidates.length} recently-closed agent-labeled/fleet-assigned).`
   );
   for (const failure of results.failed) {
     console.log(
@@ -2712,7 +2826,9 @@ export {
   completionMatches,
   contextFor,
   decode,
+  discoverRecentlyClosedReconcileCandidates,
   discoverReconcileCandidates,
+  dispatchAccepted,
   dispatchReconcileScan,
   encode,
   handleCompletion,
@@ -2720,6 +2836,7 @@ export {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   reconcileActive,
+  reconcileControlState,
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,

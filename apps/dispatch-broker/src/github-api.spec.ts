@@ -13,6 +13,7 @@ import {
   agentWorkerPipelines,
   API_VERSION,
   brokerConcurrencyGroup,
+  CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
@@ -24,6 +25,8 @@ import {
   GitHubApiError,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
+  listRecentlyClosedAgentLabeledIssues,
+  listRecentlyClosedIssuesAssignedTo,
   loadLedger,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
@@ -972,6 +975,159 @@ test('listOpenIssuesAssignedTo is a no-op returning no requests when no login is
   });
   assert.deepEqual(await listOpenIssuesAssignedTo(api, task, ''), []);
   assert.deepEqual(await listOpenIssuesAssignedTo(api, task, undefined), []);
+});
+
+test('listRecentlyClosedAgentLabeledIssues queries all three agent labels and all three review labels with state=closed, deduping by issue number', async () => {
+  const seen = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      if (url.includes('labels=agent%3Aclaude')) {
+        return response(200, [{ number: 660 }, { number: 622 }]);
+      }
+      if (url.includes('labels=agent%3Acodex')) {
+        // Same issue reported under a second label -- an (invalid)
+        // contradictory-label issue must still only be scanned once.
+        return response(200, [{ number: 622 }]);
+      }
+      if (
+        url.includes('labels=agent%3Aopencode') ||
+        url.includes('labels=review%3Aclaude') ||
+        url.includes('labels=review%3Acodex') ||
+        url.includes('labels=review%3Aopencode')
+      ) {
+        return response(200, []);
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const issues = await listRecentlyClosedAgentLabeledIssues(
+    api,
+    task,
+    '2026-08-07T00:00:00.000Z',
+  );
+  assert.deepEqual(
+    issues.map((issue) => issue.number),
+    [622, 660],
+  );
+  assert.equal(seen.length, 6);
+  for (const url of seen) assert.match(url, /state=closed/u);
+});
+
+// The task explicitly warns an unbounded closed-state sweep over the whole
+// repository history would be far more expensive than the open sweeps this
+// mirrors -- this is the guard against that: every request must carry a
+// `since` no older than CLOSED_SWEEP_WINDOW_MS behind the reference time,
+// not an open-ended query.
+test('listRecentlyClosedAgentLabeledIssues bounds every request with a `since` exactly CLOSED_SWEEP_WINDOW_MS behind the reference time', async () => {
+  const now = '2026-08-07T12:00:00.000Z';
+  const expectedSince = new Date(
+    Date.parse(now) - CLOSED_SWEEP_WINDOW_MS,
+  ).toISOString();
+  const seen = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      return response(200, []);
+    },
+  });
+  await listRecentlyClosedAgentLabeledIssues(api, task, now);
+  assert.equal(seen.length, 6, 'one bounded request per agent/review label');
+  for (const url of seen) {
+    const since = new URL(url).searchParams.get('since');
+    assert.equal(since, expectedSince);
+  }
+  // 24 hours, not "the repository's whole history" -- see the function's
+  // own header comment for why that window was chosen.
+  assert.equal(CLOSED_SWEEP_WINDOW_MS, 24 * 60 * 60 * 1000);
+});
+
+test('listRecentlyClosedAgentLabeledIssues paginates a single label past 100 results', async () => {
+  const pageOne = Array.from({ length: 100 }, (_, index) => ({
+    number: index + 1,
+  }));
+  const requestedPages = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      if (url.includes('labels=agent%3Aclaude')) {
+        const page = Number(new URL(url).searchParams.get('page'));
+        requestedPages.push(page);
+        return response(200, page === 1 ? pageOne : [{ number: 101 }]);
+      }
+      return response(200, []);
+    },
+  });
+  const issues = await listRecentlyClosedAgentLabeledIssues(api, task);
+  assert.deepEqual(requestedPages, [1, 2]);
+  assert.equal(issues.length, 101);
+});
+
+test('listRecentlyClosedIssuesAssignedTo queries the exact assignee login with state=closed and a bounded `since` (#715 review)', async () => {
+  const now = '2026-08-07T12:00:00.000Z';
+  const expectedSince = new Date(
+    Date.parse(now) - CLOSED_SWEEP_WINDOW_MS,
+  ).toISOString();
+  const seen = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      assert.ok(url.includes('state=closed'));
+      assert.ok(url.includes('assignee=jclaw-bot'));
+      assert.equal(new URL(url).searchParams.get('since'), expectedSince);
+      return response(200, [{ number: 500 }]);
+    },
+  });
+  const issues = await listRecentlyClosedIssuesAssignedTo(
+    api,
+    task,
+    'jclaw-bot',
+    now,
+  );
+  assert.deepEqual(
+    issues.map((issue) => issue.number),
+    [500],
+  );
+  assert.equal(seen.length, 1);
+});
+
+test('listRecentlyClosedIssuesAssignedTo is a no-op returning no requests when no login is configured', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () => {
+      throw new Error('must not call the API without a configured login');
+    },
+  });
+  assert.deepEqual(await listRecentlyClosedIssuesAssignedTo(api, task, ''), []);
+  assert.deepEqual(
+    await listRecentlyClosedIssuesAssignedTo(api, task, undefined),
+    [],
+  );
+});
+
+test('listRecentlyClosedIssuesAssignedTo paginates past 100 results', async () => {
+  const pageOne = Array.from({ length: 100 }, (_, index) => ({
+    number: index + 1,
+  }));
+  const requestedPages = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get('page'));
+      requestedPages.push(page);
+      return response(200, page === 1 ? pageOne : [{ number: 101 }]);
+    },
+  });
+  const issues = await listRecentlyClosedIssuesAssignedTo(
+    api,
+    task,
+    'jclaw-bot',
+  );
+  assert.deepEqual(requestedPages, [1, 2]);
+  assert.equal(issues.length, 101);
 });
 
 function dispatchingGeneration({
