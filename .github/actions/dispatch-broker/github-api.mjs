@@ -283,12 +283,33 @@ function concurrencyGroupsPath(root, runId) {
 // loop below already exists to cover, and categorically smaller than a
 // blind spot that used to persist no matter how many times or how long a
 // caller retried.
+// The marker alone is NOT sufficient, and assuming it was would trade one
+// bug for another. `run-name:` is evaluated at the *workflow* level, so a
+// second run carries this task's marker from the instant it starts -- while
+// it is still only in its `normalize` job. But `normalize`'s concurrency
+// group is the repository-wide `-control-plane-normalize` queue; only the
+// `broker` job takes the per-task group (see agent-router.yml). Treating any
+// same-task run as a holder would therefore manufacture conflicts during
+// ordinary event bursts and, once the retry budget expired, drop or delay
+// legitimate intent, completion, and control evidence.
+//
+// So the marker narrows the candidates and the *jobs* listing decides. That
+// is the "live job/run list" this redesign is named for: `/actions/runs/{id}/
+// jobs` is an ordinary, reliable listing -- unlike the `concurrency_groups`
+// sub-resource it replaces -- and it reports job status directly, which is
+// the level the group actually lives at.
+//
+// Only `in_progress` counts. A candidate's `broker` job sitting in `queued`
+// is waiting behind the group, very likely behind *this* run, and is not a
+// conflict.
+const ROUTER_BROKER_JOB_NAME = 'broker';
+
 async function findConflictingRouterRun(api, task, runId) {
   const root = repositoryPath(task);
   const data = await api.requestOk(
     `${root}/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100`,
   );
-  return (data.workflow_runs ?? []).find((run) => {
+  const candidates = (data.workflow_runs ?? []).filter((run) => {
     if (!Number.isSafeInteger(run?.id) || run.id === runId) return false;
     const marker = parseRouterGroupMarker(run.display_title);
     return (
@@ -297,6 +318,19 @@ async function findConflictingRouterRun(api, task, runId) {
       marker.issue === task.issue
     );
   });
+  for (const candidate of candidates) {
+    // Fails closed: a jobs-listing error propagates rather than being read
+    // as "no conflict", same as the runs listing above.
+    const jobs = await api.requestOk(
+      `${root}/actions/runs/${candidate.id}/jobs?per_page=100`,
+    );
+    const holdsGroup = (jobs.jobs ?? []).some(
+      (job) =>
+        job?.name === ROUTER_BROKER_JOB_NAME && job.status === 'in_progress',
+    );
+    if (holdsGroup) return candidate;
+  }
+  return undefined;
 }
 
 async function checkIndirectBrokerConcurrency(api, task, runId, suppliedGroup) {

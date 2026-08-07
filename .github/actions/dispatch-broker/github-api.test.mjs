@@ -156,6 +156,12 @@ test('verifyBrokerConcurrency (no eventName) retries an indirect conflict until 
               : [],
         };
       }
+      if (path.includes('/actions/runs/9500/jobs')) {
+        // Its broker job -- not just normalize -- is genuinely in progress
+        // on the attempts where it's still listed, so it really does hold
+        // the group.
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
+      }
       throw new Error(`Unexpected API path: ${path}`);
     },
   };
@@ -253,6 +259,11 @@ for (const eventName of [
               },
             ],
           };
+        }
+        if (path.includes('/actions/runs/9500/jobs')) {
+          // Its broker job is genuinely in progress on every attempt, so
+          // the retry budget genuinely exhausts against a real conflict.
+          return { jobs: [{ name: 'broker', status: 'in_progress' }] };
         }
         throw new Error(`Unexpected API path: ${path}`);
       },
@@ -372,29 +383,49 @@ test('findConflictingRouterRun finds another in-progress run carrying the same r
   const api = {
     requestOk: async (path) => {
       requests.push(path);
-      return {
-        workflow_runs: [
-          // Excluded: this is our own run, even though it carries the marker.
-          { id: 9001, display_title: `route #304: manual ${marker}` },
-          // No marker at all -- a pre-#545 run, or an unrelated in-progress
-          // run; must not match.
-          { id: 9010, display_title: 'route #304: labeled agent:claude' },
-          // Genuinely carries this task's marker.
-          {
-            id: 9005,
-            display_title: `route #304: labeled agent:codex ${marker}`,
-          },
-        ],
-      };
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            // Excluded: this is our own run, even though it carries the
+            // marker.
+            { id: 9001, display_title: `route #304: manual ${marker}` },
+            // No marker at all -- a pre-#545 run, or an unrelated
+            // in-progress run; must not match.
+            { id: 9010, display_title: 'route #304: labeled agent:claude' },
+            // Genuinely carries this task's marker.
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        // Its broker job is genuinely in progress, so it really does hold
+        // the group.
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
     },
   };
   const conflicting = await findConflictingRouterRun(api, task, 9001);
   assert.equal(conflicting.id, 9005);
-  // #545 removed the per-candidate concurrency_groups fetch entirely: one
-  // request total, the listing itself.
+  // One listing call plus one jobs call for the sole marker-carrying,
+  // not-self candidate -- 9001 is excluded as self and 9010 carries no
+  // marker at all, so neither's jobs are ever inspected. #545 removed the
+  // flaky concurrency_groups fetch entirely; that invariant (never touch
+  // it) still holds here, it's simply no longer the reason the request
+  // count is what it is.
   assert.deepEqual(requests, [
     '/repos/jlapenna/agent-lcars/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100',
+    '/repos/jlapenna/agent-lcars/actions/runs/9005/jobs?per_page=100',
   ]);
+  assert.equal(
+    requests.some((path) => path.includes('/concurrency_groups')),
+    false,
+  );
 });
 
 test('findConflictingRouterRun returns undefined when no other in-progress run carries the marker', async () => {
@@ -456,12 +487,196 @@ test('detects two simultaneous same-group runs symmetrically -- the #545 gap', a
   const runA = { id: 9001, display_title: `route #304: manual ${marker}` };
   const runB = { id: 9002, display_title: `route #304: manual ${marker}` };
   const api = {
-    requestOk: async () => ({ workflow_runs: [runA, runB] }),
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return { workflow_runs: [runA, runB] };
+      }
+      // Both runs' broker jobs are genuinely in progress -- each really
+      // does hold the group from the other's point of view.
+      return { jobs: [{ name: 'broker', status: 'in_progress' }] };
+    },
   };
   const conflictSeenByA = await findConflictingRouterRun(api, task, runA.id);
   const conflictSeenByB = await findConflictingRouterRun(api, task, runB.id);
   assert.equal(conflictSeenByA.id, runB.id);
   assert.equal(conflictSeenByB.id, runA.id);
+});
+
+// Regression coverage for the bug a Codex review caught: `run-name:` is
+// evaluated at the *workflow* level, so a second run carries this task's
+// marker from the instant it starts -- while it is still only in its
+// `normalize` job. But `normalize`'s concurrency group is the
+// repository-wide `-control-plane-normalize` queue; only the `broker` job
+// takes the per-task group (see agent-router.yml). Treating a same-task run
+// as a holder purely because the marker is present -- without checking
+// which job is actually running -- would manufacture false conflicts during
+// ordinary event bursts and, once the retry budget expired, drop or delay
+// legitimate intent/completion/control evidence. This had no coverage
+// before; the six tests below lock in the job-level check.
+test('findConflictingRouterRun does not treat a same-task run still only in its normalize job as a conflict', async () => {
+  const marker = routerGroupMarker();
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        return {
+          jobs: [
+            { name: 'normalize', status: 'in_progress' },
+            { name: 'broker', status: 'queued' },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
+});
+
+test('findConflictingRouterRun treats a candidate whose broker job is in_progress as a conflict', async () => {
+  const marker = routerGroupMarker();
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        return {
+          jobs: [
+            { name: 'normalize', status: 'completed' },
+            { name: 'broker', status: 'in_progress' },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const conflicting = await findConflictingRouterRun(api, task, 9001);
+  assert.equal(conflicting.id, 9005);
+});
+
+test('findConflictingRouterRun does not treat a candidate whose broker job has already completed as a conflict', async () => {
+  const marker = routerGroupMarker();
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        return {
+          jobs: [
+            { name: 'normalize', status: 'completed' },
+            { name: 'broker', status: 'completed' },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
+});
+
+test("findConflictingRouterRun fails closed (propagates) when a candidate's jobs listing cannot be fetched", async () => {
+  const marker = routerGroupMarker();
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        throw new GitHubApiError('GitHub request failed with HTTP 500', 500);
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  await assert.rejects(
+    () => findConflictingRouterRun(api, task, 9001),
+    (error) => error.name === 'GitHubApiError',
+  );
+});
+
+test('findConflictingRouterRun checks multiple candidates in order and only reports the one that actually holds the group', async () => {
+  const marker = routerGroupMarker();
+  const jobsRequested = [];
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            // First candidate: carries the marker, but still only in
+            // `normalize` -- not a holder.
+            {
+              id: 9004,
+              display_title: `route #304: labeled agent:claude ${marker}`,
+            },
+            // Second candidate: genuinely holds the group.
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9004/jobs')) {
+        jobsRequested.push(9004);
+        return {
+          jobs: [
+            { name: 'normalize', status: 'in_progress' },
+            { name: 'broker', status: 'queued' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        jobsRequested.push(9005);
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const conflicting = await findConflictingRouterRun(api, task, 9001);
+  assert.equal(conflicting.id, 9005);
+  assert.deepEqual(jobsRequested, [9004, 9005]);
 });
 
 test('findConflictingRouterRun fails closed (propagates) when the in-progress listing cannot be fetched', async () => {

@@ -1732,10 +1732,13 @@ test('an old dispatch buried past 100 newer unrelated runs is found and bound, n
 
 // Run 9002's display_title carries the router-group marker (#545) -- what
 // makes it, from `findConflictingRouterRun`'s point of view, a genuine
-// conflict for `task`'s group -- AND is still checked against
-// `/actions/runs/9002/concurrency_groups` -- what `findSupersedingRouterRun`
-// (unchanged by #545) separately still needs to positively corroborate an
-// eviction. `holds` controls only the latter.
+// candidate for `task`'s group -- and its `broker` job is `in_progress`,
+// which is what actually makes it a conflict: the marker alone only narrows
+// candidates, the per-candidate jobs listing decides (see the long comment
+// above `findConflictingRouterRun` in github-api.mjs). It is ALSO checked
+// against `/actions/runs/9002/concurrency_groups` -- what
+// `findSupersedingRouterRun` (untouched by that fix) separately still needs
+// to positively corroborate an eviction. `holds` controls only the latter.
 function supersedingClient(group, { holds = true } = {}) {
   const marker = formatRouterGroupMarker({
     repositoryId: task.repositoryId,
@@ -1752,6 +1755,9 @@ function supersedingClient(group, { holds = true } = {}) {
             },
           ],
         };
+      }
+      if (path.includes('/actions/runs/9002/jobs')) {
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
       }
       if (path.includes('/actions/runs/9002/concurrency_groups')) {
         return {
