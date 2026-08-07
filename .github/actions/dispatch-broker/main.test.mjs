@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { formatRouterGroupMarker } from '../../../libs/dispatch-contracts/src/index.js';
 import {
   acceptIntent,
   beginDispatch,
@@ -37,6 +38,7 @@ import {
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
+  runPhase,
   wasSupersededEviction,
 } from './main.mjs';
 import { digestQuickTask, normalizeEvent } from './normalize.mjs';
@@ -1728,15 +1730,34 @@ test('an old dispatch buried past 100 newer unrelated runs is found and bound, n
   );
 });
 
+// Run 9002's display_title carries the router-group marker (#545) -- what
+// makes it, from `findConflictingRouterRun`'s point of view, a genuine
+// candidate for `task`'s group -- and its `broker` job is `in_progress`,
+// which is what actually makes it a conflict: the marker alone only narrows
+// candidates, the per-candidate jobs listing decides (see the long comment
+// above `findConflictingRouterRun` in github-api.mjs). It is ALSO checked
+// against `/actions/runs/9002/concurrency_groups` -- what
+// `findSupersedingRouterRun` (untouched by that fix) separately still needs
+// to positively corroborate an eviction. `holds` controls only the latter.
 function supersedingClient(group, { holds = true } = {}) {
+  const marker = formatRouterGroupMarker({
+    repositoryId: task.repositoryId,
+    issue: task.issue,
+  });
   return {
     requestOk: async (path) => {
       if (path.includes('/workflows/agent-router.yml/runs?')) {
         return {
           workflow_runs: [
-            { id: 9002, display_title: 'route #304: labeled agent:codex' },
+            {
+              id: 9002,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
           ],
         };
+      }
+      if (path.includes('/actions/runs/9002/jobs')) {
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
       }
       if (path.includes('/actions/runs/9002/concurrency_groups')) {
         return {
@@ -1749,13 +1770,14 @@ function supersedingClient(group, { holds = true } = {}) {
 }
 
 // Drives the REAL verifyBrokerConcurrency (dispatch path, #348) against a
-// fake API where a genuinely newer router run (9002) holds this run's
-// (9001) expected group -- indistinguishable, from the dispatch run's own
-// perspective, from ordinary contention. Retries exhaust into a retryable
-// BrokerConcurrencyMismatchError, proving #348's indirect verification path
-// feeds the exact same error shape #345/#347's eviction handling already
-// expects, regardless of which path (event-triggered listing vs.
-// dispatch-triggered indirect corroboration) produced it.
+// fake API where a genuinely newer router run (9002) carries this run's
+// (9001) expected group's router-group marker (#545) -- indistinguishable,
+// from the dispatch run's own perspective, from ordinary contention.
+// Retries exhaust into a retryable BrokerConcurrencyMismatchError, proving
+// #348's indirect verification path feeds the exact same error shape
+// #345/#347's eviction handling already expects, regardless of which
+// concrete signal (previously per-run concurrency_groups self-listing,
+// now the router-group marker) produced it.
 async function exhaustedDispatchConflictError(group) {
   const client = supersedingClient(group);
   const sleeps = [];
@@ -2005,6 +2027,172 @@ test('wasSupersededEviction still fails red for an evicted anchor-control even w
   await assert.rejects(() =>
     wasSupersededEviction(client, task, 9001, group, 'anchor-control', error),
   );
+});
+
+// #645 Phase 2 module failure isolation: runPhase() classifies, records,
+// and rethrows a fallible controller step's own exception rather than
+// letting it propagate as a bare, unattributed crash.
+
+function savingStubClient({ failSave = false } = {}) {
+  const saves = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      if (options.method === 'PATCH' && path.includes('/issues/comments/9')) {
+        if (failSave) throw new GitHubApiError('save failed', 500);
+        saves.push(options.body);
+        return { id: 9 };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    },
+  };
+  return { client, saves };
+}
+
+function captureLogs() {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(message);
+  return {
+    logs,
+    restore: () => {
+      console.log = originalLog;
+    },
+  };
+}
+
+test('runPhase attributes and records a Quick Task digest mismatch instead of letting it crash normalization unattributed (#645 Phase 2)', async () => {
+  // The concrete regression case #645 Phase 2 names: a Quick Task digest
+  // mismatch (quickTaskRequest, called from normalizeEvent in
+  // normalize.mjs) used to crash normalize()'s call to normalizeEvent() as
+  // a bare, unattributed exception -- no phase, no owning system, no record
+  // anywhere. This drives the REAL normalizeEvent() through the REAL
+  // runPhase() wrapper main.mjs's normalize() now uses at that exact call
+  // site, with no ledger available -- exactly like the real job, since no
+  // ledger exists yet at normalization time (see the comment on that call
+  // site in main.mjs).
+  const context = {
+    repository: 'jlapenna/agent-lcars',
+    repositoryId: 123,
+    issue: 950,
+    runId: 9001,
+    actor: 'jlapenna',
+    now: '2026-08-01T00:00:01.000Z',
+  };
+  const marker = `<!-- agent-lcars:quick-task-request:v1 id=11111111-1111-4111-8111-111111111111 digest=${'0'.repeat(64)} -->`;
+  const issue = {
+    id: 9500,
+    number: 950,
+    title: 'Fix dispatch',
+    body: `Do the work\n\n${marker}`,
+    created_at: '2026-08-01T00:00:00.000Z',
+    updated_at: '2026-08-01T00:00:00.000Z',
+    labels: [{ name: 'agent:codex' }],
+  };
+
+  const { logs, restore } = captureLogs();
+  try {
+    // Still fails closed: the same digest-mismatch error still rejects the
+    // call, unchanged. Module failure isolation adds attribution and a
+    // record -- it never swallows or downgrades the failure.
+    await assert.rejects(
+      () =>
+        runPhase(undefined, 'signal', () =>
+          normalizeEvent({
+            eventName: 'issues',
+            event: { action: 'opened', issue, sender: { login: 'jlapenna' } },
+            context,
+            maintainer: 'jlapenna',
+          }),
+        ),
+      /Quick Task marker digest mismatch/u,
+    );
+  } finally {
+    restore();
+  }
+  // Attributed and recorded: a classified ::error:: annotation exists
+  // naming the phase and owning system, not just a bare stack trace.
+  const errorLogs = logs.filter((line) => line.startsWith('::error::'));
+  assert.equal(errorLogs.length, 1);
+  assert.match(errorLogs[0], /\[controller\/signal\]/u);
+  assert.match(errorLogs[0], /internal_error/u);
+  assert.match(errorLogs[0], /Quick Task marker digest mismatch/u);
+});
+
+test('runPhase returns the step result unchanged on success, recording nothing', async () => {
+  const { logs, restore } = captureLogs();
+  let result;
+  try {
+    result = await runPhase(undefined, 'signal', () => 'ok');
+  } finally {
+    restore();
+  }
+  assert.equal(result, 'ok');
+  assert.equal(logs.length, 0);
+});
+
+test('runPhase classifies a failing step, records it as a ledger anomaly, and rethrows the original error unchanged when a ledger is available', async () => {
+  const ledger = createLedger(task);
+  const loaded = { ledger, comment: { id: 9 } };
+  const { client, saves } = savingStubClient();
+  const original = new Error('acceptIntent boom');
+
+  const { logs, restore } = captureLogs();
+  try {
+    await assert.rejects(
+      () =>
+        runPhase({ client, loaded }, 'intent', () => {
+          throw original;
+        }),
+      (thrown) => thrown === original,
+    );
+  } finally {
+    restore();
+  }
+
+  assert.equal(saves.length, 1, 'the anomaly-carrying ledger was persisted');
+  const anomaly = ledger.anomalies.at(-1);
+  assert.equal(anomaly.kind, 'phase-failure');
+  assert.equal(anomaly.failure.phase, 'intent');
+  assert.equal(anomaly.failure.owningSystem, 'controller');
+  assert.equal(anomaly.failure.reason, 'internal_error');
+  assert.equal(anomaly.failure.retryDisposition, 'manual');
+  const errorLogs = logs.filter((line) => line.startsWith('::error::'));
+  assert.equal(errorLogs.length, 1);
+  assert.match(errorLogs[0], /\[controller\/intent\]/u);
+});
+
+test('runPhase never lets a failed recording attempt replace or swallow the original error (#645 Phase 2)', async () => {
+  const ledger = createLedger(task);
+  const loaded = { ledger, comment: { id: 9 } };
+  const { client } = savingStubClient({ failSave: true });
+  const original = new Error('scheduling boom');
+
+  const { logs, restore } = captureLogs();
+  try {
+    await assert.rejects(
+      () =>
+        runPhase({ client, loaded }, 'scheduling', () => {
+          throw original;
+        }),
+      (thrown) => thrown === original,
+    );
+  } finally {
+    restore();
+  }
+
+  // The anomaly mutation itself is pure/in-memory and never fails; only
+  // persisting it does -- so it is still on the in-memory ledger even
+  // though the save that would have durably recorded it did not land.
+  assert.equal(ledger.anomalies.length, 1);
+  assert.equal(ledger.anomalies[0].failure.phase, 'scheduling');
+  const errorLogs = logs.filter((line) => line.startsWith('::error::'));
+  assert.equal(
+    errorLogs.length,
+    2,
+    'both the original failure and the secondary recording failure are logged',
+  );
+  assert.match(errorLogs[0], /\[controller\/scheduling\]/u);
+  assert.match(errorLogs[1], /Failed to record/u);
 });
 
 let failures = 0;

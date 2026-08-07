@@ -121,3 +121,78 @@ export function parseDispatchMarker(displayTitle) {
 export function displayTitleMatchesAttempt(displayTitle, attempt) {
   return Boolean(displayTitle?.includes(formatDispatchMarker(attempt)));
 }
+
+/**
+ * The router run-name marker: `[router-group:<repositoryId>:<issue>]`.
+ *
+ * `agent-router.yml`'s own `run-name:` embeds this for every trigger type
+ * (issues, issue_comment, pull_request, workflow_dispatch) unconditionally.
+ * Unlike the dispatch marker above -- which only ever reaches a run title
+ * once a worker workflow actually starts -- this one does not depend on any
+ * job running or any endpoint self-reporting anything: GitHub Actions
+ * evaluates `run-name:` for every run at trigger time, identically
+ * regardless of what fired it.
+ *
+ * That is what makes it usable as the join key for
+ * `findConflictingRouterRun` (`.github/actions/dispatch-broker/
+ * github-api.mjs`, #545): two concurrent router runs can each see the
+ * OTHER's marker on the reliable run-LISTING response (`display_title` is
+ * returned inline for every run in a list -- see `findRunsForGeneration`'s
+ * identical reliance on that field) without either one ever inspecting its
+ * OWN `.../concurrency_groups` sub-resource, the endpoint issues #348/#545
+ * found unreliable across every trigger type sampled, at rates from ~17% to
+ * 100% depending on trigger.
+ *
+ * Derived from the same two inputs `brokerConcurrencyGroup`
+ * (github-api.mjs) derives its own group name from -- a TaskRef's
+ * `repositoryId` and `issue` -- but deliberately not from
+ * `brokerConcurrencyGroup`'s literal string itself: that format is owned by
+ * the broker action, not by this shared, dependency-free package, and this
+ * repo already carries one independent, lower-cased re-implementation of it
+ * (main.mjs's `normalize` step output). Pinning a second format to that same
+ * string would just add a third copy of it. This marker's format is defined
+ * exactly once, here.
+ */
+const ROUTER_GROUP_MARKER_RE = /\[router-group:(\d+):(\d+)\]/u;
+
+/**
+ * @typedef {object} RouterGroupIdentity
+ * @property {number} repositoryId
+ * @property {number} issue
+ */
+
+/**
+ * Render the marker `agent-router.yml`'s `run-name:` embeds.
+ *
+ * Accepts strings as well as numbers so `workflow-contract.test.mjs` can
+ * render it with GitHub Actions' own `${{ github.repository_id }}` /
+ * `${{ github.event.issue.number || github.event.pull_request.number ||
+ * inputs.issue }}` expressions substituted in, and assert the YAML against
+ * this same function instead of against a second copy of the literal --
+ * exactly as `formatDispatchMarker` already does for worker `run-name:`
+ * templates.
+ *
+ * @param {{ repositoryId: number | string, issue: number | string }} identity
+ * @returns {string}
+ */
+export function formatRouterGroupMarker({ repositoryId, issue }) {
+  return `[router-group:${repositoryId}:${issue}]`;
+}
+
+/**
+ * Recover a router run's group identity from its `display_title`.
+ *
+ * Returns `undefined` for a title with no marker at all -- a run that
+ * predates this change, or (defensively) a malformed one -- so a caller can
+ * tell "no marker" apart from "marker present but for a different task"
+ * rather than treating both the same.
+ *
+ * @param {string | undefined | null} displayTitle
+ * @returns {RouterGroupIdentity | undefined}
+ */
+export function parseRouterGroupMarker(displayTitle) {
+  const match = displayTitle?.match(ROUTER_GROUP_MARKER_RE);
+  return match
+    ? { repositoryId: Number(match[1]), issue: Number(match[2]) }
+    : undefined;
+}

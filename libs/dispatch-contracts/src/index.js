@@ -33,6 +33,7 @@ export {
  * @typedef {import('./pipelines.js').PipelineContract} PipelineContract
  * @typedef {import('./pipelines.js').AgentPipelineContract} AgentPipelineContract
  * @typedef {import('./marker.js').AttemptMarker} AttemptMarker
+ * @typedef {import('./marker.js').RouterGroupIdentity} RouterGroupIdentity
  * @typedef {import('./ledger.js').DispatchLedger} DispatchLedger
  * @typedef {import('./ledger.js').LedgerTaskRef} LedgerTaskRef
  * @typedef {import('./ledger.js').LedgerGeneration} LedgerGeneration
@@ -81,8 +82,10 @@ export {
   displayTitleMatchesAttempt,
   formatAttemptId,
   formatDispatchMarker,
+  formatRouterGroupMarker,
   parseAttemptId,
   parseDispatchMarker,
+  parseRouterGroupMarker,
 } from './marker.js';
 export {
   formatQuickTaskMarker,

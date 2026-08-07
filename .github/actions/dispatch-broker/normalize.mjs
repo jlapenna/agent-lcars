@@ -10,6 +10,10 @@ import {
   WORKER_WORKFLOW_FILES,
 } from '../../../libs/dispatch-contracts/src/index.js';
 import { digest } from './broker.mjs';
+import {
+  authorization,
+  AUTHORIZATION_RULES,
+} from './modules/authorization.mjs';
 
 // `null` is a sentinel, not a pipeline: `@agent` (#573) doesn't name a
 // specific integration, it defers to whichever `agent:*` label the issue
@@ -157,16 +161,6 @@ function taskRef(context, issue) {
   return { repositoryId, repository, issue: issueNumber };
 }
 
-function authorization(actor, maintainer, rule, extra = {}) {
-  return {
-    authorized: actor === maintainer,
-    actor,
-    configuredMaintainer: maintainer,
-    rule,
-    ...extra,
-  };
-}
-
 function makeIntent(base) {
   const normalizedPayload = {
     task: base.task,
@@ -268,13 +262,17 @@ function normalizeWorkflowDispatch({ inputs, context, maintainer }) {
           authorized: true,
           actor: context.actor,
           configuredMaintainer: maintainer,
-          rule: 'canary-scheduled-dispatch',
+          rule: AUTHORIZATION_RULES.CANARY_SCHEDULED_DISPATCH,
         },
       }),
     };
   }
   const sourceId = resolveCallerSourceId(inputs, context, 'Manual dispatch');
-  const auth = authorization(context.actor, maintainer, 'manual-maintainer');
+  const auth = authorization(
+    context.actor,
+    maintainer,
+    AUTHORIZATION_RULES.MANUAL_MAINTAINER,
+  );
   if (!auth.authorized) throw new Error('Unauthorized manual dispatch');
   if (!AGENT_LABELS.has(`agent:${inputs.pipeline}`)) {
     throw new Error('Unsupported manual dispatch pipeline');
@@ -339,7 +337,7 @@ function normalizeEvent({
     const auth = authorization(
       event.sender?.login,
       maintainer,
-      'owner-comment',
+      AUTHORIZATION_RULES.OWNER_COMMENT,
       {
         association: event.comment.author_association,
         userType: event.comment.user?.type,
@@ -404,7 +402,7 @@ function normalizeEvent({
   const auth = authorization(
     event.sender?.login,
     maintainer,
-    'maintainer-issue-event',
+    AUTHORIZATION_RULES.MAINTAINER_ISSUE_EVENT,
   );
 
   if (event.action === 'opened') {

@@ -4,8 +4,10 @@ import {
   displayTitleMatchesAttempt,
   formatAttemptId,
   formatDispatchMarker,
+  formatRouterGroupMarker,
   parseAttemptId,
   parseDispatchMarker,
+  parseRouterGroupMarker,
 } from './marker.js';
 
 describe('formatDispatchMarker', () => {
@@ -136,5 +138,48 @@ describe('the attempt ID', () => {
   it('tolerates a missing ID', () => {
     expect(parseAttemptId(undefined)).toBe(undefined);
     expect(parseAttemptId(null)).toBe(undefined);
+  });
+});
+
+describe('formatRouterGroupMarker', () => {
+  it('renders the marker the router run-name embeds (#545)', () => {
+    expect(formatRouterGroupMarker({ repositoryId: 123, issue: 304 })).toBe(
+      '[router-group:123:304]',
+    );
+  });
+
+  it('renders Actions expressions so YAML can be pinned to this function', () => {
+    // workflow-contract.test.mjs asserts agent-router.yml's run-name
+    // against this call rather than against another copy of the literal.
+    expect(
+      formatRouterGroupMarker({
+        repositoryId: '${{ github.repository_id }}',
+        issue:
+          '${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}',
+      }),
+    ).toBe(
+      '[router-group:${{ github.repository_id }}:' +
+        '${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}]',
+    );
+  });
+});
+
+describe('parseRouterGroupMarker', () => {
+  it('round-trips a rendered marker out of a full run title', () => {
+    const marker = formatRouterGroupMarker({ repositoryId: 123, issue: 304 });
+    expect(
+      parseRouterGroupMarker(`route #304: labeled agent:codex ${marker}`),
+    ).toEqual({ repositoryId: 123, issue: 304 });
+  });
+
+  it('ignores titles from before this marker existed', () => {
+    expect(parseRouterGroupMarker('route #304: labeled agent:codex')).toBe(
+      undefined,
+    );
+  });
+
+  it('tolerates a missing title', () => {
+    expect(parseRouterGroupMarker(undefined)).toBe(undefined);
+    expect(parseRouterGroupMarker(null)).toBe(undefined);
   });
 });

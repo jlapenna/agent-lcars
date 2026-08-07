@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { formatRouterGroupMarker } from '../../../libs/dispatch-contracts/src/index.js';
 import {
   acceptIntent,
   beginDispatch,
@@ -126,8 +127,13 @@ test('broker concurrency group is derived from the TaskRef repository id and iss
 // exactly what a caller gets if it omits the option) now exercises the
 // indirect path directly, with the same retry-until-it-clears shape the
 // old direct-path test covered.
+function routerGroupMarker(issue = task.issue) {
+  return formatRouterGroupMarker({ repositoryId: task.repositoryId, issue });
+}
+
 test('verifyBrokerConcurrency (no eventName) retries an indirect conflict until it clears', async () => {
   const group = brokerConcurrencyGroup(task);
+  const marker = routerGroupMarker();
   let listCalls = 0;
   const api = {
     requestOk: async (path) => {
@@ -135,17 +141,26 @@ test('verifyBrokerConcurrency (no eventName) retries an indirect conflict until 
         path.includes('/workflows/agent-router.yml/runs?status=in_progress')
       ) {
         listCalls += 1;
-        // A conflicting run holds the group on the first two attempts, then
-        // completes and drops off the in-progress list.
+        // A conflicting run carries this task's router-group marker on the
+        // first two attempts, then completes and drops off the in-progress
+        // list.
         return {
           workflow_runs:
             listCalls < 3
-              ? [{ id: 9500, display_title: 'route #304: labeled agent:codex' }]
+              ? [
+                  {
+                    id: 9500,
+                    display_title: `route #304: labeled agent:codex ${marker}`,
+                  },
+                ]
               : [],
         };
       }
-      if (path.includes('/actions/runs/9500/concurrency_groups')) {
-        return { concurrency_groups: [{ group_name: group }] };
+      if (path.includes('/actions/runs/9500/jobs')) {
+        // Its broker job -- not just normalize -- is genuinely in progress
+        // on the attempts where it's still listed, so it really does hold
+        // the group.
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
@@ -164,23 +179,14 @@ test('verifyBrokerConcurrency (no eventName) retries an indirect conflict until 
   ]);
 });
 
-// #348, across three rounds (all 2026-08-04 except round 1): GitHub's
-// /actions/runs/{id}/concurrency_groups listing has now been found
-// unreliable for every trigger type sampled, not just workflow_dispatch
-// (round 1: 5/5 sampled dispatch runs, some hours old, returned zero
-// matches) and pull_request (round 2: 100% failure rate since the broker's
-// introduction, still empty hours later on re-probe). Round 3 sampled
-// issue_comment (~47% failure rate across 34 concluded runs, including
-// solo/uncontested runs like #470's 30927934741 and #480's 30927991852,
-// both re-probed and still empty 13+ hours later) and issues (~17% across
-// 90 sampled runs, including solo run 30927288777) and found both "reliable
-// self-listing" event types were never actually reliable either -- just
-// less unreliable. verifyBrokerConcurrency therefore no longer branches on
-// eventName at all: every event name (and no event name -- see the
-// dedicated no-eventName test above) verifies indirectly via
-// findConflictingRouterRun / checkIndirectBrokerConcurrency, and NEVER
-// fetches a run's own listing. All are exercised identically below since
-// there is no longer a routing decision left to differ per event name.
+// #545: the indirect check no longer branches on eventName (unchanged since
+// #348's third round) AND no longer reads the flaky `concurrency_groups`
+// sub-resource at all -- it matches the router-group marker
+// (`formatRouterGroupMarker`/`parseRouterGroupMarker`,
+// libs/dispatch-contracts/src/marker.js) straight off the reliable run
+// listing. All trigger types are exercised identically below since there is
+// no longer a routing decision, nor a per-run inspection, to differ by event
+// name.
 
 for (const eventName of [
   'workflow_dispatch',
@@ -189,7 +195,7 @@ for (const eventName of [
   'issue_comment',
   'a_future_event_type_nobody_has_named_yet',
 ]) {
-  test(`verifyBrokerConcurrency verifies a ${eventName}-triggered run indirectly and never fetches its own listing (#348)`, async () => {
+  test(`verifyBrokerConcurrency verifies a ${eventName}-triggered run indirectly via the router-group marker (#545)`, async () => {
     const group = brokerConcurrencyGroup(task);
     const requests = [];
     const api = {
@@ -200,13 +206,11 @@ for (const eventName of [
         ) {
           return {
             workflow_runs: [
-              { id: 8000, display_title: 'route #999: unrelated issue' },
+              {
+                id: 8000,
+                display_title: `route #999: unrelated issue ${routerGroupMarker(999)}`,
+              },
             ],
-          };
-        }
-        if (path.includes('/actions/runs/8000/concurrency_groups')) {
-          return {
-            concurrency_groups: [{ group_name: 'a-totally-different-group' }],
           };
         }
         throw new Error(`Unexpected API path: ${path}`);
@@ -228,11 +232,9 @@ for (const eventName of [
     }
     assert.equal(result.group_name, group);
     assert.equal(
-      requests.some((path) =>
-        path.includes('/actions/runs/9001/concurrency_groups'),
-      ),
+      requests.some((path) => path.includes('/concurrency_groups')),
       false,
-      `must never fetch its own run listing on the ${eventName} path`,
+      `must never fetch any run's concurrency_groups sub-resource on the ${eventName} path (#545)`,
     );
     assert.equal(logged.length, 1);
     assert.match(logged[0], /^::notice::/u);
@@ -241,6 +243,7 @@ for (const eventName of [
 
   test(`verifyBrokerConcurrency retries a ${eventName}-triggered conflict and throws retryable after exhausting attempts (#348)`, async () => {
     const group = brokerConcurrencyGroup(task);
+    const marker = routerGroupMarker();
     let calls = 0;
     const api = {
       requestOk: async (path) => {
@@ -250,12 +253,17 @@ for (const eventName of [
           calls += 1;
           return {
             workflow_runs: [
-              { id: 9500, display_title: 'route #304: labeled agent:codex' },
+              {
+                id: 9500,
+                display_title: `route #304: labeled agent:codex ${marker}`,
+              },
             ],
           };
         }
-        if (path.includes('/actions/runs/9500/concurrency_groups')) {
-          return { concurrency_groups: [{ group_name: group }] };
+        if (path.includes('/actions/runs/9500/jobs')) {
+          // Its broker job is genuinely in progress on every attempt, so
+          // the retry budget genuinely exhausts against a real conflict.
+          return { jobs: [{ name: 'broker', status: 'in_progress' }] };
         }
         throw new Error(`Unexpected API path: ${path}`);
       },
@@ -309,26 +317,19 @@ for (const eventName of [
   });
 }
 
-// Regression guard for #348's third round: before this fix, 'issues' and
-// 'issue_comment' each took the direct, own-listing path (as did any
-// eventName not in the allowlist's complement, and no-eventName-at-all
-// fell back to it too), so a persistently empty own listing -- which
-// production showed happens for a real, nonzero fraction of solo,
-// uncontested runs of exactly these two event types -- retried to
-// exhaustion and failed closed. Confirms NO event name (nor omitting it
-// entirely) ever touches run 9001's own listing anymore, even when that
-// listing would report a clean, unambiguous "yes, I hold it" if asked --
-// proving the old allowlist is gone, not just rebalanced.
-test('verifyBrokerConcurrency never touches its own listing for any event name, including issues/issue_comment/no event name at all', async () => {
+// Regression guard for #545: before this fix, a clean pass still required
+// trusting each candidate's OWN `concurrency_groups` listing (or, before
+// #348's third round, this run's own listing on the now-retired direct
+// path). Confirms NO event name (nor omitting it entirely) ever fetches
+// that sub-resource for ANY run, self or otherwise -- the conflict check now
+// resolves entirely from the one listing request's inline `display_title`
+// fields.
+test("verifyBrokerConcurrency never fetches any run's concurrency_groups sub-resource, for any event name including none (#545)", async () => {
   const group = brokerConcurrencyGroup(task);
-  const ownListingRequests = [];
+  const requests = [];
   const api = {
     requestOk: async (path) => {
-      if (path.includes('/actions/runs/9001/concurrency_groups')) {
-        ownListingRequests.push(path);
-        // Even a definite, unambiguous "yes" here must never be consulted.
-        return { concurrency_groups: [{ group_name: group }] };
-      }
+      requests.push(path);
       if (
         path.includes('/workflows/agent-router.yml/runs?status=in_progress')
       ) {
@@ -346,11 +347,38 @@ test('verifyBrokerConcurrency never touches its own listing for any event name, 
     });
     assert.equal(result.group_name, group);
   }
-  assert.deepEqual(ownListingRequests, []);
+  assert.deepEqual(
+    requests.filter((path) => path.includes('/concurrency_groups')),
+    [],
+  );
 });
 
-test('findConflictingRouterRun finds another in-progress run that already holds the expected group', async () => {
-  const group = brokerConcurrencyGroup(task);
+test('verifyBrokerConcurrency fails closed (propagates, never verifies) when the in-progress listing itself cannot be fetched (#545)', async () => {
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        throw new GitHubApiError('GitHub request failed with HTTP 500', 500);
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  await assert.rejects(
+    () =>
+      verifyBrokerConcurrency(api, task, 9001, brokerConcurrencyGroup(task), {
+        sleepImpl: async () => {
+          throw new Error(
+            'a transport failure fetching the listing must not retry',
+          );
+        },
+      }),
+    (error) => error.name === 'GitHubApiError',
+  );
+});
+
+test('findConflictingRouterRun finds another in-progress run carrying the same router-group marker', async () => {
+  const marker = routerGroupMarker();
   const requests = [];
   const api = {
     requestOk: async (path) => {
@@ -360,39 +388,47 @@ test('findConflictingRouterRun finds another in-progress run that already holds 
       ) {
         return {
           workflow_runs: [
-            // Excluded: this is our own run.
-            { id: 9001, display_title: 'route #304: manual' },
-            // Newest candidate, checked first, but does not hold the group.
+            // Excluded: this is our own run, even though it carries the
+            // marker.
+            { id: 9001, display_title: `route #304: manual ${marker}` },
+            // No marker at all -- a pre-#545 run, or an unrelated
+            // in-progress run; must not match.
             { id: 9010, display_title: 'route #304: labeled agent:claude' },
-            // Older candidate that genuinely holds the group.
-            { id: 9005, display_title: 'route #304: labeled agent:codex' },
+            // Genuinely carries this task's marker.
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
           ],
         };
       }
-      if (path.includes('/actions/runs/9010/concurrency_groups')) {
-        return { concurrency_groups: [] };
-      }
-      if (path.includes('/actions/runs/9005/concurrency_groups')) {
-        return { concurrency_groups: [{ group_name: group.toUpperCase() }] };
+      if (path.includes('/actions/runs/9005/jobs')) {
+        // Its broker job is genuinely in progress, so it really does hold
+        // the group.
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
   };
   const conflicting = await findConflictingRouterRun(api, task, 9001);
   assert.equal(conflicting.id, 9005);
-  // Never asked about run 9001 (itself) and checked the newer non-matching
-  // candidate (9010) before the real conflict (9005), proving it doesn't
-  // stop at the first candidate and correctly excludes itself.
-  assert.deepEqual(
-    requests.filter((path) => path.includes('/concurrency_groups')),
-    [
-      `/repos/jlapenna/agent-lcars/actions/runs/9010/concurrency_groups?per_page=100`,
-      `/repos/jlapenna/agent-lcars/actions/runs/9005/concurrency_groups?per_page=100`,
-    ],
+  // One listing call plus one jobs call for the sole marker-carrying,
+  // not-self candidate -- 9001 is excluded as self and 9010 carries no
+  // marker at all, so neither's jobs are ever inspected. #545 removed the
+  // flaky concurrency_groups fetch entirely; that invariant (never touch
+  // it) still holds here, it's simply no longer the reason the request
+  // count is what it is.
+  assert.deepEqual(requests, [
+    '/repos/jlapenna/agent-lcars/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100',
+    '/repos/jlapenna/agent-lcars/actions/runs/9005/jobs?per_page=100',
+  ]);
+  assert.equal(
+    requests.some((path) => path.includes('/concurrency_groups')),
+    false,
   );
 });
 
-test('findConflictingRouterRun returns undefined when no other in-progress run holds the expected group', async () => {
+test('findConflictingRouterRun returns undefined when no other in-progress run carries the marker', async () => {
   const api = {
     requestOk: async (path) => {
       if (
@@ -403,9 +439,6 @@ test('findConflictingRouterRun returns undefined when no other in-progress run h
             { id: 9005, display_title: 'route #304: labeled agent:codex' },
           ],
         };
-      }
-      if (path.includes('/actions/runs/9005/concurrency_groups')) {
-        return { concurrency_groups: [] };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
@@ -413,8 +446,77 @@ test('findConflictingRouterRun returns undefined when no other in-progress run h
   assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
 });
 
-test('findConflictingRouterRun skips a candidate whose own fetch fails rather than aborting the search', async () => {
-  const group = brokerConcurrencyGroup(task);
+test('findConflictingRouterRun excludes its own run even when the listing includes it carrying the marker', async () => {
+  const marker = routerGroupMarker();
+  const api = {
+    requestOk: async () => ({
+      workflow_runs: [
+        { id: 9001, display_title: `route #304: manual ${marker}` },
+      ],
+    }),
+  };
+  assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
+});
+
+test('findConflictingRouterRun ignores a run for a different issue even though it carries a router-group marker', async () => {
+  const api = {
+    requestOk: async () => ({
+      workflow_runs: [
+        {
+          id: 9010,
+          display_title: `route #999: unrelated issue ${routerGroupMarker(999)}`,
+        },
+      ],
+    }),
+  };
+  assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
+});
+
+// #545's whole point: two runs of a trigger type whose OWN
+// `concurrency_groups` listing never used to materialize (e.g. two
+// workflow_dispatch runs racing for the same group) previously could not
+// detect each other at all -- the old indirect check needed run B's own
+// listing to confirm B held the group, and that self-report never arrived
+// for these trigger types no matter how long a caller waited. Proven closed
+// here: from EITHER run's own perspective, the OTHER is visible on the
+// single in-progress listing (display_title is returned inline, no
+// per-run fetch needed), so each one independently finds the other as a
+// conflict.
+test('detects two simultaneous same-group runs symmetrically -- the #545 gap', async () => {
+  const marker = routerGroupMarker();
+  const runA = { id: 9001, display_title: `route #304: manual ${marker}` };
+  const runB = { id: 9002, display_title: `route #304: manual ${marker}` };
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return { workflow_runs: [runA, runB] };
+      }
+      // Both runs' broker jobs are genuinely in progress -- each really
+      // does hold the group from the other's point of view.
+      return { jobs: [{ name: 'broker', status: 'in_progress' }] };
+    },
+  };
+  const conflictSeenByA = await findConflictingRouterRun(api, task, runA.id);
+  const conflictSeenByB = await findConflictingRouterRun(api, task, runB.id);
+  assert.equal(conflictSeenByA.id, runB.id);
+  assert.equal(conflictSeenByB.id, runA.id);
+});
+
+// Regression coverage for the bug a Codex review caught: `run-name:` is
+// evaluated at the *workflow* level, so a second run carries this task's
+// marker from the instant it starts -- while it is still only in its
+// `normalize` job. But `normalize`'s concurrency group is the
+// repository-wide `-control-plane-normalize` queue; only the `broker` job
+// takes the per-task group (see agent-router.yml). Treating a same-task run
+// as a holder purely because the marker is present -- without checking
+// which job is actually running -- would manufacture false conflicts during
+// ordinary event bursts and, once the retry budget expired, drop or delay
+// legitimate intent/completion/control evidence. This had no coverage
+// before; the six tests below lock in the job-level check.
+test('findConflictingRouterRun does not treat a same-task run still only in its normalize job as a conflict', async () => {
+  const marker = routerGroupMarker();
   const api = {
     requestOk: async (path) => {
       if (
@@ -422,16 +524,50 @@ test('findConflictingRouterRun skips a candidate whose own fetch fails rather th
       ) {
         return {
           workflow_runs: [
-            { id: 9010, display_title: 'route #304: labeled agent:codex' },
-            { id: 9005, display_title: 'route #304: labeled agent:claude' },
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
           ],
         };
       }
-      if (path.includes('/actions/runs/9010/concurrency_groups')) {
-        throw new Error('transient fetch failure');
+      if (path.includes('/actions/runs/9005/jobs')) {
+        return {
+          jobs: [
+            { name: 'normalize', status: 'in_progress' },
+            { name: 'broker', status: 'queued' },
+          ],
+        };
       }
-      if (path.includes('/actions/runs/9005/concurrency_groups')) {
-        return { concurrency_groups: [{ group_name: group }] };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
+});
+
+test('findConflictingRouterRun treats a candidate whose broker job is in_progress as a conflict', async () => {
+  const marker = routerGroupMarker();
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        return {
+          jobs: [
+            { name: 'normalize', status: 'completed' },
+            { name: 'broker', status: 'in_progress' },
+          ],
+        };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
@@ -440,11 +576,8 @@ test('findConflictingRouterRun skips a candidate whose own fetch fails rather th
   assert.equal(conflicting.id, 9005);
 });
 
-// PR #349 review (P1): an inspection failure must never be silently
-// downgraded to "no conflict" -- that would fail-open on exactly the error
-// path this whole mechanism exists to guard.
-
-test('findConflictingRouterRun throws a retryable, inconclusive error naming the candidate that could not be inspected when nothing else resolves a definite conflict', async () => {
+test('findConflictingRouterRun does not treat a candidate whose broker job has already completed as a conflict', async () => {
+  const marker = routerGroupMarker();
   const api = {
     requestOk: async (path) => {
       if (
@@ -452,28 +585,58 @@ test('findConflictingRouterRun throws a retryable, inconclusive error naming the
       ) {
         return {
           workflow_runs: [
-            { id: 9010, display_title: 'route #304: labeled agent:codex' },
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
           ],
         };
       }
-      if (path.includes('/actions/runs/9010/concurrency_groups')) {
-        throw new Error('transient fetch failure');
+      if (path.includes('/actions/runs/9005/jobs')) {
+        return {
+          jobs: [
+            { name: 'normalize', status: 'completed' },
+            { name: 'broker', status: 'completed' },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  assert.equal(await findConflictingRouterRun(api, task, 9001), undefined);
+});
+
+test("findConflictingRouterRun fails closed (propagates) when a candidate's jobs listing cannot be fetched", async () => {
+  const marker = routerGroupMarker();
+  const api = {
+    requestOk: async (path) => {
+      if (
+        path.includes('/workflows/agent-router.yml/runs?status=in_progress')
+      ) {
+        return {
+          workflow_runs: [
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        throw new GitHubApiError('GitHub request failed with HTTP 500', 500);
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
   };
   await assert.rejects(
     () => findConflictingRouterRun(api, task, 9001),
-    (error) =>
-      error.name === 'BrokerConcurrencyMismatchError' &&
-      error.retryable === true &&
-      /9010/u.test(error.message),
+    (error) => error.name === 'GitHubApiError',
   );
 });
 
-test('verifyBrokerConcurrency verifies a dispatch-triggered run after a candidate lookup fails once then succeeds showing no conflict (#349 review)', async () => {
-  const group = brokerConcurrencyGroup(task);
-  let inspectionAttempts = 0;
+test('findConflictingRouterRun checks multiple candidates in order and only reports the one that actually holds the group', async () => {
+  const marker = routerGroupMarker();
+  const jobsRequested = [];
   const api = {
     requestOk: async (path) => {
       if (
@@ -481,85 +644,55 @@ test('verifyBrokerConcurrency verifies a dispatch-triggered run after a candidat
       ) {
         return {
           workflow_runs: [
-            { id: 9010, display_title: 'route #304: labeled agent:codex' },
+            // First candidate: carries the marker, but still only in
+            // `normalize` -- not a holder.
+            {
+              id: 9004,
+              display_title: `route #304: labeled agent:claude ${marker}`,
+            },
+            // Second candidate: genuinely holds the group.
+            {
+              id: 9005,
+              display_title: `route #304: labeled agent:codex ${marker}`,
+            },
           ],
         };
       }
-      if (path.includes('/actions/runs/9010/concurrency_groups')) {
-        inspectionAttempts += 1;
-        if (inspectionAttempts === 1)
-          throw new Error('transient fetch failure');
-        return { concurrency_groups: [] };
+      if (path.includes('/actions/runs/9004/jobs')) {
+        jobsRequested.push(9004);
+        return {
+          jobs: [
+            { name: 'normalize', status: 'in_progress' },
+            { name: 'broker', status: 'queued' },
+          ],
+        };
+      }
+      if (path.includes('/actions/runs/9005/jobs')) {
+        jobsRequested.push(9005);
+        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
   };
-  const sleeps = [];
-  const originalLog = console.log;
-  const logged = [];
-  console.log = (message) => logged.push(message);
-  let result;
-  try {
-    result = await verifyBrokerConcurrency(api, task, 9001, group, {
-      eventName: 'workflow_dispatch',
-      sleepImpl: async (ms) => {
-        sleeps.push(ms);
-      },
-    });
-  } finally {
-    console.log = originalLog;
-  }
-  assert.equal(result.group_name, group);
-  assert.equal(inspectionAttempts, 2);
-  assert.deepEqual(sleeps, [CONCURRENCY_VERIFY_RETRY_DELAY_MS]);
-  assert.equal(logged.length, 1);
-  assert.match(logged[0], /^::notice::/u);
+  const conflicting = await findConflictingRouterRun(api, task, 9001);
+  assert.equal(conflicting.id, 9005);
+  assert.deepEqual(jobsRequested, [9004, 9005]);
 });
 
-test('verifyBrokerConcurrency throws after exhausting retries when a candidate lookup persistently fails to resolve (#349 review)', async () => {
-  const group = brokerConcurrencyGroup(task);
-  let listCalls = 0;
+test('findConflictingRouterRun fails closed (propagates) when the in-progress listing cannot be fetched', async () => {
   const api = {
     requestOk: async (path) => {
       if (
         path.includes('/workflows/agent-router.yml/runs?status=in_progress')
       ) {
-        listCalls += 1;
-        return {
-          workflow_runs: [
-            { id: 9010, display_title: 'route #304: labeled agent:codex' },
-          ],
-        };
-      }
-      if (path.includes('/actions/runs/9010/concurrency_groups')) {
-        throw new Error('persistent fetch failure');
+        throw new GitHubApiError('GitHub request failed with HTTP 500', 500);
       }
       throw new Error(`Unexpected API path: ${path}`);
     },
   };
-  const sleeps = [];
   await assert.rejects(
-    () =>
-      verifyBrokerConcurrency(api, task, 9001, group, {
-        eventName: 'workflow_dispatch',
-        sleepImpl: async (ms) => {
-          sleeps.push(ms);
-        },
-      }),
-    (error) =>
-      error.name === 'BrokerConcurrencyMismatchError' &&
-      error.retryable === true &&
-      /9010/u.test(error.message) &&
-      new RegExp(`after ${CONCURRENCY_VERIFY_MAX_ATTEMPTS} attempts`, 'u').test(
-        error.message,
-      ),
-  );
-  assert.equal(listCalls, CONCURRENCY_VERIFY_MAX_ATTEMPTS);
-  assert.deepEqual(
-    sleeps,
-    Array(CONCURRENCY_VERIFY_MAX_ATTEMPTS - 1).fill(
-      CONCURRENCY_VERIFY_RETRY_DELAY_MS,
-    ),
+    () => findConflictingRouterRun(api, task, 9001),
+    (error) => error.name === 'GitHubApiError',
   );
 });
 
