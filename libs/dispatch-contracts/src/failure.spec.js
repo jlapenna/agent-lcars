@@ -6,6 +6,7 @@ import {
   FAILURE_REASONS,
   formatFailure,
   isAutomaticallyRetryable,
+  isWellFormedFailureClassification,
   needsMaintainer,
   OWNING_SYSTEMS,
   PHASE_OWNERS,
@@ -352,5 +353,48 @@ describe('the audited failures from #645 all have a classification', () => {
       classifyFailure({ phase, reason, retryDisposition: 'manual' })
         .owningSystem,
     ).toBe(owner);
+  });
+});
+
+describe('isWellFormedFailureClassification', () => {
+  const valid = {
+    owningSystem: 'controller',
+    phase: 'reconciliation',
+    reason: 'launch_response_lost',
+    retryDisposition: 'backoff',
+  };
+
+  it('accepts anything classifyFailure produces', () => {
+    expect(
+      isWellFormedFailureClassification(
+        classifyFailure({
+          phase: 'reconciliation',
+          owningSystem: 'controller',
+          reason: 'launch_response_lost',
+          retryDisposition: 'backoff',
+          retryBudget: 2,
+          evidence: 'no run bound yet',
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['a typo in the owning system', { ...valid, owningSystem: 'controler' }],
+    ['a typo in the disposition', { ...valid, retryDisposition: 'backof' }],
+    ['an unknown phase', { ...valid, phase: 'vibes' }],
+    ['an unknown reason', { ...valid, reason: 'it_broke' }],
+    ['a missing owning system', { ...valid, owningSystem: undefined }],
+    ['a negative budget', { ...valid, retryBudget: -1 }],
+    ['a non-string evidence', { ...valid, evidence: 42 }],
+    ['a non-object', 'nope'],
+    ['null', null],
+    ['an array', []],
+  ])('rejects %s', (_label, value) => {
+    // classifyFailure refuses to build these, but that guarantee does not
+    // survive a round trip through a hand-editable GitHub comment -- and the
+    // predicate narrows its input to a type the console renders as real
+    // operational data.
+    expect(isWellFormedFailureClassification(value)).toBe(false);
   });
 });

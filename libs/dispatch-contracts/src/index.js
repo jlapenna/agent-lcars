@@ -56,6 +56,7 @@ export {
   FAILURE_REASONS,
   formatFailure,
   isAutomaticallyRetryable,
+  isWellFormedFailureClassification,
   needsMaintainer,
   OWNING_SYSTEMS,
   PHASE_OWNERS,

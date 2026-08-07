@@ -1,6 +1,6 @@
 import {
-  type FailureClassification,
   formatFailure,
+  isWellFormedFailureClassification,
 } from '@agent-lcars/dispatch-contracts';
 
 import {
@@ -265,30 +265,6 @@ function duplicateAttemptAnomalies(
 }
 
 /**
- * Guards `anomaly.failure` the same way the rest of this function guards
- * `detail`: a ledger comment is untrusted input (hand-edited, written by an
- * older broker, or - once #645 lands - foreign JSON that merely happens to
- * carry a `failure` key), so this checks the four fields `formatFailure`
- * actually reads rather than trusting the `FailureClassification` type,
- * which only binds at compile time. `isWellFormedAnomaly` (the shared
- * package's own read-side gate) already applies a shallower version of this
- * same check before a ledger reaches here; this one is stricter because,
- * unlike that gate, this file goes on to interpolate the fields into UI
- * text rather than just deciding whether to keep the ledger at all.
- */
-function isRenderableFailureClassification(
-  value: unknown,
-): value is FailureClassification {
-  return (
-    isPlainObject(value) &&
-    typeof value.owningSystem === 'string' &&
-    typeof value.phase === 'string' &&
-    typeof value.reason === 'string' &&
-    typeof value.retryDisposition === 'string'
-  );
-}
-
-/**
  * Turns one raw `ledger.anomalies` entry into readable text without
  * assuming its `detail` shape - `detail` is broker-kind-specific and
  * untyped (see `LedgerAnomaly`'s own doc comment). `duplicate-attempt` (the
@@ -324,7 +300,12 @@ function describeLedgerAnomaly(anomaly: LedgerAnomaly): string {
         : '';
     return `The dispatch ledger recorded a "${anomaly.kind}" anomaly at ${anomaly.occurredAt}.${detail}`;
   })();
-  if (!isRenderableFailureClassification(anomaly.failure)) return message;
+  // The shared read-side gate (`isWellFormedAnomaly`) already validates any
+  // `failure` against the real vocabularies before a ledger gets this far, so
+  // this re-check is defence in depth for the interpolation site rather than
+  // the primary guard -- and it is the shared validator, not a weaker local
+  // copy of it, which is what this whole issue is about.
+  if (!isWellFormedFailureClassification(anomaly.failure)) return message;
   return `${message} ${formatFailure(anomaly.failure)}`;
 }
 

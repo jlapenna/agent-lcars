@@ -308,3 +308,62 @@ export function formatFailure(failure) {
     failure.retryBudget === undefined ? '' : ` budget=${failure.retryBudget}`;
   return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
 }
+
+/**
+ * Whether an arbitrary parsed value is a classification worth trusting.
+ *
+ * `classifyFailure` refuses to construct an invalid classification, but that
+ * guarantee only covers values this process built. A classification read back
+ * out of a ledger comment did not come from `classifyFailure` — a GitHub
+ * comment is hand-editable, and a corrupted or crafted one would otherwise
+ * put `owningSystem: "controler"` or `retryDisposition: "backof"` in front of
+ * an operator as though it were real operational data, or route a decision
+ * off a disposition nothing in this module defines.
+ *
+ * So the read side re-validates against the same vocabularies, exactly as it
+ * already does for a generation's `pipeline` and `state`.
+ *
+ * @param {unknown} value
+ * @returns {value is FailureClassification}
+ */
+export function isWellFormedFailureClassification(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = /** @type {Record<string, unknown>} */ (value);
+  if (
+    typeof candidate.owningSystem !== 'string' ||
+    !SYSTEMS.has(candidate.owningSystem)
+  ) {
+    return false;
+  }
+  if (typeof candidate.phase !== 'string' || !PHASES.has(candidate.phase)) {
+    return false;
+  }
+  if (typeof candidate.reason !== 'string' || !REASONS.has(candidate.reason)) {
+    return false;
+  }
+  if (
+    typeof candidate.retryDisposition !== 'string' ||
+    !DISPOSITIONS.has(candidate.retryDisposition)
+  ) {
+    return false;
+  }
+  if (
+    candidate.retryBudget !== undefined &&
+    (!Number.isSafeInteger(candidate.retryBudget) ||
+      Number(candidate.retryBudget) < 0)
+  ) {
+    return false;
+  }
+  if (
+    candidate.evidence !== undefined &&
+    typeof candidate.evidence !== 'string'
+  ) {
+    return false;
+  }
+  if (candidate.detail !== undefined && typeof candidate.detail !== 'string') {
+    return false;
+  }
+  return true;
+}
