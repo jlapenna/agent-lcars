@@ -293,10 +293,15 @@ jobs:
       # contents/issues/pull-requests/actions write grant. Handing that one
       # to the agent step below under any name would let agent-authored
       # code rewrite the ledger or act as the controller - exactly what
-      # #645 forbids. This mint is neither: one narrow capability
-      # (actions:write only - no issues, contents, or pull-requests)
-      # scoped to this repo, good for nothing but the CI-rerun affordance
-      # below.
+      # #645 forbids. AGENT_CI_RERUN_TOKEN is not that credential, but be
+      # precise about what it is: a classic PAT at public_repo scope from
+      # the jclaw-bot machine account. Classic scopes cannot express
+      # "actions: write only", so it does carry issues:write here and CAN
+      # edit the ledger comment. What it buys is a separate, attributable,
+      # independently revocable identity confined to this public repo -- it
+      # cannot reach the fleet's private repos at all. Closing the
+      # remaining gap needs control-plane state that lives somewhere a
+      # repository-scoped token cannot touch (#645 Phase 5).
       # Loud rather than silent when the credential is absent: an empty
       # $ACTIONS_RERUN_TOKEN makes `gh run rerun` fail with an opaque error
       # deep inside an agent turn, which reads as "the agent is stuck"

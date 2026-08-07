@@ -238,12 +238,23 @@ jobs:
       # is genuinely no Claude/Codex transcript for finalize to find and
       # ship. Every OTHER agent-lcars-telemetry-watcher warning (a failed
       # transcript read/upload, a failed Firestore upsert) is fatal.
+      #
+      # Filter the permitted warning OUT and fail on whatever remains --
+      # never "pass if the benign line appeared". finalizeSidecar emits the
+      # zero-sessions warning whenever shippedCount is 0, and shippedCount
+      # is 0 exactly when every discovered transcript failed to read or
+      # reduce. So the benign line is present *precisely in the case that
+      # must fail*, and treating it as an all-clear would mask the failures
+      # this step exists to catch.
       - name: Verify telemetry finalize completed without a reported failure
         run: |
           LOG="$RUNNER_TEMP/telemetry-finalize.log"
-          if grep -q 'agent-lcars-telemetry-watcher:' "$LOG" && \
-             ! grep -q 'agent-lcars-telemetry-watcher: finalize discovered zero sessions' "$LOG"; then
-            echo "::error::Telemetry finalize reported a failure. Captured output:"
+          unexpected="$(grep 'agent-lcars-telemetry-watcher:' "$LOG" \
+            | grep -v 'finalize discovered zero sessions' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "::error::Telemetry finalize reported a failure:"
+            printf '%s\n' "$unexpected"
+            echo "--- full captured output ---"
             cat "$LOG"
             exit 1
           fi
