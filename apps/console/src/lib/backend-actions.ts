@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  formatQuickTaskMarker,
+  quickTaskDigest as sharedQuickTaskDigest,
+  quickTaskMarkerMatcher,
+} from '@agent-lcars/dispatch-contracts';
+
+import {
   getGithubClient,
   primaryWatchedRepo,
   type WatchedRepo,
@@ -480,8 +486,6 @@ export async function reassignPipeline(
 const QUICK_TASK_LABEL = 'intake:quick-task';
 const QUICK_TASK_REQUEST_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const QUICK_TASK_MARKER_PATTERN =
-  /<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f-]{36}) digest=([0-9a-f]{64}) -->/gu;
 const QUICK_TASK_RECENT_ISSUE_LIMIT = 100;
 const QUICK_TASK_CLAIM_REF_PREFIX = 'tags/agent-lcars/quick-task/';
 const QUICK_TASK_CLAIM_TAG_PREFIX = 'agent-lcars/quick-task/';
@@ -531,21 +535,19 @@ function normalizeQuickTaskRequest(
   };
 }
 
-function quickTaskDigest(request: NormalizedQuickTaskRequest): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        repository: repoKey(request.repository),
-        pipeline: request.pipeline,
-        title: request.title,
-        description: request.description,
-      }),
-    )
-    .digest('hex');
-}
+const sha256Hex = (input: string): string =>
+  createHash('sha256').update(input).digest('hex');
 
-function quickTaskMarker(requestId: string, digest: string): string {
-  return `<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${digest} -->`;
+function quickTaskDigest(request: NormalizedQuickTaskRequest): string {
+  return sharedQuickTaskDigest(
+    {
+      repository: repoKey(request.repository),
+      pipeline: request.pipeline,
+      title: request.title,
+      description: request.description,
+    },
+    sha256Hex,
+  );
 }
 
 function quickTaskClaimRef(requestId: string): string {
@@ -597,8 +599,11 @@ function parseQuickTaskClaim(message: string): QuickTaskClaim {
 
 function markerDigest(body: string | null | undefined, requestId: string) {
   if (!body) return undefined;
-  QUICK_TASK_MARKER_PATTERN.lastIndex = 0;
-  for (const match of body.matchAll(QUICK_TASK_MARKER_PATTERN)) {
+  // Multiple markers can appear in one body (e.g. a PR quoting/copying a
+  // Quick Task issue's body) so every match must be scanned for the one
+  // whose id matches, not just the first -- this needs the global matcher,
+  // not `parseQuickTaskMarker`'s single-match semantics.
+  for (const match of body.matchAll(quickTaskMarkerMatcher())) {
     if (match[1] === requestId) return match[2];
   }
   return undefined;
@@ -947,7 +952,7 @@ async function createQuickTaskOnce(
       owner: request.repository.owner,
       repo: request.repository.name,
       title: request.title,
-      body: `${request.description}\n\n${quickTaskMarker(request.requestId, digest)}`,
+      body: `${request.description}\n\n${formatQuickTaskMarker({ requestId: request.requestId, digest })}`,
       labels: [QUICK_TASK_LABEL, integration.label],
     });
     return receiptFor(request, issue.number);
