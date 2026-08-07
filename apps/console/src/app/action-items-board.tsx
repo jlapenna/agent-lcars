@@ -48,7 +48,7 @@ export function DecisionInbox({
   );
 }
 
-export function CommandDeckSections({
+export function BridgeSections({
   waitingOnDeploy,
   rest,
   cliSessions = [],

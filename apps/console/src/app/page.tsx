@@ -25,7 +25,7 @@ import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
 import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
-import { type BoardCard, CommandDeckSections } from './action-items-board';
+import { type BoardCard, BridgeSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
@@ -162,7 +162,7 @@ async function IndexBody({
         cliSessionsCapped={cliSessions.length >= MAX_SESSIONS}
       />
 
-      <CommandDeckSections
+      <BridgeSections
         waitingOnDeploy={queueView.waitingOnDeploy
           .filter((i) => matchesFilter(i.repo))
           .map((item) => toCard(item))}
@@ -204,7 +204,7 @@ async function IndexShell({ searchParams }: PageProps) {
     <Container size="xl" py="xl" className="deck-page-shell">
       <ConsoleHeader
         current="deck"
-        title="Command Deck"
+        title="Bridge"
         repoFilter={repoFilterKey}
         subtitle={
           <>
@@ -256,7 +256,7 @@ export default function Index({ searchParams }: PageProps) {
       fallback={
         <NavPageLoading
           current="deck"
-          title="Command Deck"
+          title="Bridge"
           className="deck-page-shell"
           rows={6}
         />

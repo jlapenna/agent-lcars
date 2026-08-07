@@ -66,7 +66,7 @@ test.describe('populated dashboard', () => {
       .click();
     await expect(page.getByTestId('silent-error-diagnosis')).toBeVisible();
 
-    // Deploy-wait-only work remains on the Command Deck overview.
+    // Deploy-wait-only work remains on the Bridge overview.
     await page.goto('/');
     await expect(
       page.getByRole('heading', { name: /Waiting on Next Deploy/ }),
@@ -256,12 +256,10 @@ test.describe('populated dashboard', () => {
 });
 
 test.describe('responsive decision inbox', () => {
-  test('keeps the Command Deck focused on overview work', async ({ page }) => {
+  test('keeps the Bridge focused on overview work', async ({ page }) => {
     await page.goto('/');
 
-    await expect(
-      page.getByRole('heading', { name: 'Command Deck' }),
-    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Bridge' })).toBeVisible();
     await expect(
       page.getByRole('region', { name: 'Decision Inbox' }),
     ).toHaveCount(0);
@@ -416,7 +414,7 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
   });
 
-  test('keeps the Command Deck compact and navigable on a phone', async ({
+  test('keeps the Bridge compact and navigable on a phone', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });

@@ -42,7 +42,7 @@ describe('ConsoleHeader nav rail', () => {
         <ConsoleHeader
           current="deck"
           title="Agent LCARS"
-          subtitle="Command Deck"
+          subtitle="Bridge"
           utilities={<button>Quick task</button>}
         />
       </MantineProvider>,
@@ -114,7 +114,7 @@ describe('ConsoleHeader nav rail', () => {
       <MantineProvider>
         <ConsoleHeader
           current="deck"
-          title="Command Deck"
+          title="Bridge"
           subtitle="one repo"
           repoFilter="example/console"
         />

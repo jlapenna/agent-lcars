@@ -668,7 +668,7 @@
   border-left: 4px solid var(--mantine-color-yellow-7);
 }
 
-/* ---- Queue command deck / decision Inbox (#249) ---- */
+/* ---- Queue bridge / decision Inbox (#249) ---- */
 
 .deck-utilities--mobile,
 .inbox-utilities--mobile {
@@ -1807,7 +1807,7 @@
   }
 }
 
-/* Command Deck's Inbox signpost (deck-inbox-summary.tsx): a quiet chip-row
+/* Bridge's Inbox signpost (deck-inbox-summary.tsx): a quiet chip-row
    with the LCARS left-accent treatment; the count dims when nothing waits. */
 .deck-inbox-summary {
   padding: 0.65rem 0.9rem;
