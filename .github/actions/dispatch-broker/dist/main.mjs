@@ -136,6 +136,9 @@ function classifyFailure({
     ...detail === void 0 ? {} : { detail }
   };
 }
+function needsMaintainer(failure) {
+  return failure.retryDisposition === "manual" || failure.retryDisposition === "after_configuration_change" || failure.retryDisposition === "never" && failure.reason !== "intent_superseded";
+}
 function formatFailure(failure) {
   const budget = failure.retryBudget === void 0 ? "" : ` budget=${failure.retryBudget}`;
   return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
@@ -1275,6 +1278,25 @@ async function ensureNeedsHumanParked(api2, task, maintainer) {
   );
 }
 
+// apps/dispatch-broker/src/modules/projector.ts
+async function projectNeedsHumanPark(api2, task, maintainer, failure) {
+  if (!needsMaintainer(failure)) return { parked: false };
+  await ensureNeedsHumanParked(api2, task, maintainer);
+  return { parked: true };
+}
+function recordProjectionStatus(ledger, converged, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const desiredRevision = ledger.revision;
+  const observedRevision = converged ? desiredRevision : ledger.projection?.observedRevision ?? 0;
+  return mutate(ledger, now, () => {
+    ledger.projection = {
+      desiredRevision,
+      observedRevision,
+      state: converged ? "converged" : observedRevision > 0 ? "diverged" : "pending",
+      observedAt: now
+    };
+  });
+}
+
 // apps/dispatch-broker/src/normalize.ts
 import crypto2 from "node:crypto";
 
@@ -1754,14 +1776,14 @@ function contextFor(event, inputs) {
     now: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
-async function runPhase(ledgerContext, phase, step) {
+async function runPhase(ledgerContext, phase, step, owningSystem = "controller") {
   try {
     return await step();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const failure = classifyFailure({
       phase,
-      owningSystem: "controller",
+      owningSystem,
       reason: "internal_error",
       retryDisposition: "manual",
       detail: message
@@ -1954,11 +1976,19 @@ async function trackMissingRun(client, loaded, generation, now) {
   }
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
-  if (reachedBound) {
-    await ensureNeedsHumanParked(
+  const parkFailure = reachedBound ? classifyFailure({
+    phase: "reconciliation",
+    owningSystem: "controller",
+    reason: "launch_response_lost",
+    retryDisposition: "manual",
+    evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
+  }) : void 0;
+  if (parkFailure) {
+    await projectNeedsHumanPark(
       client,
       ledger.task,
-      env("MAINTAINER_LOGIN", false)
+      env("MAINTAINER_LOGIN", false),
+      parkFailure
     );
   }
   addAnomaly(
@@ -1997,7 +2027,7 @@ async function trackMissingRun(client, loaded, generation, now) {
       evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`
     })
   );
-  if (reachedBound) {
+  if (parkFailure) {
     addAnomaly(
       ledger,
       "reconcile-parked",
@@ -2006,21 +2036,10 @@ async function trackMissingRun(client, loaded, generation, now) {
         reason: "missing-run-bound-exhausted"
       },
       now,
-      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // The genuine human handoff: `projectNeedsHumanPark` (above) has
       // just run, and the guard at the top of this function turns every
       // later pass into a no-op, so nothing further happens automatically.
-      // Same underlying reason as the `reconcile-missing-run` observations
-      // that led here -- exhausting the retry budget doesn't change *why*
-      // the run went missing, only that automated backoff has given up on
-      // it -- so `retryDisposition` moves from `backoff` to `manual` while
-      // `reason` stays `launch_response_lost`.
-      classifyFailure({
-        phase: "reconciliation",
-        owningSystem: "controller",
-        reason: "launch_response_lost",
-        retryDisposition: "manual",
-        evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
-      })
+      parkFailure
     );
   }
   await saveLedger(client, loaded);
@@ -2053,11 +2072,19 @@ async function trackStuckRun(client, loaded, generation, run, now) {
   }
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_STUCK_RUN_MAX_ATTEMPTS;
-  if (reachedBound) {
-    await ensureNeedsHumanParked(
+  const parkFailure = reachedBound ? classifyFailure({
+    phase: "reconciliation",
+    owningSystem: "runner",
+    reason: "runner_lost",
+    retryDisposition: "manual",
+    evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
+  }) : void 0;
+  if (parkFailure) {
+    await projectNeedsHumanPark(
       client,
       ledger.task,
-      env("MAINTAINER_LOGIN", false)
+      env("MAINTAINER_LOGIN", false),
+      parkFailure
     );
   }
   addAnomaly(
@@ -2096,7 +2123,7 @@ async function trackStuckRun(client, loaded, generation, run, now) {
       evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${RECONCILE_STUCK_RUN_MAX_ATTEMPTS})`
     })
   );
-  if (reachedBound) {
+  if (parkFailure) {
     addAnomaly(
       ledger,
       // Distinct kind from trackMissingRun's own 'reconcile-parked' so the
@@ -2111,21 +2138,10 @@ async function trackStuckRun(client, loaded, generation, run, now) {
         reason: "stuck-run-bound-exhausted"
       },
       now,
-      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // The genuine human handoff: `projectNeedsHumanPark` (above) has
       // just run, and the guard at the top of this function turns every
       // later pass into a no-op, so nothing further happens automatically.
-      // Same underlying reason as the `reconcile-stuck-run` observations
-      // that led here -- exhausting the observation budget doesn't change
-      // *why* the run stopped progressing, only that automated waiting has
-      // given up on it -- so `retryDisposition` moves from `backoff` to
-      // `manual` while `owningSystem`/`reason` stay `runner`/`runner_lost`.
-      classifyFailure({
-        phase: "reconciliation",
-        owningSystem: "runner",
-        reason: "runner_lost",
-        retryDisposition: "manual",
-        evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
-      })
+      parkFailure
     );
   }
   await saveLedger(client, loaded);
@@ -2206,10 +2222,17 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
     pending.generation,
     "reconcile-invariant-violation"
   ).length === 0) {
-    await ensureNeedsHumanParked(
+    const parkFailure = classifyFailure({
+      phase: "reconciliation",
+      owningSystem: "controller",
+      reason: "internal_error",
+      retryDisposition: "manual"
+    });
+    await projectNeedsHumanPark(
       client,
       ledger.task,
-      env("MAINTAINER_LOGIN", false)
+      env("MAINTAINER_LOGIN", false),
+      parkFailure
     );
     addAnomaly(
       ledger,
@@ -2219,24 +2242,7 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
         generation: pending.generation
       },
       now,
-      // "Should be unreachable through broker.mjs's own transitions" is
-      // this vocabulary's own definition of `internal_error` -- a defensive
-      // check catching corrupted-looking ledger state, not a failure any
-      // known external cause (a lost signal, a lost launch response, a
-      // provider outage, ...) explains. The ledger this invariant is about
-      // is the controller's own state, so it -- not whichever system
-      // produced the generations in question -- is the explicit owner
-      // reconciliation-phase failures require. `manual`: the guard above
-      // (reconcileAnomaliesFor(...).length === 0) makes every later pass a
-      // no-op once this fires, identical to reconcile-parked's own
-      // idempotent stop -- nothing about this resolves itself, a human has
-      // to look at the ledger and decide what actually happened.
-      classifyFailure({
-        phase: "reconciliation",
-        owningSystem: "controller",
-        reason: "internal_error",
-        retryDisposition: "manual"
-      })
+      parkFailure
     );
     await saveLedger(client, loaded);
     return;
@@ -2555,6 +2561,15 @@ async function broker() {
       );
     }
     await dispatchAccepted(client, loaded);
+    try {
+      recordProjectionStatus(loaded.ledger, true);
+      await saveLedger(client, loaded);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Failed to record the projector's convergence checkpoint: ${message}`
+      );
+    }
   } catch (error) {
     await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
   }

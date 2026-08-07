@@ -95,6 +95,14 @@ export {
   WORKER_WORKFLOW_FILES,
   workerWorkflow,
 } from './pipelines';
+export type {
+  ProjectionConvergenceState,
+  ProjectionStatus,
+} from './projection';
+export {
+  isWellFormedProjectionStatus,
+  PROJECTION_CONVERGENCE_STATES,
+} from './projection';
 export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,
