@@ -504,9 +504,11 @@ test('detects two simultaneous same-group runs symmetrically -- the #545 gap', a
 // Regression coverage for the bug a Codex review caught: `run-name:` is
 // evaluated at the *workflow* level, so a second run carries this task's
 // marker from the instant it starts -- while it is still only in its
-// `normalize` job. But `normalize`'s concurrency group is the
-// repository-wide `-control-plane-normalize` queue; only the `broker` job
-// takes the per-task group (see agent-router.yml). Treating a same-task run
+// `normalize` job. But `normalize` takes no concurrency group at all; only
+// the `broker` job takes the per-task group (see agent-router.yml, whose
+// comment records why normalize's old repository-wide queue was removed
+// after it was found silently cancelling queued router runs). Treating a
+// same-task run
 // as a holder purely because the marker is present -- without checking
 // which job is actually running -- would manufacture false conflicts during
 // ordinary event bursts and, once the retry budget expired, drop or delay

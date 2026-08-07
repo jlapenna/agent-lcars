@@ -441,9 +441,10 @@ function concurrencyGroupsPath(root: string, runId: number): string {
 // The marker alone is NOT sufficient, and assuming it was would trade one
 // bug for another. `run-name:` is evaluated at the *workflow* level, so a
 // second run carries this task's marker from the instant it starts -- while
-// it is still only in its `normalize` job. But `normalize`'s concurrency
-// group is the repository-wide `-control-plane-normalize` queue; only the
-// `broker` job takes the per-task group (see agent-router.yml). Treating any
+// it is still only in its `normalize` job. But `normalize` takes no
+// concurrency group at all; only the `broker` job takes the per-task group
+// (see agent-router.yml, whose comment records why normalize's old
+// repository-wide queue was removed). Treating any
 // same-task run as a holder would therefore manufacture conflicts during
 // ordinary event bursts and, once the retry budget expired, drop or delay
 // legitimate intent, completion, and control evidence.
