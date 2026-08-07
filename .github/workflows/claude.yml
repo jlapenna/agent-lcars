@@ -143,6 +143,7 @@ jobs:
       # The worker is untrusted until its own Actions run ID is durably bound
       # to this exact task/generation/intent/token in the serialized ledger.
       - name: Verify broker binding
+        id: broker-preflight
         uses: ./.github/actions/dispatch-broker
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -152,6 +153,17 @@ jobs:
           generation: ${{ inputs.broker_generation }}
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
+
+      # Publish the verified attempt ID to every later step as $ATTEMPT_ID.
+      # Preflight is the right source rather than recomposing it from the two
+      # raw inputs: this value is the one the broker just confirmed matches a
+      # real ledger binding, so a step that stamps an artifact with it is
+      # stamping a verified identity, not an unvalidated echo of its own
+      # inputs. (#645 Phase 4 marks PRs/comments/reviews with this.)
+      - name: Publish attempt identity
+        run: echo "ATTEMPT_ID=$ATTEMPT_ID" >> "$GITHUB_ENV"
+        env:
+          ATTEMPT_ID: ${{ steps.broker-preflight.outputs.attempt-id }}
 
       # Mints the same Agent LCARS App token codex.yml/opencode.yml use, so
       # claude's own claim/comment/label gh operations below are attributed

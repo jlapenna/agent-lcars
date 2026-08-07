@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import {
   extractLedgerComment,
+  formatAttemptId,
   isDispatchPipeline,
   LEDGER_ACTIVE_GENERATION_STATES,
   LEDGER_MARKER,
@@ -299,7 +300,17 @@ function beginDispatch(
     throw new Error('Invalid dispatch token');
   return mutate(ledger, now, () => {
     generation.state = 'dispatching';
-    generation.attempt = { token, dispatchStartedAt: now };
+    // `attemptId` is identity, `token` is proof, and they are deliberately
+    // different things: the ID is public (it is the run title's marker) while
+    // the token is the bearer capability preflight checks. Persisting the ID
+    // rather than re-deriving it at each read is what makes it immutable --
+    // a later reader sees the value written here, not one recomputed from
+    // fields that a repair could in principle touch.
+    generation.attempt = {
+      attemptId: formatAttemptId(generation),
+      token,
+      dispatchStartedAt: now,
+    };
   });
 }
 

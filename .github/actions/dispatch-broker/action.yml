@@ -61,6 +61,19 @@ outputs:
   authorized:
     description: Whether worker preflight found an exact binding
     value: ${{ steps.run.outputs.authorized }}
+  attempt-id:
+    # Derived from the `generation`/`intent-id` inputs preflight already
+    # required and verified -- NOT sourced from a new workflow_dispatch
+    # input. `broker_generation`/`broker_intent_id` are already required
+    # worker-workflow inputs, so the attempt ID is exactly recoverable from
+    # them (see formatAttemptId in libs/dispatch-contracts/src/marker.js); a
+    # new required input would just be a second, redundant way to say the
+    # same thing. It would also break consuming repos whose copy of the
+    # worker workflow lags this one -- apps/console/src/lib/backend-actions.ts's
+    # `withoutUnexpectedInputs` shim exists precisely because
+    # workflow_dispatch inputs drift like that across repos.
+    description: The verified attempt's stable identity, g<generation>:<intentId>
+    value: ${{ steps.run.outputs.attempt-id }}
   candidates:
     description: Number of open agent-labeled issues/PRs the reconcile scan discovered
     value: ${{ steps.run.outputs.candidates }}

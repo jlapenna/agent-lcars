@@ -101,6 +101,7 @@ describe('deriveLogicalWork - one task, one attempt', () => {
     expect(task.attempts[0].attribution).toBe('ledger');
     expect(task.attempts[0].generation).toBe(1);
     expect(task.attempts[0].intentId).toBe('intent-abc123');
+    expect(task.attempts[0].attemptId).toBe('g1:intent-abc123');
     expect(task.intents).toHaveLength(1);
     expect(task.intents[0]).toMatchObject({
       intentId: 'intent-abc123',
@@ -519,6 +520,85 @@ describe('deriveLogicalWork - attribution and mismatch anomalies', () => {
     expect(work).toEqual([]);
     expect(unattributedAttempts).toHaveLength(1);
     expect(unattributedAttempts[0].attribution).toBe('unattributed');
+  });
+});
+
+describe('deriveLogicalWork - attemptId (#645)', () => {
+  it('falls back to formatAttemptId(generation) when the ledger predates the persisted field', () => {
+    // makeLedger()'s default generation has an `attempt` with no
+    // `attemptId` field, matching every generation dispatched before #645
+    // added it - this is the "recompute, don't crash or omit" path.
+    const { work } = deriveLogicalWork({
+      attempts: [makeRun()],
+      ledgers: new Map([[KEY, makeLedger()]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work[0].attempts[0].attemptId).toBe('g1:intent-abc123');
+  });
+
+  it('prefers the ledger-persisted attempt.attemptId over recomputing it', () => {
+    // Deliberately a different string than `formatAttemptId` would
+    // recompute from generation/intentId, so the assertion can only pass by
+    // actually reading the persisted field - proving preference, not just
+    // coincidental agreement.
+    const ledger = makeLedger({
+      generations: [
+        {
+          generation: 1,
+          intentId: 'intent-abc123',
+          sourceId: 'src-1',
+          occurredAt: '2026-07-07T00:00:00Z',
+          pipeline: 'claude',
+          mode: 'implement',
+          state: 'active',
+          attempt: {
+            runId: 1,
+            status: 'in_progress',
+            attemptId: 'g1:intent-abc123-persisted',
+          },
+        },
+      ],
+    });
+
+    const { work } = deriveLogicalWork({
+      attempts: [makeRun()],
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work[0].attempts[0].attemptId).toBe('g1:intent-abc123-persisted');
+  });
+
+  it('derives attemptId from the run-marker alone when no ledger corroborates the attempt', () => {
+    const attempts = [
+      makeRun({
+        id: 1,
+        displayTitle: '#42: Claude issue agent [dispatch:g3:intent-xyz]',
+      }),
+    ];
+
+    const { work } = deriveLogicalWork({
+      attempts,
+      ledgers: new Map(),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work[0].attempts[0].attribution).toBe('run-marker');
+    expect(work[0].attempts[0].attemptId).toBe('g3:intent-xyz');
+  });
+
+  it('leaves attemptId undefined for a legacy-title attempt with no marker at all', () => {
+    const attempts = [makeRun({ id: 1, displayTitle: '#42: Fix the thing' })];
+
+    const { work } = deriveLogicalWork({
+      attempts,
+      ledgers: new Map(),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work[0].attempts[0].attribution).toBe('legacy-title');
+    expect(work[0].attempts[0].attemptId).toBeUndefined();
   });
 });
 

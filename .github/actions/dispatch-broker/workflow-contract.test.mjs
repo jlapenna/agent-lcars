@@ -628,6 +628,50 @@ test('deploy-console.yml fails closed when the triggering Verify job did not pas
   );
 });
 
+test('every worker captures the verified attempt ID and publishes it', async () => {
+  // An action output nobody references is inert: the preflight step used to
+  // advertise `attempt-id` while no worker gave that step an `id`, so nothing
+  // downstream could ever read it and the "propagate an attemptId" contract
+  // (#645) was satisfied on paper only. These assertions are what make the
+  // output load-bearing rather than decorative.
+  const sources = await workflowSources();
+  const canary = 'agent-dispatch-canary.yml';
+  for (const workflow of [...workerWorkflowNames, canary]) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    const steps = stepBlocks(source);
+
+    const preflight = namedStep(
+      steps,
+      workflow,
+      'Verify broker binding',
+    ).source;
+    assert.match(
+      preflight,
+      /^\s+id:\s+broker-preflight\s*$/mu,
+      `${workflow}'s preflight step needs an id for its outputs to be readable`,
+    );
+
+    const publish = namedStep(
+      steps,
+      workflow,
+      'Publish attempt identity',
+    ).source;
+    assert.match(
+      publish,
+      /steps\.broker-preflight\.outputs\.attempt-id/u,
+      `${workflow} must publish the verified attempt ID, not recompose it`,
+    );
+    assert.match(
+      publish,
+      /ATTEMPT_ID=\$ATTEMPT_ID" >> "\$GITHUB_ENV"/u,
+      `${workflow} must export ATTEMPT_ID to later steps`,
+    );
+  }
+});
+
 let failures = 0;
 for (const { name, run } of tests) {
   try {

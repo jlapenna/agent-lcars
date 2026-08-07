@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import {
   classifyFailure,
   displayTitleMatchesAttempt,
+  formatAttemptId,
 } from '../../../libs/dispatch-contracts/src/index.js';
 import {
   acceptIntent,
@@ -1053,6 +1054,17 @@ async function preflight() {
         workerWorkflow(generation.pipeline),
       );
       await output('authorized', 'true');
+      // Derived from the same generation/intentId preflight just verified,
+      // not a new workflow input -- see action.yml's `attempt-id` output for
+      // why a new required workflow_dispatch input would be both redundant
+      // and a cross-repo drift hazard.
+      await output(
+        'attempt-id',
+        formatAttemptId({
+          generation: expected.generation,
+          intentId: expected.intentId,
+        }),
+      );
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));

@@ -78,6 +78,8 @@ export {
 } from './ledger.js';
 export {
   displayTitleMatchesAttempt,
+  formatAttemptId,
   formatDispatchMarker,
+  parseAttemptId,
   parseDispatchMarker,
 } from './marker.js';

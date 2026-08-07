@@ -1,4 +1,5 @@
 import {
+  formatAttemptId,
   formatFailure,
   isWellFormedFailureClassification,
 } from '@agent-lcars/dispatch-contracts';
@@ -63,6 +64,11 @@ export type AttemptAttribution =
 export interface ExecutionAttempt extends AgentRun {
   generation?: number;
   intentId?: string;
+  /** The attempt's stable identity, `g<generation>:<intentId>` (#645) - one
+   * field a consumer can key or link on instead of recomposing the pair
+   * itself. Populated in lockstep with `generation`/`intentId` above: never
+   * set when either of those is undefined, always set when both are. */
+  attemptId?: string;
   /** How confidently `generation`/`intentId` are known:
    * - `ledger`: the run's `[dispatch:gN:intentId]` marker matched a real
    *   generation in this task's ledger - the strongest evidence.
@@ -199,6 +205,11 @@ function toExecutionAttempt(run: AgentRun): ExecutionAttempt {
       ...run,
       generation: marker.generation,
       intentId: marker.intentId,
+      // The marker IS `formatAttemptId(marker)` in brackets (see marker.js),
+      // so re-deriving it here from the same parsed pair is exact, not a
+      // guess - there is no ledger yet at this point in the join to have
+      // persisted a competing value.
+      attemptId: formatAttemptId(marker),
       attribution: 'run-marker',
     };
   }
@@ -241,6 +252,14 @@ function attributeAttemptsToLedger(
     return {
       ...attempt,
       generation: generation.generation,
+      // Prefer the ledger's own persisted `attempt.attemptId` (written once
+      // at `beginDispatch`, see broker.mjs) over re-deriving it here: that
+      // field is the immutable record of what the broker actually minted,
+      // whereas recomputing from `generation` is only ever a reconstruction
+      // of it. Fall back to `formatAttemptId` for a generation dispatched
+      // before this field existed - the derivation agrees with the marker by
+      // construction (marker.js), so it is exact, not a guess, for those too.
+      attemptId: generation.attempt?.attemptId ?? formatAttemptId(generation),
       attribution: 'ledger' as const,
     };
   });

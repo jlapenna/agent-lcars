@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   displayTitleMatchesAttempt,
+  formatAttemptId,
   formatDispatchMarker,
+  parseAttemptId,
   parseDispatchMarker,
 } from './marker.js';
 
@@ -92,5 +94,47 @@ describe('displayTitleMatchesAttempt', () => {
 
   it('tolerates a missing title', () => {
     expect(displayTitleMatchesAttempt(undefined, attempt)).toBe(false);
+  });
+});
+
+describe('the attempt ID', () => {
+  it('is what the marker encodes, with no second definition', () => {
+    // The whole reason attemptId is derived rather than minted: GitHub does
+    // not return a run's dispatch inputs on the run object, so display_title
+    // is the only channel a run and a ledger entry share. A separate minted
+    // ID would have to go in the title too, and could then disagree with the
+    // marker already there.
+    const attempt = { generation: 7, intentId: 'issue-645.g7' };
+    expect(formatDispatchMarker(attempt)).toBe(
+      `[dispatch:${formatAttemptId(attempt)}]`,
+    );
+  });
+
+  it('round-trips', () => {
+    const attempt = { generation: 12, intentId: 'issue-645.g12:1' };
+    expect(parseAttemptId(formatAttemptId(attempt))).toEqual(attempt);
+  });
+
+  it('agrees with what the run title parses back out', () => {
+    const attempt = { generation: 3, intentId: 'abc-1' };
+    const title = `#645: Codex issue agent ${formatDispatchMarker(attempt)}`;
+    expect(parseDispatchMarker(title)).toEqual(
+      parseAttemptId(formatAttemptId(attempt)),
+    );
+  });
+
+  it('rejects the empty ID a hand-triggered dispatch produces', () => {
+    // Actions renders blank inputs as `g:`; treating that as generation 0 of
+    // an empty intent would bind an unrelated run to a real ledger entry.
+    expect(parseAttemptId('g:')).toBe(undefined);
+  });
+
+  it('is anchored, so it does not match an ID embedded in other text', () => {
+    expect(parseAttemptId('#645: agent [dispatch:g3:abc]')).toBe(undefined);
+  });
+
+  it('tolerates a missing ID', () => {
+    expect(parseAttemptId(undefined)).toBe(undefined);
+    expect(parseAttemptId(null)).toBe(undefined);
   });
 });
