@@ -37,9 +37,37 @@ import { test } from 'vitest';
 import {
   type LaunchOutboxResolution,
   type StoragePort,
+  type StoredTask,
   type StoredTaskInput,
   TaskWriteConflictError,
 } from './port.js';
+
+/**
+ * A synchronization barrier for exactly `count` parties: each party calls
+ * `arrive()` after it has done whatever must happen BEFORE the concurrent
+ * step under test (e.g. reading the starting revision) and receives back a
+ * promise that resolves only once every party has arrived -- so awaiting it
+ * is the signal to begin the concurrent step itself. Deterministic (no
+ * `setTimeout`): release is driven by the last `arrive()` call, not by
+ * elapsed time. Safe even if a party never gets to call `arrive()` at all
+ * (e.g. it throws first) -- since arrival, not the step under test, is what
+ * gates the barrier, nothing here waits on a party's later success or
+ * failure.
+ */
+function makeBarrier(count: number): { arrive: () => Promise<void> } {
+  let arrived = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    arrive: () => {
+      arrived += 1;
+      if (arrived >= count) release();
+      return gate;
+    },
+  };
+}
 
 const TASK = {
   repositoryId: 1307149765,
@@ -137,32 +165,85 @@ export function runStoragePortContractSuite(
 
   test(
     name(
-      'writing with a stale expected revision throws a conflict instead of overwriting',
+      'two writers racing from the same starting revision: exactly one succeeds, the other conflicts',
     ),
     async () => {
+      // This is the property that actually distinguishes a real
+      // compare-and-swap backend from one that separately reads the current
+      // revision and then performs an unconditional write: the latter can
+      // pass a SEQUENTIAL version of this test (writer A fully completes,
+      // THEN writer B attempts its write and is told the revision moved) but
+      // would let two truly simultaneous writers -- both having observed the
+      // same starting revision before either wrote -- silently both "win".
+      // So both writers here must observe the same starting revision before
+      // either writes, and then both writes must be issued concurrently.
       const port = await createPort();
       const created = await port.writeTask(
         TASK,
         undefined,
         oneSignalState('source-1'),
       );
+      const startingRevision = created.revision;
 
-      // Two readers both start from revision 1; writer A commits...
-      await port.writeTask(TASK, created.revision, oneSignalState('source-2'));
+      // Deterministic synchronization barrier -- no setTimeout race. Each
+      // writer "arrives" (i.e. finishes observing the starting revision)
+      // and then awaits the barrier, which only resolves once BOTH have
+      // arrived, so neither writer's actual `writeTask` call can start
+      // before the other is also ready to start.
+      const barrier = makeBarrier(2);
 
-      // ...writer B, still holding the stale revision it originally read,
-      // must be told about the conflict rather than clobbering A's write.
-      await assert.rejects(
-        () =>
-          port.writeTask(TASK, created.revision, oneSignalState('source-3')),
-        TaskWriteConflictError,
+      type Attempt =
+        | { outcome: 'fulfilled'; value: StoredTask }
+        | { outcome: 'rejected'; reason: unknown };
+
+      async function race(sourceId: string): Promise<Attempt> {
+        // Nothing above this line touches the port -- arriving at the
+        // barrier is unconditional, so one writer throwing during its own
+        // write can never strand the other one waiting on the barrier.
+        await barrier.arrive();
+        try {
+          const value = await port.writeTask(
+            TASK,
+            startingRevision,
+            oneSignalState(sourceId),
+          );
+          return { outcome: 'fulfilled', value };
+        } catch (reason) {
+          return { outcome: 'rejected', reason };
+        }
+      }
+
+      const [a, b] = await Promise.all([race('writer-a'), race('writer-b')]);
+
+      const fulfilled = [a, b].filter(
+        (attempt): attempt is Attempt & { outcome: 'fulfilled' } =>
+          attempt.outcome === 'fulfilled',
+      );
+      const rejected = [a, b].filter(
+        (attempt): attempt is Attempt & { outcome: 'rejected' } =>
+          attempt.outcome === 'rejected',
       );
 
-      // A's write survives untouched -- the defining property of a real
-      // conflict signal instead of last-write-wins.
+      assert.equal(
+        fulfilled.length,
+        1,
+        'exactly one concurrent writer must succeed',
+      );
+      assert.equal(
+        rejected.length,
+        1,
+        'exactly one concurrent writer must be told about the conflict',
+      );
+      assert.ok(rejected[0].reason instanceof TaskWriteConflictError);
+
+      // The final stored state must match the winner -- a backend where
+      // both writes actually landed (e.g. the second silently clobbering
+      // the first after both passed their own check) would fail this even
+      // if it happened to also throw for one of the callers above.
+      const winner = fulfilled[0].value;
       const read = await port.readTask(TASK);
-      assert.equal(read?.signals[0].sourceId, 'source-2');
-      assert.equal(read?.revision, 2);
+      assert.deepEqual(read, winner);
+      assert.equal(winner.revision, startingRevision + 1);
     },
   );
 
@@ -423,6 +504,99 @@ export function runStoragePortContractSuite(
         port.resolveLaunchOutcome('g1:intent-1', {
           status: 'launched',
           binding: { runId: 1, runUrl: 'https://x', htmlUrl: 'https://x' },
+        }),
+      );
+    },
+  );
+
+  test(
+    name(
+      'resolving with the same resolution but reordered top-level keys is still idempotent',
+    ),
+    async () => {
+      // An at-least-once retry of resolveLaunchOutcome can reconstruct the
+      // same resolution value from scratch -- e.g. after a crash and replay
+      // -- with its object literal's keys built in a different order than
+      // the first attempt. Idempotence is documented (StoragePort.
+      // resolveLaunchOutcome: "deep-equal"), so property order must not
+      // matter.
+      const port = await createPort();
+      await port.recordLaunchIntent({
+        operationId: 'g1:intent-1',
+        task: TASK,
+        attemptId: 'g1:intent-1',
+      });
+      const first = await port.resolveLaunchOutcome('g1:intent-1', {
+        status: 'rejected',
+        reason: 'HTTP 422',
+      });
+      // Same fields, reason before status -- a different insertion order
+      // than the first call used.
+      const second = await port.resolveLaunchOutcome('g1:intent-1', {
+        reason: 'HTTP 422',
+        status: 'rejected',
+      });
+      assert.deepEqual(second, first);
+    },
+  );
+
+  test(
+    name(
+      'resolving with the same resolution but a reordered nested object is still idempotent',
+    ),
+    async () => {
+      // Same scenario as above, one level deeper: a launched binding whose
+      // `runId`/`runUrl`/`htmlUrl` were reassembled in a different order on
+      // retry (the exact case the finding names).
+      const port = await createPort();
+      await port.recordLaunchIntent({
+        operationId: 'g1:intent-1',
+        task: TASK,
+        attemptId: 'g1:intent-1',
+      });
+      const first = await port.resolveLaunchOutcome('g1:intent-1', {
+        status: 'launched',
+        binding: {
+          runId: 42,
+          runUrl:
+            'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+          htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+        },
+      });
+      const second = await port.resolveLaunchOutcome('g1:intent-1', {
+        status: 'launched',
+        binding: {
+          htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+          runUrl:
+            'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+          runId: 42,
+        },
+      });
+      assert.deepEqual(second, first);
+    },
+  );
+
+  test(
+    name(
+      'resolving with a same-shaped but genuinely different resolution still conflicts',
+    ),
+    async () => {
+      // Guards the fix for the two tests above from going too far: making
+      // property order not matter must not make VALUE not matter either.
+      const port = await createPort();
+      await port.recordLaunchIntent({
+        operationId: 'g1:intent-1',
+        task: TASK,
+        attemptId: 'g1:intent-1',
+      });
+      await port.resolveLaunchOutcome('g1:intent-1', {
+        status: 'rejected',
+        reason: 'HTTP 422',
+      });
+      await assert.rejects(() =>
+        port.resolveLaunchOutcome('g1:intent-1', {
+          status: 'rejected',
+          reason: 'HTTP 500',
         }),
       );
     },

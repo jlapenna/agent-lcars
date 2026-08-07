@@ -13,6 +13,8 @@
  * not by resembling this file.
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   type LaunchOutboxOperation,
   type LaunchOutboxResolution,
@@ -28,16 +30,22 @@ function defaultNow(): string {
   return new Date().toISOString();
 }
 
-/** Structural deep-equality for the small, JSON-shaped values this file
- *  compares (`LaunchOutboxResolution`). Not a general-purpose deep-equal --
- *  scoped to exactly what `resolveLaunchOutcome`'s idempotence check needs,
- *  the same way `canonicalJson`/`digest` in broker.ts are scoped to the
- *  ledger's own equality needs rather than pulling in a shared library. */
+/** Structural deep-equality for the values this file compares
+ *  (`LaunchOutboxResolution`), for `resolveLaunchOutcome`'s idempotence
+ *  check. This is a comparison between two in-memory values only -- neither
+ *  side is ever serialized, hashed, or persisted (unlike `serializeIdentity`
+ *  in libs/dispatch-contracts/src/quick-task.ts, whose key order IS wire
+ *  format baked into live issue-marker digests) -- so, unlike that function,
+ *  property insertion order must NOT affect the result: an at-least-once
+ *  retry that reconstructs the same resolution with e.g. `binding`'s keys in
+ *  a different order is still the same resolution. `node:util`'s
+ *  `isDeepStrictEqual` gives that directly (object key order ignored, array
+ *  element order still significant, which is what we want here). */
 function sameResolution(
   a: LaunchOutboxResolution,
   b: LaunchOutboxResolution,
 ): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return isDeepStrictEqual(a, b);
 }
 
 export class InMemoryStoragePort implements StoragePort {
