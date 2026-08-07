@@ -111,6 +111,21 @@ jobs:
       - name: Check contracts
         run: pnpm check:contracts
 
+      # dispatch-broker's action.yml runs the committed bundle at
+      # dispatch-broker/dist/main.mjs, not the loose sources next to it
+      # (Stage 1 of the TS migration -- see .github/actions/project.json's
+      # `build` target and its "// why"). A committed build artifact that
+      # can silently drift from the sources it was built from is worse than
+      # no bundle at all: someone could edit main.mjs/broker.mjs/etc.,
+      # forget to rebuild, and ship an action that still runs the OLD
+      # behavior with no signal anything is wrong. Rebuilding here and
+      # diffing against what is committed turns that into a loud CI
+      # failure instead.
+      - name: Check dispatch-broker bundle matches its source
+        run: |
+          pnpm nx build github-actions
+          git diff --exit-code -- .github/actions/dispatch-broker/dist
+
       - name: Check formatting
         run: pnpm format:check
 

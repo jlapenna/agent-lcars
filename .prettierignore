@@ -1,5 +1,12 @@
 /dist
 /coverage
+
+# Committed esbuild output (see .gitignore's negation of the blanket `dist`
+# ignore, and .github/actions/project.json's `build` target): a generated
+# bundle, not hand-authored source, so it has no business being
+# Prettier-formatted -- and doing so would fight esbuild's own output
+# formatting on every rebuild.
+.github/actions/dispatch-broker/dist
 /.nx/cache
 /.nx/workspace-data
 

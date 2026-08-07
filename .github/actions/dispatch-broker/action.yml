@@ -95,4 +95,4 @@ runs:
         BROKER_INTENT_ID: ${{ inputs.intent-id }}
         BROKER_DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
         BROKER_WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
-      run: node "$GITHUB_ACTION_PATH/main.mjs" "${{ inputs.operation }}"
+      run: node "$GITHUB_ACTION_PATH/dist/main.mjs" "${{ inputs.operation }}"
