@@ -81,16 +81,26 @@ resource "google_project_iam_member" "writer_firestore" {
   member  = "serviceAccount:${google_service_account.telemetry_writer.email}"
 }
 
-# The dispatch controller's durable authority (#645 Phase 6). Separate from
-# telemetry_writer deliberately, even though both end up with
-# roles/datastore.user: the WIF provider maps only attribute.repository, so
-# ANY workflow in this repo can already impersonate either SA and a second
-# identity buys no impersonation isolation. What it does buy is grant
-# blast-radius and auditability -- compromising the telemetry path cannot
-# also rewrite dispatch state, and the two are distinguishable in the audit
-# log. If attribute.workflow is ever added to the provider's
-# attribute_mapping, this separation is also the prerequisite that makes
-# narrowing either binding to its own workflow possible.
+# The dispatch controller's durable authority (#645 Phase 6).
+#
+# Be precise about what this separation does and does not buy, because the
+# obvious reading is wrong in two ways:
+#
+#   1. It is NOT impersonation isolation. The WIF provider above maps only
+#      attribute.repository, so any workflow in this repository can already
+#      assume either this account or telemetry_writer.
+#   2. It is NOT data isolation. roles/datastore.user is a PROJECT-level
+#      grant covering every database, and writer_firestore already gives
+#      telemetry_writer exactly that role -- so telemetry_writer can write
+#      dispatchTasks and dispatchLaunchOutbox whether or not this account
+#      exists. An earlier revision of this comment claimed a blast-radius
+#      boundary here; that claim was simply false.
+#
+# What it does buy: the two callers are distinguishable in the audit log,
+# and a separate principal is the prerequisite for ever scoping either one
+# down. Real isolation needs a dedicated Firestore database plus IAM
+# conditions narrowing BOTH grants -- including telemetry_writer's live one
+# -- and is tracked separately rather than bolted on here.
 resource "google_service_account" "dispatch_broker" {
   account_id   = "dispatch-broker"
   display_name = "Agent LCARS dispatch broker"
