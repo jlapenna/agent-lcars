@@ -122,6 +122,70 @@ secret values cannot be read back, so deleting them is irreversible and
 buys nothing. Remove them by hand once a deploy has run green on the
 variables.
 
+#### Repo secret: `AGENT_CI_RERUN_TOKEN`
+
+One credential deserves its own note, because what it must **not** be is the
+point of it.
+
+Agents are allowed to rerun their own failed CI
+(`.agents/skills/agent-protocol/agent-protocol.md` §8). That needs
+`actions: write`, which the token the Claude action vends does not have. The
+obvious source is the workflow's own `GITHUB_TOKEN` — and that is exactly
+what this must never be: it carries the job's full
+contents/issues/pull-requests grant and is the same credential the dispatch
+broker reads and writes the ledger comment with, so handing it to agent code
+would let that code rewrite the control plane's own state
+([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
+
+So this is a **classic PAT at `public_repo` scope, issued from the
+`jclaw-bot` machine account** — not the maintainer's. `public_repo` is the
+narrowest classic scope that can rerun a workflow here, and this repository
+is public, so it suffices.
+
+**The machine account is what makes the containment real rather than
+nominal.** `public_repo` grants write across the _token owner's_ accessible
+public repositories. Issued from `jclaw-bot` that is effectively this
+repository alone, and the fleet's private repos (`jlapenna/homelab`,
+`supersprinklesracing/sprinkles`) are unreachable — verified: they answer
+`404`, not `403`, so the token cannot even observe that they exist. The same
+scope issued from a maintainer account would have spanned every public
+repository that account can write.
+
+**What it still does not buy.** Classic scopes cannot express "actions:
+write and nothing else": `public_repo` also carries `issues: write` on the
+repositories it does reach, so this token _can_ edit the ledger comment on
+this one. The boundary is "a separate, attributable, independently revocable
+identity, confined to this public repository" — not "cannot reach the
+control plane".
+
+Two alternatives were considered and rejected. A **fine-grained** PAT would
+express exactly `Actions: write` and nothing more, but does not work here. A
+minted **App installation token** is genuinely narrow, but expires after an
+hour while an opencode agent step may run for two — the agent would lose the
+capability partway through the runs most likely to need it.
+
+**A consuming private repo cannot copy this verbatim.** `public_repo` grants
+nothing on a private repository, so `jlapenna/homelab` or
+`supersprinklesracing/sprinkles` would each need full `repo` scope. Issue
+those as separate per-repository tokens rather than widening this one: a
+single shared `repo`-scoped PAT would let an agent running here — in a
+public repo — reach private infrastructure it otherwise has no path to.
+
+That residue is not a gap to be closed by better credential hygiene. An
+agent that comments on issues needs `issues: write`, and the ledger _is_ an
+issue comment — which is the argument for moving control-plane state
+somewhere a repository-scoped token cannot reach at all
+([#645](https://github.com/jlapenna/agent-lcars/issues/645) Phase 5).
+
+Fails **loudly, not closed**: each worker warns if the secret is unset, and
+the agent simply cannot rerun. That is deliberate — an empty
+`$ACTIONS_RERUN_TOKEN` produces an opaque `gh` error inside an agent turn,
+which reads as "the agent is stuck" rather than "a secret is missing".
+
+`apps/dispatch-broker/src/workflow-contract.spec.ts` asserts no worker's
+agent step receives the job token under any name or spelling, including via
+inherited workflow/job-level `env:`.
+
 ### 4. Terraform
 
 `infra/terraform/` is entirely instance config by definition: project id,

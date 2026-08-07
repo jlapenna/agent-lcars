@@ -1849,7 +1849,7 @@ function assertWorkerRun(run, task, generation, expectedWorkflow) {
     throw new Error("Worker run identity does not match its ledger binding");
   }
 }
-async function reconcileActive(client, loaded) {
+async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString()) {
   let active = activeGeneration(loaded.ledger);
   if (!active) return;
   const expectedWorkflow = workerWorkflow(active.pipeline);
@@ -1918,7 +1918,9 @@ async function reconcileActive(client, loaded) {
       completedAt: run.updated_at
     });
     await saveLedger(client, loaded);
+    return;
   }
+  await trackStuckRun(client, loaded, active, run, now);
 }
 var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
@@ -2018,6 +2020,111 @@ async function trackMissingRun(client, loaded, generation, now) {
         reason: "launch_response_lost",
         retryDisposition: "manual",
         evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
+      })
+    );
+  }
+  await saveLedger(client, loaded);
+}
+var RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
+var RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
+var RECONCILE_STUCK_RUN_MAX_ATTEMPTS = 3;
+async function trackStuckRun(client, loaded, generation, run, now) {
+  const ledger = loaded.ledger;
+  if (reconcileAnomaliesFor(
+    ledger,
+    generation.generation,
+    "reconcile-stuck-run-parked"
+  ).length > 0) {
+    return;
+  }
+  const boundAt = Date.parse(
+    generation.attempt?.boundAt ?? generation.attempt?.dispatchStartedAt ?? generation.occurredAt
+  );
+  const ageMs = Date.parse(now) - boundAt;
+  if (!(ageMs >= RECONCILE_STUCK_RUN_GRACE_MS)) return;
+  const priorObservations = reconcileAnomaliesFor(
+    ledger,
+    generation.generation,
+    "reconcile-stuck-run"
+  );
+  const last = priorObservations.at(-1);
+  if (last && Date.parse(now) - Date.parse(last.occurredAt) < RECONCILE_STUCK_RUN_MIN_INTERVAL_MS) {
+    return;
+  }
+  const attempt = priorObservations.length + 1;
+  const reachedBound = attempt >= RECONCILE_STUCK_RUN_MAX_ATTEMPTS;
+  if (reachedBound) {
+    await ensureNeedsHumanParked(
+      client,
+      ledger.task,
+      env("MAINTAINER_LOGIN", false)
+    );
+  }
+  addAnomaly(
+    ledger,
+    "reconcile-stuck-run",
+    {
+      generation: generation.generation,
+      intentId: generation.intentId,
+      pipeline: generation.pipeline,
+      state: generation.state,
+      runId: run.id,
+      status: run.status,
+      attempt,
+      ageMs
+    },
+    now,
+    // owningSystem: 'runner', not 'controller' -- this reconciler is what
+    // NOTICED the stall, but the state that is wrong ("a dispatched run
+    // makes progress and eventually reports terminal") is the runner's own
+    // execution and reporting, not the controller's ledger bookkeeping. A
+    // hung self-hosted runner is squarely the runner's failure even though
+    // the controller is the one running this check; `runner_lost` is the
+    // vocabulary's own name for exactly "the runner disappeared/stopped
+    // reporting". `backoff`, not `manual`: this is still inside the bounded
+    // observation window (RECONCILE_STUCK_RUN_MAX_ATTEMPTS) -- the next
+    // scheduled reconcile pass, at least RECONCILE_STUCK_RUN_MIN_INTERVAL_MS
+    // later, is that retry, and `retryBudget` mirrors the observations this
+    // same counter has left before `reconcile-stuck-run-parked` (below)
+    // takes over.
+    classifyFailure({
+      phase: "reconciliation",
+      owningSystem: "runner",
+      reason: "runner_lost",
+      retryDisposition: "backoff",
+      retryBudget: Math.max(0, RECONCILE_STUCK_RUN_MAX_ATTEMPTS - attempt),
+      evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${RECONCILE_STUCK_RUN_MAX_ATTEMPTS})`
+    })
+  );
+  if (reachedBound) {
+    addAnomaly(
+      ledger,
+      // Distinct kind from trackMissingRun's own 'reconcile-parked' so the
+      // two orphan classes stay distinguishable in the ledger even once
+      // both are parked -- a missing-run park never got a bound run at all,
+      // a stuck-run park got one that then stopped making progress, and an
+      // operator reading the anomaly list should not have to open `detail`
+      // to tell which happened.
+      "reconcile-stuck-run-parked",
+      {
+        generation: generation.generation,
+        reason: "stuck-run-bound-exhausted"
+      },
+      now,
+      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // just run, and the guard at the top of this function turns every
+      // later pass into a no-op, so nothing further happens automatically.
+      // Same underlying reason as the `reconcile-stuck-run` observations
+      // that led here -- exhausting the observation budget doesn't change
+      // *why* the run stopped progressing, only that automated waiting has
+      // given up on it -- so `retryDisposition` moves from `backoff` to
+      // `manual` while `owningSystem`/`reason` stay `runner`/`runner_lost`.
+      classifyFailure({
+        phase: "reconciliation",
+        owningSystem: "runner",
+        reason: "runner_lost",
+        retryDisposition: "manual",
+        evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
       })
     );
   }
@@ -2582,6 +2689,9 @@ export {
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
+  RECONCILE_STUCK_RUN_GRACE_MS,
+  RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
+  RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,

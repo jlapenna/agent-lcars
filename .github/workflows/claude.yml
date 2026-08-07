@@ -68,8 +68,7 @@ permissions:
 # ledger, never a second worker dispatch. A workflow-level group here would
 # be actively harmful on top of that: GitHub keeps exactly ONE pending run
 # per group, so a second queued run for this group is silently killed
-# before any step - including "Report failure on the issue" below - can
-# fire.
+# before any step - including "Run post-agent gates" below - can fire.
 
 jobs:
   claude:
@@ -122,10 +121,12 @@ jobs:
 
       # The agent step below has unrestricted Bash on this same checkout,
       # so the post-agent gates (verify-deliverable, report-failure,
-      # telemetry-finalize) must run from a copy frozen now, while the tree
-      # is still exactly what the trusted dispatched ref checked out - and
-      # via `run:` from $RUNNER_TEMP, never `uses:`, at gate time. The full
-      # rationale lives in snapshot-enforcement-scripts/action.yml.
+      # telemetry-finalize, and the post-agent-gates orchestrator that
+      # drives all three - see "Run post-agent gates" below) must run from
+      # a copy frozen now, while the tree is still exactly what the trusted
+      # dispatched ref checked out - and via `run:` from $RUNNER_TEMP,
+      # never `uses:`, at gate time. The full rationale lives in
+      # snapshot-enforcement-scripts/action.yml.
       - name: Snapshot post-agent enforcement scripts
         uses: ./.github/actions/snapshot-enforcement-scripts
 
@@ -153,17 +154,6 @@ jobs:
           generation: ${{ inputs.broker_generation }}
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
-
-      # Publish the verified attempt ID to every later step as $ATTEMPT_ID.
-      # Preflight is the right source rather than recomposing it from the two
-      # raw inputs: this value is the one the broker just confirmed matches a
-      # real ledger binding, so a step that stamps an artifact with it is
-      # stamping a verified identity, not an unvalidated echo of its own
-      # inputs. (#645 Phase 4 marks PRs/comments/reviews with this.)
-      - name: Publish attempt identity
-        run: echo "ATTEMPT_ID=$ATTEMPT_ID" >> "$GITHUB_ENV"
-        env:
-          ATTEMPT_ID: ${{ steps.broker-preflight.outputs.attempt-id }}
 
       # Mints the same Agent LCARS App token codex.yml/opencode.yml use, so
       # claude's own claim/comment/label gh operations below are attributed
@@ -234,6 +224,39 @@ jobs:
           service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
           issue: ${{ inputs.issue }}
 
+      # A second, narrower mint - deliberately not the "Mint agent token"
+      # step above and not github.token. The App token minted above is the
+      # agent's own working identity (claim/comment/push, App-attributed);
+      # github.token is this job's own control-plane credential, the exact
+      # one dispatch-broker uses to read and write the ledger comment
+      # (every dispatch-broker step in this file passes
+      # GITHUB_TOKEN: ${{ github.token }}), carrying this workflow's full
+      # contents/issues/pull-requests/actions write grant. Handing either
+      # one to the agent step below would let agent-authored code rewrite
+      # the ledger or act as the controller - exactly what #645 forbids.
+      # #645 forbids. AGENT_CI_RERUN_TOKEN is not that credential, but be
+      # precise about what it is: a classic PAT at public_repo scope from
+      # the jclaw-bot machine account. Classic scopes cannot express
+      # "actions: write only", so it does carry issues:write here and CAN
+      # edit the ledger comment. What it buys is a separate, attributable,
+      # independently revocable identity confined to this public repo -- it
+      # cannot reach the fleet's private repos at all. Closing the
+      # remaining gap needs control-plane state that lives somewhere a
+      # repository-scoped token cannot touch (#645 Phase 5).
+      # Loud rather than silent when the credential is absent: an empty
+      # $ACTIONS_RERUN_TOKEN makes `gh run rerun` fail with an opaque error
+      # deep inside an agent turn, which reads as "the agent is stuck"
+      # rather than "a secret is unset".
+      - name: Check CI-rerun credential is present
+        run: |
+          if [ -z "$ACTIONS_RERUN_TOKEN" ]; then
+            echo "::warning::AGENT_CI_RERUN_TOKEN is unset - the agent will \
+          not be able to rerun its own failed CI (agent-protocol.md §8). \
+          Expected a classic PAT with public_repo scope."
+          fi
+        env:
+          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
+
       - name: Run Claude Code
         id: agent
         # SHA-pinned (not the v1.0.181 tag, and not floating @v1) deliberately:
@@ -249,12 +272,25 @@ jobs:
         env:
           # The app token the action vends to the agent maxes out at
           # actions:read (the token exchange supports nothing higher), so
-          # re-running workflows needs a second token: the workflow's own
-          # GITHUB_TOKEN, which carries actions:write from the permissions
-          # block above. The agent uses it as
+          # re-running workflows needs a second token. NOT the workflow's
+          # own github.token: that carries this job's full
+          # contents/issues/pull-requests/actions write grant and is the
+          # same credential dispatch-broker uses to read and write the
+          # ledger comment - handing it to the agent would let agent
+          # code rewrite the ledger and act as the controller (#645).
+          # Use AGENT_CI_RERUN_TOKEN instead: a classic PAT with the
+          # narrowest scope that can rerun a workflow here (public_repo).
+          # Note what that does NOT buy -- classic scopes cannot express
+          # "actions: write only", so this token can also write issue
+          # comments, i.e. the ledger. It is still not github.token: it is
+          # a separate, independently revocable identity that does not
+          # carry the job's id-token or its authority over other repos.
+          # A minted App token would be genuinely narrow, but expires
+          # after an hour while this step may run for two. The agent
+          # uses it as
           # `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun ...` (GH_TOKEN
           # outranks GITHUB_TOKEN in gh) - see agent-protocol.md §8.
-          ACTIONS_RERUN_TOKEN: ${{ github.token }}
+          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
         with:
           # A manually-issued long-lived token from `claude setup-token`
           # (interactive browser OAuth flow) - no auto-refresh or rotation.
@@ -308,33 +344,16 @@ jobs:
             --allowedTools "Bash,Edit,Write,MultiEdit"
             --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task"
 
-      # Runner container teardown loses everything not already durably
-      # shipped (issue #24) - this is that last chance: stop the
-      # long-running sidecar above (it must not race a doc write against
-      # this step's own authoritative one) and ship a final `ended` doc with
-      # the transcript archived to GCS, since the container disappears the
-      # moment this job ends. Uses the same baked-in wrapper script "Start
-      # telemetry sidecar" above does, and the same telemetry-writer
-      # credentials (also grants roles/storage.objectAdmin on the
-      # transcripts bucket - see infra/terraform/main.tf's
-      # writer_transcripts binding). if: always() so a failed/errored
-      # Claude Code run still gets finalized; continue-on-error: true so a
-      # broken finalize can never turn a healthy agent run red.
-      #
-      # Runs from the pre-agent snapshot ($RUNNER_TEMP), not
-      # `uses: ./.github/actions/telemetry-finalize`: this step executes
-      # AFTER "Run Claude Code", which has unrestricted Bash and could have
-      # rewritten that composite in the working tree - see "Snapshot
-      # post-agent enforcement scripts" above for the full rationale.
-      - name: Finalize telemetry sidecar
-        if: always()
-        continue-on-error: true
-        env:
-          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
-          RUN_ID: ${{ github.run_id }}
-          NUM: ${{ inputs.issue }}
-        run: bash "$RUNNER_TEMP/trusted-actions/telemetry-finalize/telemetry-finalize.sh"
-
+      # Claude-only, unmerged: catches a run that reports job success while
+      # its own log shows it crashed at auth (is_error:true, cost:0, or a
+      # 401), which the generic post-agent gates below cannot see on their
+      # own. Runs BEFORE those gates (moved ahead of telemetry-finalize,
+      # which used to sit here - telemetry-finalize's own if: always() +
+      # continue-on-error: true means neither step observes the other's
+      # side effects, so this reordering is behavior-preserving) so
+      # verify-deliverable is correctly skipped once this fails the job -
+      # see "Run post-agent gates" below for how JOB_STATUS carries that
+      # forward.
       - name: Verify Claude run status
         if: success()
         env:
@@ -356,93 +375,27 @@ jobs:
             exit 1
           fi
 
-      # Silent-stall detection: a run can end is_error:false / job success
-      # having produced NOTHING - no pushed branch, no PR, no issue comment
-      # beyond its own progress/plan note. The step above only catches init
-      # crashes, so "success" alone is never proof of delivery (see
-      # agent-protocol.md §5). Fail the job unless there is dated evidence
-      # of a deliverable, so the failure reporter below surfaces it on the
-      # issue instead of the maintainer discovering it by absence.
-      # Deliberately excludes bare bot comments on the implement path (a
-      # progress/plan comment alone proves nothing) - see
-      # verify-deliverable.sh for the full four-clause algorithm shared
-      # with codex.yml/opencode.yml.
+      # Shared post-agent gate orchestrator (#645 Phase 3): runs
+      # telemetry-finalize, verify-deliverable, failure-reason
+      # determination, and report-failure, in that order, from ONE script
+      # instead of four hand-copied steps - see post-agent-gates.sh's own
+      # header for exactly how it reproduces each phase's original if:
+      # condition (always() / success() / failure()||cancelled()) using
+      # JOB_STATUS now that they no longer run as separate steps.
+      # Silent-stall detection (verify-deliverable's phase) matters because
+      # a run can end is_error:false / job success having produced NOTHING
+      # - no pushed branch, no PR, no issue comment beyond its own
+      # progress/plan note - so "success" alone is never proof of delivery
+      # (agent-protocol.md #5).
       #
       # Runs from the pre-agent snapshot ($RUNNER_TEMP), not
-      # `uses: ./.github/actions/verify-deliverable`: this is the gate
-      # meant to catch a Claude run that did nothing real, so it must not
-      # itself be rewritable by that same run - see "Snapshot post-agent
-      # enforcement scripts" above.
-      - name: Verify a deliverable exists
-        if: success()
-        env:
-          # The job's own GITHUB_TOKEN, NOT the minted App token: installation
-          # tokens expire after one hour, and this step can run at hour three
-          # of a long agent turn (canary run 30988771060 hit exactly that -
-          # HTTP 401 on the failure report). The job token lives for the
-          # whole job; attribution shifts to github-actions[bot].
-          GH_TOKEN: ${{ github.token }}
-          AGENT: ${{ env.AGENT_NAME }}
-          REPO: ${{ github.repository }}
-          NUM: ${{ inputs.issue }}
-          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
-          MODE: ${{ inputs.mode }}
-          EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}
-          # Guards against crediting a concurrently dispatched codex/opencode
-          # run's PR on the same issue (a testing artifact, not normal
-          # usage - the router enforces exactly one agent label per issue).
-          # verify-deliverable.sh itself skips this exclusion on a reply
-          # dispatch, where the anchor is explicit.
-          EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}
-        run: bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"
-
-      # Beyond just "it failed," name the actual reason when we can tell -
-      # a generic message gives the maintainer no way to distinguish a
-      # turn-budget exhaustion (real progress, not a crash) from any other
-      # failure without opening the run and reading logs. Grep this run's
-      # own just-completed "Run Claude Code" step log for known signatures
-      # and say so explicitly; fall back to the generic message otherwise.
-      # MUST also cover cancelled(): a timeout-minutes kill sets conclusion
-      # `cancelled`, not `failure`, so `if: failure()` alone would miss it.
-      - name: Determine failure reason
-        id: failure-reason
-        if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          REASON=""
-          LOG="$(gh run view "$RUN_ID" --log 2>/dev/null || true)"
-          # Same in-progress-run caveat as "Verify Claude run status" above:
-          # this step is itself part of the run whose log it's fetching, so
-          # GitHub can legitimately return nothing - say so instead of
-          # letting the log-based REASON checks below silently find nothing.
-          if [ -z "$LOG" ]; then
-            echo "::warning::Could not fetch this run's log (often unavailable while the run is still in progress); the log-based failure-reason checks below were skipped."
-          fi
-          if [ "${NO_DELIVERABLE:-}" = "1" ]; then
-            REASON=$'\n\nThe run ended "successfully" but produced **no deliverable** - no PR, no issue close, no status:needs-human label. All of its local work is lost. Re-dispatch by re-adding the `'"$AGENT_LABEL"$'` label or replying `'"$REDISPATCH_COMMAND"$'`, and remind it to push early.'
-          elif echo "$LOG" | grep -qi "Reached maximum number of turns"; then
-            REASON=$'\n\nRan out of its turn budget mid-task (`error_max_turns`) - not a crash, it may have made real progress. Check its last comment for a takeover/resume command. To retry with a fresh run, re-add the `'"$AGENT_LABEL"$'` label or reply `'"$REDISPATCH_COMMAND"$'`.'
-          elif (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
-               (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
-            REASON=$'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'
-          fi
-          {
-            echo "reason<<REASON_EOF"
-            echo "$REASON"
-            echo "REASON_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      # Failed agent runs were previously silent - no comment, no PR,
-      # nothing on the issue. Surface them where the work was requested.
-      #
-      # Runs from the pre-agent snapshot ($RUNNER_TEMP), not
-      # `uses: ./.github/actions/report-failure`: this is the failure
-      # report itself, so it must not be rewritable by the run it's
-      # reporting on - see "Snapshot post-agent enforcement scripts" above.
-      - name: Report failure on the issue
-        if: failure() || cancelled()
+      # `uses: ./.github/actions/post-agent-gates` (which deliberately does
+      # not exist): this step's scripts run AFTER "Run Claude Code", which
+      # has unrestricted Bash and could have rewritten a locally-resolved
+      # composite in the working tree - see "Snapshot post-agent
+      # enforcement scripts" above for the full rationale.
+      - name: Run post-agent gates
+        if: always()
         env:
           # The job's own GITHUB_TOKEN, NOT the minted App token: installation
           # tokens expire after one hour, and this step can run at hour three
@@ -454,11 +407,36 @@ jobs:
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
-          ISSUE_NUM: ${{ inputs.issue }}
-          REASON: ${{ steps.failure-reason.outputs.reason }}
+          ISSUE: ${{ inputs.issue }}
+          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
+          MODE: ${{ inputs.mode }}
+          EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}
+          # Guards against crediting a concurrently dispatched codex/opencode
+          # run's PR on the same issue (a testing artifact, not normal
+          # usage - the router enforces exactly one agent label per issue).
+          # verify-deliverable.sh itself skips this exclusion on a reply
+          # dispatch, where the anchor is explicit.
+          EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}
           JOB_STATUS: ${{ job.status }}
           MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
-        run: bash "$RUNNER_TEMP/trusted-actions/report-failure/report-failure.sh"
+          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
+          # Claude's own no-deliverable wording (agent-protocol.md #5) -
+          # rendered here with this lane's own AGENT_LABEL/
+          # REDISPATCH_COMMAND rather than inside the shared script, which
+          # stays lane-agnostic.
+          NO_DELIVERABLE_REASON: >-
+            The run ended "successfully" but produced **no deliverable** -
+            no PR, no issue close, no status:needs-human label. All of its
+            local work is lost. Re-dispatch by re-adding the
+            `${{ env.AGENT_LABEL }}` label or replying
+            `${{ env.REDISPATCH_COMMAND }}`, and remind it to push early.
+          # Claude-only extra failure-reason signal (a turn-budget
+          # exhaustion or an expired/invalid OAuth token), kept as an
+          # adapter-style input to the shared orchestrator instead of
+          # either forcing codex.yml/opencode.yml onto it or dropping it -
+          # see claude-log-scan.sh. Left unset on every other lane.
+          FAILURE_LOG_SCAN_SCRIPT: ${{ runner.temp }}/trusted-actions/post-agent-gates/claude-log-scan.sh
+        run: bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"
 
       - name: Return completion observation to the broker
         if: always()

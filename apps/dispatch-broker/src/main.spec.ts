@@ -36,6 +36,9 @@ import {
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
+  RECONCILE_STUCK_RUN_GRACE_MS,
+  RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
+  RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   reconcileActive,
   reconcileLedger,
   repairMissingIntentFromLabel,
@@ -1114,6 +1117,326 @@ test('reconcileLedger treats a dispatch-unknown generation identically to dispat
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     ).length,
     1,
+  );
+});
+
+// --- reconcileActive / trackStuckRun (#645 Phase 3) --------------------
+
+// A generation that is already bound to a worker run at RECONCILE_T0 --
+// unlike dispatchingLedger() above, this starts past the point
+// reconcileActive()'s own bind branch has anything to do, so every call
+// below only ever exercises the run-status-check / trackStuckRun path.
+function stuckDispatchLedger(now = RECONCILE_T0) {
+  const ledger = createLedger(task);
+  acceptIntent(
+    ledger,
+    {
+      task,
+      intentId: 'intent-1',
+      sourceKind: 'manual',
+      sourceId: 'source-1',
+      transportRunId: 9001,
+      occurredAt: now,
+      pipeline: 'codex',
+      mode: 'implement',
+      runbook: '',
+      context: '',
+      digest: 'abc',
+      authorization: { authorized: true },
+    },
+    now,
+  );
+  beginDispatch(ledger, 1, 'dispatch_token_123456', now);
+  bindRun(
+    ledger,
+    1,
+    {
+      runId: 42,
+      runUrl:
+        'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+      htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+      workflow: 'codex.yml',
+    },
+    now,
+  );
+  return { ledger, comment: { id: 9 } };
+}
+
+// Answers reconcileActive()'s own dependencies (findRunsForGeneration's
+// list, getWorkflowRun's single-run GET, saveLedger's PATCH) plus
+// ensureNeedsHumanParked's label/assignee POSTs -- same shape as
+// reconcileStubClient above, adapted for reconcileActive's endpoints.
+function stuckRunStubClient({ status = 'in_progress', failParkStatus } = {}) {
+  const calls = [];
+  const run = {
+    id: 42,
+    repository: { id: task.repositoryId },
+    event: 'workflow_dispatch',
+    path: '.github/workflows/codex.yml',
+    display_title: '#304: Codex [dispatch:g1:intent-1]',
+    status,
+    conclusion: status === 'completed' ? 'success' : null,
+    updated_at: RECONCILE_T0,
+    url: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+    html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+  };
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path.includes('/workflows/codex.yml/runs?')) {
+        return { workflow_runs: [run] };
+      }
+      if (path.endsWith('/actions/runs/42')) return run;
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      if (
+        failParkStatus &&
+        options.method === 'POST' &&
+        (path.endsWith('/labels') || path.endsWith('/assignees'))
+      ) {
+        throw new GitHubApiError('parking failed', failParkStatus);
+      }
+      if (options.method === 'POST' && path.endsWith('/labels')) return {};
+      if (options.method === 'POST' && path.endsWith('/assignees')) return {};
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  return { client, calls };
+}
+
+test('reconcileActive stays silent while a bound, still-running run is within its stuck-run grace period', async () => {
+  const { ledger, comment } = stuckDispatchLedger();
+  const { client, calls } = stuckRunStubClient();
+  const now = addMinutes(
+    RECONCILE_T0,
+    RECONCILE_STUCK_RUN_GRACE_MS / 60_000 - 1,
+  );
+  await reconcileActive(client, { ledger, comment }, now);
+  assert.equal(ledger.anomalies.length, 0);
+  assert.equal(ledger.revision, 3); // unchanged since acceptIntent+beginDispatch+bindRun
+  assert.equal(
+    calls.some((call) => call.path.includes('/issues/comments/9')),
+    false,
+    'must not write the ledger while still inside grace',
+  );
+});
+
+test('reconcileActive walks a stuck bound run through grace, idempotent re-observation, bounded escalation, and permanent parking (#645)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const loaded = stuckDispatchLedger();
+    const { ledger } = loaded;
+    const { client, calls } = stuckRunStubClient();
+
+    // Pass 1: grace period has just elapsed -- first counted observation.
+    const t1 = addMinutes(RECONCILE_T0, RECONCILE_STUCK_RUN_GRACE_MS / 60_000);
+    await reconcileActive(client, loaded, t1);
+    let stuck = ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+    );
+    assert.equal(stuck.length, 1);
+    assert.equal(stuck[0].detail.attempt, 1);
+    assert.equal(stuck[0].detail.runId, 42);
+    assert.equal(stuck[0].failure.owningSystem, 'runner');
+    assert.equal(stuck[0].failure.reason, 'runner_lost');
+    assert.equal(stuck[0].failure.retryDisposition, 'backoff');
+    assert.equal(
+      calls.some((call) => call.path.endsWith('/labels')),
+      false,
+      'must not park on the first observation',
+    );
+
+    // Pass 2: re-observed immediately after (same instant) -- idempotent
+    // no-op, proving a duplicate/overlapping reconcile pass never
+    // double-counts.
+    const savesBefore = calls.filter((call) =>
+      call.path.includes('/issues/comments/9'),
+    ).length;
+    await reconcileActive(client, loaded, t1);
+    assert.equal(
+      ledger.anomalies.filter(
+        (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+      ).length,
+      1,
+      'a repeated pass at the same instant must not add a second observation',
+    );
+    assert.equal(
+      calls.filter((call) => call.path.includes('/issues/comments/9')).length,
+      savesBefore,
+      'an idempotent no-op pass must not write the ledger again',
+    );
+
+    // Pass 3: still inside the min-observation-interval window -- still a
+    // no-op even though time did pass.
+    const tStillTooSoon = addMinutes(
+      t1,
+      RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000 - 1,
+    );
+    await reconcileActive(client, loaded, tStillTooSoon);
+    assert.equal(
+      ledger.anomalies.filter(
+        (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+      ).length,
+      1,
+    );
+
+    // Pass 4: a full interval past the last COUNTED observation -- records
+    // the second attempt.
+    const t2 = addMinutes(t1, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
+    await reconcileActive(client, loaded, t2);
+    stuck = ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+    );
+    assert.equal(stuck.length, 2);
+    assert.equal(stuck[1].detail.attempt, 2);
+    assert.equal(
+      calls.some((call) => call.path.endsWith('/labels')),
+      false,
+      'still under the bound -- must not park yet',
+    );
+
+    // Pass 5: the third interval-separated observation reaches
+    // RECONCILE_STUCK_RUN_MAX_ATTEMPTS -- parks needs-human + maintainer,
+    // and records both the observation and a distinctly-kinded park anomaly.
+    const t3 = addMinutes(t2, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
+    await reconcileActive(client, loaded, t3);
+    stuck = ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+    );
+    assert.equal(stuck.length, RECONCILE_STUCK_RUN_MAX_ATTEMPTS);
+    assert.equal(stuck[2].detail.attempt, RECONCILE_STUCK_RUN_MAX_ATTEMPTS);
+    const parked = ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-stuck-run-parked',
+    );
+    assert.equal(parked.length, 1);
+    assert.equal(parked[0].detail.generation, 1);
+    assert.equal(parked[0].failure.retryDisposition, 'manual');
+    // Distinct kind from trackMissingRun's own park anomaly, so the two
+    // orphan classes are distinguishable in the ledger.
+    assert.equal(
+      ledger.anomalies.some((anomaly) => anomaly.kind === 'reconcile-parked'),
+      false,
+    );
+    assert.ok(calls.some((call) => call.path.endsWith('/labels')));
+    assert.ok(calls.some((call) => call.path.endsWith('/assignees')));
+
+    // Pass 6+: parked is permanent -- every later pass, at any later time,
+    // is a true no-op: no ledger mutation, and no further park calls.
+    const revisionBeforeFinal = ledger.revision;
+    const parkCallsBeforeFinal = calls.filter((call) =>
+      call.path.endsWith('/labels'),
+    ).length;
+    await reconcileActive(
+      client,
+      loaded,
+      addMinutes(t3, 10 * RECONCILE_STUCK_RUN_MIN_INTERVAL_MS),
+    );
+    assert.equal(ledger.revision, revisionBeforeFinal);
+    assert.equal(
+      calls.filter((call) => call.path.endsWith('/labels')).length,
+      parkCallsBeforeFinal,
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('trackStuckRun leaves the ledger untouched when the park mutation genuinely fails, so a retry reuses the same attempt number', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const loaded = stuckDispatchLedger();
+    const { ledger } = loaded;
+    const { client: healthyClient } = stuckRunStubClient();
+    const { client: failingClient } = stuckRunStubClient({
+      failParkStatus: 403,
+    });
+
+    const t1 = addMinutes(RECONCILE_T0, RECONCILE_STUCK_RUN_GRACE_MS / 60_000);
+    await reconcileActive(healthyClient, loaded, t1);
+    const t2 = addMinutes(t1, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
+    await reconcileActive(healthyClient, loaded, t2);
+    assert.equal(
+      ledger.anomalies.filter(
+        (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+      ).length,
+      2,
+    );
+
+    // Attempt 3 reaches the bound; the park mutation itself fails --
+    // reconcileActive must reject, and the ledger must record NEITHER the
+    // third observation NOR a park, so the next pass retries at attempt 3
+    // again rather than skipping it.
+    const t3 = addMinutes(t2, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
+    await assert.rejects(() => reconcileActive(failingClient, loaded, t3));
+    assert.equal(
+      ledger.anomalies.filter(
+        (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+      ).length,
+      2,
+      'a failed park attempt must not record a partial observation',
+    );
+    assert.equal(
+      ledger.anomalies.some(
+        (anomaly) => anomaly.kind === 'reconcile-stuck-run-parked',
+      ),
+      false,
+    );
+
+    // Retry with a healthy client at the same instant: since nothing was
+    // recorded, the interval gate does not block it, and it succeeds.
+    await reconcileActive(healthyClient, loaded, t3);
+    assert.equal(
+      ledger.anomalies.filter(
+        (anomaly) => anomaly.kind === 'reconcile-stuck-run',
+      ).length,
+      3,
+    );
+    assert.equal(
+      ledger.anomalies.some(
+        (anomaly) => anomaly.kind === 'reconcile-stuck-run-parked',
+      ),
+      true,
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileActive terminalizes a run that completes normally before the stuck-run bound, recording no stuck-run anomaly at all', async () => {
+  const loaded = stuckDispatchLedger();
+  const { ledger } = loaded;
+  const { client: runningClient } = stuckRunStubClient();
+
+  // One counted stuck-run observation, well before the bound.
+  const t1 = addMinutes(RECONCILE_T0, RECONCILE_STUCK_RUN_GRACE_MS / 60_000);
+  await reconcileActive(runningClient, loaded, t1);
+  assert.equal(
+    ledger.anomalies.filter((anomaly) => anomaly.kind === 'reconcile-stuck-run')
+      .length,
+    1,
+  );
+
+  // The run then genuinely finishes -- GitHub now reports it completed.
+  // reconcileActive must terminalize it via completeRun(), the same as any
+  // ordinary completion, and must never add a second stuck-run observation
+  // or a park for a generation that just reached its real terminal state.
+  const { client: completedClient } = stuckRunStubClient({
+    status: 'completed',
+  });
+  const t2 = addMinutes(t1, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
+  await reconcileActive(completedClient, loaded, t2);
+  assert.equal(ledger.generations[0].state, 'completed');
+  assert.equal(
+    ledger.anomalies.filter((anomaly) => anomaly.kind === 'reconcile-stuck-run')
+      .length,
+    1,
+    'a run that reaches its real terminal state must not accrue a second observation',
+  );
+  assert.equal(
+    ledger.anomalies.some(
+      (anomaly) => anomaly.kind === 'reconcile-stuck-run-parked',
+    ),
+    false,
+    'a normally-terminalized run must never be parked',
   );
 });
 

@@ -6,6 +6,15 @@
   "tags": ["platform:server", "scope:shared"],
   "// why": "The source lives here rather than under .github/actions because that directory is deployment surface: it holds action.yml and the committed bundle this target produces, and nothing else. Keeping the source in a normal Nx app is what gives it lint, typecheck, test and build targets on the same terms as every other project.",
   "targets": {
+    "test": {
+      "// why": "workflow-contract.spec.ts reads .github/workflows/*.yml at runtime, so those files are real inputs to this target even though nothing imports them. Without declaring them, Nx hashes only this project's own sources and happily serves a cached pass after a workflow changes -- meaning the suite whose entire job is catching workflow drift would be the one thing that never notices it. Verified: editing a worker workflow used to leave `pnpm nx test` green from cache.",
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/.github/workflows/*.yml",
+        "{workspaceRoot}/.github/actions/**/action.yml"
+      ]
+    },
     "build": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"],

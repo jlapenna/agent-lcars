@@ -402,6 +402,7 @@ function assertWorkerRun(
 async function reconcileActive(
   client: GitHubApiClient,
   loaded: LoadedLedger,
+  now: string = new Date().toISOString(),
 ): Promise<void> {
   let active = activeGeneration(loaded.ledger);
   if (!active) return;
@@ -467,6 +468,10 @@ async function reconcileActive(
   );
   assertWorkerRun(run, loaded.ledger.task, active, expectedWorkflow);
   if (run.status === 'completed') {
+    // Cancelled and timed-out runs land here too -- GitHub reports
+    // `status: 'completed'` regardless of `conclusion`, so a cancellation or
+    // a timeout terminalizes out-of-band the same as any other outcome, with
+    // no dependence on the worker's own callback ever arriving.
     completeRun(loaded.ledger, active.generation, {
       runId: run.id,
       status: run.status,
@@ -474,7 +479,13 @@ async function reconcileActive(
       completedAt: run.updated_at,
     });
     await saveLedger(client, loaded);
+    return;
   }
+  // The other half of #645's out-of-band terminalization gap: a run IS
+  // bound (unlike trackMissingRun's case below) but GitHub has never once
+  // reported it terminal. trackStuckRun applies the same bounded
+  // observation-and-escalation shape to that case.
+  await trackStuckRun(client, loaded, active, run, now);
 }
 
 // The reconciler's (#305) grace period before a still-runless dispatching
@@ -637,6 +648,179 @@ async function trackMissingRun(
         reason: 'launch_response_lost',
         retryDisposition: 'manual',
         evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
+      }),
+    );
+  }
+  await saveLedger(client, loaded);
+}
+
+// The grace period before a BOUND-but-non-terminal run is even considered
+// for escalation (#645 Phase 3) -- must exceed the longest legitimate run,
+// or this watchdog fires on healthy work, which is worse than no watchdog.
+// The three worker workflows' own job-level `timeout-minutes` are GitHub's
+// own server-side backstop on how long a run can legitimately stay
+// non-terminal: claude.yml and codex.yml are both 90, opencode.yml is 135
+// (the largest). On top of that: queue time before a self-hosted runner
+// picks up the dispatched job at all (the runner-autoscaler's own
+// documented worst case is its hour-long DRAIN_TIMEOUT_SECONDS host-drain
+// window) and a margin for GitHub's own status-reporting lag once a run
+// genuinely ends. 135 + 60 + 45 rounds to a clean 4 hours.
+const RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1000;
+// Minimum gap between two COUNTED stuck-run observations for the same
+// generation -- identical idempotence purpose to
+// RECONCILE_MISSING_RUN_MIN_INTERVAL_MS above: re-observing "still not
+// terminal" inside this window records nothing and mutates nothing, so an
+// overlapping or rapidly re-triggered reconcile pass cannot inflate the
+// counter. Set to dispatch-reconcile.yml's own 30-minute scheduled cadence,
+// so a genuinely new scheduled pass always clears it.
+const RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1000;
+// Bound on how many distinct, interval-separated "still not terminal"
+// observations a bound run gets before its generation is parked
+// needs-human. Same bounded-retry posture as
+// RECONCILE_MISSING_RUN_MAX_ATTEMPTS (#343/#344).
+const RECONCILE_STUCK_RUN_MAX_ATTEMPTS = 3;
+
+// Repairs the other half of #645's out-of-band terminalization gap:
+// reconcileActive() above already terminalizes the instant GitHub reports
+// `run.status === 'completed'` (any conclusion, including cancelled and
+// timed-out -- that half needs no repair), but does nothing when GitHub
+// keeps reporting a bound run as non-terminal forever. A hung self-hosted
+// runner, a runner that lost connectivity without GitHub's own governor
+// marking the job failed, or a run GitHub simply never finishes reporting
+// on all leave a generation `active` in the ledger with no escalation and
+// no park.
+//
+// Deliberately mirrors trackMissingRun's own grace/interval/bound/park
+// shape rather than inventing a second idiom, so the two orphan repairs
+// read as one pattern. Every mutation here is recorded in the ledger's
+// `anomalies` array before (successful) escalation and is itself
+// idempotent, for the same reasons trackMissingRun's own header comment
+// gives.
+//
+// This function must NEVER terminalize the generation itself: declaring a
+// run complete that GitHub still reports as running would fabricate an
+// outcome, which is exactly what #645's finalizer section forbids. It only
+// escalates to a human -- the real terminal state, whenever it actually
+// arrives, still lands through reconcileActive()'s own completeRun() call
+// above, from GitHub, not from this function's guesswork.
+async function trackStuckRun(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  generation: LedgerGeneration,
+  run: WorkflowRun,
+  now: string,
+): Promise<void> {
+  const ledger = loaded.ledger;
+  if (
+    reconcileAnomaliesFor(
+      ledger,
+      generation.generation,
+      'reconcile-stuck-run-parked',
+    ).length > 0
+  ) {
+    return;
+  }
+  const boundAt = Date.parse(
+    generation.attempt?.boundAt ??
+      generation.attempt?.dispatchStartedAt ??
+      generation.occurredAt,
+  );
+  const ageMs = Date.parse(now) - boundAt;
+  if (!(ageMs >= RECONCILE_STUCK_RUN_GRACE_MS)) return;
+
+  const priorObservations = reconcileAnomaliesFor(
+    ledger,
+    generation.generation,
+    'reconcile-stuck-run',
+  );
+  const last = priorObservations.at(-1);
+  if (
+    last &&
+    Date.parse(now) - Date.parse(last.occurredAt) <
+      RECONCILE_STUCK_RUN_MIN_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  const attempt = priorObservations.length + 1;
+  const reachedBound = attempt >= RECONCILE_STUCK_RUN_MAX_ATTEMPTS;
+  // Apply the (idempotent, verify-then-decide) GitHub-side park BEFORE
+  // recording it in the ledger: if the mutation throws, the ledger must
+  // stay exactly as it was so the next pass retries at the same attempt
+  // count, rather than claiming a park that never actually landed. Same
+  // ordering trackMissingRun uses, for the same reason.
+  if (reachedBound) {
+    await ensureNeedsHumanParked(
+      client,
+      ledger.task,
+      env('MAINTAINER_LOGIN', false),
+    );
+  }
+  addAnomaly(
+    ledger,
+    'reconcile-stuck-run',
+    {
+      generation: generation.generation,
+      intentId: generation.intentId,
+      pipeline: generation.pipeline,
+      state: generation.state,
+      runId: run.id,
+      status: run.status,
+      attempt,
+      ageMs,
+    },
+    now,
+    // owningSystem: 'runner', not 'controller' -- this reconciler is what
+    // NOTICED the stall, but the state that is wrong ("a dispatched run
+    // makes progress and eventually reports terminal") is the runner's own
+    // execution and reporting, not the controller's ledger bookkeeping. A
+    // hung self-hosted runner is squarely the runner's failure even though
+    // the controller is the one running this check; `runner_lost` is the
+    // vocabulary's own name for exactly "the runner disappeared/stopped
+    // reporting". `backoff`, not `manual`: this is still inside the bounded
+    // observation window (RECONCILE_STUCK_RUN_MAX_ATTEMPTS) -- the next
+    // scheduled reconcile pass, at least RECONCILE_STUCK_RUN_MIN_INTERVAL_MS
+    // later, is that retry, and `retryBudget` mirrors the observations this
+    // same counter has left before `reconcile-stuck-run-parked` (below)
+    // takes over.
+    classifyFailure({
+      phase: 'reconciliation',
+      owningSystem: 'runner',
+      reason: 'runner_lost',
+      retryDisposition: 'backoff',
+      retryBudget: Math.max(0, RECONCILE_STUCK_RUN_MAX_ATTEMPTS - attempt),
+      evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${RECONCILE_STUCK_RUN_MAX_ATTEMPTS})`,
+    }),
+  );
+  if (reachedBound) {
+    addAnomaly(
+      ledger,
+      // Distinct kind from trackMissingRun's own 'reconcile-parked' so the
+      // two orphan classes stay distinguishable in the ledger even once
+      // both are parked -- a missing-run park never got a bound run at all,
+      // a stuck-run park got one that then stopped making progress, and an
+      // operator reading the anomaly list should not have to open `detail`
+      // to tell which happened.
+      'reconcile-stuck-run-parked',
+      {
+        generation: generation.generation,
+        reason: 'stuck-run-bound-exhausted',
+      },
+      now,
+      // The genuine human handoff: `ensureNeedsHumanParked` (above) has
+      // just run, and the guard at the top of this function turns every
+      // later pass into a no-op, so nothing further happens automatically.
+      // Same underlying reason as the `reconcile-stuck-run` observations
+      // that led here -- exhausting the observation budget doesn't change
+      // *why* the run stopped progressing, only that automated waiting has
+      // given up on it -- so `retryDisposition` moves from `backoff` to
+      // `manual` while `owningSystem`/`reason` stay `runner`/`runner_lost`.
+      classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'runner',
+        reason: 'runner_lost',
+        retryDisposition: 'manual',
+        evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`,
       }),
     );
   }
@@ -1591,6 +1775,9 @@ export {
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
+  RECONCILE_STUCK_RUN_GRACE_MS,
+  RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
+  RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   reconcileActive,
   reconcileLedger,
   repairMissingIntentFromLabel,
