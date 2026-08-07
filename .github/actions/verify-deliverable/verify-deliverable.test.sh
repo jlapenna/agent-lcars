@@ -111,7 +111,10 @@ fail() {
   exit 1
 }
 
-# --- Case 1: clause (a) - PR referencing the issue, updated since start ---
+# --- Case 1: clause (a) - PR referencing the issue, updated since start,
+# authored by the agent's own identity (EXPECTED_COMMENT_LOGIN, the login
+# GitHub actually attributes to this run's PRs - see clause (a)'s own
+# comment for why that login and not AGENT_GIT_LOGIN) ---
 (
   base_env
   case_dir="$test_root/pr-passes"
@@ -124,6 +127,54 @@ JSON
   case "$output" in
     *"Deliverable evidence: PR referencing #42"*) ;;
     *) fail "clause (a) message missing expected text" ;;
+  esac
+)
+
+# --- Case 1b: clause (a) - a REFERENCING PR authored by an unrelated login
+# (neither a sibling pipeline nor this run's own identity - e.g. a human)
+# must NOT satisfy the gate merely by mentioning #NUM in its title/body.
+# REGRESSION TEST for the bug confirmed live on jlapenna/agent-lcars#650
+# generation 9: a human's PR (#711) that only said "Issue #650" in its body
+# got credited as #650's deliverable even though no agent produced
+# anything. EXCLUDE_PR_AUTHOR is deliberately left unset here - the old
+# clause only filtered logins EXCLUDE_PR_AUTHOR named, so an author absent
+# from that list (any human, any third-party bot) sailed through
+# regardless; the fix requires the author to actually BE this run's own
+# identity, independent of what is or isn't on the exclusion list. ---
+(
+  base_env
+  case_dir="$test_root/pr-unrelated-human-author-not-deliverable-regression"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":711,"title":"fix(gates): stop a stale needs-human park counting as a deliverable","body":"See Issue #42 for background.","updated_at":"2024-01-02T00:00:00Z","user":{"login":"jlapenna"}}]
+JSON
+  run_case pr-unrelated-human-author-not-deliverable-regression
+  test "$status" = 1 || fail "REGRESSION: a PR by an unrelated human author that merely references #NUM must not satisfy clause (a)"
+  case "$output" in
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message for an unrelated author's referencing PR" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "an unrelated author's referencing PR must still be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 1c: clause (a) - a REFERENCING PR authored by this run's own
+# identity (EXPECTED_COMMENT_LOGIN) still satisfies the gate, even when
+# EXPECTED_COMMENT_LOGIN is not the pr-passes case's default login - proves
+# the new author check keys off EXPECTED_COMMENT_LOGIN specifically, not a
+# hardcoded string ---
+(
+  base_env
+  export EXPECTED_COMMENT_LOGIN="claude[bot]"
+  case_dir="$test_root/pr-own-identity-author-passes"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}}]
+JSON
+  run_case pr-own-identity-author-passes
+  test "$status" = 0 || fail "a referencing PR authored by EXPECTED_COMMENT_LOGIN should satisfy clause (a)"
+  case "$output" in
+    *"Deliverable evidence: PR referencing #42"*) ;;
+    *) fail "own-identity-author message missing expected text" ;;
   esac
 )
 
@@ -147,8 +198,7 @@ JSON
 )
 
 # --- Case 2a2: clause (a)'s author exclusion is comma-separated - every
-# listed sibling pipeline login is excluded, an unlisted author still
-# counts ---
+# listed sibling pipeline login is excluded ---
 (
   base_env
   export EXCLUDE_PR_AUTHOR="claude[bot],agent-lcars[bot]"
@@ -160,16 +210,23 @@ JSON
   run_case pr-excluded-author-list
   test "$status" = 1 || fail "every login in a comma-separated exclusion list must be excluded"
 )
+# An author absent from EXCLUDE_PR_AUTHOR still counts - but, post-fix, only
+# when it is ALSO this run's own identity (EXPECTED_COMMENT_LOGIN). In
+# production EXCLUDE_PR_AUTHOR only ever lists sibling pipelines' logins,
+# never the agent's own (see clause (a)'s header comment), so "absent from
+# the list" and "is this run's own identity" coincide for every real
+# dispatch; case 1b above is the regression test proving an unlisted author
+# that is NOT this run's own identity no longer counts.
 (
   base_env
-  export EXCLUDE_PR_AUTHOR="claude[bot],agent-lcars[bot]"
+  export EXCLUDE_PR_AUTHOR="claude[bot]"
   case_dir="$test_root/pr-unlisted-author-passes"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":9,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"codex[bot]"}}]
+[{"number":9,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
 JSON
   run_case pr-unlisted-author-passes
-  test "$status" = 0 || fail "an author absent from the exclusion list must still satisfy clause (a)"
+  test "$status" = 0 || fail "an author absent from the exclusion list, and equal to this run's own identity, must still satisfy clause (a)"
 )
 
 # --- Case 2b: clause (a) does NOT exclude by author on a reply dispatch -
@@ -193,6 +250,28 @@ JSON
   esac
 )
 
+# --- Case 2b2: reply mode's bypass extends past the sibling-exclusion list
+# to the new own-identity author check too - an entirely unrelated author
+# (not a sibling, not this run's own identity, no EXCLUDE_PR_AUTHOR even
+# set) still satisfies clause (a) on a reply dispatch, exactly as before
+# this fix. If this regressed, a @claude reply continuing a PR a human
+# (not any agent) had opened would wrongly be discarded. ---
+(
+  base_env
+  export MODE=reply
+  case_dir="$test_root/pr-unrelated-author-reply-bypass"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"jlapenna"}}]
+JSON
+  run_case pr-unrelated-author-reply-bypass
+  test "$status" = 0 || fail "an unrelated-author PR must still satisfy clause (a) on a reply dispatch (own-identity check must not apply there either)"
+  case "$output" in
+    *"Deliverable evidence: PR referencing #42"*) ;;
+    *) fail "reply-mode unrelated-author message missing expected text" ;;
+  esac
+)
+
 # --- Case 2c: clause (a) also matches when #NUM IS the PR's own number -
 # an implement dispatch whose anchor is a pull request (agent:* takeover,
 # #567), where the pushed-to PR never mentions its own number in its own
@@ -209,6 +288,27 @@ JSON
   case "$output" in
     *"Deliverable evidence: PR referencing #42"*) ;;
     *) fail "self-referencing-anchor message missing expected text" ;;
+  esac
+)
+
+# --- Case 2c2: the takeover anchor (#NUM IS the PR's own number) satisfies
+# clause (a) even when authored by a HUMAN, on an implement dispatch - the
+# whole point of the takeover carve-out (#567): the anchor and the
+# pushed-to PR are the same object, and a human may have opened it before
+# the agent took it over. The new own-identity author check must not
+# regress this - it is explicitly exempted for the anchor PR. ---
+(
+  base_env
+  case_dir="$test_root/pr-self-referencing-anchor-human-author"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":42,"title":"Fix widget","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"jlapenna"}}]
+JSON
+  run_case pr-self-referencing-anchor-human-author
+  test "$status" = 0 || fail "clause (a) should pass when the PR IS #NUM, even authored by a human (takeover, #567)"
+  case "$output" in
+    *"Deliverable evidence: PR referencing #42"*) ;;
+    *) fail "human-authored self-referencing-anchor message missing expected text" ;;
   esac
 )
 
