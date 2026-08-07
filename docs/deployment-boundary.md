@@ -122,6 +122,36 @@ secret values cannot be read back, so deleting them is irreversible and
 buys nothing. Remove them by hand once a deploy has run green on the
 variables.
 
+#### Repo secret: `AGENT_CI_RERUN_TOKEN`
+
+One credential deserves its own note, because what it must **not** be is the
+point of it.
+
+Agents are allowed to rerun their own failed CI
+(`.agents/skills/agent-protocol/agent-protocol.md` §8). That needs
+`actions: write`, which the token the Claude action vends does not have. The
+obvious source is the workflow's own `GITHUB_TOKEN` — and that is exactly
+what this must never be: it carries the job's full
+contents/issues/pull-requests grant and is the same credential the dispatch
+broker reads and writes the ledger comment with, so handing it to agent code
+would let that code rewrite the control plane's own state
+([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
+
+So this is a **fine-grained PAT scoped to this repository with only
+`Actions: write`**, and nothing else. A minted App installation token is
+equally narrow but expires after an hour, while an opencode agent step may
+run for two — the agent would lose the capability mid-run, which is why this
+is a PAT rather than another `mint-agent-token` call.
+
+Fails **loudly, not closed**: each worker warns if the secret is unset, and
+the agent simply cannot rerun. That is deliberate — an empty
+`$ACTIONS_RERUN_TOKEN` produces an opaque `gh` error inside an agent turn,
+which reads as "the agent is stuck" rather than "a secret is missing".
+
+`apps/dispatch-broker/src/workflow-contract.spec.ts` asserts no worker's
+agent step receives the job token under any name or spelling, including via
+inherited workflow/job-level `env:`.
+
 ### 4. Terraform
 
 `infra/terraform/` is entirely instance config by definition: project id,

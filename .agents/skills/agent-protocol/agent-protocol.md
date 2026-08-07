@@ -175,9 +175,18 @@ converging and is indistinguishable, from the outside, from a stuck run.
 - If your own push triggers a failing CI check, you can usually rerun it
   yourself rather than parking: `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun
 <run-id> --failed`. Your default token typically cannot rerun workflows;
-  a workflow that wants to grant this exports its own `GITHUB_TOKEN`
-  (which carries `actions: write`) as `$ACTIONS_RERUN_TOKEN` for exactly
-  this purpose — check whether your dispatch workflow does.
+  a workflow that wants to grant this exports a dedicated credential as
+  `$ACTIONS_RERUN_TOKEN` for exactly this purpose — check whether your
+  dispatch workflow does. If the variable is empty, the workflow did not
+  grant it: park rather than retrying, because the failure will be an
+  opaque `gh` error rather than a clear permission message.
+- **What that credential deliberately is not:** it is never the workflow's
+  own `GITHUB_TOKEN`. That token carries the job's full
+  contents/issues/pull-requests write grant and is the same credential the
+  dispatch broker uses to read and write the ledger comment, so handing it
+  to an agent would let agent-authored code rewrite the control plane's own
+  state (agent-lcars#645). It is a credential scoped to `actions: write`
+  and nothing else — enough to rerun a workflow, enough for nothing else.
 - **Platform fact:** GitHub holds the Actions run resulting from a
   bot-authored push (or a PR opened by one) as `action_required` with
   **zero check runs minted**, regardless of billing state or fork status.

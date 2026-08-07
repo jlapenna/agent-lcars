@@ -527,6 +527,16 @@ test('worker agent steps never receive github.token under any name (#645 Phase 3
   // token"). Scan the adapter step's whole source (env: AND with:), not
   // one known variable name, so a differently-named leak still trips
   // this.
+  // Three ways this leaks that a naive scan misses, all of which reach the
+  // adapter step just as effectively as writing it inline:
+  //   - workflow-level or job-level `env:`, which every step inherits;
+  //   - `secrets.GITHUB_TOKEN`, the same credential under another context;
+  //   - bracket-form context access, e.g. github['token'].
+  // A drift guard that only recognises one spelling is a guard against
+  // being written the way it was written last time.
+  const jobTokenReference =
+    /\$\{\{\s*(?:github\s*(?:\.\s*token|\[\s*['"]token['"]\s*\])|secrets\s*(?:\.\s*GITHUB_TOKEN|\[\s*['"]GITHUB_TOKEN['"]\s*\]))\s*\}\}/u;
+
   const sources = await workflowSources();
   for (const workflow of workerWorkflowNames) {
     const source = sources.find(
@@ -537,10 +547,33 @@ test('worker agent steps never receive github.token under any name (#645 Phase 3
     const adapter = agentAdapterStep(steps, workflow);
     assert.doesNotMatch(
       adapter.source,
-      /\$\{\{\s*github\.token\s*\}\}/u,
-      `${workflow}'s agent step (steps.agent) must never receive ` +
-        'github.token under any name -- use a separately minted, ' +
-        'narrowly-scoped token instead (see "Mint CI-rerun token")',
+      jobTokenReference,
+      `${workflow}'s agent step (steps.agent) must never receive the job ` +
+        'token under any name or spelling -- use a separately minted, ' +
+        'narrowly-scoped credential instead (AGENT_CI_RERUN_TOKEN)',
+    );
+
+    // Everything above the first step is workflow- and job-level config;
+    // an `env:` entry there is inherited by every step including the
+    // adapter, so a leak placed here would never appear in the step's own
+    // source.
+    assert.match(
+      adapter.source,
+      /ACTIONS_RERUN_TOKEN:\s+\$\{\{\s*secrets\.AGENT_CI_RERUN_TOKEN\s*\}\}/u,
+      `${workflow} must grant the CI-rerun affordance through the ` +
+        'dedicated AGENT_CI_RERUN_TOKEN secret -- a fine-grained PAT with ' +
+        'only Actions: write. A minted App token is equally narrow but ' +
+        'expires after an hour, and this step can run for two.',
+    );
+
+    const firstStep = source.search(/^ {6}- name: /mu);
+    const inheritedConfig =
+      firstStep === -1 ? source : source.slice(0, firstStep);
+    assert.doesNotMatch(
+      inheritedConfig,
+      jobTokenReference,
+      `${workflow} must not expose the job token through workflow- or ` +
+        'job-level env:, which the agent step inherits silently',
     );
   }
 });

@@ -297,13 +297,20 @@ jobs:
       # (actions:write only - no issues, contents, or pull-requests)
       # scoped to this repo, good for nothing but the CI-rerun affordance
       # below.
-      - name: Mint CI-rerun token
-        id: ci-rerun-token
-        uses: ./.github/actions/mint-agent-token
-        with:
-          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
-          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-          permission-actions: write
+      # Loud rather than silent when the credential is absent: an empty
+      # $ACTIONS_RERUN_TOKEN makes `gh run rerun` fail with an opaque error
+      # deep inside an agent turn, which reads as "the agent is stuck"
+      # rather than "a secret is unset".
+      - name: Check CI-rerun credential is present
+        run: |
+          if [ -z "$ACTIONS_RERUN_TOKEN" ]; then
+            echo "::warning::AGENT_CI_RERUN_TOKEN is unset - the agent will \
+          not be able to rerun its own failed CI (agent-protocol.md §8). \
+          Expected a fine-grained PAT scoped to this repository with only \
+          Actions: write."
+          fi
+        env:
+          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
 
       - name: Run Codex
         id: agent
@@ -318,10 +325,11 @@ jobs:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           # Same CI-rerun affordance claude.yml grants its agent (see
-          # agent-protocol.md §8), from the narrowly-scoped mint above -
-          # NOT github.token, which is the ledger-writing control-plane
-          # credential (see "Mint CI-rerun token" above).
-          ACTIONS_RERUN_TOKEN: ${{ steps.ci-rerun-token.outputs.token }}
+          # agent-protocol.md §8). A fine-grained PAT scoped to this
+          # repository with only Actions: write - NOT github.token, which
+          # is the ledger-writing control-plane credential, and not a
+          # minted App token either, since those expire after an hour.
+          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
           CODEX_PROMPT: >-
             Work the routed anchor in the JSON brief at
             `$AGENT_DISPATCH_CONTEXT`. Read
