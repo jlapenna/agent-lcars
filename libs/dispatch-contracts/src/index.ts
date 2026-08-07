@@ -53,15 +53,23 @@ export {
   LEDGER_SCHEMA,
   renderLedgerComment,
 } from './ledger';
-export type { AttemptMarker, RouterGroupIdentity } from './marker';
+export type {
+  AgentResultClaim,
+  AttemptMarker,
+  ClaimArtifactType,
+  RouterGroupIdentity,
+} from './marker';
 export {
   displayTitleMatchesAttempt,
   formatAttemptId,
+  formatClaimMarker,
   formatDispatchMarker,
   formatRouterGroupMarker,
   parseAttemptId,
+  parseClaimMarker,
   parseDispatchMarker,
   parseRouterGroupMarker,
+  textCarriesClaim,
 } from './marker';
 export type {
   AgentPipeline,
