@@ -82,6 +82,9 @@ jobs:
       - name: Test failure reporting
         run: bash .github/actions/report-failure/report-failure.test.sh
 
+      - name: Test canary failure alerting
+        run: bash .github/actions/canary-alert/canary-alert.test.sh
+
       - name: Test post-agent gate orchestration (#645 Phase 3)
         run: bash .github/actions/post-agent-gates/post-agent-gates.test.sh
 

@@ -73,3 +73,20 @@ jobs:
           maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
           source: scheduled
           sweep-stale-canaries: 'true'
+
+      # A canary nobody hears is not a canary: this run's own failed 7
+      # consecutive scheduled runs with zero notification is what this
+      # step closes. if: always() so it evaluates after both a passing and
+      # a failing canary run above; canary-alert's own step is
+      # continue-on-error: true (see its action.yml) so a broken alert
+      # path can never turn a healthy canary red, and can never turn a
+      # failing one green either - the canary step above already fixed the
+      # job's real conclusion before this step runs.
+      - name: Alert on canary failure / resolve on recovery
+        if: always()
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          canary-status: ${{ job.status }}
+          workflow-file: dispatch-canary.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}
