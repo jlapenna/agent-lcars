@@ -24,6 +24,7 @@ import {
   assertWorkerRun,
   completionMatches,
   decode,
+  discoverRecentlyClosedReconcileCandidates,
   discoverReconcileCandidates,
   dispatchAccepted,
   dispatchReconcileScan,
@@ -2016,6 +2017,91 @@ test('reconcileLedger with issueClosed: false (the live, common case for an open
   }
 });
 
+// findRunsForGeneration matches by display-title marker, not run id (see
+// displayTitleMatchesAttempt in dispatch-contracts) -- two runs carrying
+// the identical `[dispatch:g1:intent-1]` marker is exactly what
+// reconcileActive()'s own duplicate-attempt anomaly detects and throws on,
+// entirely independent of whether the anchor itself is open or closed.
+function duplicateAttemptStubClient() {
+  const calls = [];
+  const makeRun = (id) => ({
+    id,
+    repository: { id: task.repositoryId },
+    event: 'workflow_dispatch',
+    path: '.github/workflows/codex.yml',
+    display_title: '#304: Codex [dispatch:g1:intent-1]',
+    status: 'in_progress',
+    conclusion: null,
+    updated_at: '2026-08-01T00:03:00.000Z',
+    url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${id}`,
+    html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${id}`,
+  });
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path.includes('/workflows/codex.yml/runs?')) {
+        return { workflow_runs: [makeRun(42), makeRun(43)] };
+      }
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  return { client, calls };
+}
+
+test('an anchor whose reconcileActive() throws on an unrelated duplicate-attempt anomaly still converges control.closed, because broker() now converges it first -- and the anomaly still surfaces rather than being swallowed (#715 Codex P2 on #645/#663)', async () => {
+  // Reproduces broker()'s new composition for a `reconcile` event carrying
+  // `issueClosed: true` (see broker() in main.mjs): reconcileControlState()
+  // now runs BEFORE reconcileActive(), specifically so an anomaly in the
+  // anchor's own active generation -- unrelated to whether the anchor is
+  // closed -- can never again starve control-state convergence the way it
+  // did before #715 (every later reconcile pass would re-observe the same
+  // anomaly, reconcileActive() would throw again before reconcileLedger()
+  // was ever reached, and control.closed would never become true).
+  const ledger = boundLedger();
+  assert.equal(ledger.control.closed, false);
+  const loaded = { ledger, comment: { id: 9 } };
+  const { client, calls } = duplicateAttemptStubClient();
+
+  const isClosed = await reconcileControlState(
+    client,
+    loaded,
+    /* issueClosed */ true,
+    '2026-08-07T19:00:00.000Z',
+    30990000,
+  );
+  assert.equal(isClosed, true);
+  assert.equal(
+    ledger.control.closed,
+    true,
+    'control state must converge before reconcileActive() ever runs',
+  );
+  assert.ok(
+    calls.some((call) => call.path.includes('/issues/comments/9')),
+    'the convergence write must have actually landed',
+  );
+
+  // reconcileActive() still runs next, exactly as broker() does, and still
+  // throws on the unrelated duplicate-attempt anomaly -- that anomaly is a
+  // genuine, distinct problem (>1 worker run bound to one generation) this
+  // fix does not paper over; it must still surface, not be swallowed
+  // (broker()'s own catch routes any throw here to failClosed(), which
+  // always parks needs-human AND rethrows -- see failClosed in
+  // github-api.mjs).
+  await assert.rejects(
+    () => reconcileActive(client, loaded),
+    /Multiple worker runs match one dispatch generation/,
+  );
+  assert.ok(
+    ledger.anomalies.some((anomaly) => anomaly.kind === 'duplicate-attempt'),
+    'the unrelated anomaly must still be recorded, not silently dropped',
+  );
+
+  // The earlier convergence must survive the later throw untouched -- the
+  // whole point of running it first.
+  assert.equal(ledger.control.closed, true);
+});
+
 test('dispatchReconcileScan fires one workflow_dispatch per candidate with kind=reconcile and the exact issue number', async () => {
   const requests = [];
   const client = {
@@ -2201,6 +2287,111 @@ test('discoverReconcileCandidates skips the fleet-assignee lane entirely when no
     },
   };
   const candidates = await discoverReconcileCandidates(
+    client,
+    'jlapenna/agent-lcars',
+    '',
+  );
+  assert.deepEqual(candidates, []);
+  assert.ok(seenUrls.every((url) => !url.includes('assignee=')));
+});
+
+// --- discoverRecentlyClosedReconcileCandidates (#715 review: closed
+// counterpart to the fleet-assignee lane) --------------------------------
+
+test('discoverRecentlyClosedReconcileCandidates discovers a closed, fleet-assigned, unlabeled anchor merged with closed labeled candidates, and that anchor then converges control.closed (#715 Codex P2 on #645/#663)', async () => {
+  // Issue #500: closed via GITHUB_TOKEN (agent-automerge.yml's `gh issue
+  // close` backstop, or an automerge-linked PR's `Fixes #N` auto-close)
+  // after its last agent:* label was already removed while its worker was
+  // still active -- exactly the case listRecentlyClosedIssuesAssignedTo
+  // exists to cover, mirroring listOpenIssuesAssignedTo's own open-side
+  // coverage (#363 review). Issue #304 is the ordinary, still-labeled
+  // closed case listRecentlyClosedAgentLabeledIssues already covered
+  // before this fix.
+  const seenUrls = [];
+  const client = {
+    requestOk: async (url) => {
+      seenUrls.push(url);
+      if (url.includes('labels=agent%3Aclaude')) {
+        return [{ number: 304 }];
+      }
+      if (
+        url.includes('labels=agent%3Acodex') ||
+        url.includes('labels=agent%3Aopencode') ||
+        url.includes('labels=review%3Aclaude') ||
+        url.includes('labels=review%3Acodex') ||
+        url.includes('labels=review%3Aopencode')
+      ) {
+        return [];
+      }
+      if (url.includes('assignee=jclaw-bot')) {
+        assert.ok(url.includes('state=closed'));
+        return [{ number: 500 }];
+      }
+      throw new Error(`Unexpected API path: ${url}`);
+    },
+  };
+  const candidates = await discoverRecentlyClosedReconcileCandidates(
+    client,
+    'jlapenna/agent-lcars',
+    'jclaw-bot',
+    '2026-08-07T12:00:00.000Z',
+  );
+  assert.deepEqual(
+    candidates.map((issue) => issue.number),
+    [304, 500],
+  );
+  assert.ok(seenUrls.some((url) => url.includes('assignee=jclaw-bot')));
+
+  // Discovery alone only proves the anchor is back in front of a reconcile
+  // pass; the repair this whole PR is about is that such a pass then
+  // converges the ledger's own control.closed copy. Prove that second half
+  // directly: exactly what a `reconcile` event for issue #500, carrying
+  // `issueClosed: true`, does to its ledger.
+  const ledger = boundLedger();
+  assert.equal(ledger.control.closed, false);
+  const isClosed = await reconcileControlState(
+    reconcileStubClient().client,
+    { ledger, comment: { id: 9 } },
+    true,
+    '2026-08-07T12:00:01.000Z',
+    30990000,
+  );
+  assert.equal(isClosed, true);
+  assert.equal(ledger.control.closed, true);
+});
+
+test('discoverRecentlyClosedReconcileCandidates dedupes an issue that is both closed-labeled and closed-fleet-assigned', async () => {
+  const client = {
+    requestOk: async (url) => {
+      if (url.includes('labels=agent%3Aclaude')) return [{ number: 304 }];
+      if (url.includes('labels=')) return [];
+      if (url.includes('assignee=')) return [{ number: 304 }];
+      throw new Error(`Unexpected API path: ${url}`);
+    },
+  };
+  const candidates = await discoverRecentlyClosedReconcileCandidates(
+    client,
+    'jlapenna/agent-lcars',
+    'jclaw-bot',
+  );
+  assert.deepEqual(
+    candidates.map((issue) => issue.number),
+    [304],
+  );
+});
+
+test('discoverRecentlyClosedReconcileCandidates skips the closed fleet-assignee lane entirely when no fleet login is configured', async () => {
+  const seenUrls = [];
+  const client = {
+    requestOk: async (url) => {
+      seenUrls.push(url);
+      if (url.includes('labels=')) return [];
+      throw new Error(
+        `Unexpected API path (assignee lane should be skipped): ${url}`,
+      );
+    },
+  };
+  const candidates = await discoverRecentlyClosedReconcileCandidates(
     client,
     'jlapenna/agent-lcars',
     '',

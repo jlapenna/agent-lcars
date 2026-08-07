@@ -1041,6 +1041,17 @@ async function listOpenIssuesAssignedTo(api2, task, login) {
     `${root}/issues?state=open&assignee=${encodeURIComponent(login)}`
   );
 }
+async function listRecentlyClosedIssuesAssignedTo(api2, task, login, now = /* @__PURE__ */ new Date()) {
+  if (!login) return [];
+  const root = repositoryPath(task);
+  const since = new Date(
+    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
+  ).toISOString();
+  return listAll(
+    api2,
+    `${root}/issues?state=closed&since=${encodeURIComponent(since)}&assignee=${encodeURIComponent(login)}`
+  );
+}
 async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", { createIfMissing = true } = {}) {
   const root = repositoryPath(task);
   const comments = await listAll(
@@ -2597,6 +2608,19 @@ async function broker() {
   }
   await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
+    if (normalized.kind === "reconcile") {
+      await runPhase(
+        { client, loaded },
+        "reconciliation",
+        () => reconcileControlState(
+          client,
+          loaded,
+          normalized.issueClosed,
+          (/* @__PURE__ */ new Date()).toISOString(),
+          runId
+        )
+      );
+    }
     await reconcileActive(client, loaded);
     if (normalized.kind === "intent") {
       const accepted = await runPhase(
@@ -2735,16 +2759,27 @@ async function discoverReconcileCandidates(client, repository, fleetLogin) {
     (left, right) => left.number - right.number
   );
 }
+async function discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
+  const task = { repository };
+  const [labeled, assigned] = await Promise.all([
+    listRecentlyClosedAgentLabeledIssues(client, task, now),
+    listRecentlyClosedIssuesAssignedTo(client, task, fleetLogin, now)
+  ]);
+  const byNumber = /* @__PURE__ */ new Map();
+  for (const issue of [...labeled, ...assigned]) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number
+  );
+}
 async function scanReconcile() {
   const client = api();
   const repository = env("GITHUB_REPOSITORY");
+  const fleetLogin = env("AGENT_FLEET_LOGIN", false);
   const [openCandidates, closedCandidates] = await Promise.all([
-    discoverReconcileCandidates(
-      client,
-      repository,
-      env("AGENT_FLEET_LOGIN", false)
-    ),
-    listRecentlyClosedAgentLabeledIssues(client, { repository })
+    discoverReconcileCandidates(client, repository, fleetLogin),
+    discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin)
   ]);
   const byNumber = /* @__PURE__ */ new Map();
   for (const issue of [...openCandidates, ...closedCandidates]) {
@@ -2753,7 +2788,7 @@ async function scanReconcile() {
   const issueNumbers = [...byNumber.keys()].sort((left, right) => left - right);
   const results = await dispatchReconcileScan(client, repository, issueNumbers);
   console.log(
-    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${issueNumbers.length} candidate(s) (${openCandidates.length} open agent-labeled/fleet-assigned, ${closedCandidates.length} recently-closed agent-labeled).`
+    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${issueNumbers.length} candidate(s) (${openCandidates.length} open agent-labeled/fleet-assigned, ${closedCandidates.length} recently-closed agent-labeled/fleet-assigned).`
   );
   for (const failure of results.failed) {
     console.log(
@@ -2791,6 +2826,7 @@ export {
   completionMatches,
   contextFor,
   decode,
+  discoverRecentlyClosedReconcileCandidates,
   discoverReconcileCandidates,
   dispatchAccepted,
   dispatchReconcileScan,
