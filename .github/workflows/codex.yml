@@ -291,6 +291,29 @@ jobs:
           chmod 600 "$HOME/.codex/auth.json"
           codex login status
 
+      # A second, narrower mint - deliberately not the "Mint agent token"
+      # step above and not github.token. The App token minted above is the
+      # agent's own working identity (claim/comment/push, and it is also
+      # handed to the agent step below as GH_TOKEN/GITHUB_TOKEN for its own
+      # gh/git operations); github.token is this job's own control-plane
+      # credential, the exact one dispatch-broker uses to read and write
+      # the ledger comment (every dispatch-broker step in this file passes
+      # GITHUB_TOKEN: ${{ github.token }}), carrying this workflow's full
+      # contents/issues/pull-requests/actions write grant. Handing that one
+      # to the agent step below under any name would let agent-authored
+      # code rewrite the ledger or act as the controller - exactly what
+      # #645 forbids. This mint is neither: one narrow capability
+      # (actions:write only - no issues, contents, or pull-requests)
+      # scoped to this repo, good for nothing but the CI-rerun affordance
+      # below.
+      - name: Mint CI-rerun token
+        id: ci-rerun-token
+        uses: ./.github/actions/mint-agent-token
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-actions: write
+
       - name: Run Codex
         id: agent
         # A step timeout, not just the job's: exceeding this fails the step
@@ -304,8 +327,10 @@ jobs:
           GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
           # Same CI-rerun affordance claude.yml grants its agent (see
-          # agent-protocol.md §8).
-          ACTIONS_RERUN_TOKEN: ${{ github.token }}
+          # agent-protocol.md §8), from the narrowly-scoped mint above -
+          # NOT github.token, which is the ledger-writing control-plane
+          # credential (see "Mint CI-rerun token" above).
+          ACTIONS_RERUN_TOKEN: ${{ steps.ci-rerun-token.outputs.token }}
           CODEX_PROMPT: >-
             Work the routed anchor in the JSON brief at
             `$AGENT_DISPATCH_CONTEXT`. Read

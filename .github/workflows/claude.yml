@@ -234,6 +234,27 @@ jobs:
           service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
           issue: ${{ inputs.issue }}
 
+      # A second, narrower mint - deliberately not the "Mint agent token"
+      # step above and not github.token. The App token minted above is the
+      # agent's own working identity (claim/comment/push, App-attributed);
+      # github.token is this job's own control-plane credential, the exact
+      # one dispatch-broker uses to read and write the ledger comment
+      # (every dispatch-broker step in this file passes
+      # GITHUB_TOKEN: ${{ github.token }}), carrying this workflow's full
+      # contents/issues/pull-requests/actions write grant. Handing either
+      # one to the agent step below would let agent-authored code rewrite
+      # the ledger or act as the controller - exactly what #645 forbids.
+      # This mint is neither: one narrow capability (actions:write only -
+      # no issues, contents, or pull-requests) scoped to this repo, good
+      # for nothing but the CI-rerun affordance below.
+      - name: Mint CI-rerun token
+        id: ci-rerun-token
+        uses: ./.github/actions/mint-agent-token
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-actions: write
+
       - name: Run Claude Code
         id: agent
         # SHA-pinned (not the v1.0.181 tag, and not floating @v1) deliberately:
@@ -249,12 +270,18 @@ jobs:
         env:
           # The app token the action vends to the agent maxes out at
           # actions:read (the token exchange supports nothing higher), so
-          # re-running workflows needs a second token: the workflow's own
-          # GITHUB_TOKEN, which carries actions:write from the permissions
-          # block above. The agent uses it as
+          # re-running workflows needs a second token. NOT the workflow's
+          # own github.token: that carries this job's full
+          # contents/issues/pull-requests/actions write grant and is the
+          # same credential dispatch-broker uses to read and write the
+          # ledger comment - handing it to the agent would let agent
+          # code rewrite the ledger and act as the controller (#645).
+          # Use the narrowly-scoped mint from "Mint CI-rerun token"
+          # above instead: a single actions:write-only capability, good
+          # for nothing but this. The agent uses it as
           # `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun ...` (GH_TOKEN
           # outranks GITHUB_TOKEN in gh) - see agent-protocol.md §8.
-          ACTIONS_RERUN_TOKEN: ${{ github.token }}
+          ACTIONS_RERUN_TOKEN: ${{ steps.ci-rerun-token.outputs.token }}
         with:
           # A manually-issued long-lived token from `claude setup-token`
           # (interactive browser OAuth flow) - no auto-refresh or rotation.

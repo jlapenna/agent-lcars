@@ -384,11 +384,13 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       './.github/actions/assert-repo-vars',
     );
     const preflight = namedStep(steps, workflow, 'Verify broker binding');
-    const mint = actionStep(
-      steps,
-      workflow,
-      './.github/actions/mint-agent-token',
-    );
+    // Found by name, not by `actionStep`'s uses-scan: since #645 Phase 3
+    // every worker also mints a second, narrowly-scoped token (see "Mint
+    // CI-rerun token") from this same composite action, so a scan for
+    // "the one step using this action" no longer identifies a unique
+    // step. The uniquely-named "Mint agent token" step is still the
+    // identity/push-credential mint this assertion is about.
+    const mint = namedStep(steps, workflow, 'Mint agent token');
     const claim = actionStep(steps, workflow, './.github/actions/claim-issue');
     const telemetryStart = actionStep(
       steps,
@@ -500,6 +502,39 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
     assert.match(
       completion.source,
       stepField('worker-workflow', '${{ env.WORKER_WORKFLOW }}', 10),
+    );
+  }
+});
+
+test('worker agent steps never receive github.token under any name (#645 Phase 3)', async () => {
+  // github.token is this job's own control-plane credential -- the exact
+  // one dispatch-broker uses to read and write the ledger comment (every
+  // dispatch-broker step in every worker passes
+  // GITHUB_TOKEN: ${{ github.token }}), and it carries the workflow's
+  // full contents/issues/pull-requests/actions write grant. The agent
+  // step runs untrusted, agent-authored code with unrestricted Bash;
+  // handing it github.token under ANY env-var name would let that code
+  // rewrite the ledger and act as the controller -- exactly what #645
+  // forbids. All three workers used to do this via ACTIONS_RERUN_TOKEN
+  // (the CI-rerun affordance from agent-protocol.md §8); the fix mints a
+  // separate actions:write-only token instead (see "Mint CI-rerun
+  // token"). Scan the adapter step's whole source (env: AND with:), not
+  // one known variable name, so a differently-named leak still trips
+  // this.
+  const sources = await workflowSources();
+  for (const workflow of workerWorkflowNames) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    const steps = stepBlocks(source);
+    const adapter = agentAdapterStep(steps, workflow);
+    assert.doesNotMatch(
+      adapter.source,
+      /\$\{\{\s*github\.token\s*\}\}/u,
+      `${workflow}'s agent step (steps.agent) must never receive ` +
+        'github.token under any name -- use a separately minted, ' +
+        'narrowly-scoped token instead (see "Mint CI-rerun token")',
     );
   }
 });
