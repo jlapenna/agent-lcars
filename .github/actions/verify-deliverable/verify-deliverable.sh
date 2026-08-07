@@ -25,11 +25,19 @@
 #       implement dispatch, EXCLUDE_PR_AUTHOR keeps a concurrently
 #       dispatched sibling pipeline's PR from satisfying this clause, but
 #       that exclusion is skipped on a reply dispatch - see clause (a)
-#       below for why). Also matches when #NUM IS the PR's own number, not
-#       just a title/body reference to it - an agent:*-on-PR takeover
-#       dispatch (#567) has the anchor and the pushed-to PR be the exact
-#       same object, which never mentions its own number in its own title
-#       or body;
+#       below for why). A REFERENCING PR (title/body mentions #NUM, but
+#       isn't #NUM itself) must also be authored by EXPECTED_COMMENT_LOGIN -
+#       this run's own agent identity as GitHub actually attributes it (see
+#       clause (a) below for why that login, and not AGENT_GIT_LOGIN, is the
+#       right one) - otherwise a bystander's PR that merely discusses the
+#       issue (e.g. a human's unrelated fix PR whose body says "see #650")
+#       would satisfy the gate for work no agent did (confirmed live on
+#       #650 generation 9). Also matches when #NUM IS the PR's own number,
+#       regardless of author, not just a title/body reference to it - an
+#       agent:*-on-PR takeover dispatch (#567) has the anchor and the
+#       pushed-to PR be the exact same object, which never mentions its own
+#       number in its own title or body, and which may have been opened by
+#       a human;
 #   (b) the issue was closed since STARTED_AT;
 #   (c) the status:needs-human label was applied since STARTED_AT AND is
 #       still present (the sanctioned blocked/clarifying-question ending).
@@ -157,17 +165,42 @@ fi
 # regardless of which pipeline authored the PR - excluding by author there
 # would discard a legitimate cross-agent takeover (e.g. this run is a
 # @claude reply continuing a PR codex originally opened).
+#
+# A REFERENCING PR (not the anchor itself) must additionally be authored by
+# THIS run's own identity, $expected (= EXPECTED_COMMENT_LOGIN), or it does
+# not count - without this, ANY PR that merely mentions #NUM, by ANY author,
+# satisfies the gate, which is exactly what let a human's unrelated PR
+# (jlapenna/agent-lcars#711, whose body happened to say "Issue #650") get
+# credited as issue #650 generation 9's deliverable when no agent produced
+# anything. $expected, not AGENT_GIT_LOGIN: AGENT_GIT_LOGIN is only the
+# local `git config user.name` used for commit authorship (see
+# agent-setup/action.yml) - for the claude lane it is the fleet-claim login
+# `jclaw-bot`, which never appears as a PR's GitHub-attributed `.user.login`
+# (that's `claude[bot]`, minted by a wholly separate token exchange the
+# claude-code-action performs internally). $expected is what clauses (d)
+# and (e) already trust for this exact purpose, and, unlike AGENT_GIT_LOGIN,
+# it verifiably matches the real `.user.login` GitHub records for all three
+# lanes. Skipped in reply mode for the same reason EXCLUDE_PR_AUTHOR is
+# skipped there - the explicit, deliberately-dispatched anchor already makes
+# any update to a referencing PR valid evidence regardless of author (e.g.
+# a @claude reply crediting a PR codex originally opened, authored as
+# agent-lcars[bot], not claude[bot]). The takeover case (#NUM IS the PR's
+# own number) is exempt in every mode, same as EXCLUDE_PR_AUTHOR above:
+# that PR may be authored by a human (#567).
 if [ -z "$found" ]; then
   if pr_json=$(gh api "repos/$REPO/pulls?state=all&sort=updated&direction=desc&per_page=50" 2>&1); then
     prs=$(jq -r \
-      --arg started "$STARTED_AT" --arg num "$NUM" --arg exclude "$EXCLUDE_PR_AUTHOR" --arg mode "$MODE" \
+      --arg started "$STARTED_AT" --arg num "$NUM" --arg exclude "$EXCLUDE_PR_AUTHOR" \
+      --arg mode "$MODE" --arg expected "$EXPECTED_COMMENT_LOGIN" \
       '($exclude | split(",") | map(select(length > 0))) as $excluded
        | [.[] | .user.login as $author
+              | (.number == ($num | tonumber)) as $is_anchor
               | select(.updated_at >= $started)
               | select($mode == "reply" or ($excluded | index($author)) == null)
+              | select($mode == "reply" or $is_anchor or $author == $expected)
               | select(
                   ((.title + " " + (.body // "")) | test("#" + $num + "([^0-9]|$)"))
-                  or (.number == ($num | tonumber))
+                  or $is_anchor
                 )]
        | length' <<<"$pr_json")
     if [ "${prs:-0}" -gt 0 ]; then
