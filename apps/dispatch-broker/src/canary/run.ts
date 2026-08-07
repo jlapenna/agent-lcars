@@ -1,12 +1,11 @@
 // Production dispatch-broker canary lifecycle (#307, final child of epic
 // #301). Reuses the SAME hardened GitHub API client and ledger parser the
-// broker itself uses (dispatch-broker/github-api.mjs, dispatch-broker/
-// broker.mjs) rather than a parallel implementation: create a dedicated,
-// clearly-marked issue -> dispatch it through agent-router.yml's real
-// `kind: 'canary'` broker path -> poll the real ledger comment to a
-// terminal state -> clean up (close on success, park status:needs-human
-// with evidence on failure, mirroring github-api.mjs's own failClosed/
-// ensureNeedsHumanParked convention).
+// broker itself uses (../github-api.ts) rather than a parallel
+// implementation: create a dedicated, clearly-marked issue -> dispatch it
+// through agent-router.yml's real `kind: 'canary'` broker path -> poll the
+// real ledger comment to a terminal state -> clean up (close on success,
+// park status:needs-human with evidence on failure, mirroring
+// github-api.ts's own failClosed/ensureNeedsHumanParked convention).
 //
 // Called by two workflows sharing this one action:
 //   - dispatch-canary.yml: hourly + workflow_dispatch, no live-url probe.
@@ -16,6 +15,12 @@
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
+import type {
+  DispatchLedger,
+  LedgerGeneration,
+  LedgerTaskRef,
+} from '@agent-lcars/dispatch-contracts';
+
 import {
   createGitHubApi,
   dispatchRouterEvent,
@@ -24,7 +29,31 @@ import {
   loadLedger,
   mapWithConcurrency,
   repositoryPath,
-} from '../dispatch-broker/github-api.mjs';
+} from '../github-api.js';
+
+// `createGitHubApi()`'s return shape -- see github-api.ts. Derived via
+// ReturnType rather than a hand-copied local interface (main.ts's own
+// GitHubApiClient) because GitHubApi itself isn't exported from that
+// module; this stays exact without duplicating its shape.
+type GitHubApiClient = ReturnType<typeof createGitHubApi>;
+
+// GitHub REST shapes this file reads. Minimal on purpose -- only the
+// fields actually used below (see github-api.ts's own GitHubIssueDetail
+// for the fuller shape other consumers need).
+interface GitHubIssueSummary {
+  number: number;
+  title?: string;
+  body?: string | null;
+  created_at: string;
+  labels?: (string | { name?: string })[];
+  pull_request?: unknown;
+}
+
+type SleepImpl = (ms: number) => Promise<void>;
+type FetchLike = (
+  url: string,
+  init: { method: string; signal: AbortSignal },
+) => Promise<{ ok: boolean; status: number }>;
 
 const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
 const CANARY_TITLE_PREFIX = '[dispatch-canary]';
@@ -47,10 +76,10 @@ const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
 // keeps a real, bounded budget (a genuinely wedged broker still fails
 // loud) while comfortably covering the worst round trip observed so far.
 const LEDGER_POLL_TIMEOUT_MS = 25 * 60 * 1000;
-// Mirrors dispatch-broker/main.mjs's handleCompletion poll-until-terminal
-// backoff (same start/cap/doubling shape) rather than a flat interval: start
-// small so a fast-completing canary is detected quickly, double each
-// attempt, and cap growth so a long wait doesn't hammer the API.
+// Mirrors ../main.ts's handleCompletion poll-until-terminal backoff (same
+// start/cap/doubling shape) rather than a flat interval: start small so a
+// fast-completing canary is detected quickly, double each attempt, and cap
+// growth so a long wait doesn't hammer the API.
 const LEDGER_POLL_BACKOFF_START_MS = 2_000;
 const LEDGER_POLL_BACKOFF_MAX_MS = 15_000;
 const TERMINAL_REJECTED_STATES = new Set([
@@ -92,31 +121,41 @@ const TERMINAL_REJECTED_STATES = new Set([
 // very next scheduled pass.
 const STALE_CANARY_AGE_MS = 35 * 60 * 1000;
 
-function env(name, required = true) {
+function env(name: string, required = true): string {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);
   return value ?? '';
 }
 
-async function output(name, value) {
+async function output(name: string, value: string): Promise<void> {
   const path = process.env.GITHUB_OUTPUT;
   if (!path) return;
   await fs.appendFile(path, `${name}=${value}\n`, 'utf8');
 }
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface ProbeLiveUrlOptions {
+  fetchImpl?: FetchLike;
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  sleepImpl?: SleepImpl;
+}
+
+type ProbeLiveUrlResult =
+  { ok: true; status: number } | { ok: false; reason: string };
+
 async function probeLiveUrl(
-  url,
+  url: string,
   {
     fetchImpl = fetch,
     maxAttempts = LIVE_URL_PROBE_MAX_ATTEMPTS,
     retryDelayMs = LIVE_URL_PROBE_RETRY_DELAY_MS,
     sleepImpl = sleep,
-  } = {},
-) {
+  }: ProbeLiveUrlOptions = {},
+): Promise<ProbeLiveUrlResult> {
   let lastReason = 'never attempted';
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -127,14 +166,20 @@ async function probeLiveUrl(
       if (response.ok) return { ok: true, status: response.status };
       lastReason = `HTTP ${response.status}`;
     } catch (error) {
-      lastReason = error.message;
+      lastReason = (error as Error).message;
     }
     if (attempt < maxAttempts) await sleepImpl(retryDelayMs);
   }
   return { ok: false, reason: lastReason };
 }
 
-function issueBody({ source, runUrl, deployRunUrl }) {
+interface IssueBodyContext {
+  source: string;
+  runUrl: string;
+  deployRunUrl?: string;
+}
+
+function issueBody({ source, runUrl, deployRunUrl }: IssueBodyContext): string {
   const lines = [
     'Automated production canary for the dispatch broker (#307). Created, ' +
       'dispatched through the real dispatch broker and a dedicated no-op ' +
@@ -151,10 +196,14 @@ function issueBody({ source, runUrl, deployRunUrl }) {
   return lines.join('\n');
 }
 
-async function createCanaryIssue(api, repository, context) {
+async function createCanaryIssue(
+  api: GitHubApiClient,
+  repository: string,
+  context: IssueBodyContext,
+): Promise<{ number: number }> {
   const root = repositoryPath({ repository });
   const timestamp = new Date().toISOString();
-  const issue = await api.requestOk(`${root}/issues`, {
+  const issue = await api.requestOk<{ number?: unknown }>(`${root}/issues`, {
     method: 'POST',
     body: {
       title: `[dispatch-canary] Production dispatch broker canary — ${timestamp}`,
@@ -164,10 +213,17 @@ async function createCanaryIssue(api, repository, context) {
   if (!Number.isSafeInteger(issue?.number)) {
     throw new Error('GitHub did not return the created canary issue number');
   }
-  return issue;
+  // isSafeInteger narrows at runtime but not for TS -- same posture as
+  // github-api.ts's findSupersedingRouterRun, which casts immediately
+  // after an identical guard.
+  return issue as { number: number };
 }
 
-async function dispatchRouterCanary(api, repository, issueNumber) {
+async function dispatchRouterCanary(
+  api: GitHubApiClient,
+  repository: string,
+  issueNumber: number,
+): Promise<void> {
   await dispatchRouterEvent(
     api,
     { repository },
@@ -184,33 +240,41 @@ async function dispatchRouterCanary(api, repository, issueNumber) {
 // orchestrator close the issue and report a false green even if the real
 // broker never ran or genuinely failed.
 //
-// This is exactly the trust boundary dispatch-broker/github-api.mjs's own
-// loadLedger already defends for every other ledger read in this
-// codebase: exactly one marker-bearing comment is ever trusted (more than
-// one is treated as an anomaly and fails closed, never "pick the first"),
-// and that one comment must be authored by the same workflow identity
-// (REST-shaped `github-actions[bot]` login + `type: 'Bot'` -- see
+// This is exactly the trust boundary ../github-api.ts's own loadLedger
+// already defends for every other ledger read in this codebase: exactly
+// one marker-bearing comment is ever trusted (more than one is treated as
+// an anomaly and fails closed, never "pick the first"), and that one
+// comment must be authored by the same workflow identity (REST-shaped
+// `github-actions[bot]` login + `type: 'Bot'` -- see
 // docs/bot-identity-formats.md) every ledger write in this repo already
 // uses. Do not weaken or duplicate that rule here.
 const LEDGER_WORKFLOW_IDENTITY = 'github-actions[bot]';
+
+interface FoundGeneration {
+  ledger: DispatchLedger;
+  generation: LedgerGeneration;
+}
 
 // Shared by the live poll below and sweepStaleCanaries' one-shot read: find
 // this issue's ledger comment (if any) and the 'canary'-pipeline generation
 // within it. Returns undefined when no ledger comment exists yet, or none
 // of its generations is the canary pipeline.
 //
-// Reuses dispatch-broker/github-api.mjs's own loadLedger rather than
-// re-deriving its trust rule locally: exactly one marker-bearing comment is
-// ever trusted (more than one is treated as an anomaly and fails closed,
-// never "pick the first"), and that one comment must be authored by the
-// same workflow identity (REST-shaped `github-actions[bot]` login + `type:
-// 'Bot'` -- see docs/bot-identity-formats.md) every ledger write in this
-// repo already uses. loadLedger also paginates its comment listing
-// (listAll), unlike a raw, unpaginated `GET .../comments` call -- on a
-// canary issue with more than 30 comments (GitHub's default page size), an
-// unpaginated read could miss the real ledger comment entirely and silently
-// defeat this trust check. Do not weaken or duplicate that rule here.
-async function findCanaryGeneration(api, task) {
+// Reuses ../github-api.ts's own loadLedger rather than re-deriving its
+// trust rule locally: exactly one marker-bearing comment is ever trusted
+// (more than one is treated as an anomaly and fails closed, never "pick
+// the first"), and that one comment must be authored by the same workflow
+// identity (REST-shaped `github-actions[bot]` login + `type: 'Bot'` -- see
+// docs/bot-identity-formats.md) every ledger write in this repo already
+// uses. loadLedger also paginates its comment listing (listAll), unlike a
+// raw, unpaginated `GET .../comments` call -- on a canary issue with more
+// than 30 comments (GitHub's default page size), an unpaginated read could
+// miss the real ledger comment entirely and silently defeat this trust
+// check. Do not weaken or duplicate that rule here.
+async function findCanaryGeneration(
+  api: GitHubApiClient,
+  task: LedgerTaskRef,
+): Promise<FoundGeneration | undefined> {
   const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
     createIfMissing: false,
   });
@@ -221,15 +285,21 @@ async function findCanaryGeneration(api, task) {
   return generation ? { ledger: loaded.ledger, generation } : undefined;
 }
 
+interface PollCanaryLedgerOptions {
+  timeoutMs?: number;
+  sleepImpl?: SleepImpl;
+  now?: () => number;
+}
+
 async function pollCanaryLedger(
-  api,
-  task,
+  api: GitHubApiClient,
+  task: LedgerTaskRef,
   {
     timeoutMs = LEDGER_POLL_TIMEOUT_MS,
     sleepImpl = sleep,
     now = () => Date.now(),
-  } = {},
-) {
+  }: PollCanaryLedgerOptions = {},
+): Promise<FoundGeneration & { rejected?: boolean }> {
   const deadline = now() + timeoutMs;
   let delay = LEDGER_POLL_BACKOFF_START_MS;
   while (now() < deadline) {
@@ -248,10 +318,20 @@ async function pollCanaryLedger(
   );
 }
 
+interface CloseCanaryIssueContext {
+  generation: LedgerGeneration;
+  runUrl?: string;
+  message?: string;
+}
+
 // `message` lets a caller (sweepStaleCanaries below) supply its own success
 // comment instead of the default runUrl-templated one below, while still
 // sharing the same comment-then-close sequence.
-async function closeCanaryIssue(api, task, { generation, runUrl, message }) {
+async function closeCanaryIssue(
+  api: GitHubApiClient,
+  task: LedgerTaskRef,
+  { generation, runUrl, message }: CloseCanaryIssueContext,
+): Promise<void> {
   const root = repositoryPath(task);
   const body =
     message ??
@@ -268,11 +348,16 @@ async function closeCanaryIssue(api, task, { generation, runUrl, message }) {
   });
 }
 
-// Mirrors github-api.mjs's failClosed/ensureNeedsHumanParked convention: a
-// failure is never a silent log line. The issue stays OPEN with evidence
+// Mirrors ../github-api.ts's failClosed/ensureNeedsHumanParked convention:
+// a failure is never a silent log line. The issue stays OPEN with evidence
 // (not auto-closed) so a maintainer has something concrete to act on --
 // cleanup only ever closes a canary that actually verified successfully.
-async function parkCanaryFailure(api, task, maintainer, reason) {
+async function parkCanaryFailure(
+  api: GitHubApiClient,
+  task: LedgerTaskRef,
+  maintainer: string,
+  reason: string,
+): Promise<void> {
   const root = repositoryPath(task);
   try {
     await api.requestOk(`${root}/issues/${task.issue}/comments`, {
@@ -291,18 +376,24 @@ async function parkCanaryFailure(api, task, maintainer, reason) {
   await ensureNeedsHumanParked(api, task, maintainer);
 }
 
-function hasNeedsHumanLabel(issue) {
+function hasNeedsHumanLabel(issue: GitHubIssueSummary): boolean {
   return (issue.labels ?? []).some(
     (label) =>
       (typeof label === 'string' ? label : label.name) === 'status:needs-human',
   );
 }
 
+interface SweepOutcome {
+  issue: number;
+  outcome: string;
+  error?: string;
+}
+
 // Deterministic-rediscovery backstop for an orchestrator run that never
 // reached its own runDispatchCanary catch block (job timeout, workflow
 // cancellation, runner loss -- see STALE_CANARY_AGE_MS above). Lists every
 // currently open issue (a single paginated, fully-consistent listing --
-// deliberately not the Search API: github-api.mjs's own discovery comment
+// deliberately not the Search API: github-api.ts's own discovery comment
 // notes the epic design audit explicitly rejected full-text/marker search
 // as a discovery mechanism because of search-index replication lag),
 // filters to this canary's own title prefix plus marker, and for every
@@ -328,9 +419,14 @@ function hasNeedsHumanLabel(issue) {
 // CANARY_SWEEP_CONCURRENCY below (a "list every open issue" discovery pass
 // can turn up a large stale backlog; an unbounded burst of simultaneous
 // GitHub writes risks tripping secondary rate limits, per the same PR #374
-// review finding dispatch-broker/main.mjs's dispatchReconcileScan already
-// applies this bound for).
-async function sweepOneStaleCanary(api, task, maintainer, alreadyParked) {
+// review finding ../main.ts's dispatchReconcileScan already applies this
+// bound for).
+async function sweepOneStaleCanary(
+  api: GitHubApiClient,
+  task: LedgerTaskRef,
+  maintainer: string,
+  alreadyParked: boolean,
+): Promise<SweepOutcome> {
   const found = await findCanaryGeneration(api, task);
   const conclusion = found?.generation?.attempt?.conclusion;
   if (found?.generation.state === 'completed' && conclusion === 'success') {
@@ -371,15 +467,26 @@ async function sweepOneStaleCanary(api, task, maintainer, alreadyParked) {
 // See the comment above sweepOneStaleCanary for why this is bounded.
 const CANARY_SWEEP_CONCURRENCY = 5;
 
+interface SweepStaleCanariesOptions {
+  now?: () => number;
+  ageMs?: number;
+}
+
 async function sweepStaleCanaries(
-  api,
-  repository,
-  repositoryId,
-  maintainer,
-  { now = () => Date.now(), ageMs = STALE_CANARY_AGE_MS } = {},
-) {
+  api: GitHubApiClient,
+  repository: string,
+  repositoryId: number,
+  maintainer: string,
+  {
+    now = () => Date.now(),
+    ageMs = STALE_CANARY_AGE_MS,
+  }: SweepStaleCanariesOptions = {},
+): Promise<SweepOutcome[]> {
   const root = repositoryPath({ repository });
-  const openIssues = await listAll(api, `${root}/issues?state=open`);
+  const openIssues = await listAll<GitHubIssueSummary>(
+    api,
+    `${root}/issues?state=open`,
+  );
   const stale = openIssues.filter((issue) => {
     if (issue.pull_request) return false;
     if (!issue.title?.startsWith(CANARY_TITLE_PREFIX)) return false;
@@ -405,9 +512,25 @@ async function sweepStaleCanaries(
       : {
           issue: stale[index].number,
           outcome: 'error',
-          error: outcome.reason.message,
+          // Assumed Error-shaped, exactly as ../main.ts's own
+          // dispatchReconcileScan assumes for the same mapWithConcurrency
+          // rejection shape.
+          error: (outcome.reason as Error).message,
         },
   );
+}
+
+interface RunDispatchCanaryOptions {
+  api: GitHubApiClient;
+  repository: string;
+  repositoryId: number;
+  maintainer: string;
+  source: string;
+  runUrl: string;
+  deployRunUrl?: string;
+  liveUrl?: string;
+  probeOptions?: ProbeLiveUrlOptions;
+  pollOptions?: PollCanaryLedgerOptions;
 }
 
 async function runDispatchCanary({
@@ -421,7 +544,7 @@ async function runDispatchCanary({
   liveUrl,
   probeOptions = {},
   pollOptions = {},
-}) {
+}: RunDispatchCanaryOptions): Promise<{ issue: number }> {
   if (liveUrl) {
     const probe = await probeLiveUrl(liveUrl, probeOptions);
     if (!probe.ok) {
@@ -467,12 +590,12 @@ async function runDispatchCanary({
     });
     return { issue: issue.number };
   } catch (error) {
-    await parkCanaryFailure(api, task, maintainer, error.message);
+    await parkCanaryFailure(api, task, maintainer, (error as Error).message);
     throw error;
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
   const api = createGitHubApi({ token: env('GITHUB_TOKEN') });
   const repository = env('GITHUB_REPOSITORY');
   const repositoryId = Number(env('GITHUB_REPOSITORY_ID'));
@@ -490,7 +613,7 @@ async function main() {
   // canary from creating, dispatching, and verifying. Any sweep problem is
   // still surfaced loudly -- just after the primary result, never instead
   // of it.
-  let sweepError;
+  let sweepError: Error | undefined;
   if (sweepStale) {
     try {
       const swept = await sweepStaleCanaries(
@@ -514,8 +637,10 @@ async function main() {
         );
       }
     } catch (error) {
-      console.log(`::error::canary janitor sweep aborted: ${error.message}`);
-      sweepError = error;
+      console.log(
+        `::error::canary janitor sweep aborted: ${(error as Error).message}`,
+      );
+      sweepError = error as Error;
     }
   }
 

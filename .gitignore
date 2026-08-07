@@ -23,6 +23,11 @@ __pycache__/
 !.github/actions/dispatch-broker/dist
 !.github/actions/dispatch-broker/dist/**
 
+# run-dispatch-canary/dist is the same committed-bundle pattern as
+# dispatch-broker/dist above (same `build-canary` Nx target, same reason).
+!.github/actions/run-dispatch-canary/dist
+!.github/actions/run-dispatch-canary/dist/**
+
 # dependencies
 node_modules
 # pnpm falls back to a project-local store here when run inside

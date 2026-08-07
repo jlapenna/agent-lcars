@@ -73,9 +73,6 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
-      - name: Test dispatch broker canary lifecycle (#307)
-        run: node --test .github/actions/run-dispatch-canary/*.test.mjs
-
       - name: Test image publish path-based routing (#441)
         run: node --test .github/actions/plan-image-publish/*.test.mjs
 
@@ -120,10 +117,18 @@ jobs:
       # behavior with no signal anything is wrong. Rebuilding here and
       # diffing against what is committed turns that into a loud CI
       # failure instead.
-      - name: Check dispatch-broker bundle matches its source
+      #
+      # run-dispatch-canary/dist/run.mjs is the same pattern, built by the
+      # sibling `build-canary` target from apps/dispatch-broker/src/canary --
+      # checked here too, not just dispatch-broker/dist: this exact class of
+      # drift (source moved, committed bundle/import left stale) is what let
+      # run-dispatch-canary's action silently break for six straight
+      # scheduled runs with nothing in CI to catch it.
+      - name: Check dispatch-broker and run-dispatch-canary bundles match their source
         run: |
           pnpm nx build @agent-lcars/dispatch-broker
-          git diff --exit-code -- .github/actions/dispatch-broker/dist
+          pnpm nx build-canary @agent-lcars/dispatch-broker
+          git diff --exit-code -- .github/actions/dispatch-broker/dist .github/actions/run-dispatch-canary/dist
 
       - name: Check formatting
         run: pnpm format:check

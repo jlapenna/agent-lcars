@@ -7,6 +7,10 @@
 # Prettier-formatted -- and doing so would fight esbuild's own output
 # formatting on every rebuild.
 .github/actions/dispatch-broker/dist
+
+# Same generated-bundle exemption as dispatch-broker/dist above, produced
+# by apps/dispatch-broker's `build-canary` target instead of `build`.
+.github/actions/run-dispatch-canary/dist
 /.nx/cache
 /.nx/workspace-data
 
