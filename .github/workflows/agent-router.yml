@@ -77,9 +77,27 @@ jobs:
   normalize:
     # Control-plane work has a protected, always-warm self-hosted pool.
     runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
-    concurrency:
-      group: ${{ github.repository }}-control-plane-normalize
-      cancel-in-progress: false
+    # Deliberately NO concurrency group here. This job used to take a
+    # repository-wide `-control-plane-normalize` queue to keep normalize load
+    # off the small control-plane pool -- but a GitHub concurrency group is a
+    # lossy queue, not a throughput limiter: at most ONE run per group may be
+    # pending, so a newer arrival evicts the older pending one. `cancel-in-
+    # progress: false` protects the *running* run and does nothing for the
+    # queued one.
+    #
+    # Because that group was repository-wide, ANY two router events anywhere
+    # in the repo landing close together dropped the older one outright --
+    # cancelled before its first step, so no ledger comment, no anomaly, no
+    # trace at all. Observed in production: near every router run over a
+    # multi-hour window was `cancelled` with zero steps executed, including a
+    # `labeled` event that should have dispatched an agent and simply did not.
+    # dispatch-reconcile.yml eventually re-drives such an issue, so this
+    # surfaced as mysterious dispatch latency rather than an outright hole.
+    #
+    # Normalize is read-only and capped at 2 minutes, and the runner pool
+    # already applies the right backpressure: jobs wait for a free runner
+    # instead of being cancelled. Serialization that actually matters is the
+    # `broker` job's per-task group below, which is unchanged.
     timeout-minutes: 2
     outputs:
       eligible: ${{ steps.normalize.outputs.eligible }}
