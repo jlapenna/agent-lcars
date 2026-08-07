@@ -21,6 +21,7 @@ inputs:
       verify-deliverable
       report-failure
       telemetry-finalize
+      post-agent-gates
 
 outputs:
   path:

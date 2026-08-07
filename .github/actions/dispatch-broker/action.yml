@@ -96,3 +96,22 @@ runs:
         BROKER_DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
         BROKER_WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
       run: node "$GITHUB_ACTION_PATH/dist/main.mjs" "${{ inputs.operation }}"
+
+    # Publish the verified attempt ID to every later step in the caller's
+    # own job as $ATTEMPT_ID (#645 Phase 3/4: a step that stamps an
+    # artifact with it is stamping a verified identity, not an unvalidated
+    # echo of its own inputs). Folded in here instead of a fifth
+    # hand-copied `run: echo ATTEMPT_ID=...` step in every worker
+    # workflow: this composite already produces `attempt-id` from the same
+    # preflight call, and a composite action step can write $GITHUB_ENV
+    # exactly like a plain `run:` step can (see
+    # prepare-agent-dispatch/prepare.sh for another composite doing this).
+    # Gated to `operation == 'preflight'` so a later completion-callback
+    # call in the same job never blanks out the value this step already
+    # published.
+    - name: Publish attempt identity
+      if: inputs.operation == 'preflight'
+      shell: bash
+      env:
+        ATTEMPT_ID: ${{ steps.run.outputs.attempt-id }}
+      run: echo "ATTEMPT_ID=$ATTEMPT_ID" >> "$GITHUB_ENV"

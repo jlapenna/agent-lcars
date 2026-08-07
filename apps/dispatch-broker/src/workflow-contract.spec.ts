@@ -328,8 +328,14 @@ test('workers expose one canonical dispatch and lane-configuration contract', as
       'agent: ${{ env.AGENT_NAME }}',
       'EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}',
       'EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}',
-      '$AGENT_LABEL',
-      '$REDISPATCH_COMMAND',
+      // NO_DELIVERABLE_REASON (post-agent-gates.sh's lane-owned input)
+      // substitutes both of these via GH Actions expression syntax rather
+      // than bash string interpolation now that the reason text is
+      // rendered by the caller's own YAML, not composed inside a `run:`
+      // script -- see "each lane's own no-deliverable wording..." below
+      // for the exact per-lane text this produces.
+      '${{ env.AGENT_LABEL }}',
+      '${{ env.REDISPATCH_COMMAND }}',
     ]) {
       assert.ok(
         source.includes(use),
@@ -366,10 +372,7 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       'Prepare dispatch context',
       'Start telemetry sidecar',
       adapter.name,
-      'Finalize telemetry sidecar',
-      'Verify a deliverable exists',
-      'Determine failure reason',
-      'Report failure on the issue',
+      'Run post-agent gates',
       'Return completion observation to the broker',
     ]);
 
@@ -397,26 +400,7 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       workflow,
       './.github/actions/telemetry-start',
     );
-    const telemetryFinalize = namedStep(
-      steps,
-      workflow,
-      'Finalize telemetry sidecar',
-    );
-    const deliverable = namedStep(
-      steps,
-      workflow,
-      'Verify a deliverable exists',
-    );
-    const failureReason = namedStep(
-      steps,
-      workflow,
-      'Determine failure reason',
-    );
-    const failureReport = namedStep(
-      steps,
-      workflow,
-      'Report failure on the issue',
-    );
+    const postAgentGates = namedStep(steps, workflow, 'Run post-agent gates');
     const completion = namedStep(
       steps,
       workflow,
@@ -449,46 +433,68 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
     assert.doesNotMatch(claim.source, /message-prefix:/u);
 
     assert.match(telemetryStart.source, stepField('if', 'always()'));
-    assert.match(telemetryFinalize.source, stepField('if', 'always()'));
+
+    // Run post-agent gates (#645 Phase 3): the single entry point that
+    // replaces the four hand-copied telemetry-finalize/verify-deliverable/
+    // determine-failure-reason/report-failure steps. It must run
+    // unconditionally (mirroring telemetry-finalize's own if: always()) and
+    // must NOT carry continue-on-error -- that flag on the four original
+    // steps applied only to telemetry-finalize; verify-deliverable and
+    // report-failure both need their own failure to fail the job, and
+    // post-agent-gates.sh reproduces that internally via its own exit code
+    // (see its header comment), which continue-on-error at the step level
+    // would silently swallow.
+    assert.match(postAgentGates.source, stepField('if', 'always()'));
+    assert.doesNotMatch(postAgentGates.source, /continue-on-error/u);
     assert.match(
-      telemetryFinalize.source,
-      stepField('continue-on-error', 'true'),
-    );
-    assert.match(
-      telemetryFinalize.source,
+      postAgentGates.source,
       stepField(
         'run',
-        'bash "$RUNNER_TEMP/trusted-actions/telemetry-finalize/telemetry-finalize.sh"',
+        'bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"',
       ),
     );
-    assert.match(deliverable.source, stepField('if', 'success()'));
+    // Every env var post-agent-gates.sh requires, wired from exactly the
+    // same sources the four original steps used -- same tokens (github.token,
+    // deliberately, not the minted App token), same JOB_STATUS/NO_DELIVERABLE
+    // propagation inputs.
+    for (const [envField, envValue] of [
+      ['GH_TOKEN', '${{ github.token }}'],
+      ['AGENT', '${{ env.AGENT_NAME }}'],
+      ['REPO', '${{ github.repository }}'],
+      ['SERVER_URL', '${{ github.server_url }}'],
+      ['RUN_ID', '${{ github.run_id }}'],
+      ['ISSUE', '${{ inputs.issue }}'],
+      ['STARTED_AT', "${{ steps.agent-setup.outputs['started-at'] }}"],
+      ['MODE', '${{ inputs.mode }}'],
+      ['EXPECTED_COMMENT_LOGIN', '${{ env.EXPECTED_COMMENT_LOGIN }}'],
+      ['EXCLUDE_PR_AUTHOR', '${{ env.EXCLUDE_PR_AUTHOR }}'],
+      ['JOB_STATUS', '${{ job.status }}'],
+      ['MAINTAINER', '${{ vars.MAINTAINER_LOGIN }}'],
+      [
+        'WRITER_CREDENTIALS_FILE',
+        "${{ steps.telemetry-start.outputs['credentials-file-path'] }}",
+      ],
+    ]) {
+      assert.match(
+        postAgentGates.source,
+        stepField(envField, envValue, 10),
+        `${workflow}'s "Run post-agent gates" step must pass ${envField} to the orchestrator`,
+      );
+    }
+    // NO_DELIVERABLE_REASON is lane-owned data (each lane's own wording,
+    // asserted verbatim in the dedicated per-lane test below) -- just check
+    // the shape (a folded block scalar) and that it substitutes THIS lane's
+    // own AGENT_LABEL/REDISPATCH_COMMAND rather than a hardcoded literal.
     assert.match(
-      deliverable.source,
-      stepField(
-        'run',
-        'bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"',
-      ),
+      postAgentGates.source,
+      new RegExp(`^ {10}NO_DELIVERABLE_REASON:\\s*>-\\s*$`, 'mu'),
     );
-    assert.match(failureReason.source, stepField('id', 'failure-reason'));
+    assert.match(postAgentGates.source, /`\$\{\{ env\.AGENT_LABEL \}\}`/u);
     assert.match(
-      failureReason.source,
-      stepField('if', 'failure() || cancelled()'),
+      postAgentGates.source,
+      /`\$\{\{ env\.REDISPATCH_COMMAND \}\}`/u,
     );
-    assert.match(
-      failureReport.source,
-      stepField('if', 'failure() || cancelled()'),
-    );
-    assert.match(
-      failureReport.source,
-      stepField('REASON', '${{ steps.failure-reason.outputs.reason }}', 10),
-    );
-    assert.match(
-      failureReport.source,
-      stepField(
-        'run',
-        'bash "$RUNNER_TEMP/trusted-actions/report-failure/report-failure.sh"',
-      ),
-    );
+
     assert.match(completion.source, stepField('if', 'always()'));
     assert.match(completion.source, stepField('continue-on-error', 'true'));
     assert.match(
@@ -696,12 +702,39 @@ test('deploy-console.yml fails closed when the triggering Verify job did not pas
   );
 });
 
-test('every worker captures the verified attempt ID and publishes it', async () => {
+test('every worker captures the verified attempt ID via the broker preflight call', async () => {
   // An action output nobody references is inert: the preflight step used to
   // advertise `attempt-id` while no worker gave that step an `id`, so nothing
   // downstream could ever read it and the "propagate an attemptId" contract
-  // (#645) was satisfied on paper only. These assertions are what make the
-  // output load-bearing rather than decorative.
+  // (#645) was satisfied on paper only. Phase 3 removed the fourth
+  // byte-identical hand-copied "Publish attempt identity" step (it runs
+  // pre-agent, so unlike the post-agent gates it CAN safely become a
+  // composite-action step) and folded it into dispatch-broker/action.yml
+  // itself, gated to `operation == 'preflight'` so a later
+  // completion-callback call in the same job never blanks the value back
+  // out. Assert both halves: the composite does the export exactly once,
+  // and every worker's (and the canary's) preflight call still gives that
+  // export something to key off (an `id` on the step).
+  const brokerActionSource = await fs.readFile(
+    path.join(workspaceRoot, '.github/actions/dispatch-broker/action.yml'),
+    'utf8',
+  );
+  assert.match(
+    brokerActionSource,
+    /^\s+if:\s+inputs\.operation == 'preflight'\s*$/mu,
+    'dispatch-broker/action.yml must gate publishing ATTEMPT_ID to the preflight operation',
+  );
+  assert.match(
+    brokerActionSource,
+    /ATTEMPT_ID:\s*\$\{\{\s*steps\.run\.outputs\.attempt-id\s*\}\}/u,
+    'dispatch-broker/action.yml must publish the SAME attempt ID its own preflight call just verified, not recompose it',
+  );
+  assert.match(
+    brokerActionSource,
+    /ATTEMPT_ID=\$ATTEMPT_ID" >> "\$GITHUB_ENV"/u,
+    "dispatch-broker/action.yml must export ATTEMPT_ID to the caller job's later steps",
+  );
+
   const sources = await workflowSources();
   const canary = 'agent-dispatch-canary.yml';
   for (const workflow of [...workerWorkflowNames, canary]) {
@@ -719,23 +752,171 @@ test('every worker captures the verified attempt ID and publishes it', async () 
     assert.match(
       preflight,
       /^\s+id:\s+broker-preflight\s*$/mu,
-      `${workflow}'s preflight step needs an id for its outputs to be readable`,
+      `${workflow}'s preflight step needs an id for dispatch-broker/action.yml's own attempt-id output to resolve`,
     );
 
-    const publish = namedStep(
-      steps,
-      workflow,
-      'Publish attempt identity',
-    ).source;
-    assert.match(
-      publish,
-      /steps\.broker-preflight\.outputs\.attempt-id/u,
-      `${workflow} must publish the verified attempt ID, not recompose it`,
+    assert.doesNotMatch(
+      source,
+      /Publish attempt identity/u,
+      `${workflow} must not hand-copy a "Publish attempt identity" step -- dispatch-broker/action.yml now does this once, internally, on every preflight call`,
     );
+  }
+});
+
+test('no worker invokes a post-agent gate via `uses:` (#645 Phase 3 security invariant)', async () => {
+  // The agent step has unrestricted Bash and can rewrite both the working
+  // tree and the runner's own _actions download, so any post-agent gate
+  // resolved from disk via `uses:` after that point could execute
+  // agent-authored code with the job's token (docs/published-actions.md's
+  // "Security: post-agent gates run from a pre-agent snapshot"; see also
+  // snapshot-enforcement-scripts/action.yml). Every gate must instead run
+  // as `run: bash "$RUNNER_TEMP/trusted-actions/<name>/<name>.sh"` from the
+  // pre-agent snapshot. Phase 3's consolidation into one orchestrating
+  // script is exactly the kind of change that could accidentally regress
+  // this by reaching for `uses:` on the new shared script -- assert it
+  // can never happen silently.
+  const gateActions = [
+    'verify-deliverable',
+    'report-failure',
+    'telemetry-finalize',
+    'post-agent-gates',
+  ];
+  const sources = await workflowSources();
+  const canary = 'agent-dispatch-canary.yml';
+  for (const workflow of [...workerWorkflowNames, canary]) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    for (const action of gateActions) {
+      assert.doesNotMatch(
+        source,
+        new RegExp(
+          `uses:\\s*\\./\\.github/actions/${action}(?:[\\s@]|$)`,
+          'mu',
+        ),
+        `${workflow} must never invoke ${action} via \`uses:\` -- post-agent gates must run from the pre-agent snapshot via \`run: bash "$RUNNER_TEMP/trusted-actions/...\`, never \`uses:\``,
+      );
+    }
+  }
+  for (const workflow of workerWorkflowNames) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
     assert.match(
-      publish,
-      /ATTEMPT_ID=\$ATTEMPT_ID" >> "\$GITHUB_ENV"/u,
-      `${workflow} must export ATTEMPT_ID to later steps`,
+      source,
+      /run:\s+bash "\$RUNNER_TEMP\/trusted-actions\/post-agent-gates\/post-agent-gates\.sh"/u,
+      `${workflow} must run the shared post-agent gate orchestrator from the pre-agent snapshot`,
     );
+  }
+  // The canary has no post-agent gates at all (#307/#645) -- assert it
+  // stays that way rather than silently growing one.
+  const canarySource = sources.find(
+    (candidate) => candidate.name === canary,
+  )?.source;
+  assert.doesNotMatch(canarySource, /post-agent-gates|Run post-agent gates/u);
+});
+
+function foldedBlockScalar(source, field, indentation = 10) {
+  const pattern = new RegExp(
+    `^ {${indentation}}${field}:\\s*>-\\n((?:^ {${
+      indentation + 2
+    },}\\S.*\\n?)+)`,
+    'mu',
+  );
+  const match = pattern.exec(source);
+  assert.ok(match, `expected a folded (">-") block scalar for ${field}`);
+  return match[1]
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(' ');
+}
+
+test("each lane's own no-deliverable wording survives the merge into post-agent-gates.sh verbatim", async () => {
+  // claude.yml/codex.yml/opencode.yml each phrased their own
+  // "successfully but produced no deliverable" report differently before
+  // this refactor (not just AGENT_LABEL/REDISPATCH_COMMAND substitution --
+  // genuinely different sentences). The shared post-agent-gates.sh
+  // orchestrator stays lane-agnostic by taking NO_DELIVERABLE_REASON as an
+  // adapter-style input instead of picking one lane's wording (or
+  // templating a lowest-common-denominator version) -- assert each lane's
+  // exact original wording (with its own AGENT_LABEL/REDISPATCH_COMMAND
+  // substituted via `${{ env.* }}`, exactly as this lane's job-level env
+  // already declares those two) survived byte for byte.
+  const expected = {
+    'claude.yml':
+      'The run ended "successfully" but produced **no deliverable** - no PR, no issue close, no status:needs-human label. All of its local work is lost. Re-dispatch by re-adding the `${{ env.AGENT_LABEL }}` label or replying `${{ env.REDISPATCH_COMMAND }}`, and remind it to push early.',
+    'codex.yml':
+      'The run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by re-adding the `${{ env.AGENT_LABEL }}` label or replying `${{ env.REDISPATCH_COMMAND }}`, and remind it to push or communicate a final result.',
+    'opencode.yml':
+      'The run ended "successfully" but produced **no deliverable** - it may have reasoned to a conclusion internally without ever posting it. Re-dispatch by re-adding the `${{ env.AGENT_LABEL }}` label or replying `${{ env.REDISPATCH_COMMAND }}`, and consider whether the prompt needs to be even more explicit for this issue.',
+  };
+  const sources = await workflowSources();
+  for (const [workflow, expectedText] of Object.entries(expected)) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    assert.equal(
+      foldedBlockScalar(source, 'NO_DELIVERABLE_REASON'),
+      expectedText,
+      `${workflow}'s NO_DELIVERABLE_REASON must match its original wording exactly`,
+    );
+  }
+});
+
+test("claude's extra failure-reason log-scan survives as an adapter-style input, absent from codex/opencode", async () => {
+  // claude.yml's original "Determine failure reason" step was materially
+  // larger than codex.yml's/opencode.yml's: beyond the shared
+  // NO_DELIVERABLE check, it grepped this run's own log for a turn-budget
+  // exhaustion or an expired/invalid OAuth token. That is lane-specific
+  // behavior, not duplication -- #645 Phase 3 keeps it as an optional,
+  // lane-provided input to the shared orchestrator (FAILURE_LOG_SCAN_SCRIPT)
+  // instead of forcing codex/opencode onto it or dropping it.
+  const sources = await workflowSources();
+  const claudeSource = sources.find(
+    (candidate) => candidate.name === 'claude.yml',
+  )?.source;
+  assert.ok(claudeSource, 'claude.yml is missing');
+  assert.match(
+    claudeSource,
+    /FAILURE_LOG_SCAN_SCRIPT:\s*\$\{\{ runner\.temp \}\}\/trusted-actions\/post-agent-gates\/claude-log-scan\.sh/u,
+    'claude.yml must point the shared orchestrator at its own log-scan script',
+  );
+  // "Verify Claude run status" (an existing, separate, claude-only gate
+  // unrelated to the four steps this refactor consolidates) must still run
+  // between the agent step and the merged orchestrator, gated on
+  // success() exactly as before -- its own failure must still correctly
+  // skip verify-deliverable inside post-agent-gates.sh via JOB_STATUS.
+  const claudeSteps = stepBlocks(claudeSource);
+  const runStatus = namedStep(
+    claudeSteps,
+    'claude.yml',
+    'Verify Claude run status',
+  );
+  assert.match(runStatus.source, stepField('if', 'success()'));
+  const claudeAgentStep = agentAdapterStep(claudeSteps, 'claude.yml');
+  const agentIndex = claudeSteps.indexOf(claudeAgentStep);
+  const runStatusIndex = claudeSteps.indexOf(runStatus);
+  const gatesIndex = claudeSteps.findIndex(
+    (step) => step.name === 'Run post-agent gates',
+  );
+  assert.ok(
+    agentIndex < runStatusIndex && runStatusIndex < gatesIndex,
+    '"Verify Claude run status" must run between the agent step and "Run post-agent gates"',
+  );
+
+  for (const workflow of ['codex.yml', 'opencode.yml']) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    assert.doesNotMatch(
+      source,
+      /FAILURE_LOG_SCAN_SCRIPT/u,
+      `${workflow} must not gain claude's log-scan signal -- it never had one`,
+    );
+    assert.doesNotMatch(source, /Verify Claude run status/u);
   }
 });

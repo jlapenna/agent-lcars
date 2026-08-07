@@ -93,11 +93,16 @@ agent-authored code with the job's token. The invariant (see
 `snapshot-enforcement-scripts/action.yml`):
 
 1. Call `snapshot-enforcement-scripts` via `uses:` **before** the agent
-   step — it freezes `verify-deliverable`, `report-failure`, and
-   `telemetry-finalize` into `$RUNNER_TEMP/trusted-actions`.
+   step — it freezes `verify-deliverable`, `report-failure`,
+   `telemetry-finalize`, and `post-agent-gates` into
+   `$RUNNER_TEMP/trusted-actions`.
 2. After the agent step, run the gates **only** as
    `run: bash "$RUNNER_TEMP/trusted-actions/<name>/<name>.sh"` — never via
-   `uses:`.
+   `uses:`. `post-agent-gates/post-agent-gates.sh` is the single entry
+   point every worker calls; it drives `verify-deliverable`,
+   `report-failure`, and `telemetry-finalize` (all from the same snapshot)
+   as an internal orchestration, so each worker needs only one such step
+   instead of four hand-copied ones (#645 Phase 3).
 
 `mint-agent-token` note: always request the narrowest scope the caller
 needs via `owner`/`repositories`/`permission-*` — an unscoped token
