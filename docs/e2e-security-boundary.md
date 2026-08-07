@@ -117,6 +117,58 @@ Next.js would auto-load from `apps/console`, closing the file-based path around
 the clean process environment. Validation errors name the unsafe key but never
 echo its value.
 
+## Bootstrap and exact-model provider canaries (#645 Phase 3)
+
+The dispatch-broker canary above proves the broker's own claim/dispatch/
+completion-callback path; it deliberately runs on `ubuntu-latest` and never
+touches self-hosted infra or a model credential
+(`apps/dispatch-broker/src/workflow-contract.spec.ts`'s "structurally
+incapable" assertions pin this down). Two more workflows close what that
+canary structurally cannot cover:
+
+`.github/workflows/bootstrap-canary.yml` (hourly + `workflow_dispatch`)
+allocates a runner from the real self-hosted pool
+(`vars.AGENT_RUNNER_LABEL`) and runs the same bootstrap sequence
+claude.yml/codex.yml/opencode.yml all share ahead of their own agent step --
+mint-agent-token, snapshot-enforcement-scripts, and the telemetry sidecar's
+WIF auth + process lifecycle -- then stops, without ever invoking a paid
+model. Two of those four pieces (telemetry-start/telemetry-finalize) are
+themselves built to never fail the job that calls them, since a real agent
+dispatch must not be blocked by a broken sidecar (see
+`telemetry-start/action.yml` and
+`apps/telemetry-watcher/bin/sidecar-lifecycle.sh`'s own "every failure path
+... exits 0" contract). This workflow adds explicit verification steps
+after each composite call -- reading the same output/PID/log signals those
+actions already produce for this purpose (including
+`agent-lcars-telemetry-watcher`'s own `::warning::` escalation from
+agent-lcars#352) -- so a genuinely broken WIF grant or a missing sidecar
+binary fails the canary loudly instead of the composite's own
+`continue-on-error: true` silently absorbing it.
+
+`.github/workflows/opencode-model-canary.yml` (hourly + `workflow_dispatch`,
+self-hosted -- the endpoint is LAN-only) is the one lane where "the exact
+configured model actually answers" can be tested honestly and cheaply:
+OpenCode resolves `homelab/default` through LiteLLM at
+`https://llm.lan.jlapenna.net/v1` (`opencode.json`) with a plain bearer key
+(`OPENCODE_LLM_API_KEY`), so a direct minimal `/v1/chat/completions` call
+against that exact base URL and model name is a genuine readiness check --
+its assertions in `workflow-contract.spec.ts` cross-check both literals
+against `opencode.json` itself rather than a second hardcoded copy, so a
+future config change fails the test instead of silently drifting.
+
+Claude and Codex have no equivalent. `CLAUDE_CODE_OAUTH_TOKEN` (an
+interactive `claude setup-token` credential scoped to
+`anthropics/claude-code-action`) has no documented lightweight
+validity/whoami check independent of a real completion. `CODEX_AUTH_JSON`
+(a ChatGPT subscription credential) has `codex login status`, already run
+by `codex.yml` on every real dispatch, but that command is documented as a
+local credential-_presence_ check only -- it makes no network call and
+proves nothing about whether the token is still accepted upstream. Building
+a canary around either would pass without testing anything, the exact
+failure mode #645 exists to eliminate; proving either lane's exact model
+answers requires the real, paid/subscription-consuming harness, which a
+canary must not invoke.
+
 ## Credential incident follow-up
 
 Before this boundary existed, a local run inherited an ambient OpenCode

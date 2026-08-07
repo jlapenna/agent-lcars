@@ -697,6 +697,161 @@ test('the canary orchestrators (#307) never reference a self-hosted runner or a 
   }
 });
 
+test('the bootstrap canary (#645 Phase 3) exercises the self-hosted worker bootstrap sequence without an agent step', async () => {
+  // bootstrap-canary.yml proves the half of the worker lifecycle
+  // agent-dispatch-canary.yml is structurally incapable of touching: runner
+  // allocation from vars.AGENT_RUNNER_LABEL, mint-agent-token,
+  // snapshot-enforcement-scripts, and the telemetry sidecar. It must run on
+  // the real self-hosted pool (the opposite of the broker canary's own
+  // ubuntu-latest requirement) while still never invoking a paid model,
+  // mirroring agent-dispatch-canary.yml's own "structurally incapable of a
+  // paid or privileged agent" contract for the one dimension that still
+  // applies here (no agent adapter, no third-party agent action).
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'bootstrap-canary.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    source,
+    /^\s+runs-on:\s+\['\$\{\{ vars\.AGENT_RUNNER_LABEL \}\}'\]\s*$/mu,
+    'bootstrap-canary.yml must allocate a runner from the same self-hosted pool claude.yml/codex.yml/opencode.yml use',
+  );
+
+  for (const action of [
+    './.github/actions/snapshot-enforcement-scripts',
+    './.github/actions/mint-agent-token',
+    './.github/actions/telemetry-start',
+  ]) {
+    assert.match(
+      source,
+      new RegExp(`uses:\\s*${escapeRegex(action)}(?:[\\s@]|$)`, 'mu'),
+      `bootstrap-canary.yml must invoke ${action}`,
+    );
+  }
+
+  // Finalize must run from the pre-agent snapshot via a bare `run:`, never
+  // `uses: ./.github/actions/telemetry-finalize` -- that composite's own
+  // inner step is continue-on-error: true (telemetry must never fail a
+  // real agent run) and therefore always reports green regardless of
+  // whether the underlying finalize actually succeeded, which would make
+  // this entire canary incapable of catching the failure it exists to
+  // catch. See sidecar-lifecycle.sh's own "every failure path ... exits 0"
+  // contract and agent-lcars#352's ::warning:: escalation, which this
+  // workflow's own verification step reads instead of trusting the
+  // composite's exit code.
+  assert.doesNotMatch(
+    source,
+    /uses:\s*\.\/\.github\/actions\/telemetry-finalize(?:[\s@]|$)/u,
+    'bootstrap-canary.yml must never invoke telemetry-finalize via `uses:` -- its own continue-on-error: true would make this canary incapable of failing on a real finalize failure',
+  );
+  assert.match(
+    source,
+    /run:[^\n]*\n\s*bash "\$RUNNER_TEMP\/trusted-actions\/telemetry-finalize\/telemetry-finalize\.sh"/u,
+    'bootstrap-canary.yml must finalize telemetry from the pre-agent snapshot via `run:`',
+  );
+
+  // No agent adapter step (the agentAdapterStep helper's own marker: an
+  // `id: agent` step) and no published third-party agent action reference
+  // -- this canary must stay structurally incapable of a paid dispatch, the
+  // same property agent-dispatch-canary.yml's own #307 contract test
+  // enforces.
+  const steps = stepBlocks(source);
+  assert.equal(
+    steps.filter((step) => stepField('id', 'agent').test(step.source)).length,
+    0,
+    'bootstrap-canary.yml must not expose an agent adapter step (steps.agent)',
+  );
+  assert.doesNotMatch(source, /anthropics\/claude-code-action/u);
+  assert.doesNotMatch(source, /anomalyco\/opencode/u);
+  assert.doesNotMatch(source, /@openai\/codex/u);
+
+  // Never touches the broker/ledger -- unlike agent-dispatch-canary.yml,
+  // this is a standalone infra probe with no issue to claim and nothing for
+  // the broker to arbitrate.
+  assert.doesNotMatch(source, /\.\/\.github\/actions\/dispatch-broker/u);
+  assert.doesNotMatch(source, /\.\/\.github\/actions\/claim-issue/u);
+
+  // Least privilege: only what google-github-actions/auth (inside
+  // telemetry-start) needs, plus read access to check out the repo.
+  assert.match(source, /^permissions:\s*$/mu);
+  assert.match(source, /^\s+contents:\s+read\s*$/mu);
+  assert.match(source, /^\s+id-token:\s+write\s*$/mu);
+  assert.doesNotMatch(
+    source,
+    /^\s+(issues|pull-requests|actions):\s+write\s*$/mu,
+  );
+});
+
+test('the OpenCode model canary (#645 Phase 3) probes the exact model opencode.json configures, honestly', async () => {
+  // Claude (CLAUDE_CODE_OAUTH_TOKEN, an interactive claude-code-action
+  // credential with no documented lightweight validity check) and Codex
+  // (CODEX_AUTH_JSON, a ChatGPT subscription credential whose own `codex
+  // login status` check -- already run by codex.yml on every real dispatch
+  // -- is a local credential-presence check, not a network liveness check)
+  // have no honest equivalent, and #645 explicitly forbids faking one for
+  // either lane. OpenCode alone resolves through a plain OpenAI-compatible
+  // LiteLLM endpoint with a bearer API key, so a direct minimal
+  // /v1/chat/completions call is genuinely meaningful -- assert it stays
+  // driven by opencode.json's own real configuration, not an independently
+  // hardcoded literal that could silently drift from it.
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'opencode-model-canary.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    source,
+    /^\s+runs-on:\s+\['\$\{\{ vars\.AGENT_RUNNER_LABEL \}\}'\]\s*$/mu,
+    'opencode-model-canary.yml must run on the self-hosted pool -- the LiteLLM endpoint is LAN-only',
+  );
+  assert.match(source, /secrets\.OPENCODE_LLM_API_KEY/u);
+
+  const steps = stepBlocks(source);
+  assert.equal(
+    steps.filter((step) => stepField('id', 'agent').test(step.source)).length,
+    0,
+    'opencode-model-canary.yml must not expose an agent adapter step (steps.agent)',
+  );
+  assert.doesNotMatch(source, /anthropics\/claude-code-action/u);
+  assert.doesNotMatch(source, /anomalyco\/opencode\/github/u);
+  assert.doesNotMatch(source, /@openai\/codex/u);
+
+  // Cross-check against opencode.json's own real configuration instead of
+  // trusting a second, independently hardcoded literal in the workflow --
+  // a future change to the homelab provider's baseURL or model key must
+  // fail this test, not silently drift.
+  const opencodeConfig = JSON.parse(
+    await fs.readFile(path.join(workspaceRoot, 'opencode.json'), 'utf8'),
+  );
+  const homelabProvider = opencodeConfig.provider?.homelab;
+  assert.ok(
+    homelabProvider,
+    'opencode.json must still declare the homelab provider this canary probes',
+  );
+  const baseUrl = homelabProvider.options?.baseURL;
+  assert.ok(
+    baseUrl,
+    'opencode.json must declare provider.homelab.options.baseURL',
+  );
+  const modelKeys = Object.keys(homelabProvider.models ?? {});
+  assert.equal(
+    modelKeys.length,
+    1,
+    'expected exactly one model configured under provider.homelab.models',
+  );
+  const [modelKey] = modelKeys;
+
+  assert.ok(
+    source.includes(`${baseUrl}/chat/completions`),
+    `opencode-model-canary.yml must call opencode.json's own configured baseURL (${baseUrl}), not an independently hardcoded one`,
+  );
+  assert.ok(
+    source.includes(`"model":"${modelKey}"`),
+    `opencode-model-canary.yml must request opencode.json's own configured model key (${modelKey}) -- the same one opencode.yml's own \`model: homelab/${modelKey}\` input drives`,
+  );
+});
+
 test('post-deploy-smoke.yml gates only on conclusion, never on head_branch (#307 P2 fix)', async () => {
   // deploy-console.yml's gate job fails unless the triggering CI run's
   // Verify job passed, and deploy depends on that gate. Its workflow-level

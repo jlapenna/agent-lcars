@@ -1,0 +1,95 @@
+name: OpenCode Model Canary
+
+# Exact-model provider canary (#645 Phase 3), scoped to OpenCode only -- see
+# bootstrap-canary.yml's own header for why the other two lanes (Claude,
+# Codex) do not get an equivalent here. bootstrap-canary.yml proves the
+# self-hosted worker bootstrap sequence (runner allocation, App token mint,
+# enforcement-script snapshot, telemetry); neither it nor the existing
+# dispatch-broker canary (agent-dispatch-canary.yml, dispatch-canary.yml)
+# ever asks whether the model each lane is actually configured to use is
+# alive and answering. This workflow closes that gap for the one lane where
+# it can be answered honestly and cheaply.
+#
+# Why OpenCode specifically: opencode.json configures the `homelab` provider
+# as `@ai-sdk/openai-compatible` against `https://llm.lan.jlapenna.net/v1`
+# (Homelab LiteLLM), authenticated with a plain bearer key
+# (OPENCODE_LLM_API_KEY) -- a genuine OpenAI-compatible REST endpoint, so a
+# direct, minimal `/v1/chat/completions` call against that exact base URL
+# and that exact model name is a real, honest readiness check: it proves
+# the same model resolution path opencode.yml's own `model: homelab/default`
+# input drives is alive, without running the OpenCode CLI or its published
+# GitHub Action at all. Claude's CLAUDE_CODE_OAUTH_TOKEN (an interactive
+# `claude setup-token` credential, scoped to claude-code-action, with no
+# documented lightweight validity check independent of a real completion)
+# and Codex's CODEX_AUTH_JSON (a ChatGPT subscription credential restored
+# from Secret Manager, whose own `codex login status` check -- already run
+# by codex.yml on every real dispatch -- is documented as a LOCAL
+# credential-presence check only, not a network validity/liveness check)
+# have no equivalent honest, cheap probe: proving either one's exact model
+# answers requires actually invoking the real paid/subscription-consuming
+# harness, which #645 explicitly forbids a canary from doing. Building a
+# probe around either credential anyway -- one that "passes" without
+# actually exercising a live network round trip against the provider --
+# would be exactly the theater this issue exists to eliminate.
+#
+# Endpoint is LAN-only (llm.lan.jlapenna.net), so this must run on the
+# self-hosted pool, unlike the ubuntu-latest broker canaries. Scheduled +
+# workflow_dispatch, and its failure convention mirrors bootstrap-canary.yml
+# (and label-contract-audit.yml/rerun-infra-killed-runs.yml/
+# dispatch-reconcile.yml before it): no anchor issue exists for this
+# standalone infra probe, so a genuine failure fails the job loudly
+# (::error:: annotations, non-zero exit) rather than parking
+# status:needs-human on a fabricated one.
+
+on:
+  schedule:
+    # Hourly, offset clear of every other scheduled cadence documented in
+    # this repo -- see bootstrap-canary.yml's own list ('43 * * * *');
+    # ':08' keeps clear of that and of dispatch-canary.yml ('13'),
+    # dispatch-reconcile.yml ('7,37'), rerun-infra-killed-runs.yml
+    # ('22,52'), and label-contract-audit.yml ('17 13 * * *' daily).
+    - cron: '8 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ['${{ vars.AGENT_RUNNER_LABEL }}']
+    timeout-minutes: 5
+    steps:
+      # opencode.json's `provider.homelab.models` map has exactly one entry,
+      # keyed "default" -- that key, not its human-readable `name` field, is
+      # the model identifier opencode.yml's own `model: homelab/default`
+      # input already drives (provider/model-key form). Sending anything
+      # else here would test a model OpenCode never actually requests.
+      - name: Probe OpenCode's exact configured model (homelab/default via LiteLLM)
+        env:
+          OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+        run: |
+          if [ -z "$OPENCODE_LLM_API_KEY" ]; then
+            echo "::error::OPENCODE_LLM_API_KEY is unset; cannot probe the LiteLLM endpoint OpenCode itself depends on."
+            exit 1
+          fi
+
+          RESPONSE_FILE="$(mktemp)"
+          HTTP_STATUS="$(curl -sS -o "$RESPONSE_FILE" -w '%{http_code}' \
+            --max-time 60 \
+            -H "Authorization: Bearer $OPENCODE_LLM_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"default","messages":[{"role":"user","content":"Reply with exactly one word: pong"}],"max_tokens":8}' \
+            https://llm.lan.jlapenna.net/v1/chat/completions)"
+
+          echo "HTTP status: $HTTP_STATUS"
+          cat "$RESPONSE_FILE"
+          echo
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::LiteLLM chat/completions probe for model 'default' (opencode.json's homelab/default) returned HTTP $HTTP_STATUS -- a real OpenCode dispatch would fail identically at model-resolution time."
+            exit 1
+          fi
+
+          if ! jq -e '.choices[0].message.content // empty | length > 0' "$RESPONSE_FILE" >/dev/null; then
+            echo "::error::LiteLLM responded 200 but returned no completion content -- see the response body above."
+            exit 1
+          fi
