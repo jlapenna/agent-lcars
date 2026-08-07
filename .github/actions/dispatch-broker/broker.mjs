@@ -1,16 +1,17 @@
 import crypto from 'node:crypto';
 
-import { isDispatchPipeline } from '../../../libs/dispatch-contracts/src/index.js';
+import {
+  extractLedgerComment,
+  isDispatchPipeline,
+  LEDGER_ACTIVE_GENERATION_STATES,
+  LEDGER_MARKER,
+  LEDGER_SCHEMA,
+  renderLedgerComment as renderLedgerCommentContract,
+} from '../../../libs/dispatch-contracts/src/index.js';
 
-const LEDGER_MARKER = '<!-- agent-lcars:dispatch-ledger:v1 -->';
-const LEDGER_SCHEMA = 'agent-lcars.dispatch-ledger/v1';
-const ACTIVE_STATES = new Set([
-  'dispatching',
-  'dispatch-unknown',
-  'active',
-  'completion-observed',
-  'completion-awaiting-terminal',
-]);
+// Alias to minimise churn below: every existing `ACTIVE_STATES` reference in
+// this file (and `main.mjs`'s imported one) keeps working unchanged.
+const ACTIVE_STATES = LEDGER_ACTIVE_GENERATION_STATES;
 const TERMINAL_RUN_STATUSES = new Set(['completed']);
 // 'canary' (#307) is a dedicated, structurally-no-op fourth pipeline: it
 // exists purely to prove the broker's own claim/dispatch/completion-
@@ -101,20 +102,18 @@ function validateLedger(ledger, task) {
 }
 
 function parseLedgerComment(body, task) {
-  if (typeof body !== 'string' || !body.includes(LEDGER_MARKER)) {
-    throw new Error('Dispatch ledger marker missing');
-  }
-  const matches = [...body.matchAll(/```json\s*([\s\S]*?)\s*```/gu)];
-  if (matches.length !== 1) {
-    throw new Error('Malformed dispatch ledger: expected one JSON block');
-  }
-  let ledger;
-  try {
-    ledger = JSON.parse(matches[0][1]);
-  } catch {
+  const extraction = extractLedgerComment(body);
+  if (!extraction.ok) {
+    if (extraction.reason === 'no-marker') {
+      throw new Error('Dispatch ledger marker missing');
+    }
+    if (extraction.reason === 'block-count') {
+      throw new Error('Malformed dispatch ledger: expected one JSON block');
+    }
+    // extraction.reason === 'invalid-json'
     throw new Error('Malformed dispatch ledger: invalid JSON');
   }
-  return validateLedger(ledger, task);
+  return validateLedger(extraction.ledger, task);
 }
 
 function visibleSummary(ledger) {
@@ -137,7 +136,7 @@ function visibleSummary(ledger) {
 }
 
 function renderLedgerComment(ledger) {
-  return `${LEDGER_MARKER}\n${visibleSummary(ledger)}\n\n<details><summary>Machine state</summary>\n\n\`\`\`json\n${JSON.stringify(ledger)}\n\`\`\`\n\n</details>`;
+  return renderLedgerCommentContract(ledger, visibleSummary(ledger));
 }
 
 function mutate(ledger, now, callback) {

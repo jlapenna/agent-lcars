@@ -42,6 +42,12 @@ export const E2E_FIXTURE_REPO = {
   name: 'sprinkles',
 } as const;
 
+/** Stand-in for the real repo's numeric GitHub ID, which a ledger's `task`
+ * carries (`LedgerTaskRef.repositoryId`) but nothing in this fixture suite
+ * otherwise needs to look up. Numbered well clear of anything real, same as
+ * `E2E_ITEM_NUMBERS`. */
+const E2E_FIXTURE_REPOSITORY_ID = 900000000;
+
 /** Numbered well clear of anything real so a fixture leaking into a live
  * console would be obvious rather than plausible. */
 export const E2E_ITEM_NUMBERS = {
@@ -115,6 +121,7 @@ function ledgerFixture(): DispatchLedger {
     schema: 'agent-lcars.dispatch-ledger/v1',
     revision: 2,
     task: {
+      repositoryId: E2E_FIXTURE_REPOSITORY_ID,
       repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
       issue: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
     },
@@ -642,6 +649,7 @@ export function recordQuickTaskIssue(params: {
     schema: 'agent-lcars.dispatch-ledger/v1',
     revision: 1,
     task: {
+      repositoryId: E2E_FIXTURE_REPOSITORY_ID,
       repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
       issue: number,
     },

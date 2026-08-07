@@ -1,131 +1,76 @@
-import type { AgentPipeline } from './watched-repo';
+import {
+  type DispatchLedger,
+  type DispatchPipeline,
+  extractLedgerComment,
+  hasLedgerMarker,
+  isPlainObject,
+  isWellFormedLedger,
+  LEDGER_ACTIVE_GENERATION_STATES,
+  LEDGER_MARKER,
+  type LedgerAnomaly,
+  type LedgerControl,
+  type LedgerGeneration,
+  type LedgerRunAttempt,
+  type LedgerSource,
+} from '@agent-lcars/dispatch-contracts';
 
 /**
- * Read-side mirror of `.github/actions/dispatch-broker/broker.mjs`'s ledger
- * schema (`agent-lcars.dispatch-ledger/v1`). The broker is the sole writer;
- * this file only ever reads the comment it pins to an issue/PR
+ * Read-side consumer of `@agent-lcars/dispatch-contracts`' ledger schema
+ * (`agent-lcars.dispatch-ledger/v1`). `broker.mjs` is the sole writer; this
+ * file only ever reads the comment it pins to an issue/PR
  * (`pinLedgerWhenUnoccupied`) and turns it into typed data for the console's
  * view models (see `logical-work.ts`).
  *
- * Deliberately re-derives the marker/schema constants and a lenient parser
- * rather than importing broker.mjs directly: that file lives under
- * `.github/actions/dispatch-broker` (a separate Node ESM package with no
- * relationship to this Next app's build), and the broker's own
- * `validateLedger` throws on anything it doesn't like - exactly the wrong
- * behavior for a read path that must degrade a malformed/older ledger to
- * "no ledger" instead of crashing the dashboard (see `parseDispatchLedger`'s
- * own doc comment).
+ * The marker, the schema string, the state vocabulary, the comment envelope,
+ * and the record shapes (`DispatchLedger`, `LedgerGeneration`, ...) used to
+ * be re-derived here by hand, with this file's own header noting the two
+ * packages had "no relationship." They had already drifted: this file's
+ * copies were missing `context`/`reply`/`digest` on a generation and
+ * `token`/`unknownAt`/`unknownReason`/`rejectedAt`/`rejectionReason`/
+ * `completionObservedAt`/`lastObservedAt` on an attempt. Those constants and
+ * shapes now come from `libs/dispatch-contracts/src/ledger.js` - import it,
+ * do not re-derive it.
+ *
+ * What is still genuinely different, and deliberately NOT shared, is each
+ * side's validation *policy*: the broker's own `validateLedger` throws on
+ * anything it doesn't trust - correct for a writer that must fail closed.
+ * This file instead degrades a malformed or older ledger to "no ledger"
+ * rather than crash a dashboard (see `parseDispatchLedger`'s own doc
+ * comment), building that lenient policy on the shared `isWellFormedLedger`
+ * predicate rather than the broker's strict gate.
  */
 
-export const LEDGER_MARKER = '<!-- agent-lcars:dispatch-ledger:v1 -->';
-const LEDGER_SCHEMA = 'agent-lcars.dispatch-ledger/v1';
-
-/** Mirrors broker.mjs's ACTIVE_STATES - every state a generation can be in
- * while it still has (or is about to have) a live workflow attempt. */
-export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
-  'dispatching',
-  'dispatch-unknown',
-  'active',
-  'completion-observed',
-  'completion-awaiting-terminal',
-]);
-
-/** Every state a ledger generation can be in - the single source both the
- * `LedgerGenerationState` type and the `LEDGER_GENERATION_STATES` runtime
- * membership check (used by `isWellFormedGeneration` below) derive from, so
- * the ~11 literals are never hand-listed twice and can't drift apart. */
-const LEDGER_GENERATION_STATES_LIST = [
-  'accepted',
-  'pending',
-  'dispatching',
-  'dispatch-unknown',
-  'dispatch-rejected',
-  'active',
-  'completion-observed',
-  'completion-awaiting-terminal',
-  'completed',
-  'superseded',
-  'superseded-by-close',
-] as const;
-
-export type LedgerGenerationState =
-  (typeof LEDGER_GENERATION_STATES_LIST)[number];
+export { isPlainObject, LEDGER_ACTIVE_GENERATION_STATES, LEDGER_MARKER };
+export type {
+  DispatchLedger,
+  LedgerAnomaly,
+  LedgerControl,
+  LedgerGeneration,
+  LedgerRunAttempt,
+  LedgerSource,
+};
 
 /** Every pipeline the broker can persist. `canary` is the trusted no-op
- * production probe, not a selectable coding-agent integration. */
-export type LedgerPipeline = AgentPipeline | 'canary';
+ * production probe, not a selectable coding-agent integration. Kept as a
+ * console-local alias of the shared `DispatchPipeline` typedef since
+ * existing callers reference it by this name. */
+export type LedgerPipeline = DispatchPipeline;
 
-export interface LedgerRunAttempt {
-  runId?: number;
-  runUrl?: string;
-  htmlUrl?: string;
-  status?: string;
-  conclusion?: string;
-  dispatchStartedAt?: string;
-  boundAt?: string;
-  completedAt?: string;
-}
+/** Every state a ledger generation can be in - the shared package's own
+ * `LedgerGeneration['state']` field type. Kept as a console-local alias
+ * since existing callers reference it by this name. */
+export type LedgerGenerationState = LedgerGeneration['state'];
 
-export interface LedgerGeneration {
-  generation: number;
-  intentId: string;
-  sourceId: string;
-  occurredAt: string;
-  pipeline: LedgerPipeline;
-  mode?: string;
-  runbook?: string;
-  state: LedgerGenerationState;
-  attempt?: LedgerRunAttempt;
-}
-
-export interface LedgerSource {
-  sourceKind: string;
-  sourceId: string;
-  transportRunId?: number;
-  occurredAt: string;
-}
-
-export interface LedgerAnomaly {
-  kind: string;
-  /** broker.mjs's `addAnomaly(ledger, kind, detail)` takes an arbitrary
-   * JSON-serializable value - every real call site (e.g. `main.mjs`'s
-   * `duplicate-attempt`: `{ generation, runIds }`) passes a plain object,
-   * never a string. Untyped rather than a specific shape: new anomaly kinds
-   * (the reconciler in #305 adds several) carry their own detail shapes
-   * this file has no reason to know in advance - see
-   * `logical-work.ts`'s `describeLedgerAnomaly` for how a caller safely
-   * renders one without assuming its shape. */
-  detail?: unknown;
-  occurredAt: string;
-}
-
-export interface LedgerControl {
-  closed: boolean;
-  sourceId?: string;
-  occurredAt?: string;
-  merged?: boolean;
-}
-
-/** A ledger's own `task` field (broker.mjs's `"owner/name"` string form),
- * and also the shape a caller passes in to name the task it expects a
- * scanned comment window to belong to (see `parseDispatchLedger`) - one
- * type for both so comparing the two is a plain equality check rather than
- * two independently-declared duplicates of the same two fields. */
+/** A ledger's own `task` field (the shared package's `LedgerTaskRef`, which
+ * also carries `repositoryId`), and also the shape a caller passes in to
+ * name the task it expects a scanned comment window to belong to (see
+ * `parseDispatchLedger`) - deliberately narrower than the ledger's own
+ * `task`: a caller only ever asserts what it already knows (repository +
+ * issue), never the numeric `repositoryId` a GraphQL/REST fetch would have
+ * to look up separately just to compare. */
 export interface ExpectedTask {
   repository: string;
   issue: number;
-}
-
-export interface DispatchLedger {
-  schema: string;
-  revision: number;
-  task: ExpectedTask;
-  createdAt: string;
-  updatedAt: string;
-  control: LedgerControl;
-  sources: LedgerSource[];
-  generations: LedgerGeneration[];
-  anomalies: LedgerAnomaly[];
 }
 
 /** `ledger.sources` entry whose `sourceId` produced a given generation - the
@@ -140,118 +85,6 @@ export function sourceKindForGeneration(
   return ledger.sources.find(
     (source) => source.sourceId === generation.sourceId,
   )?.sourceKind;
-}
-
-const SINGLE_JSON_BLOCK_RE = /```json\s*([\s\S]*?)\s*```/gu;
-
-// Exported for logical-work.ts's describeLedgerAnomaly, which needs the
-// identical narrow-unknown-to-record check when rendering an
-// `LedgerAnomaly.detail` payload - kept as one definition rather than a
-// byte-identical copy in each file.
-export function isPlainObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
-const PIPELINES = new Set<LedgerPipeline>([
-  'claude',
-  'codex',
-  'opencode',
-  'canary',
-]);
-
-const LEDGER_GENERATION_STATES = new Set<LedgerGenerationState>(
-  LEDGER_GENERATION_STATES_LIST,
-);
-
-/**
- * Per-element shape check for one `ledger.generations` entry. This is the
- * fix for a real crash, not just a defensive nicety: `logical-work.ts`'s
- * `stateForGeneration`/`intentsFromLedger`/`selectedPipeline` all dereference
- * `generation.state`/`.generation`/`.pipeline`/`.intentId`/`.sourceId`/
- * `.occurredAt` unguarded, trusting that anything that survived
- * `isWellFormedLedger` has this shape. Before this check, `isWellFormedLedger`
- * only verified `generations` was an *array* - a real (not just crafted)
- * malformed ledger with e.g. `generations: [null]` or a generation missing
- * `state` passed validation and then crashed rendering downstream.
- */
-function isWellFormedGeneration(value: unknown): value is LedgerGeneration {
-  if (!isPlainObject(value)) return false;
-  if (
-    !Number.isSafeInteger(value.generation) ||
-    (value.generation as number) <= 0
-  ) {
-    return false;
-  }
-  if (!isNonEmptyString(value.intentId)) return false;
-  if (!isNonEmptyString(value.sourceId)) return false;
-  if (!isNonEmptyString(value.occurredAt)) return false;
-  if (!PIPELINES.has(value.pipeline as LedgerPipeline)) return false;
-  if (!LEDGER_GENERATION_STATES.has(value.state as LedgerGenerationState)) {
-    return false;
-  }
-  // `attempt` is optional, but if present must at least be an object -
-  // logical-work.ts never reads its fields directly today, but a
-  // non-object value here would still be a sign of a corrupted ledger.
-  if (value.attempt !== undefined && !isPlainObject(value.attempt)) {
-    return false;
-  }
-  return true;
-}
-
-function isWellFormedSource(value: unknown): value is LedgerSource {
-  if (!isPlainObject(value)) return false;
-  return isNonEmptyString(value.sourceKind) && isNonEmptyString(value.sourceId);
-}
-
-function isWellFormedAnomaly(value: unknown): value is LedgerAnomaly {
-  if (!isPlainObject(value)) return false;
-  return isNonEmptyString(value.kind) && isNonEmptyString(value.occurredAt);
-}
-
-/**
- * Structural validation only loose enough to keep a malformed/foreign
- * comment from being trusted as ledger data - NOT broker.mjs's full
- * `validateLedger` (which also enforces active/pending cardinality and a
- * numeric `repositoryId` the console doesn't have a cheap way to
- * cross-check here). A ledger that fails this still means "no ledger for
- * this task," never a thrown error - see `parseDispatchLedger`.
- *
- * Validates every element of `generations`/`sources`/`anomalies`, not just
- * that the fields themselves are arrays: a single malformed element (a
- * `null`, or a generation missing `state`) is just as untrustworthy as a
- * malformed top-level shape, and letting it through used to crash
- * `logical-work.ts`'s consumers instead of degrading like every other
- * malformed-ledger case.
- */
-function isWellFormedLedger(value: unknown): value is DispatchLedger {
-  if (!isPlainObject(value)) return false;
-  if (value.schema !== LEDGER_SCHEMA) return false;
-  if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 0) {
-    return false;
-  }
-  if (!isPlainObject(value.task)) return false;
-  const task = value.task as Record<string, unknown>;
-  if (typeof task.repository !== 'string' || task.repository.length === 0) {
-    return false;
-  }
-  if (!Number.isSafeInteger(task.issue) || (task.issue as number) <= 0) {
-    return false;
-  }
-  if (!Array.isArray(value.sources) || !Array.isArray(value.generations)) {
-    return false;
-  }
-  if (!Array.isArray(value.anomalies)) return false;
-  if (!isPlainObject(value.control)) return false;
-  if (!value.generations.every(isWellFormedGeneration)) return false;
-  if (!value.sources.every(isWellFormedSource)) return false;
-  if (!value.anomalies.every(isWellFormedAnomaly)) return false;
-  return true;
 }
 
 export interface ParseLedgerResult {
@@ -277,6 +110,11 @@ function taskLabel(task: ExpectedTask): string {
  * blank the dashboard" convention the rest of this app follows (see
  * `item-enrichment.ts`).
  *
+ * Built on the shared `extractLedgerComment`, which only proves the comment
+ * carried exactly one JSON block - each of its non-`ok` `reason`s is mapped
+ * to this file's own warning text below, and a successful extraction is
+ * still passed through `isWellFormedLedger` before being trusted.
+ *
  * `expectedTask` must match the parsed ledger's own `task` field
  * (case-insensitive on the repository, exact on the issue number - mirrors
  * broker.mjs's own `validateLedger` cross-check). Without this, a
@@ -289,25 +127,24 @@ export function parseDispatchLedger(
   commentBody: string,
   expectedTask: ExpectedTask,
 ): ParseLedgerResult {
-  if (!commentBody.includes(LEDGER_MARKER)) return {};
+  const extraction = extractLedgerComment(commentBody);
+  if (!extraction.ok) {
+    if (extraction.reason === 'no-marker') return {};
 
-  const label = taskLabel(expectedTask);
-  const matches = [...commentBody.matchAll(SINGLE_JSON_BLOCK_RE)];
-  if (matches.length !== 1) {
-    return {
-      warning: `Malformed dispatch ledger for ${label} (expected one JSON block, found ${matches.length}).`,
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(matches[0][1]);
-  } catch {
+    const label = taskLabel(expectedTask);
+    if (extraction.reason === 'block-count') {
+      return {
+        warning: `Malformed dispatch ledger for ${label} (expected one JSON block, found ${extraction.blocks}).`,
+      };
+    }
+    // extraction.reason === 'invalid-json'
     return {
       warning: `Malformed dispatch ledger for ${label} (invalid JSON).`,
     };
   }
 
+  const label = taskLabel(expectedTask);
+  const parsed = extraction.ledger;
   if (!isWellFormedLedger(parsed)) {
     return {
       warning: `Malformed dispatch ledger for ${label} (unexpected shape).`,
@@ -339,7 +176,7 @@ export function findLedgerCommentBody(
   comments: { body: string }[],
 ): string | undefined {
   for (let i = comments.length - 1; i >= 0; i--) {
-    if (comments[i].body.includes(LEDGER_MARKER)) return comments[i].body;
+    if (hasLedgerMarker(comments[i].body)) return comments[i].body;
   }
   return undefined;
 }

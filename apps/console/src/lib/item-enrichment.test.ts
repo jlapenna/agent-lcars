@@ -15,7 +15,11 @@ function ledgerJson(overrides: Record<string, unknown> = {}) {
   return {
     schema: 'agent-lcars.dispatch-ledger/v1',
     revision: 2,
-    task: { repository: 'supersprinklesracing/sprinkles', issue: 42 },
+    task: {
+      repositoryId: 1001,
+      repository: 'supersprinklesracing/sprinkles',
+      issue: 42,
+    },
     createdAt: '2026-07-07T00:00:00Z',
     updatedAt: '2026-07-07T00:00:00Z',
     control: { closed: false },
@@ -160,6 +164,7 @@ describe('enrichItems - dispatch ledger parsing', () => {
                 body: ledgerCommentBody(
                   ledgerJson({
                     task: {
+                      repositoryId: 1001,
                       repository: 'supersprinklesracing/sprinkles',
                       issue: 999,
                     },
@@ -193,7 +198,11 @@ describe('enrichItems - dispatch ledger parsing', () => {
               {
                 body: ledgerCommentBody(
                   ledgerJson({
-                    task: { repository: 'someone-else/other-repo', issue: 42 },
+                    task: {
+                      repositoryId: 1002,
+                      repository: 'someone-else/other-repo',
+                      issue: 42,
+                    },
                   }),
                 ),
                 url: 'https://x/1',
