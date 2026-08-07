@@ -81,6 +81,37 @@ resource "google_project_iam_member" "writer_firestore" {
   member  = "serviceAccount:${google_service_account.telemetry_writer.email}"
 }
 
+# The dispatch controller's durable authority (#645 Phase 6).
+#
+# Be precise about what this separation does and does not buy, because the
+# obvious reading is wrong in two ways:
+#
+#   1. It is NOT impersonation isolation. The WIF provider above maps only
+#      attribute.repository, so any workflow in this repository can already
+#      assume either this account or telemetry_writer.
+#   2. It is NOT data isolation. roles/datastore.user is a PROJECT-level
+#      grant covering every database, and writer_firestore already gives
+#      telemetry_writer exactly that role -- so telemetry_writer can write
+#      dispatchTasks and dispatchLaunchOutbox whether or not this account
+#      exists. An earlier revision of this comment claimed a blast-radius
+#      boundary here; that claim was simply false.
+#
+# What it does buy: the two callers are distinguishable in the audit log,
+# and a separate principal is the prerequisite for ever scoping either one
+# down. Real isolation needs a dedicated Firestore database plus IAM
+# conditions narrowing BOTH grants -- including telemetry_writer's live one
+# -- and is tracked separately rather than bolted on here.
+resource "google_service_account" "dispatch_broker" {
+  account_id   = "dispatch-broker"
+  display_name = "Agent LCARS dispatch broker"
+}
+
+resource "google_project_iam_member" "dispatch_broker_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.dispatch_broker.email}"
+}
+
 resource "google_project_iam_member" "apphosting_firestore" {
   project    = var.project_id
   role       = "roles/datastore.viewer"
@@ -153,6 +184,18 @@ resource "google_service_account_iam_member" "members_writer_impersonation" {
   service_account_id = google_service_account.telemetry_writer.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.sprinkles_repository}"
+}
+
+# Only this repo, unlike telemetry_writer's three-repo grant: the dispatch
+# controller runs solely in agent-lcars, so sprinkles and homelab have no
+# reason to impersonate it. Note this binding is as narrow as the provider
+# permits today -- attribute_mapping above maps only attribute.repository,
+# so this cannot yet be scoped to agent-router.yml specifically, and any
+# workflow in this repo can assume it.
+resource "google_service_account_iam_member" "dispatch_broker_impersonation" {
+  service_account_id = google_service_account.dispatch_broker.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
 # This repo's own claude.yml now ships its issue-agent sessions' telemetry
