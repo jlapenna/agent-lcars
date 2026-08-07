@@ -31,8 +31,13 @@
 #       same object, which never mentions its own number in its own title
 #       or body;
 #   (b) the issue was closed since STARTED_AT;
-#   (c) the status:needs-human label is present (the sanctioned blocked/
-#       clarifying-question ending);
+#   (c) the status:needs-human label was applied since STARTED_AT AND is
+#       still present (the sanctioned blocked/clarifying-question ending).
+#       Both halves are load-bearing: current presence alone lets a stale
+#       label from an earlier run satisfy every later run's gate forever
+#       (same reason (b) checks closed_at, not a bare state=="closed"),
+#       while a past `labeled` event alone keeps counting after the park
+#       was removed, since timeline events are permanent;
 #   (d) - only on a reply dispatch (MODE=reply) or a runbook dispatch
 #       (RUNBOOK non-empty) - EXPECTED_COMMENT_LOGIN posted a comment on
 #       the anchor since STARTED_AT. Gated deliberately: a bare pickup/plan
@@ -173,26 +178,53 @@ if [ -z "$found" ]; then
   fi
 fi
 
-# (b)+(c) share one REST issue fetch (state/closed_at/labels all come back
-# on the same object): (b) issue closed since STARTED_AT - closed_at, not
-# just current state=="closed", because a pre-existing closure (e.g.
-# another pipeline closed it moments before this run started) must not
-# count as THIS run's deliverable; (c) status:needs-human label present
-# (the sanctioned blocked/clarifying-question ending).
+# (b) issue closed since STARTED_AT - closed_at, not just current
+# state=="closed", because a pre-existing closure (e.g. another pipeline
+# closed it moments before this run started) must not count as THIS run's
+# deliverable.
+needs_human_now=
 if [ -z "$found" ]; then
   if issue_json=$(gh api "repos/$REPO/issues/$NUM" 2>&1); then
     closed_at=$(jq -r 'if .state == "closed" then (.closed_at // "") else "" end' <<<"$issue_json")
     if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then
       found="issue #$NUM closed at $closed_at (after $STARTED_AT)"
     fi
-    if [ -z "$found" ]; then
-      labeled=$(jq -r '[.labels[].name] | contains(["status:needs-human"])' <<<"$issue_json")
-      if [ "$labeled" = "true" ]; then
-        found="status:needs-human label applied on #$NUM"
-      fi
-    fi
+    # Current presence, for clause (c) below to AND against its own
+    # recency check - see there for why both halves are required.
+    needs_human_now=$(jq -r '[.labels[].name] | contains(["status:needs-human"])' <<<"$issue_json")
   else
     errors+=("Issue lookup (gh api repos/$REPO/issues/$NUM) failed: $issue_json")
+  fi
+fi
+
+# (c) status:needs-human label applied since STARTED_AT (the sanctioned
+# blocked/clarifying-question ending) - not just current presence, for the
+# same reason (b) checks closed_at instead of a bare state=="closed": the
+# labels array on the issue object carries no timestamps, so a label
+# applied by an EARLIER run (or another pipeline) before this run even
+# started would otherwise satisfy every subsequent run's gate
+# unconditionally, forever, no matter what that later run itself did -
+# confirmed live on #650, where a stale park from generation 7 let
+# generation 8's own no-op run report success. So this walks the issue
+# TIMELINE's `labeled` events instead, which do carry `created_at`
+# (paginated - a long-lived issue can accumulate many). An agent that
+# legitimately parks the issue during its OWN run still passes; a stale,
+# pre-existing park does not.
+#
+# Recency is necessary but NOT sufficient, so this ANDs it with current
+# presence: a `labeled` event is permanent, so a park applied during this
+# run and then REMOVED (the run became unblocked, or a human unparked it)
+# would otherwise keep satisfying the gate forever even though the issue is
+# no longer parked and the run may have produced nothing else. Both halves
+# are required - applied by THIS run, and still parked now.
+if [ -z "$found" ] && [ "$needs_human_now" = "true" ]; then
+  if timeline_hits=$(gh api "repos/$REPO/issues/$NUM/timeline?per_page=100" --paginate \
+    --jq ".[] | select(.event == \"labeled\" and (.label.name // \"\") == \"status:needs-human\" and .created_at >= \"$STARTED_AT\") | .created_at" 2>&1); then
+    if [ -n "$timeline_hits" ]; then
+      found="status:needs-human label applied on #$NUM since $STARTED_AT"
+    fi
+  else
+    errors+=("Issue timeline lookup (gh api repos/$REPO/issues/$NUM/timeline) failed: $timeline_hits")
   fi
 fi
 
