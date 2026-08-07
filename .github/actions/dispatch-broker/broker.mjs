@@ -518,9 +518,31 @@ function verifyPreflight(ledger, expected) {
   );
 }
 
-function addAnomaly(ledger, kind, detail, now = new Date().toISOString()) {
+/**
+ * `failure` is an optional `FailureClassification` (#645's
+ * owning-system/phase/reason/retry vocabulary from
+ * ../../../libs/dispatch-contracts/src/failure.js), appended as a fifth
+ * positional parameter rather than inserted before `now` so every existing
+ * call -- including ledger-contract.test.mjs's, which calls this directly
+ * with (ledger, kind, detail, now) -- keeps meaning exactly what it did
+ * before. Omitted, the anomaly record carries no `failure` key at all
+ * (not an explicit `undefined`), identical to every anomaly recorded prior
+ * to this field existing.
+ */
+function addAnomaly(
+  ledger,
+  kind,
+  detail,
+  now = new Date().toISOString(),
+  failure,
+) {
   return mutate(ledger, now, () => {
-    ledger.anomalies.push({ kind, detail, occurredAt: now });
+    ledger.anomalies.push({
+      kind,
+      detail,
+      occurredAt: now,
+      ...(failure === undefined ? {} : { failure }),
+    });
   });
 }
 

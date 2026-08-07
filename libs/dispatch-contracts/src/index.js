@@ -42,8 +42,26 @@ export {
  * @typedef {import('./ledger.js').LedgerAnomaly} LedgerAnomaly
  * @typedef {import('./ledger.js').LedgerControl} LedgerControl
  * @typedef {import('./ledger.js').LedgerCommentExtraction} LedgerCommentExtraction
+ * @typedef {import('./failure.js').OwningSystem} OwningSystem
+ * @typedef {import('./failure.js').FailurePhase} FailurePhase
+ * @typedef {import('./failure.js').FailureReason} FailureReason
+ * @typedef {import('./failure.js').RetryDisposition} RetryDisposition
+ * @typedef {import('./failure.js').FailureClassification} FailureClassification
  */
 
+export {
+  AUTOMATICALLY_RETRYABLE_DISPOSITIONS,
+  classifyFailure,
+  FAILURE_PHASES,
+  FAILURE_REASONS,
+  formatFailure,
+  isAutomaticallyRetryable,
+  isWellFormedFailureClassification,
+  needsMaintainer,
+  OWNING_SYSTEMS,
+  PHASE_OWNERS,
+  RETRY_DISPOSITIONS,
+} from './failure.js';
 export {
   extractLedgerComment,
   hasLedgerMarker,

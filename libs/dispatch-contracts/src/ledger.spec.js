@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractLedgerComment,
   hasLedgerMarker,
+  isWellFormedAnomaly,
   isWellFormedGeneration,
   isWellFormedLedger,
   isWellFormedSource,
@@ -268,6 +269,50 @@ describe('isWellFormedLedger', () => {
         pipeline: 'codex',
         state: 'active',
         attempt: 'nope',
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('isWellFormedAnomaly', () => {
+  it('accepts an anomaly with no failure classification', () => {
+    // Every anomaly recorded before #645 added the field looks like this.
+    // Rejecting it would turn every ledger written by an older broker into
+    // "no ledger" on the console the moment it grew a first anomaly.
+    expect(
+      isWellFormedAnomaly({
+        kind: 'duplicate-attempt',
+        detail: { generation: 1, runIds: [1, 2] },
+        occurredAt: '2026-08-06T00:00:00.000Z',
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts an anomaly carrying a #645 failure classification', () => {
+    expect(
+      isWellFormedAnomaly({
+        kind: 'reconcile-parked',
+        detail: { generation: 1, reason: 'missing-run-bound-exhausted' },
+        occurredAt: '2026-08-06T00:00:00.000Z',
+        failure: {
+          owningSystem: 'controller',
+          phase: 'reconciliation',
+          reason: 'launch_response_lost',
+          retryDisposition: 'manual',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a non-object failure field', () => {
+    // A consumer (describeLedgerAnomaly) reads `failure.owningSystem` etc.
+    // unguarded once this gate has passed -- a string or array here would
+    // crash it rather than degrade to "no classification".
+    expect(
+      isWellFormedAnomaly({
+        kind: 'reconcile-parked',
+        occurredAt: '2026-08-06T00:00:00.000Z',
+        failure: 'manual',
       }),
     ).toBe(false);
   });

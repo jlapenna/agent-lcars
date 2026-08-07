@@ -1,4 +1,9 @@
 import {
+  formatFailure,
+  isWellFormedFailureClassification,
+} from '@agent-lcars/dispatch-contracts';
+
+import {
   type AgentPipeline,
   type AgentRun,
   attemptMarkerFromDisplayTitle,
@@ -269,22 +274,39 @@ function duplicateAttemptAnomalies(
  * kinds a future broker change adds (e.g. #305's reconciler introduces
  * `reconcile-missing-run`/`reconcile-parked`/`reconcile-invariant-violation`)
  * - still renders instead of being silently dropped or crashing.
+ *
+ * #645 layers a `failure` classification (owning system, phase, reason
+ * code, retry disposition) onto an anomaly alongside its pre-existing
+ * `kind`/`detail`. When present, its `formatFailure` one-liner is appended
+ * verbatim - reusing the same rendering the broker's own logs/annotations
+ * use rather than re-deriving a second layout that could drift from it.
+ * Older ledgers (recorded before this field existed) carry no `failure` at
+ * all, and this must keep rendering exactly as it did before for those.
  */
 function describeLedgerAnomaly(anomaly: LedgerAnomaly): string {
-  if (
-    anomaly.kind === 'duplicate-attempt' &&
-    isPlainObject(anomaly.detail) &&
-    Number.isSafeInteger(anomaly.detail.generation) &&
-    Array.isArray(anomaly.detail.runIds)
-  ) {
-    const runIds = anomaly.detail.runIds.join(', ');
-    return `The dispatch ledger recorded a duplicate-attempt anomaly for generation ${anomaly.detail.generation}: runs ${runIds} were both bound to it.`;
-  }
-  const detail =
-    isPlainObject(anomaly.detail) || Array.isArray(anomaly.detail)
-      ? ` ${JSON.stringify(anomaly.detail)}`
-      : '';
-  return `The dispatch ledger recorded a "${anomaly.kind}" anomaly at ${anomaly.occurredAt}.${detail}`;
+  const message = (() => {
+    if (
+      anomaly.kind === 'duplicate-attempt' &&
+      isPlainObject(anomaly.detail) &&
+      Number.isSafeInteger(anomaly.detail.generation) &&
+      Array.isArray(anomaly.detail.runIds)
+    ) {
+      const runIds = anomaly.detail.runIds.join(', ');
+      return `The dispatch ledger recorded a duplicate-attempt anomaly for generation ${anomaly.detail.generation}: runs ${runIds} were both bound to it.`;
+    }
+    const detail =
+      isPlainObject(anomaly.detail) || Array.isArray(anomaly.detail)
+        ? ` ${JSON.stringify(anomaly.detail)}`
+        : '';
+    return `The dispatch ledger recorded a "${anomaly.kind}" anomaly at ${anomaly.occurredAt}.${detail}`;
+  })();
+  // The shared read-side gate (`isWellFormedAnomaly`) already validates any
+  // `failure` against the real vocabularies before a ledger gets this far, so
+  // this re-check is defence in depth for the interpolation site rather than
+  // the primary guard -- and it is the shared validator, not a weaker local
+  // copy of it, which is what this whole issue is about.
+  if (!isWellFormedFailureClassification(anomaly.failure)) return message;
+  return `${message} ${formatFailure(anomaly.failure)}`;
 }
 
 /**

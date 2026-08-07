@@ -20,6 +20,7 @@
  * builds it on this one set of definitions.
  */
 
+import { isWellFormedFailureClassification } from './failure.js';
 import { isDispatchPipeline } from './pipelines.js';
 
 /** @typedef {import('./pipelines.js').DispatchPipeline} DispatchPipeline */
@@ -183,6 +184,11 @@ export const LEDGER_ACTIVE_GENERATION_STATES = new Set([
  *   carries its own detail shape, and a consumer must render one without
  *   assuming that shape.
  * @property {string} occurredAt
+ * @property {import('./failure.js').FailureClassification} [failure] The
+ *   owning-system/phase/reason/retry vocabulary (#645), layered onto the
+ *   pre-existing free-form `kind`/`detail` rather than replacing them.
+ *   Optional because every anomaly recorded before this field existed has
+ *   none, and `isWellFormedAnomaly` must keep accepting those unchanged.
  */
 
 /**
@@ -364,7 +370,25 @@ export function isWellFormedSource(value) {
  */
 export function isWellFormedAnomaly(value) {
   if (!isPlainObject(value)) return false;
-  return isNonEmptyString(value.kind) && isNonEmptyString(value.occurredAt);
+  if (!isNonEmptyString(value.kind) || !isNonEmptyString(value.occurredAt)) {
+    return false;
+  }
+  // `failure` is optional -- every anomaly recorded before #645 has none,
+  // and those must keep reading as well-formed rather than rejecting older
+  // ledgers. When present it is validated against the real vocabularies, not
+  // merely shape-checked: `classifyFailure` refuses to build an invalid
+  // classification, but that guarantee does not survive a round trip through
+  // a hand-editable GitHub comment, and this predicate narrows its input to
+  // a typed `FailureClassification` that consumers then render as
+  // operational data. Same reasoning already applied to a generation's
+  // `pipeline` and `state` above.
+  if (
+    value.failure !== undefined &&
+    !isWellFormedFailureClassification(value.failure)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**
