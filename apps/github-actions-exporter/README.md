@@ -62,8 +62,8 @@ API errors and stale repository refreshes observable.
 ## Verification
 
 ```sh
-uv run --no-env-file --frozen ruff check exporter.py tests
-uv run --no-env-file --frozen ruff format --check exporter.py tests
-uv run --no-env-file --frozen python -W error::ResourceWarning -m unittest discover -s tests -v
+uv run --no-project --no-env-file --with-requirements requirements.lock --with ruff==0.16.1 ruff check exporter.py tests
+uv run --no-project --no-env-file --with-requirements requirements.lock --with ruff==0.16.1 ruff format --check exporter.py tests
+uv run --no-project --no-env-file --with-requirements requirements.lock python -W error::ResourceWarning -m unittest discover -s tests -v
 docker build -t agent-lcars-github-actions-exporter:local .
 ```

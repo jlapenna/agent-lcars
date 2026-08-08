@@ -245,7 +245,7 @@ jobs:
           version: 0.11.17
           python-version: '3.14'
           enable-cache: true
-          cache-dependency-glob: apps/github-actions-exporter/uv.lock
+          cache-dependency-glob: apps/github-actions-exporter/requirements.lock
 
       # Whole workspace, not a per-project list. AGENTS.md requires the
       # affected test/typecheck/build targets before publishing, and the

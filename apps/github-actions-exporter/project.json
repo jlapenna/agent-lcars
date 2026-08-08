@@ -8,7 +8,7 @@
     "build": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run --no-env-file --frozen python -m py_compile exporter.py",
+        "command": "python3 -m py_compile exporter.py",
         "cwd": "apps/github-actions-exporter"
       }
     },
@@ -16,8 +16,8 @@
       "executor": "nx:run-commands",
       "options": {
         "commands": [
-          "uv run --no-env-file --frozen ruff check exporter.py tests",
-          "uv run --no-env-file --frozen ruff format --check exporter.py tests"
+          "uv run --no-project --no-env-file --with-requirements requirements.lock --with ruff==0.16.1 ruff check exporter.py tests",
+          "uv run --no-project --no-env-file --with-requirements requirements.lock --with ruff==0.16.1 ruff format --check exporter.py tests"
         ],
         "parallel": false,
         "cwd": "apps/github-actions-exporter"
@@ -26,7 +26,7 @@
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run --no-env-file --frozen python -W error::ResourceWarning -m unittest discover -s tests -v",
+        "command": "uv run --no-project --no-env-file --with-requirements requirements.lock python -W error::ResourceWarning -m unittest discover -s tests -v",
         "cwd": "apps/github-actions-exporter"
       }
     },
