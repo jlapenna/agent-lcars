@@ -3662,7 +3662,6 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
       projected.projectionAvailable = true;
       return projected;
     } catch (error) {
-      if (error instanceof LedgerProjectionRepairError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       console.log(
         `::warning::Loaded authoritative Firestore state for ${task.repository}#${task.issue}, but its GitHub ledger projection is unavailable this pass: ${message}`

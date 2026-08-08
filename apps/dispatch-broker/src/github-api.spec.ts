@@ -857,7 +857,7 @@ test('authority projection repairs every extra corrupt marker and selects the wo
   );
 });
 
-test('authority projection fails closed when duplicate repair is rejected', async () => {
+test('authority projection reports when duplicate repair is rejected', async () => {
   const authoritative = createLedger(task);
   const body = renderLedgerComment(authoritative);
   const api = createGitHubApi({

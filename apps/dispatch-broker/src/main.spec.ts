@@ -398,6 +398,87 @@ test('authority launches when the scheduling projection PATCH fails', async () =
   );
 });
 
+test('authority launches when duplicate projection cleanup is rejected', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-duplicate-projection',
+    sourceKind: 'manual',
+    sourceId: 'source-duplicate-projection',
+    transportRunId: 740,
+    occurredAt: '2026-08-08T07:19:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'duplicate-projection',
+    authorization: { authorized: true },
+  });
+  await acquireAuthority(port, task, 'delivery:duplicate-projection', seed);
+  const runId = 74001;
+  let cleanupAttempts = 0;
+  let dispatches = 0;
+  const client = {
+    request: async (path, options = {}) => {
+      if (options.method === 'DELETE') {
+        cleanupAttempts += 1;
+        return {
+          status: 503,
+          data: { message: 'projection cleanup unavailable' },
+          headers: new Headers(),
+        };
+      }
+      assert.match(path, /actions\/workflows\/codex.yml\/dispatches$/u);
+      dispatches += 1;
+      return {
+        status: 200,
+        data: {
+          workflow_run_id: runId,
+          run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+          html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+        },
+        headers: new Headers(),
+      };
+    },
+    requestOk: async () => [
+      {
+        id: 2,
+        body: renderLedgerComment(seed),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+      {
+        id: 4,
+        body: renderLedgerComment(seed),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+    ],
+  };
+
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'reconcile', task },
+    false,
+    'authority',
+    'delivery:duplicate-projection',
+    () => port,
+  );
+  assert.ok(loaded);
+  assert.equal(loaded.projectionAvailable, false);
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(cleanupAttempts, 1);
+  assert.equal(dispatches, 1);
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, runId);
+  assert.equal(
+    (await port.readLaunchOperation('g1:intent-duplicate-projection'))?.status,
+    'launched',
+  );
+});
+
 test('authority restores accepted state when pre-launch outbox recording fails', async () => {
   const port = new InMemoryStoragePort();
   const seed = createLedger(task);

@@ -55,7 +55,6 @@ import {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
-  LedgerProjectionRepairError,
   listAll,
   loadLedger,
   loadLedgerProjection,
@@ -2045,11 +2044,6 @@ async function loadBrokerLedger(
       projected.projectionAvailable = true;
       return projected;
     } catch (error) {
-      // Duplicate workflow-owned projections make the still-comment-backed
-      // worker preflight reject every future launch. Never downgrade a
-      // failed repair to a best-effort projection warning and dispatch into
-      // that known-denied state.
-      if (error instanceof LedgerProjectionRepairError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       console.log(
         `::warning::Loaded authoritative Firestore state for ` +
