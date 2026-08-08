@@ -471,3 +471,26 @@ jobs:
           if [ "$CLOSED" -gt 0 ]; then
             echo "::warning::Swept $CLOSED anchor(s) the inline close in restore-main-checks did not reach."
           fi
+
+  alert-scheduled-sweep:
+    needs: close-orphaned-anchors
+    if: always() && github.event_name == 'schedule'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on scheduled sweep failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.close-orphaned-anchors.result }}
+          workflow-file: agent-automerge.yml
+          workflow-event: schedule
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

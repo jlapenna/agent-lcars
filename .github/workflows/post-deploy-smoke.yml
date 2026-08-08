@@ -93,3 +93,25 @@ jobs:
           deploy-run-url: ${{ github.event.workflow_run.html_url }}
           # Matches deploy-console.yml's own hardcoded APP_URL.
           live-url: https://agent-console.supersprinkles.racing
+
+  alert:
+    needs: smoke
+    if: always() && github.event.workflow_run.conclusion == 'success'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on post-deploy failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.smoke.result }}
+          workflow-file: post-deploy-smoke.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

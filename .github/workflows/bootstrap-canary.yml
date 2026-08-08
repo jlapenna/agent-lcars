@@ -22,10 +22,11 @@ name: Bootstrap Canary
 # dispatch. It mirrors label-contract-audit.yml / rerun-infra-killed-runs.yml
 # / dispatch-reconcile.yml's own convention for a scheduled infra check with
 # no natural issue/PR anchor: let a genuine failure fail the job loudly
-# (::error:: annotations, a non-zero exit, a red run in the Actions tab)
-# rather than parking status:needs-human on a fabricated issue -- see
-# report-failure/action.yml's own header for why that heavier mechanism
-# exists specifically for anchored issue/PR work, which this is not.
+# (::error:: annotations, a non-zero exit, a red run in the Actions tab).
+# The separate ubuntu-latest alert job reports that workflow-health failure
+# on its own durable issue; it never pretends the issue is a dispatched task
+# or mutates a dispatch ledger. See report-failure/action.yml's own header for
+# why that heavier mechanism remains specific to anchored issue/PR work.
 #
 # Two of the four bootstrap pieces (telemetry-start/telemetry-finalize) are
 # themselves DESIGNED to never fail the job that calls them -- every
@@ -60,9 +61,9 @@ on:
 permissions:
   contents: read
   # google-github-actions/auth@v3 (inside telemetry-start) needs this on the
-  # job to mint a WIF token. Nothing else here needs a broader grant --
-  # deliberately no issues/pull-requests/actions permission: this workflow
-  # never touches an issue, a PR, or another workflow run.
+  # bootstrap job to mint a WIF token. The probe deliberately inherits no
+  # issues/pull-requests/actions write permission. #722's separate alert job
+  # overrides this block with its own narrower GitHub-hosted permissions.
   id-token: write
 
 jobs:
@@ -284,3 +285,25 @@ jobs:
             echo "::error::Telemetry sidecar is still running after finalize; finalize's own stop sequence (sidecar-lifecycle.sh's SIGTERM-then-wait loop) should have terminated it."
             exit 1
           fi
+
+  alert:
+    needs: bootstrap
+    if: always()
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on bootstrap failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.bootstrap.result }}
+          workflow-file: bootstrap-canary.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

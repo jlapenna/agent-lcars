@@ -93,3 +93,25 @@ jobs:
             echo "::error::LiteLLM responded 200 but returned no completion content -- see the response body above."
             exit 1
           fi
+
+  alert:
+    needs: probe
+    if: always()
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on model-probe failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.probe.result }}
+          workflow-file: opencode-model-canary.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

@@ -123,6 +123,17 @@ function actionStep(steps, workflow, action) {
   return matches[0];
 }
 
+function jobBlock(source, workflow, jobName) {
+  const startPattern = new RegExp(`^ {2}${escapeRegex(jobName)}:\\s*$`, 'mu');
+  const match = startPattern.exec(source);
+  assert.ok(match, `${workflow} must declare ${jobName}`);
+  const remainder = source.slice(match.index);
+  const nextJobOffset = remainder.slice(1).search(/^ {2}[A-Za-z0-9_-]+:\s*$/mu);
+  return nextJobOffset === -1
+    ? remainder
+    : remainder.slice(0, nextJobOffset + 1);
+}
+
 function agentAdapterStep(steps, workflow) {
   const matches = steps.filter((step) =>
     stepField('id', 'agent').test(step.source),
@@ -167,6 +178,101 @@ test('unsupported queue policies are absent and serialized jobs do not cancel', 
     if (['agent-router.yml', 'codex.yml'].includes(workflow.name)) {
       assert.match(workflow.source, /^\s*cancel-in-progress:\s*false\s*$/mu);
     }
+  }
+});
+
+test('critical scheduled workflows report one isolated durable alert and recover independently (#722)', async () => {
+  const contracts = [
+    {
+      workflow: 'agent-automerge.yml',
+      job: 'alert-scheduled-sweep',
+      needs: 'close-orphaned-anchors',
+      guard: "always() && github.event_name == 'schedule'",
+      status: '${{ needs.close-orphaned-anchors.result }}',
+      event: 'schedule',
+    },
+    {
+      workflow: 'bootstrap-canary.yml',
+      job: 'alert',
+      needs: 'bootstrap',
+      guard: 'always()',
+      status: '${{ needs.bootstrap.result }}',
+    },
+    {
+      workflow: 'dispatch-canary.yml',
+      job: 'alert',
+      needs: 'canary',
+      guard: 'always()',
+      status: '${{ needs.canary.result }}',
+    },
+    {
+      workflow: 'dispatch-reconcile.yml',
+      job: 'alert',
+      needs: '[hosted-scan, action-fallback]',
+      guard: 'always()',
+      status:
+        "${{ needs.hosted-scan.result != 'skipped' && needs.hosted-scan.result || needs.action-fallback.result }}",
+    },
+    {
+      workflow: 'label-contract-audit.yml',
+      job: 'alert',
+      needs: 'audit',
+      guard: 'always()',
+      status: '${{ needs.audit.result }}',
+    },
+    {
+      workflow: 'opencode-model-canary.yml',
+      job: 'alert',
+      needs: 'probe',
+      guard: 'always()',
+      status: '${{ needs.probe.result }}',
+    },
+    {
+      workflow: 'post-deploy-smoke.yml',
+      job: 'alert',
+      needs: 'smoke',
+      guard: "always() && github.event.workflow_run.conclusion == 'success'",
+      status: '${{ needs.smoke.result }}',
+    },
+    {
+      workflow: 'rerun-infra-killed-runs.yml',
+      job: 'alert',
+      needs: 'scan',
+      guard: 'always()',
+      status: '${{ needs.scan.result }}',
+    },
+  ];
+
+  for (const contract of contracts) {
+    const source = await fs.readFile(
+      path.join(workflowsDirectory, contract.workflow),
+      'utf8',
+    );
+    const alertJob = jobBlock(source, contract.workflow, contract.job);
+    assert.match(alertJob, stepField('needs', contract.needs, 4));
+    assert.match(alertJob, stepField('if', contract.guard, 4));
+    assert.match(alertJob, /^ {4}continue-on-error:\s+true$/mu);
+    assert.match(alertJob, /^ {4}runs-on:\s+ubuntu-latest$/mu);
+    assert.match(alertJob, /^ {6}actions:\s+read$/mu);
+    assert.match(alertJob, /^ {6}contents:\s+read$/mu);
+    assert.match(alertJob, /^ {6}issues:\s+write$/mu);
+    assert.match(alertJob, /^ {8}uses:\s+actions\/checkout@v7$/mu);
+    assert.match(
+      alertJob,
+      /^ {8}uses:\s+\.\/\.github\/actions\/canary-alert$/mu,
+    );
+    assert.match(alertJob, stepField('token', '${{ github.token }}', 10));
+    assert.match(alertJob, stepField('workflow-status', contract.status, 10));
+    assert.match(alertJob, stepField('workflow-file', contract.workflow, 10));
+    if (contract.event) {
+      assert.match(alertJob, stepField('workflow-event', contract.event, 10));
+    } else {
+      assert.doesNotMatch(alertJob, /^ {10}workflow-event:/mu);
+    }
+    assert.match(
+      alertJob,
+      stepField('maintainer', '${{ vars.MAINTAINER_LOGIN }}', 10),
+    );
   }
 });
 
@@ -922,13 +1028,20 @@ test('the bootstrap canary (#645 Phase 3) exercises the self-hosted worker boots
   assert.doesNotMatch(source, /\.\/\.github\/actions\/dispatch-broker/u);
   assert.doesNotMatch(source, /\.\/\.github\/actions\/claim-issue/u);
 
-  // Least privilege: only what google-github-actions/auth (inside
-  // telemetry-start) needs, plus read access to check out the repo.
-  assert.match(source, /^permissions:\s*$/mu);
-  assert.match(source, /^\s+contents:\s+read\s*$/mu);
-  assert.match(source, /^\s+id-token:\s+write\s*$/mu);
+  // Least privilege for the probe itself: only what
+  // google-github-actions/auth (inside telemetry-start) needs, plus read
+  // access to check out the repo. #722's separate ubuntu-latest alert job
+  // has its own job-scoped issues: write grant (pinned by the alert contract
+  // above); that must never leak into the bootstrap probe's permissions.
+  const jobsStart = source.search(/^jobs:\s*$/mu);
+  assert.notEqual(jobsStart, -1);
+  const workflowHeader = source.slice(0, jobsStart);
+  const bootstrapJob = jobBlock(source, 'bootstrap-canary.yml', 'bootstrap');
+  assert.match(workflowHeader, /^permissions:\s*$/mu);
+  assert.match(workflowHeader, /^\s+contents:\s+read\s*$/mu);
+  assert.match(workflowHeader, /^\s+id-token:\s+write\s*$/mu);
   assert.doesNotMatch(
-    source,
+    `${workflowHeader}\n${bootstrapJob}`,
     /^\s+(issues|pull-requests|actions):\s+write\s*$/mu,
   );
 });

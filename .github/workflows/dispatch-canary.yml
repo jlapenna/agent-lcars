@@ -107,6 +107,7 @@ jobs:
   alert:
     needs: canary
     if: always()
+    continue-on-error: true
     # Deliberately ubuntu-latest, matching `canary` above: the alert must
     # keep working even when the self-hosted control plane -- the thing
     # dispatch-canary.yml exists to watch -- is itself the thing that's
@@ -141,6 +142,6 @@ jobs:
         uses: ./.github/actions/canary-alert
         with:
           token: ${{ github.token }}
-          canary-status: ${{ needs.canary.result }}
+          workflow-status: ${{ needs.canary.result }}
           workflow-file: dispatch-canary.yml
           maintainer: ${{ vars.MAINTAINER_LOGIN }}
