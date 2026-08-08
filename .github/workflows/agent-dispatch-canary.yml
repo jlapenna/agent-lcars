@@ -180,6 +180,7 @@ jobs:
       contents: read
       id-token: write
       issues: write
+      pull-requests: read
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:
       issue: ${{ inputs.issue }}

@@ -694,6 +694,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     assert.match(source, /^ {6}actions:\s+read\s*$/mu);
     assert.match(source, /^ {6}id-token:\s+write\s*$/mu);
     assert.match(source, /^ {6}issues:\s+write\s*$/mu);
+    assert.match(source, /^ {6}pull-requests:\s+read\s*$/mu);
     assert.match(
       source,
       new RegExp(
@@ -717,6 +718,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
   assert.match(fallbackSource, /^ {6}actions:\s+read\s*$/mu);
   assert.match(fallbackSource, /^ {6}id-token:\s+write\s*$/mu);
+  assert.match(fallbackSource, /^ {6}pull-requests:\s+read\s*$/mu);
   const steps = stepBlocks(fallbackSource);
   assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [
     'Report and park bootstrap-independent failure',
@@ -751,6 +753,12 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(evidence.source, stepField('if', 'always()'));
   assert.match(evidence.source, /actions\/runs\/\$GITHUB_RUN_ID\/jobs/u);
   assert.match(evidence.source, /<!-- attempt-claim:\$\{attempt_id\} -->/u);
+  assert.match(evidence.source, /select\(\.conclusion == "failure"\)/u);
+  assert.match(evidence.source, /Omitting unverified lifecycle outcome/u);
+  assert.doesNotMatch(
+    evidence.source,
+    /Could not read trusted worker job metadata[\s\S]{0,200}outcome-kind=startup-failure/u,
+  );
   assert.match(
     evidence.source,
     /Successful dispatch canary lacks its exact comment outcome/u,

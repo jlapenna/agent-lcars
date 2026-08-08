@@ -51,6 +51,7 @@ jobs:
       contents: read
       id-token: write
       issues: write
+      pull-requests: read
     steps:
       - name: Report and park bootstrap-independent failure
         if: inputs.worker-result != 'success'
@@ -136,8 +137,6 @@ jobs:
             "repos/$REPO/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
             > "$jobs_file"; then
             echo "::warning::Could not read trusted worker job metadata"
-            printf '%s\n' 'outcome-kind=startup-failure' >> "$GITHUB_OUTPUT"
-            exit 0
           fi
           worker_job="$(jq -c --arg step "$agent_step" \
             '[.[]?.jobs[]? | select(any(.steps[]?; .name == $step))] | last // empty' \
@@ -149,7 +148,7 @@ jobs:
               [ .steps[]?
                 | select(.name == "Authenticate to GCP for the subscription credential"
                     or .name == "Restore subscription authentication")
-                | select(.conclusion != "success" and .conclusion != "skipped")
+                | select(.conclusion == "failure")
               ] | length' <<<"$worker_job")"
             if [ "$credential_failure" -gt 0 ]; then
               readiness_failure='credential'
@@ -157,6 +156,10 @@ jobs:
           fi
 
           if [ "$WORKER_RESULT" != 'success' ]; then
+            if [ -z "$worker_job" ]; then
+              echo "::warning::Omitting unverified lifecycle outcome"
+              exit 0
+            fi
             agent_conclusion="$(jq -r --arg step "$agent_step" \
               '[.steps[]? | select(.name == $step)] | last | .conclusion // ""' \
               <<<"${worker_job:-{}}")"
