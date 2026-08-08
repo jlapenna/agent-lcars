@@ -33,10 +33,12 @@ type fakeDockerServer struct {
 	// listDelay stalls every ContainerList response, standing in for a slow
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
-	listDelay       time.Duration
-	imagePresent    bool
-	imagePulls      int
-	pullStreamError bool
+	listDelay        time.Duration
+	imagePresent     bool
+	imagePulls       int
+	pullStreamError  bool
+	containerCreates int
+	createFailures   []int
 }
 
 // inspectStub is the canned response for one container ID's ContainerInspect
@@ -204,6 +206,29 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = w.Write([]byte("{\"status\":\"Pull complete\"}\n"))
 
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/containers/create"):
+		f.mu.Lock()
+		f.containerCreates++
+		status := 0
+		if len(f.createFailures) > 0 {
+			status = f.createFailures[0]
+			f.createFailures = f.createFailures[1:]
+		}
+		if status == http.StatusNotFound {
+			// The exact #478 race: a host-side prune removed the image after
+			// the caller's successful inspect and before this create.
+			f.imagePresent = false
+		}
+		f.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such image"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(container.CreateResponse{ID: "created-container"})
+
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -222,6 +247,18 @@ func (f *fakeDockerServer) pullCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.imagePulls
+}
+
+func (f *fakeDockerServer) setCreateFailures(statuses ...int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createFailures = append([]int(nil), statuses...)
+}
+
+func (f *fakeDockerServer) createCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.containerCreates
 }
 
 // containerIDFromPath extracts the {id} segment from versioned docker API
