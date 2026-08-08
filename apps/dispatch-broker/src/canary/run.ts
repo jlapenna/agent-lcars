@@ -339,6 +339,41 @@ function assertCanaryContracts({ ledger, generation }: FoundGeneration): void {
   }
 }
 
+/**
+ * A successful controller completion and its finalizer/projector writes are
+ * separate ledger mutations. GitHub can therefore expose `completed/success`
+ * before the exact outcome and the checkpoint for that new revision arrive.
+ * Only those incomplete observations are retryable; a value that is already
+ * present but wrong remains a hard contract failure.
+ */
+function isCanaryContractObservationPending({
+  ledger,
+  generation,
+}: FoundGeneration): boolean {
+  const attempt = generation.attempt;
+  if (attempt?.attemptId !== formatAttemptId(generation)) return false;
+  if (attempt.outcome !== undefined && attempt.outcome !== 'comment') {
+    return false;
+  }
+
+  const projection = ledger.projection;
+  if (projection?.state === 'diverged') return false;
+  if (
+    projection?.state === 'converged' &&
+    projection.desiredRevision === ledger.revision - 1 &&
+    projection.observedRevision !== projection.desiredRevision
+  ) {
+    return false;
+  }
+
+  if (attempt.outcome === undefined) return true;
+  if (!projection || projection.state === 'pending') return true;
+  return (
+    projection.state === 'converged' &&
+    projection.desiredRevision !== ledger.revision - 1
+  );
+}
+
 // Shared by the live poll below and sweepStaleCanaries' one-shot read: find
 // this issue's ledger comment (if any) and the 'canary'-pipeline generation
 // within it. Returns undefined when no ledger comment exists yet, or none
@@ -384,14 +419,19 @@ interface PollCanaryLedgerOptions {
 
 function describeCanaryObservation(found?: FoundGeneration): string {
   if (!found) return 'awaiting a ledger generation for this caller';
-  const { generation } = found;
+  const { generation, ledger } = found;
   const attempt = generation.attempt;
+  const projection = ledger.projection;
   return [
     `g${generation.generation}`,
     `state=${generation.state}`,
     `worker=${attempt?.htmlUrl ?? 'unbound'}`,
     `status=${attempt?.status ?? 'unknown'}`,
     `conclusion=${attempt?.conclusion ?? 'unknown'}`,
+    `outcome=${attempt?.outcome ?? 'missing'}`,
+    projection
+      ? `projection=${projection.state}:${projection.observedRevision}/${projection.desiredRevision}@r${ledger.revision}`
+      : 'projection=missing',
   ].join(' ');
 }
 
@@ -424,7 +464,16 @@ async function pollCanaryLedger(
       lastObservation = observation;
     }
     if (found?.generation.state === 'completed') {
-      return found;
+      // A non-successful controller result is already terminal and should be
+      // reported by runDispatchCanary immediately. For success, wait through
+      // the real finalizer/projector visibility window observed in production
+      // run 31267661432, but fail immediately when a populated contract is
+      // wrong rather than laundering it into a timeout.
+      if (found.generation.attempt?.conclusion !== 'success') return found;
+      if (!isCanaryContractObservationPending(found)) {
+        assertCanaryContracts(found);
+        return found;
+      }
     }
     if (found && TERMINAL_REJECTED_STATES.has(found.generation.state)) {
       return { ...found, rejected: true };
@@ -435,8 +484,8 @@ async function pollCanaryLedger(
     delay = Math.min(delay * 2, LEDGER_POLL_BACKOFF_MAX_MS);
   }
   throw new Error(
-    'Timed out waiting for the canary dispatch ledger to reach a terminal ' +
-      `state after ${elapsedSeconds(startedAt, now())}s; last observation: ` +
+    'Timed out waiting for the canary dispatch ledger to reach a verified ' +
+      `terminal contract after ${elapsedSeconds(startedAt, now())}s; last observation: ` +
       `${lastObservation ?? 'poll ended before the first observation'}`,
   );
 }

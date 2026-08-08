@@ -509,6 +509,24 @@ function assertCanaryContracts({ ledger, generation }) {
     );
   }
 }
+function isCanaryContractObservationPending({
+  ledger,
+  generation
+}) {
+  const attempt = generation.attempt;
+  if (attempt?.attemptId !== formatAttemptId(generation)) return false;
+  if (attempt.outcome !== void 0 && attempt.outcome !== "comment") {
+    return false;
+  }
+  const projection = ledger.projection;
+  if (projection?.state === "diverged") return false;
+  if (projection?.state === "converged" && projection.desiredRevision === ledger.revision - 1 && projection.observedRevision !== projection.desiredRevision) {
+    return false;
+  }
+  if (attempt.outcome === void 0) return true;
+  if (!projection || projection.state === "pending") return true;
+  return projection.state === "converged" && projection.desiredRevision !== ledger.revision - 1;
+}
 async function findCanaryGeneration(api, task, sourceId) {
   const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
     createIfMissing: false
@@ -521,14 +539,17 @@ async function findCanaryGeneration(api, task, sourceId) {
 }
 function describeCanaryObservation(found) {
   if (!found) return "awaiting a ledger generation for this caller";
-  const { generation } = found;
+  const { generation, ledger } = found;
   const attempt = generation.attempt;
+  const projection = ledger.projection;
   return [
     `g${generation.generation}`,
     `state=${generation.state}`,
     `worker=${attempt?.htmlUrl ?? "unbound"}`,
     `status=${attempt?.status ?? "unknown"}`,
-    `conclusion=${attempt?.conclusion ?? "unknown"}`
+    `conclusion=${attempt?.conclusion ?? "unknown"}`,
+    `outcome=${attempt?.outcome ?? "missing"}`,
+    projection ? `projection=${projection.state}:${projection.observedRevision}/${projection.desiredRevision}@r${ledger.revision}` : "projection=missing"
   ].join(" ");
 }
 function elapsedSeconds(startedAt, observedAt) {
@@ -555,7 +576,11 @@ async function pollCanaryLedger(api, task, {
       lastObservation = observation;
     }
     if (found?.generation.state === "completed") {
-      return found;
+      if (found.generation.attempt?.conclusion !== "success") return found;
+      if (!isCanaryContractObservationPending(found)) {
+        assertCanaryContracts(found);
+        return found;
+      }
     }
     if (found && TERMINAL_REJECTED_STATES.has(found.generation.state)) {
       return { ...found, rejected: true };
@@ -566,7 +591,7 @@ async function pollCanaryLedger(api, task, {
     delay = Math.min(delay * 2, LEDGER_POLL_BACKOFF_MAX_MS);
   }
   throw new Error(
-    `Timed out waiting for the canary dispatch ledger to reach a terminal state after ${elapsedSeconds(startedAt, now())}s; last observation: ${lastObservation ?? "poll ended before the first observation"}`
+    `Timed out waiting for the canary dispatch ledger to reach a verified terminal contract after ${elapsedSeconds(startedAt, now())}s; last observation: ${lastObservation ?? "poll ended before the first observation"}`
   );
 }
 async function closeCanaryIssue(api, task, { generation, runUrl, message }) {
