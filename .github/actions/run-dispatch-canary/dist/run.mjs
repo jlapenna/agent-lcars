@@ -503,9 +503,9 @@ function assertCanaryContracts({ ledger, generation }) {
     );
   }
   const projection = ledger.projection;
-  if (projection?.state !== "converged" || projection.desiredRevision !== projection.observedRevision) {
+  if (projection?.state !== "converged" || projection.desiredRevision !== projection.observedRevision || projection.desiredRevision !== ledger.revision - 1) {
     throw new Error(
-      `Canary projector contract failed: expected converged matching revisions, got ${projection ? JSON.stringify(projection) : "no projection status"}.`
+      `Canary projector contract failed: expected a converged checkpoint for the terminal ledger revision immediately before the checkpoint write, got ${projection ? JSON.stringify(projection) : "no projection status"}.`
     );
   }
 }

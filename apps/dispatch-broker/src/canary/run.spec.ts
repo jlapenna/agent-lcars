@@ -79,6 +79,9 @@ function ledgerCommentWithGeneration(options = {}) {
     attempt,
   });
   if (projectionState !== undefined) {
+    // recordProjectionStatus targets the current ledger revision, then its
+    // own checkpoint mutation advances the ledger exactly once.
+    ledger.revision = 8;
     ledger.projection = {
       desiredRevision: 7,
       observedRevision: projectionState === 'converged' ? 7 : 6,
@@ -269,6 +272,20 @@ test('assertCanaryContracts rejects a controller-only green with no typed finali
 test('assertCanaryContracts rejects a green outcome with a divergent projector', () => {
   const comment = ledgerCommentWithGeneration({ projectionState: 'diverged' });
   const parsed = JSON.parse(comment.body.match(/```json\n([^]*?)\n```/u)[1]);
+  assert.throws(
+    () =>
+      assertCanaryContracts({
+        ledger: parsed,
+        generation: parsed.generations[0],
+      }),
+    /projector contract failed/u,
+  );
+});
+
+test('assertCanaryContracts rejects a stale historically converged projector checkpoint', () => {
+  const comment = ledgerCommentWithGeneration();
+  const parsed = JSON.parse(comment.body.match(/```json\n([^]*?)\n```/u)[1]);
+  parsed.revision += 1;
   assert.throws(
     () =>
       assertCanaryContracts({
