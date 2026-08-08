@@ -130,6 +130,28 @@ jobs:
     # Broker writes stay on the protected self-hosted control-plane pool.
     runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
     timeout-minutes: 5
+    # Job-level `permissions:` REPLACES the workflow-level block above
+    # entirely for this job (GitHub Actions semantics) rather than adding to
+    # it, so every permission broker's own steps actually use must be
+    # restated here -- not copied from the workflow-level block, which is
+    # `normalize`'s own grant and includes `pull-requests: write` that
+    # normalize needs but broker does not. Checked, not assumed: every
+    # `request()`/`requestOk()` call site in github-api.ts that broker's
+    # code path (main.ts's broker()) reaches only ever touches `/issues/*`
+    # (ledger comments, labels, assignees, pin) and `/actions/*` (workflow
+    # dispatch, run listings) endpoints -- never `/pulls/*` -- so
+    # `pull-requests: write` is deliberately NOT restated here.
+    permissions:
+      contents: read # actions/checkout below.
+      issues: write # ledger comments/labels/pin/assignee-park (github-api.ts).
+      actions: write # workflow_dispatch + run listings (github-api.ts).
+      # #645 Phase 6 (shadow mode): WIF token minting for the
+      # "Authenticate to GCP for dispatch storage shadow observation" step
+      # below. A grant this job always carries, even when
+      # DISPATCH_STORAGE_MODE is 'off' -- job permissions are static, not
+      # conditional -- but that step's own `if:` means an 'off' run never
+      # spends it: no OIDC token request is made, so nothing is minted.
+      id-token: write
     concurrency:
       # Reserved repository-wide prefix; contract test proves no other job or
       # workflow can case-fold into this broker namespace.
@@ -139,12 +161,40 @@ jobs:
       - name: Checkout trusted broker revision
         uses: actions/checkout@v7
 
+      # #645 Phase 6 (shadow mode): conditional on the mode being enabled so
+      # an 'off' (or unset) DISPATCH_STORAGE_MODE mints no token at all --
+      # the genuine rollback position dispatch-broker/src/storage/shadow.ts
+      # documents. Same google-github-actions/auth usage as
+      # deploy-console.yml's own gcp-auth step (token_format: access_token,
+      # unpinned @v3 tag -- matching that workflow's own pinning style for
+      # this action), reading the same vars.GCP_WIF_PROVIDER every other WIF
+      # consumer in this repo already uses. GCP_DISPATCH_BROKER_SA
+      # (dispatch-broker@agent-lcars.iam.gserviceaccount.com,
+      # roles/datastore.user) is this job's own narrowly-scoped service
+      # account, distinct from GCP_DEPLOYER_SA/GCP_CODEX_AGENT_SA.
+      - name: Authenticate to GCP for dispatch storage shadow observation
+        id: gcp-auth
+        if: vars.DISPATCH_STORAGE_MODE == 'shadow'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DISPATCH_BROKER_SA }}
+          token_format: access_token
+
       - name: Apply serialized broker transition
         uses: ./.github/actions/dispatch-broker
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
           ANCHOR_IS_PR: ${{ github.event.issue.pull_request != null || github.event.pull_request != null }}
+          # #645 Phase 6 (shadow mode): the mode switch itself, plus what
+          # main.ts's createShadowStoragePort needs when it is 'shadow'.
+          # DISPATCH_STORAGE_TOKEN/GCP_PROJECT_ID are simply unused strings
+          # when the mode is 'off' -- dispatch-broker/src/storage/shadow.ts's
+          # gate means neither is ever read.
+          DISPATCH_STORAGE_MODE: ${{ vars.DISPATCH_STORAGE_MODE }}
+          DISPATCH_STORAGE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         with:
           operation: broker
           payload: ${{ needs.normalize.outputs.payload }}

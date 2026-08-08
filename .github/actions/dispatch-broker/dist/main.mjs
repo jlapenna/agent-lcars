@@ -1792,6 +1792,490 @@ function normalizeEvent({
   return { kind: "ignored", reason: "unsupported issue action" };
 }
 
+// apps/dispatch-broker/src/storage/firestore-rest-port.ts
+import { isDeepStrictEqual } from "node:util";
+
+// apps/dispatch-broker/src/storage/port.ts
+function taskKey(task) {
+  return `${task.repositoryId}:${task.issue}`;
+}
+var TaskWriteConflictError = class extends Error {
+  constructor(task, expectedRevision, actualRevision) {
+    super(
+      `Task write conflict for ${task.repository}#${task.issue}: expected revision ${expectedRevision ?? "(none)"}, found ${actualRevision ?? "(none)"}`
+    );
+    this.task = task;
+    this.expectedRevision = expectedRevision;
+    this.actualRevision = actualRevision;
+    this.name = "TaskWriteConflictError";
+  }
+  task;
+  expectedRevision;
+  actualRevision;
+};
+
+// apps/dispatch-broker/src/storage/firestore-rest-port.ts
+var TASKS_COLLECTION = "dispatchTasks";
+var LAUNCH_OUTBOX_COLLECTION = "dispatchLaunchOutbox";
+function defaultNow() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function sameResolution(a, b) {
+  return isDeepStrictEqual(a, b);
+}
+function toFirestoreValue(value) {
+  if (value === null) return { nullValue: null };
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  }
+  if (typeof value === "string") return { stringValue: value };
+  if (Array.isArray(value)) {
+    return {
+      arrayValue: {
+        // Defensive, not load-bearing for anything port.contract.ts
+        // exercises today: no domain field here is ever an array
+        // containing `undefined`, but skipping it (rather than crashing on
+        // it) matches the same "absent, not null" posture `toFirestoreFields`
+        // takes for object keys below.
+        values: value.filter((element) => element !== void 0).map(toFirestoreValue)
+      }
+    };
+  }
+  if (typeof value === "object") {
+    return {
+      mapValue: {
+        fields: toFirestoreFields(value)
+      }
+    };
+  }
+  throw new TypeError(
+    `Cannot store a value of type ${typeof value} in Firestore`
+  );
+}
+function toFirestoreFields(obj) {
+  const fields = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === void 0) continue;
+    fields[key] = toFirestoreValue(value);
+  }
+  return fields;
+}
+function fromFirestoreValue(value) {
+  if ("nullValue" in value) return null;
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return value.doubleValue;
+  if ("stringValue" in value) return value.stringValue;
+  if ("timestampValue" in value) return value.timestampValue;
+  if ("arrayValue" in value) {
+    return (value.arrayValue.values ?? []).map(fromFirestoreValue);
+  }
+  if ("mapValue" in value) {
+    return fromFirestoreFields(value.mapValue.fields ?? {});
+  }
+  throw new TypeError(`Unrecognized Firestore value: ${JSON.stringify(value)}`);
+}
+function fromFirestoreFields(fields) {
+  const obj = {};
+  for (const [key, value] of Object.entries(fields)) {
+    obj[key] = fromFirestoreValue(value);
+  }
+  return obj;
+}
+var FirestoreRestError = class extends Error {
+  constructor(status, body) {
+    super(
+      `Firestore REST request failed with HTTP ${status}: ${JSON.stringify(body)}`
+    );
+    this.status = status;
+    this.body = body;
+    this.name = "FirestoreRestError";
+  }
+  status;
+  body;
+};
+var FirestoreRestStoragePort = class {
+  #token;
+  #documentsRoot;
+  #baseUrl;
+  constructor(options) {
+    this.#token = options.token;
+    this.#documentsRoot = `projects/${options.projectId}/databases/(default)/documents`;
+    const emulatorHost = options.emulatorHost ?? process.env.FIRESTORE_EMULATOR_HOST;
+    this.#baseUrl = emulatorHost ? `http://${emulatorHost}/v1/${this.#documentsRoot}` : `https://firestore.googleapis.com/v1/${this.#documentsRoot}`;
+  }
+  async #authHeader() {
+    const token = typeof this.#token === "function" ? await this.#token() : this.#token;
+    return `Bearer ${token}`;
+  }
+  async #request(url, init) {
+    const requestInit = {
+      method: init?.method ?? "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: await this.#authHeader()
+      }
+    };
+    if (init?.body !== void 0) {
+      requestInit.body = JSON.stringify(init.body);
+    }
+    const response = await fetch(url, requestInit);
+    const text = await response.text();
+    return {
+      status: response.status,
+      body: text ? JSON.parse(text) : void 0
+    };
+  }
+  #documentUrl(collection, id) {
+    return `${this.#baseUrl}/${collection}/${encodeURIComponent(id)}`;
+  }
+  #documentName(collection, id) {
+    return `${this.#documentsRoot}/${collection}/${id}`;
+  }
+  /** `GET` one document. `undefined` when it does not exist -- the REST API
+   *  reports that as HTTP 404 `NOT_FOUND`, verified directly against the
+   *  emulator rather than assumed. */
+  async #getDocument(collection, id) {
+    const { status, body } = await this.#request(
+      this.#documentUrl(collection, id)
+    );
+    if (status === 404) return void 0;
+    if (status !== 200) throw new FirestoreRestError(status, body);
+    const document = body;
+    return { fields: document.fields ?? {}, updateTime: document.updateTime };
+  }
+  /**
+   * `:commit` one document write under a `currentDocument` precondition.
+   * Returns `false` -- never throws -- when the precondition was not met
+   * (`ALREADY_EXISTS` for a failed `exists: false`, `FAILED_PRECONDITION`
+   * for a stale `updateTime`), both verified directly against the emulator.
+   * Any other non-2xx response is a genuine, unexpected failure and throws
+   * `FirestoreRestError`.
+   */
+  async #commit(collection, id, fields, currentDocument) {
+    const { status, body } = await this.#request(`${this.#baseUrl}:commit`, {
+      method: "POST",
+      body: {
+        writes: [
+          {
+            update: { name: this.#documentName(collection, id), fields },
+            currentDocument
+          }
+        ]
+      }
+    });
+    if (status === 200) return true;
+    const errorStatus = body?.error?.status;
+    if (status === 409 && errorStatus === "ALREADY_EXISTS" || status === 400 && errorStatus === "FAILED_PRECONDITION") {
+      return false;
+    }
+    throw new FirestoreRestError(status, body);
+  }
+  // -------------------------------------------------------------------------
+  // Task aggregate.
+  // -------------------------------------------------------------------------
+  async readTask(task) {
+    const document = await this.#getDocument(TASKS_COLLECTION, taskKey(task));
+    return document ? fromFirestoreFields(document.fields) : void 0;
+  }
+  async writeTask(task, expectedRevision, next, now = defaultNow()) {
+    const id = taskKey(task);
+    const current = await this.#getDocument(TASKS_COLLECTION, id);
+    const currentRevision = current ? fromFirestoreFields(current.fields).revision : void 0;
+    if (currentRevision !== expectedRevision) {
+      throw new TaskWriteConflictError(task, expectedRevision, currentRevision);
+    }
+    const stored = {
+      ...structuredClone(next),
+      task: structuredClone(task),
+      revision: (expectedRevision ?? 0) + 1,
+      updatedAt: now
+    };
+    const precondition = current ? { updateTime: current.updateTime } : { exists: false };
+    const committed = await this.#commit(
+      TASKS_COLLECTION,
+      id,
+      toFirestoreFields(stored),
+      precondition
+    );
+    if (!committed) {
+      const latest = await this.#getDocument(TASKS_COLLECTION, id);
+      const latestRevision = latest ? fromFirestoreFields(latest.fields).revision : void 0;
+      throw new TaskWriteConflictError(task, expectedRevision, latestRevision);
+    }
+    return stored;
+  }
+  // -------------------------------------------------------------------------
+  // Launch outbox.
+  // -------------------------------------------------------------------------
+  async recordLaunchIntent(operation, now = defaultNow()) {
+    const document = await this.#getDocument(
+      LAUNCH_OUTBOX_COLLECTION,
+      operation.operationId
+    );
+    if (document) {
+      const existing = fromFirestoreFields(
+        document.fields
+      );
+      const sameOperation = existing.attemptId === operation.attemptId && taskKey(existing.task) === taskKey(operation.task);
+      if (!sameOperation) {
+        throw new Error(
+          `Launch outbox operation ID reused for a different attempt: ${operation.operationId}`
+        );
+      }
+      return existing;
+    }
+    const created = {
+      operationId: operation.operationId,
+      task: structuredClone(operation.task),
+      attemptId: operation.attemptId,
+      recordedAt: now,
+      status: "pending"
+    };
+    const committed = await this.#commit(
+      LAUNCH_OUTBOX_COLLECTION,
+      operation.operationId,
+      toFirestoreFields(created),
+      { exists: false }
+    );
+    if (!committed) {
+      return this.recordLaunchIntent(operation, now);
+    }
+    return created;
+  }
+  async resolveLaunchOutcome(operationId, resolution, now = defaultNow()) {
+    const document = await this.#getDocument(
+      LAUNCH_OUTBOX_COLLECTION,
+      operationId
+    );
+    if (!document) {
+      throw new Error(
+        `Cannot resolve launch outbox operation that was never recorded: ${operationId}`
+      );
+    }
+    const existing = fromFirestoreFields(
+      document.fields
+    );
+    if (existing.status !== "pending") {
+      if (existing.resolution && sameResolution(existing.resolution, resolution)) {
+        return existing;
+      }
+      throw new Error(
+        `Launch outbox operation ${operationId} already resolved as ${existing.status}; refusing to overwrite with a different resolution`
+      );
+    }
+    const resolved = {
+      ...existing,
+      status: resolution.status,
+      resolvedAt: now,
+      resolution
+    };
+    const committed = await this.#commit(
+      LAUNCH_OUTBOX_COLLECTION,
+      operationId,
+      toFirestoreFields(resolved),
+      { updateTime: document.updateTime }
+    );
+    if (!committed) {
+      return this.resolveLaunchOutcome(operationId, resolution, now);
+    }
+    return resolved;
+  }
+  async readLaunchOperation(operationId) {
+    const document = await this.#getDocument(
+      LAUNCH_OUTBOX_COLLECTION,
+      operationId
+    );
+    return document ? fromFirestoreFields(
+      document.fields
+    ) : void 0;
+  }
+  async listPendingLaunchOperations() {
+    const { status, body } = await this.#request(`${this.#baseUrl}:runQuery`, {
+      method: "POST",
+      body: {
+        structuredQuery: {
+          from: [{ collectionId: LAUNCH_OUTBOX_COLLECTION }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: "status" },
+              op: "EQUAL",
+              value: { stringValue: "pending" }
+            }
+          }
+        }
+      }
+    });
+    if (status !== 200) throw new FirestoreRestError(status, body);
+    const rows = body;
+    return rows.filter((row) => row.document !== void 0).map(
+      (row) => fromFirestoreFields(
+        row.document?.fields ?? {}
+      )
+    );
+  }
+};
+
+// apps/dispatch-broker/src/storage/shadow.ts
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
+function parseDispatchStorageMode(raw) {
+  const value = (raw ?? "").trim();
+  if (value === "" || value === "off") return "off";
+  if (value === "shadow") return "shadow";
+  throw new Error(
+    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset) or 'shadow'.`
+  );
+}
+function mapGenerationState(state) {
+  switch (state) {
+    case "accepted":
+      return "accepted";
+    case "pending":
+      return "pending";
+    case "dispatching":
+    case "dispatch-unknown":
+      return "dispatching";
+    case "active":
+    case "completion-observed":
+    case "completion-awaiting-terminal":
+      return "active";
+    case "completed":
+      return "completed";
+    case "dispatch-rejected":
+    case "superseded":
+    case "superseded-by-close":
+      return "superseded";
+    default: {
+      const exhaustive = state;
+      throw new Error(
+        `Unhandled ledger generation state: ${String(exhaustive)}`
+      );
+    }
+  }
+}
+function mapAuthorization(authorization2) {
+  if (!authorization2) return { observed: true };
+  if ("authorized" in authorization2) {
+    return {
+      authorized: authorization2.authorized,
+      actor: authorization2.actor,
+      rule: authorization2.rule
+    };
+  }
+  return {
+    observed: true,
+    actor: authorization2.actor,
+    workflow: authorization2.workflow
+  };
+}
+function mapSignal(source) {
+  return {
+    sourceKind: source.sourceKind,
+    sourceId: source.sourceId,
+    occurredAt: source.occurredAt,
+    authorization: mapAuthorization(source.authorization)
+  };
+}
+function mapAttempt(generation) {
+  const attempt = generation.attempt;
+  if (!attempt) return void 0;
+  return {
+    attemptId: attempt.attemptId ?? formatAttemptId({
+      generation: generation.generation,
+      intentId: generation.intentId
+    }),
+    token: attempt.token ?? "",
+    dispatchStartedAt: attempt.dispatchStartedAt ?? generation.occurredAt,
+    runId: attempt.runId,
+    runUrl: attempt.runUrl,
+    htmlUrl: attempt.htmlUrl,
+    boundAt: attempt.boundAt,
+    completedAt: attempt.completedAt,
+    conclusion: attempt.conclusion
+  };
+}
+function mapIntent(generation) {
+  return {
+    intentId: generation.intentId,
+    sourceId: generation.sourceId,
+    occurredAt: generation.occurredAt,
+    state: mapGenerationState(generation.state),
+    attempt: mapAttempt(generation)
+  };
+}
+function projectLedgerToStoredTask(ledger) {
+  const activeGeneration2 = ledger.generations.find(
+    (generation) => LEDGER_ACTIVE_GENERATION_STATES.has(generation.state)
+  );
+  const pendingGeneration = ledger.generations.find(
+    (generation) => generation.state === "pending"
+  );
+  const acceptedGeneration = ledger.generations.find(
+    (generation) => generation.state === "accepted"
+  );
+  const desiredIntentId = activeGeneration2?.intentId ?? pendingGeneration?.intentId ?? acceptedGeneration?.intentId;
+  return {
+    desiredIntentId,
+    signals: ledger.sources.map(mapSignal),
+    intents: ledger.generations.map(mapIntent)
+  };
+}
+function checkRoundTrip(written, after) {
+  if (!after) {
+    return [
+      { field: "revision", expected: written.revision, actual: void 0 }
+    ];
+  }
+  const fields = [
+    "desiredIntentId",
+    "signals",
+    "intents"
+  ];
+  const divergences = [];
+  for (const field of fields) {
+    const expected = written[field];
+    const actual = after[field];
+    if (!isDeepStrictEqual2(expected, actual)) {
+      divergences.push({ field, expected, actual });
+    }
+  }
+  if (after.revision !== written.revision) {
+    divergences.push({
+      field: "revision",
+      expected: written.revision,
+      actual: after.revision
+    });
+  }
+  return divergences;
+}
+function logRoundTripMismatches(task, divergences) {
+  for (const divergence of divergences) {
+    console.log(
+      `::warning::dispatch-storage shadow round-trip mismatch for ${task.repository}#${task.issue}, field '${divergence.field}': expected=${JSON.stringify(divergence.expected)} actual=${JSON.stringify(divergence.actual)}`
+    );
+  }
+}
+async function observeDispatchStorage(port, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const task = ledger.task;
+  const before = await port.readTask(task);
+  const desired = projectLedgerToStoredTask(ledger);
+  const written = await port.writeTask(task, before?.revision, desired, now);
+  const after = await port.readTask(task);
+  logRoundTripMismatches(task, checkRoundTrip(written, after));
+}
+async function maybeObserveDispatchStorage(mode, createPort, ledger, now) {
+  if (mode !== "shadow") return;
+  try {
+    await observeDispatchStorage(createPort(), ledger, now);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::dispatch-storage shadow observation failed for ${ledger.task.repository}#${ledger.task.issue}: ${message}`
+    );
+  }
+}
+
 // apps/dispatch-broker/src/main.ts
 function env(name, required = true) {
   const value = process.env[name];
@@ -1811,6 +2295,12 @@ function decode(value) {
 }
 function api() {
   return createGitHubApi({ token: env("GITHUB_TOKEN") });
+}
+function createShadowStoragePort() {
+  return new FirestoreRestStoragePort({
+    projectId: env("GCP_PROJECT_ID"),
+    token: env("DISPATCH_STORAGE_TOKEN")
+  });
 }
 function contextFor(event, inputs) {
   return {
@@ -2570,6 +3060,9 @@ async function applyAnchorControlTransition(client, loaded, control) {
 async function broker() {
   const normalized = decode(env("BROKER_PAYLOAD"));
   if (normalized.kind === "ignored") return;
+  const storageMode = parseDispatchStorageMode(
+    env("DISPATCH_STORAGE_MODE", false)
+  );
   const task = resolveTask(normalized);
   const client = api();
   const isPullRequest = env("ANCHOR_IS_PR", false) === "true";
@@ -2666,6 +3159,11 @@ async function broker() {
         `::warning::Failed to record the projector's convergence checkpoint: ${message}`
       );
     }
+    await maybeObserveDispatchStorage(
+      storageMode,
+      createShadowStoragePort,
+      loaded.ledger
+    );
   } catch (error) {
     await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
   }
