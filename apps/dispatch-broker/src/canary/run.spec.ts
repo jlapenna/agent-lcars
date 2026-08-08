@@ -283,6 +283,36 @@ test('pollCanaryLedger waits for the finalizer outcome and current projector che
   assert.match(notices[1], /projection=converged:7\/7@r8/u);
 });
 
+test('pollCanaryLedger retries a divergent checkpoint from an older ledger revision', async () => {
+  let call = 0;
+  const client = api(async () => {
+    call += 1;
+    return response(200, [
+      call === 1
+        ? ledgerCommentWithGeneration({
+            projectionState: 'diverged',
+            ledgerRevision: 9,
+            projectionDesiredRevision: 7,
+          })
+        : ledgerCommentWithGeneration(),
+    ]);
+  });
+  let clock = 0;
+  const notices = [];
+  const result = await pollCanaryLedger(client, task, {
+    now: () => clock,
+    sleepImpl: async (delay) => {
+      clock += delay;
+    },
+    log: (message) => notices.push(message),
+  });
+
+  assert.equal(call, 2);
+  assert.equal(result.ledger.projection.state, 'converged');
+  assert.match(notices[0], /projection=diverged:6\/7@r9/u);
+  assert.match(notices[1], /projection=converged:7\/7@r8/u);
+});
+
 test('pollCanaryLedger fails immediately when a populated finalizer contract is wrong', async () => {
   let call = 0;
   const client = api(async () => {

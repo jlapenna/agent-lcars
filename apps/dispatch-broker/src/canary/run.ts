@@ -343,8 +343,9 @@ function assertCanaryContracts({ ledger, generation }: FoundGeneration): void {
  * A successful controller completion and its finalizer/projector writes are
  * separate ledger mutations. GitHub can therefore expose `completed/success`
  * before the exact outcome and the checkpoint for that new revision arrive.
- * Only those incomplete observations are retryable; a value that is already
- * present but wrong remains a hard contract failure.
+ * Incomplete observations and checkpoints for an older ledger revision are
+ * retryable; a value populated for the current target revision but wrong
+ * remains a hard contract failure.
  */
 function isCanaryContractObservationPending({
   ledger,
@@ -357,7 +358,12 @@ function isCanaryContractObservationPending({
   }
 
   const projection = ledger.projection;
-  if (projection?.state === 'diverged') return false;
+  if (
+    projection?.state === 'diverged' &&
+    projection.desiredRevision === ledger.revision - 1
+  ) {
+    return false;
+  }
   if (
     projection?.state === 'converged' &&
     projection.desiredRevision === ledger.revision - 1 &&
@@ -369,7 +375,7 @@ function isCanaryContractObservationPending({
   if (attempt.outcome === undefined) return true;
   if (!projection || projection.state === 'pending') return true;
   return (
-    projection.state === 'converged' &&
+    (projection.state === 'converged' || projection.state === 'diverged') &&
     projection.desiredRevision !== ledger.revision - 1
   );
 }
