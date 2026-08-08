@@ -37,6 +37,12 @@ workers can delete comments, but they cannot change GitHub's `created_at` or
 the repository configuration. Only tasks GitHub created at or after the epoch
 may initialize an empty aggregate automatically.
 
+One narrow retirement rule prevents migration debris from becoming a durable
+retry backlog: reconciliation and delayed webhook replay may quarantine a
+compatibility-only task only when live GitHub state proves that it is closed,
+predates the cutover, and carries no `agent:*` or `review:*` intent. Open,
+active-label, and post-cutover authority gaps continue to fail closed.
+
 Two seams are load-bearing enough to read before anything else:
 
 - **The compatibility comment is forgeable by the agents it controls.**

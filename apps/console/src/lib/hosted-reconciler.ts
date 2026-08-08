@@ -2,7 +2,6 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
-import { DISPATCH_LABELS } from '@agent-lcars/dispatch-contracts';
 import {
   type IssueOrPullRequest,
   normalizeEvent,
@@ -28,6 +27,7 @@ import {
 import type { ReconcileOidcIdentity } from './github-actions-oidc';
 import { getGithubClient } from './github-client';
 import { processHostedControllerEvent } from './hosted-controller';
+import { isRetiredLegacyCandidate } from './retired-legacy-candidate';
 
 function splitRepository(repository: string): { owner: string; repo: string } {
   const [owner, repo, ...rest] = repository.split('/');
@@ -35,43 +35,6 @@ function splitRepository(repository: string): { owner: string; repo: string } {
     throw new Error(`Invalid GitHub repository: ${repository}`);
   }
   return { owner, repo };
-}
-
-const dispatchLabels = new Set<string>(DISPATCH_LABELS);
-
-/**
- * The authority cutover deliberately fails closed when an old task missed
- * exact-state backfill. A recently closed issue assigned to the fleet is one
- * safe exception: if it predates the immutable cutover epoch and carries no
- * current dispatch label, GitHub proves there is no work left to admit or
- * repair. Leave the compatibility-only record quarantined and let the
- * bounded closed sweep age it out instead of failing every unrelated task in
- * the scan.
- *
- * Keep this narrower than "closed means safe". A post-cutover gap indicates
- * a new writer bug, and a closed issue that still carries agent/review intent
- * may need controller convergence; both must remain visible failures. An
- * invalid epoch also fails closed.
- */
-function isRetiredLegacyCandidate(
-  issue: IssueOrPullRequest,
-  authorityEpoch: string,
-): boolean {
-  if (issue.state !== 'closed') return false;
-  if (
-    (issue.labels ?? []).some((label) =>
-      dispatchLabels.has(typeof label === 'string' ? label : label.name),
-    )
-  ) {
-    return false;
-  }
-  const createdAt = Date.parse(issue.created_at);
-  const cutoverAt = Date.parse(authorityEpoch);
-  return (
-    Number.isFinite(createdAt) &&
-    Number.isFinite(cutoverAt) &&
-    createdAt < cutoverAt
-  );
 }
 
 export function createOctokitReconcileTransport(
@@ -144,7 +107,6 @@ export function createOctokitReconcileTransport(
         }
         if (
           error instanceof AuthorityStateMissingError &&
-          error.compatibilityQuiescent &&
           isRetiredLegacyCandidate(liveIssue, authorityEpoch)
         ) {
           console.info(
