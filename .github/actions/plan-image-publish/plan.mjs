@@ -72,7 +72,14 @@ const RUNNER_IMAGE_PREFIX = 'apps/runner-autoscaler/runner-image/';
 // image) since agent-lcars#441's evidence and acceptance criteria are
 // about the watcher/JIT-runner side, not about narrowing this one further.
 const CONTROL_PLANE_PREFIX = 'apps/runner-autoscaler/';
-const EXPORTER_PREFIX = 'apps/github-actions-exporter/';
+// The exporter's Dockerfile copies only these files. README, tests, and Nx
+// integration still run in CI but cannot change the published image, so do
+// not spend the serialized builder lane on them.
+const EXPORTER_IMAGE_FILES = new Set([
+  'apps/github-actions-exporter/Dockerfile',
+  'apps/github-actions-exporter/exporter.py',
+  'apps/github-actions-exporter/requirements.lock',
+]);
 
 function startsWithAny(file, prefixes) {
   return prefixes.some((prefix) => file.startsWith(prefix));
@@ -108,7 +115,7 @@ function isControlPlane(file) {
 }
 
 function isExporter(file) {
-  return file.startsWith(EXPORTER_PREFIX);
+  return EXPORTER_IMAGE_FILES.has(file);
 }
 
 // `changedFiles === null` is the explicit "no well-defined diff" sentinel

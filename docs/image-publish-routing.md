@@ -47,8 +47,10 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
    Schedules only the JIT runner.
 4. **Control-plane inputs** — everything else under
    `apps/runner-autoscaler/**`. Schedules only the control plane.
-5. **Exporter inputs** — `apps/github-actions-exporter/**`. Schedules only
-   the exporter.
+5. **Exporter image inputs** — its `Dockerfile`, `exporter.py`, and
+   `requirements.lock`. Schedules only the exporter. Its README, tests, and
+   Nx project config remain CI inputs but cannot change the image and do not
+   consume the serialized builder lane.
 6. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
 
 A push can match more than one rule; each image is scheduled if **any**

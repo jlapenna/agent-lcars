@@ -130,6 +130,17 @@ test('an exporter source change schedules only the exporter', () => {
   );
 });
 
+test('exporter tests, Nx config, and documentation schedule no image build', () => {
+  assert.deepEqual(
+    planImageBuilds([
+      'apps/github-actions-exporter/tests/test_exporter.py',
+      'apps/github-actions-exporter/project.json',
+      'apps/github-actions-exporter/README.md',
+    ]),
+    { controlPlane: false, jitRunner: false, watcher: false, exporter: false },
+  );
+});
+
 // Changing how images are built/scanned/promoted is as much a reason to
 // rebuild everything as changing what's in them (mirrors the existing
 // scan-image rationale in publish-images.yml, agent-lcars#224).

@@ -96,7 +96,11 @@ on:
     branches: [main]
     paths:
       - apps/runner-autoscaler/**
-      - apps/github-actions-exporter/**
+      # The exporter Dockerfile copies exactly these two inputs in addition
+      # to itself. README/tests/Nx config are CI inputs, not image inputs.
+      - apps/github-actions-exporter/Dockerfile
+      - apps/github-actions-exporter/exporter.py
+      - apps/github-actions-exporter/requirements.lock
       - .github/workflows/publish-images.yml
       # Changing how an image is scanned/attested/promoted, or how image
       # builds are ROUTED, is as much a reason to republish-and-exercise as
