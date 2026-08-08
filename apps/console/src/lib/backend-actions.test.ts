@@ -517,11 +517,15 @@ describe('approveAndMergePr', () => {
 describe('cancelWorkflowRun', () => {
   function mockOctokit({
     displayTitle = '#4242: Fix the flaky test',
-  }: { displayTitle?: string } = {}) {
+    runStatuses = ['completed'],
+  }: { displayTitle?: string; runStatuses?: string[] } = {}) {
     const cancelWorkflowRun_ = vi.fn().mockResolvedValue({});
-    const getWorkflowRun = vi
-      .fn()
-      .mockResolvedValue({ data: { display_title: displayTitle } });
+    const getWorkflowRun = vi.fn().mockImplementation(async () => ({
+      data: {
+        display_title: displayTitle,
+        status: runStatuses.shift() ?? 'completed',
+      },
+    }));
     const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
       rest: {
@@ -566,6 +570,55 @@ describe('cancelWorkflowRun', () => {
       ref: 'main',
       inputs: { kind: 'reconcile', issue: '4242' },
     });
+  });
+
+  it('waits for GitHub to finish cancellation before reconciling the run', async () => {
+    vi.useFakeTimers();
+    try {
+      const { getWorkflowRun, createWorkflowDispatch } = mockOctokit({
+        runStatuses: ['in_progress', 'completed'],
+      });
+
+      const cancellation = cancelWorkflowRun(DEFAULT_REPO, 12345);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getWorkflowRun).toHaveBeenCalledTimes(1);
+      expect(createWorkflowDispatch).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(250);
+      await cancellation;
+      expect(getWorkflowRun).toHaveBeenCalledTimes(2);
+      expect(createWorkflowDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inputs: { kind: 'reconcile', issue: '4242' },
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves a slow cancellation to the scheduled sweep without reconciling early', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { getWorkflowRun, createWorkflowDispatch } = mockOctokit({
+        runStatuses: Array.from({ length: 6 }, () => 'in_progress'),
+      });
+
+      const cancellation = cancelWorkflowRun(DEFAULT_REPO, 12345);
+      await vi.runAllTimersAsync();
+      await cancellation;
+
+      expect(getWorkflowRun).toHaveBeenCalledTimes(6);
+      expect(createWorkflowDispatch).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('scheduled sweep will converge it'),
+        12345,
+      );
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it('parses the anchor from an opencode-prefixed display title the same way the dashboard does', async () => {

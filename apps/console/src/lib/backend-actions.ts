@@ -428,25 +428,44 @@ async function notifyReconcileForCancelledRun(
   repo: WatchedRepo,
   runId: number,
 ): Promise<void> {
+  // GitHub acknowledges a cancellation request before the run becomes
+  // terminal. Reconcile only after `status: completed`; an earlier pass sees
+  // the still-active attempt and is a no-op. Keep this wait bounded so the
+  // console action remains responsive, with the scheduled sweep as the
+  // fallback when GitHub takes longer to finish cancellation.
+  const pollDelaysMs = [0, 250, 500, 1000, 2000, 4000];
   let anchorNumber: number | undefined;
-  try {
-    const octokit = getGithubClient();
-    const { data: run } = await octokit.rest.actions.getWorkflowRun({
-      owner: repo.owner,
-      repo: repo.name,
-      run_id: runId,
-    });
-    anchorNumber = issueNumberFromDisplayTitle(run.display_title);
-  } catch (error) {
-    console.error(
-      'agent-lcars: failed to identify the anchor for cancelled run #%s:',
-      runId,
-      error,
-    );
+  for (const delayMs of pollDelaysMs) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      const octokit = getGithubClient();
+      const { data: run } = await octokit.rest.actions.getWorkflowRun({
+        owner: repo.owner,
+        repo: repo.name,
+        run_id: runId,
+      });
+      anchorNumber ??= issueNumberFromDisplayTitle(run.display_title);
+      if (run.status !== 'completed') continue;
+    } catch (error) {
+      console.error(
+        'agent-lcars: failed to identify the anchor for cancelled run #%s:',
+        runId,
+        error,
+      );
+      return;
+    }
+    if (anchorNumber !== undefined) {
+      await notifyReconcile(repo, anchorNumber);
+    }
     return;
   }
-  if (anchorNumber === undefined) return;
-  await notifyReconcile(repo, anchorNumber);
+
+  console.warn(
+    'agent-lcars: cancelled run #%s did not become terminal before the reconcile wait expired; the scheduled sweep will converge it',
+    runId,
+  );
 }
 
 // dispatchUnstickPrs is console-level ops. A caller with a concrete item
