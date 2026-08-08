@@ -119,4 +119,58 @@ describe('storage authority lease', () => {
     expect(waits).toBeGreaterThan(0);
     expect(acquired.session.owner).toBe('delivery:two');
   });
+
+  test.each([
+    {
+      name: 'an empty compatibility projection',
+      state: { signals: [], intents: [] },
+      expected: true,
+    },
+    {
+      name: 'terminal compatibility history',
+      state: {
+        signals: [],
+        intents: [
+          {
+            intentId: 'intent-1',
+            sourceId: 'source-1',
+            occurredAt: '2026-08-08T05:00:00.000Z',
+            state: 'completed' as const,
+          },
+        ],
+      },
+      expected: true,
+    },
+    {
+      name: 'an active compatibility intent',
+      state: {
+        desiredIntentId: 'intent-1',
+        signals: [],
+        intents: [
+          {
+            intentId: 'intent-1',
+            sourceId: 'source-1',
+            occurredAt: '2026-08-08T05:00:00.000Z',
+            state: 'active' as const,
+          },
+        ],
+      },
+      expected: false,
+    },
+  ])('classifies $name before failing closed', async ({ state, expected }) => {
+    const port = new InMemoryStoragePort();
+    await port.writeTask(task, undefined, state);
+
+    await expect(
+      acquireAuthority(
+        port,
+        task,
+        'delivery:migration-check',
+        createLedger(task),
+      ),
+    ).rejects.toMatchObject({
+      name: 'AuthorityStateMissingError',
+      compatibilityQuiescent: expected,
+    });
+  });
 });

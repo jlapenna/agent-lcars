@@ -2552,14 +2552,16 @@ var AuthorityStateNotFoundError = class extends Error {
   task;
 };
 var AuthorityStateMissingError = class extends Error {
-  constructor(task) {
+  constructor(task, compatibilityQuiescent = false) {
     super(
       `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; return to shadow mode and backfill it before authority cutover`
     );
     this.task = task;
+    this.compatibilityQuiescent = compatibilityQuiescent;
     this.name = "AuthorityStateMissingError";
   }
   task;
+  compatibilityQuiescent;
 };
 function leaseIsLive(lease, now) {
   return Boolean(lease && Date.parse(lease.expiresAt) > Date.parse(now));
@@ -2581,7 +2583,10 @@ async function acquireAuthority(port, task, owner, seed, options = {}) {
       throw new AuthorityStateNotFoundError(task);
     }
     if (current && !current.controllerState) {
-      throw new AuthorityStateMissingError(task);
+      const compatibilityQuiescent = current.desiredIntentId === void 0 && current.intents.every(
+        (intent) => ["completed", "superseded"].includes(intent.state)
+      );
+      throw new AuthorityStateMissingError(task, compatibilityQuiescent);
     }
     if (current?.lease && current.lease.owner !== owner && leaseIsLive(current.lease, observedAt)) {
       const remainingBudget = busyDeadline - Date.now();
