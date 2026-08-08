@@ -1,4 +1,5 @@
 import {
+  type DispatchOutcomeKind,
   formatAttemptId,
   formatFailure,
   isWellFormedFailureClassification,
@@ -78,6 +79,9 @@ export interface ExecutionAttempt extends AgentRun {
    *   predates the broker's marker rollout.
    * - `unattributed`: no issue number parsed at all. */
   attribution: AttemptAttribution;
+  /** Broker-owned lifecycle result for this exact bound run, distinct from
+   * the coarse GitHub Actions conclusion. */
+  outcome?: DispatchOutcomeKind;
 }
 
 export interface DispatchIntentView {
@@ -91,6 +95,7 @@ export interface DispatchIntentView {
   pipeline: AgentPipeline;
   mode?: string;
   state: LedgerGeneration['state'];
+  outcome?: DispatchOutcomeKind;
 }
 
 export interface LogicalWorkAnomaly {
@@ -229,6 +234,7 @@ function toExecutionAttempt(run: AgentRun): ExecutionAttempt {
 function attributeAttemptsToLedger(
   attempts: ExecutionAttempt[],
   ledger: DispatchLedger | undefined,
+  mergedDeliverables?: ReadonlySet<number>,
 ): { attempts: ExecutionAttempt[]; anomalies: LogicalWorkAnomaly[] } {
   if (!ledger) return { attempts, anomalies: [] };
   const anomalies: LogicalWorkAnomaly[] = [];
@@ -260,10 +266,33 @@ function attributeAttemptsToLedger(
       // before this field existed - the derivation agrees with the marker by
       // construction (marker.js), so it is exact, not a guess, for those too.
       attemptId: generation.attempt?.attemptId ?? formatAttemptId(generation),
+      ...(generation.attempt?.runId === attempt.id && generation.attempt.outcome
+        ? { outcome: reportedOutcome(generation, mergedDeliverables) }
+        : {}),
       attribution: 'ledger' as const,
     };
   });
   return { attempts: attributed, anomalies };
+}
+
+/** Turns an immutable worker result (`pull-request`) into the later
+ * reliability result (`merged-deliverable`) only when GitHub's live graph
+ * says the exact PR number that verifier persisted for this attempt merged.
+ * A different merged PR linked to the same issue never upgrades it. */
+function reportedOutcome(
+  generation: LedgerGeneration,
+  mergedDeliverables?: ReadonlySet<number>,
+): DispatchOutcomeKind | undefined {
+  const outcome = generation.attempt?.outcome;
+  const reference = generation.attempt?.outcomeReference;
+  if (
+    outcome === 'pull-request' &&
+    reference?.kind === 'pull-request' &&
+    mergedDeliverables?.has(reference.number)
+  ) {
+    return 'merged-deliverable';
+  }
+  return outcome;
 }
 
 /** Same-pipeline duplicates are the anomaly worth calling out explicitly -
@@ -346,7 +375,10 @@ function ledgerRecordedAnomalies(ledger: DispatchLedger): LogicalWorkAnomaly[] {
   }));
 }
 
-function intentsFromLedger(ledger: DispatchLedger): DispatchIntentView[] {
+function intentsFromLedger(
+  ledger: DispatchLedger,
+  mergedDeliverables?: ReadonlySet<number>,
+): DispatchIntentView[] {
   // Built once rather than calling `sourceKindForGeneration` (an O(sources)
   // `.find()`) per generation - same "build a Map once, look up per
   // element" pattern `attributeAttemptsToLedger` above already establishes
@@ -375,6 +407,7 @@ function intentsFromLedger(ledger: DispatchLedger): DispatchIntentView[] {
         pipeline: generation.pipeline,
         mode: generation.mode,
         state: generation.state,
+        outcome: reportedOutcome(generation, mergedDeliverables),
       }))
   );
 }
@@ -413,6 +446,10 @@ export interface DeriveLogicalWorkInput {
    * so a task with attempts but no open-item metadata still renders (title
    * falls back to the run's own display title). */
   taskMeta: Map<string, TaskMeta>;
+  /** Exact merged PR numbers associated with each task, from GitHub's live
+   * issue/PR graph. Only an attempt whose persisted outcome reference names
+   * one of these numbers is reported as merged. */
+  mergedDeliverables?: Map<string, ReadonlySet<number>>;
 }
 
 export interface DeriveLogicalWorkResult {
@@ -481,8 +518,9 @@ export function deriveLogicalWork(
     const sortedAttempts = entry.attempts
       .slice()
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const mergedDeliverables = input.mergedDeliverables?.get(key);
     const { attempts, anomalies: mismatchAnomalies } =
-      attributeAttemptsToLedger(sortedAttempts, ledger);
+      attributeAttemptsToLedger(sortedAttempts, ledger, mergedDeliverables);
 
     const anomalies: LogicalWorkAnomaly[] = [
       ...mismatchAnomalies,
@@ -522,7 +560,7 @@ export function deriveLogicalWork(
       url: meta?.url ?? taskRefUrl(task),
       selectedPipeline: selectedPipeline(ledger, attempts),
       state,
-      intents: ledger ? intentsFromLedger(ledger) : [],
+      intents: ledger ? intentsFromLedger(ledger, mergedDeliverables) : [],
       attempts,
       anomalies,
       provenance: ledger

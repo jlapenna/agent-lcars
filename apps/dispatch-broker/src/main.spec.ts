@@ -162,6 +162,7 @@ test('storage-authoritative dispatch records the outbox and resolves it after pe
     },
     requestOk: async (path, options = {}) => {
       if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       assert.match(path, /issues\/comments\/9$/u);
       assert.equal(options.method, 'PATCH');
       return { id: 9 };
@@ -224,7 +225,11 @@ test('a launched worker stays active when launch-outbox resolution fails', async
       },
       headers: new Headers(),
     }),
-    requestOk: async () => ({ id: 9 }),
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
+      return { id: 9 };
+    },
   };
   const loaded = {
     ledger: authority.ledger,
@@ -309,6 +314,7 @@ test('authority launches from Firestore while the compatibility projection is un
     }),
     requestOk: async (path) => {
       if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       throw new Error('projection must remain untouched');
     },
   };
@@ -374,6 +380,7 @@ test('authority launches when the scheduling projection PATCH fails', async () =
     },
     requestOk: async (path) => {
       if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       throw new Error('GitHub projection unavailable');
     },
   };
@@ -518,6 +525,7 @@ test('authority restores accepted state when pre-launch outbox recording fails',
     },
     requestOk: async (path) => {
       if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       projectionWrites += 1;
       return { id: 9 };
     },
@@ -571,7 +579,11 @@ test('authority persists dispatch-unknown when auxiliary outbox resolution fails
     request: async () => {
       throw new Error('dispatch response timeout');
     },
-    requestOk: async () => ({ id: 9 }),
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
+      return { id: 9 };
+    },
   };
   const loaded = {
     ledger: authority.ledger,
@@ -801,6 +813,7 @@ test('dispatch admission holds ordinary accepted work while needs-human is live,
     requestOk: async (path, options = {}) => {
       resumedCalls.push({ path, method: options.method ?? 'GET' });
       if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       if (path.endsWith('/issues/comments/9')) return { id: 9 };
       throw new Error(`Unexpected resumed request: ${path}`);
     },
@@ -826,6 +839,90 @@ test('dispatch admission holds ordinary accepted work while needs-human is live,
   assert.equal(ledger.generations[0].state, 'active');
   assert.equal(
     resumedCalls.filter((call) => call.path.endsWith('/dispatches')).length,
+    1,
+  );
+});
+
+test('dispatch admission parks visibly before allocation while lane health is open and resumes the same accepted generation after recovery (#523)', async () => {
+  const ledger = acceptedLedger('codex');
+  const loaded = { ledger, comment: { id: 9 } };
+  const readinessMarker =
+    '<!-- agent-lcars:workflow-alert:v1:bootstrap-canary.yml -->';
+  let healthy = false;
+  let projectedComment;
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) {
+        return healthy
+          ? []
+          : [
+              {
+                number: 901,
+                title: 'Bootstrap Canary is failing',
+                body: readinessMarker,
+                html_url: 'https://github.com/jlapenna/agent-lcars/issues/901',
+              },
+            ];
+      }
+      if (path.includes('/issues/304/comments?')) {
+        return projectedComment ? [projectedComment] : [];
+      }
+      if (path.endsWith('/issues/304/comments')) {
+        projectedComment = { id: 71, body: options.body.body };
+        return projectedComment;
+      }
+      if (path.endsWith('/issues/comments/71')) {
+        projectedComment = { id: 71, body: options.body.body };
+        return projectedComment;
+      }
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected readiness request: ${path}`);
+    },
+    request: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/actions/workflows/codex.yml/dispatches')) {
+        return {
+          status: 200,
+          data: {
+            workflow_run_id: 42,
+            run_url:
+              'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+            html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+          },
+        };
+      }
+      throw new Error(`Unexpected readiness dispatch: ${path}`);
+    },
+  };
+
+  await dispatchAccepted(client, loaded);
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(ledger.generations[0].state, 'accepted');
+  assert.equal(
+    calls.filter((call) => call.path.endsWith('/dispatches')).length,
+    0,
+  );
+  assert.equal(
+    calls.filter(
+      (call) =>
+        call.path.endsWith('/issues/304/comments') && call.method === 'POST',
+    ).length,
+    1,
+    'repeated health checks must converge on one visible park comment',
+  );
+  assert.match(projectedComment.body, /before worker allocation/u);
+  assert.match(projectedComment.body, /Scheduled reconcile/u);
+
+  healthy = true;
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(ledger.generations[0].state, 'active');
+  assert.equal(
+    calls.filter((call) => call.path.endsWith('/dispatches')).length,
     1,
   );
 });
@@ -1792,6 +1889,116 @@ test('a redelivered completion after terminal reconciliation is a no-op', async 
   assert.equal(writes, 0);
 });
 
+test('a trusted completion persists the exact PR reference beside its immutable worker outcome', async () => {
+  const ledger = boundLedger();
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) return workerRun('completed');
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+
+  await handleCompletion(
+    client,
+    { ledger, comment: { id: 9 } },
+    {
+      kind: 'completion',
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceKind: 'completion',
+      sourceId: 'worker-run:42',
+      transportRunId: 9003,
+      outcome: 'pull-request',
+      outcomeReference: { kind: 'pull-request', number: 755 },
+    },
+  );
+
+  assert.equal(ledger.generations[0].attempt.outcome, 'pull-request');
+  assert.deepEqual(ledger.generations[0].attempt.outcomeReference, {
+    kind: 'pull-request',
+    number: 755,
+  });
+});
+
+test('a trusted credential failure opens the lane breaker before completion can promote more work, without reopening on stale redelivery (#523)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = boundLedger();
+    const calls = [];
+    let openIssues = [];
+    const client = {
+      requestOk: async (path, options = {}) => {
+        calls.push({
+          path,
+          method: options.method ?? 'GET',
+          body: options.body,
+        });
+        if (path.endsWith('/actions/runs/42')) {
+          return workerRun('completed');
+        }
+        if (path.includes('/issues?state=open')) return openIssues;
+        if (path.endsWith('/issues') && options.method === 'POST') {
+          openIssues = [
+            {
+              number: 902,
+              title: options.body.title,
+              body: options.body.body,
+              html_url: 'https://github.com/jlapenna/agent-lcars/issues/902',
+            },
+          ];
+          return openIssues[0];
+        }
+        if (path.endsWith('/issues/comments/9')) return { id: 9 };
+        throw new Error(`Unexpected completion readiness path: ${path}`);
+      },
+    };
+    const completion = {
+      kind: 'completion',
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceKind: 'completion',
+      sourceId: 'worker-run:42',
+      transportRunId: 9003,
+      outcome: 'startup-failure',
+      readinessFailure: 'credential',
+    };
+
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+
+    assert.equal(ledger.generations[0].state, 'completed');
+    assert.equal(ledger.generations[0].attempt.outcome, 'startup-failure');
+    assert.equal(
+      calls.filter(
+        (call) => call.path.endsWith('/issues') && call.method === 'POST',
+      ).length,
+      1,
+    );
+
+    // Model an operator closing the incident after repairing the credential.
+    // The already-recorded completion source makes a stale callback a no-op,
+    // so it must not recreate the breaker from old evidence.
+    openIssues = [];
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+    assert.equal(
+      calls.filter(
+        (call) => call.path.endsWith('/issues') && call.method === 'POST',
+      ).length,
+      1,
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
 test('authority renews its lease before every completion poll that can cross the original expiry', async () => {
   const port = new InMemoryStoragePort();
   const ledger = boundLedger();
@@ -1903,6 +2110,7 @@ function reconcileStubClient({ failParkStatus, issue, timeline } = {}) {
       if (path.includes(`/issues/${task.issue}/timeline`)) {
         return timeline ?? [];
       }
+      if (path.includes('/issues?state=open')) return [];
       if (path.endsWith(`/issues/${task.issue}`)) {
         return issue ?? { id: 9304, labels: [], assignees: [] };
       }

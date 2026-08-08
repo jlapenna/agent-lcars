@@ -249,6 +249,79 @@ describe('enrichItems - dispatch ledger parsing', () => {
   });
 });
 
+describe('enrichItems - merged deliverable relationships', () => {
+  it('returns only authoritative merged PR references for an issue when requested', async () => {
+    const graphql = setupGraphql({
+      repository: {
+        i42: {
+          __typename: 'Issue',
+          closedByPullRequestsReferences: {
+            nodes: [
+              {
+                number: 77,
+                url: 'https://github.com/example/repo/pull/77',
+                mergedAt: '2026-08-08T00:00:00Z',
+              },
+              {
+                number: 78,
+                url: 'https://github.com/example/repo/pull/78',
+                mergedAt: null,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await enrichItems(DEFAULT_REPO, [
+      {
+        ...wantsComments,
+        wantsMergedDeliverables: true,
+      },
+    ]);
+
+    expect(result.byNumber.get(42)?.mergedDeliverables).toEqual([
+      {
+        number: 77,
+        url: 'https://github.com/example/repo/pull/77',
+        mergedAt: '2026-08-08T00:00:00Z',
+      },
+    ]);
+    expect(graphql.mock.calls[0]?.[0]).toContain(
+      'closedByPullRequestsReferences',
+    );
+  });
+
+  it('reports a merged PR anchor as its own merged deliverable', async () => {
+    setupGraphql({
+      repository: {
+        i42: {
+          __typename: 'PullRequest',
+          number: 42,
+          url: 'https://github.com/example/repo/pull/42',
+          mergedAt: '2026-08-08T00:00:00Z',
+          isDraft: false,
+          mergeStateStatus: 'UNKNOWN',
+          reviewRequests: { nodes: [] },
+          reviewThreads: { totalCount: 0, nodes: [] },
+          commits: { nodes: [] },
+        },
+      },
+    });
+
+    const result = await enrichItems(DEFAULT_REPO, [
+      {
+        number: 42,
+        isPr: true,
+        wantsComments: true,
+        wantsMergedDeliverables: true,
+      },
+    ]);
+
+    expect(result.byNumber.get(42)?.mergedDeliverables?.[0]?.number).toBe(42);
+  });
+});
+
 // #538: GitHub's `reviewThreads` connection has no `isResolved` filter
 // argument, so the unresolved count has to come from fetching nodes and
 // filtering client-side - this is the one place that logic lives.

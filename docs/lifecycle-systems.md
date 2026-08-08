@@ -146,6 +146,20 @@ lost. Intent is preserved, never dropped, and no second authorization is
 invented. The no-op canary pipeline alone is exempt because a failed canary
 parks its canonical issue and its next probe must still run to prove recovery.
 
+**Lane-readiness admission policy (#523):** worker allocation also stops when
+the repository has a durable, open health incident for the selected lane.
+`readLaneReadiness()` consumes the shared `bootstrap-canary.yml` alert for all
+three lanes, the exact-provider `opencode-model-canary.yml` alert for OpenCode,
+and one lane-specific incident marker for a trusted Claude/Codex credential
+failure. The broker checks this after accepting the ordered generation but
+before `beginDispatch()` or the worker-workflow POST. It projects one
+pipeline-keyed hold comment onto the task and leaves the generation accepted;
+it deliberately does **not** add `status:needs-human` to the task, because that
+label means a human owns the task's next decision and would prevent automatic
+recovery. The health incident itself carries `status:needs-human`. Closing it
+(or letting a canary close it) is the health transition; scheduled reconcile
+then dispatches the same generation without inventing another authorization.
+
 **What breaking looks like (worked incident — PR
 [#703](https://github.com/jlapenna/agent-lcars/pull/703)):** the `normalize`
 job in `agent-router.yml` held a repository-wide concurrency group
@@ -332,6 +346,20 @@ invoking the requested agent/provider combination.
   lifecycle scaffolding with one worker harness" bullet, done for bootstrap
   and post-agent gates; the harness is these shared composite actions plus
   `post-agent-gates.sh`, not yet a single first-class module).
+- `.github/actions/prepare-agent-dispatch` — immediately before the model
+  step, fetches the live anchor and serializes dispatch-brief schema 2: current
+  state/title/body/labels/assignees, checkbox acceptance criteria, the prior
+  generation's terminal result, the latest structured agent result, requested
+  result kinds, and exact UTC deadline/checkpoint timestamps. Anchor text is
+  explicitly untrusted data, not instructions. Generating this at the last
+  responsible moment prevents an early job-start snapshot from becoming the
+  agent's working context after a long bootstrap.
+- `.github/actions/archive-opencode-trajectory` — after OpenCode runs, exports
+  every workspace-scoped session created after the dispatch start with
+  `opencode export --sanitize`, writes a compact manifest, and uploads it as a
+  30-day artifact. Export failure is visible but fail-soft, so diagnostics
+  cannot replace the worker's real result. The persisted trajectory separates
+  provider delay, repeated model summaries, tool failure, and productive work.
 - `.github/workflows/bootstrap-canary.yml` — proves the self-hosted
   bootstrap sequence (runner allocation, App-token mint, enforcement-script
   snapshot, telemetry sidecar WIF auth) on the real fleet without invoking a
@@ -420,6 +448,17 @@ across multiple dispatches is a human problem: a stale credential, a
 provider outage, or a broken bootstrap step needs a maintainer, not a
 reconciler.
 
+There is one deliberate circuit breaker before that human repair. A trusted
+Codex auth/bootstrap step failure, or Claude's proven zero-cost OAuth failure
+signature, returns a typed readiness signal in the completion callback. The
+broker creates or reuses exactly one lane incident and blocks later allocations
+as described in the Dispatch controller section. A callback write failure is
+retryable; after its completion source is persisted, stale redelivery cannot
+reopen an incident a maintainer already closed. OpenCode provider readiness is
+instead driven proactively by its exact-model canary. No fake Claude/Codex
+"whoami" probe exists: neither credential has an honest cheap network liveness
+check, so local credential presence is never promoted to provider health.
+
 ## 4. Outcome finalizer
 
 **Owns, in principle:** terminal attempt state and deliverable validity —
@@ -440,6 +479,14 @@ it's already one system:
   `status:needs-human` label appearing, an expected bot comment on a reply
   or runbook dispatch, or a PR review on a review dispatch). The inference
   path is explicitly kept until soak, per #645, not removed yet.
+  A comment carrying both the exact attempt claim and
+  `<!-- agent-result:v1:no-op -->` is the machine-verifiable already-resolved
+  result; a generic implement-mode comment still does not pass. The verifier
+  publishes a typed lifecycle outcome and, for PR evidence, the exact PR
+  number. `post-agent-gates.sh` separately classifies startup failure, agent
+  trajectory failure, and outcome-gate failure, and the worker's trusted
+  completion callback persists both outcome and PR reference on that exact
+  ledger attempt. GitHub's coarse workflow conclusion remains separate.
 - **Execution-state classification** (`not_started`/`running`/`exited`/
   `timed_out`/`cancelled`/`lost`) — this is decided by the **controller's**
   own reconciliation code: `reconcileActive`, `trackMissingRun`,
@@ -539,6 +586,15 @@ paths plus one read path, not one system:**
   where the owning-system/phase/reason/retry-disposition fields from
   `libs/dispatch-contracts/src/failure.ts` (PR #681, merged) actually
   surface to a maintainer.
+  `logical-work.ts` also joins the exact bound run to its durable outcome, so
+  startup failure, trajectory failure, outcome-gate failure, park, no-op,
+  comment/review/closed, and PR delivery render independently from the Actions
+  conclusion. The Agents page makes one bounded, batched GraphQL enrichment
+  pass for its recent-run window, including anchors that have already closed
+  and disappeared from the open board. It reports `merged-deliverable` only
+  when GitHub's authoritative closing-PR relationship contains the exact PR
+  number persisted by that attempt; another merged PR on the same issue cannot
+  upgrade it by inference.
 
 **What breaking looks like:** the deliverable and the outcome are correct,
 but nothing visible reflects it — no comment, no label change, no console

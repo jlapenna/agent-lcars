@@ -2,6 +2,9 @@ name: Prepare agent dispatch
 description: Write routed issue context as data for a headless coding agent.
 
 inputs:
+  token:
+    description: GitHub token used only to read the current anchor context.
+    required: true
   agent:
     description: Name of the agent receiving the dispatch.
     required: true
@@ -23,6 +26,19 @@ inputs:
     description: Optional router or deployment context for the dispatch.
     required: false
     default: ''
+  prior-terminal-state:
+    description: JSON summary emitted by broker preflight for the prior attempt.
+    required: false
+    default: 'null'
+  budget-minutes:
+    description: Actual timeout of the upcoming agent step.
+    required: true
+  artifact-checkpoint-minutes:
+    description: Minutes after start by which a durable artifact is required.
+    required: true
+  finalize-checkpoint-minutes:
+    description: Minutes after start by which scope expansion must stop.
+    required: true
 
 outputs:
   path:
@@ -39,10 +55,15 @@ runs:
       id: prepare
       shell: bash
       env:
+        GH_TOKEN: ${{ inputs.token }}
         AGENT: ${{ inputs.agent }}
         ISSUE: ${{ inputs.issue }}
         MODE: ${{ inputs.mode }}
         REPLY: ${{ inputs.reply }}
         RUNBOOK: ${{ inputs.runbook }}
         CONTEXT: ${{ inputs.context }}
+        PRIOR_TERMINAL_STATE: ${{ inputs.prior-terminal-state }}
+        BUDGET_MINUTES: ${{ inputs.budget-minutes }}
+        ARTIFACT_CHECKPOINT_MINUTES: ${{ inputs.artifact-checkpoint-minutes }}
+        FINALIZE_CHECKPOINT_MINUTES: ${{ inputs.finalize-checkpoint-minutes }}
       run: bash "$GITHUB_ACTION_PATH/prepare.sh"

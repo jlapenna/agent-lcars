@@ -19,9 +19,10 @@
  * genuinely different requirements, so each side keeps its own gate and
  * builds it on this one set of definitions.
  */
-
 import type { FailureClassification } from './failure';
 import { isWellFormedFailureClassification } from './failure';
+import type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
+import { isDispatchOutcomeKind, isDispatchOutcomeReference } from './outcomes';
 import type { DispatchPipeline } from './pipelines';
 import { isDispatchPipeline } from './pipelines';
 import type { ProjectionStatus } from './projection';
@@ -125,6 +126,13 @@ export interface LedgerRunAttempt {
   status?: string;
   /** Authoritative run conclusion. */
   conclusion?: string;
+  /** Worker-reported lifecycle outcome, independently useful from the
+   * coarse GitHub run conclusion. */
+  outcome?: DispatchOutcomeKind;
+  /** Exact object backing `outcome`, when the verifier could identify one.
+   * This stays immutable with the worker result; readers may independently
+   * observe that a referenced PR merged later. */
+  outcomeReference?: DispatchOutcomeReference;
   /** Authoritative terminal timestamp. */
   completedAt?: string;
 }
@@ -377,6 +385,26 @@ export function isWellFormedGeneration(
   // corrupted ledger even though no consumer reads its fields unguarded.
   if (value.attempt !== undefined && !isPlainObject(value.attempt)) {
     return false;
+  }
+  if (isPlainObject(value.attempt)) {
+    if (
+      value.attempt.outcome !== undefined &&
+      !isDispatchOutcomeKind(value.attempt.outcome)
+    ) {
+      return false;
+    }
+    if (
+      value.attempt.outcomeReference !== undefined &&
+      !isDispatchOutcomeReference(value.attempt.outcomeReference)
+    ) {
+      return false;
+    }
+    if (
+      value.attempt.outcomeReference !== undefined &&
+      value.attempt.outcome !== 'pull-request'
+    ) {
+      return false;
+    }
   }
   return true;
 }

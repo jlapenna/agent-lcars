@@ -95,7 +95,12 @@ async function getCachedTaskSource(
   // (item-enrichment.ts) rather than a bespoke comment fetch, so ledger
   // parsing stays the one code path (see toEnrichment's `ledger` field).
   const enrichment = await enrichItems(repo, [
-    { number: issueNumber, isPr, wantsComments: true },
+    {
+      number: issueNumber,
+      isPr,
+      wantsComments: true,
+      wantsMergedDeliverables: true,
+    },
   ]);
 
   return {
@@ -181,6 +186,16 @@ export async function getTaskDetail(
           url: issue.html_url,
           humanNeeded: labels.includes('status:needs-human'),
         },
+      ],
+    ]),
+    mergedDeliverables: new Map([
+      [
+        key,
+        new Set(
+          (itemEnrichment?.mergedDeliverables ?? []).map(
+            (deliverable) => deliverable.number,
+          ),
+        ),
       ],
     ]),
   });

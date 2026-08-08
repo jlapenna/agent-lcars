@@ -89,6 +89,8 @@ ATTEMPT_ID="${ATTEMPT_ID:-}"
 
 found=""
 found_via=""
+outcome_kind=""
+outcome_reference=""
 errors=()
 
 # (0) Exact attempt-claim marker - see header comment above.
@@ -116,6 +118,14 @@ if [ -n "$ATTEMPT_ID" ]; then
     if [ -n "$claim_pr_hits" ]; then
       found="PR carrying this run's attempt-claim marker ($ATTEMPT_ID)"
       found_via="exact"
+      outcome_kind="pull-request"
+      # A duplicated claim marker still proves a PR deliverable exists, but
+      # it no longer identifies ONE object that can later be called merged.
+      # Persist no reference in that anomalous case rather than selecting an
+      # arbitrary API-list entry and misattributing its future merge.
+      if [[ "$claim_pr_hits" != *$'\n'* ]]; then
+        outcome_reference="$claim_pr_hits"
+      fi
     fi
   fi
 
@@ -127,6 +137,13 @@ if [ -n "$ATTEMPT_ID" ]; then
       if [ -n "$claim_comment_hits" ]; then
         found="comment carrying this run's attempt-claim marker ($ATTEMPT_ID)"
         found_via="exact"
+        outcome_kind="comment"
+        if claim_no_op_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
+          --jq ".[] | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id" 2>/dev/null) && \
+          [ -n "$claim_no_op_hits" ]; then
+          found="evidence-backed structured no-op carrying this run's attempt-claim marker ($ATTEMPT_ID)"
+          outcome_kind="no-op"
+        fi
       fi
     elif [ "$MODE" != "reply" ] && [ -z "$RUNBOOK" ]; then
       # Clause (d) will not run for this dispatch, so nothing else repeats
@@ -145,6 +162,7 @@ if [ -n "$ATTEMPT_ID" ]; then
       if [ -n "$claim_review_hits" ]; then
         found="pull request review carrying this run's attempt-claim marker ($ATTEMPT_ID)"
         found_via="exact"
+        outcome_kind="review"
       fi
     fi
   fi
@@ -189,7 +207,7 @@ fi
 # that PR may be authored by a human (#567).
 if [ -z "$found" ]; then
   if pr_json=$(gh api "repos/$REPO/pulls?state=all&sort=updated&direction=desc&per_page=50" 2>&1); then
-    prs=$(jq -r \
+    matching_prs=$(jq -c \
       --arg started "$STARTED_AT" --arg num "$NUM" --arg exclude "$EXCLUDE_PR_AUTHOR" \
       --arg mode "$MODE" --arg expected "$EXPECTED_COMMENT_LOGIN" \
       '($exclude | split(",") | map(select(length > 0))) as $excluded
@@ -202,9 +220,14 @@ if [ -z "$found" ]; then
                   ((.title + " " + (.body // "")) | test("#" + $num + "([^0-9]|$)"))
                   or $is_anchor
                 )]
-       | length' <<<"$pr_json")
-    if [ "${prs:-0}" -gt 0 ]; then
+       | map(.number)' <<<"$pr_json")
+    matching_pr_count=$(jq -r 'length' <<<"$matching_prs")
+    if [ "${matching_pr_count:-0}" -gt 0 ]; then
       found="PR referencing #$NUM created/updated since $STARTED_AT"
+      outcome_kind="pull-request"
+      if [ "$matching_pr_count" -eq 1 ]; then
+        outcome_reference=$(jq -r '.[0]' <<<"$matching_prs")
+      fi
     fi
   else
     errors+=("PR list lookup (gh api repos/$REPO/pulls) failed: $pr_json")
@@ -221,6 +244,7 @@ if [ -z "$found" ]; then
     closed_at=$(jq -r 'if .state == "closed" then (.closed_at // "") else "" end' <<<"$issue_json")
     if [ -n "$closed_at" ] && [ "$closed_at" \> "$STARTED_AT" ]; then
       found="issue #$NUM closed at $closed_at (after $STARTED_AT)"
+      outcome_kind="closed"
     fi
     # Current presence, for clause (c) below to AND against its own
     # recency check - see there for why both halves are required.
@@ -255,6 +279,7 @@ if [ -z "$found" ] && [ "$needs_human_now" = "true" ]; then
     --jq ".[] | select(.event == \"labeled\" and (.label.name // \"\") == \"status:needs-human\" and .created_at >= \"$STARTED_AT\") | .created_at" 2>&1); then
     if [ -n "$timeline_hits" ]; then
       found="status:needs-human label applied on #$NUM since $STARTED_AT"
+      outcome_kind="park"
     fi
   else
     errors+=("Issue timeline lookup (gh api repos/$REPO/issues/$NUM/timeline) failed: $timeline_hits")
@@ -273,6 +298,7 @@ if [ -z "$found" ] && { [ "$MODE" = "reply" ] || [ -n "$RUNBOOK" ]; }; then
        | length' <<<"$comments_json")
     if [ "${botcomments:-0}" -ge 1 ]; then
       found="$EXPECTED_COMMENT_LOGIN posted a comment on #$NUM since $STARTED_AT"
+      outcome_kind="comment"
     fi
   else
     errors+=("Comment lookup (gh api repos/$REPO/issues/$NUM/comments) failed: $comments_json")
@@ -289,6 +315,7 @@ if [ -z "$found" ] && [ "$MODE" = "review" ]; then
        | length' <<<"$reviews_json")
     if [ "${botreviews:-0}" -ge 1 ]; then
       found="$EXPECTED_COMMENT_LOGIN submitted a pull request review on #$NUM since $STARTED_AT"
+      outcome_kind="review"
     fi
   else
     errors+=("PR review lookup (gh api repos/$REPO/pulls/$NUM/reviews) failed: $reviews_json")
@@ -306,6 +333,12 @@ if [ -n "$found" ]; then
     echo "::notice::$AGENT deliverable verified via INFERENCE (time window + bot login) - no exact attempt-claim marker was found"
   fi
   echo "Deliverable evidence: $found"
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "outcome-kind=${outcome_kind:-unknown-success}" >> "$GITHUB_OUTPUT"
+    if [ -n "$outcome_reference" ]; then
+      echo "outcome-reference=$outcome_reference" >> "$GITHUB_OUTPUT"
+    fi
+  fi
   exit 0
 fi
 

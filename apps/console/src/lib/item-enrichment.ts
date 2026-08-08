@@ -58,6 +58,12 @@ export interface EnrichedPr {
   reviewThreadsTruncated: boolean;
 }
 
+export interface EnrichedMergedDeliverable {
+  number: number;
+  url: string;
+  mergedAt: string;
+}
+
 export interface ItemEnrichment {
   /** Oldest→newest, same order `issues.listComments` returned, so the
    * newest is last and a backwards scan finds the newest match first. */
@@ -72,6 +78,11 @@ export interface ItemEnrichment {
    * fetched, an issue that predates the broker, or one whose ledger comment
    * failed to parse (see `EnrichmentResult.warnings` for that last case). */
   ledger?: DispatchLedger;
+  /** Authoritative merged PRs GitHub associates with this anchor. Requested
+   * only by reliability/task-detail reads; omitted from the open board's
+   * ordinary enrichment to avoid paying for unused graph nodes. For a PR
+   * anchor this contains the PR itself once merged. */
+  mergedDeliverables?: EnrichedMergedDeliverable[];
 }
 
 export interface EnrichmentResult {
@@ -119,20 +130,31 @@ export interface EnrichmentRequest {
    * `classifyIssue`. Requesting the window for everything would multiply
    * node cost across the whole board for data nobody reads. */
   wantsComments: boolean;
+  /** Fetch exact merged-PR relationships for outcome reporting. */
+  wantsMergedDeliverables?: boolean;
 }
 
 function selectionFor(request: EnrichmentRequest): string {
   const comments = request.wantsComments
     ? `comments(last: ${COMMENT_WINDOW}) { nodes { body url author { login } } }`
     : '';
+  const issueMergedDeliverables = request.wantsMergedDeliverables
+    ? `closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+        nodes { number url mergedAt }
+      }`
+    : '';
+  const pullRequestMergeFields = request.wantsMergedDeliverables
+    ? 'url mergedAt'
+    : '';
   // `number` is always selected: a selection set cannot be empty, and an
   // item needing neither comments nor PR fields would otherwise emit one.
   return `
     ${alias(request.number)}: issueOrPullRequest(number: ${request.number}) {
       __typename
-      ... on Issue { number ${comments} }
+      ... on Issue { number ${comments} ${issueMergedDeliverables} }
       ... on PullRequest {
         number
+        ${pullRequestMergeFields}
         isDraft
         mergeStateStatus
         body
@@ -191,6 +213,14 @@ interface RawCheckContext {
 
 interface RawItem {
   __typename?: string;
+  number?: number;
+  url?: string;
+  mergedAt?: string | null;
+  closedByPullRequestsReferences?: {
+    nodes?:
+      | ({ number?: number; url?: string; mergedAt?: string | null } | null)[]
+      | null;
+  } | null;
   isDraft?: boolean;
   mergeStateStatus?: string;
   body?: string | null;
@@ -285,6 +315,7 @@ interface EnrichmentOutcome {
 function toEnrichment(
   item: RawItem,
   expectedTask: ExpectedTask,
+  wantsMergedDeliverables: boolean,
 ): EnrichmentOutcome {
   const comments = (item.comments?.nodes ?? []).flatMap((node) =>
     node?.body
@@ -315,7 +346,23 @@ function toEnrichment(
   }
 
   if (item.__typename !== 'PullRequest') {
-    return { enrichment: { comments, ledger }, warning };
+    const mergedDeliverables = wantsMergedDeliverables
+      ? (item.closedByPullRequestsReferences?.nodes ?? []).flatMap((node) =>
+          node?.number && node.url && node.mergedAt
+            ? [
+                {
+                  number: node.number,
+                  url: node.url,
+                  mergedAt: node.mergedAt,
+                },
+              ]
+            : [],
+        )
+      : undefined;
+    return {
+      enrichment: { comments, ledger, mergedDeliverables },
+      warning,
+    };
   }
 
   const mergeState = lower(item.mergeStateStatus) ?? 'unknown';
@@ -326,6 +373,17 @@ function toEnrichment(
     enrichment: {
       comments,
       ledger,
+      mergedDeliverables: wantsMergedDeliverables
+        ? item.number && item.url && item.mergedAt
+          ? [
+              {
+                number: item.number,
+                url: item.url,
+                mergedAt: item.mergedAt,
+              },
+            ]
+          : []
+        : undefined,
       pr: {
         draft: item.isDraft ?? false,
         mergeableState: MERGE_STATES.has(mergeState) ? mergeState : 'unknown',
@@ -390,10 +448,14 @@ export async function enrichItems(
     for (const request of chunk) {
       const raw = repository[alias(request.number)];
       if (!raw) continue;
-      const { enrichment, warning } = toEnrichment(raw, {
-        repository: repoKey(repo),
-        issue: request.number,
-      });
+      const { enrichment, warning } = toEnrichment(
+        raw,
+        {
+          repository: repoKey(repo),
+          issue: request.number,
+        },
+        Boolean(request.wantsMergedDeliverables),
+      );
       byNumber.set(request.number, enrichment);
       if (warning) warnings.push(warning);
     }

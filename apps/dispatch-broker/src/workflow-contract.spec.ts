@@ -528,8 +528,8 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       'Mint agent token',
       'Claim the issue as the agent fleet',
       'Shared agent setup',
-      'Prepare dispatch context',
       'Start telemetry sidecar',
+      'Prepare current dispatch brief and runtime deadline',
       adapter.name,
       'Run post-agent gates',
       'Return completion observation to the broker',
@@ -668,6 +668,32 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
     assert.match(
       completion.source,
       stepField('worker-workflow', '${{ env.WORKER_WORKFLOW }}', 10),
+    );
+    assert.match(
+      completion.source,
+      stepField(
+        'outcome-kind',
+        '${{ steps.post_agent_gates.outputs.outcome-kind }}',
+        10,
+      ),
+    );
+    assert.match(
+      completion.source,
+      stepField(
+        'outcome-reference',
+        '${{ steps.post_agent_gates.outputs.outcome-reference }}',
+        10,
+      ),
+      `${workflow}'s trusted verifier must return the exact PR reference to the broker`,
+    );
+    assert.match(
+      completion.source,
+      stepField(
+        'readiness-failure',
+        '${{ steps.post_agent_gates.outputs.readiness-failure }}',
+        10,
+      ),
+      `${workflow}'s trusted post-agent classifier must return a lane-readiness failure to the broker`,
     );
   }
 });

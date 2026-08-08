@@ -5,6 +5,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
 import { type ActionItem } from '../../lib/action-items';
+import { displayRunTitle, issueUrlForRun } from '../../lib/agent-activity';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
 import {
@@ -27,6 +28,7 @@ import {
   deriveLogicalWork,
   ledgerAndTaskMetaFromItems,
 } from '../../lib/logical-work';
+import { getCachedRecentTaskEnrichment } from '../../lib/recent-task-enrichment';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
@@ -74,7 +76,7 @@ async function AgentsPageBody({
   // Deduped the same way as the home page (page.tsx): parallel fetchers can
   // degrade the same way (e.g. one rate-limit hit per PR-join), and each
   // unique problem only needs saying once.
-  const warnings = Array.from(
+  const baseWarnings = Array.from(
     new Set([
       ...itemWarnings,
       ...activity.warnings,
@@ -158,6 +160,17 @@ async function AgentsPageBody({
     matchesFilter(item.repo),
   );
 
+  const recentTaskEnrichment = await getCachedRecentTaskEnrichment(
+    filteredActivity.recentRuns.flatMap((run) =>
+      run.issueNumber === undefined
+        ? []
+        : [{ repo: run.repo, issueNumber: run.issueNumber }],
+    ),
+  );
+  const warnings = Array.from(
+    new Set([...baseWarnings, ...recentTaskEnrichment.data.warnings]),
+  );
+
   // #306: logical-task/execution-attempt/runner-occupancy as three
   // deliberately distinct numbers (see deriveActivityMetrics's own doc
   // comment). Ledger data comes from each item's already-fetched comment
@@ -171,15 +184,44 @@ async function AgentsPageBody({
     humanNeeded: item.actionTypes.includes('needs-human'),
   }));
   const { ledgers, taskMeta } = ledgerAndTaskMetaFromItems(logicalWorkItems);
+  const mergedDeliverables = new Map<string, ReadonlySet<number>>();
+  for (const entry of recentTaskEnrichment.data.entries) {
+    const key = repoItemKey(entry.repo, entry.issueNumber);
+    if (entry.ledger) ledgers.set(key, entry.ledger);
+    mergedDeliverables.set(key, new Set(entry.mergedDeliverableNumbers));
+  }
+  // Closed anchors are absent from the open-item board. Seed their metadata
+  // from the exact recent run so the newly fetched ledger is not rendered as
+  // an anonymous task, and so its exact run/outcome join remains visible.
+  for (const run of filteredActivity.recentRuns) {
+    if (run.issueNumber === undefined) continue;
+    const key = repoItemKey(run.repo, run.issueNumber);
+    if (!taskMeta.has(key)) {
+      taskMeta.set(key, {
+        repo: run.repo,
+        issueNumber: run.issueNumber,
+        title: displayRunTitle(run),
+        url: issueUrlForRun(run) ?? run.url,
+      });
+    }
+  }
   const { work: logicalWork, unattributedAttempts } = deriveLogicalWork({
     attempts: [...filteredActivity.liveRuns, ...filteredActivity.recentRuns],
     ledgers,
     taskMeta,
+    mergedDeliverables,
   });
   const activityMetrics = deriveActivityMetrics(
     logicalWork,
     [...logicalWork.flatMap((task) => task.attempts), ...unattributedAttempts],
     filteredActivity.fleet,
+  );
+  const outcomesByRunId = Object.fromEntries(
+    logicalWork.flatMap((task) =>
+      task.attempts.flatMap((attempt) =>
+        attempt.outcome ? [[attempt.id, attempt.outcome] as const] : [],
+      ),
+    ),
   );
 
   return (
@@ -190,9 +232,17 @@ async function AgentsPageBody({
       fleet={
         <>
           <DataFreshness
-            fetchedAt={oldestFetchedAt(itemsFetchedAt, activityFetchedAt)}
+            fetchedAt={oldestFetchedAt(
+              itemsFetchedAt,
+              activityFetchedAt,
+              recentTaskEnrichment.fetchedAt,
+            )}
             initialLabel={formatRelativeTime(
-              oldestFetchedAt(itemsFetchedAt, activityFetchedAt),
+              oldestFetchedAt(
+                itemsFetchedAt,
+                activityFetchedAt,
+                recentTaskEnrichment.fetchedAt,
+              ),
             )}
           />
           <FleetSnapshotBar
@@ -221,6 +271,7 @@ async function AgentsPageBody({
         <RecentOutcomesSection
           recentRuns={filteredActivity.recentRuns}
           sessionsByRunId={sessionsByRunId}
+          outcomesByRunId={outcomesByRunId}
         />
       }
     />

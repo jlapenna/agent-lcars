@@ -16,6 +16,8 @@
 
 import type {
   DispatchLedger,
+  DispatchOutcomeKind,
+  DispatchOutcomeReference,
   LedgerGeneration,
   LedgerRunAttempt,
   LedgerTaskRef,
@@ -34,6 +36,53 @@ interface RunBinding {
   runUrl: string;
   htmlUrl: string;
   workflow?: string;
+}
+
+function recordOutcome(
+  ledger: DispatchLedger,
+  generationNumber: number,
+  outcome: DispatchOutcomeKind,
+  outcomeReference?: DispatchOutcomeReference,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
+  if (
+    !generation ||
+    ![
+      'active',
+      'completion-observed',
+      'completion-awaiting-terminal',
+      'completed',
+    ].includes(generation.state)
+  ) {
+    throw new Error('Generation is not awaiting a worker outcome');
+  }
+  const attempt = attemptOf(generation);
+  if (attempt.outcome && attempt.outcome !== outcome) {
+    throw new Error(
+      `Generation ${generationNumber} already reported outcome ${attempt.outcome}, not ${outcome}`,
+    );
+  }
+  if (
+    outcomeReference &&
+    attempt.outcomeReference &&
+    JSON.stringify(attempt.outcomeReference) !==
+      JSON.stringify(outcomeReference)
+  ) {
+    throw new Error(
+      `Generation ${generationNumber} already reported a different outcome reference`,
+    );
+  }
+  if (
+    attempt.outcome === outcome &&
+    (!outcomeReference || attempt.outcomeReference)
+  ) {
+    return ledger;
+  }
+  return mutate(ledger, now, () => {
+    attempt.outcome = outcome;
+    if (outcomeReference) attempt.outcomeReference = outcomeReference;
+  });
 }
 
 /** What `completeRun` needs from a terminal run observation. */
@@ -354,6 +403,7 @@ export {
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
+  recordOutcome,
   restoreAcceptedForLaunchRetry,
   verifyPreflight,
 };

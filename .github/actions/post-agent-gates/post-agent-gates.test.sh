@@ -120,6 +120,8 @@ base_env() {
   export WRITER_CREDENTIALS_FILE=
   export NO_DELIVERABLE_REASON="LANE_NO_DELIVERABLE_MARKER"
   export FAILURE_LOG_SCAN_SCRIPT=
+  export AGENT_STEP_OUTCOME=success
+  export READINESS_FAILURE=
 }
 
 run_case() {
@@ -188,6 +190,8 @@ JSON
     fail "a found deliverable must never post a failure comment"
   fi
   grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a clean primary finalizer must suppress the fallback"
+  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its outcome kind"
+  grep -qx 'outcome-reference=7' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its exact reference"
 )
 
 # --- Case 2: JOB_STATUS success, genuinely no deliverable - NO_DELIVERABLE
@@ -207,6 +211,7 @@ JSON
   grep -q '/issues/42/labels' "$FAKE_GH_DIR/calls" || fail "expected the status:needs-human label mutation"
   grep -q '/issues/42/assignees' "$FAKE_GH_DIR/calls" || fail "expected the maintainer assignment mutation"
   grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a landed no-deliverable report must suppress a duplicate fallback"
+  grep -qx 'outcome-kind=outcome-gate-failure' "$GITHUB_OUTPUT" || fail "a missing deliverable must be classified separately"
 )
 
 # --- Case 3: JOB_STATUS success, verify-deliverable's own lookup fails
@@ -244,6 +249,18 @@ JSON
   if grep -q 'was cancelled' "$FAKE_GH_DIR/calls"; then
     fail "an ordinary failure must not be reported as cancelled"
   fi
+  grep -qx 'outcome-kind=trajectory-failure' "$GITHUB_OUTPUT" || fail "an agent-step failure must be classified as trajectory"
+)
+
+# --- Case 4b: a worker that fails before the agent step is distinguishable
+# from a trajectory failure. ---
+(
+  base_env
+  export JOB_STATUS=failure
+  export AGENT_STEP_OUTCOME=skipped
+  run_case startup-failed
+  test "$status" = 0 || fail "a reported startup failure must preserve the upstream job result"
+  grep -qx 'outcome-kind=startup-failure' "$GITHUB_OUTPUT" || fail "a skipped agent step must be classified as startup failure"
 )
 
 # --- Case 5: JOB_STATUS cancelled - report-failure.sh's own MSG logic
@@ -359,6 +376,29 @@ LOG
   run_case claude-log-scan-oauth
   test "$status" = 0 || fail "log-scan oauth case with a landed report must still exit 0"
   grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' "$FAKE_GH_DIR/calls" || fail "expected the OAuth-token REASON text"
+  grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the OAuth signature to publish a credential readiness failure"
+)
+
+# --- Case 12: a lane adapter can publish a validated readiness signal even
+# when the ordinary failure report subsequently runs. ---
+(
+  base_env
+  export JOB_STATUS=failure
+  export READINESS_FAILURE=credential
+  run_case adapter-readiness-failure
+  test "$status" = 0 || fail "adapter readiness signal must not change the ordinary report result"
+  grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the adapter readiness signal in step outputs"
+)
+
+# --- Case 13: arbitrary readiness strings never cross the callback trust
+# boundary. ---
+(
+  base_env
+  export JOB_STATUS=failure
+  export READINESS_FAILURE=not-a-real-signal
+  run_case invalid-readiness-failure
+  test "$status" != 0 || fail "an invalid readiness signal must fail closed"
+  grep -q 'Invalid READINESS_FAILURE' "$FAKE_GH_DIR/output" || fail "expected the invalid readiness diagnostic"
 )
 
 echo "post-agent-gates.test.sh: all cases passed"

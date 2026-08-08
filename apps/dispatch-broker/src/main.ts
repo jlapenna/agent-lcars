@@ -41,6 +41,7 @@ import {
   markDispatchUnknown,
   observeCompletion,
   recordControlEvidence,
+  recordOutcome,
   restoreAcceptedForLaunchRetry,
   verifyPreflight,
 } from './broker';
@@ -50,6 +51,7 @@ import {
   createReconcileTransport,
   dispatchRouterEvent,
   dispatchWorker,
+  ensureLaneReadinessAlert,
   failClosed,
   findRunsForGeneration,
   findSupersedingRouterRun,
@@ -60,6 +62,7 @@ import {
   loadLedger,
   loadLedgerProjection,
   pinLedgerWhenUnoccupied,
+  readLaneReadiness,
   repositoryPath,
   saveLedger as saveLedgerComment,
   verifyBrokerConcurrency,
@@ -67,6 +70,7 @@ import {
 } from './github-api';
 import type { Intent } from './modules/intent';
 import {
+  projectComment,
   projectNeedsHumanPark,
   recordProjectionStatus,
   removeIssueLabel,
@@ -1645,6 +1649,43 @@ async function anchorNeedsHuman(
   return issueHasNeedsHumanLabel(issue);
 }
 
+async function holdForLaneReadiness(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  generation: LedgerGeneration,
+): Promise<boolean> {
+  const blockers = await readLaneReadiness(
+    client,
+    loaded.ledger.task,
+    generation.pipeline,
+  );
+  if (blockers.length === 0) return false;
+  const display =
+    generation.pipeline[0].toUpperCase() + generation.pipeline.slice(1);
+  await projectComment(
+    client,
+    loaded.ledger.task,
+    'lane-readiness',
+    generation.pipeline,
+    (marker) => `${marker}
+
+### ${display} dispatch paused for lane readiness
+
+The broker held generation ${generation.generation} **before worker allocation** because the following durable health signal${blockers.length === 1 ? ' is' : 's are'} open:
+
+${blockers.map((blocker) => `- [#${blocker.issue}: ${blocker.title}](${blocker.url})`).join('\n')}
+
+This is an automatic infrastructure hold, not a human-owned task park. Repair the linked health incident and close it (or let its canary close it on recovery). Scheduled reconcile will retry the readiness check and resume this accepted generation; do not create another dispatch generation. This notice is live only while a linked health issue remains open.`,
+  );
+  console.log(
+    `::notice::Holding accepted ${generation.pipeline} generation ` +
+      `${generation.generation} for issue #${loaded.ledger.task.issue} ` +
+      `before worker allocation: readiness blocker${blockers.length === 1 ? '' : 's'} ` +
+      blockers.map((blocker) => `#${blocker.issue}`).join(', '),
+  );
+  return true;
+}
+
 async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1672,6 +1713,7 @@ async function dispatchAccepted(
       );
       return;
     }
+    if (await holdForLaneReadiness(client, loaded, generation)) return;
     const beforeScheduling = structuredClone(loaded.ledger);
     const scheduled = await runPhase(
       { client, loaded },
@@ -1845,8 +1887,41 @@ async function handleCompletion(
     runId: normalized.workerRunId,
     authorization: { observed: true, workflow: expectedWorkflow },
   });
+  const priorOutcome = generation.attempt?.outcome;
+  const priorOutcomeReference = generation.attempt?.outcomeReference;
+  if (normalized.outcome) {
+    recordOutcome(
+      loaded.ledger,
+      generation.generation,
+      normalized.outcome,
+      normalized.outcomeReference,
+    );
+  }
+  // A lane-health incident is a projection of a trusted worker signal, not
+  // attempt authority. Create it before persisting this callback's evidence:
+  // if the issue mutation fails, redelivery sees no recorded source and can
+  // retry; after both succeed, a later stale redelivery cannot reopen an
+  // incident an operator already closed after remediation.
+  if (normalized.readinessFailure && evidence.outcome === 'recorded') {
+    await ensureLaneReadinessAlert(
+      client,
+      normalized.task,
+      generation.pipeline,
+      normalized.readinessFailure,
+      run.html_url,
+      env('MAINTAINER_LOGIN', false),
+    );
+  }
   if (generation.state === 'completed') {
-    if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
+    if (
+      evidence.outcome === 'recorded' ||
+      (normalized.outcome && priorOutcome !== normalized.outcome) ||
+      (normalized.outcomeReference &&
+        JSON.stringify(priorOutcomeReference) !==
+          JSON.stringify(normalized.outcomeReference))
+    ) {
+      await saveLedger(client, loaded);
+    }
     return;
   }
   if (generation.state === 'active') {
@@ -2533,6 +2608,34 @@ async function preflight(): Promise<void> {
             intentId: expected.intentId,
           }),
         );
+        const priorTerminal = ledger.generations
+          .filter(
+            (candidate) =>
+              candidate.generation < expected.generation &&
+              [
+                'completed',
+                'dispatch-rejected',
+                'superseded',
+                'superseded-by-close',
+              ].includes(candidate.state),
+          )
+          .sort((left, right) => right.generation - left.generation)[0];
+        await output(
+          'prior-terminal-state',
+          JSON.stringify(
+            priorTerminal
+              ? {
+                  generation: priorTerminal.generation,
+                  state: priorTerminal.state,
+                  pipeline: priorTerminal.pipeline,
+                  mode: priorTerminal.mode ?? null,
+                  outcome: priorTerminal.attempt?.outcome ?? null,
+                  conclusion: priorTerminal.attempt?.conclusion ?? null,
+                  completedAt: priorTerminal.attempt?.completedAt ?? null,
+                }
+              : null,
+          ),
+        );
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -2569,12 +2672,38 @@ async function completionCallback(): Promise<void> {
     repository: env('GITHUB_REPOSITORY'),
     issue: Number(env('BROKER_ISSUE')),
   };
+  const outcome = env('BROKER_OUTCOME_KIND', false);
+  const outcomeReference = env('BROKER_OUTCOME_REFERENCE', false);
+  if (outcomeReference) {
+    const number = Number(outcomeReference);
+    if (
+      outcome !== 'pull-request' ||
+      !Number.isSafeInteger(number) ||
+      number <= 0
+    ) {
+      throw new Error(
+        'BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome',
+      );
+    }
+  }
   const completionPayload = encode({
     workerRunId: Number(env('GITHUB_RUN_ID')),
     generation: Number(env('BROKER_GENERATION')),
     intentId: env('BROKER_INTENT_ID'),
     token: env('BROKER_DISPATCH_TOKEN'),
     workflow: env('BROKER_WORKER_WORKFLOW'),
+    ...(outcome ? { outcome } : {}),
+    ...(outcomeReference
+      ? {
+          outcomeReference: {
+            kind: 'pull-request',
+            number: Number(outcomeReference),
+          },
+        }
+      : {}),
+    ...(env('BROKER_READINESS_FAILURE', false)
+      ? { readinessFailure: env('BROKER_READINESS_FAILURE') }
+      : {}),
   });
   await dispatchRouterEvent(client, task, {
     kind: 'completion',
@@ -2703,6 +2832,7 @@ export {
   FRESH_INTENT_OUTCOMES,
   handleCompletion,
   healStaleAgentLabels,
+  holdForLaneReadiness,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,

@@ -14,13 +14,16 @@ vi.mock('../agent-activity-panel', () => ({
   FinishedRunRow: ({
     run,
     session,
+    outcome,
   }: {
     run: AgentRun;
     session?: IssueAgentSessionDoc;
+    outcome?: string;
   }) => (
     <div data-testid={`finished-run-${run.id}`}>
       {run.pipeline}
       {session ? ` (${session.sessionId})` : ''}
+      {outcome ? ` [${outcome}]` : ''}
     </div>
   ),
 }));
@@ -101,6 +104,22 @@ describe('RecentOutcomesSection', () => {
     );
     expect(screen.getByTestId('finished-run-1')).toHaveTextContent(
       '(runner-session-1)',
+    );
+  });
+
+  it('forwards the durable broker outcome independently of GitHub conclusion', () => {
+    render(
+      <MantineProvider>
+        <RecentOutcomesSection
+          recentRuns={[
+            makeAgentRun({ id: 9, conclusion: 'failure', pipeline: 'codex' }),
+          ]}
+          outcomesByRunId={{ 9: 'startup-failure' }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('finished-run-9')).toHaveTextContent(
+      '[startup-failure]',
     );
   });
 

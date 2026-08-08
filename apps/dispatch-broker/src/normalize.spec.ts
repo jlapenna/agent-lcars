@@ -857,6 +857,95 @@ test('completion callback accepts the canary worker workflow (#307)', () => {
   assert.equal(normalized.workflow, 'agent-dispatch-canary.yml');
 });
 
+test('completion callback carries only a validated lane-readiness failure signal', () => {
+  const valid = {
+    workerRunId: 42,
+    generation: 7,
+    intentId: 'intent-7',
+    token: 'dispatch_token_777777',
+    workflow: 'codex.yml',
+    outcome: 'startup-failure',
+    readinessFailure: 'credential',
+  };
+  const normalized = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: {},
+    inputs: {
+      kind: 'completion',
+      issue: '304',
+      completion_payload: Buffer.from(JSON.stringify(valid)).toString(
+        'base64url',
+      ),
+    },
+    context: { ...context, actor: 'github-actions[bot]' },
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.kind, 'completion');
+  assert.equal(normalized.readinessFailure, 'credential');
+
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'workflow_dispatch',
+        event: {},
+        inputs: {
+          kind: 'completion',
+          issue: '304',
+          completion_payload: Buffer.from(
+            JSON.stringify({ ...valid, readinessFailure: 'attacker-value' }),
+          ).toString('base64url'),
+        },
+        context: { ...context, actor: 'github-actions[bot]' },
+        maintainer: 'jlapenna',
+      }),
+    /invalid binding fields/u,
+  );
+});
+
+test('completion callback preserves only an exact PR reference paired with a PR outcome', () => {
+  const valid = {
+    workerRunId: 42,
+    generation: 7,
+    intentId: 'intent-7',
+    token: 'dispatch_token_777777',
+    workflow: 'codex.yml',
+    outcome: 'pull-request',
+    outcomeReference: { kind: 'pull-request', number: 755 },
+  };
+  const normalizeCompletion = (completion) =>
+    normalizeEvent({
+      eventName: 'workflow_dispatch',
+      event: {},
+      inputs: {
+        kind: 'completion',
+        issue: '304',
+        completion_payload: Buffer.from(JSON.stringify(completion)).toString(
+          'base64url',
+        ),
+      },
+      context: { ...context, actor: 'github-actions[bot]' },
+      maintainer: 'jlapenna',
+    });
+
+  const normalized = normalizeCompletion(valid);
+  assert.equal(normalized.kind, 'completion');
+  assert.deepEqual(normalized.outcomeReference, {
+    kind: 'pull-request',
+    number: 755,
+  });
+
+  for (const invalid of [
+    { ...valid, outcome: 'comment' },
+    { ...valid, outcomeReference: { kind: 'pull-request', number: 0 } },
+    { ...valid, outcomeReference: { kind: 'issue', number: 755 } },
+  ]) {
+    assert.throws(
+      () => normalizeCompletion(invalid),
+      /invalid binding fields/u,
+    );
+  }
+});
+
 test('completion payload rejects malformed or fabricated binding fields', () => {
   const valid = {
     workerRunId: 42,

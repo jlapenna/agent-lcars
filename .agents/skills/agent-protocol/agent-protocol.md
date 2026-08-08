@@ -166,6 +166,20 @@ marker is found. Stamp only the artifact that IS your deliverable, never your
 takeover or progress comment (§1, §3): the marker is a claim of authorship
 over one specific object, not a running commentary tag.
 
+When the requested result already exists before the run starts, finish with
+one evidence-backed structured no-op comment. Name the existing commit, PR,
+check, or live behavior that proves no new change is needed, and include both
+the attempt claim above and this exact result marker:
+
+```text
+<!-- agent-result:v1:no-op -->
+```
+
+The finalizer recognizes `no-op` only when both markers are on the same
+comment. A takeover/progress comment, a bare “already fixed” assertion, or a
+no-op marker without this run's exact attempt claim is not a completed
+deliverable.
+
 ## 6. Push early — never hold finished work locally
 
 Commit and push as soon as the smallest coherent slice of work exists (it

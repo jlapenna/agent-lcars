@@ -144,6 +144,31 @@ function formatFailure(failure) {
   return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
 }
 
+// libs/dispatch-contracts/src/outcomes.ts
+var DISPATCH_OUTCOME_KINDS = [
+  "startup-failure",
+  "trajectory-failure",
+  "outcome-gate-failure",
+  "park",
+  "no-op",
+  "pull-request",
+  "merged-deliverable",
+  "review",
+  "comment",
+  "closed",
+  "unknown-success"
+];
+function isDispatchOutcomeKind(value) {
+  return DISPATCH_OUTCOME_KINDS.includes(value);
+}
+function isDispatchOutcomeReference(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value;
+  return candidate.kind === "pull-request" && Number.isSafeInteger(candidate.number) && Number(candidate.number) > 0;
+}
+
 // libs/dispatch-contracts/src/pipelines.ts
 var PIPELINE_CONTRACTS = Object.freeze({
   claude: Object.freeze({
@@ -345,6 +370,16 @@ var QUICK_TASK_MARKER_SOURCE = "<!-- agent-lcars:quick-task-request:v1 id=([0-9a
 var QUICK_TASK_MARKER_RE = new RegExp(QUICK_TASK_MARKER_SOURCE, "u");
 function quickTaskMarkerMatcher() {
   return new RegExp(QUICK_TASK_MARKER_SOURCE, "gu");
+}
+
+// libs/dispatch-contracts/src/readiness.ts
+var LANE_READINESS_FAILURES = [
+  "credential",
+  "provider",
+  "bootstrap"
+];
+function isLaneReadinessFailure(value) {
+  return typeof value === "string" && LANE_READINESS_FAILURES.includes(value);
 }
 
 // libs/dispatch-reconcile/src/scan.ts
@@ -693,6 +728,35 @@ function acceptIntent(ledger, intent, now = (/* @__PURE__ */ new Date()).toISOSt
 
 // apps/dispatch-broker/src/modules/scheduler.ts
 var TERMINAL_RUN_STATUSES = /* @__PURE__ */ new Set(["completed"]);
+function recordOutcome(ledger, generationNumber, outcome, outcomeReference, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || ![
+    "active",
+    "completion-observed",
+    "completion-awaiting-terminal",
+    "completed"
+  ].includes(generation.state)) {
+    throw new Error("Generation is not awaiting a worker outcome");
+  }
+  const attempt = attemptOf(generation);
+  if (attempt.outcome && attempt.outcome !== outcome) {
+    throw new Error(
+      `Generation ${generationNumber} already reported outcome ${attempt.outcome}, not ${outcome}`
+    );
+  }
+  if (outcomeReference && attempt.outcomeReference && JSON.stringify(attempt.outcomeReference) !== JSON.stringify(outcomeReference)) {
+    throw new Error(
+      `Generation ${generationNumber} already reported a different outcome reference`
+    );
+  }
+  if (attempt.outcome === outcome && (!outcomeReference || attempt.outcomeReference)) {
+    return ledger;
+  }
+  return mutate(ledger, now, () => {
+    attempt.outcome = outcome;
+    if (outcomeReference) attempt.outcomeReference = outcomeReference;
+  });
+}
 function findGeneration(ledger, generationNumber) {
   return ledger.generations.find(
     (candidate) => candidate.generation === generationNumber
@@ -1175,6 +1239,68 @@ async function listAll(api2, path) {
   }
   throw new Error("GitHub pagination exceeded safety bound");
 }
+var workflowAlertMarker = (workflow) => `<!-- agent-lcars:workflow-alert:v1:${workflow} -->`;
+var laneReadinessMarker = (pipeline) => `<!-- agent-lcars:lane-readiness:v1:${pipeline} -->`;
+async function readLaneReadiness(api2, task, pipeline) {
+  if (pipeline === "canary") return [];
+  const expected = /* @__PURE__ */ new Map([
+    [workflowAlertMarker("bootstrap-canary.yml"), "bootstrap-canary"],
+    [laneReadinessMarker(pipeline), "lane-incident"]
+  ]);
+  if (pipeline === "opencode") {
+    expected.set(
+      workflowAlertMarker("opencode-model-canary.yml"),
+      "provider-canary"
+    );
+  }
+  const root = repositoryPath(task);
+  const issues = await listAll(
+    api2,
+    `${root}/issues?state=open`
+  );
+  const blockers = [];
+  for (const issue of issues) {
+    if (issue.pull_request || typeof issue.body !== "string") continue;
+    for (const [marker, source] of expected) {
+      if (!issue.body.includes(marker)) continue;
+      blockers.push({
+        issue: issue.number,
+        title: issue.title ?? `Readiness incident #${issue.number}`,
+        url: issue.html_url ?? `https://github.com/${task.repository}/issues/${issue.number}`,
+        source
+      });
+      break;
+    }
+  }
+  return blockers.sort((left, right) => left.issue - right.issue);
+}
+async function ensureLaneReadinessAlert(api2, task, pipeline, failure, runUrl, maintainer) {
+  if (pipeline === "canary") {
+    throw new Error("The no-op canary cannot create an agent lane incident");
+  }
+  const marker = laneReadinessMarker(pipeline);
+  const root = repositoryPath(task);
+  const open = (await listAll(api2, `${root}/issues?state=open`)).filter(
+    (issue) => !issue.pull_request && typeof issue.body === "string" && issue.body.includes(marker)
+  ).sort((left, right) => left.number - right.number);
+  if (open.length > 0) return open[0];
+  const display = pipeline[0].toUpperCase() + pipeline.slice(1);
+  return api2.requestOk(`${root}/issues`, {
+    method: "POST",
+    body: {
+      title: `${display} agent lane is unavailable`,
+      body: `${marker}
+
+A trusted worker completion reported a shared **${failure}** readiness failure for the \`${pipeline}\` lane.
+
+- First observed run: ${runUrl}
+- Effect: the broker will not allocate another ${display} worker while this issue is open.
+- Resume trigger: repair or rotate the affected prerequisite, verify the lane is healthy, then close this issue. Scheduled reconcile will resume held accepted work automatically.`,
+      labels: ["status:needs-human"],
+      ...maintainer ? { assignees: [maintainer] } : {}
+    }
+  });
+}
 function createReconcileTransport(api2) {
   return {
     listIssues: async (query) => {
@@ -1541,6 +1667,36 @@ async function ensureNeedsHumanParked(api2, task, maintainer) {
 }
 
 // apps/dispatch-broker/src/modules/projector.ts
+function projectionMarker(kind, key) {
+  return `<!-- agent-lcars:projection:${kind}:${key} -->`;
+}
+async function projectComment(api2, task, kind, key, render) {
+  const marker = projectionMarker(kind, key);
+  const root = repositoryPath(task);
+  const comments = await listAll(
+    api2,
+    `${root}/issues/${task.issue}/comments`
+  );
+  const existing = comments.filter((comment) => comment.body?.includes(marker));
+  if (existing.length > 1) {
+    throw new Error(
+      `Duplicate ${kind} projection comment on issue #${task.issue} for key ${key}`
+    );
+  }
+  const body = render(marker);
+  if (existing.length === 1) {
+    const updated = await api2.requestOk(
+      `${root}/issues/comments/${existing[0].id}`,
+      { method: "PATCH", body: { body } }
+    );
+    return { id: updated.id, action: "updated" };
+  }
+  const created = await api2.requestOk(
+    `${root}/issues/${task.issue}/comments`,
+    { method: "POST", body: { body } }
+  );
+  return { id: created.id, action: "created" };
+}
 async function projectNeedsHumanPark(api2, task, maintainer, failure) {
   if (!needsMaintainer(failure)) return { parked: false };
   await ensureNeedsHumanParked(api2, task, maintainer);
@@ -1740,7 +1896,7 @@ function normalizeWorkflowDispatch({
       throw new Error("Completion payload is malformed");
     }
     const candidate = completion;
-    if (!Number.isSafeInteger(candidate.workerRunId) || candidate.workerRunId <= 0 || !Number.isSafeInteger(candidate.generation) || candidate.generation <= 0 || !/^[A-Za-z0-9._:-]{1,200}$/u.test(candidate.intentId ?? "") || !/^[A-Za-z0-9_-]{16,200}$/u.test(candidate.token ?? "") || !WORKER_WORKFLOWS.has(candidate.workflow)) {
+    if (!Number.isSafeInteger(candidate.workerRunId) || candidate.workerRunId <= 0 || !Number.isSafeInteger(candidate.generation) || candidate.generation <= 0 || !/^[A-Za-z0-9._:-]{1,200}$/u.test(candidate.intentId ?? "") || !/^[A-Za-z0-9_-]{16,200}$/u.test(candidate.token ?? "") || !WORKER_WORKFLOWS.has(candidate.workflow) || candidate.outcome !== void 0 && !isDispatchOutcomeKind(candidate.outcome) || candidate.outcomeReference !== void 0 && !isDispatchOutcomeReference(candidate.outcomeReference) || candidate.outcomeReference !== void 0 && candidate.outcome !== "pull-request" || candidate.readinessFailure !== void 0 && !isLaneReadinessFailure(candidate.readinessFailure)) {
       throw new Error("Completion payload has invalid binding fields");
     }
     return {
@@ -1753,7 +1909,10 @@ function normalizeWorkflowDispatch({
       generation: candidate.generation,
       intentId: candidate.intentId,
       token: candidate.token,
-      workflow: candidate.workflow
+      workflow: candidate.workflow,
+      ...candidate.outcome ? { outcome: candidate.outcome } : {},
+      ...candidate.outcomeReference ? { outcomeReference: candidate.outcomeReference } : {},
+      ...candidate.readinessFailure ? { readinessFailure: candidate.readinessFailure } : {}
     };
   }
   if (inputs.kind === "canary") {
@@ -2132,7 +2291,9 @@ function mapAttempt(generation) {
     htmlUrl: attempt.htmlUrl,
     boundAt: attempt.boundAt,
     completedAt: attempt.completedAt,
-    conclusion: attempt.conclusion
+    conclusion: attempt.conclusion,
+    outcome: attempt.outcome,
+    outcomeReference: attempt.outcomeReference
   };
 }
 function mapIntent(generation) {
@@ -3448,6 +3609,34 @@ async function anchorNeedsHuman(client, task) {
   );
   return issueHasNeedsHumanLabel(issue);
 }
+async function holdForLaneReadiness(client, loaded, generation) {
+  const blockers = await readLaneReadiness(
+    client,
+    loaded.ledger.task,
+    generation.pipeline
+  );
+  if (blockers.length === 0) return false;
+  const display = generation.pipeline[0].toUpperCase() + generation.pipeline.slice(1);
+  await projectComment(
+    client,
+    loaded.ledger.task,
+    "lane-readiness",
+    generation.pipeline,
+    (marker) => `${marker}
+
+### ${display} dispatch paused for lane readiness
+
+The broker held generation ${generation.generation} **before worker allocation** because the following durable health signal${blockers.length === 1 ? " is" : "s are"} open:
+
+${blockers.map((blocker) => `- [#${blocker.issue}: ${blocker.title}](${blocker.url})`).join("\n")}
+
+This is an automatic infrastructure hold, not a human-owned task park. Repair the linked health incident and close it (or let its canary close it on recovery). Scheduled reconcile will retry the readiness check and resume this accepted generation; do not create another dispatch generation. This notice is live only while a linked health issue remains open.`
+  );
+  console.log(
+    `::notice::Holding accepted ${generation.pipeline} generation ${generation.generation} for issue #${loaded.ledger.task.issue} before worker allocation: readiness blocker${blockers.length === 1 ? "" : "s"} ` + blockers.map((blocker) => `#${blocker.issue}`).join(", ")
+  );
+  return true;
+}
 async function dispatchAccepted(client, loaded) {
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
@@ -3460,6 +3649,7 @@ async function dispatchAccepted(client, loaded) {
       );
       return;
     }
+    if (await holdForLaneReadiness(client, loaded, generation)) return;
     const beforeScheduling = structuredClone(loaded.ledger);
     const scheduled = await runPhase(
       { client, loaded },
@@ -3570,8 +3760,30 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
     runId: normalized.workerRunId,
     authorization: { observed: true, workflow: expectedWorkflow }
   });
+  const priorOutcome = generation.attempt?.outcome;
+  const priorOutcomeReference = generation.attempt?.outcomeReference;
+  if (normalized.outcome) {
+    recordOutcome(
+      loaded.ledger,
+      generation.generation,
+      normalized.outcome,
+      normalized.outcomeReference
+    );
+  }
+  if (normalized.readinessFailure && evidence.outcome === "recorded") {
+    await ensureLaneReadinessAlert(
+      client,
+      normalized.task,
+      generation.pipeline,
+      normalized.readinessFailure,
+      run.html_url,
+      env("MAINTAINER_LOGIN", false)
+    );
+  }
   if (generation.state === "completed") {
-    if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
+    if (evidence.outcome === "recorded" || normalized.outcome && priorOutcome !== normalized.outcome || normalized.outcomeReference && JSON.stringify(priorOutcomeReference) !== JSON.stringify(normalized.outcomeReference)) {
+      await saveLedger2(client, loaded);
+    }
     return;
   }
   if (generation.state === "active") {
@@ -3998,6 +4210,28 @@ async function preflight() {
             intentId: expected.intentId
           })
         );
+        const priorTerminal = ledger.generations.filter(
+          (candidate) => candidate.generation < expected.generation && [
+            "completed",
+            "dispatch-rejected",
+            "superseded",
+            "superseded-by-close"
+          ].includes(candidate.state)
+        ).sort((left, right) => right.generation - left.generation)[0];
+        await output(
+          "prior-terminal-state",
+          JSON.stringify(
+            priorTerminal ? {
+              generation: priorTerminal.generation,
+              state: priorTerminal.state,
+              pipeline: priorTerminal.pipeline,
+              mode: priorTerminal.mode ?? null,
+              outcome: priorTerminal.attempt?.outcome ?? null,
+              conclusion: priorTerminal.attempt?.conclusion ?? null,
+              completedAt: priorTerminal.attempt?.completedAt ?? null
+            } : null
+          )
+        );
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 2e3));
@@ -4025,12 +4259,30 @@ async function completionCallback() {
     repository: env("GITHUB_REPOSITORY"),
     issue: Number(env("BROKER_ISSUE"))
   };
+  const outcome = env("BROKER_OUTCOME_KIND", false);
+  const outcomeReference = env("BROKER_OUTCOME_REFERENCE", false);
+  if (outcomeReference) {
+    const number = Number(outcomeReference);
+    if (outcome !== "pull-request" || !Number.isSafeInteger(number) || number <= 0) {
+      throw new Error(
+        "BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome"
+      );
+    }
+  }
   const completionPayload = encode({
     workerRunId: Number(env("GITHUB_RUN_ID")),
     generation: Number(env("BROKER_GENERATION")),
     intentId: env("BROKER_INTENT_ID"),
     token: env("BROKER_DISPATCH_TOKEN"),
-    workflow: env("BROKER_WORKER_WORKFLOW")
+    workflow: env("BROKER_WORKER_WORKFLOW"),
+    ...outcome ? { outcome } : {},
+    ...outcomeReference ? {
+      outcomeReference: {
+        kind: "pull-request",
+        number: Number(outcomeReference)
+      }
+    } : {},
+    ...env("BROKER_READINESS_FAILURE", false) ? { readinessFailure: env("BROKER_READINESS_FAILURE") } : {}
   });
   await dispatchRouterEvent(client, task, {
     kind: "completion",
@@ -4109,6 +4361,7 @@ export {
   encode,
   handleCompletion,
   healStaleAgentLabels,
+  holdForLaneReadiness,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,

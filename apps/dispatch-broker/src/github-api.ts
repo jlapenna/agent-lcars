@@ -1,4 +1,5 @@
 import type {
+  DispatchPipeline,
   LedgerGeneration,
   LedgerRunAttempt,
   LedgerTaskRef,
@@ -201,6 +202,21 @@ interface GitHubIssueDetail {
   updated_at: string;
   merged?: boolean;
   merged_at?: string | null;
+}
+
+interface GitHubReadinessIssue {
+  number: number;
+  title?: string;
+  body?: string | null;
+  html_url?: string;
+  pull_request?: unknown;
+}
+
+export interface LaneReadinessBlocker {
+  issue: number;
+  title: string;
+  url: string;
+  source: 'bootstrap-canary' | 'provider-canary' | 'lane-incident';
 }
 
 /** A GitHub Actions workflow run, as returned by both the single-run GET
@@ -681,6 +697,104 @@ async function listAll<T>(api: GitHubApi, path: string): Promise<T[]> {
     if (data.length < 100) return all;
   }
   throw new Error('GitHub pagination exceeded safety bound');
+}
+
+const workflowAlertMarker = (workflow: string): string =>
+  `<!-- agent-lcars:workflow-alert:v1:${workflow} -->`;
+const laneReadinessMarker = (pipeline: string): string =>
+  `<!-- agent-lcars:lane-readiness:v1:${pipeline} -->`;
+
+/**
+ * Read the runner platform's durable readiness projections. Open canary
+ * alert issues are external health input to the controller, not state the
+ * controller owns. A lane-specific incident is added after a worker proves
+ * a shared credential/provider prerequisite failed. Listing issues rather
+ * than using Search is intentional: issue-list reads are immediately
+ * consistent enough to stop the next serialized dispatch, while search
+ * indexing can lag behind the incident creation that must trip this breaker.
+ */
+async function readLaneReadiness(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  pipeline: DispatchPipeline,
+): Promise<LaneReadinessBlocker[]> {
+  if (pipeline === 'canary') return [];
+  const expected = new Map<string, LaneReadinessBlocker['source']>([
+    [workflowAlertMarker('bootstrap-canary.yml'), 'bootstrap-canary'],
+    [laneReadinessMarker(pipeline), 'lane-incident'],
+  ]);
+  if (pipeline === 'opencode') {
+    expected.set(
+      workflowAlertMarker('opencode-model-canary.yml'),
+      'provider-canary',
+    );
+  }
+  const root = repositoryPath(task);
+  const issues = await listAll<GitHubReadinessIssue>(
+    api,
+    `${root}/issues?state=open`,
+  );
+  const blockers: LaneReadinessBlocker[] = [];
+  for (const issue of issues) {
+    if (issue.pull_request || typeof issue.body !== 'string') continue;
+    for (const [marker, source] of expected) {
+      if (!issue.body.includes(marker)) continue;
+      blockers.push({
+        issue: issue.number,
+        title: issue.title ?? `Readiness incident #${issue.number}`,
+        url:
+          issue.html_url ??
+          `https://github.com/${task.repository}/issues/${issue.number}`,
+        source,
+      });
+      break;
+    }
+  }
+  return blockers.sort((left, right) => left.issue - right.issue);
+}
+
+/**
+ * Open one durable incident per lane after a trusted completion callback
+ * identifies a shared startup prerequisite. The issue is intentionally
+ * human-closed: Claude/Codex credentials have no honest lightweight network
+ * probe, so remediation itself is the health transition an operator must
+ * confirm. OpenCode's independent provider canary remains auto-closing.
+ */
+async function ensureLaneReadinessAlert(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  pipeline: DispatchPipeline,
+  failure: 'credential' | 'provider' | 'bootstrap',
+  runUrl: string,
+  maintainer: string,
+): Promise<GitHubReadinessIssue> {
+  if (pipeline === 'canary') {
+    throw new Error('The no-op canary cannot create an agent lane incident');
+  }
+  const marker = laneReadinessMarker(pipeline);
+  const root = repositoryPath(task);
+  const open = (
+    await listAll<GitHubReadinessIssue>(api, `${root}/issues?state=open`)
+  )
+    .filter(
+      (issue) =>
+        !issue.pull_request &&
+        typeof issue.body === 'string' &&
+        issue.body.includes(marker),
+    )
+    .sort((left, right) => left.number - right.number);
+  if (open.length > 0) return open[0];
+
+  const display = pipeline[0].toUpperCase() + pipeline.slice(1);
+  return api.requestOk<GitHubReadinessIssue>(`${root}/issues`, {
+    method: 'POST',
+    body: {
+      title: `${display} agent lane is unavailable`,
+      body: `${marker}\n\nA trusted worker completion reported a shared **${failure}** readiness failure for the \`${pipeline}\` lane.\n\n- First observed run: ${runUrl}\n- Effect: the broker will not allocate another ${display} worker while this issue is open.\n- Resume trigger: repair or rotate the affected prerequisite, verify the lane is healthy, then close this issue. Scheduled reconcile will resume held accepted work automatically.`,
+      labels: ['status:needs-human'],
+      ...(maintainer ? { assignees: [maintainer] } : {}),
+    },
+  });
 }
 
 // Shared by main.mjs's dispatchReconcileScan and run-dispatch-canary/
@@ -1475,6 +1589,7 @@ export {
   createReconcileTransport,
   dispatchRouterEvent,
   dispatchWorker,
+  ensureLaneReadinessAlert,
   ensureNeedsHumanParked,
   failClosed,
   findConflictingRouterRun,
@@ -1492,6 +1607,7 @@ export {
   loadLedgerProjection,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
+  readLaneReadiness,
   removeIssueLabel,
   repositoryPath,
   saveLedger,

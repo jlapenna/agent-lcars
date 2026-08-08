@@ -109,3 +109,4 @@ jobs:
           intent-id: ${{ inputs.intent-id }}
           dispatch-token: ${{ inputs.dispatch-token }}
           worker-workflow: ${{ inputs.worker-workflow }}
+          outcome-kind: startup-failure

@@ -178,6 +178,19 @@ failure mode #645 exists to eliminate; proving either lane's exact model
 answers requires the real, paid/subscription-consuming harness, which a
 canary must not invoke.
 
+The broker turns these durable alerts into an allocation circuit breaker; it
+does not merely display them. Every real lane is blocked by an open
+`bootstrap-canary.yml` alert, OpenCode is additionally blocked by the
+exact-model alert above, and a trusted worker can open one lane-specific
+incident after proving a shared credential failure (Codex's auth steps or
+Claude's zero-cost OAuth rejection signature). Admission is checked before
+the launch outbox and worker POST. A held task receives one idempotent,
+pipeline-keyed explanation, while the health incident—not the task—carries
+`status:needs-human`; closing the incident lets scheduled reconcile resume the
+same accepted generation. This preserves the security distinction above:
+Claude/Codex local credential presence still does not masquerade as a provider
+probe, but a proven failure stops repeated spend.
+
 ## Credential incident follow-up
 
 Before this boundary existed, a local run inherited an ambient OpenCode
