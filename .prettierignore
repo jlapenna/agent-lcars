@@ -1,6 +1,10 @@
 /dist
 /coverage
 
+# uv creates a project-local environment for Python Nx targets. Third-party
+# package metadata and vendored JavaScript are not workspace source.
+**/.venv/**
+
 # Committed esbuild output (see .gitignore's negation of the blanket `dist`
 # ignore, and .github/actions/project.json's `build` target): a generated
 # bundle, not hand-authored source, so it has no business being

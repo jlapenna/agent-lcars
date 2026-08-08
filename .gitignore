@@ -36,6 +36,9 @@ __pycache__/
 
 # dependencies
 node_modules
+# Python project-local environments are generated dependency trees, just
+# like node_modules; uv creates this path on the first exporter target run.
+.venv/
 # pnpm falls back to a project-local store here when run inside
 # tools/e2e-docker.sh's container (isolated HOME, no pre-existing pnpm
 # config) instead of using the usual global store.
