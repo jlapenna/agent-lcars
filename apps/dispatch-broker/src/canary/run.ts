@@ -16,10 +16,11 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-import type {
-  DispatchLedger,
-  LedgerGeneration,
-  LedgerTaskRef,
+import {
+  type DispatchLedger,
+  formatAttemptId,
+  type LedgerGeneration,
+  type LedgerTaskRef,
 } from '@agent-lcars/dispatch-contracts';
 
 import {
@@ -302,6 +303,42 @@ interface FoundGeneration {
   generation: LedgerGeneration;
 }
 
+/**
+ * The canary is the contract probe for three systems, not only a green
+ * workflow conclusion. The controller must preserve the exact attempt
+ * binding, the outcome finalizer must validate the attempt-scoped comment,
+ * and the projector must publish a converged compatibility view. Keeping
+ * these checks together prevents a controller-only success from masking a
+ * broken finalizer or projector.
+ */
+function assertCanaryContracts({ ledger, generation }: FoundGeneration): void {
+  const expectedAttemptId = formatAttemptId(generation);
+  if (generation.attempt?.attemptId !== expectedAttemptId) {
+    throw new Error(
+      `Canary controller contract failed: expected attemptId '${expectedAttemptId}', ` +
+        `got '${generation.attempt?.attemptId ?? 'missing'}'.`,
+    );
+  }
+  if (generation.attempt.outcome !== 'comment') {
+    throw new Error(
+      `Canary finalizer contract failed: expected exact comment outcome, got ` +
+        `'${generation.attempt.outcome ?? 'missing'}'.`,
+    );
+  }
+  const projection = ledger.projection;
+  if (
+    projection?.state !== 'converged' ||
+    projection.desiredRevision !== projection.observedRevision ||
+    projection.desiredRevision !== ledger.revision - 1
+  ) {
+    throw new Error(
+      `Canary projector contract failed: expected a converged checkpoint for the ` +
+        `terminal ledger revision immediately before the checkpoint write, got ` +
+        `${projection ? JSON.stringify(projection) : 'no projection status'}.`,
+    );
+  }
+}
+
 // Shared by the live poll below and sweepStaleCanaries' one-shot read: find
 // this issue's ledger comment (if any) and the 'canary'-pipeline generation
 // within it. Returns undefined when no ledger comment exists yet, or none
@@ -534,6 +571,7 @@ async function sweepOneStaleCanary(
   const found = await findCanaryGeneration(api, task);
   const conclusion = found?.generation?.attempt?.conclusion;
   if (found?.generation.state === 'completed' && conclusion === 'success') {
+    assertCanaryContracts(found);
     await closeCanaryIssue(api, task, {
       generation: found.generation,
       message: alreadyParked
@@ -707,6 +745,7 @@ async function runDispatchCanary({
           '.',
       );
     }
+    assertCanaryContracts(result);
     await closeCanaryIssue(api, task, {
       generation: result.generation,
       runUrl,
@@ -794,6 +833,7 @@ if (
 }
 
 export {
+  assertCanaryContracts,
   CANARY_SWEEP_CONCURRENCY,
   closeCanaryIssue,
   dispatchRouterCanary,

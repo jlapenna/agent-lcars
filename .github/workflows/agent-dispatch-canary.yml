@@ -99,6 +99,14 @@ jobs:
       - name: Checkout trusted broker revision
         uses: actions/checkout@v7
 
+      # The production canary exercises the same exact-artifact finalizer as
+      # a real worker, not merely the controller's run-status polling. Keep
+      # the verifier in a trusted snapshot so the invocation shape remains
+      # identical to the three agent workers even though this canary never
+      # runs untrusted code itself.
+      - name: Snapshot post-agent enforcement scripts
+        uses: ./.github/actions/snapshot-enforcement-scripts
+
       # The worker is untrusted until its own Actions run ID is durably
       # bound to this exact task/generation/intent/token in the serialized
       # ledger -- identical to claude.yml/codex.yml/opencode.yml.
@@ -149,7 +157,24 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh issue comment "$ISSUE" --repo "$REPO" --body \
-            "🤖 Dispatch canary worker verified claim + broker preflight binding. No model or self-hosted runner was used. Run: $RUN_URL"
+            "🤖 Dispatch canary worker verified claim + broker preflight binding. No model or self-hosted runner was used. Run: $RUN_URL
+
+          <!-- attempt-claim:$ATTEMPT_ID -->"
+
+      - name: Verify the exact canary artifact through the outcome finalizer
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT: Dispatch canary
+          REPO: ${{ github.repository }}
+          NUM: ${{ inputs.issue }}
+          STARTED_AT: '1970-01-01T00:00:00Z'
+          MODE: implement
+          RUNBOOK: ''
+          EXPECTED_COMMENT_LOGIN: github-actions[bot]
+          EXCLUDE_PR_AUTHOR: ''
+          EXCLUDE_COMMENT_ID: ''
+        run: bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"
 
       - name: Return completion observation to the broker
         if: always()
@@ -164,3 +189,4 @@ jobs:
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
           worker-workflow: agent-dispatch-canary.yml
+          outcome-kind: ${{ steps.verify.outputs.outcome-kind }}

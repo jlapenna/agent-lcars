@@ -671,24 +671,30 @@ workflows:
 
 Required-check CI failures and CodeQL findings already surface through
 GitHub's native check/security notification paths; they are not scheduled
-heartbeats and do not open these issues. More importantly, an alert can only
-watch a signal that exists: the Outcome finalizer and Projector/read model
-still have no standalone contract canary, and the Runner platform is only
-exercised indirectly by `bootstrap-canary.yml`. Those are system-canary gaps,
-not silent-failure-alert wiring gaps; the table below keeps them visible.
+heartbeats and do not open these issues. A system does not need a separate
+workflow merely to claim a separate canary: the production dispatch round
+trip now asserts each system's own contract. Its worker writes an exact
+attempt-scoped comment, runs the real snapshotted deliverable verifier, and
+returns that typed `comment` outcome; the orchestrator then requires the
+immutable attempt binding and a converged projector checkpoint before it can
+close the canonical issue. A green controller run can therefore no longer
+mask a broken finalizer or projector. `bootstrap-canary.yml` similarly makes
+real runner allocation part of its contract: a missing runner leaves the job
+queued until its bounded timeout, after which the GitHub-hosted alert job
+opens the workflow-specific incident.
 
 ## Canary coverage today, honestly
 
 #645 asks for one end-to-end contract canary per system (Phase 6). What
 exists now:
 
-| System               | Canary                                                                                | Status                                                                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dispatch controller  | `dispatch-canary.yml` / `agent-dispatch-canary.yml`                                   | Exists                                                                                                                                       |
-| Runner platform      | —                                                                                     | No dedicated canary; exercised indirectly as a side effect of `bootstrap-canary.yml` allocating a real runner, not verified in its own right |
-| Worker runtime       | `bootstrap-canary.yml` (all three lanes), `opencode-model-canary.yml` (OpenCode only) | Exists, partial (no Claude/Codex model canary — see Worker runtime section for why)                                                          |
-| Outcome finalizer    | —                                                                                     | None                                                                                                                                         |
-| Projector/read model | —                                                                                     | None                                                                                                                                         |
+| System               | Canary                                                                                | Contract proved                                                                                                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dispatch controller  | `dispatch-canary.yml` / `agent-dispatch-canary.yml`                                   | Stable caller → intent → immutable attempt ID/run binding → successful terminal generation                                                                                                                                            |
+| Runner platform      | `bootstrap-canary.yml`                                                                | A job is allocated on the exact production worker label within the bounded job timeout; the independent GitHub-hosted alert survives allocation failure                                                                               |
+| Worker runtime       | `bootstrap-canary.yml` (all three lanes), `opencode-model-canary.yml` (OpenCode only) | Shared token/snapshot/telemetry bootstrap on the real fleet, plus the one honest cheap exact-model probe. Claude/Codex deliberately have no fake presence-only model probe; see the Worker runtime section                            |
+| Outcome finalizer    | `dispatch-canary.yml` / `agent-dispatch-canary.yml`                                   | The real snapshotted verifier independently accepts the exact attempt-claim comment and persists its typed `comment` outcome; a merely successful Actions conclusion is rejected                                                      |
+| Projector/read model | `dispatch-canary.yml` / `agent-dispatch-canary.yml`                                   | The compatibility projection must report `state=converged` with equal desired/observed revisions before the canary closes; missing/divergent projection leaves the canonical issue open and lets the canary alert surface the failure |
 
 ## Related docs
 

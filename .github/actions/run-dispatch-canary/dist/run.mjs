@@ -57,6 +57,11 @@ var GENERATION_STATES = new Set(
   LEDGER_GENERATION_STATES
 );
 
+// libs/dispatch-contracts/src/marker.ts
+function formatAttemptId({ generation, intentId }) {
+  return `g${generation}:${intentId}`;
+}
+
 // apps/dispatch-broker/src/modules/ledger-core.ts
 var ACTIVE_STATES = LEDGER_ACTIVE_GENERATION_STATES;
 function assertTaskRef(task) {
@@ -485,6 +490,25 @@ async function dispatchRouterCanary(api, repository, issueNumber, callerId) {
   );
 }
 var LEDGER_WORKFLOW_IDENTITY = "github-actions[bot]";
+function assertCanaryContracts({ ledger, generation }) {
+  const expectedAttemptId = formatAttemptId(generation);
+  if (generation.attempt?.attemptId !== expectedAttemptId) {
+    throw new Error(
+      `Canary controller contract failed: expected attemptId '${expectedAttemptId}', got '${generation.attempt?.attemptId ?? "missing"}'.`
+    );
+  }
+  if (generation.attempt.outcome !== "comment") {
+    throw new Error(
+      `Canary finalizer contract failed: expected exact comment outcome, got '${generation.attempt.outcome ?? "missing"}'.`
+    );
+  }
+  const projection = ledger.projection;
+  if (projection?.state !== "converged" || projection.desiredRevision !== projection.observedRevision || projection.desiredRevision !== ledger.revision - 1) {
+    throw new Error(
+      `Canary projector contract failed: expected a converged checkpoint for the terminal ledger revision immediately before the checkpoint write, got ${projection ? JSON.stringify(projection) : "no projection status"}.`
+    );
+  }
+}
 async function findCanaryGeneration(api, task, sourceId) {
   const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
     createIfMissing: false
@@ -596,6 +620,7 @@ async function sweepOneStaleCanary(api, task, maintainer, alreadyParked) {
   const found = await findCanaryGeneration(api, task);
   const conclusion = found?.generation?.attempt?.conclusion;
   if (found?.generation.state === "completed" && conclusion === "success") {
+    assertCanaryContracts(found);
     await closeCanaryIssue(api, task, {
       generation: found.generation,
       message: alreadyParked ? `\u{1F9F9} Swept by the scheduled canary janitor: this canary was previously parked status:needs-human after its orchestrator run never returned, but its dispatch broker ledger shows generation g${found.generation.generation} completed successfully since then. Recovering and closing.` : `\u{1F9F9} Swept by the scheduled canary janitor: this canary's own orchestrator run never returned (job timeout or workflow cancellation), but its dispatch broker ledger shows generation g${found.generation.generation} completed successfully. Closing.`
@@ -708,6 +733,7 @@ async function runDispatchCanary({
         `Canary dispatch generation g${result.generation?.generation} ended in state '${result.generation?.state}'` + (conclusion ? ` with conclusion '${conclusion}'` : "") + "."
       );
     }
+    assertCanaryContracts(result);
     await closeCanaryIssue(api, task, {
       generation: result.generation,
       runUrl
@@ -777,6 +803,7 @@ export {
   CANARY_SWEEP_CONCURRENCY,
   LEDGER_POLL_TIMEOUT_MS,
   STALE_CANARY_AGE_MS,
+  assertCanaryContracts,
   closeCanaryIssue,
   dispatchRouterCanary,
   issueBody,

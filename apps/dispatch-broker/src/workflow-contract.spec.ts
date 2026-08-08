@@ -1076,6 +1076,22 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
   // Firestore reader token before any untrusted code runs.
   assert.doesNotMatch(source, /secrets\./u);
   assert.match(source, /^\s+id-token:\s+write\s*$/mu);
+  assert.match(
+    source,
+    /uses:\s*\.\/\.github\/actions\/snapshot-enforcement-scripts/u,
+    'the canary must snapshot the same trusted finalizer used by real workers',
+  );
+  assert.match(
+    source,
+    /run:\s+bash "\$RUNNER_TEMP\/trusted-actions\/verify-deliverable\/verify-deliverable\.sh"/u,
+    'the canary must exercise exact deliverable validation from the trusted snapshot',
+  );
+  assert.match(source, /<!-- attempt-claim:\$ATTEMPT_ID -->/u);
+  assert.match(
+    source,
+    /outcome-kind:\s*\$\{\{ steps\.verify\.outputs\.outcome-kind \}\}/u,
+    "the canary completion must persist the finalizer's typed outcome",
+  );
   // Every worker calls the broker's completion-callback unconditionally so
   // a crashed run still clears its ledger generation (#305's reconciler is
   // only ever a backstop, never the primary path).
