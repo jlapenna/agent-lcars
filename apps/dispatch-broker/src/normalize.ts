@@ -15,21 +15,21 @@ import {
   WORKER_WORKFLOW_FILES,
 } from '@agent-lcars/dispatch-contracts';
 
-import type { AnchorControl, ControlEvidence } from './broker.js';
-import { digest } from './broker.js';
-import { authorization, AUTHORIZATION_RULES } from './modules/authorization.js';
-import type { Intent } from './modules/intent.js';
+import type { AnchorControl, ControlEvidence } from './broker';
+import { digest } from './broker';
+import { authorization, AUTHORIZATION_RULES } from './modules/authorization';
+import type { Intent } from './modules/intent';
 
 /** A GitHub `labels` entry: either the bare name (some webhook payloads) or
  *  the full label object (the REST API's shape). */
 type GitHubLabel = string | { name: string };
 
-interface GitHubUser {
+export interface GitHubUser {
   login?: string;
   type?: string;
 }
 
-interface GitHubComment {
+export interface GitHubComment {
   id: number;
   body: string;
   created_at: string;
@@ -40,7 +40,7 @@ interface GitHubComment {
 /** The fields read off an issue or a pull request -- normalize.mjs treats
  *  both the same way everywhere except the few spots that check
  *  `pull_request` for presence. */
-interface IssueOrPullRequest {
+export interface IssueOrPullRequest {
   id: number;
   number?: number;
   title: string;
@@ -63,7 +63,7 @@ interface IssueOrPullRequest {
  *  handles (`issues`, `issue_comment`, `pull_request`) -- each branch reads
  *  only the fields its own event actually carries, exactly as the
  *  untyped original did. */
-interface WebhookEvent {
+export interface WebhookEvent {
   action: string;
   issue?: IssueOrPullRequest;
   pull_request?: IssueOrPullRequest;
@@ -72,7 +72,7 @@ interface WebhookEvent {
   label?: { name: string };
 }
 
-interface TimelineEvent {
+export interface TimelineEvent {
   event?: string;
   label?: { name?: string };
   actor?: { login?: string };

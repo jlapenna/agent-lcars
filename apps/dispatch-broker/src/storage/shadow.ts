@@ -147,7 +147,7 @@ import {
   type StoredTask,
   type StoredTaskInput,
   type TaskRef,
-} from './port.js';
+} from './port';
 
 // ---------------------------------------------------------------------------
 // The switch.

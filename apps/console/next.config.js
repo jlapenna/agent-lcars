@@ -5,6 +5,10 @@ const { composePlugins, withNx } = require('@nx/next');
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // The generated Cloud Tasks client loads its GAPIC JSON at runtime with a
+  // dynamic require. Keep it as a Node dependency in the standalone server;
+  // Turbopack cannot statically bundle that generated lookup.
+  serverExternalPackages: ['@google-cloud/tasks'],
   // Next 16's native cache model, enabling `"use cache"` +
   // `cacheTag`/`cacheLife` (see lib/dashboard-data.ts for why the legacy
   // `unstable_cache` was not an option). It also requires every uncached

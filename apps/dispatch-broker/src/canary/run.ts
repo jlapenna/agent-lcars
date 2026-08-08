@@ -29,7 +29,7 @@ import {
   loadLedger,
   mapWithConcurrency,
   repositoryPath,
-} from '../github-api.js';
+} from '../github-api';
 
 // `createGitHubApi()`'s return shape -- see github-api.ts. Derived via
 // ReturnType rather than a hand-copied local interface (main.ts's own

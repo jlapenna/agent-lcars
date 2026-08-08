@@ -1237,7 +1237,9 @@ async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", 
   }
   return { comment, ledger, created: true, existingComments: comments };
 }
-async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "github-actions[bot]") {
+async function loadLedgerProjection(api2, task, ledger, controllerIdentities = [
+  { login: "github-actions[bot]", type: "Bot" }
+]) {
   const root = repositoryPath(task);
   const comments = await listAll(
     api2,
@@ -1247,7 +1249,9 @@ async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "gith
     (comment2) => comment2.body?.includes(LEDGER_MARKER)
   );
   const ownedCandidates = markerCandidates.filter(
-    (comment2) => comment2.body?.includes(LEDGER_MARKER) && comment2.user?.login === workflowIdentity && comment2.user?.type === "Bot"
+    (comment2) => comment2.body?.includes(LEDGER_MARKER) && controllerIdentities.some(
+      (identity) => comment2.user?.login === identity.login && comment2.user?.type === identity.type
+    )
   ).sort((left, right) => left.id - right.id);
   let comment = ownedCandidates[0];
   let created = false;
@@ -1285,13 +1289,17 @@ async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "gith
     ...created && { existingComments: comments }
   };
 }
-async function classifyAuthorityTaskInitialization(api2, task, authorityEpoch, workflowIdentity = "github-actions[bot]") {
+async function classifyAuthorityTaskInitialization(api2, task, authorityEpoch, controllerIdentities = [
+  { login: "github-actions[bot]", type: "Bot" }
+]) {
   const comments = await listAll(
     api2,
     `${repositoryPath(task)}/issues/${task.issue}/comments`
   );
   const hasProjection = comments.some(
-    (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.type === "Bot" && comment.user.login === workflowIdentity
+    (comment) => comment.body?.includes(LEDGER_MARKER) && controllerIdentities.some(
+      (identity) => comment.user?.login === identity.login && comment.user?.type === identity.type
+    )
   );
   if (hasProjection) return "compatibility-projection";
   const epoch = Date.parse(authorityEpoch);
@@ -2746,7 +2754,11 @@ async function runPhase(ledgerContext, phase, step, owningSystem = "controller")
 }
 async function normalize() {
   const event = JSON.parse(
-    await fs.readFile(env("GITHUB_EVENT_PATH"), "utf8")
+    await fs.readFile(
+      /* turbopackIgnore: true */
+      env("GITHUB_EVENT_PATH"),
+      "utf8"
+    )
   );
   const eventName = env("GITHUB_EVENT_NAME");
   const inputs = event.inputs ?? {};
@@ -3615,7 +3627,7 @@ async function healStaleAgentLabels(client, loaded, intent) {
   });
   if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "") {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities) {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
   if (storageMode === "authority") {
     const port = storagePortFactory();
@@ -3638,7 +3650,8 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
         const initializationEvidence = await classifyAuthorityTaskInitialization(
           client,
           task,
-          authorityEpoch
+          authorityEpoch,
+          projectionIdentities
         );
         if (untrackedPullRequestControl && initializationEvidence !== "compatibility-projection") {
           return void 0;
@@ -3661,7 +3674,8 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
       const projected = await loadLedgerProjection(
         client,
         task,
-        authority.ledger
+        authority.ledger,
+        projectionIdentities
       );
       projected.authority = authority.session;
       projected.projectionAvailable = true;
@@ -3694,33 +3708,41 @@ async function applyAnchorControlTransition(client, loaded, control) {
   applyAnchorControl(loaded.ledger, control);
   await saveLedger2(client, loaded);
 }
-async function broker() {
-  const normalized = decode(env("BROKER_PAYLOAD"));
+async function processNormalizedEvent({
+  normalized,
+  githubToken,
+  storageMode: storageModeInput,
+  authorityEpoch: authorityEpochInput = "",
+  storagePortFactory,
+  isPullRequest,
+  transportRunId: runId,
+  authorityOwner,
+  maintainer = "",
+  actionConcurrency,
+  projectionIdentities
+}) {
   if (normalized.kind === "ignored") return;
-  const storageMode = parseDispatchStorageMode(
-    env("DISPATCH_STORAGE_MODE", false)
-  );
-  const authorityEpoch = storageMode === "authority" ? env("DISPATCH_AUTHORITY_EPOCH") : "";
+  const storageMode = parseDispatchStorageMode(storageModeInput);
+  const authorityEpoch = storageMode === "authority" ? authorityEpochInput : "";
   const task = resolveTask(normalized);
-  const client = api();
-  const isPullRequest = env("ANCHOR_IS_PR", false) === "true";
-  const runId = Number(env("GITHUB_RUN_ID"));
-  const group = env("BROKER_GROUP");
-  const eventName = env("GITHUB_EVENT_NAME", false);
-  try {
-    await verifyBrokerConcurrency(client, task, runId, group, { eventName });
-  } catch (error) {
-    if (await wasSupersededEviction(
-      client,
-      task,
-      runId,
-      group,
-      normalized.kind,
-      error
-    )) {
-      return;
+  const client = createGitHubApi({ token: githubToken });
+  if (actionConcurrency) {
+    const { eventName, group } = actionConcurrency;
+    try {
+      await verifyBrokerConcurrency(client, task, runId, group, { eventName });
+    } catch (error) {
+      if (await wasSupersededEviction(
+        client,
+        task,
+        runId,
+        group,
+        normalized.kind,
+        error
+      )) {
+        return;
+      }
+      throw error;
     }
-    throw error;
   }
   let loaded;
   try {
@@ -3730,9 +3752,10 @@ async function broker() {
       normalized,
       isPullRequest,
       storageMode,
-      `action:${runId}`,
-      createStoragePort,
-      authorityEpoch
+      authorityOwner,
+      storagePortFactory,
+      authorityEpoch,
+      projectionIdentities
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {
@@ -3741,7 +3764,7 @@ async function broker() {
       );
       throw error;
     }
-    await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
+    await failClosed(client, task, maintainer, error);
   }
   if (!loaded) {
     console.log(
@@ -3813,11 +3836,11 @@ async function broker() {
     }
     await maybeObserveDispatchStorage(
       storageMode,
-      createStoragePort,
+      storagePortFactory,
       loaded.ledger
     );
   } catch (error) {
-    await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
+    await failClosed(client, task, maintainer, error);
   } finally {
     if (loaded?.authority) {
       try {
@@ -3830,6 +3853,30 @@ async function broker() {
       }
     }
   }
+}
+async function broker() {
+  const normalized = decode(env("BROKER_PAYLOAD"));
+  const runId = Number(env("GITHUB_RUN_ID"));
+  const hostedControllerLogin = env("HOSTED_CONTROLLER_LOGIN", false);
+  await processNormalizedEvent({
+    normalized,
+    githubToken: env("GITHUB_TOKEN"),
+    storageMode: env("DISPATCH_STORAGE_MODE", false),
+    authorityEpoch: env("DISPATCH_AUTHORITY_EPOCH", false),
+    storagePortFactory: createStoragePort,
+    isPullRequest: env("ANCHOR_IS_PR", false) === "true",
+    transportRunId: runId,
+    authorityOwner: `action:${runId}`,
+    maintainer: env("MAINTAINER_LOGIN", false),
+    actionConcurrency: {
+      group: env("BROKER_GROUP"),
+      eventName: env("GITHUB_EVENT_NAME", false)
+    },
+    projectionIdentities: [
+      { login: "github-actions[bot]", type: "Bot" },
+      ...hostedControllerLogin ? [{ login: hostedControllerLogin, type: "User" }] : []
+    ]
+  });
 }
 async function preflight() {
   const task = {
@@ -3994,6 +4041,7 @@ export {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
+  processNormalizedEvent,
   reconcileActive,
   reconcileControlState,
   reconcileLedger,

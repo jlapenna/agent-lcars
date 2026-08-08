@@ -28,7 +28,7 @@ import {
   LEDGER_MARKER,
   parseLedgerComment,
   renderLedgerComment,
-} from './broker.js';
+} from './broker';
 
 const API_VERSION = '2026-03-10';
 
@@ -881,6 +881,11 @@ interface LoadLedgerOptions {
   createIfMissing?: boolean;
 }
 
+export interface LedgerProjectionIdentity {
+  login: string;
+  type: 'Bot' | 'User';
+}
+
 async function loadLedger(
   api: GitHubApi,
   task: LedgerTaskRef,
@@ -939,7 +944,9 @@ async function loadLedgerProjection(
   api: GitHubApi,
   task: LedgerTaskRef,
   ledger: DispatchLedger,
-  workflowIdentity = 'github-actions[bot]',
+  controllerIdentities: readonly LedgerProjectionIdentity[] = [
+    { login: 'github-actions[bot]', type: 'Bot' },
+  ],
 ): Promise<LoadedLedger> {
   const root = repositoryPath(task);
   const comments = await listAll<GitHubIssueComment>(
@@ -953,8 +960,11 @@ async function loadLedgerProjection(
     .filter(
       (comment) =>
         comment.body?.includes(LEDGER_MARKER) &&
-        comment.user?.login === workflowIdentity &&
-        comment.user?.type === 'Bot',
+        controllerIdentities.some(
+          (identity) =>
+            comment.user?.login === identity.login &&
+            comment.user?.type === identity.type,
+        ),
     )
     .sort((left, right) => left.id - right.id);
   let comment = ownedCandidates[0];
@@ -1020,7 +1030,9 @@ async function classifyAuthorityTaskInitialization(
   api: GitHubApi,
   task: LedgerTaskRef,
   authorityEpoch: string,
-  workflowIdentity = 'github-actions[bot]',
+  controllerIdentities: readonly LedgerProjectionIdentity[] = [
+    { login: 'github-actions[bot]', type: 'Bot' },
+  ],
 ): Promise<AuthorityInitializationEvidence> {
   const comments = await listAll<GitHubIssueComment>(
     api,
@@ -1032,8 +1044,11 @@ async function classifyAuthorityTaskInitialization(
   const hasProjection = comments.some(
     (comment) =>
       comment.body?.includes(LEDGER_MARKER) &&
-      comment.user?.type === 'Bot' &&
-      comment.user.login === workflowIdentity,
+      controllerIdentities.some(
+        (identity) =>
+          comment.user?.login === identity.login &&
+          comment.user?.type === identity.type,
+      ),
   );
   if (hasProjection) return 'compatibility-projection';
 

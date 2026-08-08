@@ -32,7 +32,7 @@ import {
   assertTaskRef,
   mutate,
   validateLedger,
-} from './ledger-core.js';
+} from './ledger-core';
 
 /**
  * A normalized, already-authorized dispatch signal -- normalize.mjs's

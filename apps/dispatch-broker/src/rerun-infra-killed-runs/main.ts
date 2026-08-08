@@ -17,14 +17,14 @@ import {
   createGitHubApi,
   mapWithConcurrency,
   repositoryPath,
-} from '../github-api.js';
-import type { PullRequestSummary, WorkflowJob } from './detect.js';
+} from '../github-api';
+import type { PullRequestSummary, WorkflowJob } from './detect';
 import {
   buildRerunCommentBody,
   isEligibleForRerun,
   runLooksInfraKilled,
   selectAssociatedPullRequest,
-} from './detect.js';
+} from './detect';
 
 // `createGitHubApi()`'s return shape -- see github-api.ts. Derived via
 // ReturnType rather than a hand-copied local interface because GitHubApi

@@ -25,7 +25,7 @@ import {
   runReconcileScan,
 } from '@agent-lcars/dispatch-reconcile';
 
-import type { AnchorControl } from './broker.js';
+import type { AnchorControl } from './broker';
 import {
   abandonPendingLaunchForClosedAnchor,
   acceptIntent,
@@ -43,7 +43,7 @@ import {
   recordControlEvidence,
   restoreAcceptedForLaunchRetry,
   verifyPreflight,
-} from './broker.js';
+} from './broker';
 import {
   classifyAuthorityTaskInitialization,
   createGitHubApi,
@@ -55,6 +55,7 @@ import {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  type LedgerProjectionIdentity,
   listAll,
   loadLedger,
   loadLedgerProjection,
@@ -63,20 +64,20 @@ import {
   saveLedger as saveLedgerComment,
   verifyBrokerConcurrency,
   workerWorkflow,
-} from './github-api.js';
-import type { Intent } from './modules/intent.js';
+} from './github-api';
+import type { Intent } from './modules/intent';
 import {
   projectNeedsHumanPark,
   recordProjectionStatus,
   removeIssueLabel,
-} from './modules/projector.js';
-import type { PreflightExpectation } from './modules/scheduler.js';
+} from './modules/projector';
+import type { PreflightExpectation } from './modules/scheduler';
 import type {
   AnchorControlEvent,
   CompletionEvent,
   NormalizeContext,
   NormalizedEvent,
-} from './normalize.js';
+} from './normalize';
 import {
   makeIntent,
   normalizeEvent,
@@ -84,7 +85,7 @@ import {
   REVIEW_LABELS,
   selectedPipeline,
   selectedPipelineFrom,
-} from './normalize.js';
+} from './normalize';
 import {
   acquireAuthority,
   type AuthoritySession,
@@ -93,13 +94,13 @@ import {
   persistAuthority,
   releaseAuthority,
   TaskLeaseBusyError,
-} from './storage/authority.js';
-import { FirestoreRestStoragePort } from './storage/firestore-rest-port.js';
-import type { LaunchOutboxOperation, StoragePort } from './storage/port.js';
+} from './storage/authority';
+import { FirestoreRestStoragePort } from './storage/firestore-rest-port';
+import type { LaunchOutboxOperation, StoragePort } from './storage/port';
 import {
   maybeObserveDispatchStorage,
   parseDispatchStorageMode,
-} from './storage/shadow.js';
+} from './storage/shadow';
 
 // --- GitHub webhook/REST shapes main.mjs reads. One set covering every
 // endpoint this file calls: the raw event payload off disk (normalize()),
@@ -417,8 +418,13 @@ async function runPhase<T>(
 }
 
 async function normalize(): Promise<void> {
+  // This is an Action-only path; the hosted route imports
+  // processNormalizedEvent and never reads the runner event file.
   const event: GitHubEventPayload = JSON.parse(
-    await fs.readFile(env('GITHUB_EVENT_PATH'), 'utf8'),
+    await fs.readFile(
+      /* turbopackIgnore: true */ env('GITHUB_EVENT_PATH'),
+      'utf8',
+    ),
   );
   const eventName = env('GITHUB_EVENT_NAME');
   const inputs: Record<string, string> = event.inputs ?? {};
@@ -1982,6 +1988,7 @@ async function loadBrokerLedger(
   leaseOwner = '',
   storagePortFactory: () => StoragePort = createStoragePort,
   authorityEpoch = '',
+  projectionIdentities?: readonly LedgerProjectionIdentity[],
 ): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
@@ -2014,6 +2021,7 @@ async function loadBrokerLedger(
             client,
             task,
             authorityEpoch,
+            projectionIdentities,
           );
         // Every PR close/reopen is routed here. With no exact state and no
         // workflow-owned compatibility projection, the PR was never a
@@ -2046,6 +2054,7 @@ async function loadBrokerLedger(
         client,
         task,
         authority.ledger,
+        projectionIdentities,
       );
       projected.authority = authority.session;
       projected.projectionAvailable = true;
@@ -2086,28 +2095,55 @@ async function applyAnchorControlTransition(
   await saveLedger(client, loaded);
 }
 
-async function broker(): Promise<void> {
-  // encode()/decode() round-trip a NormalizedEvent through a GitHub Actions
-  // output within this same action's own two jobs (normalize -> broker); no
-  // external tamper surface beyond GitHub's own output-passing, and the
-  // original decode() applied no validation here either.
-  const normalized = decode(env('BROKER_PAYLOAD')) as NormalizedEvent;
+export interface BrokerPassOptions {
+  normalized: NormalizedEvent;
+  githubToken: string;
+  storageMode: string;
+  authorityEpoch?: string;
+  storagePortFactory: () => StoragePort;
+  isPullRequest: boolean;
+  transportRunId: number;
+  authorityOwner: string;
+  maintainer?: string;
+  /** Action-only concurrency evidence. Hosted callers omit this because the
+   * Firestore authority lease is their serialization primitive. */
+  actionConcurrency?: { group: string; eventName?: string };
+  /** Identities allowed to own the compatibility projection. Firestore,
+   * never the comment, remains controller authority. */
+  projectionIdentities?: readonly LedgerProjectionIdentity[];
+}
+
+/**
+ * Execute one already-normalized controller delivery.
+ *
+ * The GitHub Action and the hosted webhook endpoint deliberately share this
+ * exact transition path. Transport-specific concerns stay in their wrappers:
+ * the Action verifies its lossy concurrency-group serialization, while the
+ * hosted endpoint relies on the durable Firestore lease acquired below.
+ */
+export async function processNormalizedEvent({
+  normalized,
+  githubToken,
+  storageMode: storageModeInput,
+  authorityEpoch: authorityEpochInput = '',
+  storagePortFactory,
+  isPullRequest,
+  transportRunId: runId,
+  authorityOwner,
+  maintainer = '',
+  actionConcurrency,
+  projectionIdentities,
+}: BrokerPassOptions): Promise<void> {
   if (normalized.kind === 'ignored') return;
   // #645 Phase 6: parsed once, up front, before any ledger work -- a
   // misconfigured DISPATCH_STORAGE_MODE repo variable (anything other than
   // 'off'/unset/'shadow') must fail this run immediately and loudly, not be
   // discovered after a dispatch pass already did real work, and never be
   // silently treated as 'off' (see storage/shadow.ts's header).
-  const storageMode = parseDispatchStorageMode(
-    env('DISPATCH_STORAGE_MODE', false),
-  );
-  const authorityEpoch =
-    storageMode === 'authority' ? env('DISPATCH_AUTHORITY_EPOCH') : '';
+  const storageMode = parseDispatchStorageMode(storageModeInput);
+  const authorityEpoch = storageMode === 'authority' ? authorityEpochInput : '';
   const task = resolveTask(normalized);
-  const client = api();
-  const isPullRequest = env('ANCHOR_IS_PR', false) === 'true';
-  const runId = Number(env('GITHUB_RUN_ID'));
-  const group = env('BROKER_GROUP');
+  const client = createGitHubApi({ token: githubToken });
   // GITHUB_EVENT_NAME is a standard runner-provided variable (already
   // relied on by normalize()), not something this action sets itself.
   // verifyBrokerConcurrency only uses it for its own diagnostic log line
@@ -2118,23 +2154,25 @@ async function broker(): Promise<void> {
   // findConflictingRouterRun in github-api.mjs for the sampled numbers).
   // The indirect check is now unconditional, so this stays optional without
   // changing which verification path runs.
-  const eventName = env('GITHUB_EVENT_NAME', false);
-  try {
-    await verifyBrokerConcurrency(client, task, runId, group, { eventName });
-  } catch (error) {
-    if (
-      await wasSupersededEviction(
-        client,
-        task,
-        runId,
-        group,
-        normalized.kind,
-        error,
-      )
-    ) {
-      return;
+  if (actionConcurrency) {
+    const { eventName, group } = actionConcurrency;
+    try {
+      await verifyBrokerConcurrency(client, task, runId, group, { eventName });
+    } catch (error) {
+      if (
+        await wasSupersededEviction(
+          client,
+          task,
+          runId,
+          group,
+          normalized.kind,
+          error,
+        )
+      ) {
+        return;
+      }
+      throw error;
     }
-    throw error;
   }
   let loaded: LoadedLedger | undefined;
   try {
@@ -2144,9 +2182,10 @@ async function broker(): Promise<void> {
       normalized,
       isPullRequest,
       storageMode,
-      `action:${runId}`,
-      createStoragePort,
+      authorityOwner,
+      storagePortFactory,
       authorityEpoch,
+      projectionIdentities,
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {
@@ -2155,7 +2194,7 @@ async function broker(): Promise<void> {
       );
       throw error;
     }
-    await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
+    await failClosed(client, task, maintainer, error);
   }
   if (!loaded) {
     console.log(
@@ -2273,11 +2312,11 @@ async function broker(): Promise<void> {
     // intentionally inert there; off mode never invokes the port factory.
     await maybeObserveDispatchStorage(
       storageMode,
-      createStoragePort,
+      storagePortFactory,
       loaded.ledger,
     );
   } catch (error) {
-    await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
+    await failClosed(client, task, maintainer, error);
   } finally {
     if (loaded?.authority) {
       try {
@@ -2291,6 +2330,37 @@ async function broker(): Promise<void> {
       }
     }
   }
+}
+
+async function broker(): Promise<void> {
+  // encode()/decode() round-trip a NormalizedEvent through a GitHub Actions
+  // output within this same action's own two jobs (normalize -> broker); no
+  // external tamper surface beyond GitHub's own output-passing, and the
+  // original decode() applied no validation here either.
+  const normalized = decode(env('BROKER_PAYLOAD')) as NormalizedEvent;
+  const runId = Number(env('GITHUB_RUN_ID'));
+  const hostedControllerLogin = env('HOSTED_CONTROLLER_LOGIN', false);
+  await processNormalizedEvent({
+    normalized,
+    githubToken: env('GITHUB_TOKEN'),
+    storageMode: env('DISPATCH_STORAGE_MODE', false),
+    authorityEpoch: env('DISPATCH_AUTHORITY_EPOCH', false),
+    storagePortFactory: createStoragePort,
+    isPullRequest: env('ANCHOR_IS_PR', false) === 'true',
+    transportRunId: runId,
+    authorityOwner: `action:${runId}`,
+    maintainer: env('MAINTAINER_LOGIN', false),
+    actionConcurrency: {
+      group: env('BROKER_GROUP'),
+      eventName: env('GITHUB_EVENT_NAME', false),
+    },
+    projectionIdentities: [
+      { login: 'github-actions[bot]', type: 'Bot' },
+      ...(hostedControllerLogin
+        ? [{ login: hostedControllerLogin, type: 'User' as const }]
+        : []),
+    ],
+  });
 }
 
 async function preflight(): Promise<void> {

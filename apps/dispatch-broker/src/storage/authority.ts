@@ -6,8 +6,8 @@ import {
   type TaskLease,
   type TaskRef,
   TaskWriteConflictError,
-} from './port.js';
-import { projectLedgerToStoredTask } from './shadow.js';
+} from './port';
+import { projectLedgerToStoredTask } from './shadow';
 
 export const DEFAULT_TASK_LEASE_MS = 2 * 60 * 1000;
 const DEFAULT_CAS_ATTEMPTS = 8;
