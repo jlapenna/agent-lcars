@@ -4,9 +4,20 @@ import path from 'node:path';
 import tsconfigPaths from 'vite-tsconfig-paths';
 import { defineConfig, mergeConfig, type UserConfig } from 'vitest/config';
 
+// Vite 8's native resolve.tsconfigPaths option does not currently resolve
+// bare workspace aliases through Vitest's SSR import path. Keep the proven
+// plugin until that path uses Vite's native resolver, but give the compatibility
+// plugin a repo-owned name so Vite does not emit its inapplicable generic
+// removal advisory on every Nx project discovery.
+export function vitestTsconfigPaths(projects: string[]) {
+  const plugin = tsconfigPaths({ projects });
+  plugin.name = 'agent-lcars:vitest-tsconfig-paths-compat';
+  return plugin;
+}
+
 // Shared factory for every migrated project's vitest.config.mts, mirroring
 // jest.preset.js's role for Jest projects. Each project config stays a
-// one-liner: `createVitestConfig({ dirname: __dirname, projectName: '@agent-lcars/x' })`.
+// one-liner: `createVitestConfig({ dirname: import.meta.dirname, projectName: '@agent-lcars/x' })`.
 export function createVitestConfig(options: {
   dirname: string;
   projectName: string;
@@ -33,11 +44,11 @@ export function createVitestConfig(options: {
     overrides = {},
   } = options;
   const projectRelative = path
-    .relative(__dirname, dirname)
+    .relative(import.meta.dirname, dirname)
     .split(path.sep)
     .join('/');
   const tsconfigProjects = [
-    path.join(__dirname, 'tsconfig.base.json'),
+    path.join(import.meta.dirname, 'tsconfig.base.json'),
     path.join(dirname, 'tsconfig.typecheck.json'),
     path.join(dirname, 'tsconfig.json'),
   ].filter(existsSync);
@@ -50,7 +61,7 @@ export function createVitestConfig(options: {
     ...(needsFirestoreMockShim || needsJestFnShim
       ? [
           path.join(
-            __dirname,
+            import.meta.dirname,
             'libs/test-utils/src/firestore/vitest-jest-shim.ts',
           ),
         ]
@@ -58,7 +69,7 @@ export function createVitestConfig(options: {
     ...(needsJestDomMatchers
       ? [
           path.join(
-            __dirname,
+            import.meta.dirname,
             'libs/test-utils/src/dom/vitest-jest-dom-setup.ts',
           ),
         ]
@@ -66,7 +77,7 @@ export function createVitestConfig(options: {
     ...(needsMatchMediaMock
       ? [
           path.join(
-            __dirname,
+            import.meta.dirname,
             'libs/test-utils/src/dom/vitest-matchmedia-mock.ts',
           ),
         ]
@@ -77,11 +88,15 @@ export function createVitestConfig(options: {
   return mergeConfig(
     defineConfig({
       root: dirname,
-      cacheDir: path.join(__dirname, 'node_modules/.vite', projectRelative),
+      cacheDir: path.join(
+        import.meta.dirname,
+        'node_modules/.vite',
+        projectRelative,
+      ),
       // Test runs do not emit distributable assets. Production assets remain
       // owned by each project's Nx build target.
       publicDir: false,
-      plugins: [tsconfigPaths({ projects: tsconfigProjects })],
+      plugins: [vitestTsconfigPaths(tsconfigProjects)],
       resolve: {
         // Mirrors jest.preset.js's workspace-wide `server-only` ->
         // server-only-mock.js moduleNameMapper entry. Without this, any
@@ -93,7 +108,7 @@ export function createVitestConfig(options: {
         // as a resolve alias since it has no moduleNameMapper concept.
         alias: {
           'server-only': path.join(
-            __dirname,
+            import.meta.dirname,
             'libs/test-utils/src/server-only-mock.js',
           ),
         },
@@ -110,7 +125,11 @@ export function createVitestConfig(options: {
         passWithNoTests: true,
         setupFiles,
         coverage: {
-          reportsDirectory: path.join(__dirname, 'coverage', projectRelative),
+          reportsDirectory: path.join(
+            import.meta.dirname,
+            'coverage',
+            projectRelative,
+          ),
           provider: 'v8',
         },
       },

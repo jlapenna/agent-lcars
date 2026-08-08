@@ -6,7 +6,7 @@ import { createVitestConfig } from '../../vitest.config.base.mts';
 // carve-out needed: this app has no firestore-jest-mock/jest.doMock
 // usage at all.
 export default createVitestConfig({
-  dirname: __dirname,
+  dirname: import.meta.dirname,
   projectName: '@agent-lcars/console',
   environment: 'jsdom',
   needsJestDomMatchers: true,
@@ -19,10 +19,10 @@ export default createVitestConfig({
     oxc: { jsx: { runtime: 'automatic' } },
     resolve: {
       alias: {
-        // The shared tsconfigPaths() plugin resolves workspace mappings, but
+        // The shared compatibility plugin resolves workspace mappings, but
         // this app-local `"@/*": ["./src/*"]` alias is kept explicit so the
         // test config does not depend on tsconfig discovery order.
-        '@': path.join(__dirname, 'src'),
+        '@': path.join(import.meta.dirname, 'src'),
         // jest.preset.js globally maps `server-only` to a no-op via
         // `moduleNameMapper`; Vitest has no config-level equivalent of a
         // *global* moduleNameMapper, so each Next.js app's
@@ -32,17 +32,17 @@ export default createVitestConfig({
         // re-declaring it here — matches members/onecake frontend
         // precedent).
         'server-only': path.join(
-          __dirname,
+          import.meta.dirname,
           '../../libs/test-utils/src/server-only-mock.js',
         ),
         'next/server': path.join(
-          __dirname,
+          import.meta.dirname,
           '../../node_modules/next/server.js',
         ),
       },
     },
     test: {
-      setupFiles: [path.join(__dirname, 'vitest-setup.ts')],
+      setupFiles: [path.join(import.meta.dirname, 'vitest-setup.ts')],
       testTimeout: 30000,
       server: {
         deps: {
