@@ -34,6 +34,11 @@ __pycache__/
 !.github/actions/rerun-infra-killed-runs/dist
 !.github/actions/rerun-infra-killed-runs/dist/**
 
+# deliverable-watchdog/dist is #721's scheduled observer bundle, built and
+# drift-checked by the sibling `build-deliverable-watchdog` Nx target.
+!.github/actions/deliverable-watchdog/dist
+!.github/actions/deliverable-watchdog/dist/**
+
 # dependencies
 node_modules
 # pnpm falls back to a project-local store here when run inside

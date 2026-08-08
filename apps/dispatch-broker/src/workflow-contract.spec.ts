@@ -206,6 +206,13 @@ test('critical scheduled workflows report one isolated durable alert and recover
       status: '${{ needs.canary.result }}',
     },
     {
+      workflow: 'deliverable-watchdog.yml',
+      job: 'alert',
+      needs: 'scan',
+      guard: 'always()',
+      status: '${{ needs.scan.result }}',
+    },
+    {
       workflow: 'dispatch-reconcile.yml',
       job: 'alert',
       needs: '[hosted-scan, action-fallback]',
@@ -274,6 +281,48 @@ test('critical scheduled workflows report one isolated durable alert and recover
       stepField('maintainer', '${{ vars.MAINTAINER_LOGIN }}', 10),
     );
   }
+});
+
+test('the deliverable watchdog observes stale agent PRs without broker or merge authority (#721)', async () => {
+  const workflow = 'deliverable-watchdog.yml';
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, workflow),
+    'utf8',
+  );
+  const scan = jobBlock(source, workflow, 'scan');
+  assert.match(scan, /^ {4}runs-on:\s+ubuntu-latest$/mu);
+  assert.match(scan, /^ {6}checks:\s+read$/mu);
+  assert.match(scan, /^ {6}contents:\s+read$/mu);
+  assert.match(scan, /^ {6}issues:\s+write$/mu);
+  assert.match(scan, /^ {6}pull-requests:\s+read$/mu);
+  assert.doesNotMatch(scan, /^ {6}(actions|id-token):\s+write$/mu);
+  assert.doesNotMatch(source, /dispatch-broker|gh pr (merge|update-branch)/u);
+  assert.match(source, /^\s+cancel-in-progress:\s+false$/mu);
+
+  const action = actionStep(
+    stepBlocks(scan),
+    workflow,
+    './.github/actions/deliverable-watchdog',
+  );
+  assert.match(
+    action.source,
+    stepField('agent-bot-logins', '${{ vars.AGENT_BOT_LOGINS }}', 10),
+  );
+  assert.match(
+    action.source,
+    stepField('maintainer', '${{ vars.MAINTAINER_LOGIN }}', 10),
+  );
+  assert.match(action.source, stepField('required-check', 'Verify', 10));
+  assert.match(action.source, stepField('stale-hours', "'6'", 10));
+
+  const actionSource = await fs.readFile(
+    path.join(workspaceRoot, '.github/actions/deliverable-watchdog/action.yml'),
+    'utf8',
+  );
+  assert.match(
+    actionSource,
+    /run:\s+node "\$GITHUB_ACTION_PATH\/dist\/main\.mjs"/u,
+  );
 });
 
 test('workers carry no per-issue concurrency group; the broker owns that dedup (#321)', async () => {

@@ -78,6 +78,7 @@ section.
 | Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                                                   | Worker runtime (bootstrap phase)                                                                                                                                           | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                   |
 | Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                                           | Worker runtime (provider admission/execution)                                                                                                                              | The agent step's own log; `opencode-model-canary.yml`'s last scheduled result                                                             |
 | Agent process exits 0, but no PR/comment/label shows up, or an unrelated artifact gets credited                                                                                         | Outcome finalizer                                                                                                                                                          | `.github/actions/verify-deliverable`'s log line naming which clause (0, a–e) it evaluated                                                 |
+| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                                                  | Outcome finalizer (post-dispatch landing observer)                                                                                                                         | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment        |
 | Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                                           | Outcome finalizer / Projector (reporting) — see the seam note in that section                                                                                              | `.github/actions/report-failure`'s log                                                                                                    |
 | GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                                           | Projector/read model                                                                                                                                                       | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                              |
 | Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                                                  | Dispatch controller (reconciliation)                                                                                                                                       | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                     |
@@ -405,7 +406,7 @@ reconciler.
 **Owns, in principle:** terminal attempt state and deliverable validity —
 independent of the agent filesystem or work credential.
 
-**What actually exists today is split across two places that don't yet
+**What actually exists today is split across three places that don't yet
 share a boundary**, and naming that split is more useful than pretending
 it's already one system:
 
@@ -429,6 +430,18 @@ it's already one system:
   intents, not by a dedicated finalizer reconciler. This is precisely the
   entanglement Phase 6's "give each of the five systems its own narrow
   reconciler" is supposed to end; it has not yet.
+- **Post-dispatch deliverable landing observation** —
+  `.github/workflows/deliverable-watchdog.yml` scans open agent-authored PRs
+  independently of the dispatch ledger. If neither the head commit nor the
+  required `Verify` check has moved for six hours, it writes one durable
+  `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment on each
+  open closing anchor (or the PR itself), applies `status:needs-human`, and
+  assigns the maintainer. It also catches the green-but-still-open case: a
+  successful check proves code quality, not that the artifact landed. The
+  observer never rebases, merges, closes, or updates a branch. When activity
+  resumes it transitions its own comment but deliberately leaves the shared
+  needs-human label for a maintainer, because another dispatch/reporting
+  failure may own that same label.
 
 **What breaking looks like:** an agent process exits zero, but
 `verify-deliverable` finds no clause satisfied — no attempt-claim marker, no
@@ -450,15 +463,18 @@ guards against that for the clauses that remain.
 2. Whether the run actually produced the artifact you expect (a PR, a
    comment, a label) and whether that artifact carries the attempt-claim
    marker — if the artifact exists but lacks the marker and doesn't satisfy
-   any inference clause either, that's a real gap, not a false negative.
+   any inference clause either, that's a real gap, not a false negative. If
+   the PR exists but did not land, inspect its required check and the durable
+   deliverable-watchdog comment on its anchor.
 3. If the failure is about execution state (cancelled/lost) rather than
    deliverable validity, check the ledger's `generations` entry directly —
    that classification comes from the controller's reconciliation code
    (`main.ts`), not from `verify-deliverable`.
 
 **Who/what repairs it:** nothing automatically retries a failed
-deliverable-validation gate — a `status:needs-human` label plus a
-maintainer-facing comment from `report-failure` is the terminal state.
+deliverable-validation gate or mutates an abandoned PR — a
+`status:needs-human` label plus a maintainer-facing comment from
+`report-failure` or the deliverable watchdog is the terminal state.
 Post-agent redrive is explicitly disallowed until side-effect
 reconciliation completes (#645's own "must not" list for this system);
 today that boundary is enforced by convention (nothing wired to auto-redrive
@@ -569,6 +585,7 @@ workflows:
 | Workflow                      | Watched job/path                                             | Scope note                                                                                                         |
 | ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | `dispatch-canary.yml`         | `canary`                                                     | Full scheduled/manual dispatch lifecycle                                                                           |
+| `deliverable-watchdog.yml`    | `scan`                                                       | Watches the observer that surfaces agent PRs abandoned after a successful dispatch                                 |
 | `dispatch-reconcile.yml`      | whichever of `hosted-scan` or `action-fallback` was selected | Never treats the intentionally skipped transport as a failure                                                      |
 | `rerun-infra-killed-runs.yml` | `scan`                                                       | Watches the CI self-healing sweep                                                                                  |
 | `post-deploy-smoke.yml`       | `smoke`                                                      | Evaluates only after an upstream deployment actually succeeded; a skipped smoke cannot falsely resolve an incident |

@@ -85,6 +85,30 @@
           }
         }
       }
+    },
+    "build-deliverable-watchdog": {
+      "// why": "Same committed dependency-free bundle pattern as the sibling scheduled actions. #721's watchdog is operational recovery code, so CI rebuilds and diffs its bundle instead of trusting a manually updated artifact.",
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "platform": "node",
+        "target": "node24",
+        "format": ["esm"],
+        "bundle": true,
+        "thirdParty": true,
+        "outputPath": ".github/actions/deliverable-watchdog/dist",
+        "outputFileName": "main.mjs",
+        "main": "apps/dispatch-broker/src/deliverable-watchdog/main.ts",
+        "tsConfig": "apps/dispatch-broker/tsconfig.build.json",
+        "generatePackageJson": false,
+        "skipTypeCheck": false,
+        "esbuildOptions": {
+          "sourcemap": false,
+          "outExtension": {
+            ".js": ".mjs"
+          }
+        }
+      }
     }
   }
 }
