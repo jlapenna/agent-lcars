@@ -52,19 +52,15 @@ on:
         description: 'Immutable broker dispatch token'
         required: true
 
-# Least privilege: enough to comment on / claim the anchor issue and call
-# the broker's own composite action via this job's own ambient token.
-# actions:write is required for the completion-callback step's own
-# workflow_dispatch POST back to agent-router.yml -- the exact reason
-# claude.yml/codex.yml/opencode.yml all declare it too. Deliberately no
-# contents:write, pull-requests:write, and no secret at all. Authority mode
-# adds only a short-lived, read-before-agent Firestore
-# token for exact broker preflight; this workflow still has no model or App
-# secret and never runs agent code.
+# Least privilege: enough to comment on / claim the anchor issue, read its
+# own run during preflight, and mint the short-lived completion OIDC token.
+# Deliberately no contents:write, pull-requests:write, or secret at all.
+# Authority mode adds only a short-lived, read-before-agent Firestore token;
+# this workflow still has no model or App secret and never runs agent code.
 permissions:
   contents: read
   issues: write
-  actions: write
+  actions: read
   id-token: write
 
 # No per-issue concurrency group here, for the same reason claude.yml has
@@ -176,17 +172,23 @@ jobs:
           EXCLUDE_COMMENT_ID: ''
         run: bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"
 
-      - name: Return completion observation to the broker
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/dispatch-broker
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          operation: completion-callback
-          issue: ${{ inputs.issue }}
-          generation: ${{ inputs.broker_generation }}
-          intent-id: ${{ inputs.broker_intent_id }}
-          dispatch-token: ${{ inputs.broker_dispatch_token }}
-          worker-workflow: agent-dispatch-canary.yml
-          outcome-kind: ${{ steps.verify.outputs.outcome-kind }}
+  completion-finalize:
+    needs: canary
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: read
+    uses: ./.github/workflows/agent-fallback-finalize.yml
+    with:
+      issue: ${{ inputs.issue }}
+      generation: ${{ inputs.broker_generation }}
+      intent-id: ${{ inputs.broker_intent_id }}
+      dispatch-token: ${{ inputs.broker_dispatch_token }}
+      worker-workflow: agent-dispatch-canary.yml
+      worker-result: ${{ needs.canary.result }}
+      agent: Dispatch canary
+      fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
+      maintainer: ${{ vars.MAINTAINER_LOGIN }}

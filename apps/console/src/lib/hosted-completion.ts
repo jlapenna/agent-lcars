@@ -12,6 +12,10 @@ import type { Octokit } from '@octokit/rest';
 import { controlPlaneRepository, maintainerLogin } from './deployment';
 import type { CompletionOidcIdentity } from './github-actions-oidc';
 import { getGithubClient } from './github-client';
+import {
+  type CompletionReconcilePayload,
+  enqueueCompletionReconcile,
+} from './hosted-completion-reconcile';
 import { processHostedControllerEvent } from './hosted-controller';
 
 interface HostedCompletionBody {
@@ -67,12 +71,16 @@ export async function completeHostedWorker({
   octokit = getGithubClient(),
   now = new Date(),
   invocationId = crypto.randomUUID(),
+  enqueueReconcile = enqueueCompletionReconcile,
 }: {
   identity: CompletionOidcIdentity;
   body: unknown;
   octokit?: Octokit;
   now?: Date | string;
   invocationId?: string;
+  enqueueReconcile?: (
+    payload: CompletionReconcilePayload,
+  ) => Promise<'enqueued' | 'duplicate'>;
 }): Promise<{ issue: number; workerRunId: number; workflow: string }> {
   const completion = parseBody(body);
   const expectedRepository = controlPlaneRepository();
@@ -145,6 +153,12 @@ export async function completeHostedWorker({
     }
     throw error;
   }
+  await enqueueReconcile({
+    repository: identity.repository,
+    repositoryId: identity.repositoryId,
+    issue: completion.issue,
+    workerRunId: identity.runId,
+  });
   return {
     issue: completion.issue,
     workerRunId: identity.runId,

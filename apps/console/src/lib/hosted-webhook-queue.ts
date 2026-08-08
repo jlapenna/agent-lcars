@@ -12,11 +12,12 @@ export interface GitHubWebhookEnvelope {
   signature: string;
 }
 
-interface WebhookTask {
+export interface WebhookTask {
   taskId: string;
   url: string;
   headers: Record<string, string>;
   body: Buffer;
+  scheduleTime?: { seconds: number };
 }
 
 export interface WebhookTaskQueue {
@@ -42,6 +43,7 @@ class GoogleCloudTasksWebhookQueue implements WebhookTaskQueue {
           headers: task.headers,
           body: task.body,
         },
+        ...(task.scheduleTime && { scheduleTime: task.scheduleTime }),
         // Firestore authority deliberately waits for a contested lease before
         // retrying. Give that bounded wait room to finish in the worker, while
         // the public GitHub endpoint only waits for this durable enqueue.
@@ -51,7 +53,7 @@ class GoogleCloudTasksWebhookQueue implements WebhookTaskQueue {
   }
 }
 
-const defaultQueue = new GoogleCloudTasksWebhookQueue();
+export const defaultWebhookTaskQueue = new GoogleCloudTasksWebhookQueue();
 
 function isAlreadyExists(error: unknown): boolean {
   return (
@@ -64,7 +66,7 @@ function isAlreadyExists(error: unknown): boolean {
 
 export async function enqueueGitHubWebhook(
   envelope: GitHubWebhookEnvelope,
-  queue: WebhookTaskQueue = defaultQueue,
+  queue: WebhookTaskQueue = defaultWebhookTaskQueue,
 ): Promise<{
   deliveryId: string;
   eventName: string;

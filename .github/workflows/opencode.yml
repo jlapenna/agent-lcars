@@ -72,8 +72,6 @@ permissions:
 
 jobs:
   opencode:
-    outputs:
-      post_agent_gates_complete: ${{ steps.post_agent_gates.outputs.complete }}
     # The centralized router authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
@@ -433,30 +431,15 @@ jobs:
             prompt needs to be even more explicit for this issue.
         run: bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"
 
-      - name: Return completion observation to the broker
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/dispatch-broker
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          operation: completion-callback
-          issue: ${{ inputs.issue }}
-          generation: ${{ inputs.broker_generation }}
-          intent-id: ${{ inputs.broker_intent_id }}
-          dispatch-token: ${{ inputs.broker_dispatch_token }}
-          worker-workflow: ${{ env.WORKER_WORKFLOW }}
-          outcome-kind: ${{ steps.post_agent_gates.outputs.outcome-kind }}
-          outcome-reference: ${{ steps.post_agent_gates.outputs.outcome-reference }}
-          readiness-failure: ${{ steps.post_agent_gates.outputs.readiness-failure }}
-
   fallback-finalize:
     needs: opencode
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != '' && needs.opencode.outputs.post_agent_gates_complete != 'true'
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
     permissions:
-      actions: write
+      actions: read
       contents: read
+      id-token: write
       issues: write
+      pull-requests: read
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:
       issue: ${{ inputs.issue }}
@@ -465,5 +448,8 @@ jobs:
       dispatch-token: ${{ inputs.broker_dispatch_token }}
       worker-workflow: opencode.yml
       worker-result: ${{ needs.opencode.result }}
+      mode: ${{ inputs.mode }}
+      runbook: ${{ inputs.runbook }}
       agent: OpenCode
+      fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       maintainer: ${{ vars.MAINTAINER_LOGIN }}

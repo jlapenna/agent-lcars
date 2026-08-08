@@ -29,18 +29,21 @@ completion callback -- is separately, continuously verified in production by
 `.github/workflows/dispatch-canary.yml` (hourly + `workflow_dispatch`) and
 `.github/workflows/post-deploy-smoke.yml` (chained off `deploy-console.yml`
 completing). Both share `.github/actions/run-dispatch-canary`, which reuses
-one canonical, clearly-marked issue, dispatches it through
-`agent-router.yml`'s real broker (`apps/dispatch-broker/src/normalize.ts`'s
-`kind: 'canary'` intent, a fourth pipeline alongside claude/codex/opencode --
-see `apps/dispatch-broker/src/broker.ts`), and drives it to a dedicated no-op worker,
-`agent-dispatch-canary.yml`.
+one canonical, clearly-marked issue, invokes the retained manual
+`agent-router.yml` transport with `kind: 'canary'` (a fourth pipeline alongside
+claude/codex/opencode -- see `apps/dispatch-broker/src/broker.ts`), and drives
+it to a dedicated no-op worker, `agent-dispatch-canary.yml`. The worker returns
+its binding through the production OIDC-authenticated hosted completion
+endpoint, so the canary spans the rollback dispatch path and the authoritative
+completion path.
 
 That worker is structurally incapable of invoking a paid model or a
 privileged/self-hosted runner: it runs on `ubuntu-latest` (never
-`vars.AGENT_RUNNER_LABEL`), holds no secret beyond GitHub's own ambient
-per-job token, performs no model invocation, GCP authentication, or
-repository checkout-and-write beyond claiming/commenting/closing the anchor
-issue, and unconditionally reports completion to the broker under
+`vars.AGENT_RUNNER_LABEL`), holds no long-lived secret, performs no model
+invocation, and only mints short-lived OIDC credentials for read-only
+Firestore preflight and hosted completion. Its GitHub writes are limited to
+claiming/commenting/closing the anchor issue, and it unconditionally reports
+completion to the broker under
 `if: always()` -- see `workflow-contract.test.mjs`'s "#307" checks, which
 assert exactly these properties from the workflow source. `canary` is never
 selectable through the `agent:*` label contract or the Quick Task agent
@@ -49,16 +52,17 @@ picker; the only way to produce that intent is the dedicated
 repo's own two trusted canary workflows.
 
 The post-deploy smoke additionally probes the live console URL for a 2xx
-response before exercising the broker, so a broken deployed revision is
-caught even before the write-path check runs. Either workflow's failure
+response before exercising the broker, and the worker's hosted callback then
+proves that deployed revision accepts the exact signed identity and binding.
+Either workflow's failure
 reopens and parks `status:needs-human` (label + maintainer assignee) on that
 canary issue with evidence, rather than a silent log line; a successful run
 clears that blocker label and closes the same issue automatically. Historical
 per-run v1 artifacts are still swept during the migration. This proves the
-broker's
-GitHub write path, not the deployed console's own server action writing to
-GitHub through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`); that
-remains a separately-scoped write-path E2E fixture effort in `apps/console`.
+manual rollback dispatch path and the hosted controller's completion write
+path through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`). Ordinary
+event admission through the GitHub App webhook is verified separately by
+delivery, Cloud Tasks, and hosted-processing evidence.
 
 Cleanup above runs inside the same orchestrator process as the rest of the
 lifecycle (a `try`/`catch` around create-dispatch-poll), so it cannot
@@ -120,8 +124,8 @@ echo its value.
 
 ## Bootstrap and exact-model provider canaries (#645 Phase 3)
 
-The dispatch-broker canary above proves the broker's own claim/dispatch/
-completion-callback path; it deliberately runs on `ubuntu-latest` and never
+The dispatch-broker canary above proves claim/manual-dispatch/hosted-
+completion; it deliberately runs on `ubuntu-latest` and never
 touches self-hosted infra or a model credential
 (`apps/dispatch-broker/src/workflow-contract.spec.ts`'s "structurally
 incapable" assertions pin this down). Two more workflows close what that

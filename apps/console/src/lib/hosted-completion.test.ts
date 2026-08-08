@@ -55,6 +55,7 @@ beforeEach(() => {
 
 describe('hosted worker completion', () => {
   it('derives run and repository identity from OIDC before processing', async () => {
+    const enqueueReconcile = vi.fn().mockResolvedValue('enqueued');
     await expect(
       completeHostedWorker({
         identity,
@@ -71,6 +72,7 @@ describe('hosted worker completion', () => {
         octokit: octokitForIssue(),
         now: '2026-08-08T12:00:00.000Z',
         invocationId: 'request-1',
+        enqueueReconcile,
       }),
     ).resolves.toEqual({
       issue: 736,
@@ -90,6 +92,12 @@ describe('hosted worker completion', () => {
       transportRunId: 93_099_054_125,
       authorityOwner: 'completion:93099054125:request-1',
       pollCompletionUntilTerminal: false,
+    });
+    expect(enqueueReconcile).toHaveBeenCalledWith({
+      repository: 'jlapenna/agent-lcars',
+      repositoryId: 1_307_149_765,
+      issue: 736,
+      workerRunId: 93_099_054_125,
     });
   });
 
@@ -149,6 +157,7 @@ describe('hosted worker completion', () => {
   });
 
   it('maps an authoritative binding mismatch to a non-retryable input error', async () => {
+    const enqueueReconcile = vi.fn().mockResolvedValue('enqueued');
     processHostedControllerEvent.mockRejectedValueOnce(
       new CompletionBindingError(
         'Completion callback does not match the bound worker run',
@@ -166,8 +175,30 @@ describe('hosted worker completion', () => {
           workflow: 'codex.yml',
         },
         octokit: octokitForIssue(),
+        enqueueReconcile,
       }),
     ).rejects.toThrow(HostedCompletionInputError);
+    expect(enqueueReconcile).not.toHaveBeenCalled();
+  });
+
+  it('fails retryably when the post-run reconciliation is not durable', async () => {
+    const error = new Error('queue unavailable');
+
+    await expect(
+      completeHostedWorker({
+        identity,
+        body: {
+          issue: 736,
+          generation: 2,
+          intentId: 'intent:abc123',
+          token: 'abcdefghijklmnop',
+          workflow: 'codex.yml',
+        },
+        octokit: octokitForIssue(),
+        enqueueReconcile: vi.fn().mockRejectedValue(error),
+      }),
+    ).rejects.toBe(error);
+    expect(processHostedControllerEvent).toHaveBeenCalledOnce();
   });
 
   it('passes the live pull-request shape to the shared controller', async () => {
@@ -181,6 +212,7 @@ describe('hosted worker completion', () => {
         workflow: 'codex.yml',
       },
       octokit: octokitForIssue(true),
+      enqueueReconcile: vi.fn().mockResolvedValue('enqueued'),
     });
     expect(processHostedControllerEvent).toHaveBeenCalledWith(
       expect.objectContaining({ isPullRequest: true }),

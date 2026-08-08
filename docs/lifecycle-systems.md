@@ -19,9 +19,14 @@ in authority mode, using a short-lived, read-only WIF identity minted before
 any untrusted agent code runs. Controller state lives in the dedicated
 `dispatch-controller` database; both the worker's preflight identity and the
 telemetry writer are constrained with per-database IAM Conditions, so neither
-can write controller state. The controller writer is reachable only from
-`agent-router.yml` on `main`. Shadow/off preflight retains the comment reader
-for rollback compatibility. `off` is the rollback position before authority
+can write controller state. Production event writes enter the existing App
+Hosting backend through the GitHub App webhook, pass an HMAC check and Cloud
+Tasks queue, and execute through the shared controller under a Firestore
+lease. Worker completion callbacks and the scheduled reconciler authenticate
+to separate hosted endpoints with exact-workflow GitHub Actions OIDC. The
+`workflow_dispatch`-only `agent-router.yml` retains the prior WIF writer as a
+manual rollback path. Shadow/off preflight retains the comment reader for
+rollback compatibility. `off` is the rollback position before authority
 cutover.
 
 Authority initialization fails closed across the migration boundary.
@@ -50,11 +55,11 @@ Two seams are load-bearing enough to read before anything else:
 - **A GitHub concurrency group is a lossy queue, not a throughput limiter.**
   At most one run per group may be _pending_; a newer arrival evicts the
   older one outright, and `cancel-in-progress: false` protects only the
-  _running_ run. `dispatch-reconcile.yml` is the safety net for lost
-  intents, but it works by re-deriving desired state from the issue's
-  current labels — so an intent whose labels have since changed leaves
-  nothing for it to reconcile. This is not hypothetical; it is what happened
-  today (see the Dispatch controller worked incident below).
+  _running_ run. This is why production admission no longer uses Action
+  event triggers. The retained manual `agent-router.yml` fallback still has
+  that property, so use it to re-drive one anchor deliberately, never as a
+  durable event queue. This is not hypothetical; it is what happened in the
+  Dispatch controller worked incident below.
 
 The Runner platform section below has its own seam, named where it belongs:
 its actual runtime configuration lives in a different repository entirely,
@@ -66,22 +71,22 @@ confirm the symptom but not the cause.
 The fast path. Match what you're looking at, then go to that system's
 section.
 
-| What you observe                                                                                                                                                                        | Owning system                                                                                                                                                              | Look here first                                                                                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue carries the right `agent:*` label but nothing dispatches; `agent-router.yml` runs show `cancelled` with **zero steps executed**                                                   | Dispatch controller                                                                                                                                                        | The run's own step list (0 steps = evicted, not failed) — see worked incident below                                                       |
-| Issue carries the right `agent:*` label but nothing dispatches, and `gh run list --workflow agent-router.yml` shows **no run at all** for the event                                     | Dispatch controller (event-trigger path) — **not** Runner platform: runner selection happens only after GitHub creates the run, so an absent run was never queued anywhere | Whether the event reached GitHub and matched `agent-router.yml`'s trigger filters at all (webhook delivery, event type, label)            |
-| `agent-router.yml` jobs sit **queued**, never even starting                                                                                                                             | Runner platform                                                                                                                                                            | `gh api repos/<owner>/<repo>/actions/runners` for a runner carrying `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}`                              |
-| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                                                 | Dispatch controller (hosted reconciliation)                                                                                                                                | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                 |
-| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                                                  | Runner platform                                                                                                                                                            | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                      |
-| A published action (`run-dispatch-canary`, `rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                                                                                                                        | The failing step's raw log, before assuming an authorization/ordering bug                                                                 |
-| A scheduled workflow (canary or self-healer) fails or times out repeatedly                                                                                                              | Workflow failure alerts                                                                                                                                                    | Its workflow-specific `status:needs-human` issue (`<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`); see the coverage table below |
-| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                                                   | Worker runtime (bootstrap phase)                                                                                                                                           | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                   |
-| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                                           | Worker runtime (provider admission/execution)                                                                                                                              | The agent step's own log; `opencode-model-canary.yml`'s last scheduled result                                                             |
-| Agent process exits 0, but no PR/comment/label shows up, or an unrelated artifact gets credited                                                                                         | Outcome finalizer                                                                                                                                                          | `.github/actions/verify-deliverable`'s log line naming which clause (0, a–e) it evaluated                                                 |
-| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                                                  | Outcome finalizer (post-dispatch landing observer)                                                                                                                         | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment        |
-| Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                                           | Outcome finalizer / Projector (reporting) — see the seam note in that section                                                                                              | `.github/actions/report-failure`'s log                                                                                                    |
-| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                                           | Projector/read model                                                                                                                                                       | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                              |
-| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                                                  | Dispatch controller (reconciliation)                                                                                                                                       | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                     |
+| What you observe                                                                                                                                                                        | Owning system                                                                 | Look here first                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Issue carries the right `agent:*` label but nothing dispatches, with no hosted admission log for its delivery                                                                           | Dispatch controller (webhook admission)                                       | GitHub App delivery history, then `/api/control-plane/webhook` and Cloud Tasks logs                                                       |
+| Webhook ACKed but the queued `/api/control-plane/webhook/process` request repeatedly returns 4xx/5xx                                                                                    | Dispatch controller (hosted admission)                                        | App Hosting logs for HMAC, payload normalization, Firestore lease, or GitHub API failure                                                  |
+| A manually dispatched `agent-router.yml` fallback sits **queued**, never starting                                                                                                       | Runner platform                                                               | `gh api repos/<owner>/<repo>/actions/runners` for a runner carrying `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}`                              |
+| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                                                 | Dispatch controller (hosted reconciliation)                                   | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                 |
+| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                                                  | Runner platform                                                               | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                      |
+| A published action (`run-dispatch-canary`, `rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                           | The failing step's raw log, before assuming an authorization/ordering bug                                                                 |
+| A scheduled workflow (canary or self-healer) fails or times out repeatedly                                                                                                              | Workflow failure alerts                                                       | Its workflow-specific `status:needs-human` issue (`<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`); see the coverage table below |
+| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                                                   | Worker runtime (bootstrap phase)                                              | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                   |
+| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                                           | Worker runtime (provider admission/execution)                                 | The agent step's own log; `opencode-model-canary.yml`'s last scheduled result                                                             |
+| Agent process exits 0, but no PR/comment/label shows up, or an unrelated artifact gets credited                                                                                         | Outcome finalizer                                                             | `.github/actions/verify-deliverable`'s log line naming which clause (0, a–e) it evaluated                                                 |
+| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                                                  | Outcome finalizer (post-dispatch landing observer)                            | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment        |
+| Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                                           | Outcome finalizer / Projector (reporting) — see the seam note in that section | `.github/actions/report-failure`'s log                                                                                                    |
+| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                                           | Projector/read model                                                          | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                              |
+| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                                                  | Dispatch controller (reconciliation)                                          | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                     |
 
 ## 1. Dispatch controller
 
@@ -115,6 +120,14 @@ and the dispatch ledger itself.
 - `apps/console/src/app/api/control-plane/reconcile/route.ts` — hosted scan
   endpoint; accepts only GitHub Actions OIDC from this repository's
   `dispatch-reconcile.yml` on `main`.
+- `apps/console/src/app/api/control-plane/webhook/` — public HMAC-verified
+  webhook enqueue plus the authenticated Cloud Tasks processor.
+- `apps/console/src/app/api/control-plane/completion/route.ts` — hosted
+  completion observation; accepts only OIDC from an allowed worker workflow
+  on this repository's `main`.
+- `apps/console/src/lib/hosted-controller.ts`, `hosted-admission.ts`,
+  `hosted-completion.ts`, `hosted-reconciler.ts` — the hosted transport
+  adapters around the same controller transition path used by the fallback.
 - `libs/dispatch-contracts/src/` — the shared schema every consumer now
   imports instead of hand-mirroring: `ledger.ts` (ledger shape/marker),
   `marker.ts` (the `[dispatch:g<n>:<id>]` run-title marker and the
@@ -122,9 +135,12 @@ and the dispatch ledger itself.
   `failure.ts` (owning-system/phase/reason/retry-disposition vocabulary),
   `projection.ts`, `quick-task.ts`.
 - `.github/actions/dispatch-broker` — the composite wrapping the esbuild
-  bundle at `dist/main.mjs` (source: `apps/dispatch-broker/src/main.ts`).
-- `.github/workflows/agent-router.yml` — the `normalize` and `broker` jobs,
-  both `runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}`.
+  bundle at `dist/main.mjs` (source: `apps/dispatch-broker/src/main.ts`). It
+  retains preflight/manual broker operations and supplies the trusted thin
+  OIDC completion client; it is no longer the production event queue.
+- `.github/workflows/agent-router.yml` — a `workflow_dispatch`-only manual
+  rollback transport. Its `normalize` and `broker` jobs still run on
+  `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}` when explicitly invoked.
 - `.github/workflows/dispatch-reconcile.yml` — a GitHub-hosted scheduler
   invokes the App Hosting endpoint every 30 minutes. Its manual
   `action-fallback` transport retains the prior self-hosted composite-action
@@ -199,39 +215,34 @@ broker's own logic executes.
    `generations`, `anomalies`, `projection`. No comment, or a comment stuck
    on an old revision with no anomaly, is the first signal something
    upstream never landed.
-2. `gh run list --workflow agent-router.yml` for the issue — a `cancelled`
-   run with **zero steps executed** is a concurrency eviction (see the
-   worked incident), not a real failure; a run that executed and then
-   failed is a genuine error; **no run at all** is neither — runner
-   selection happens only after GitHub creates the run, so an absent run
-   means the event never reached this workflow in the first place, which
-   is still this system's problem, not Runner platform's (see the symptom
-   table).
+2. Check the GitHub App delivery and correlate its delivery UUID through the
+   public webhook ACK, Cloud Tasks request, and hosted processing log. There
+   is intentionally no event-triggered `agent-router.yml` run in production;
+   that workflow now appears only when an operator invokes the fallback.
 3. If a published action is involved, read its own step log first —
    `ERR_MODULE_NOT_FOUND` or any other load-time error means the code never
    ran at all, which rules out an authorization/ordering explanation before
    you go looking for one.
 
-**Who/what repairs it:** `dispatch-reconcile.yml` scans every open,
-agent-labeled or agent-fleet-assigned issue/PR every 30 minutes and
-re-drives a generation stuck `dispatching`/`dispatch-unknown` through the
-same per-issue serialized `agent-router.yml` path every other trigger uses.
-Past a bounded retry count it parks `status:needs-human` instead of retrying
-forever. A queued/accepted ordinary generation remains held while that park
-label is present and resumes after a maintainer removes it. The reconciler
-also reconstructs a queue-evicted current agent/review-label intent from its
-real, maintainer-authored timeline source, including a relabel after an
-earlier generation completed (#639). Repeated scans and a delayed original
-webhook reuse that exact source ID and cannot create a second generation. A
-digest-valid, maintainer-authored Quick Task is the narrow creation-time
-fallback because GitHub emits no separate timeline event for labels included
-in the issue-creation request (#634).
-The scheduled scan runs through App Hosting from `ubuntu-latest`, so a
-`CONTROL_PLANE_RUNNER_LABEL` outage can delay the per-issue router repairs
-but cannot prevent their durable `workflow_dispatch` runs from being
-created. During hosted-path soak, a maintainer can select
-`action-fallback` on a manual `dispatch-reconcile.yml` run to execute the
-previous composite-action scanner.
+**Who/what repairs it:** `dispatch-reconcile.yml` invokes the hosted scan
+every 30 minutes. App Hosting discovers every open agent-labeled or
+agent-fleet-assigned issue/PR and processes each repair directly through the
+shared controller under Firestore authority; it does not create one
+`agent-router.yml` run per candidate. Past a bounded retry count it parks
+`status:needs-human` instead of retrying forever. A queued/accepted ordinary
+generation remains held while that park label is present and resumes after a
+maintainer removes it. The reconciler also reconstructs a lost current
+agent/review-label intent from its real maintainer-authored timeline source,
+including a relabel after an earlier generation completed (#639). Repeated
+scans and a delayed original webhook reuse that exact source ID and cannot
+create a second generation. A digest-valid, maintainer-authored Quick Task is
+the narrow creation-time fallback because GitHub emits no separate timeline
+event for labels included in the issue-creation request (#634). The
+GitHub-hosted scheduler and App Hosting processor remain outside the
+self-hosted control-plane runner failure domain. A maintainer can select
+`action-fallback` on a manual
+`dispatch-reconcile.yml` run to execute the previous composite-action
+scanner.
 
 ## 2. Runner platform
 
@@ -375,10 +386,12 @@ invoking the requested agent/provider combination.
 
 **Credential boundaries, concretely** (worker workflow, `claude.yml` as the
 example — the other two lanes match): the agent step never receives
-`github.token` — every dispatch-broker call in the job uses that credential
-directly, so handing it to agent-authored code would let that code rewrite
-the ledger or act as the controller, which is exactly what the ledger-forgery
-finding above is about. The agent instead gets a separately minted Agent
+`github.token`. Preflight uses the job token before untrusted execution; the
+post-agent completion client runs from a pre-agent frozen snapshot and mints
+an exact-workflow OIDC token instead of receiving `github.token`. Handing the
+job token to agent-authored code would let that code act as the fallback
+controller, which is exactly what the ledger-forgery finding above is about.
+The agent instead gets a separately minted Agent
 LCARS App token (`mint-agent-token`) for its own claim/comment/push
 identity, a distinct telemetry WIF credential (`telemetry-start`,
 impersonating a write-only `telemetry-writer` service account), and,

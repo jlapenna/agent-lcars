@@ -127,12 +127,13 @@ takeover comment, eyes reactions, one edited progress comment, parking on
 a real blocker; a review dispatch pushes nothing (there is nothing to push
 on a pure review).
 
-`.github/workflows/agent-router.yml` subscribes to pull-request
-`labeled`/`unlabeled` actions in addition to `closed`/`reopened`, so both
-label families reach the same normalized, serialized broker path (#565).
-`apps/dispatch-broker/src/normalize.ts`,
-`apps/dispatch-broker/src/main.ts`'s timeline fetch, and
-`verify-deliverable.sh` keep the transport, authorization, and deliverable
+The GitHub App subscribes to issue, issue-comment, and pull-request events.
+Hosted admission normalizes pull-request `labeled`/`unlabeled` actions in
+addition to `closed`/`reopened`, so both label families reach the same shared
+controller path (#565). `.github/workflows/agent-router.yml` retains only
+manual `workflow_dispatch` as a rollback transport.
+`apps/dispatch-broker/src/normalize.ts`, hosted timeline fetches, and
+`verify-deliverable.sh` keep transport, authorization, and deliverable
 contracts aligned for both modes.
 
 ## Dispatch ledger reconciliation
@@ -162,12 +163,12 @@ idempotency test coverage.
 What it repairs, reusing the broker's own existing machinery wherever
 possible:
 
-- **Completion observations lost to a red or crashed run** (a pre-#349 red
-  broker run, a worker timeout, or a force-cancel that skipped the
-  completion callback): `reconcileActive()` — already run on every event —
-  re-fetches the bound worker run's live status and applies the same
-  idempotent `completeRun` transition the callback would have, whenever it
-  finds the run is actually terminal.
+- **Hosted completion finalization, or an observation lost to a crashed
+  run.** The worker's OIDC callback records `completion-observed` and returns
+  before polling because its own run cannot become terminal until that HTTP
+  request finishes. `reconcileActive()` re-fetches the bound run after it is
+  terminal and applies the idempotent `completeRun` transition. The same path
+  repairs a timeout or force-cancel that skipped the callback entirely.
 - **A dispatch whose outcome was genuinely lost** (a queue-evicted intent
   #345/#347 deliberately failed red for, or a worker that crashed before any
   run ever registered): a generation stuck `dispatching`/`dispatch-unknown`

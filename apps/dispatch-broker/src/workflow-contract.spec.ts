@@ -532,7 +532,6 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       'Prepare current dispatch brief and runtime deadline',
       adapter.name,
       'Run post-agent gates',
-      'Return completion observation to the broker',
     ]);
 
     const snapshot = actionStep(
@@ -560,11 +559,6 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       './.github/actions/telemetry-start',
     );
     const postAgentGates = namedStep(steps, workflow, 'Run post-agent gates');
-    const completion = namedStep(
-      steps,
-      workflow,
-      'Return completion observation to the broker',
-    );
 
     assert.match(checkout.source, stepField('uses', 'actions/checkout@v7'));
     assert.match(
@@ -655,50 +649,24 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       /`\$\{\{ env\.REDISPATCH_COMMAND \}\}`/u,
     );
 
-    assert.match(completion.source, stepField('if', 'always()'));
-    assert.match(completion.source, stepField('continue-on-error', 'true'));
-    assert.match(
-      completion.source,
-      stepField('uses', './.github/actions/dispatch-broker'),
-    );
-    assert.match(
-      completion.source,
-      stepField('operation', 'completion-callback', 10),
-    );
-    assert.match(
-      completion.source,
-      stepField('worker-workflow', '${{ env.WORKER_WORKFLOW }}', 10),
-    );
-    assert.match(
-      completion.source,
-      stepField(
-        'outcome-kind',
-        '${{ steps.post_agent_gates.outputs.outcome-kind }}',
-        10,
-      ),
-    );
-    assert.match(
-      completion.source,
-      stepField(
-        'outcome-reference',
-        '${{ steps.post_agent_gates.outputs.outcome-reference }}',
-        10,
-      ),
-      `${workflow}'s trusted verifier must return the exact PR reference to the broker`,
-    );
-    assert.match(
-      completion.source,
-      stepField(
-        'readiness-failure',
-        '${{ steps.post_agent_gates.outputs.readiness-failure }}',
-        10,
-      ),
-      `${workflow}'s trusted post-agent classifier must return a lane-readiness failure to the broker`,
+    assert.doesNotMatch(
+      source,
+      /^ {6}- name:\s+Return completion observation to the broker\s*$/mu,
+      `${workflow} must not mint completion authority inside the untrusted worker job`,
     );
   }
+
+  const snapshotAction = await fs.readFile(
+    path.join(
+      workspaceRoot,
+      '.github/actions/snapshot-enforcement-scripts/action.yml',
+    ),
+    'utf8',
+  );
+  assert.match(snapshotAction, /^ {6}dispatch-broker\s*$/mu);
 });
 
-test('every agent lane has one shared GitHub-hosted fallback finalizer outside the self-hosted bootstrap failure domain (#639)', async () => {
+test('every agent lane delegates completion to the shared isolated GitHub-hosted finalizer (#639/#736)', async () => {
   const sources = await workflowSources();
   for (const pipeline of agentWorkerPipelines) {
     const workflow = workerWorkflow(pipeline);
@@ -706,34 +674,44 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
       (candidate) => candidate.name === workflow,
     )?.source;
     assert.ok(source, `${workflow} is missing`);
-    assert.match(
+    assert.doesNotMatch(
       source,
-      /^ {4}outputs:\s*\n {6}post_agent_gates_complete:\s*\$\{\{ steps\.post_agent_gates\.outputs\.complete \}\}\s*$/mu,
-      `${workflow} must publish proof that its primary trusted finalizer completed`,
+      /^ {4}outputs:\s*$/mu,
+      `${workflow} must not expose worker-controlled outputs to the isolated finalizer`,
     );
     assert.match(source, /^ {2}fallback-finalize:\s*$/mu);
     assert.match(source, new RegExp(`^ {4}needs:\\s+${pipeline}\\s*$`, 'mu'));
     assert.match(
       source,
-      new RegExp(
-        `needs\\.${pipeline}\\.outputs\\.post_agent_gates_complete != 'true'`,
-        'u',
-      ),
-      `${workflow}'s hosted fallback must run unless the primary reporter proved completion`,
+      /^ {4}if:\s+always\(\) && github\.event_name == 'workflow_dispatch' && inputs\.issue != ''\s*$/mu,
+      `${workflow}'s isolated finalizer must run after every worker result`,
     );
     assert.match(
       source,
       /^ {4}uses:\s+\.\/\.github\/workflows\/agent-fallback-finalize\.yml\s*$/mu,
     );
-    assert.match(source, /^ {6}actions:\s+write\s*$/mu);
     assert.match(source, /^ {6}contents:\s+read\s*$/mu);
+    assert.match(source, /^ {6}actions:\s+read\s*$/mu);
+    assert.match(source, /^ {6}id-token:\s+write\s*$/mu);
     assert.match(source, /^ {6}issues:\s+write\s*$/mu);
+    assert.match(source, /^ {6}pull-requests:\s+read\s*$/mu);
     assert.match(
       source,
       new RegExp(
         `^ {6}worker-result:\\s+\\$\\{\\{ needs\\.${pipeline}\\.result \\}\\}\\s*$`,
         'mu',
       ),
+    );
+    assert.match(source, /^ {6}mode:\s+\$\{\{ inputs\.mode \}\}\s*$/mu);
+    assert.match(source, /^ {6}runbook:\s+\$\{\{ inputs\.runbook \}\}\s*$/mu);
+    assert.match(
+      source,
+      /^ {6}fleet-login:\s+\$\{\{ vars\.AGENT_FLEET_LOGIN \}\}\s*$/mu,
+    );
+    assert.doesNotMatch(
+      source,
+      new RegExp(`needs\\.${pipeline}\\.outputs`, 'u'),
+      `${workflow} must pass no worker-controlled output across the finalizer boundary`,
     );
   }
 
@@ -742,18 +720,27 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
     'utf8',
   );
   assert.match(fallbackSource, /^ {2}workflow_call:\s*$/mu);
+  assert.match(fallbackSource, /^ {6}fleet-login:\s*$/mu);
   assert.match(fallbackSource, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
   assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
+  assert.match(fallbackSource, /^ {6}actions:\s+read\s*$/mu);
+  assert.match(fallbackSource, /^ {6}id-token:\s+write\s*$/mu);
+  assert.match(fallbackSource, /^ {6}pull-requests:\s+read\s*$/mu);
   const steps = stepBlocks(fallbackSource);
   assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [
     'Report and park bootstrap-independent failure',
-    'Checkout trusted revision for controller callback',
+    'Derive trusted completion evidence',
     'Return completion observation to the broker',
+    'Preserve failed callback for scheduled reconciliation',
   ]);
   const report = namedStep(
     steps,
     'agent-fallback-finalize.yml',
     'Report and park bootstrap-independent failure',
+  );
+  assert.match(
+    report.source,
+    stepField('if', "inputs.worker-result != 'success'"),
   );
   assert.match(report.source, stepField('GH_TOKEN', '${{ github.token }}', 10));
   assert.match(report.source, /agent-lcars:bootstrap-fallback:v1/u);
@@ -761,18 +748,81 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
   assert.match(report.source, /\{labels: \["status:needs-human"\]\}/u);
   assert.match(report.source, /\{assignees: \[\$login\]\}/u);
   assert.doesNotMatch(report.source, /labels\[\]|assignees\[\]|--silent/u);
+  const evidence = namedStep(
+    steps,
+    'agent-fallback-finalize.yml',
+    'Derive trusted completion evidence',
+  );
   const callback = namedStep(
     steps,
     'agent-fallback-finalize.yml',
     'Return completion observation to the broker',
   );
+  const preserveCallback = namedStep(
+    steps,
+    'agent-fallback-finalize.yml',
+    'Preserve failed callback for scheduled reconciliation',
+  );
+  assert.match(evidence.source, stepField('if', 'always()'));
+  assert.match(evidence.source, /actions\/runs\/\$GITHUB_RUN_ID\/jobs/u);
+  assert.match(evidence.source, /<!-- attempt-claim:\$\{attempt_id\} -->/u);
+  assert.match(evidence.source, /select\(\.conclusion == "failure"\)/u);
+  assert.doesNotMatch(evidence.source, /Classify Claude .* readiness/u);
   assert.match(
-    callback.source,
-    stepField('uses', './.github/actions/dispatch-broker'),
+    evidence.source,
+    /Claude's structured execution file lives in the untrusted worker/u,
+  );
+  assert.match(evidence.source, /\.started_at \/\/ ""/u);
+  assert.match(
+    evidence.source,
+    /status:needs-human[\s\S]*comments\?since=\$started_at[\s\S]*submitted_at >= \$started/u,
+    'the isolated finalizer must preserve the trusted gate inference outcomes',
+  );
+  assert.match(evidence.source, /Omitting unverified lifecycle outcome/u);
+  assert.doesNotMatch(
+    evidence.source,
+    /Could not read trusted worker job metadata[\s\S]{0,200}outcome-kind=startup-failure/u,
+  );
+  assert.match(
+    evidence.source,
+    /Successful dispatch canary lacks its exact comment outcome/u,
+  );
+  assert.doesNotMatch(
+    fallbackSource,
+    /post-agent-gates-complete|inputs\.outcome-kind|inputs\.outcome-reference|inputs\.readiness-failure/u,
+  );
+  assert.doesNotMatch(
+    fallbackSource,
+    /actions\/checkout|uses:\s+\.\/\.github\/actions/u,
   );
   assert.match(
     callback.source,
-    stepField('operation', 'completion-callback', 10),
+    stepField('if', 'always()'),
+    'a reporting failure must not skip the hosted completion callback',
+  );
+  assert.match(callback.source, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/u);
+  assert.match(callback.source, /data-binary = "@\$payload_file"/u);
+  assert.match(callback.source, /steps\.evidence\.outputs\.outcome-kind/u);
+  assert.match(callback.source, /completion-sent=true/u);
+  assert.doesNotMatch(callback.source, /dispatch-token[^\n]*argv|set -x/u);
+  assert.doesNotMatch(callback.source, /GITHUB_TOKEN|github\.token/u);
+  assert.match(
+    preserveCallback.source,
+    stepField(
+      'if',
+      "always() && steps.callback.outputs.completion-sent != 'true'",
+    ),
+  );
+  assert.match(
+    preserveCallback.source,
+    stepField('FLEET_LOGIN', '${{ inputs.fleet-login }}', 10),
+  );
+  assert.match(preserveCallback.source, /\{assignees: \[\$login\]\}/u);
+  assert.match(preserveCallback.source, /for attempt in 1 2 3/u);
+  assert.match(preserveCallback.source, /fleet-assignee reconcile sweep/u);
+  assert.doesNotMatch(
+    preserveCallback.source,
+    /labels\[\]|assignees\[\]|--silent/u,
   );
 });
 
@@ -795,11 +845,11 @@ test('workflow-owned assignment mutations use parse-safe JSON bodies (#645)', as
 
 test('worker agent steps never receive github.token under any name (#645 Phase 3)', async () => {
   // github.token is this job's own control-plane credential -- the exact
-  // one dispatch-broker uses to read and write the ledger comment (every
-  // dispatch-broker step in every worker passes
-  // GITHUB_TOKEN: ${{ github.token }}), and it carries the workflow's
-  // full contents/issues/pull-requests/actions write grant. The agent
-  // step runs untrusted, agent-authored code with unrestricted Bash;
+  // one dispatch-broker preflight reads before untrusted execution. The
+  // post-agent completion client deliberately uses OIDC and never receives
+  // this token. The job token carries the workflow's full
+  // contents/issues/pull-requests/actions write grant. The agent step runs
+  // untrusted, agent-authored code with unrestricted Bash;
   // handing it github.token under ANY env-var name would let that code
   // rewrite the ledger and act as the controller -- exactly what #645
   // forbids. All three workers used to do this via ACTIONS_RERUN_TOKEN
@@ -859,7 +909,7 @@ test('worker agent steps never receive github.token under any name (#645 Phase 3
   }
 });
 
-test('router serializes issue and pull-request lifecycle through one normalized group output', async () => {
+test('router retains only the serialized workflow_dispatch rollback path', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
@@ -869,16 +919,11 @@ test('router serializes issue and pull-request lifecycle through one normalized 
     source,
     /^\s+group:\s+\$\{\{ steps\.normalize\.outputs\.group \}\}\s*$/mu,
   );
-  assert.match(source, /^\s+pull_request_target:\s*$/mu);
-  assert.doesNotMatch(
-    source,
-    /^\s+pull_request:\s*$/mu,
-    'the privileged router must execute trusted base-branch code, never a PR merge ref',
-  );
-  assert.match(
-    source,
-    /^\s+types:\s+\[closed, reopened, labeled, unlabeled\]\s*$/mu,
-  );
+  assert.match(source, /^ {2}workflow_dispatch:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}issues:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}issue_comment:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}pull_request_target:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}pull_request:\s*$/mu);
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
 });
 
@@ -1107,25 +1152,24 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
     'the canary must exercise exact deliverable validation from the trusted snapshot',
   );
   assert.match(source, /<!-- attempt-claim:\$ATTEMPT_ID -->/u);
+  assert.doesNotMatch(
+    source,
+    /needs\.canary\.outputs|outcome_kind:\s*\$\{\{/u,
+    'the canary must not pass its output file across the isolated boundary',
+  );
+  // Completion is delegated to the same isolated reusable finalizer as the
+  // real workers, so the canary job itself cannot mint an accepted callback.
+  assert.match(source, /^ {2}completion-finalize:\s*$/mu);
+  assert.match(source, /^ {4}if:\s+always\(\)/mu);
   assert.match(
     source,
-    /outcome-kind:\s*\$\{\{ steps\.verify\.outputs\.outcome-kind \}\}/u,
-    "the canary completion must persist the finalizer's typed outcome",
+    /^ {4}uses:\s+\.\/\.github\/workflows\/agent-fallback-finalize\.yml\s*$/mu,
   );
-  // Every worker calls the broker's completion-callback unconditionally so
-  // a crashed run still clears its ledger generation (#305's reconciler is
-  // only ever a backstop, never the primary path).
-  assert.match(source, /operation:\s*completion-callback/u);
-  const completionStepIndex = source.indexOf('operation: completion-callback');
-  const precedingSource = source.slice(0, completionStepIndex);
-  const lastAlwaysIndex = precedingSource.lastIndexOf('if: always()');
-  assert.ok(
-    lastAlwaysIndex >= 0 &&
-      precedingSource
-        .slice(lastAlwaysIndex)
-        .includes('uses: ./.github/actions/dispatch-broker'),
-    'the completion-callback step must run under if: always()',
+  assert.match(
+    source,
+    /^ {6}fleet-login:\s+\$\{\{ vars\.AGENT_FLEET_LOGIN \}\}\s*$/mu,
   );
+  assert.doesNotMatch(source, /operation:\s*completion-callback/u);
 });
 
 test('the canary orchestrators (#307) never reference a self-hosted runner or a secret', async () => {
@@ -1371,9 +1415,8 @@ test('every worker captures the verified attempt ID via the broker preflight cal
   // byte-identical hand-copied "Publish attempt identity" step (it runs
   // pre-agent, so unlike the post-agent gates it CAN safely become a
   // composite-action step) and folded it into dispatch-broker/action.yml
-  // itself, gated to `operation == 'preflight'` so a later
-  // completion-callback call in the same job never blanks the value back
-  // out. Assert both halves: the composite does the export exactly once,
+  // itself, gated to `operation == 'preflight'`. Assert both halves: the
+  // composite does the export exactly once,
   // and every worker's (and the canary's) preflight call still gives that
   // export something to key off (an `id` on the step).
   const brokerActionSource = await fs.readFile(
@@ -1547,12 +1590,16 @@ test('no worker invokes a post-agent gate via `uses:` (#645 Phase 3 security inv
       `${workflow} must run the shared post-agent gate orchestrator from the pre-agent snapshot`,
     );
   }
-  // The canary has no post-agent gates at all (#307/#645) -- assert it
-  // stays that way rather than silently growing one.
+  // The canary has no post-agent gate step at all (#307/#645). It may pass
+  // the reusable finalizer's completion-proof input, but must not execute
+  // the agent-lane gate orchestrator itself.
   const canarySource = sources.find(
     (candidate) => candidate.name === canary,
   )?.source;
-  assert.doesNotMatch(canarySource, /post-agent-gates|Run post-agent gates/u);
+  assert.doesNotMatch(
+    canarySource,
+    /Run post-agent gates|trusted-actions\/post-agent-gates/u,
+  );
 });
 
 function foldedBlockScalar(source, field, indentation = 10) {
@@ -1604,7 +1651,7 @@ test("each lane's own no-deliverable wording survives the merge into post-agent-
   }
 });
 
-test("claude's structured failure scan survives as an adapter-style input, absent from codex/opencode", async () => {
+test("claude's structured failure scan remains worker-local and is never promoted to trusted readiness evidence", async () => {
   // claude.yml's original "Determine failure reason" step was materially
   // larger than codex.yml's/opencode.yml's: beyond the shared
   // NO_DELIVERABLE check, it inspects Claude Code Action's structured
@@ -1626,19 +1673,18 @@ test("claude's structured failure scan survives as an adapter-style input, absen
   assert.match(
     claudeSource,
     /CLAUDE_EXECUTION_FILE:\s*\$\{\{ steps\.agent\.outputs\.execution_file \}\}/u,
-    "claude.yml must pass the action's completed structured result to trusted failure classification",
+    "claude.yml must pass the action's completed structured result to its worker-local failure classification",
   );
-  // "Verify Claude run status" (an existing, separate, claude-only gate
-  // unrelated to the four steps this refactor consolidates) must still run
-  // between the agent step and the merged orchestrator, gated on
-  // success() exactly as before -- its own failure must still correctly
-  // skip verify-deliverable inside post-agent-gates.sh via JOB_STATUS.
+  // "Verify Claude run status" remains a worker-local behavior gate. Its
+  // structured input is writable by the untrusted worker, so it must never
+  // be copied into named readiness steps that the hosted finalizer trusts.
   const claudeSteps = stepBlocks(claudeSource);
   const runStatus = namedStep(
     claudeSteps,
     'claude.yml',
     'Verify Claude run status',
   );
+  assert.doesNotMatch(claudeSource, /Classify Claude .* readiness/u);
   assert.match(runStatus.source, stepField('if', 'success()'));
   assert.match(
     runStatus.source,
@@ -1671,5 +1717,6 @@ test("claude's structured failure scan survives as an adapter-style input, absen
       `${workflow} must not gain claude's log-scan signal -- it never had one`,
     );
     assert.doesNotMatch(source, /Verify Claude run status/u);
+    assert.doesNotMatch(source, /Classify Claude .* readiness/u);
   }
 });

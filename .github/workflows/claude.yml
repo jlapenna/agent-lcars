@@ -72,8 +72,6 @@ permissions:
 
 jobs:
   claude:
-    outputs:
-      post_agent_gates_complete: ${{ steps.post_agent_gates.outputs.complete }}
     # The centralized router (agent-router.yml) authorizes the request -
     # maintainer-only label add, or an OWNER's non-bot `@claude` reply on an
     # issue or PR - before dispatching this worker via workflow_dispatch.
@@ -471,30 +469,15 @@ jobs:
           CLAUDE_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
         run: bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"
 
-      - name: Return completion observation to the broker
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/dispatch-broker
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          operation: completion-callback
-          issue: ${{ inputs.issue }}
-          generation: ${{ inputs.broker_generation }}
-          intent-id: ${{ inputs.broker_intent_id }}
-          dispatch-token: ${{ inputs.broker_dispatch_token }}
-          worker-workflow: ${{ env.WORKER_WORKFLOW }}
-          outcome-kind: ${{ steps.post_agent_gates.outputs.outcome-kind }}
-          outcome-reference: ${{ steps.post_agent_gates.outputs.outcome-reference }}
-          readiness-failure: ${{ steps.post_agent_gates.outputs.readiness-failure }}
-
   fallback-finalize:
     needs: claude
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != '' && needs.claude.outputs.post_agent_gates_complete != 'true'
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
     permissions:
-      actions: write
+      actions: read
       contents: read
+      id-token: write
       issues: write
+      pull-requests: read
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:
       issue: ${{ inputs.issue }}
@@ -503,5 +486,8 @@ jobs:
       dispatch-token: ${{ inputs.broker_dispatch_token }}
       worker-workflow: claude.yml
       worker-result: ${{ needs.claude.result }}
+      mode: ${{ inputs.mode }}
+      runbook: ${{ inputs.runbook }}
       agent: Claude
+      fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       maintainer: ${{ vars.MAINTAINER_LOGIN }}

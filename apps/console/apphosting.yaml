@@ -84,11 +84,10 @@ env:
     availability:
       - RUNTIME
 
-  # Hosted admission initially runs alongside agent-router's event triggers.
-  # Both paths share Firestore authority and projection identities; the value
-  # changes to `authority` when the Action event triggers are retired.
+  # GitHub App webhook delivery is the production event authority. The
+  # workflow_dispatch-only agent-router remains as the manual rollback path.
   - variable: AGENT_LCARS_HOSTED_ADMISSION_MODE
-    value: 'shadow'
+    value: 'authority'
     availability:
       - RUNTIME
 
