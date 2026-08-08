@@ -378,7 +378,7 @@ var CANARY_TITLE_PREFIX = "[dispatch-canary]";
 var CANARY_TITLE = "[dispatch-canary] Production dispatch broker canary";
 var LIVE_URL_PROBE_MAX_ATTEMPTS = 5;
 var LIVE_URL_PROBE_RETRY_DELAY_MS = 15e3;
-var LEDGER_POLL_TIMEOUT_MS = 25 * 60 * 1e3;
+var LEDGER_POLL_TIMEOUT_MS = 30 * 60 * 1e3;
 var LEDGER_POLL_BACKOFF_START_MS = 2e3;
 var LEDGER_POLL_BACKOFF_MAX_MS = 15e3;
 var TERMINAL_REJECTED_STATES = /* @__PURE__ */ new Set([
@@ -386,7 +386,7 @@ var TERMINAL_REJECTED_STATES = /* @__PURE__ */ new Set([
   "superseded",
   "superseded-by-close"
 ]);
-var STALE_CANARY_AGE_MS = 35 * 60 * 1e3;
+var STALE_CANARY_AGE_MS = 40 * 60 * 1e3;
 function env(name, required = true) {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);
@@ -495,27 +495,54 @@ async function findCanaryGeneration(api, task, sourceId) {
   ).sort((left, right) => right.generation - left.generation)[0];
   return generation ? { ledger: loaded.ledger, generation } : void 0;
 }
+function describeCanaryObservation(found) {
+  if (!found) return "awaiting a ledger generation for this caller";
+  const { generation } = found;
+  const attempt = generation.attempt;
+  return [
+    `g${generation.generation}`,
+    `state=${generation.state}`,
+    `worker=${attempt?.htmlUrl ?? "unbound"}`,
+    `status=${attempt?.status ?? "unknown"}`,
+    `conclusion=${attempt?.conclusion ?? "unknown"}`
+  ].join(" ");
+}
+function elapsedSeconds(startedAt, observedAt) {
+  return Math.max(0, Math.round((observedAt - startedAt) / 1e3));
+}
 async function pollCanaryLedger(api, task, {
   timeoutMs = LEDGER_POLL_TIMEOUT_MS,
   sleepImpl = sleep,
   now = () => Date.now(),
-  sourceId
+  sourceId,
+  log = console.log
 } = {}) {
-  const deadline = now() + timeoutMs;
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
   let delay = LEDGER_POLL_BACKOFF_START_MS;
+  let lastObservation;
   while (now() < deadline) {
     const found = await findCanaryGeneration(api, task, sourceId);
+    const observation = describeCanaryObservation(found);
+    if (observation !== lastObservation) {
+      log(
+        `::notice::canary ledger after ${elapsedSeconds(startedAt, now())}s: ${observation}`
+      );
+      lastObservation = observation;
+    }
     if (found?.generation.state === "completed") {
       return found;
     }
     if (found && TERMINAL_REJECTED_STATES.has(found.generation.state)) {
       return { ...found, rejected: true };
     }
-    await sleepImpl(delay);
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await sleepImpl(Math.min(delay, remaining));
     delay = Math.min(delay * 2, LEDGER_POLL_BACKOFF_MAX_MS);
   }
   throw new Error(
-    "Timed out waiting for the canary dispatch ledger to reach a terminal state"
+    `Timed out waiting for the canary dispatch ledger to reach a terminal state after ${elapsedSeconds(startedAt, now())}s; last observation: ${lastObservation ?? "poll ended before the first observation"}`
   );
 }
 async function closeCanaryIssue(api, task, { generation, runUrl, message }) {
@@ -664,7 +691,13 @@ async function runDispatchCanary({
   });
   const task = { repositoryId, repository, issue: issue.number };
   try {
-    await dispatchRouterCanary(api, repository, issue.number, callerId);
+    const routerRun = await dispatchRouterCanary(
+      api,
+      repository,
+      issue.number,
+      callerId
+    );
+    console.log(`::notice::canary router dispatched: ${routerRun.htmlUrl}`);
     const result = await pollCanaryLedger(api, task, {
       ...pollOptions,
       sourceId: callerId
@@ -742,6 +775,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 export {
   CANARY_SWEEP_CONCURRENCY,
+  LEDGER_POLL_TIMEOUT_MS,
   STALE_CANARY_AGE_MS,
   closeCanaryIssue,
   dispatchRouterCanary,

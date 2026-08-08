@@ -9,11 +9,13 @@ import {
   closeCanaryIssue,
   dispatchRouterCanary,
   issueBody,
+  LEDGER_POLL_TIMEOUT_MS,
   parkCanaryFailure,
   pollCanaryLedger,
   prepareCanaryIssue,
   probeLiveUrl,
   runDispatchCanary,
+  STALE_CANARY_AGE_MS,
   sweepStaleCanaries,
 } from './run.js';
 
@@ -35,20 +37,24 @@ function api(handler) {
   return createGitHubApi({ token: 'token', fetchImpl: handler });
 }
 
-function ledgerCommentWithGeneration({
-  state = 'completed',
-  conclusion = 'success',
-  issue = task.issue,
-  user = { login: 'github-actions[bot]', type: 'Bot' },
-  sourceId = '11111111-1111-4111-8111-111111111111',
-} = {}) {
+function ledgerCommentWithGeneration(options = {}) {
+  const {
+    state = 'completed',
+    status = state === 'completed' ? 'completed' : 'in_progress',
+    issue = task.issue,
+    user = { login: 'github-actions[bot]', type: 'Bot' },
+    sourceId = '11111111-1111-4111-8111-111111111111',
+  } = options;
+  const conclusion = Object.hasOwn(options, 'conclusion')
+    ? options.conclusion
+    : 'success';
   const ledger = createLedger({ ...task, issue }, '2026-08-01T00:00:00.000Z');
   const attempt = {
     token: 'dispatch_token_123456',
     runId: 42,
     runUrl: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
     htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
-    status: 'completed',
+    status,
     ...(conclusion !== undefined && { conclusion }),
   };
   ledger.generations.push({
@@ -221,6 +227,37 @@ test('pollCanaryLedger resolves once the canary generation reaches completed/suc
   assert.equal(call, 3);
 });
 
+test('pollCanaryLedger logs only meaningful caller-specific state transitions with elapsed time', async () => {
+  let call = 0;
+  const client = api(async () => {
+    call += 1;
+    if (call === 1) return response(200, []);
+    if (call === 2) {
+      return response(200, [
+        ledgerCommentWithGeneration({
+          state: 'dispatched',
+          conclusion: undefined,
+        }),
+      ]);
+    }
+    return response(200, [ledgerCommentWithGeneration()]);
+  });
+  let clock = 0;
+  const notices = [];
+  await pollCanaryLedger(client, task, {
+    now: () => clock,
+    sleepImpl: async (delay) => {
+      clock += delay;
+    },
+    log: (message) => notices.push(message),
+  });
+  assert.equal(notices.length, 3);
+  assert.match(notices[0], /after 0s: awaiting a ledger generation/u);
+  assert.match(notices[1], /after 2s: g1 state=dispatched/u);
+  assert.match(notices[1], /worker=https:\/\/github\.com\/jlapenna/u);
+  assert.match(notices[2], /after 6s: g1 state=completed/u);
+});
+
 test('pollCanaryLedger waits for this orchestrator caller instead of accepting an older successful generation', async () => {
   const current = '22222222-2222-4222-8222-222222222222';
   let call = 0;
@@ -275,7 +312,32 @@ test('pollCanaryLedger times out loudly rather than polling forever', async () =
           clock += 10_000;
         },
       }),
-    /Timed out waiting/u,
+    /Timed out waiting.*after 10s; last observation: awaiting a ledger generation/su,
+  );
+});
+
+test('the production timeout contract covers the observed 26-minute lifecycle and preserves ten minutes of job cleanup headroom (#772)', async () => {
+  assert.equal(LEDGER_POLL_TIMEOUT_MS, 30 * 60 * 1000);
+  assert.equal(STALE_CANARY_AGE_MS, 40 * 60 * 1000);
+  assert.equal(STALE_CANARY_AGE_MS - LEDGER_POLL_TIMEOUT_MS, 10 * 60 * 1000);
+
+  const client = api(async () => response(200, []));
+  let clock = 0;
+  await assert.rejects(
+    () =>
+      pollCanaryLedger(client, task, {
+        now: () => clock,
+        sleepImpl: async (delay) => {
+          clock += delay;
+        },
+        log: () => undefined,
+      }),
+    /after 1800s/u,
+  );
+  assert.equal(
+    clock,
+    LEDGER_POLL_TIMEOUT_MS,
+    'backoff must stop at the configured deadline rather than overshooting it',
   );
 });
 

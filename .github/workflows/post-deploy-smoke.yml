@@ -64,11 +64,11 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     # See dispatch-canary.yml's `canary` job for why this stays ubuntu-latest.
     runs-on: ubuntu-latest
-    # See run.mjs's LEDGER_POLL_TIMEOUT_MS (25 min) for why this needs
-    # headroom well beyond the old 15 min: the self-hosted broker hops this
-    # canary waits on can queue for several minutes under fleet contention
-    # (#436).
-    timeout-minutes: 35
+    # See run.mjs's LEDGER_POLL_TIMEOUT_MS (30 min) for why this keeps ten
+    # minutes of teardown/failure-parking headroom: the two self-hosted
+    # broker hops queued for about 24 minutes in production run 31255623033
+    # before the lifecycle converged successfully at about 26 minutes (#772).
+    timeout-minutes: 40
     steps:
       - name: Assert required repo variables are set
         env:

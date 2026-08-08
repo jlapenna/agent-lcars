@@ -73,7 +73,7 @@ canonical issue and legacy per-run canaries left behind by either orchestrator
 (`run.mjs`'s `sweepStaleCanaries`, `sweep-stale-canaries: true` only on
 that caller): it lists open issues, filters to this canary's own title
 prefix and marker, and for every candidate older than both orchestrators'
-own `timeout-minutes: 35` job budget -- past which GitHub Actions
+own `timeout-minutes: 40` job budget -- past which GitHub Actions
 guarantees the job was killed if the issue is still open -- closes it if
 its ledger already shows a
 successful completion or parks `status:needs-human` otherwise. This is the

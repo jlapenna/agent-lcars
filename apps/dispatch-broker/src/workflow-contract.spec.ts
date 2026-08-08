@@ -1101,6 +1101,11 @@ test('the canary orchestrators (#307) never reference a self-hosted runner or a 
     assert.doesNotMatch(source, /\$\{\{\s*vars\.AGENT_RUNNER_LABEL\s*\}\}/u);
     assert.doesNotMatch(source, /secrets\./u);
     assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
+    assert.match(
+      source,
+      /^\s+timeout-minutes:\s+40\s*$/mu,
+      `${workflow} must retain ten minutes beyond the 30-minute ledger poll for failure parking and teardown (#772)`,
+    );
   }
 });
 

@@ -79,10 +79,13 @@ const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
 // evidence showed one hop alone taking up to ~16.6 minutes, and one
 // two-hop round trip totaling ~20 minutes, while the dispatch broker
 // itself completed every one of those generations successfully -- the
-// ledger just hadn't caught up before this poll gave up. 25 minutes
-// keeps a real, bounded budget (a genuinely wedged broker still fails
-// loud) while comfortably covering the worst round trip observed so far.
-const LEDGER_POLL_TIMEOUT_MS = 25 * 60 * 1000;
+// ledger just hadn't caught up before this poll gave up. Production run
+// 31255623033 then spent about 24 minutes queued across the two broker
+// hops and converged successfully at about 26 minutes, disproving the old
+// 25-minute bound (#772). 30 minutes retains a real failure budget while
+// covering that observed round trip. The two orchestrator jobs keep a
+// separate ten-minute margin for failure parking and action teardown.
+const LEDGER_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 // Mirrors ../main.ts's handleCompletion poll-until-terminal backoff (same
 // start/cap/doubling shape) rather than a flat interval: start small so a
 // fast-completing canary is detected quickly, double each attempt, and cap
@@ -99,8 +102,8 @@ const TERMINAL_REJECTED_STATES = new Set([
 // a job-level `timeout-minutes` or an operator/workflow cancellation tears
 // down the whole runner process, including anything still awaiting inside
 // pollCanaryLedger, before that catch block ever runs. Neither
-// dispatch-canary.yml (timeout-minutes: 35) nor post-deploy-smoke.yml
-// (timeout-minutes: 35) has a separate cleanup job to survive that -- this
+// dispatch-canary.yml (timeout-minutes: 40) nor post-deploy-smoke.yml
+// (timeout-minutes: 40) has a separate cleanup job to survive that -- this
 // canary is a small, self-contained workflow, not embedded in
 // deploy-console.yml's own job, so there is no natural place to split
 // "verify" and "cleanup" into two jobs the way the epic design audit (#301)
@@ -112,7 +115,7 @@ const TERMINAL_REJECTED_STATES = new Set([
 // issue is found and closed/parked within one hour at the very most --
 // still "automatically cleaned up" per #307's acceptance bar, just not
 // synchronously. Pinned to exactly both orchestrators' own
-// timeout-minutes: 35 job budget, not padded beyond it (PR #448 review):
+// timeout-minutes: 40 job budget, not padded beyond it (PR #448 review):
 // GitHub Actions kills a job the instant its own runtime hits
 // timeout-minutes, so an open, marked canary issue older than that value
 // can ONLY mean its own orchestrator run was killed before reaching its
@@ -123,10 +126,10 @@ const TERMINAL_REJECTED_STATES = new Set([
 // to sweep but not yet old enough to pass this filter -- for an orphan
 // that lands in that window right before an hourly pass, the janitor
 // skips it and it waits a full extra cycle, silently breaking the "next
-// pass" guarantee above. Keeping this well under the hourly cadence (35
+// pass" guarantee above. Keeping this well under the hourly cadence (40
 // min < 60 min) still guarantees a genuinely killed run is swept by the
 // very next scheduled pass.
-const STALE_CANARY_AGE_MS = 35 * 60 * 1000;
+const STALE_CANARY_AGE_MS = 40 * 60 * 1000;
 
 function env(name: string, required = true): string {
   const value = process.env[name];
@@ -339,6 +342,24 @@ interface PollCanaryLedgerOptions {
   sleepImpl?: SleepImpl;
   now?: () => number;
   sourceId?: string;
+  log?: (message: string) => void;
+}
+
+function describeCanaryObservation(found?: FoundGeneration): string {
+  if (!found) return 'awaiting a ledger generation for this caller';
+  const { generation } = found;
+  const attempt = generation.attempt;
+  return [
+    `g${generation.generation}`,
+    `state=${generation.state}`,
+    `worker=${attempt?.htmlUrl ?? 'unbound'}`,
+    `status=${attempt?.status ?? 'unknown'}`,
+    `conclusion=${attempt?.conclusion ?? 'unknown'}`,
+  ].join(' ');
+}
+
+function elapsedSeconds(startedAt: number, observedAt: number): number {
+  return Math.max(0, Math.round((observedAt - startedAt) / 1000));
 }
 
 async function pollCanaryLedger(
@@ -349,23 +370,37 @@ async function pollCanaryLedger(
     sleepImpl = sleep,
     now = () => Date.now(),
     sourceId,
+    log = console.log,
   }: PollCanaryLedgerOptions = {},
 ): Promise<FoundGeneration & { rejected?: boolean }> {
-  const deadline = now() + timeoutMs;
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
   let delay = LEDGER_POLL_BACKOFF_START_MS;
+  let lastObservation: string | undefined;
   while (now() < deadline) {
     const found = await findCanaryGeneration(api, task, sourceId);
+    const observation = describeCanaryObservation(found);
+    if (observation !== lastObservation) {
+      log(
+        `::notice::canary ledger after ${elapsedSeconds(startedAt, now())}s: ${observation}`,
+      );
+      lastObservation = observation;
+    }
     if (found?.generation.state === 'completed') {
       return found;
     }
     if (found && TERMINAL_REJECTED_STATES.has(found.generation.state)) {
       return { ...found, rejected: true };
     }
-    await sleepImpl(delay);
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await sleepImpl(Math.min(delay, remaining));
     delay = Math.min(delay * 2, LEDGER_POLL_BACKOFF_MAX_MS);
   }
   throw new Error(
-    'Timed out waiting for the canary dispatch ledger to reach a terminal state',
+    'Timed out waiting for the canary dispatch ledger to reach a terminal ' +
+      `state after ${elapsedSeconds(startedAt, now())}s; last observation: ` +
+      `${lastObservation ?? 'poll ended before the first observation'}`,
   );
 }
 
@@ -652,7 +687,13 @@ async function runDispatchCanary({
   const task = { repositoryId, repository, issue: issue.number };
 
   try {
-    await dispatchRouterCanary(api, repository, issue.number, callerId);
+    const routerRun = await dispatchRouterCanary(
+      api,
+      repository,
+      issue.number,
+      callerId,
+    );
+    console.log(`::notice::canary router dispatched: ${routerRun.htmlUrl}`);
     const result = await pollCanaryLedger(api, task, {
       ...pollOptions,
       sourceId: callerId,
@@ -757,6 +798,7 @@ export {
   closeCanaryIssue,
   dispatchRouterCanary,
   issueBody,
+  LEDGER_POLL_TIMEOUT_MS,
   parkCanaryFailure,
   pollCanaryLedger,
   prepareCanaryIssue,
