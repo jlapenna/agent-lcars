@@ -1,6 +1,7 @@
 import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
+  approveAndMergePr,
   approveAndRebasePr,
   cancelWorkflowRun,
   clearHumanNeededLabel,
@@ -28,11 +29,17 @@ vi.mock('./github-client', async (importOriginal) => {
 });
 
 describe('closeIssue', () => {
-  it('closes the given issue on the console repo', async () => {
+  function mockOctokit() {
     const update = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { update } },
+      rest: { issues: { update }, actions: { createWorkflowDispatch } },
     });
+    return { update, createWorkflowDispatch };
+  }
+
+  it('closes the given issue on the console repo', async () => {
+    const { update } = mockOctokit();
 
     await closeIssue(DEFAULT_REPO, 2709);
 
@@ -44,7 +51,22 @@ describe('closeIssue', () => {
     });
   });
 
-  it('propagates a GitHub API error', async () => {
+  it('notifies the dispatch controller to reconcile the closed issue', async () => {
+    const { createWorkflowDispatch } = mockOctokit();
+
+    await closeIssue(DEFAULT_REPO, 2709);
+
+    expect(createWorkflowDispatch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      workflow_id: 'agent-router.yml',
+      ref: 'main',
+      inputs: { kind: 'reconcile', issue: '2709' },
+    });
+  });
+
+  it('propagates a GitHub API error and never notifies', async () => {
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
@@ -54,18 +76,63 @@ describe('closeIssue', () => {
               Object.assign(new Error('Not Found'), { status: 404 }),
             ),
         },
+        actions: { createWorkflowDispatch },
       },
     });
 
     await expect(closeIssue(DEFAULT_REPO, 2709)).rejects.toThrow('Not Found');
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not fail the close when the reconcile ping's dispatch fails outright", async () => {
+    const { update, createWorkflowDispatch } = mockOctokit();
+    createWorkflowDispatch.mockRejectedValue(
+      Object.assign(new Error('Server Error'), { status: 500 }),
+    );
+
+    await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
+    expect(update).toHaveBeenCalled();
+  });
+
+  it("degrades like retriggerIssue's dispatch when the target repo's router predates kind: reconcile", async () => {
+    const { createWorkflowDispatch } = mockOctokit();
+    createWorkflowDispatch
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Unexpected inputs provided: ["kind"]'), {
+          status: 422,
+        }),
+      )
+      .mockResolvedValueOnce({});
+
+    await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
+
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
+    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ inputs: { issue: '2709' } }),
+    );
+  });
+
+  it('still does not fail the close when even the retried reconcile ping fails', async () => {
+    const { update, createWorkflowDispatch } = mockOctokit();
+    createWorkflowDispatch.mockRejectedValue(
+      Object.assign(new Error('Unexpected inputs provided: ["kind"]'), {
+        status: 422,
+      }),
+    );
+
+    await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
+    expect(update).toHaveBeenCalled();
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('updatePrBranch', () => {
-  it('updates the PR branch with the latest base branch changes', async () => {
+  it('updates the PR branch with the latest base branch changes and never notifies', async () => {
     const updateBranch = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { pulls: { updateBranch } },
+      rest: { pulls: { updateBranch }, actions: { createWorkflowDispatch } },
     });
 
     await updatePrBranch(DEFAULT_REPO, 2709);
@@ -75,6 +142,9 @@ describe('updatePrBranch', () => {
       repo: 'sprinkles',
       pull_number: 2709,
     });
+    // A branch update doesn't write any fact the dispatch ledger tracks -
+    // no reconcile ping should ever follow it.
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });
 
   it('propagates a GitHub API error', async () => {
@@ -97,11 +167,17 @@ describe('updatePrBranch', () => {
 });
 
 describe('clearHumanNeededLabel', () => {
-  it('removes the needs-human status label from the given issue', async () => {
+  function mockOctokit() {
     const removeLabel = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { removeLabel } },
+      rest: { issues: { removeLabel }, actions: { createWorkflowDispatch } },
     });
+    return { removeLabel, createWorkflowDispatch };
+  }
+
+  it('removes the needs-human status label from the given issue', async () => {
+    const { removeLabel } = mockOctokit();
 
     await clearHumanNeededLabel(DEFAULT_REPO, 2709);
 
@@ -113,7 +189,20 @@ describe('clearHumanNeededLabel', () => {
     });
   });
 
-  it('swallows a 404 (label was already absent)', async () => {
+  it('notifies the dispatch controller to reconcile after clearing the park state', async () => {
+    const { createWorkflowDispatch } = mockOctokit();
+
+    await clearHumanNeededLabel(DEFAULT_REPO, 2709);
+
+    expect(createWorkflowDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputs: { kind: 'reconcile', issue: '2709' },
+      }),
+    );
+  });
+
+  it('swallows a 404 (label was already absent) and does not notify', async () => {
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
@@ -123,12 +212,16 @@ describe('clearHumanNeededLabel', () => {
               Object.assign(new Error('Not Found'), { status: 404 }),
             ),
         },
+        actions: { createWorkflowDispatch },
       },
     });
 
     await expect(
       clearHumanNeededLabel(DEFAULT_REPO, 2709),
     ).resolves.toBeUndefined();
+    // The label write never happened - nothing changed for the ledger to
+    // learn about.
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });
 });
 
@@ -138,10 +231,14 @@ describe('postComment (mention routing)', () => {
       data: { html_url: 'https://github.com/o/r/issues/1#issuecomment-1' },
     });
     const removeLabel = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { createComment, removeLabel } },
+      rest: {
+        issues: { createComment, removeLabel },
+        actions: { createWorkflowDispatch },
+      },
     });
-    return { createComment, removeLabel };
+    return { createComment, removeLabel, createWorkflowDispatch };
   }
 
   it('rejects a blank body without calling GitHub', async () => {
@@ -239,6 +336,34 @@ describe('postComment (mention routing)', () => {
       expect.objectContaining({ name: 'status:needs-human' }),
     );
   });
+
+  it('posting a comment alone (no label actually cleared) does not notify the dispatch controller', async () => {
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: {
+        issues: {
+          createComment: vi.fn().mockResolvedValue({
+            data: {
+              html_url: 'https://github.com/o/r/issues/1#issuecomment-1',
+            },
+          }),
+          // 404: nothing to clear, so clearNeedsHumanLabel's own notify never
+          // fires either - isolates that createComment itself is inert from
+          // the ledger's perspective, per the seam's own analysis.
+          removeLabel: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error('Not Found'), { status: 404 }),
+            ),
+        },
+        actions: { createWorkflowDispatch },
+      },
+    });
+
+    await postComment(DEFAULT_REPO, 2709, 'hi', ['agent:claude']);
+
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+  });
 });
 
 describe('approveAndRebasePr', () => {
@@ -247,15 +372,20 @@ describe('approveAndRebasePr', () => {
     const updateBranch = vi.fn().mockResolvedValue({});
     const get = vi.fn().mockResolvedValue({ data: { node_id: 'PR_kwAB' } });
     const graphql = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { pulls: { createReview, updateBranch, get } },
+      rest: {
+        pulls: { createReview, updateBranch, get },
+        actions: { createWorkflowDispatch },
+      },
       graphql,
     });
-    return { createReview, updateBranch, get, graphql };
+    return { createReview, updateBranch, get, graphql, createWorkflowDispatch };
   }
 
-  it('approves, updates the branch, then enables squash auto-merge', async () => {
-    const { createReview, updateBranch, get, graphql } = mockOctokit();
+  it('approves, updates the branch, then enables squash auto-merge - and never notifies', async () => {
+    const { createReview, updateBranch, get, graphql, createWorkflowDispatch } =
+      mockOctokit();
 
     await approveAndRebasePr(DEFAULT_REPO, 42);
 
@@ -279,6 +409,11 @@ describe('approveAndRebasePr', () => {
       expect.stringContaining('enablePullRequestAutoMerge'),
       { pullRequestId: 'PR_kwAB', mergeMethod: 'SQUASH' },
     );
+    // Approving, updating the branch, and merely *enabling* auto-merge
+    // write no ledger-tracked fact themselves - the eventual merge is a
+    // normal GitHub-initiated event agent-router.yml still observes on its
+    // own, so no reconcile ping should follow any of these calls.
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });
 
   it('propagates a GitHub API error from the approval step', async () => {
@@ -294,12 +429,114 @@ describe('approveAndRebasePr', () => {
   });
 });
 
-describe('cancelWorkflowRun', () => {
-  it('cancels the given run on the console repo', async () => {
-    const cancelWorkflowRun_ = vi.fn().mockResolvedValue({});
+describe('approveAndMergePr', () => {
+  function mockOctokit() {
+    const createReview = vi.fn().mockResolvedValue({});
+    const merge = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { actions: { cancelWorkflowRun: cancelWorkflowRun_ } },
+      rest: {
+        pulls: { createReview, merge },
+        actions: { createWorkflowDispatch },
+      },
     });
+    return { createReview, merge, createWorkflowDispatch };
+  }
+
+  it('approves then squash-merges the PR', async () => {
+    const { createReview, merge } = mockOctokit();
+
+    await approveAndMergePr(DEFAULT_REPO, 42);
+
+    expect(createReview).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      pull_number: 42,
+      event: 'APPROVE',
+    });
+    expect(merge).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      pull_number: 42,
+      merge_method: 'squash',
+    });
+  });
+
+  it('notifies the dispatch controller to reconcile the merged PR anchor', async () => {
+    const { createWorkflowDispatch } = mockOctokit();
+
+    await approveAndMergePr(DEFAULT_REPO, 42);
+
+    expect(createWorkflowDispatch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      workflow_id: 'agent-router.yml',
+      ref: 'main',
+      inputs: { kind: 'reconcile', issue: '42' },
+    });
+  });
+
+  it('propagates a GitHub API error from the approval step and never merges or notifies', async () => {
+    const { createReview, merge, createWorkflowDispatch } = mockOctokit();
+    createReview.mockRejectedValue(
+      Object.assign(new Error('Review already submitted'), { status: 422 }),
+    );
+
+    await expect(approveAndMergePr(DEFAULT_REPO, 42)).rejects.toThrow(
+      'Review already submitted',
+    );
+    expect(merge).not.toHaveBeenCalled();
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+  });
+
+  it('propagates a GitHub API error from the merge step and never notifies', async () => {
+    const { merge, createWorkflowDispatch } = mockOctokit();
+    merge.mockRejectedValue(
+      Object.assign(new Error('Pull Request is not mergeable'), {
+        status: 405,
+      }),
+    );
+
+    await expect(approveAndMergePr(DEFAULT_REPO, 42)).rejects.toThrow(
+      'Pull Request is not mergeable',
+    );
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+  });
+
+  it('still resolves the merge when the reconcile ping fails outright', async () => {
+    const { merge, createWorkflowDispatch } = mockOctokit();
+    createWorkflowDispatch.mockRejectedValue(
+      Object.assign(new Error('Server Error'), { status: 500 }),
+    );
+
+    await expect(approveAndMergePr(DEFAULT_REPO, 42)).resolves.toBeUndefined();
+    expect(merge).toHaveBeenCalled();
+  });
+});
+
+describe('cancelWorkflowRun', () => {
+  function mockOctokit({
+    displayTitle = '#4242: Fix the flaky test',
+  }: { displayTitle?: string } = {}) {
+    const cancelWorkflowRun_ = vi.fn().mockResolvedValue({});
+    const getWorkflowRun = vi
+      .fn()
+      .mockResolvedValue({ data: { display_title: displayTitle } });
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: {
+        actions: {
+          cancelWorkflowRun: cancelWorkflowRun_,
+          getWorkflowRun,
+          createWorkflowDispatch,
+        },
+      },
+    });
+    return { cancelWorkflowRun_, getWorkflowRun, createWorkflowDispatch };
+  }
+
+  it('cancels the given run on the console repo', async () => {
+    const { cancelWorkflowRun_ } = mockOctokit();
 
     await cancelWorkflowRun(DEFAULT_REPO, 12345);
 
@@ -310,7 +547,78 @@ describe('cancelWorkflowRun', () => {
     });
   });
 
-  it('propagates a GitHub API error (e.g. the run already completed)', async () => {
+  it("notifies the dispatch controller to reconcile the run's anchor issue", async () => {
+    const { getWorkflowRun, createWorkflowDispatch } = mockOctokit({
+      displayTitle: '#4242: Fix the flaky test',
+    });
+
+    await cancelWorkflowRun(DEFAULT_REPO, 12345);
+
+    expect(getWorkflowRun).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      run_id: 12345,
+    });
+    expect(createWorkflowDispatch).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      workflow_id: 'agent-router.yml',
+      ref: 'main',
+      inputs: { kind: 'reconcile', issue: '4242' },
+    });
+  });
+
+  it('parses the anchor from an opencode-prefixed display title the same way the dashboard does', async () => {
+    const { createWorkflowDispatch } = mockOctokit({
+      displayTitle: 'opencode #777: Investigate the outage',
+    });
+
+    await cancelWorkflowRun(DEFAULT_REPO, 12345);
+
+    expect(createWorkflowDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputs: { kind: 'reconcile', issue: '777' },
+      }),
+    );
+  });
+
+  it('skips the reconcile ping when the title carries no anchor number', async () => {
+    const { createWorkflowDispatch } = mockOctokit({
+      displayTitle: 'Manually dispatched run',
+    });
+
+    await expect(
+      cancelWorkflowRun(DEFAULT_REPO, 12345),
+    ).resolves.toBeUndefined();
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+  });
+
+  it('still resolves the cancel when looking up the anchor fails', async () => {
+    const { cancelWorkflowRun_, createWorkflowDispatch } = mockOctokit();
+    (getGithubClient as Mock).mockReturnValue({
+      rest: {
+        actions: {
+          cancelWorkflowRun: cancelWorkflowRun_,
+          getWorkflowRun: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error('Not Found'), { status: 404 }),
+            ),
+          createWorkflowDispatch,
+        },
+      },
+    });
+
+    await expect(
+      cancelWorkflowRun(DEFAULT_REPO, 12345),
+    ).resolves.toBeUndefined();
+    expect(cancelWorkflowRun_).toHaveBeenCalled();
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+  });
+
+  it('propagates a GitHub API error (e.g. the run already completed) and never looks up an anchor', async () => {
+    const getWorkflowRun = vi.fn();
+    const createWorkflowDispatch = vi.fn();
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         actions: {
@@ -319,6 +627,8 @@ describe('cancelWorkflowRun', () => {
             .mockRejectedValue(
               Object.assign(new Error('Conflict'), { status: 409 }),
             ),
+          getWorkflowRun,
+          createWorkflowDispatch,
         },
       },
     });
@@ -326,6 +636,8 @@ describe('cancelWorkflowRun', () => {
     await expect(cancelWorkflowRun(DEFAULT_REPO, 12345)).rejects.toThrow(
       'Conflict',
     );
+    expect(getWorkflowRun).not.toHaveBeenCalled();
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });
 });
 
@@ -490,7 +802,16 @@ describe('retriggerIssue (pipeline routing)', () => {
       expect.objectContaining({ name: 'agent:opencode' }),
     );
     expect(addLabels).not.toHaveBeenCalled();
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+    // clearNeedsHumanLabel's own reconcile ping still fires (the park-state
+    // label really was cleared just above), but the agent-triggering intent
+    // dispatch must stay skipped, or the /oc mention in the note would run
+    // the agent a second time - which is what this test guards against.
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(1);
+    expect(createWorkflowDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputs: { kind: 'reconcile', issue: '2709' },
+      }),
+    );
   });
 
   it('a claude-pipeline note carrying /oc does not trigger the claude early-return', async () => {
@@ -515,19 +836,44 @@ describe('retriggerIssue (pipeline routing)', () => {
 
   it("retries without caller_id when the target repo's router predates that input", async () => {
     const { createWorkflowDispatch } = mockOctokit(['agent:claude']);
-    createWorkflowDispatch
-      .mockRejectedValueOnce(
-        Object.assign(new Error('Unexpected inputs provided: ["caller_id"]'), {
-          status: 422,
-        }),
-      )
-      .mockResolvedValueOnce({});
+    // Simulate a repo whose agent-router.yml specifically doesn't recognize
+    // `caller_id` yet (rather than queuing one rejection by call order):
+    // clearNeedsHumanLabel's own reconcile ping fires first and carries no
+    // `caller_id`, so it must not be the call that trips this 422.
+    createWorkflowDispatch.mockImplementation(
+      async ({ inputs }: { inputs: Record<string, string> }) => {
+        if ('caller_id' in inputs) {
+          throw Object.assign(
+            new Error('Unexpected inputs provided: ["caller_id"]'),
+            { status: 422 },
+          );
+        }
+        return {};
+      },
+    );
 
     await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
-    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(3);
+    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        inputs: { kind: 'reconcile', issue: '2709' },
+      }),
+    );
     expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
       2,
+      expect.objectContaining({
+        inputs: {
+          issue: '2709',
+          pipeline: 'claude',
+          mode: 'implement',
+          caller_id: DISPATCH_ID,
+        },
+      }),
+    );
+    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
+      3,
       expect.objectContaining({
         inputs: { issue: '2709', pipeline: 'claude', mode: 'implement' },
       }),
@@ -543,7 +889,11 @@ describe('retriggerIssue (pipeline routing)', () => {
     await expect(
       retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
     ).rejects.toThrow('Server Error');
-    expect(createWorkflowDispatch).toHaveBeenCalledTimes(1);
+    // clearNeedsHumanLabel's reconcile ping attempts and fails first (its
+    // own failure is swallowed - see the closeIssue/clearHumanNeededLabel
+    // notify tests), then the real intent dispatch attempts and fails,
+    // which is what actually propagates out of retriggerIssue.
+    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
   });
 });
 
