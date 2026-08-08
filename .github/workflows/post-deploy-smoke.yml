@@ -56,7 +56,15 @@ permissions:
   issues: write
 
 concurrency:
-  group: post-deploy-smoke
+  # A job-level `if:` does not keep this workflow run out of its workflow-
+  # level concurrency group. GitHub retains at most one pending run per
+  # group, so a later `Deploy console` run whose deploy job was skipped can
+  # otherwise evict the pending smoke for a real successful deploy before
+  # either `smoke` or `alert` evaluates its guard. Production evidence:
+  # successful deploy 31265350447 queued smoke 31265599938, then skipped
+  # deploy 31266056841 evicted it via smoke 31266058986. Keep successful
+  # deploys serialized with each other while isolating non-success triggers.
+  group: post-deploy-smoke-${{ github.event.workflow_run.conclusion }}
   cancel-in-progress: false
 
 jobs:

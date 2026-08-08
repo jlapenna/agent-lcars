@@ -1329,6 +1329,24 @@ test('post-deploy-smoke.yml gates only on conclusion, never on head_branch (#307
   assert.doesNotMatch(jobsSection, /head_branch/u);
 });
 
+test('post-deploy-smoke.yml isolates successful deploys from skipped workflow triggers (#787)', async () => {
+  // `jobs.smoke.if` is evaluated only after a workflow run has entered its
+  // workflow-level concurrency group. Without the upstream conclusion in
+  // the key, a later skipped Deploy console run can evict the one pending
+  // smoke for an earlier successful production deploy before that guard is
+  // evaluated.
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'post-deploy-smoke.yml'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /^\s+group:\s+post-deploy-smoke-\$\{\{ github\.event\.workflow_run\.conclusion \}\}\s*$/mu,
+  );
+  assert.doesNotMatch(source, /^\s+group:\s+post-deploy-smoke\s*$/mu);
+  assert.match(source, /^\s+cancel-in-progress:\s+false\s*$/mu);
+});
+
 test('deploy-console.yml fails closed when the triggering Verify job did not pass (#543)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'deploy-console.yml'),
