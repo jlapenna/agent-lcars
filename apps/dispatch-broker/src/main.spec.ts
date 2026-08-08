@@ -23,6 +23,7 @@ import {
 import {
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  assertCompletionBindingBeforeInitialization,
   assertCompletionLedgerBinding,
   assertWorkerRun,
   CompletionBindingError,
@@ -1545,6 +1546,46 @@ test('authoritative completion binding rejects stale body fields before mutation
     );
   }
   assert.deepEqual(ledger, before);
+});
+
+test('completion binding rejects missing authority state before initialization', async () => {
+  const port = new InMemoryStoragePort();
+  const requests = [];
+  const normalized = {
+    kind: 'completion' as const,
+    task,
+    sourceKind: 'completion' as const,
+    sourceId: 'worker-run:42',
+    transportRunId: 42,
+    workerRunId: 42,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workflow: 'codex.yml',
+  };
+
+  await assert.rejects(
+    () =>
+      assertCompletionBindingBeforeInitialization(
+        {
+          request: async (...args) => {
+            requests.push(args);
+            throw new Error('Completion preflight must not call GitHub');
+          },
+          requestOk: async (...args) => {
+            requests.push(args);
+            throw new Error('Completion preflight must not call GitHub');
+          },
+        },
+        task,
+        normalized,
+        'authority',
+        () => port,
+      ),
+    CompletionBindingError,
+  );
+  assert.equal(await port.readTask(task), undefined);
+  assert.deepEqual(requests, []);
 });
 
 test('only unambiguous non-transient 4xx dispatch failures are definite rejections', () => {

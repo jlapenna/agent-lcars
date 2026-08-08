@@ -3723,6 +3723,17 @@ function assertCompletionLedgerBinding(ledger, normalized) {
   }
   return generation;
 }
+async function assertCompletionBindingBeforeInitialization(client, task, normalized, storageMode, storagePortFactory) {
+  const ledger = storageMode === "authority" ? (await storagePortFactory().readTask(task))?.controllerState : (await loadLedger(client, task, void 0, {
+    createIfMissing: false
+  }))?.ledger;
+  if (!ledger) {
+    throw new CompletionBindingError(
+      "Completion callback does not match the bound worker run"
+    );
+  }
+  assertCompletionLedgerBinding(ledger, normalized);
+}
 function completionMatches(generation, normalized, run) {
   return completionLedgerMatches(generation, normalized) && run.id === normalized.workerRunId;
 }
@@ -4027,6 +4038,15 @@ async function processNormalizedEvent({
       }
       throw error;
     }
+  }
+  if (normalized.kind === "completion") {
+    await assertCompletionBindingBeforeInitialization(
+      client,
+      task,
+      normalized,
+      storageMode,
+      storagePortFactory
+    );
   }
   let loaded;
   try {
@@ -4367,6 +4387,7 @@ export {
   RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  assertCompletionBindingBeforeInitialization,
   assertCompletionLedgerBinding,
   assertWorkerRun,
   completionMatches,

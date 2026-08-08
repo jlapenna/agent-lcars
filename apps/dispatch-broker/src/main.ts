@@ -1842,6 +1842,34 @@ export function assertCompletionLedgerBinding(
   return generation;
 }
 
+/**
+ * Authenticate a completion against existing state without creating state,
+ * acquiring a lease, projecting a comment, or invoking fail-closed parking.
+ * The leased copy is checked again below before mutation.
+ */
+export async function assertCompletionBindingBeforeInitialization(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+  normalized: CompletionEvent,
+  storageMode: ReturnType<typeof parseDispatchStorageMode>,
+  storagePortFactory: () => StoragePort,
+): Promise<void> {
+  const ledger =
+    storageMode === 'authority'
+      ? (await storagePortFactory().readTask(task))?.controllerState
+      : (
+          await loadLedger(client, task, undefined, {
+            createIfMissing: false,
+          })
+        )?.ledger;
+  if (!ledger) {
+    throw new CompletionBindingError(
+      'Completion callback does not match the bound worker run',
+    );
+  }
+  assertCompletionLedgerBinding(ledger, normalized);
+}
+
 function completionMatches(
   generation: LedgerGeneration | undefined,
   normalized: CompletionEvent,
@@ -2392,6 +2420,15 @@ export async function processNormalizedEvent({
       }
       throw error;
     }
+  }
+  if (normalized.kind === 'completion') {
+    await assertCompletionBindingBeforeInitialization(
+      client,
+      task,
+      normalized,
+      storageMode,
+      storagePortFactory,
+    );
   }
   let loaded: LoadedLedger | undefined;
   try {

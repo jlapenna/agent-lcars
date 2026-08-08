@@ -73,7 +73,10 @@ jobs:
     # control-plane pool is unavailable. App Hosting performs discovery and
     # direct processing after validating this job's OIDC claims.
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Two bounded five-candidate waves can each wait 130s on live authority
+    # leases. Keep the scheduler alive through that 260s worst case plus
+    # discovery, GitHub API, and response overhead.
+    timeout-minutes: 7
     permissions:
       id-token: write
     steps:
@@ -88,7 +91,7 @@ jobs:
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$RECONCILE_AUDIENCE")"
           oidc_token="$(jq -er '.value | select(type == "string" and length > 0)' \
             <<<"$token_response")"
-          curl --fail-with-body --silent --show-error --max-time 240 \
+          curl --fail-with-body --silent --show-error --max-time 360 \
             -X POST \
             -H "Authorization: Bearer $oidc_token" \
             "$RECONCILE_URL"
