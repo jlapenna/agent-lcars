@@ -52,6 +52,7 @@ import {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  hasLedgerProjection,
   LedgerProjectionRepairError,
   listAll,
   loadLedger,
@@ -86,6 +87,7 @@ import {
 import {
   acquireAuthority,
   type AuthoritySession,
+  AuthorityStateMissingError,
   AuthorityStateNotFoundError,
   persistAuthority,
   releaseAuthority,
@@ -1344,6 +1346,15 @@ async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
 ): Promise<void> {
+  if (loaded.authority && loaded.projectionAvailable === false) {
+    console.log(
+      `::warning::Deferring worker dispatch for ` +
+        `${loaded.ledger.task.repository}#${loaded.ledger.task.issue}: ` +
+        `the compatibility ledger projection is unavailable, so the ` +
+        `still-comment-backed worker preflight could not verify a binding.`,
+    );
+    return;
+  }
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
       (candidate) => candidate.state === 'accepted',
@@ -1465,7 +1476,15 @@ async function handleCompletion(
   client: GitHubApiClient,
   loaded: LoadedLedger,
   normalized: CompletionEvent,
+  polling: {
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
 ): Promise<void> {
+  const now = polling.now ?? Date.now;
+  const sleep =
+    polling.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const generation = loaded.ledger.generations.find(
     (candidate) => candidate.generation === normalized.generation,
   );
@@ -1518,11 +1537,22 @@ async function handleCompletion(
   }
   await saveLedger(client, loaded);
 
-  const deadline = Date.now() + 120_000;
+  const deadline = now() + 120_000;
   let delay = 2_000;
-  while (run.status !== 'completed' && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, delay));
+  while (run.status !== 'completed' && now() < deadline) {
+    await sleep(delay);
     delay = Math.min(delay * 2, 15_000);
+    // Completion polling can run for the full two-minute lease interval and
+    // its final sleep may cross the deadline. Renew before every remote read
+    // so another Action or hosted delivery cannot take the lease while this
+    // completion handler still owns and is about to persist the aggregate.
+    if (loaded.authority) {
+      await persistAuthority(
+        loaded.authority,
+        loaded.ledger,
+        new Date(now()).toISOString(),
+      );
+    }
     try {
       run = await getWorkflowRun(
         client,
@@ -1747,6 +1777,7 @@ async function loadBrokerLedger(
   isPullRequest: boolean,
   storageMode: ReturnType<typeof parseDispatchStorageMode> = 'off',
   leaseOwner = '',
+  storagePortFactory: () => StoragePort = createStoragePort,
 ): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
@@ -1757,21 +1788,37 @@ async function loadBrokerLedger(
   const untrackedPullRequestControl =
     isPullRequest && normalized.kind === 'anchor-control';
   if (storageMode === 'authority') {
+    const port = storagePortFactory();
     let authority;
     try {
       authority = await acquireAuthority(
-        createStoragePort(),
+        port,
         task,
         leaseOwner,
         createLedger(task),
         {
-          createIfMissing: !untrackedPullRequestControl,
+          // Missing state needs a GitHub projection check below before a new
+          // empty aggregate can be created safely.
+          createIfMissing: false,
           busyWaitMs: 130_000,
         },
       );
     } catch (error) {
-      if (error instanceof AuthorityStateNotFoundError) return undefined;
-      throw error;
+      if (error instanceof AuthorityStateNotFoundError) {
+        if (await hasLedgerProjection(client, task)) {
+          throw new AuthorityStateMissingError(task);
+        }
+        if (untrackedPullRequestControl) return undefined;
+        authority = await acquireAuthority(
+          port,
+          task,
+          leaseOwner,
+          createLedger(task),
+          { busyWaitMs: 130_000 },
+        );
+      } else {
+        throw error;
+      }
     }
     try {
       const projected: LoadedLedger = await loadLedgerProjection(

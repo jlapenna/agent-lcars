@@ -36,7 +36,7 @@ export class AuthorityStateNotFoundError extends Error {
 export class AuthorityStateMissingError extends Error {
   constructor(public readonly task: TaskRef) {
     super(
-      `Stored task ${task.repository}#${task.issue} predates exact controller state; return to shadow mode and backfill it before authority cutover`,
+      `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; return to shadow mode and backfill it before authority cutover`,
     );
     this.name = 'AuthorityStateMissingError';
   }

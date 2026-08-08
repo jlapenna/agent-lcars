@@ -994,6 +994,30 @@ async function loadLedgerProjection(
   return { comment, ledger, created: true, existingComments: comments };
 }
 
+/**
+ * Detect whether a task already has a workflow-owned compatibility ledger
+ * without parsing that projection as controller state. Authority cutover
+ * uses this only when Firestore has no task document: an existing marker
+ * means shadow backfill was incomplete and an empty aggregate must not be
+ * seeded over the live task history.
+ */
+async function hasLedgerProjection(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  workflowIdentity = 'github-actions[bot]',
+): Promise<boolean> {
+  const comments = await listAll<GitHubIssueComment>(
+    api,
+    `${repositoryPath(task)}/issues/${task.issue}/comments`,
+  );
+  return comments.some(
+    (comment) =>
+      comment.body?.includes(LEDGER_MARKER) &&
+      comment.user?.login === workflowIdentity &&
+      comment.user?.type === 'Bot',
+  );
+}
+
 async function saveLedger(
   api: GitHubApi,
   loaded: LoadedLedger,
@@ -1404,6 +1428,7 @@ export {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  hasLedgerProjection,
   LedgerProjectionRepairError,
   listAll,
   listOpenAgentLabeledIssues,

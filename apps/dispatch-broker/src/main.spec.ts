@@ -229,6 +229,53 @@ test('a launched worker stays active when launch-outbox resolution fails', async
   );
 });
 
+test('authority defers worker launch while the compatibility projection is unavailable', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-projection-unavailable',
+    sourceKind: 'manual',
+    sourceId: 'source-projection-unavailable',
+    transportRunId: 738,
+    occurredAt: '2026-08-08T07:00:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'projection-unavailable',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:projection-unavailable',
+    seed,
+  );
+  const client = {
+    request: async () => {
+      throw new Error('worker dispatch must be deferred');
+    },
+    requestOk: async () => {
+      throw new Error('projection must remain untouched');
+    },
+  };
+
+  await dispatchAccepted(client, {
+    ledger: authority.ledger,
+    comment: { id: 0 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: false,
+  });
+
+  assert.equal(authority.ledger.generations[0].state, 'accepted');
+  assert.equal(
+    await port.readLaunchOperation('g1:intent-projection-unavailable'),
+    undefined,
+  );
+});
+
 test('authority records projection convergence only after the compatibility comment succeeds', async () => {
   const port = new InMemoryStoragePort();
   const ledger = createLedger(task);
@@ -536,6 +583,71 @@ test('an issue close keeps the existing create-if-missing ledger behavior', asyn
   assert.deepEqual(
     calls.map((call) => call.method),
     ['GET', 'POST'],
+  );
+});
+
+test('authority rejects an existing comment-backed task that missed exact-state backfill', async () => {
+  const ledger = createLedger(task);
+  const port = new InMemoryStoragePort();
+  const client = {
+    requestOk: async () => [
+      {
+        id: 9,
+        body: renderLedgerComment(ledger),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+    ],
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'reconcile', task },
+        false,
+        'authority',
+        'delivery:missing-backfill',
+        () => port,
+      ),
+    /no exact authoritative controller state/u,
+  );
+  assert.equal(await port.readTask(task), undefined);
+});
+
+test('authority may seed a genuinely new task with no compatibility projection', async () => {
+  const port = new InMemoryStoragePort();
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if ((options.method ?? 'GET') === 'GET') return [];
+      if (options.method === 'POST') {
+        return {
+          id: 9,
+          body: options.body.body,
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        };
+      }
+      throw new Error(`Unexpected API request: ${options.method} ${path}`);
+    },
+  };
+
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'reconcile', task },
+    false,
+    'authority',
+    'delivery:new-task',
+    () => port,
+  );
+
+  assert.equal(loaded.ledger.generations.length, 0);
+  assert.ok((await port.readTask(task))?.controllerState);
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ['GET', 'GET', 'POST'],
   );
 });
 
@@ -1051,6 +1163,63 @@ test('a redelivered completion after terminal reconciliation is a no-op', async 
   );
   assert.equal(ledger.generations[0].state, 'completed');
   assert.equal(writes, 0);
+});
+
+test('authority renews its lease before every completion poll that can cross the original expiry', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = boundLedger();
+  const startedAt = Date.now();
+  let clock = startedAt;
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:completion-poll',
+    ledger,
+    { now: () => new Date(clock).toISOString() },
+  );
+  let crossedOriginalExpiry = false;
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) {
+        if (clock - startedAt >= 120_000) {
+          crossedOriginalExpiry = true;
+          assert.ok(Date.parse(authority.session.lease.expiresAt) > clock);
+          return workerRun('completed');
+        }
+        return workerRun();
+      }
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+
+  await handleCompletion(
+    client,
+    {
+      ledger: authority.ledger,
+      comment: { id: 9 },
+      authority: authority.session,
+    },
+    {
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceId: 'worker-run:42',
+      transportRunId: 9003,
+    },
+    {
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    },
+  );
+
+  assert.equal(crossedOriginalExpiry, true);
+  assert.equal(authority.ledger.generations[0].state, 'completed');
 });
 
 // --- reconcileLedger / trackMissingRun (#305) -------------------------

@@ -23,6 +23,7 @@ import {
   findRunsForGeneration,
   findSupersedingRouterRun,
   GitHubApiError,
+  hasLedgerProjection,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   listRecentlyClosedAgentLabeledIssues,
@@ -876,6 +877,38 @@ test('authority projection fails closed when duplicate repair is rejected', asyn
     () => loadLedgerProjection(api, task, authoritative),
     /Failed to remove duplicate workflow-owned ledger comment 4: HTTP 403/u,
   );
+});
+
+test('authority detects an existing workflow-owned projection without parsing it', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () =>
+      response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> corrupt',
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+      ]),
+  });
+
+  assert.equal(await hasLedgerProjection(api, task), true);
+});
+
+test('authority does not treat an unowned marker as an existing projection', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () =>
+      response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> attacker',
+          user: { login: 'worker', type: 'User' },
+        },
+      ]),
+  });
+
+  assert.equal(await hasLedgerProjection(api, task), false);
 });
 
 test('missing ledger is created once and pinned only with an unoccupied issue pin', async () => {

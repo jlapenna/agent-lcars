@@ -1249,6 +1249,15 @@ async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "gith
   }
   return { comment, ledger, created: true, existingComments: comments };
 }
+async function hasLedgerProjection(api2, task, workflowIdentity = "github-actions[bot]") {
+  const comments = await listAll(
+    api2,
+    `${repositoryPath(task)}/issues/${task.issue}/comments`
+  );
+  return comments.some(
+    (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.login === workflowIdentity && comment.user?.type === "Bot"
+  );
+}
 async function saveLedger(api2, loaded) {
   const root = repositoryPath(loaded.ledger.task);
   const comment = await api2.requestOk(
@@ -2170,7 +2179,7 @@ var AuthorityStateNotFoundError = class extends Error {
 var AuthorityStateMissingError = class extends Error {
   constructor(task) {
     super(
-      `Stored task ${task.repository}#${task.issue} predates exact controller state; return to shadow mode and backfill it before authority cutover`
+      `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; return to shadow mode and backfill it before authority cutover`
     );
     this.task = task;
     this.name = "AuthorityStateMissingError";
@@ -3165,6 +3174,12 @@ function isDefiniteDispatchRejection(error) {
   return error instanceof GitHubApiError && Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status);
 }
 async function dispatchAccepted(client, loaded) {
+  if (loaded.authority && loaded.projectionAvailable === false) {
+    console.log(
+      `::warning::Deferring worker dispatch for ${loaded.ledger.task.repository}#${loaded.ledger.task.issue}: the compatibility ledger projection is unavailable, so the still-comment-backed worker preflight could not verify a binding.`
+    );
+    return;
+  }
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
       (candidate) => candidate.state === "accepted"
@@ -3246,7 +3261,9 @@ async function dispatchAccepted(client, loaded) {
 function completionMatches(generation, normalized, run) {
   return generation && generation.intentId === normalized.intentId && generation.attempt?.token === normalized.token && generation.attempt?.runId === normalized.workerRunId && run.id === normalized.workerRunId;
 }
-async function handleCompletion(client, loaded, normalized) {
+async function handleCompletion(client, loaded, normalized, polling = {}) {
+  const now = polling.now ?? Date.now;
+  const sleep2 = polling.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const generation = loaded.ledger.generations.find(
     (candidate) => candidate.generation === normalized.generation
   );
@@ -3286,11 +3303,18 @@ async function handleCompletion(client, loaded, normalized) {
     observeCompletion(loaded.ledger, generation.generation, run.id);
   }
   await saveLedger2(client, loaded);
-  const deadline = Date.now() + 12e4;
+  const deadline = now() + 12e4;
   let delay = 2e3;
-  while (run.status !== "completed" && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, delay));
+  while (run.status !== "completed" && now() < deadline) {
+    await sleep2(delay);
     delay = Math.min(delay * 2, 15e3);
+    if (loaded.authority) {
+      await persistAuthority(
+        loaded.authority,
+        loaded.ledger,
+        new Date(now()).toISOString()
+      );
+    }
     try {
       run = await getWorkflowRun(
         client,
@@ -3398,24 +3422,40 @@ async function healStaleAgentLabels(client, loaded, intent) {
   });
   if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "") {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort) {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
   if (storageMode === "authority") {
+    const port = storagePortFactory();
     let authority;
     try {
       authority = await acquireAuthority(
-        createStoragePort(),
+        port,
         task,
         leaseOwner,
         createLedger(task),
         {
-          createIfMissing: !untrackedPullRequestControl,
+          // Missing state needs a GitHub projection check below before a new
+          // empty aggregate can be created safely.
+          createIfMissing: false,
           busyWaitMs: 13e4
         }
       );
     } catch (error) {
-      if (error instanceof AuthorityStateNotFoundError) return void 0;
-      throw error;
+      if (error instanceof AuthorityStateNotFoundError) {
+        if (await hasLedgerProjection(client, task)) {
+          throw new AuthorityStateMissingError(task);
+        }
+        if (untrackedPullRequestControl) return void 0;
+        authority = await acquireAuthority(
+          port,
+          task,
+          leaseOwner,
+          createLedger(task),
+          { busyWaitMs: 13e4 }
+        );
+      } else {
+        throw error;
+      }
     }
     try {
       const projected = await loadLedgerProjection(
