@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { E2E_CLI_SESSION_IDS, useCliSessionFixtures } from './seed';
-import { cliSessionRow, useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
 useCliSessionFixtures();
@@ -39,21 +39,34 @@ test.describe('/agents page @smoke', () => {
       page.getByRole('heading', { name: 'Recent Outcomes' }),
     ).toBeVisible();
 
+    // Cache Components intentionally preserve the previous route's DOM in
+    // a hidden React Activity boundary during client navigation. Scope
+    // test-id queries to the visible destination section: role queries do
+    // this automatically, while getByTestId also sees the cached Deck row.
+    const activeAgents = page.getByTestId('active-agents-section');
     // The seeded live/idle CLI sessions (same fixtures the home page's
     // panel renders) show up here too, via the shared CliSessionRow.
-    const liveRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.live);
+    const liveRow = activeAgents.getByTestId(
+      `cli-session-${E2E_CLI_SESSION_IDS.live}`,
+    );
     await expect(liveRow.getByTestId('cli-session-liveness')).toHaveText(
       'live',
     );
-    const idleRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.idle);
+    const idleRow = activeAgents.getByTestId(
+      `cli-session-${E2E_CLI_SESSION_IDS.idle}`,
+    );
     await expect(idleRow.getByTestId('cli-session-liveness')).toHaveText(
       'idle',
     );
     // Ended/stale sessions are history, not active work - they must not
     // appear in the Active Agents section at all (no collapsed disclosure
     // here, unlike the home page's panel).
-    await expect(cliSessionRow(page, E2E_CLI_SESSION_IDS.ended)).toHaveCount(0);
-    await expect(cliSessionRow(page, E2E_CLI_SESSION_IDS.stale)).toHaveCount(0);
+    await expect(
+      activeAgents.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.ended}`),
+    ).toHaveCount(0);
+    await expect(
+      activeAgents.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.stale}`),
+    ).toHaveCount(0);
 
     // No action items are seeded in this environment (see the module doc
     // above), so the claim list is genuinely empty - assert the zero state

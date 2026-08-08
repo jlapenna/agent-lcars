@@ -1,4 +1,7 @@
+'use client';
+
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
@@ -156,6 +159,7 @@ export function ConsoleNavRail({
       {NAV_ITEMS.map((item) => (
         <Anchor
           key={item.key}
+          component={Link}
           href={navHref(item, archiveQuery, repoFilter)}
           underline="never"
           className="lcars-nav-pill"
