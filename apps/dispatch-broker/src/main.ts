@@ -1547,21 +1547,6 @@ async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
 ): Promise<void> {
-  const deferForProjection = (): boolean => {
-    if (!loaded.authority || loaded.projectionAvailable !== false) {
-      return false;
-    }
-    console.log(
-      `::warning::Deferring worker dispatch for ` +
-        `${loaded.ledger.task.repository}#${loaded.ledger.task.issue}: ` +
-        `the compatibility ledger projection is unavailable, so the ` +
-        `still-comment-backed worker preflight could not verify a binding.`,
-    );
-    return true;
-  };
-  if (deferForProjection()) {
-    return;
-  }
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
       (candidate) => candidate.state === 'accepted',
@@ -1605,19 +1590,10 @@ async function dispatchAccepted(
         // persisted state is still accepted; after it, reconciliation has the
         // pending operation proving that no launch outcome was lost.
         await saveLedger(client, loaded);
-        if (loaded.authority && loaded.projectionAvailable === false) {
-          // No worker dispatch has happened yet. Restore the accepted
-          // generation so a later reconcile can retry once its preflight
-          // projection is writable; the pending outbox entry is idempotent.
-          loaded.ledger = beforeScheduling;
-          recordProjectionStatus(loaded.ledger, false);
-          await persistAuthority(loaded.authority, loaded.ledger);
-          return false;
-        }
         return true;
       },
     );
-    if (!scheduled || deferForProjection()) return;
+    if (!scheduled) return;
     let binding: {
       runId: number;
       runUrl: string;

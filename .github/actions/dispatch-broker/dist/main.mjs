@@ -3368,18 +3368,6 @@ async function resolvePendingLaunchAsLaunchedBestEffort(loaded, generation, bind
   }
 }
 async function dispatchAccepted(client, loaded) {
-  const deferForProjection = () => {
-    if (!loaded.authority || loaded.projectionAvailable !== false) {
-      return false;
-    }
-    console.log(
-      `::warning::Deferring worker dispatch for ${loaded.ledger.task.repository}#${loaded.ledger.task.issue}: the compatibility ledger projection is unavailable, so the still-comment-backed worker preflight could not verify a binding.`
-    );
-    return true;
-  };
-  if (deferForProjection()) {
-    return;
-  }
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
       (candidate) => candidate.state === "accepted"
@@ -3413,16 +3401,10 @@ async function dispatchAccepted(client, loaded) {
           }
         }
         await saveLedger2(client, loaded);
-        if (loaded.authority && loaded.projectionAvailable === false) {
-          loaded.ledger = beforeScheduling;
-          recordProjectionStatus(loaded.ledger, false);
-          await persistAuthority(loaded.authority, loaded.ledger);
-          return false;
-        }
         return true;
       }
     );
-    if (!scheduled || deferForProjection()) return;
+    if (!scheduled) return;
     let binding;
     try {
       binding = await dispatchWorker(client, generation, loaded.ledger.task);

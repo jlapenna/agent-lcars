@@ -271,7 +271,7 @@ test('a launched worker stays active when launch-outbox resolution fails', async
   assert.equal((await port.readLaunchOperation(attemptId))?.status, 'launched');
 });
 
-test('authority defers worker launch while the compatibility projection is unavailable', async () => {
+test('authority launches from Firestore while the compatibility projection is unavailable', async () => {
   const port = new InMemoryStoragePort();
   const seed = createLedger(task);
   acceptIntent(seed, {
@@ -294,10 +294,17 @@ test('authority defers worker launch while the compatibility projection is unava
     'delivery:projection-unavailable',
     seed,
   );
+  const runId = 73801;
   const client = {
-    request: async () => {
-      throw new Error('worker dispatch must be deferred');
-    },
+    request: async () => ({
+      status: 200,
+      data: {
+        workflow_run_id: runId,
+        run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+        html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+      },
+      headers: new Headers(),
+    }),
     requestOk: async () => {
       throw new Error('projection must remain untouched');
     },
@@ -311,14 +318,20 @@ test('authority defers worker launch while the compatibility projection is unava
     projectionAvailable: false,
   });
 
-  assert.equal(authority.ledger.generations[0].state, 'accepted');
+  assert.equal(authority.ledger.generations[0].state, 'active');
+  assert.equal(authority.ledger.generations[0].attempt?.runId, runId);
   assert.equal(
-    await port.readLaunchOperation('g1:intent-projection-unavailable'),
-    undefined,
+    (await port.readLaunchOperation('g1:intent-projection-unavailable'))
+      ?.status,
+    'launched',
+  );
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'active',
   );
 });
 
-test('authority restores accepted state when the scheduling projection PATCH fails', async () => {
+test('authority launches when the scheduling projection PATCH fails', async () => {
   const port = new InMemoryStoragePort();
   const seed = createLedger(task);
   acceptIntent(seed, {
@@ -341,11 +354,20 @@ test('authority restores accepted state when the scheduling projection PATCH fai
     'delivery:scheduling-projection-failure',
     seed,
   );
+  const runId = 73901;
   let dispatches = 0;
   const client = {
     request: async () => {
       dispatches += 1;
-      throw new Error('worker dispatch must not happen');
+      return {
+        status: 200,
+        data: {
+          workflow_run_id: runId,
+          run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+          html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+        },
+        headers: new Headers(),
+      };
     },
     requestOk: async () => {
       throw new Error('GitHub projection unavailable');
@@ -361,17 +383,18 @@ test('authority restores accepted state when the scheduling projection PATCH fai
 
   await dispatchAccepted(client, loaded);
 
-  assert.equal(dispatches, 0);
+  assert.equal(dispatches, 1);
   assert.equal(loaded.projectionAvailable, false);
-  assert.equal(loaded.ledger.generations[0].state, 'accepted');
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, runId);
   assert.equal(
     (await port.readTask(task))?.controllerState?.generations[0].state,
-    'accepted',
+    'active',
   );
   assert.equal(
     (await port.readLaunchOperation('g1:intent-scheduling-projection-failure'))
       ?.status,
-    'pending',
+    'launched',
   );
 });
 
