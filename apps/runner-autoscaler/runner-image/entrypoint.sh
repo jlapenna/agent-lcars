@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-# See externals-health.sh for node24_runs/repair_externals_if_needed and why
-# the populate/repair check must actually invoke node24 rather than just
-# stat it. Shared with the control plane's periodic idle-host maintenance
-# sweep (scaler.go:sweepHostWorkDir, agent-lcars#392) so both call sites use
-# identical logic instead of two copies that can drift apart.
+# See externals-health.sh for required_node_runtimes_run and why the
+# populate/repair check must actually invoke each required Node runtime rather
+# than just stat it. Shared with the control plane's periodic idle-host
+# maintenance sweep (scaler.go:sweepHostWorkDir, agent-lcars#392) so both call
+# sites use identical logic instead of two copies that can drift apart.
 # shellcheck source=externals-health.sh
 source /usr/local/lib/agent-lcars/externals-health.sh
 # shellcheck source=toolchain-health.sh
@@ -20,8 +20,8 @@ repair_externals_if_needed
 # exits here without registering is swept by the scaler's existing
 # crash-loop/orphan cleanup (see deregisterRunner), the same path already
 # used for a dead host or a crash-looping image.
-if ! node24_runs; then
-  echo "FATAL: /home/runner/externals/node24/bin/node failed a preflight invocation" >&2
+if ! required_node_runtimes_run; then
+  echo "FATAL: required Actions runtimes node20/node24 failed a preflight invocation" >&2
   exit 1
 fi
 

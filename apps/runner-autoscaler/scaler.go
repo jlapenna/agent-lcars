@@ -2417,7 +2417,7 @@ fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
 
-# Proactively verify (and repair) the shared externals/node24 runtime as
+# Proactively verify (and repair) the shared required Actions Node runtimes as
 # part of this same idle-host maintenance pass (agent-lcars#392), using the
 # identical self-heal logic and lock file entrypoint.sh uses (baked into
 # this same image), so a broken host is caught between real jobs instead of
@@ -2434,7 +2434,7 @@ echo "SWEEP before=$before after=$after cap=$cap"
 if [ -f /usr/local/lib/agent-lcars/externals-health.sh ]; then
   . /usr/local/lib/agent-lcars/externals-health.sh
   repair_externals_if_needed
-  if node24_runs; then
+  if required_node_runtimes_run; then
     echo "EXTERNALS_HEALTHY=1"
   else
     echo "EXTERNALS_HEALTHY=0"
@@ -2534,7 +2534,7 @@ fi
 		hostExternalsHealthyGauge.WithLabelValues(host).Set(1)
 	} else {
 		hostExternalsHealthyGauge.WithLabelValues(host).Set(0)
-		a.logger.Warn("Shared externals/node24 runtime is still unhealthy after a repair attempt", slog.String("host", host))
+		a.logger.Warn("Shared required Actions Node runtime is still unhealthy after a repair attempt", slog.String("host", host))
 	}
 	return nil
 }
