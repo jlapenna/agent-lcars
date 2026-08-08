@@ -385,6 +385,67 @@ test('checkRoundTrip reports nothing when the read-back exactly matches what was
   assert.deepEqual(checkRoundTrip(written, { ...written }), []);
 });
 
+test('checkRoundTrip treats Firestore-dropped undefined properties as absent, including nested attempt and authorization fields', () => {
+  const written = storedTaskFixture({
+    desiredIntentId: undefined,
+    signals: [
+      {
+        sourceKind: 'completion',
+        sourceId: 'worker-run:1',
+        occurredAt: '2026-08-01T00:00:00.000Z',
+        authorization: {
+          observed: true,
+          actor: undefined,
+          workflow: 'opencode.yml',
+        },
+      },
+    ],
+    intents: [
+      {
+        intentId: 'intent-1',
+        sourceId: 'source-1',
+        occurredAt: '2026-08-01T00:00:00.000Z',
+        state: 'active',
+        attempt: {
+          attemptId: 'g1:intent-1',
+          token: 'token',
+          dispatchStartedAt: '2026-08-01T00:00:00.000Z',
+          completedAt: undefined,
+          conclusion: undefined,
+        },
+      },
+    ],
+  });
+  const after: StoredTask = {
+    task: written.task,
+    revision: written.revision,
+    updatedAt: written.updatedAt,
+    signals: [
+      {
+        authorization: { workflow: 'opencode.yml', observed: true },
+        occurredAt: '2026-08-01T00:00:00.000Z',
+        sourceId: 'worker-run:1',
+        sourceKind: 'completion',
+      },
+    ],
+    intents: [
+      {
+        state: 'active',
+        attempt: {
+          token: 'token',
+          attemptId: 'g1:intent-1',
+          dispatchStartedAt: '2026-08-01T00:00:00.000Z',
+        },
+        occurredAt: '2026-08-01T00:00:00.000Z',
+        sourceId: 'source-1',
+        intentId: 'intent-1',
+      },
+    ],
+  };
+
+  assert.deepEqual(checkRoundTrip(written, after), []);
+});
+
 test('checkRoundTrip reports a revision divergence, expected vs undefined, when storage has nothing for a task it was just told to write', () => {
   const written = storedTaskFixture();
   assert.deepEqual(checkRoundTrip(written, undefined), [
