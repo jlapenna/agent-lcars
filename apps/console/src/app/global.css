@@ -1037,7 +1037,7 @@
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
-    grid-template-columns: minmax(11rem, 13rem) minmax(0, 1fr);
+    grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr);
     min-height: 80px;
     margin-bottom: 0 !important;
     gap: 0;
@@ -1115,7 +1115,6 @@
     )
     .lcars-nav {
     flex-wrap: nowrap;
-    gap: 4px;
   }
 
   .console-header:is(
@@ -1126,7 +1125,7 @@
       [data-current='costs']
     )
     .lcars-nav-pill {
-    padding: 7px 14px;
+    padding: 7px 18px;
     font-size: 0.875rem;
   }
 
@@ -1225,6 +1224,38 @@
 }
 
 @media (min-width: 48em) and (max-width: 63.99em) {
+  .console-header:is(
+    [data-current='deck'],
+    [data-current='inbox'],
+    [data-current='agents'],
+    [data-current='sessions'],
+    [data-current='costs']
+  ) {
+    grid-template-columns: minmax(11rem, 13rem) minmax(0, 1fr);
+  }
+
+  .console-header:is(
+      [data-current='deck'],
+      [data-current='inbox'],
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
+    .lcars-nav {
+    gap: 4px;
+  }
+
+  .console-header:is(
+      [data-current='deck'],
+      [data-current='inbox'],
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
+    .lcars-nav-pill {
+    padding: 7px 14px;
+  }
+
   .console-header:is(
       [data-current='deck'],
       [data-current='inbox'],
