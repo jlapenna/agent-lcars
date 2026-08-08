@@ -45,5 +45,6 @@ if [ "$affected_count" -eq 0 ]; then
   exit 0
 fi
 
-echo "apps/console is affected - running a production 'next build' smoke (RSC boundary guard, #537)..."
-./tools/nx run @agent-lcars/console:build
+echo "apps/console is affected - building and probing the deployable standalone bundle (#537, #736)..."
+./tools/nx run @agent-lcars/console:bundle
+./tools/console-standalone-smoke.sh
