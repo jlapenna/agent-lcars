@@ -99,7 +99,6 @@ async function mapWithConcurrency(items, limit, worker) {
   await Promise.all(workers);
   return results;
 }
-var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var FIND_RUNS_FOR_GENERATION_CREATED_BUFFER_MS = 5 * 60 * 1e3;
 
 // apps/dispatch-broker/src/rerun-infra-killed-runs/detect.ts
