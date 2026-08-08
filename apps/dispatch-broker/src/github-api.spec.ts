@@ -857,6 +857,48 @@ test('authority projection repairs every extra corrupt marker and selects the wo
   );
 });
 
+test('authority projection recognizes both Action and hosted controller identities during migration', async () => {
+  const authoritative = createLedger(task);
+  const deleted = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      if (options.method === 'DELETE') {
+        deleted.push(Number(url.split('/').at(-1)));
+        return response(204);
+      }
+      return response(200, [
+        {
+          id: 4,
+          body: renderLedgerComment(authoritative),
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+        {
+          id: 2,
+          body: renderLedgerComment(authoritative),
+          user: { login: 'jlapenna', type: 'User' },
+        },
+        {
+          id: 1,
+          body: renderLedgerComment(authoritative),
+          user: { login: 'worker', type: 'User' },
+        },
+      ]);
+    },
+  });
+
+  const projected = await loadLedgerProjection(api, task, authoritative, [
+    { login: 'github-actions[bot]', type: 'Bot' },
+    { login: 'jlapenna', type: 'User' },
+  ]);
+
+  assert.equal(projected.comment.id, 2);
+  assert.deepEqual(
+    deleted.sort((left, right) => left - right),
+    [1, 4],
+  );
+});
+
 test('authority projection reports when duplicate repair is rejected', async () => {
   const authoritative = createLedger(task);
   const body = renderLedgerComment(authoritative);
@@ -938,6 +980,33 @@ test('authority refuses to initialize over an existing workflow-owned projection
       api,
       task,
       '2026-08-08T00:00:00.000Z',
+    ),
+    'compatibility-projection',
+  );
+});
+
+test('authority refuses to initialize over a hosted controller projection', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () =>
+      response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> hosted',
+          user: { login: 'jlapenna', type: 'User' },
+        },
+      ]),
+  });
+
+  assert.equal(
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+      [
+        { login: 'github-actions[bot]', type: 'Bot' },
+        { login: 'jlapenna', type: 'User' },
+      ],
     ),
     'compatibility-projection',
   );

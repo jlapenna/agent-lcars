@@ -57,8 +57,8 @@ import {
   listAll,
   removeIssueLabel,
   repositoryPath,
-} from '../github-api.js';
-import { mutate } from './ledger-core.js';
+} from '../github-api';
+import { mutate } from './ledger-core';
 
 /** The projector's own GitHub client shape — derived from
  *  `createGitHubApi`'s real return type rather than a third hand-copied

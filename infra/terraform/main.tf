@@ -2,6 +2,7 @@ locals {
   services = toset([
     "firebaseapphosting.googleapis.com", "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com", "cloudbuild.googleapis.com",
+    "cloudtasks.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com", "firebase.googleapis.com",
     "firestore.googleapis.com", "iam.googleapis.com",
@@ -149,6 +150,61 @@ resource "google_project_iam_member" "apphosting_firestore" {
   }
 }
 
+# Hosted admission shares controller authority with the Action fallback during
+# migration. Keep the grant at the dedicated database boundary; the console
+# remains read-only in telemetry's default database above.
+resource "google_project_iam_member" "apphosting_dispatch_controller" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+  depends_on = [
+    google_firebase_project.this,
+    google_firestore_database.dispatch_controller,
+  ]
+  condition {
+    title       = "hosted-dispatch-controller-writer"
+    description = "Hosted admission writes only the dispatch controller database."
+    expression  = "resource.name == \"projects/${var.project_id}/databases/${google_firestore_database.dispatch_controller.name}\""
+  }
+}
+
+# GitHub's webhook response deadline is shorter than the controller's bounded
+# lease wait. Admission therefore acknowledges only after a named Cloud Task
+# durably owns the exact signed request; this queue retries broker processing.
+resource "google_cloud_tasks_queue" "dispatch_webhooks" {
+  project         = var.project_id
+  location        = var.region
+  name            = "dispatch-webhooks"
+  deletion_policy = "ABANDON"
+
+  rate_limits {
+    max_concurrent_dispatches = 10
+    max_dispatches_per_second = 10
+  }
+
+  retry_config {
+    max_attempts       = 100
+    max_retry_duration = "86400s"
+    min_backoff        = "1s"
+    max_backoff        = "60s"
+    max_doublings      = 5
+  }
+
+  stackdriver_logging_config {
+    sampling_ratio = 1
+  }
+
+  depends_on = [google_project_service.services]
+}
+
+resource "google_cloud_tasks_queue_iam_member" "apphosting_dispatch_webhooks_enqueuer" {
+  project  = var.project_id
+  location = google_cloud_tasks_queue.dispatch_webhooks.location
+  name     = google_cloud_tasks_queue.dispatch_webhooks.name
+  role     = "roles/cloudtasks.enqueuer"
+  member   = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
 resource "google_storage_bucket_iam_member" "apphosting_transcripts" {
   bucket = google_storage_bucket.transcripts.name
   role   = "roles/storage.objectViewer"
@@ -289,7 +345,13 @@ resource "google_service_account_iam_member" "homelab_writer_impersonation" {
 }
 
 resource "google_secret_manager_secret" "runtime" {
-  for_each  = toset(["AUTH_SECRET", "AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET", "AGENT_LCARS_GITHUB_TOKEN"])
+  for_each = toset([
+    "AUTH_SECRET",
+    "AUTH_GITHUB_ID",
+    "AUTH_GITHUB_SECRET",
+    "AGENT_LCARS_GITHUB_TOKEN",
+    "AGENT_LCARS_WEBHOOK_SECRET",
+  ])
   secret_id = each.value
   replication {
     auto {}

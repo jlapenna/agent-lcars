@@ -14,11 +14,16 @@ export const config = {
 };
 
 export default createAuthProxy({
-  // The reconcile route performs stronger request authentication itself:
-  // it verifies a GitHub Actions OIDC signature plus repository/workflow/
-  // ref/event claims before doing any work. It cannot require a browser
-  // session because the scheduled workflow is its caller.
-  publicRoutes: ['/login', '/api/logs/error', '/api/control-plane/reconcile'],
+  // These control-plane routes perform stronger request authentication
+  // themselves: reconcile verifies GitHub Actions OIDC claims, and webhook
+  // verifies GitHub's raw-body HMAC. Neither caller has a browser session.
+  publicRoutes: [
+    '/login',
+    '/api/logs/error',
+    '/api/control-plane/reconcile',
+    '/api/control-plane/webhook',
+    '/api/control-plane/webhook/process',
+  ],
   // Both routes are guarded by isE2eTesting() themselves (403 outside e2e);
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page

@@ -22,7 +22,7 @@ import type {
 } from '@agent-lcars/dispatch-contracts';
 import { formatAttemptId } from '@agent-lcars/dispatch-contracts';
 
-import { ACTIVE_STATES, mutate, validateLedger } from './ledger-core.js';
+import { ACTIVE_STATES, mutate, validateLedger } from './ledger-core';
 
 const TERMINAL_RUN_STATUSES = new Set(['completed']);
 

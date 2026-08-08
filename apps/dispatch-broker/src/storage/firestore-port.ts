@@ -101,7 +101,7 @@ import {
   taskKey,
   type TaskRef,
   TaskWriteConflictError,
-} from './port.js';
+} from './port';
 
 const TASKS_COLLECTION = 'dispatchTasks';
 const LAUNCH_OUTBOX_COLLECTION = 'dispatchLaunchOutbox';

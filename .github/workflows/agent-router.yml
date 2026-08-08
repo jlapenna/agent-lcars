@@ -183,6 +183,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+          HOSTED_CONTROLLER_LOGIN: ${{ vars.HOSTED_CONTROLLER_LOGIN }}
           ANCHOR_IS_PR: ${{ needs.normalize.outputs.is-pr }}
           # The mode switch itself, plus what main.ts's storage adapter needs
           # in shadow or authority mode.

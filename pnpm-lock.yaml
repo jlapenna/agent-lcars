@@ -14,6 +14,9 @@ importers:
       '@google-cloud/storage':
         specifier: ^7.19.0
         version: 7.21.0(encoding@0.1.13)
+      '@google-cloud/tasks':
+        specifier: ^6.3.0
+        version: 6.3.0
       '@mantine/core':
         specifier: ^9.0.2
         version: 9.5.1(@mantine/hooks@9.5.1(react@19.2.8))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1650,6 +1653,10 @@ packages:
   '@google-cloud/storage@7.21.0':
     resolution: {integrity: sha512-l+IFTkd+6Y5LoAuXyYCKNAKtw/Ci+rAMqgdTB1jv4iZiLhw0rtq+0qjIRbBizXkNzEFmXiXUW0H7sZQQvk1ffA==}
     engines: {node: '>=14'}
+
+  '@google-cloud/tasks@6.3.0':
+    resolution: {integrity: sha512-80I5otVKL+cWY2fzMVs7vj5qOQ+JDCxO7Kem90P33JsR6EZDg0dRquHkSqsNH5NbAEOW9g1WAq9O5S8jPiE14g==}
+    engines: {node: '>=18'}
 
   '@googleapis/sqladmin@37.0.0':
     resolution: {integrity: sha512-LBxSb3V+avoqsTHY/KsSR4/3FGnRfUw8yhGjx6ihTE5w7Y6l1EZkcx62aCCfCNkaigCQDvgiJG2Pq2jxN1sfag==}
@@ -12403,6 +12410,12 @@ snapshots:
       teeny-request: 9.0.0(encoding@0.1.13)
     transitivePeerDependencies:
       - encoding
+      - supports-color
+
+  '@google-cloud/tasks@6.3.0':
+    dependencies:
+      google-gax: 5.0.8
+    transitivePeerDependencies:
       - supports-color
 
   '@googleapis/sqladmin@37.0.0':

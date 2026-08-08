@@ -24,7 +24,7 @@ import {
   taskKey,
   type TaskRef,
   TaskWriteConflictError,
-} from './port.js';
+} from './port';
 
 function defaultNow(): string {
   return new Date().toISOString();

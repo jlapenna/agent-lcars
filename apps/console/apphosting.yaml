@@ -84,6 +84,35 @@ env:
     availability:
       - RUNTIME
 
+  # Hosted admission initially runs alongside agent-router's event triggers.
+  # Both paths share Firestore authority and projection identities; the value
+  # changes to `authority` when the Action event triggers are retired.
+  - variable: AGENT_LCARS_HOSTED_ADMISSION_MODE
+    value: 'shadow'
+    availability:
+      - RUNTIME
+
+  - variable: AGENT_LCARS_WEBHOOK_QUEUE
+    value: 'dispatch-webhooks'
+    availability:
+      - RUNTIME
+
+  - variable: AGENT_LCARS_WEBHOOK_QUEUE_LOCATION
+    value: 'us-central1'
+    availability:
+      - RUNTIME
+
+  - variable: DISPATCH_FIRESTORE_DATABASE_ID
+    value: 'dispatch-controller'
+    availability:
+      - RUNTIME
+
+  # Production Firestore authority cutover instant (#736).
+  - variable: DISPATCH_AUTHORITY_EPOCH
+    value: '2026-08-08T09:57:07.766246530Z'
+    availability:
+      - RUNTIME
+
   - variable: AGENT_LCARS_ARTIFACT_SHARE_BASE_URL
     value: 'https://share.lan.jlapenna.net'
     availability:
@@ -118,5 +147,9 @@ env:
   # split wasn't earning its keep).
   - variable: AGENT_LCARS_GITHUB_TOKEN
     secret: AGENT_LCARS_GITHUB_TOKEN
+    availability:
+      - RUNTIME
+  - variable: AGENT_LCARS_WEBHOOK_SECRET
+    secret: AGENT_LCARS_WEBHOOK_SECRET
     availability:
       - RUNTIME

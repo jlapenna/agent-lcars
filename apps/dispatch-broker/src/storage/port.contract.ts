@@ -40,7 +40,7 @@ import {
   type StoredTask,
   type StoredTaskInput,
   TaskWriteConflictError,
-} from './port.js';
+} from './port';
 
 /**
  * A synchronization barrier for exactly `count` parties: each party calls

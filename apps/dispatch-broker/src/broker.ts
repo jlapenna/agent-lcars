@@ -31,14 +31,14 @@ import {
   acceptIntent,
   compareIntentOrder,
   validateIntent,
-} from './modules/intent.js';
+} from './modules/intent';
 import {
   ACTIVE_STATES,
   assertTaskRef,
   createLedger,
   mutate,
   validateLedger,
-} from './modules/ledger-core.js';
+} from './modules/ledger-core';
 import {
   abandonPendingLaunchForClosedAnchor,
   awaitTerminal,
@@ -50,7 +50,7 @@ import {
   observeCompletion,
   restoreAcceptedForLaunchRetry,
   verifyPreflight,
-} from './modules/scheduler.js';
+} from './modules/scheduler';
 
 // 'canary' (#307) is a dedicated, structurally-no-op fourth pipeline: it
 // exists purely to prove the broker's own claim/dispatch/completion-
