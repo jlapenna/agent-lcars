@@ -16,6 +16,7 @@ type HostedControllerEvent = Pick<
   | 'transportRunId'
   | 'authorityOwner'
   | 'pollCompletionUntilTerminal'
+  | 'authorityBusyWaitMs'
 >;
 
 /**
@@ -29,6 +30,7 @@ export function processHostedControllerEvent({
   transportRunId,
   authorityOwner,
   pollCompletionUntilTerminal,
+  authorityBusyWaitMs,
 }: HostedControllerEvent): Promise<void> {
   return processNormalizedEvent({
     normalized,
@@ -44,6 +46,7 @@ export function processHostedControllerEvent({
     transportRunId,
     authorityOwner,
     pollCompletionUntilTerminal,
+    authorityBusyWaitMs,
     maintainer: maintainerLogin(),
     projectionIdentities: [
       { login: 'github-actions[bot]', type: 'Bot' },

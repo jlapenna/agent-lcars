@@ -2231,6 +2231,7 @@ async function loadBrokerLedger(
   storagePortFactory: () => StoragePort = createStoragePort,
   authorityEpoch = '',
   projectionIdentities?: readonly LedgerProjectionIdentity[],
+  authorityBusyWaitMs = 130_000,
 ): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
@@ -2253,7 +2254,7 @@ async function loadBrokerLedger(
           // Missing state needs a GitHub projection check below before a new
           // empty aggregate can be created safely.
           createIfMissing: false,
-          busyWaitMs: 130_000,
+          busyWaitMs: authorityBusyWaitMs,
         },
       );
     } catch (error) {
@@ -2285,7 +2286,7 @@ async function loadBrokerLedger(
           task,
           leaseOwner,
           createLedger(task),
-          { busyWaitMs: 130_000 },
+          { busyWaitMs: authorityBusyWaitMs },
         );
       } else {
         throw error;
@@ -2353,6 +2354,8 @@ export interface BrokerPassOptions {
   /** Identities allowed to own the compatibility projection. Firestore,
    * never the comment, remains controller authority. */
   projectionIdentities?: readonly LedgerProjectionIdentity[];
+  /** How long this transport may wait for another authority lease. */
+  authorityBusyWaitMs?: number;
   /** Hosted worker callbacks must return after recording the observation:
    * the calling workflow cannot become terminal while its HTTP request is
    * still waiting. Action callbacks retain the bounded terminal poll. */
@@ -2380,6 +2383,7 @@ export async function processNormalizedEvent({
   actionConcurrency,
   projectionIdentities,
   pollCompletionUntilTerminal = true,
+  authorityBusyWaitMs = 130_000,
 }: BrokerPassOptions): Promise<void> {
   if (normalized.kind === 'ignored') return;
   // #645 Phase 6: parsed once, up front, before any ledger work -- a
@@ -2442,6 +2446,7 @@ export async function processNormalizedEvent({
       storagePortFactory,
       authorityEpoch,
       projectionIdentities,
+      authorityBusyWaitMs,
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {

@@ -73,9 +73,9 @@ jobs:
     # control-plane pool is unavailable. App Hosting performs discovery and
     # direct processing after validating this job's OIDC claims.
     runs-on: ubuntu-latest
-    # Two bounded five-candidate waves can each wait 130s on live authority
-    # leases. Keep the scheduler alive through that 260s worst case plus
-    # discovery, GitHub API, and response overhead.
+    # Hosted candidates defer immediately when another controller owns their
+    # authority lease, so queue size cannot multiply the 130s wait used by
+    # single-event transports. Leave room for discovery and GitHub API work.
     timeout-minutes: 7
     permissions:
       id-token: write

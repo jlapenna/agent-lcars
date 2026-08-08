@@ -91,6 +91,7 @@ describe('hosted reconciler GitHub transport', () => {
       isPullRequest: true,
       transportRunId: 93_099_054_125,
       authorityOwner: 'reconcile:93099054125:20:request-1',
+      authorityBusyWaitMs: 0,
     });
   });
 

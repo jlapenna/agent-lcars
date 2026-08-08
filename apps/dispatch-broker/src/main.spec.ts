@@ -1245,6 +1245,33 @@ test('authority rejects an existing comment-backed task that missed exact-state 
   assert.equal(await port.readTask(task), undefined);
 });
 
+test('authority supports immediate lease deferral for unbounded hosted scans', async () => {
+  const port = new InMemoryStoragePort();
+  await acquireAuthority(port, task, 'other-controller', boundLedger());
+  const client = {
+    requestOk: async () => {
+      throw new Error('A contended lease must defer before GitHub projection');
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'reconcile', task },
+        false,
+        'authority',
+        'hosted-scan',
+        () => port,
+        '',
+        undefined,
+        0,
+      ),
+    /already leased/u,
+  );
+});
+
 test('authority may seed a genuinely new task with no compatibility projection', async () => {
   const port = new InMemoryStoragePort();
   const calls = [];

@@ -84,6 +84,10 @@ export function createOctokitReconcileTransport(
         isPullRequest: Boolean(liveIssue.pull_request),
         transportRunId: identity.runId,
         authorityOwner: `reconcile:${identity.runId}:${issue}:${invocationId}`,
+        // A scheduled scan can discover an unbounded number of candidates.
+        // Defer contended issues to the next pass instead of accumulating a
+        // 130-second lease wait for every five-candidate wave.
+        authorityBusyWaitMs: 0,
       });
     },
   };

@@ -3921,7 +3921,7 @@ async function healStaleAgentLabels(client, loaded, intent) {
   });
   if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities) {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities, authorityBusyWaitMs = 13e4) {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
   if (storageMode === "authority") {
     const port = storagePortFactory();
@@ -3936,7 +3936,7 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
           // Missing state needs a GitHub projection check below before a new
           // empty aggregate can be created safely.
           createIfMissing: false,
-          busyWaitMs: 13e4
+          busyWaitMs: authorityBusyWaitMs
         }
       );
     } catch (error) {
@@ -3958,7 +3958,7 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
           task,
           leaseOwner,
           createLedger(task),
-          { busyWaitMs: 13e4 }
+          { busyWaitMs: authorityBusyWaitMs }
         );
       } else {
         throw error;
@@ -4014,7 +4014,8 @@ async function processNormalizedEvent({
   maintainer = "",
   actionConcurrency,
   projectionIdentities,
-  pollCompletionUntilTerminal = true
+  pollCompletionUntilTerminal = true,
+  authorityBusyWaitMs = 13e4
 }) {
   if (normalized.kind === "ignored") return;
   const storageMode = parseDispatchStorageMode(storageModeInput);
@@ -4059,7 +4060,8 @@ async function processNormalizedEvent({
       authorityOwner,
       storagePortFactory,
       authorityEpoch,
-      projectionIdentities
+      projectionIdentities,
+      authorityBusyWaitMs
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {
