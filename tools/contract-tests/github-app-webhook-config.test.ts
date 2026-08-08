@@ -50,7 +50,7 @@ describe('GitHub App webhook configuration', () => {
     ).toBe(true);
   });
 
-  it('sets the secret without returning it and verifies active subscriptions', async () => {
+  it('sets the secret without returning it and verifies subscriptions', async () => {
     const webhookSecret = 'never-return-this-secret';
     const webhookUrl = 'https://console.test/api/control-plane/webhook';
     const fetchImpl = vi.fn(
@@ -76,7 +76,6 @@ describe('GitHub App webhook configuration', () => {
     });
     expect(result).toEqual({
       app: 'agent-lcars',
-      active: true,
       url: webhookUrl,
       contentType: 'json',
       events: ['issue_comment', 'issues', 'pull_request'],
@@ -137,36 +136,34 @@ describe('GitHub App webhook configuration', () => {
     }
   });
 
-  it('does not mutate GitHub when the App webhook is disabled', async () => {
-    const fetchImpl = vi.fn(async (url: string | URL) => {
-      if (new URL(String(url)).pathname === '/app') {
-        return response({
-          slug: 'agent-lcars',
-          events: ['issues', 'issue_comment', 'pull_request'],
-          hook_attributes: { active: false },
-        });
-      }
-      return response({
-        url: 'https://console.test/api/control-plane/webhook',
-        content_type: 'json',
-      });
-    });
+  it('does not treat non-authoritative hook activation metadata as a configuration gate', async () => {
+    const webhookUrl = 'https://console.test/api/control-plane/webhook';
+    for (const hookAttributes of [undefined, { active: false }]) {
+      const fetchImpl = vi.fn(
+        async (url: string | URL, options?: RequestInit) => {
+          const path = new URL(String(url)).pathname;
+          if (path === '/app' && !options?.method) {
+            return response({
+              slug: 'agent-lcars',
+              events: ['issues', 'issue_comment', 'pull_request'],
+              ...(hookAttributes ? { hook_attributes: hookAttributes } : {}),
+            });
+          }
+          return response({ url: webhookUrl, content_type: 'json' });
+        },
+      );
 
-    await expect(
-      configureAppWebhook({
-        clientId: 'Iv1.client',
-        privateKey: privatePem,
-        webhookSecret: 'secret',
-        webhookUrl: 'https://console.test/api/control-plane/webhook',
-        fetchImpl,
-      }),
-    ).rejects.toThrow('webhook is not active');
-    expect(
-      fetchImpl.mock.calls.map(([url, options]) => ({
-        path: new URL(String(url)).pathname,
-        method: options?.method ?? 'GET',
-      })),
-    ).toEqual([{ path: '/app', method: 'GET' }]);
+      await expect(
+        configureAppWebhook({
+          clientId: 'Iv1.client',
+          privateKey: privatePem,
+          webhookSecret: 'secret',
+          webhookUrl,
+          fetchImpl,
+        }),
+      ).resolves.toMatchObject({ url: webhookUrl });
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    }
   });
 
   it('does not mutate GitHub when a required event is missing', async () => {
