@@ -230,6 +230,24 @@ if (!javaCheck.ok) {
         }, 100);
       }),
     ]);
+
+    // A listening TCP socket only proves that the Java process bound its
+    // port. On a cold CI host, google-gax can still spend several seconds
+    // initializing its first channel (including the one-time metadata
+    // availability probe) before the first document read. Pay that startup
+    // cost inside beforeAll's explicit 60-second budget so the shared
+    // contract's ordinary five-second per-case timeout measures storage
+    // behavior, not emulator/client boot (#732 CI acceptance).
+    await clearFirestoreData();
+    const warmupPort = new FirestoreStoragePort({
+      projectId: PROJECT_ID,
+      emulatorHost: EMULATOR_HOST,
+    });
+    await warmupPort.readTask({
+      repositoryId: 0,
+      repository: 'warmup/firestore-emulator',
+      issue: 0,
+    });
   }, 60_000);
 
   afterAll(async () => {
