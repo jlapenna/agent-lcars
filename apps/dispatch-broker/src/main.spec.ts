@@ -40,6 +40,7 @@ import {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
+  projectClaudeReadiness,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
@@ -54,6 +55,7 @@ import {
   resolveTask,
   runPhase,
   saveProjectionCheckpoint,
+  trustedActionsRunUrl,
   wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, makeIntent, normalizeEvent } from './normalize.js';
@@ -2267,6 +2269,97 @@ test('a trusted credential failure opens the lane breaker before completion can 
     );
   } finally {
     delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('the trusted Claude probe projection opens and then resolves the same lane incident (#797)', async () => {
+  const runUrl = 'https://github.com/jlapenna/agent-lcars/actions/runs/99';
+  const issues = [];
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, options });
+      if (path.includes('/issues?state=open')) {
+        return issues.filter((issue) => issue.state === 'open');
+      }
+      if (path.endsWith('/issues') && options.method === 'POST') {
+        const issue = {
+          number: 903,
+          title: options.body.title,
+          body: options.body.body,
+          state: 'open',
+        };
+        issues.push(issue);
+        return issue;
+      }
+      const match = path.match(/\/issues\/(\d+)$/u);
+      const issue = issues.find(
+        (candidate) => candidate.number === Number(match?.[1]),
+      );
+      if (!issue) throw new Error(`Unexpected probe projection path: ${path}`);
+      if (options.method === 'PATCH') Object.assign(issue, options.body);
+      return issue;
+    },
+  };
+
+  const opened = await projectClaudeReadiness(
+    client,
+    task,
+    'credential-failure',
+    runUrl,
+    'jlapenna',
+  );
+  assert.equal(opened, 1);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].body, /lane-readiness:v1:claude/u);
+  assert.match(issues[0].body, /isolated trusted Claude probe/u);
+  assert.equal(issues[0].state, 'open');
+
+  const resolved = await projectClaudeReadiness(
+    client,
+    task,
+    'healthy',
+    runUrl,
+    'jlapenna',
+  );
+  assert.equal(resolved, 1);
+  assert.equal(issues[0].state, 'closed');
+  assert.match(issues[0].body, /Verified recovery probe/u);
+  assert.equal(
+    calls.filter((call) => call.options.method === 'POST').length,
+    1,
+  );
+  assert.equal(
+    calls.filter((call) => call.options.method === 'PATCH').length,
+    1,
+  );
+});
+
+test('Claude readiness evidence accepts only an exact run URL from this repository', () => {
+  const priorServer = process.env.GITHUB_SERVER_URL;
+  const priorRepository = process.env.GITHUB_REPOSITORY;
+  process.env.GITHUB_SERVER_URL = 'https://github.com';
+  process.env.GITHUB_REPOSITORY = 'jlapenna/agent-lcars';
+  try {
+    const expected =
+      'https://github.com/jlapenna/agent-lcars/actions/runs/31276532506';
+    assert.equal(trustedActionsRunUrl(expected), expected);
+    for (const invalid of [
+      'https://github.com/other/repo/actions/runs/31276532506',
+      `${expected}?attempt=2`,
+      'https://example.test/jlapenna/agent-lcars/actions/runs/31276532506',
+      'not-a-url',
+    ]) {
+      assert.throws(
+        () => trustedActionsRunUrl(invalid),
+        /exact run URL in this repository/u,
+      );
+    }
+  } finally {
+    if (priorServer === undefined) delete process.env.GITHUB_SERVER_URL;
+    else process.env.GITHUB_SERVER_URL = priorServer;
+    if (priorRepository === undefined) delete process.env.GITHUB_REPOSITORY;
+    else process.env.GITHUB_REPOSITORY = priorRepository;
   }
 });
 

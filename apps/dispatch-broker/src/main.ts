@@ -51,6 +51,10 @@ import {
   verifyPreflight,
 } from './broker';
 import {
+  classifyClaudeReadiness,
+  type ClaudeReadinessState,
+} from './claude-readiness';
+import {
   classifyAuthorityTaskInitialization,
   createGitHubApi,
   createReconcileTransport,
@@ -68,6 +72,7 @@ import {
   pinLedgerWhenUnoccupied,
   readLaneReadiness,
   repositoryPath,
+  resolveLaneReadinessAlerts,
   saveLedger as saveLedgerComment,
   verifyBrokerConcurrency,
   workerWorkflow,
@@ -2859,6 +2864,95 @@ async function completionCallback(): Promise<void> {
   });
 }
 
+type ProjectableClaudeReadinessState = Exclude<ClaudeReadinessState, 'unknown'>;
+
+function trustedActionsRunUrl(value: string): string {
+  const serverUrl = env('GITHUB_SERVER_URL').replace(/\/$/u, '');
+  const repository = env('GITHUB_REPOSITORY');
+  const prefix = `${serverUrl}/${repository}/actions/runs/`;
+  const runId = value.startsWith(prefix) ? value.slice(prefix.length) : '';
+  if (!/^\d+$/u.test(runId)) {
+    throw new Error(
+      'BROKER_EVIDENCE_URL must be an exact run URL in this repository',
+    );
+  }
+  return value;
+}
+
+async function projectClaudeReadiness(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+  state: ProjectableClaudeReadinessState,
+  evidenceUrl: string,
+  maintainer: string,
+): Promise<number> {
+  if (state === 'credential-failure') {
+    await ensureLaneReadinessAlert(
+      client,
+      task,
+      'claude',
+      'credential',
+      evidenceUrl,
+      maintainer,
+      'probe',
+    );
+    return 1;
+  }
+  const resolved = await resolveLaneReadinessAlerts(
+    client,
+    task,
+    'claude',
+    evidenceUrl,
+  );
+  return resolved.length;
+}
+
+async function claudeReadiness(): Promise<void> {
+  const state = env(
+    'BROKER_READINESS_STATE',
+  ) as ProjectableClaudeReadinessState;
+  if (state !== 'credential-failure' && state !== 'healthy') {
+    throw new Error(
+      'BROKER_READINESS_STATE must be credential-failure or healthy',
+    );
+  }
+  const evidenceUrl = trustedActionsRunUrl(env('BROKER_EVIDENCE_URL'));
+  const task: LedgerTaskRef = {
+    repositoryId: Number(env('GITHUB_REPOSITORY_ID')),
+    repository: env('GITHUB_REPOSITORY'),
+    // Lane incidents are repository-level health projections. The helper
+    // accepts a canonical TaskRef because all other readiness callers have
+    // one, but neither open nor resolve reads this sentinel issue number.
+    issue: 0,
+  };
+  const count = await projectClaudeReadiness(
+    api(),
+    task,
+    state,
+    evidenceUrl,
+    env('MAINTAINER_LOGIN', false),
+  );
+  await output('readiness-incidents', String(count));
+}
+
+async function classifyClaudeReadinessProbe(): Promise<void> {
+  const executionFile = env('BROKER_EXECUTION_FILE', false);
+  const conclusion = env('BROKER_PROBE_CONCLUSION', false);
+  let execution: unknown;
+  if (executionFile) {
+    try {
+      execution = JSON.parse(await fs.readFile(executionFile, 'utf8'));
+    } catch {
+      // Missing/unparseable evidence is intentionally unknown. Never echo the
+      // file or parsing error: a provider response may contain private text.
+    }
+  }
+  await output(
+    'readiness-state',
+    classifyClaudeReadiness(conclusion, execution),
+  );
+}
+
 // Merges both discovery lanes (#305, broadened by the #363 review):
 // currently agent-labeled issues/PRs (the fast path -- covers everything
 // still mid-dispatch or freshly completed) union'd with issues/PRs assigned
@@ -2961,6 +3055,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else if (operation === 'preflight') await preflight();
   else if (operation === 'completion-callback') await completionCallback();
   else if (operation === 'reconcile') await scanReconcile();
+  else if (operation === 'classify-claude-readiness')
+    await classifyClaudeReadinessProbe();
+  else if (operation === 'claude-readiness') await claudeReadiness();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
 }
 
@@ -2983,6 +3080,7 @@ export {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
+  projectClaudeReadiness,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
@@ -2997,5 +3095,6 @@ export {
   resolveTask,
   runPhase,
   saveProjectionCheckpoint,
+  trustedActionsRunUrl,
   wasSupersededEviction,
 };

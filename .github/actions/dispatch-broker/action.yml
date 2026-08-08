@@ -8,7 +8,7 @@ description: Normalize, serialize, bind, and verify durable agent dispatch inten
 
 inputs:
   operation:
-    description: normalize, broker, preflight, completion-callback, or reconcile
+    description: normalize, broker, preflight, completion-callback, reconcile, classify-claude-readiness, or claude-readiness
     required: true
   payload:
     description: Base64url normalized intent emitted by the normalize operation
@@ -48,6 +48,22 @@ inputs:
     default: ''
   readiness-failure:
     description: Shared lane prerequisite that failed (credential, provider, or bootstrap)
+    required: false
+    default: ''
+  readiness-state:
+    description: Trusted Claude probe result (credential-failure or healthy)
+    required: false
+    default: ''
+  evidence-url:
+    description: Exact trusted GitHub Actions run that produced a readiness result
+    required: false
+    default: ''
+  execution-file:
+    description: Structured result from the isolated Claude probe
+    required: false
+    default: ''
+  probe-conclusion:
+    description: GitHub step conclusion for the isolated Claude probe
     required: false
     default: ''
 
@@ -98,6 +114,12 @@ outputs:
   dispatched:
     description: Number of candidates the reconcile scan successfully dispatched
     value: ${{ steps.run.outputs.dispatched }}
+  readiness-incidents:
+    description: Number of Claude lane incidents created/reused or resolved
+    value: ${{ steps.run.outputs.readiness-incidents }}
+  readiness-state:
+    description: Fail-closed isolated Claude probe classification
+    value: ${{ steps.run.outputs.readiness-state }}
 
 runs:
   using: composite
@@ -116,6 +138,10 @@ runs:
         BROKER_OUTCOME_KIND: ${{ inputs.outcome-kind }}
         BROKER_OUTCOME_REFERENCE: ${{ inputs.outcome-reference }}
         BROKER_READINESS_FAILURE: ${{ inputs.readiness-failure }}
+        BROKER_READINESS_STATE: ${{ inputs.readiness-state }}
+        BROKER_EVIDENCE_URL: ${{ inputs.evidence-url }}
+        BROKER_EXECUTION_FILE: ${{ inputs.execution-file }}
+        BROKER_PROBE_CONCLUSION: ${{ inputs.probe-conclusion }}
       run: node "$GITHUB_ACTION_PATH/dist/main.mjs" "${{ inputs.operation }}"
 
     # Publish the verified attempt ID to every later step in the caller's
