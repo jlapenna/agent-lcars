@@ -29,7 +29,7 @@ export default createVitestConfig({
         // vitest.config.mts needs this alias explicitly even though the
         // shared base config also declares it (mergeConfig's handling of
         // nested `resolve.alias` isn't reliable enough to skip
-        // re-declaring it here — matches members/onecake frontend
+        // re-declaring it here — matches Sprinkles/OneCake frontend
         // precedent).
         'server-only': path.join(
           import.meta.dirname,

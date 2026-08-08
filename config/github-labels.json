@@ -110,9 +110,9 @@
       "color": "0e8a16",
       "description": "Ephemeral GitHub Actions runner autoscaler"
     },
-    "app:members": {
+    "app:sprinkles": {
       "color": "1d76db",
-      "description": "Sprinkles Members application"
+      "description": "Sprinkles application"
     },
     "app:onecake": {
       "color": "ff69b4",
@@ -196,7 +196,7 @@
         "ci:run-e2e",
         "ci:update-snapshots",
         "planning",
-        "app:members",
+        "app:sprinkles",
         "app:onecake",
         "app:primes"
       ],
@@ -218,7 +218,8 @@
         "run-e2e": ["ci:run-e2e"],
         "update-snapshots": ["ci:update-snapshots"],
         "project": ["planning"],
-        "members": ["app:members"],
+        "members": ["app:sprinkles"],
+        "app:members": ["app:sprinkles"],
         "onecake": ["app:onecake"],
         "primes": ["app:primes"]
       },

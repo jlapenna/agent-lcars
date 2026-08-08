@@ -10,7 +10,7 @@ import {
 /**
  * Firebase client SDK config, shared across every app that initializes a
  * client-side Firebase app (#2127 — this file was byte-identical across
- * members/onecake/primes before being centralized here).
+ * Sprinkles/OneCake/Primes before being centralized here).
  */
 export const clientConfig = {
   apiKey: getNextPublicFirebaseApiKey(),
