@@ -134,6 +134,7 @@ base_env() {
   export CANARY_STATUS=failure
   export WORKFLOW_FILE=dispatch-canary.yml
   export WORKFLOW_EVENT=""
+  export FAILURE_DETAIL=""
   export WORKFLOW_NAME="Dispatch Canary"
   export MAINTAINER=maintainer-login
 }
@@ -185,6 +186,22 @@ fail() {
   if grep -q 'issue close' "$FAKE_GH_DIR/calls"; then
     fail "first failure must not close anything"
   fi
+)
+
+# --- Failure details from a watched job are preserved in the tracked issue
+# without changing the generic behavior for workflows that provide none. ---
+(
+  base_env
+  export WORKFLOW_FILE=webhook-ingress-canary.yml
+  export WORKFLOW_NAME="GitHub App Webhook Ingress Canary"
+  export FAILURE_DETAIL="repeated_processor_failure: attempt 3 failed"
+  case_dir="$test_root/failure-detail"
+  mkdir -p "$case_dir"
+  echo '[]' > "$case_dir/open-issues.json"
+  echo '{"workflow_runs":[]}' > "$case_dir/runs.json"
+  run_case failure-detail
+  test "$status" = 0 || fail "failure detail should be reported"
+  grep -q 'Failure detail: repeated_processor_failure: attempt 3 failed' "$FAKE_GH_DIR/calls" || fail "expected the watched job failure category in the issue body"
 )
 
 # --- Case 2: second failure - an alert issue is already open. Must comment

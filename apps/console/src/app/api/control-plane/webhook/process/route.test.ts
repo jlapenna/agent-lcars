@@ -2,13 +2,32 @@ import crypto from 'node:crypto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { admitGitHubWebhook } = vi.hoisted(() => ({
+const {
+  admitGitHubWebhook,
+  identifyWebhookIngressCanary,
+  parseCloudTasksAttempt,
+  recordWebhookIngressProcessed,
+  recordWebhookIngressProcessing,
+  recordWebhookIngressProcessorFailure,
+} = vi.hoisted(() => ({
   admitGitHubWebhook: vi.fn(),
+  identifyWebhookIngressCanary: vi.fn(),
+  parseCloudTasksAttempt: vi.fn(),
+  recordWebhookIngressProcessed: vi.fn(),
+  recordWebhookIngressProcessing: vi.fn(),
+  recordWebhookIngressProcessorFailure: vi.fn(),
 }));
 
 vi.mock('@/lib/hosted-admission', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/hosted-admission')>()),
   admitGitHubWebhook,
+}));
+vi.mock('@/lib/webhook-ingress-receipt', () => ({
+  identifyWebhookIngressCanary,
+  parseCloudTasksAttempt,
+  recordWebhookIngressProcessed,
+  recordWebhookIngressProcessing,
+  recordWebhookIngressProcessorFailure,
 }));
 
 import { POST } from './route';
@@ -45,6 +64,11 @@ function request({
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv('AGENT_LCARS_WEBHOOK_SECRET', SECRET);
+  identifyWebhookIngressCanary.mockReturnValue(undefined);
+  parseCloudTasksAttempt.mockReturnValue(1);
+  recordWebhookIngressProcessed.mockResolvedValue(undefined);
+  recordWebhookIngressProcessing.mockResolvedValue(undefined);
+  recordWebhookIngressProcessorFailure.mockResolvedValue(undefined);
   admitGitHubWebhook.mockResolvedValue({
     deliveryId: '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
     eventName: 'issues',
@@ -78,5 +102,48 @@ describe('POST /api/control-plane/webhook/process', () => {
     const response = await POST(request({ body: '{' }));
     expect(response.status).toBe(500);
     expect(admitGitHubWebhook).not.toHaveBeenCalled();
+  });
+
+  it('records repeated sentinel processor attempts and terminal success', async () => {
+    const identity = {
+      deliveryId: '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
+      eventName: 'issues',
+      action: 'closed',
+      repository: 'jlapenna/agent-lcars',
+      repositoryId: 1_307_149_765,
+      issue: 796,
+    };
+    identifyWebhookIngressCanary.mockReturnValue(identity);
+    parseCloudTasksAttempt.mockReturnValue(3);
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(200);
+    expect(recordWebhookIngressProcessing).toHaveBeenCalledWith(identity, 3);
+    expect(recordWebhookIngressProcessed).toHaveBeenCalledWith(identity);
+  });
+
+  it('records a processor failure before returning a retryable response', async () => {
+    const identity = {
+      deliveryId: '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
+      eventName: 'issues',
+      action: 'closed',
+      repository: 'jlapenna/agent-lcars',
+      repositoryId: 1_307_149_765,
+      issue: 796,
+    };
+    const failure = new Error('controller unavailable');
+    identifyWebhookIngressCanary.mockReturnValue(identity);
+    parseCloudTasksAttempt.mockReturnValue(2);
+    admitGitHubWebhook.mockRejectedValue(failure);
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(500);
+    expect(recordWebhookIngressProcessorFailure).toHaveBeenCalledWith(
+      identity,
+      2,
+      failure,
+    );
   });
 });

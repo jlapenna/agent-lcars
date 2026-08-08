@@ -152,13 +152,18 @@ jobs:
       # observer. It shares the same committed-bundle contract: the workflow
       # must execute exactly the reviewed TypeScript source, never a stale
       # artifact left behind by a missed local build.
+      #
+      # run-webhook-ingress-canary/dist/run.mjs is the GitHub-hosted real-App
+      # ingress probe. Its private-key/OIDC boundary is operational security
+      # code, so it has the same source-to-committed-bundle drift check.
       - name: Check committed operational action bundles match their source
         run: |
           pnpm nx build @agent-lcars/dispatch-broker
           pnpm nx build-canary @agent-lcars/dispatch-broker
           pnpm nx build-rerun-infra-killed-runs @agent-lcars/dispatch-broker
           pnpm nx build-deliverable-watchdog @agent-lcars/dispatch-broker
-          git diff --exit-code -- .github/actions/dispatch-broker/dist .github/actions/run-dispatch-canary/dist .github/actions/rerun-infra-killed-runs/dist .github/actions/deliverable-watchdog/dist
+          pnpm nx build-webhook-ingress-canary @agent-lcars/dispatch-broker
+          git diff --exit-code -- .github/actions/dispatch-broker/dist .github/actions/run-dispatch-canary/dist .github/actions/rerun-infra-killed-runs/dist .github/actions/deliverable-watchdog/dist .github/actions/run-webhook-ingress-canary/dist
 
       - name: Check formatting
         run: pnpm format:check

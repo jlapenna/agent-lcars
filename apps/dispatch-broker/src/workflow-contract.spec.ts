@@ -242,6 +242,13 @@ test('critical scheduled workflows report one isolated durable alert and recover
       status: '${{ needs.smoke.result }}',
     },
     {
+      workflow: 'webhook-ingress-canary.yml',
+      job: 'alert',
+      needs: 'probe',
+      guard: 'always()',
+      status: '${{ needs.probe.result }}',
+    },
+    {
       workflow: 'rerun-infra-killed-runs.yml',
       job: 'alert',
       needs: 'scan',
@@ -281,6 +288,48 @@ test('critical scheduled workflows report one isolated durable alert and recover
       stepField('maintainer', '${{ vars.MAINTAINER_LOGIN }}', 10),
     );
   }
+});
+
+test('the webhook ingress canary proves App delivery without dispatching a worker (#796)', async () => {
+  const workflow = 'webhook-ingress-canary.yml';
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, workflow),
+    'utf8',
+  );
+  const probe = jobBlock(source, workflow, 'probe');
+  assert.match(source, /^ {2}schedule:$/mu);
+  assert.match(source, /^ {2}workflow_dispatch:$/mu);
+  assert.match(source, /^concurrency:$/mu);
+  assert.match(source, /^ {2}group:\s+webhook-ingress-canary-run$/mu);
+  assert.match(probe, /^ {4}runs-on:\s+ubuntu-latest$/mu);
+  assert.match(probe, /^ {6}contents:\s+read$/mu);
+  assert.match(probe, /^ {6}id-token:\s+write$/mu);
+  assert.match(probe, /^ {6}issues:\s+write$/mu);
+  assert.match(
+    probe,
+    /^ {8}uses:\s+\.\/\.github\/actions\/run-webhook-ingress-canary$/mu,
+  );
+  assert.match(probe, /secrets\.AGENT_LCARS_PRIVATE_KEY/u);
+  assert.doesNotMatch(
+    source,
+    /agent-router\.yml|AGENT_RUNNER_LABEL|agent-dispatch-canary\.yml|claude\.yml|codex\.yml|opencode\.yml/u,
+  );
+
+  const implementation = await fs.readFile(
+    path.join(
+      workspaceRoot,
+      'apps/dispatch-broker/src/webhook-ingress-canary/run.ts',
+    ),
+    'utf8',
+  );
+  assert.match(implementation, /\/app\/hook\/deliveries/u);
+  assert.match(implementation, /WEBHOOK_INGRESS_PROBE_URL/u);
+  assert.match(implementation, /WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE/u);
+  assert.match(implementation, /DISPATCH_LABELS/u);
+  assert.doesNotMatch(
+    implementation,
+    /agent-router\.yml|AGENT_RUNNER_LABEL|workerWorkflow\(/u,
+  );
 });
 
 test('the deliverable watchdog observes stale agent PRs without broker or merge authority (#721)', async () => {

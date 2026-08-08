@@ -32,6 +32,13 @@ inputs:
       trigger lanes whose successful runs must not reset this alert's streak.
     required: false
     default: ''
+  failure-detail:
+    description: >-
+      Optional sanitized diagnostic emitted by the watched job. Included only
+      on the failure path so the tracked issue distinguishes failure classes
+      without requiring an operator to open logs first.
+    required: false
+    default: ''
   maintainer:
     description: Login assigned on a newly created alert issue.
     required: true
@@ -60,6 +67,7 @@ runs:
         CANARY_STATUS: ${{ inputs.workflow-status }}
         WORKFLOW_FILE: ${{ inputs.workflow-file }}
         WORKFLOW_EVENT: ${{ inputs.workflow-event }}
+        FAILURE_DETAIL: ${{ inputs.failure-detail }}
         WORKFLOW_NAME: ${{ github.workflow }}
         MAINTAINER: ${{ inputs.maintainer }}
       run: bash "$GITHUB_ACTION_PATH/canary-alert.sh"

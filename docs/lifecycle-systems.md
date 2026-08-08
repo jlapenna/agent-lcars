@@ -150,6 +150,12 @@ and the dispatch ledger itself.
   `.github/actions/run-dispatch-canary` — the controller's own end-to-end
   canary (structurally incapable of touching self-hosted infra or a paid
   model; runs on `ubuntu-latest`).
+- `.github/workflows/webhook-ingress-canary.yml` +
+  `.github/actions/run-webhook-ingress-canary` — the real GitHub App ingress
+  canary. It toggles one non-dispatch sentinel and requires the exact App
+  delivery, public response, Cloud Tasks processing receipt, timeline source,
+  and delivery-derived controller transport identity. It runs only on
+  `ubuntu-latest` and never invokes a worker or model.
 
 **Park admission policy (#720):** `status:needs-human` is a real stop signal
 for ordinary agent spend. A generation may still become `accepted` in the
@@ -673,6 +679,7 @@ workflows:
 | Workflow                      | Watched job/path                                             | Scope note                                                                                                         |
 | ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | `dispatch-canary.yml`         | `canary`                                                     | Full scheduled/manual dispatch lifecycle                                                                           |
+| `webhook-ingress-canary.yml`  | `probe`                                                      | Real subscribed GitHub App event through public ingress, queue processing, and exact durable authority observation |
 | `deliverable-watchdog.yml`    | `scan`                                                       | Watches the observer that surfaces agent PRs abandoned after a successful dispatch                                 |
 | `dispatch-reconcile.yml`      | whichever of `hosted-scan` or `action-fallback` was selected | Never treats the intentionally skipped transport as a failure                                                      |
 | `rerun-infra-killed-runs.yml` | `scan`                                                       | Watches the CI self-healing sweep                                                                                  |
@@ -703,7 +710,7 @@ exists now:
 
 | System               | Canary                                                                                | Contract proved                                                                                                                                                                                                                       |
 | -------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dispatch controller  | `dispatch-canary.yml` / `agent-dispatch-canary.yml`                                   | Stable caller → intent → immutable attempt ID/run binding → successful terminal generation                                                                                                                                            |
+| Dispatch controller  | `webhook-ingress-canary.yml`; `dispatch-canary.yml` / `agent-dispatch-canary.yml`     | Real subscribed GitHub App delivery → HMAC → Cloud Tasks → exact event-originated authority; plus stable manual caller → intent → immutable attempt ID/run binding → successful terminal generation                                   |
 | Runner platform      | `bootstrap-canary.yml`                                                                | A job is allocated on the exact production worker label within the bounded job timeout; the independent GitHub-hosted alert survives allocation failure                                                                               |
 | Worker runtime       | `bootstrap-canary.yml` (all three lanes), `opencode-model-canary.yml` (OpenCode only) | Shared token/snapshot/telemetry bootstrap on the real fleet, plus the one honest cheap exact-model probe. Claude/Codex deliberately have no fake presence-only model probe; see the Worker runtime section                            |
 | Outcome finalizer    | `dispatch-canary.yml` / `agent-dispatch-canary.yml`                                   | The real snapshotted verifier independently accepts the exact attempt-claim comment and persists its typed `comment` outcome; a merely successful Actions conclusion is rejected                                                      |

@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 
+import {
+  WEBHOOK_INGRESS_CANARY_MARKER,
+  WEBHOOK_INGRESS_CANARY_TITLE,
+} from '@agent-lcars/dispatch-contracts';
 import { test } from 'vitest';
 
 import {
@@ -59,6 +63,62 @@ function prEvent(action, overrides = {}) {
     ...overrides,
   };
 }
+
+test('the webhook ingress sentinel can never become dispatch work (#796)', () => {
+  const sentinel = {
+    ...baseIssue,
+    title: WEBHOOK_INGRESS_CANARY_TITLE,
+    body: WEBHOOK_INGRESS_CANARY_MARKER,
+  };
+  for (const candidate of [
+    {
+      eventName: 'issues',
+      event: issueEvent('labeled', { issue: sentinel }),
+    },
+    {
+      eventName: 'issue_comment',
+      event: issueEvent('created', {
+        issue: sentinel,
+        comment: {
+          id: 1,
+          body: '/codex',
+          created_at: context.now,
+          author_association: 'OWNER',
+          user: { login: 'jlapenna', type: 'User' },
+        },
+      }),
+    },
+    {
+      eventName: 'workflow_dispatch',
+      event: { action: '', issue: sentinel },
+      inputs: {
+        issue: String(sentinel.number),
+        pipeline: 'codex',
+        mode: 'implement',
+        caller_id: '11111111-1111-4111-8111-111111111111',
+      },
+    },
+  ]) {
+    assert.deepEqual(
+      normalizeEvent({
+        ...candidate,
+        context,
+        maintainer: 'jlapenna',
+      }),
+      { kind: 'ignored', reason: 'webhook ingress canary sentinel' },
+    );
+  }
+
+  const closed = normalizeEvent({
+    eventName: 'issues',
+    event: issueEvent('closed', { issue: sentinel }),
+    context,
+    timeline: timeline('closed', { label: undefined }),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(closed.kind, 'anchor-control');
+  assert.equal(closed.control.kind, 'closed');
+});
 
 test('exact command parsing accepts command lines and rejects prose, quotes, and code', () => {
   assert.deepEqual(parseExactCommand('/codex please continue'), {

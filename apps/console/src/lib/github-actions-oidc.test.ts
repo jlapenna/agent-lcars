@@ -1,6 +1,8 @@
 import {
   COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
+  WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
+  WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH,
 } from '@agent-lcars/dispatch-contracts';
 import {
   RECONCILE_OIDC_AUDIENCE,
@@ -11,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertCompletionOidcClaims,
   assertReconcileOidcClaims,
+  assertWebhookIngressCanaryOidcClaims,
 } from './github-actions-oidc';
 
 const repository = 'jlapenna/agent-lcars';
@@ -105,5 +108,50 @@ describe('GitHub Actions completion OIDC claims', () => {
     [{ ...completionClaims, run_id: '0' }, 'run_id'],
   ])('rejects a completion caller with the wrong %s claim', (claims, field) => {
     expect(() => assertCompletionOidcClaims(claims, repository)).toThrow(field);
+  });
+});
+
+describe('GitHub Actions webhook ingress canary OIDC claims', () => {
+  const canaryClaims = {
+    aud: WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
+    repository,
+    repository_id: '1307149765',
+    run_id: '93099054125',
+    workflow_ref: `${repository}/${WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH}@refs/heads/main`,
+    ref: 'refs/heads/main',
+    event_name: 'schedule',
+  };
+
+  it('accepts only scheduled/manual ingress probes from main', () => {
+    expect(
+      assertWebhookIngressCanaryOidcClaims(canaryClaims, repository),
+    ).toEqual({
+      repository,
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_125,
+    });
+    expect(
+      assertWebhookIngressCanaryOidcClaims(
+        { ...canaryClaims, event_name: 'workflow_dispatch' },
+        repository,
+      ),
+    ).toMatchObject({ runId: 93_099_054_125 });
+  });
+
+  it.each([
+    [{ ...canaryClaims, repository: 'attacker/fork' }, 'repository'],
+    [
+      {
+        ...canaryClaims,
+        workflow_ref: `${repository}/.github/workflows/ci.yml@refs/heads/main`,
+      },
+      'workflow_ref',
+    ],
+    [{ ...canaryClaims, ref: 'refs/heads/feature' }, 'ref'],
+    [{ ...canaryClaims, event_name: 'pull_request' }, 'event_name'],
+  ])('rejects a canary caller with the wrong %s claim', (claims, field) => {
+    expect(() =>
+      assertWebhookIngressCanaryOidcClaims(claims, repository),
+    ).toThrow(field);
   });
 });

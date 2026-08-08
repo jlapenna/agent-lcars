@@ -109,6 +109,30 @@
           }
         }
       }
+    },
+    "build-webhook-ingress-canary": {
+      "// why": "The real-ingress probe is a committed dependency-free action bundle so its scheduled GitHub-hosted workflow executes the same reviewed source CI tests, without a runtime install or self-hosted runner.",
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "platform": "node",
+        "target": "node24",
+        "format": ["esm"],
+        "bundle": true,
+        "thirdParty": true,
+        "outputPath": ".github/actions/run-webhook-ingress-canary/dist",
+        "outputFileName": "run.mjs",
+        "main": "apps/dispatch-broker/src/webhook-ingress-canary/run.ts",
+        "tsConfig": "apps/dispatch-broker/tsconfig.build.json",
+        "generatePackageJson": false,
+        "skipTypeCheck": false,
+        "esbuildOptions": {
+          "sourcemap": false,
+          "outExtension": {
+            ".js": ".mjs"
+          }
+        }
+      }
     }
   }
 }

@@ -358,6 +358,8 @@ function parseRouterGroupMarker(displayTitle) {
 var COMPLETION_OIDC_AUDIENCE = "agent-lcars-dispatch-completion";
 var HOSTED_COMPLETION_PATH = "/api/control-plane/completion";
 var HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
+var WEBHOOK_INGRESS_PROBE_PATH = "/api/control-plane/webhook/probe";
+var WEBHOOK_INGRESS_PROBE_URL = `https://agent-console.supersprinkles.racing${WEBHOOK_INGRESS_PROBE_PATH}`;
 
 // libs/dispatch-contracts/src/quick-task.ts
 function serializeIdentity({
@@ -386,6 +388,10 @@ var LANE_READINESS_FAILURES = [
 function isLaneReadinessFailure(value) {
   return typeof value === "string" && LANE_READINESS_FAILURES.includes(value);
 }
+
+// libs/dispatch-contracts/src/webhook-ingress.ts
+var WEBHOOK_INGRESS_CANARY_MARKER = "<!-- agent-lcars:webhook-ingress-canary:v1 -->";
+var WEBHOOK_INGRESS_CANARY_TITLE = "GitHub App webhook ingress canary sentinel";
 
 // libs/dispatch-reconcile/src/scan.ts
 var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
@@ -1875,6 +1881,11 @@ function authorization(actor, maintainer, rule, extra = {}) {
 }
 
 // apps/dispatch-broker/src/normalize.ts
+function isWebhookIngressCanary(issue) {
+  return Boolean(
+    issue && issue.title === WEBHOOK_INGRESS_CANARY_TITLE && issue.body?.includes(WEBHOOK_INGRESS_CANARY_MARKER)
+  );
+}
 var COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
 var WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
 var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -2116,6 +2127,10 @@ function normalizeEvent({
   maintainer
 }) {
   const semanticEventName = eventName === "pull_request_target" ? "pull_request" : eventName;
+  const issue = event.issue ?? event.pull_request;
+  if (isWebhookIngressCanary(issue) && !(semanticEventName === "issues" && ["closed", "reopened"].includes(event.action))) {
+    return { kind: "ignored", reason: "webhook ingress canary sentinel" };
+  }
   if (semanticEventName === "workflow_dispatch") {
     return normalizeWorkflowDispatch({
       inputs,
@@ -2124,7 +2139,6 @@ function normalizeEvent({
       issue: event.issue
     });
   }
-  const issue = event.issue ?? event.pull_request;
   if (!issue) return { kind: "ignored", reason: "event has no issue" };
   const task = taskRef(context, issue);
   const pipeline = selectedPipeline(issue);
