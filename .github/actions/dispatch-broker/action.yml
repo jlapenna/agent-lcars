@@ -49,6 +49,9 @@ outputs:
   repository-id:
     description: Immutable numeric GitHub repository ID
     value: ${{ steps.run.outputs.repository-id }}
+  is-pr:
+    description: Whether the canonical anchor is a pull request
+    value: ${{ steps.run.outputs.is-pr }}
   group:
     description: Repository-wide collision-safe broker concurrency group
     value: ${{ steps.run.outputs.group }}

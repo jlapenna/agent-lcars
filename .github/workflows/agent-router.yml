@@ -106,6 +106,7 @@ jobs:
       eligible: ${{ steps.normalize.outputs.eligible }}
       issue: ${{ steps.normalize.outputs.issue }}
       repository-id: ${{ steps.normalize.outputs.repository-id }}
+      is-pr: ${{ steps.normalize.outputs.is-pr }}
       group: ${{ steps.normalize.outputs.group }}
       payload: ${{ steps.normalize.outputs.payload }}
     steps:
@@ -137,16 +138,14 @@ jobs:
     # entirely for this job (GitHub Actions semantics) rather than adding to
     # it, so every permission broker's own steps actually use must be
     # restated here -- not copied from the workflow-level block, which is
-    # `normalize`'s own grant and includes `pull-requests: write` that
-    # normalize needs but broker does not. Checked, not assumed: every
-    # `request()`/`requestOk()` call site in github-api.ts that broker's
-    # code path (main.ts's broker()) reaches only ever touches `/issues/*`
-    # (ledger comments, labels, assignees, pin) and `/actions/*` (workflow
-    # dispatch, run listings) endpoints -- never `/pulls/*` -- so
-    # `pull-requests: write` is deliberately NOT restated here.
+    # `normalize`'s own grant. The broker uses the Issues REST surface for
+    # ledger comments on both issues and pull requests, but GitHub still
+    # authorizes `/issues/*` comment writes on PR anchors against
+    # `pull-requests: write`, so both grants are required here.
     permissions:
       contents: read # actions/checkout below.
       issues: write # ledger comments/labels/pin/assignee-park (github-api.ts).
+      pull-requests: write # `/issues/*` ledger writes on PR anchors.
       actions: write # workflow_dispatch + run listings (github-api.ts).
       # Dispatch-storage WIF token minting for the conditional auth step
       # below. A grant this job always carries, even when
@@ -184,7 +183,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
-          ANCHOR_IS_PR: ${{ github.event.issue.pull_request != null || github.event.pull_request != null }}
+          ANCHOR_IS_PR: ${{ needs.normalize.outputs.is-pr }}
           # The mode switch itself, plus what main.ts's storage adapter needs
           # in shadow or authority mode.
           # DISPATCH_STORAGE_TOKEN/GCP_PROJECT_ID are simply unused strings
