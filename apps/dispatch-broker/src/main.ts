@@ -1843,9 +1843,11 @@ export function assertCompletionLedgerBinding(
 }
 
 /**
- * Authenticate a completion against existing state without creating state,
- * acquiring a lease, projecting a comment, or invoking fail-closed parking.
- * The leased copy is checked again below before mutation.
+ * Authenticate a completion against existing compatibility state without
+ * creating state, projecting a comment, or invoking fail-closed parking.
+ * Authority mode instead acquires its shared lease in loadBrokerLedger before
+ * validating, so a fast callback cannot race the controller's bindRun write.
+ * The loaded copy is checked again below before mutation in either mode.
  */
 export async function assertCompletionBindingBeforeInitialization(
   client: GitHubApiClient,
@@ -2259,6 +2261,14 @@ async function loadBrokerLedger(
       );
     } catch (error) {
       if (error instanceof AuthorityStateNotFoundError) {
+        // A completion callback may authenticate only against an existing
+        // bound generation. Never inspect compatibility projection or seed
+        // state for an unbound completion request.
+        if (normalized.kind === 'completion') {
+          throw new CompletionBindingError(
+            'Completion callback does not match the bound worker run',
+          );
+        }
         const initializationEvidence =
           await classifyAuthorityTaskInitialization(
             client,
@@ -2289,6 +2299,31 @@ async function loadBrokerLedger(
           { busyWaitMs: authorityBusyWaitMs },
         );
       } else {
+        throw error;
+      }
+    }
+    if (normalized.kind === 'completion') {
+      try {
+        // Acquire the shared lease before deciding that a callback is
+        // unbound. A just-dispatched worker can reach this endpoint while
+        // the dispatching controller still owns the lease and is about to
+        // persist bindRun; acquireAuthority waits behind that owner. Keep
+        // this check ahead of loadLedgerProjection so a genuinely invalid
+        // callback cannot create or repair GitHub projection state.
+        assertCompletionLedgerBinding(authority.ledger, normalized);
+      } catch (error) {
+        try {
+          await releaseAuthority(authority.session, authority.ledger);
+        } catch (releaseError) {
+          const message =
+            releaseError instanceof Error
+              ? releaseError.message
+              : String(releaseError);
+          console.log(
+            `::warning::Failed to release rejected completion lease; ` +
+              `it will expire automatically: ${message}`,
+          );
+        }
         throw error;
       }
     }
@@ -2425,7 +2460,7 @@ export async function processNormalizedEvent({
       throw error;
     }
   }
-  if (normalized.kind === 'completion') {
+  if (normalized.kind === 'completion' && storageMode !== 'authority') {
     await assertCompletionBindingBeforeInitialization(
       client,
       task,
@@ -2455,6 +2490,7 @@ export async function processNormalizedEvent({
       );
       throw error;
     }
+    if (error instanceof CompletionBindingError) throw error;
     await failClosed(client, task, maintainer, error);
   }
   if (!loaded) {

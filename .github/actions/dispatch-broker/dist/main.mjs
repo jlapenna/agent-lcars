@@ -3941,6 +3941,11 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
       );
     } catch (error) {
       if (error instanceof AuthorityStateNotFoundError) {
+        if (normalized.kind === "completion") {
+          throw new CompletionBindingError(
+            "Completion callback does not match the bound worker run"
+          );
+        }
         const initializationEvidence = await classifyAuthorityTaskInitialization(
           client,
           task,
@@ -3961,6 +3966,21 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
           { busyWaitMs: authorityBusyWaitMs }
         );
       } else {
+        throw error;
+      }
+    }
+    if (normalized.kind === "completion") {
+      try {
+        assertCompletionLedgerBinding(authority.ledger, normalized);
+      } catch (error) {
+        try {
+          await releaseAuthority(authority.session, authority.ledger);
+        } catch (releaseError) {
+          const message = releaseError instanceof Error ? releaseError.message : String(releaseError);
+          console.log(
+            `::warning::Failed to release rejected completion lease; it will expire automatically: ${message}`
+          );
+        }
         throw error;
       }
     }
@@ -4040,7 +4060,7 @@ async function processNormalizedEvent({
       throw error;
     }
   }
-  if (normalized.kind === "completion") {
+  if (normalized.kind === "completion" && storageMode !== "authority") {
     await assertCompletionBindingBeforeInitialization(
       client,
       task,
@@ -4070,6 +4090,7 @@ async function processNormalizedEvent({
       );
       throw error;
     }
+    if (error instanceof CompletionBindingError) throw error;
     await failClosed(client, task, maintainer, error);
   }
   if (!loaded) {

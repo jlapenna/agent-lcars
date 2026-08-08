@@ -57,7 +57,11 @@ import {
   wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, makeIntent, normalizeEvent } from './normalize.js';
-import { acquireAuthority } from './storage/authority.js';
+import {
+  acquireAuthority,
+  persistAuthority,
+  releaseAuthority,
+} from './storage/authority.js';
 import { InMemoryStoragePort } from './storage/in-memory-port.js';
 
 const task = {
@@ -1613,6 +1617,121 @@ test('completion binding rejects missing authority state before initialization',
   );
   assert.equal(await port.readTask(task), undefined);
   assert.deepEqual(requests, []);
+});
+
+test('authority completion waits for bindRun before validating and projecting', async () => {
+  const port = new InMemoryStoragePort();
+  const dispatching = dispatchingLedger().ledger;
+  const controller = await acquireAuthority(
+    port,
+    task,
+    'dispatch-controller',
+    dispatching,
+  );
+  let controllerReleased = false;
+  const projectionCalls = [];
+  const client = {
+    request: async () => {
+      throw new Error('No projection mutation expected');
+    },
+    requestOk: async (path) => {
+      assert.equal(controllerReleased, true);
+      projectionCalls.push(path);
+      return [
+        {
+          id: 9,
+          body: renderLedgerComment(controller.ledger),
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+      ];
+    },
+  };
+  const normalized = {
+    kind: 'completion' as const,
+    task,
+    sourceKind: 'completion' as const,
+    sourceId: 'worker-run:42',
+    transportRunId: 42,
+    workerRunId: 42,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workflow: 'codex.yml',
+  };
+
+  const load = loadBrokerLedger(
+    client,
+    task,
+    normalized,
+    false,
+    'authority',
+    'completion:42',
+    () => port,
+    '',
+    undefined,
+    500,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  bindRun(controller.ledger, 1, {
+    runId: 42,
+    runUrl: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+    htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+    workflow: 'codex.yml',
+  });
+  await persistAuthority(controller.session, controller.ledger);
+  await releaseAuthority(controller.session, controller.ledger);
+  controllerReleased = true;
+
+  const loaded = await load;
+  assert.equal(loaded?.ledger.generations[0].attempt?.runId, 42);
+  assert.equal(projectionCalls.length, 1);
+  assert.ok(loaded?.authority);
+  await releaseAuthority(loaded.authority, loaded.ledger);
+});
+
+test('authority completion rejects an invalid binding before GitHub projection', async () => {
+  const port = new InMemoryStoragePort();
+  const seeded = await acquireAuthority(
+    port,
+    task,
+    'seed-controller',
+    boundLedger(),
+  );
+  await releaseAuthority(seeded.session, seeded.ledger);
+  const client = {
+    request: async () => {
+      throw new Error('Invalid completion must not mutate GitHub projection');
+    },
+    requestOk: async () => {
+      throw new Error('Invalid completion must not read GitHub projection');
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        {
+          kind: 'completion',
+          task,
+          sourceKind: 'completion',
+          sourceId: 'worker-run:99',
+          transportRunId: 99,
+          workerRunId: 99,
+          generation: 1,
+          intentId: 'intent-1',
+          token: 'dispatch_token_123456',
+          workflow: 'codex.yml',
+        },
+        false,
+        'authority',
+        'completion:99',
+        () => port,
+      ),
+    CompletionBindingError,
+  );
+  assert.equal((await port.readTask(task))?.lease, undefined);
 });
 
 test('only unambiguous non-transient 4xx dispatch failures are definite rejections', () => {
