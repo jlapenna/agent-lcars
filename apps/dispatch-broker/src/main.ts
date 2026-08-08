@@ -76,6 +76,12 @@ import {
   selectedPipeline,
   selectedPipelineFrom,
 } from './normalize.js';
+import { FirestoreRestStoragePort } from './storage/firestore-rest-port.js';
+import type { StoragePort } from './storage/port.js';
+import {
+  maybeObserveDispatchStorage,
+  parseDispatchStorageMode,
+} from './storage/shadow.js';
 
 // --- GitHub webhook/REST shapes main.mjs reads. One set covering every
 // endpoint this file calls: the raw event payload off disk (normalize()),
@@ -203,6 +209,23 @@ function decode(value: string): unknown {
 
 function api(): GitHubApiClient {
   return createGitHubApi({ token: env('GITHUB_TOKEN') });
+}
+
+// #645 Phase 6 (shadow mode): the one place a `FirestoreRestStoragePort` is
+// ever constructed. Deliberately a lazy factory, never called eagerly --
+// `maybeObserveDispatchStorage` (storage/shadow.ts) only invokes this when
+// `DISPATCH_STORAGE_MODE` is `'shadow'`, so an `'off'` run never reads
+// GCP_PROJECT_ID/DISPATCH_STORAGE_TOKEN, never constructs this class, and
+// never makes a Firestore request -- see that module's own "Inertness of
+// 'off'" section. Credential resolution stays out of the adapter itself
+// (firestore-rest-port.ts's own "Auth" section): agent-router.yml's
+// google-github-actions/auth step mints the access token and this file only
+// ever reads the resulting env var, never derives one itself.
+function createShadowStoragePort(): StoragePort {
+  return new FirestoreRestStoragePort({
+    projectId: env('GCP_PROJECT_ID'),
+    token: env('DISPATCH_STORAGE_TOKEN'),
+  });
 }
 
 function contextFor(
@@ -1658,6 +1681,14 @@ async function broker(): Promise<void> {
   // original decode() applied no validation here either.
   const normalized = decode(env('BROKER_PAYLOAD')) as NormalizedEvent;
   if (normalized.kind === 'ignored') return;
+  // #645 Phase 6: parsed once, up front, before any ledger work -- a
+  // misconfigured DISPATCH_STORAGE_MODE repo variable (anything other than
+  // 'off'/unset/'shadow') must fail this run immediately and loudly, not be
+  // discovered after a dispatch pass already did real work, and never be
+  // silently treated as 'off' (see storage/shadow.ts's header).
+  const storageMode = parseDispatchStorageMode(
+    env('DISPATCH_STORAGE_MODE', false),
+  );
   const task = resolveTask(normalized);
   const client = api();
   const isPullRequest = env('ANCHOR_IS_PR', false) === 'true';
@@ -1809,6 +1840,18 @@ async function broker(): Promise<void> {
         `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
       );
     }
+    // #645 Phase 6 (shadow mode): observe this pass's resulting ledger
+    // state against durable storage. Runs last, after every ledger-
+    // authoritative write this pass made -- the ledger stays sole
+    // authority; this is purely an observer. maybeObserveDispatchStorage's
+    // own containment (storage/shadow.ts) means a storage failure here can
+    // never turn this otherwise-successful pass into a failed job, and
+    // 'off' never reaches this call's port factory at all.
+    await maybeObserveDispatchStorage(
+      storageMode,
+      createShadowStoragePort,
+      loaded.ledger,
+    );
   } catch (error) {
     await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
   }

@@ -113,7 +113,9 @@ test.describe('/costs workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="costs"]');
     await expect(header.getByRole('link', { name: 'Costs' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
+    await expect(header.getByRole('link', { name: 'Deck' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(
       header.getByRole('button', { name: 'More console options' }),
     ).toBeVisible();
