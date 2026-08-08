@@ -1133,11 +1133,21 @@ test('deploy-console.yml uses a workflow-restricted provider for its project-IAM
     path.join(workflowsDirectory, 'deploy-console.yml'),
     'utf8',
   );
-  const auth =
-    /\n\s+- uses: google-github-actions\/auth@v3\n\s+id: gcp-auth\n(?<body>(?:\s+.*\n)+?)(?=\s+- (?:name|uses):)/u.exec(
-      source,
-    )?.groups?.body;
-  assert.ok(auth, 'deploy-console.yml must retain its gcp-auth step');
+  const lines = source.split('\n');
+  const authStart = lines.findIndex(
+    (line) => line.trim() === '- uses: google-github-actions/auth@v3',
+  );
+  assert.notEqual(
+    authStart,
+    -1,
+    'deploy-console.yml must retain its GCP auth action',
+  );
+  const authEnd = lines.findIndex(
+    (line, index) => index > authStart && /^\s+- (?:name|uses):/u.test(line),
+  );
+  assert.notEqual(authEnd, -1, 'the deploy GCP auth block must be bounded');
+  const auth = lines.slice(authStart, authEnd).join('\n');
+  assert.match(auth, /^\s+id: gcp-auth$/mu);
   assert.match(
     auth,
     stepField(
