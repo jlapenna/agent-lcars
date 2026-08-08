@@ -83,10 +83,12 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | `GCP_WIF_PROVIDER`                 | `projects/611425338852/…/providers/github`                                           | claude / codex / opencode                                                                                                    |
 | `GCP_DEPLOYER_WIF_PROVIDER`        | `projects/611425338852/…/workloadIdentityPools/github-deployer/providers/github`     | deploy-console only; provider accepts `deploy-console.yml` from `main`                                                       |
 | `GCP_DISPATCH_BROKER_WIF_PROVIDER` | `projects/611425338852/…/workloadIdentityPools/dispatch-controller/providers/github` | agent-router only; provider accepts `agent-router.yml` from `main`                                                           |
+| `GCP_WEBHOOK_CONFIG_WIF_PROVIDER`  | Terraform output `github_app_webhook_configurator_workload_identity_provider`        | configure-github-app-webhook only; provider accepts that workflow from `main`                                                |
 | `GCP_TELEMETRY_WRITER_SA`          | `telemetry-writer@agent-lcars…`                                                      | claude / codex                                                                                                               |
 | `GCP_CODEX_AGENT_SA`               | `codex-agent@agent-lcars…`                                                           | codex                                                                                                                        |
 | `GCP_DISPATCH_BROKER_SA`           | `dispatch-broker@agent-lcars…`                                                       | agent-router controller writes only                                                                                          |
 | `GCP_DISPATCH_PREFLIGHT_SA`        | `dispatch-preflight@agent-lcars…`                                                    | worker preflight reads only                                                                                                  |
+| `GCP_WEBHOOK_CONFIG_SA`            | Terraform output `github_app_webhook_configurator_service_account`                   | configure-github-app-webhook; reads only the webhook HMAC secret                                                             |
 | `DISPATCH_FIRESTORE_DATABASE_ID`   | `dispatch-controller`                                                                | agent-router and authority-mode worker preflight                                                                             |
 | `DISPATCH_STORAGE_MODE`            | `shadow`, then `authority`                                                           | dispatch controller migration switch                                                                                         |
 | `DISPATCH_AUTHORITY_EPOCH`         | cutover timestamp in ISO 8601                                                        | authority initialization boundary; set before switching to `authority`                                                       |
@@ -96,6 +98,14 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | `APPHOSTING_BACKEND_ID`            | `agent-lcars`                                                                        | deploy-console                                                                                                               |
 | `AGENT_BOT_LOGINS`                 | `["claude[bot]","agent-lcars[bot]"]`                                                 | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                                                            |
 | `NX_CACHE_URL`                     | homelab Nx cache                                                                     | all agent lanes (pre-existing)                                                                                               |
+
+After applying Terraform, map the dedicated webhook configurator outputs to
+the repository variables the workflow consumes:
+
+```sh
+gh variable set GCP_WEBHOOK_CONFIG_WIF_PROVIDER --body "$(terraform -chdir=infra/terraform output -raw github_app_webhook_configurator_workload_identity_provider)"
+gh variable set GCP_WEBHOOK_CONFIG_SA --body "$(terraform -chdir=infra/terraform output -raw github_app_webhook_configurator_service_account)"
+```
 
 Two values in `publish-images.yml` are deliberately **not**
 variables — its `runs-on: lcars-build-client` and its BuildKit
