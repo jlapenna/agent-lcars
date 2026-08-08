@@ -193,6 +193,7 @@ interface GitHubIssueDetail {
   number: number;
   title: string;
   body?: string | null;
+  user?: GitHubUserRef;
   labels?: (string | GitHubLabelRef)[];
   assignees?: GitHubUserRef[];
   pull_request?: unknown;

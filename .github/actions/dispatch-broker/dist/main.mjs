@@ -3231,10 +3231,20 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)
   );
   const mostRecent = labelApplications[0];
-  if (!mostRecent) return;
-  const actor = mostRecent.actor;
-  if (!actor || actor.login !== maintainer) return;
-  const quickTask = quickTaskRequest(issue, task.repository, pipeline);
+  let actor;
+  let authorizationRule = "reconcile-label-repair";
+  let quickTask;
+  if (mostRecent) {
+    actor = mostRecent.actor;
+    if (!actor || actor.login !== maintainer) return;
+    quickTask = quickTaskRequest(issue, task.repository, pipeline);
+  } else {
+    actor = issue.user;
+    if (!actor || actor.login !== maintainer) return;
+    quickTask = quickTaskRequest(issue, task.repository, pipeline);
+    if (!quickTask) return;
+    authorizationRule = "reconcile-quick-task-create-repair";
+  }
   const intent = makeIntent({
     task,
     ...quickTask && {
@@ -3256,7 +3266,7 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
       // which cannot equal `maintainer` there without already returning.
       actor: actor.login,
       configuredMaintainer: maintainer,
-      rule: "reconcile-label-repair"
+      rule: authorizationRule
     }
   });
   acceptIntent(ledger, intent, now);

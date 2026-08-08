@@ -2618,6 +2618,32 @@ function maintainerLabelTimeline(login = 'jlapenna') {
   ];
 }
 
+function quickTaskRepairIssue({ author = 'jlapenna', persistedDigest } = {}) {
+  const description = 'Repair this Quick Task';
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  const digest = digestQuickTask({
+    repository: task.repository,
+    pipeline: 'codex',
+    title: 'Quick task issue',
+    description,
+  });
+  return {
+    requestId,
+    digest,
+    issue: {
+      id: 9304,
+      number: task.issue,
+      title: 'Quick task issue',
+      body: `${description}\n\n<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${persistedDigest ?? digest} -->`,
+      user: { login: author },
+      labels: [{ name: 'intake:quick-task' }, { name: 'agent:codex' }],
+      assignees: [],
+      created_at: '2026-08-04T05:59:00.000Z',
+      updated_at: '2026-08-04T05:59:00.000Z',
+    },
+  };
+}
+
 test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a live, unambiguous agent label applied by the maintainer (#520)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {
@@ -2725,12 +2751,118 @@ test('reconcileLedger repair does NOT fire when the label was most recently appl
   }
 });
 
-test('reconcileLedger repair does NOT fire when the issue timeline has no matching labeled event at all', async () => {
+test('reconcileLedger repairs a creation-time Quick Task label from its digest and maintainer author when no labeled timeline event exists (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue, requestId, digest } = quickTaskRepairIssue();
+    const { client } = reconcileStubClient({ issue, timeline: [] });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:00:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    assert.equal(
+      ledger.generations[0].intentId,
+      `quick:${requestId}:${digest}`,
+    );
+    assert.equal(ledger.generations[0].state, 'accepted');
+    assert.deepEqual(ledger.sources[0].authorization, {
+      authorized: true,
+      actor: 'jlapenna',
+      configuredMaintainer: 'jlapenna',
+      rule: 'reconcile-quick-task-create-repair',
+    });
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger does NOT trust a valid creation-time Quick Task marker authored by a non-maintainer (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue } = quickTaskRepairIssue({
+      author: 'some-other-collaborator',
+    });
+    const { client, calls } = reconcileStubClient({ issue, timeline: [] });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:00:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 0);
+    assert.equal(
+      calls.some((call) => call.method !== 'GET'),
+      false,
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('a real non-maintainer label event takes precedence over the original Quick Task author (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue } = quickTaskRepairIssue();
+    const { client } = reconcileStubClient({
+      issue,
+      timeline: maintainerLabelTimeline('some-other-collaborator'),
+    });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:00:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 0);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger rejects a maintainer-authored Quick Task whose creation marker digest is invalid (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue } = quickTaskRepairIssue({
+      persistedDigest: '0'.repeat(64),
+    });
+    const { client } = reconcileStubClient({ issue, timeline: [] });
+    await assert.rejects(
+      () =>
+        reconcileLedger(
+          client,
+          { ledger, comment: { id: 9 } },
+          '2026-08-04T06:00:00.000Z',
+          30880000,
+        ),
+      /Quick Task marker digest mismatch/u,
+    );
+    assert.equal(ledger.generations.length, 0);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repair does NOT treat an ordinary maintainer-authored issue as a Quick Task when its timeline has no matching label event (#634)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {
     const ledger = createLedger(task);
     const { client } = reconcileStubClient({
-      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      issue: {
+        id: 9304,
+        user: { login: 'jlapenna' },
+        labels: [{ name: 'agent:codex' }],
+        assignees: [],
+      },
       timeline: [],
     });
     const now = '2026-08-04T06:00:00.000Z';

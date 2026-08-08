@@ -177,6 +177,13 @@ possible:
   (`reconcile-parked`). A generation still within its grace period, or
   re-observed sooner than the minimum interval, is a silent no-op — this is
   what makes overlapping/duplicate scans idempotent.
+- **An intent evicted before the ledger recorded any generation**: an
+  unambiguous live agent label is repaired only from its most recent
+  maintainer-authored `labeled` event. The narrow creation-time exception is
+  a digest-valid Quick Task authored by the configured maintainer, because
+  GitHub emits no separate timeline event for labels included in an issue's
+  creation request (#634). A real later label event always takes precedence,
+  so its non-maintainer actor can never fall back to the original author.
 - **Stale pending intents**: queued behind either repair above, they are
   promoted when their blocking generation resolves (`completeRun`'s
   existing promotion), but promotion is not unconditional launch:

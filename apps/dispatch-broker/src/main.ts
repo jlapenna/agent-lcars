@@ -129,6 +129,7 @@ interface GitHubIssueDetail {
   number: number;
   title: string;
   body?: string | null;
+  user?: GitHubUserRef;
   labels?: (string | GitHubLabelRef)[];
   assignees?: GitHubUserRef[];
   pull_request?: unknown;
@@ -1147,6 +1148,14 @@ async function trackStuckRun(
 // non-maintainer authorship leaves the repair undone (fails closed, same
 // as the live path) rather than guessing.
 //
+// #634's one narrow exception is a digest-valid Quick Task whose agent:*
+// label was part of the issue-creation request. GitHub emits no separate
+// `labeled` timeline event for creation-time labels, so there is no label
+// actor to recover. Only when NO matching label event exists, require both
+// quickTaskRequest()'s existing marker/digest proof and the issue author's
+// login to match the configured maintainer. A real label event always wins:
+// its non-maintainer actor cannot fall back to the issue's original author.
+//
 // Must page through the ENTIRE timeline (listAll), not just its first
 // page (Codex review, P1 follow-up): an issue with over 100 timeline
 // events could have the label's true most-recent application sitting on
@@ -1197,11 +1206,23 @@ async function repairMissingIntentFromLabel(
         Date.parse(right.created_at) - Date.parse(left.created_at),
     );
   const mostRecent = labelApplications[0];
-  if (!mostRecent) return;
-  const actor = mostRecent.actor;
-  if (!actor || actor.login !== maintainer) return;
-
-  const quickTask = quickTaskRequest(issue, task.repository, pipeline);
+  let actor: GitHubUserRef | undefined;
+  let authorizationRule = 'reconcile-label-repair';
+  let quickTask: ReturnType<typeof quickTaskRequest>;
+  if (mostRecent) {
+    actor = mostRecent.actor;
+    if (!actor || actor.login !== maintainer) return;
+    quickTask = quickTaskRequest(issue, task.repository, pipeline);
+  } else {
+    // Check authorship before parsing the marker. This keeps an untrusted
+    // issue author from turning a malformed marker into a reconcile error;
+    // ordinary or malformed maintainer-authored issues still fail closed.
+    actor = issue.user;
+    if (!actor || actor.login !== maintainer) return;
+    quickTask = quickTaskRequest(issue, task.repository, pipeline);
+    if (!quickTask) return;
+    authorizationRule = 'reconcile-quick-task-create-repair';
+  }
   const intent = makeIntent({
     task,
     ...(quickTask && {
@@ -1223,7 +1244,7 @@ async function repairMissingIntentFromLabel(
       // which cannot equal `maintainer` there without already returning.
       actor: actor.login,
       configuredMaintainer: maintainer,
-      rule: 'reconcile-label-repair',
+      rule: authorizationRule,
     },
   });
   acceptIntent(ledger, intent, now);
