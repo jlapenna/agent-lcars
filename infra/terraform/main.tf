@@ -230,6 +230,21 @@ resource "google_service_account" "github_deployer" {
   display_name = "Agent LCARS GitHub Actions deployer"
 }
 
+# Reads one HMAC secret while configuring the GitHub App hook. It has no
+# project-level role and is reachable only from its exact reviewed main
+# workflow through the dedicated pool below.
+resource "google_service_account" "github_app_webhook_configurator" {
+  account_id   = "github-app-webhook-config"
+  display_name = "Agent LCARS GitHub App webhook configurator"
+}
+
+resource "google_secret_manager_secret_iam_member" "github_app_webhook_configurator" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_WEBHOOK_SECRET"].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.github_app_webhook_configurator.email}"
+}
+
 resource "google_project_iam_member" "deployer_roles" {
   for_each = toset([
     "roles/firebase.admin",
@@ -281,6 +296,23 @@ resource "google_iam_workload_identity_pool_provider" "github_deployer" {
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
 
+resource "google_iam_workload_identity_pool" "github_app_webhook_configurator" {
+  workload_identity_pool_id = "github-app-webhook-config"
+  display_name              = "GitHub App webhook config"
+}
+
+resource "google_iam_workload_identity_pool_provider" "github_app_webhook_configurator" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_app_webhook_configurator.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github"
+  display_name                       = "GitHub App webhook config main"
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+  }
+  attribute_condition = "assertion.repository == '${var.github_owner}/${var.github_repository}' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == '${var.github_owner}/${var.github_repository}/.github/workflows/configure-github-app-webhook.yml@refs/heads/main'"
+  oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
+}
+
 resource "google_iam_workload_identity_pool" "dispatch_controller" {
   workload_identity_pool_id = "dispatch-controller"
   display_name              = "GitHub dispatch controller"
@@ -305,6 +337,12 @@ resource "google_service_account_iam_member" "github_deployer_impersonation" {
   service_account_id = google_service_account.github_deployer.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_deployer.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
+resource "google_service_account_iam_member" "github_app_webhook_configurator_impersonation" {
+  service_account_id = google_service_account.github_app_webhook_configurator.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_app_webhook_configurator.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
 resource "google_service_account_iam_member" "members_writer_impersonation" {
