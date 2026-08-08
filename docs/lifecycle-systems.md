@@ -703,6 +703,10 @@ exists now:
   actions in `.github/actions/` are fleet-consumable, and the post-agent
   snapshot-then-`run:` pattern that keeps an agent's unrestricted Bash
   access from being able to tamper with its own finalization gates.
+- [`docs/trajectory-evaluation.md`](trajectory-evaluation.md) — the
+  privacy-safe frozen and rolling production corpus that distinguishes
+  worker readiness, protocol, trajectory, task outcome, change quality, and
+  efficiency instead of treating workflow color as agent quality.
 - [`docs/github-label-contract.md`](github-label-contract.md) — the
   `agent:*`/`status:*`/`review:*` label vocabulary referenced throughout
   this document.

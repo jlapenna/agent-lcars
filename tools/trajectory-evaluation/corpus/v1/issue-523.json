@@ -1,0 +1,2556 @@
+{
+  "schemaVersion": "agent-lcars.trajectory-corpus/v1",
+  "corpusId": "issue-523-production-20-run",
+  "frozenAt": "2026-08-04T15:31:10Z",
+  "sourceWindow": {
+    "from": "2026-08-01T17:41:47Z",
+    "to": "2026-08-04T15:31:10Z",
+    "selection": "The 20 most recent completed, non-skipped Claude, Codex, or OpenCode worker executions at the #523 audit cutoff, ordered by workflow creation time.",
+    "sourceRefs": [
+      {
+        "kind": "issue",
+        "url": "https://github.com/jlapenna/agent-lcars/issues/523",
+        "sha256": null,
+        "access": "public"
+      }
+    ]
+  },
+  "privacy": {
+    "contentPolicy": "public-metadata",
+    "redactionPolicy": "agent-lcars.trajectory-redaction/v1",
+    "transcriptPolicy": "protected-reference-only"
+  },
+  "entries": [
+    {
+      "id": "run-30869989822",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 447,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/447",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-ui-ambiguity",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "4fc73d489d1e7a04a19bcb976665f8bbc9b682a0",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30869989822,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30869989822",
+        "workflowConclusion": "success",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869989822",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-04T01:50:50Z",
+        "agentStartedAt": "2026-08-04T01:53:07Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-04T01:58:57Z",
+        "terminalAt": "2026-08-04T02:01:31Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/453",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 109,
+        "modelSeconds": 490,
+        "firstArtifactSeconds": 350,
+        "runnerMinutes": 8.85,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869989822",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Merged PR #453 with green core CI and no review objection."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869989822",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/447",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/453",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30869944091",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 446,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/446",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-ui",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "4fc73d489d1e7a04a19bcb976665f8bbc9b682a0",
+        "workflowPath": ".github/workflows/claude.yml",
+        "runId": 30869944091,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30869944091",
+        "workflowConclusion": "success",
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": null,
+        "budgetMinutes": 90,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869944091",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-04T01:49:54Z",
+        "agentStartedAt": "2026-08-04T01:50:31Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-04T02:00:52Z",
+        "terminalAt": "2026-08-04T02:01:48Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/455",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 24,
+        "modelSeconds": 664,
+        "firstArtifactSeconds": 621,
+        "runnerMinutes": 11.48,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869944091",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Merged PR #455 with green core CI and no review objection."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869944091",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/446",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/455",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30869929697",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 445,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/445",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-ui",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "4fc73d489d1e7a04a19bcb976665f8bbc9b682a0",
+        "workflowPath": ".github/workflows/claude.yml",
+        "runId": 30869929697,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30869929697",
+        "workflowConclusion": "success",
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": null,
+        "budgetMinutes": 90,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869929697",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-04T01:49:37Z",
+        "agentStartedAt": "2026-08-04T01:51:19Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-04T02:00:48Z",
+        "terminalAt": "2026-08-04T02:12:26Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/454",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 40,
+        "modelSeconds": 1256,
+        "firstArtifactSeconds": 569,
+        "runnerMinutes": 22.13,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869929697",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Merged PR #454 with green core CI and no review objection."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869929697",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/445",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/454",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30869881403",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 444,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/444",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-ui",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "4fc73d489d1e7a04a19bcb976665f8bbc9b682a0",
+        "workflowPath": ".github/workflows/claude.yml",
+        "runId": 30869881403,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30869881403",
+        "workflowConclusion": "success",
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": null,
+        "budgetMinutes": 90,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869881403",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-04T01:48:36Z",
+        "agentStartedAt": "2026-08-04T01:49:46Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-04T01:57:07Z",
+        "terminalAt": "2026-08-04T01:57:56Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/452",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 59,
+        "modelSeconds": 479,
+        "firstArtifactSeconds": 441,
+        "runnerMinutes": 8.33,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869881403",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Merged PR #452 with green core CI and no review objection."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30869881403",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/444",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/452",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30784784675",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 266,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/266",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-ui",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "3ec4459e30cbbce59da86de28a6d51ebb91a5771",
+        "workflowPath": ".github/workflows/claude.yml",
+        "runId": 30784784675,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30784784675",
+        "workflowConclusion": "success",
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": null,
+        "budgetMinutes": 90,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30784784675",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-03T04:33:53Z",
+        "agentStartedAt": "2026-08-03T04:34:17Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-03T05:09:12Z",
+        "terminalAt": "2026-08-03T05:10:01Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/385",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 14,
+        "modelSeconds": 2133,
+        "firstArtifactSeconds": 2095,
+        "runnerMinutes": 35.88,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30784784675",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Desired diagnostic trajectory and merged PR #385 with measured browser evidence."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30784784675",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/266",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/385",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30763003312",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 335,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/335",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "documentation",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 3,
+        "workflowSha": "fb06035c08c5a3df736407cbe3362063acdc0a7b",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30763003312,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30763003312",
+        "workflowConclusion": "success",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30763003312",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-02T19:16:31Z",
+        "agentStartedAt": "2026-08-02T19:17:06Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-02T19:22:49Z",
+        "terminalAt": "2026-08-02T19:23:24Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/351",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 11,
+        "modelSeconds": 363,
+        "firstArtifactSeconds": 343,
+        "runnerMinutes": 6.68,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30763003312",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Third generation completed the docs fix in about six minutes; merged PR #351."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30763003312",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/335",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/351",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30759766484",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 336,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/336",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "documentation",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "949d64190d266772175e4cff189d94032f514bf1",
+        "workflowPath": ".github/workflows/opencode.yml",
+        "runId": 30759766484,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30759766484",
+        "workflowConclusion": "success",
+        "agent": "opencode",
+        "provider": "homelab-litellm",
+        "model": "homelab/default",
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759766484",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-02T17:50:31Z",
+        "agentStartedAt": "2026-08-02T18:11:39Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-02T18:56:26Z",
+        "terminalAt": "2026-08-02T19:08:35Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/350",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 1253,
+        "modelSeconds": 3408,
+        "firstArtifactSeconds": 2687,
+        "runnerMinutes": 57.18,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759766484",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Correct six-line docs PR #350, but first artifact arrived near the 60-minute budget."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759766484",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/336",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/350",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30759760688",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 335,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/335",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "documentation",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 2,
+        "workflowSha": "949d64190d266772175e4cff189d94032f514bf1",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30759760688,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30759760688",
+        "workflowConclusion": "failure",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759760688",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": false,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-02T17:50:21Z",
+        "agentStartedAt": null,
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-02T18:11:56Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 1262,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.53,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759760688",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Subscription authentication restoration failed before Codex executed."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759760688",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/335",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30759758231",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 334,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/334",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "documentation",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 2,
+        "workflowSha": "949d64190d266772175e4cff189d94032f514bf1",
+        "workflowPath": ".github/workflows/claude.yml",
+        "runId": 30759758231,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30759758231",
+        "workflowConclusion": "failure",
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": null,
+        "budgetMinutes": 90,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759758231",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-02T17:50:17Z",
+        "agentStartedAt": "2026-08-02T18:11:32Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-02T18:13:31Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "outcome-gate-failure",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/342",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": null,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 1265,
+        "modelSeconds": 105,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 2.13,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759758231",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Correctly identified that generation 1 and merged PR #342 already resolved the issue; the deliverable gate rejected the honest no-op."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30759758231",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/334",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/342",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30749363701",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 335,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/335",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "documentation",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "d574c31675d79acafb5a8cce3e072e800432125f",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30749363701,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30749363701",
+        "workflowConclusion": "failure",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30749363701",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": false,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-02T13:10:22Z",
+        "agentStartedAt": null,
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-02T13:11:11Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 14,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.55,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30749363701",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Subscription authentication restoration failed before Codex executed."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30749363701",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/335",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30749361834",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 334,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/334",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "documentation",
+      "dispatch": {
+        "mode": "implement",
+        "generation": 1,
+        "workflowSha": "d574c31675d79acafb5a8cce3e072e800432125f",
+        "workflowPath": ".github/workflows/claude.yml",
+        "runId": 30749361834,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30749361834",
+        "workflowConclusion": "success",
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": null,
+        "budgetMinutes": 90,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30749361834",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-02T13:10:19Z",
+        "agentStartedAt": "2026-08-02T13:10:40Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": "2026-08-02T13:16:28Z",
+        "terminalAt": "2026-08-02T13:17:26Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "merged-deliverable",
+        "artifactRefs": [
+          {
+            "kind": "pull-request",
+            "url": "https://github.com/jlapenna/agent-lcars/pull/342",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "green",
+        "review": "no-objection",
+        "merged": true,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 12,
+        "modelSeconds": 395,
+        "firstArtifactSeconds": 348,
+        "runnerMinutes": 6.9,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30749361834",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Merged PR #342 with green core CI and no review objection."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30749361834",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/334",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "pull-request",
+          "url": "https://github.com/jlapenna/agent-lcars/pull/342",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30736102300",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 318,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/318",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "ci-infrastructure",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "5576e3d7067c69fbbb7dd649e054836c85930218",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30736102300,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30736102300",
+        "workflowConclusion": "failure",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30736102300",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": false,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-02T06:32:27Z",
+        "agentStartedAt": null,
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-02T06:33:16Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 13,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.57,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30736102300",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Subscription authentication restoration failed before Codex executed."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30736102300",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/318",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30716657840",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 296,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-routing",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "b65029de65903845a65f23ac6cfeb79eea356328",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30716657840,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30716657840",
+        "workflowConclusion": "failure",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30716657840",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": false,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T20:17:43Z",
+        "agentStartedAt": null,
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T20:18:25Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 8,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.55,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30716657840",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Subscription authentication restoration failed before Codex executed."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30716657840",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30715940743",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 296,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-routing",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "b65029de65903845a65f23ac6cfeb79eea356328",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30715940743,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30715940743",
+        "workflowConclusion": "failure",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30715940743",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": false,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T19:58:23Z",
+        "agentStartedAt": null,
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T19:59:02Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 9,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.48,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30715940743",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Subscription authentication restoration failed before Codex executed."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30715940743",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30714356647",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 296,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-routing",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "4d7d181217bb4aad144c2606206fdbaa197fc41a",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30714356647,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30714356647",
+        "workflowConclusion": "failure",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30714356647",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": false,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T19:15:09Z",
+        "agentStartedAt": null,
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T19:16:23Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 15,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.97,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30714356647",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Subscription authentication restoration failed before Codex executed."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30714356647",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30714322709",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 296,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "console-routing",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "4d7d181217bb4aad144c2606206fdbaa197fc41a",
+        "workflowPath": ".github/workflows/claude.yml",
+        "runId": 30714322709,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30714322709",
+        "workflowConclusion": "failure",
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": null,
+        "budgetMinutes": 90,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30714322709",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": true,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T19:14:13Z",
+        "agentStartedAt": "2026-08-01T19:14:30Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T19:15:07Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 8,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.75,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30714322709",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Claude action process started but the expired OAuth credential failed before a model turn."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30714322709",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/296",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30711932929",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 287,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/287",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "dispatch-protocol",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "9498c1d95ed99025dbe8772fdc063226b472c269",
+        "workflowPath": ".github/workflows/codex.yml",
+        "runId": 30711932929,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30711932929",
+        "workflowConclusion": "failure",
+        "agent": "codex",
+        "provider": "openai",
+        "model": null,
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30711932929",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "credential-failure",
+        "agentProcessStarted": false,
+        "modelTurnObserved": false
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T18:10:29Z",
+        "agentStartedAt": null,
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T18:11:12Z"
+      },
+      "trajectory": {
+        "outcome": "not-started",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "startup-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 8,
+        "modelSeconds": null,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 0.57,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30711932929",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "correct",
+          "notes": "Subscription authentication restoration failed before Codex executed."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30711932929",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/287",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "not-applicable",
+        "progress": "not-applicable",
+        "durableResult": "not-applicable",
+        "terminalBehavior": "not-applicable",
+        "adherent": null
+      }
+    },
+    {
+      "id": "run-30710886467",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 268,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/268",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "dispatch-observability",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "9498c1d95ed99025dbe8772fdc063226b472c269",
+        "workflowPath": ".github/workflows/opencode.yml",
+        "runId": 30710886467,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30710886467",
+        "workflowConclusion": "failure",
+        "agent": "opencode",
+        "provider": "homelab-litellm",
+        "model": "homelab/default",
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710886467",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T17:41:48Z",
+        "agentStartedAt": "2026-08-01T17:42:08Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T18:42:26Z"
+      },
+      "trajectory": {
+        "outcome": "loop",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "trajectory-failure",
+        "artifactRefs": []
+      },
+      "quality": {
+        "accepted": false,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "unknown"
+      },
+      "efficiency": {
+        "queueSeconds": 7,
+        "modelSeconds": 3612,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 60.5,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710886467",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": false,
+          "correctness": "incorrect",
+          "notes": "Repeated near-identical state with little source progress until the 60-minute timeout; no durable artifact."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710886467",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/268",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "missing",
+        "terminalBehavior": "missing",
+        "adherent": false
+      }
+    },
+    {
+      "id": "run-30710885751",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 260,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/260",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "cross-repo-intake",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "9498c1d95ed99025dbe8772fdc063226b472c269",
+        "workflowPath": ".github/workflows/opencode.yml",
+        "runId": 30710885751,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885751",
+        "workflowConclusion": "success",
+        "agent": "opencode",
+        "provider": "homelab-litellm",
+        "model": "homelab/default",
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885751",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T17:41:47Z",
+        "agentStartedAt": "2026-08-01T18:23:31Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T18:56:04Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "correct-park",
+        "artifactRefs": [
+          {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/260",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 2489,
+        "modelSeconds": 1947,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 32.78,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885751",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Correct protocol park for a task whose required product context was outside this repository."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885751",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/260",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    },
+    {
+      "id": "run-30710885776",
+      "repository": "jlapenna/agent-lcars",
+      "repositoryVisibility": "public",
+      "anchor": {
+        "number": 261,
+        "type": "issue",
+        "snapshot": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/261",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "taskClass": "cross-repo-intake",
+      "dispatch": {
+        "mode": "implement",
+        "generation": null,
+        "workflowSha": "9498c1d95ed99025dbe8772fdc063226b472c269",
+        "workflowPath": ".github/workflows/opencode.yml",
+        "runId": 30710885776,
+        "runUrl": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885776",
+        "workflowConclusion": "success",
+        "agent": "opencode",
+        "provider": "homelab-litellm",
+        "model": "homelab/default",
+        "budgetMinutes": 60,
+        "brief": {
+          "availability": "reference-only",
+          "capturedAt": null,
+          "sourceRef": {
+            "kind": "dispatch-brief",
+            "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885776",
+            "sha256": null,
+            "access": "public"
+          }
+        }
+      },
+      "setup": {
+        "outcome": "ready",
+        "agentProcessStarted": true,
+        "modelTurnObserved": true
+      },
+      "milestones": {
+        "queuedAt": "2026-08-01T17:41:47Z",
+        "agentStartedAt": "2026-08-01T17:42:08Z",
+        "takeoverAt": null,
+        "diagnosisAt": null,
+        "firstDurableArtifactAt": null,
+        "terminalAt": "2026-08-01T18:33:28Z"
+      },
+      "trajectory": {
+        "outcome": "productive",
+        "archiveRefs": []
+      },
+      "terminal": {
+        "kind": "correct-park",
+        "artifactRefs": [
+          {
+            "kind": "issue",
+            "url": "https://github.com/jlapenna/agent-lcars/issues/261",
+            "sha256": null,
+            "access": "public"
+          }
+        ]
+      },
+      "quality": {
+        "accepted": true,
+        "ci": "not-applicable",
+        "review": "not-applicable",
+        "merged": false,
+        "regression": "none-known"
+      },
+      "efficiency": {
+        "queueSeconds": 6,
+        "modelSeconds": 3075,
+        "firstArtifactSeconds": null,
+        "runnerMinutes": 51.57,
+        "retries": 0
+      },
+      "annotations": {
+        "automatic": {
+          "confidence": "high",
+          "sourceRefs": [
+            {
+              "kind": "workflow-run",
+              "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885776",
+              "sha256": null,
+              "access": "public"
+            }
+          ]
+        },
+        "human": {
+          "reviewer": "jlapenna",
+          "reviewedAt": "2026-08-04T15:31:10Z",
+          "confidence": "high",
+          "useful": true,
+          "correctness": "correct",
+          "notes": "Correct protocol park for a task whose required product context was outside this repository."
+        }
+      },
+      "sourceRefs": [
+        {
+          "kind": "workflow-run",
+          "url": "https://github.com/jlapenna/agent-lcars/actions/runs/30710885776",
+          "sha256": null,
+          "access": "public"
+        },
+        {
+          "kind": "issue",
+          "url": "https://github.com/jlapenna/agent-lcars/issues/261",
+          "sha256": null,
+          "access": "public"
+        }
+      ],
+      "protocol": {
+        "takeover": "unknown",
+        "progress": "unknown",
+        "durableResult": "observed",
+        "terminalBehavior": "observed",
+        "adherent": true
+      }
+    }
+  ]
+}

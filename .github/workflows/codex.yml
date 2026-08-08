@@ -325,6 +325,7 @@ jobs:
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
 
       - name: Prepare current dispatch brief and runtime deadline
+        id: dispatch-brief
         uses: ./.github/actions/prepare-agent-dispatch
         with:
           token: ${{ steps.agent-lcars-token.outputs.token }}
@@ -338,6 +339,15 @@ jobs:
           budget-minutes: '60'
           artifact-checkpoint-minutes: '25'
           finalize-checkpoint-minutes: '45'
+
+      - name: Preserve protected dispatch snapshot for evaluation
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-dispatch-brief-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.dispatch-brief.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Run Codex
         id: agent
