@@ -56,6 +56,7 @@ import {
   runPhase,
   saveProjectionCheckpoint,
   trustedActionsRunUrl,
+  trustedClaudeExecutionFile,
   wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, makeIntent, normalizeEvent } from './normalize.js';
@@ -2361,6 +2362,23 @@ test('Claude readiness evidence accepts only an exact run URL from this reposito
     if (priorRepository === undefined) delete process.env.GITHUB_REPOSITORY;
     else process.env.GITHUB_REPOSITORY = priorRepository;
   }
+});
+
+test('Claude readiness reads only the pinned action artifact at its exact runner-temp path', () => {
+  const expected = '/runner/temp/claude-execution-output.json';
+  assert.equal(trustedClaudeExecutionFile(expected, '/runner/temp'), expected);
+  for (const invalid of [
+    '',
+    '/runner/temp/other.json',
+    '/runner/temp/nested/../claude-execution-output.json',
+    '/worker/claude-execution-output.json',
+  ]) {
+    assert.equal(
+      trustedClaudeExecutionFile(invalid, '/runner/temp'),
+      undefined,
+    );
+  }
+  assert.equal(trustedClaudeExecutionFile(expected, ''), undefined);
 });
 
 test('a hosted completion records the observation without polling its caller', async () => {

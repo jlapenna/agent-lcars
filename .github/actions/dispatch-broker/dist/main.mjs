@@ -1,6 +1,7 @@
 // apps/dispatch-broker/src/main.ts
 import crypto3 from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // libs/dispatch-contracts/src/failure.ts
@@ -1090,10 +1091,10 @@ function createGitHubApi({
   fetchImpl = fetch,
   baseUrl = "https://api.github.com"
 }) {
-  async function request(path, { method = "GET", body, timeoutMs = 3e4 } = {}) {
+  async function request(path2, { method = "GET", body, timeoutMs = 3e4 } = {}) {
     let response;
     try {
-      response = await fetchImpl(`${baseUrl}${path}`, {
+      response = await fetchImpl(`${baseUrl}${path2}`, {
         method,
         headers: {
           Accept: "application/vnd.github+json",
@@ -1124,8 +1125,8 @@ function createGitHubApi({
     }
     return { status: response.status, data, headers: response.headers };
   }
-  async function requestOk(path, options) {
-    const response = await request(path, options);
+  async function requestOk(path2, options) {
+    const response = await request(path2, options);
     if (response.status < 200 || response.status >= 300) {
       throw new GitHubApiError(
         `GitHub request failed with HTTP ${response.status}`,
@@ -1260,12 +1261,12 @@ async function findSupersedingRouterRun(api2, task, runId) {
   );
   return inspections.find(Boolean);
 }
-async function listAll(api2, path) {
+async function listAll(api2, path2) {
   const all = [];
   for (let page = 1; page <= 100; page += 1) {
-    const separator = path.includes("?") ? "&" : "?";
+    const separator = path2.includes("?") ? "&" : "?";
     const data = await api2.requestOk(
-      `${path}${separator}per_page=100&page=${page}`
+      `${path2}${separator}per_page=100&page=${page}`
     );
     if (!Array.isArray(data))
       throw new Error("GitHub pagination response is not an array");
@@ -3028,8 +3029,8 @@ function env(name, required = true) {
   return value ?? "";
 }
 function output(name, value) {
-  const path = env("GITHUB_OUTPUT");
-  return fs.appendFile(path, `${name}=${value}
+  const path2 = env("GITHUB_OUTPUT");
+  return fs.appendFile(path2, `${name}=${value}
 `, "utf8");
 }
 function encode(value) {
@@ -4632,19 +4633,30 @@ async function claudeReadiness() {
   );
   await output("readiness-incidents", String(count));
 }
+function trustedClaudeExecutionFile(value, runnerTemp) {
+  if (!value || !runnerTemp) return void 0;
+  const expected = path.join(runnerTemp, "claude-execution-output.json");
+  return value === expected ? expected : void 0;
+}
 async function classifyClaudeReadinessProbe() {
-  const executionFile = env("BROKER_EXECUTION_FILE", false);
+  const executionFile = trustedClaudeExecutionFile(
+    env("BROKER_EXECUTION_FILE", false),
+    env("RUNNER_TEMP", false)
+  );
   const conclusion = env("BROKER_PROBE_CONCLUSION", false);
   let execution;
   if (executionFile) {
     try {
-      execution = JSON.parse(
-        await fs.readFile(
-          /* turbopackIgnore: true */
-          executionFile,
-          "utf8"
-        )
-      );
+      const stat = await fs.lstat(executionFile);
+      if (stat.isFile() && !stat.isSymbolicLink()) {
+        execution = JSON.parse(
+          await fs.readFile(
+            /* turbopackIgnore: true */
+            executionFile,
+            "utf8"
+          )
+        );
+      }
     } catch {
     }
   }
@@ -4744,5 +4756,6 @@ export {
   runPhase,
   saveProjectionCheckpoint,
   trustedActionsRunUrl,
+  trustedClaudeExecutionFile,
   wasSupersededEviction
 };

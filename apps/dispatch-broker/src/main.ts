@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type {
@@ -2935,15 +2936,30 @@ async function claudeReadiness(): Promise<void> {
   await output('readiness-incidents', String(count));
 }
 
+function trustedClaudeExecutionFile(
+  value: string,
+  runnerTemp: string,
+): string | undefined {
+  if (!value || !runnerTemp) return undefined;
+  const expected = path.join(runnerTemp, 'claude-execution-output.json');
+  return value === expected ? expected : undefined;
+}
+
 async function classifyClaudeReadinessProbe(): Promise<void> {
-  const executionFile = env('BROKER_EXECUTION_FILE', false);
+  const executionFile = trustedClaudeExecutionFile(
+    env('BROKER_EXECUTION_FILE', false),
+    env('RUNNER_TEMP', false),
+  );
   const conclusion = env('BROKER_PROBE_CONCLUSION', false);
   let execution: unknown;
   if (executionFile) {
     try {
-      execution = JSON.parse(
-        await fs.readFile(/* turbopackIgnore: true */ executionFile, 'utf8'),
-      );
+      const stat = await fs.lstat(executionFile);
+      if (stat.isFile() && !stat.isSymbolicLink()) {
+        execution = JSON.parse(
+          await fs.readFile(/* turbopackIgnore: true */ executionFile, 'utf8'),
+        );
+      }
     } catch {
       // Missing/unparseable evidence is intentionally unknown. Never echo the
       // file or parsing error: a provider response may contain private text.
@@ -3098,5 +3114,6 @@ export {
   runPhase,
   saveProjectionCheckpoint,
   trustedActionsRunUrl,
+  trustedClaudeExecutionFile,
   wasSupersededEviction,
 };
