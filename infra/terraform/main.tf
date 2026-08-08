@@ -238,6 +238,9 @@ resource "google_iam_workload_identity_pool_provider" "dispatch_controller" {
     "google.subject"       = "assertion.sub"
     "attribute.repository" = "assertion.repository"
   }
+  # agent-router's privileged PR lane uses pull_request_target, whose OIDC ref
+  # and workflow_ref both remain on the trusted base branch. Never admit the
+  # PR-controlled refs/pull/<n>/merge context to this writer identity.
   attribute_condition = "assertion.repository == '${var.github_owner}/${var.github_repository}' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == '${var.github_owner}/${var.github_repository}/.github/workflows/agent-router.yml@refs/heads/main'"
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }

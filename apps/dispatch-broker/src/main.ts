@@ -432,20 +432,23 @@ async function normalize(): Promise<void> {
   }
   let timeline: GitHubTimelineEvent[] = [];
   // The Issue Timeline API also covers pull requests (a PR number IS an
-  // issue number under the hood), so a pull_request labeled/unlabeled event
+  // issue number under the hood), so a pull_request_target labeled/unlabeled
+  // event
   // -- the review-dispatch counterpart to an issue's labeled/unlabeled --
   // needs the same timeline fetch normalizeEvent's timelineSource() relies
-  // on to disambiguate which delivery this webhook is. pull_request's own
-  // closed/reopened actions don't need it: normalizeEvent resolves their
-  // sourceId directly from the payload, not the timeline.
+  // on to disambiguate which delivery this webhook is. The target event is
+  // required here because it runs this privileged controller from trusted
+  // main rather than from a PR-controlled merge ref. Its own closed/reopened
+  // actions don't need the timeline: normalizeEvent resolves their sourceId
+  // directly from the payload.
   const wantsTimeline =
     (eventName === 'issues' &&
       ['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)) ||
-    (eventName === 'pull_request' &&
+    (['pull_request', 'pull_request_target'].includes(eventName) &&
       ['labeled', 'unlabeled'].includes(event.action));
   if (wantsTimeline) {
-    // wantsTimeline is only true for an `issues`/`pull_request` event, both
-    // of which always carry one of the two -- recomputed independently here
+    // wantsTimeline is only true for an issue or pull-request event, each of
+    // which always carries one of the two -- recomputed independently here
     // exactly as the original did.
     const numbered = event.issue ?? event.pull_request;
     if (!numbered) {

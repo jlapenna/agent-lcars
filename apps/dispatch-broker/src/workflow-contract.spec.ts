@@ -592,7 +592,12 @@ test('router serializes issue and pull-request lifecycle through one normalized 
     source,
     /^\s+group:\s+\$\{\{ steps\.normalize\.outputs\.group \}\}\s*$/mu,
   );
-  assert.match(source, /^\s+pull_request:\s*$/mu);
+  assert.match(source, /^\s+pull_request_target:\s*$/mu);
+  assert.doesNotMatch(
+    source,
+    /^\s+pull_request:\s*$/mu,
+    'the privileged router must execute trusted base-branch code, never a PR merge ref',
+  );
   assert.match(
     source,
     /^\s+types:\s+\[closed, reopened, labeled, unlabeled\]\s*$/mu,

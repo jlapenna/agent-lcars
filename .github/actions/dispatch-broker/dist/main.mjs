@@ -1809,7 +1809,8 @@ function normalizeEvent({
   timeline = [],
   maintainer
 }) {
-  if (eventName === "workflow_dispatch") {
+  const semanticEventName = eventName === "pull_request_target" ? "pull_request" : eventName;
+  if (semanticEventName === "workflow_dispatch") {
     return normalizeWorkflowDispatch({
       inputs,
       context,
@@ -1821,7 +1822,7 @@ function normalizeEvent({
   if (!issue) return { kind: "ignored", reason: "event has no issue" };
   const task = taskRef(context, issue);
   const pipeline = selectedPipeline(issue);
-  if (eventName === "issue_comment" && event.action === "created") {
+  if (semanticEventName === "issue_comment" && event.action === "created") {
     const parsed = parseExactCommand(event.comment?.body ?? "");
     if (!parsed) return { kind: "ignored", reason: "no exact agent command" };
     const resolvedPipeline = parsed.pipeline ?? pipeline;
@@ -1869,7 +1870,7 @@ function normalizeEvent({
       })
     };
   }
-  if (eventName === "pull_request") {
+  if (semanticEventName === "pull_request") {
     if (["closed", "reopened"].includes(event.action)) {
       if (!issue.id || Number.isNaN(Date.parse(issue.updated_at))) {
         throw new Error("Malformed pull request anchor event");
@@ -1894,7 +1895,7 @@ function normalizeEvent({
       return { kind: "ignored", reason: "unsupported pull request action" };
     }
   }
-  if (!["issues", "pull_request"].includes(eventName))
+  if (!["issues", "pull_request"].includes(semanticEventName))
     return { kind: "ignored", reason: "unsupported event" };
   const auth = authorization(
     event.sender?.login,
@@ -1929,7 +1930,7 @@ function normalizeEvent({
     };
   }
   if (["labeled", "unlabeled", "closed", "reopened"].includes(event.action)) {
-    const source = timelineSource(timeline, eventName, event);
+    const source = timelineSource(timeline, semanticEventName, event);
     if (event.action === "closed" || event.action === "reopened") {
       return {
         kind: "anchor-control",
@@ -1944,7 +1945,7 @@ function normalizeEvent({
       };
     }
     const labelName = event.label?.name;
-    const isReviewLabel = eventName === "pull_request" && Boolean(labelName?.startsWith("review:"));
+    const isReviewLabel = semanticEventName === "pull_request" && Boolean(labelName?.startsWith("review:"));
     if (!labelName?.startsWith("agent:") && !isReviewLabel) {
       return { kind: "ignored", reason: "non-agent label event" };
     }
@@ -2758,7 +2759,7 @@ async function normalize() {
     event.issue = issue2;
   }
   let timeline = [];
-  const wantsTimeline = eventName === "issues" && ["labeled", "unlabeled", "closed", "reopened"].includes(event.action) || eventName === "pull_request" && ["labeled", "unlabeled"].includes(event.action);
+  const wantsTimeline = eventName === "issues" && ["labeled", "unlabeled", "closed", "reopened"].includes(event.action) || ["pull_request", "pull_request_target"].includes(eventName) && ["labeled", "unlabeled"].includes(event.action);
   if (wantsTimeline) {
     const numbered = event.issue ?? event.pull_request;
     if (!numbered) {

@@ -13,7 +13,10 @@ name: Agent Issue Router
 # fetching each candidate's unreliable /concurrency_groups sub-resource.
 # GitHub Actions evaluates run-name unconditionally for every trigger type,
 # so this fallback chain (event issue -> event PR -> manual input) must keep
-# covering all four: issues, issue_comment, pull_request, workflow_dispatch.
+# covering all four: issues, issue_comment, pull_request_target,
+# workflow_dispatch. pull_request_target is deliberate: this privileged
+# controller checks out and executes only the trusted default-branch workflow
+# and broker bundle, never code from the pull request merge ref.
 run-name: >-
   route #${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}:
   ${{ github.event.issue.title || github.event.pull_request.title || inputs.kind || 'manual' }}
@@ -24,7 +27,7 @@ on:
     types: [opened, labeled, unlabeled, closed, reopened]
   issue_comment:
     types: [created]
-  pull_request:
+  pull_request_target:
     types: [closed, reopened, labeled, unlabeled]
   workflow_dispatch:
     inputs:
