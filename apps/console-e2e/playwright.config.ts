@@ -18,7 +18,14 @@ const executablePath =
 
 export default defineConfig({
   ...nxE2EPreset(__filename, { testDir: './src' }),
-  timeout: 300000,
+  // Nx retries a failed test twice in CI. A five-minute per-test ceiling
+  // therefore lets one missed event/action consume 15 minutes of this
+  // serial job before the remaining specs can run (#519). The slowest real
+  // production-bundle case is normally under 15 seconds; 90 seconds keeps
+  // substantial saturation headroom while bounding one broken test to 4.5
+  // minutes across all three CI attempts. Exceptionally long scenarios
+  // must opt in with test.setTimeout() and explain their own bound.
+  timeout: 90_000,
   workers: 1,
   outputDir: './test-output/test-results',
   reporter: [
