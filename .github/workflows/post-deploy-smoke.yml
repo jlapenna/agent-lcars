@@ -35,8 +35,8 @@ name: Post-Deploy Smoke
 # own.
 #
 # Behavioral check, in order: (1) the live URL answers with a 2xx response,
-# (2) a canary issue created after that round-trips through the real
-# dispatch broker + no-op worker (the same GitHub write/routing path a real
+# (2) the canonical canary issue, refreshed after that, round-trips through
+# the real dispatch broker + no-op worker (the same GitHub write/routing path a real
 # agent dispatch uses) within a bounded window. This proves the deployed
 # revision is reachable and that the broker's GitHub write path still works
 # in production. It deliberately does NOT exercise the deployed console's

@@ -28,8 +28,8 @@ label-driven dispatch, workflow-run binding, and the explicit worker
 completion callback -- is separately, continuously verified in production by
 `.github/workflows/dispatch-canary.yml` (hourly + `workflow_dispatch`) and
 `.github/workflows/post-deploy-smoke.yml` (chained off `deploy-console.yml`
-completing). Both share `.github/actions/run-dispatch-canary`, which creates
-a dedicated, clearly-marked issue, dispatches it through
+completing). Both share `.github/actions/run-dispatch-canary`, which reuses
+one canonical, clearly-marked issue, dispatches it through
 `agent-router.yml`'s real broker (`apps/dispatch-broker/src/normalize.ts`'s
 `kind: 'canary'` intent, a fourth pipeline alongside claude/codex/opencode --
 see `apps/dispatch-broker/src/broker.ts`), and drives it to a dedicated no-op worker,
@@ -51,10 +51,11 @@ repo's own two trusted canary workflows.
 The post-deploy smoke additionally probes the live console URL for a 2xx
 response before exercising the broker, so a broken deployed revision is
 caught even before the write-path check runs. Either workflow's failure
-parks `status:needs-human` (label + maintainer assignee) on the canary
-issue with evidence and leaves it open, rather than a silent log line; a
-successful run closes its issue automatically -- the acceptance bar for
-"canary artifacts are automatically cleaned up." This proves the broker's
+reopens and parks `status:needs-human` (label + maintainer assignee) on that
+canary issue with evidence, rather than a silent log line; a successful run
+clears that blocker label and closes the same issue automatically. Historical
+per-run v1 artifacts are still swept during the migration. This proves the
+broker's
 GitHub write path, not the deployed console's own server action writing to
 GitHub through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`); that
 remains a separately-scoped write-path E2E fixture effort in `apps/console`.
@@ -67,8 +68,8 @@ executes, identical to the failure mode the epic design audit (#301)
 describes for `deploy-console.yml`'s own job. Neither canary orchestrator
 embeds a real production deploy the way `deploy-console.yml` does, so
 there is no natural split into a separate same-workflow cleanup job here;
-instead, `dispatch-canary.yml`'s existing hourly run also sweeps stale
-canaries left behind by a previous run of either orchestrator
+instead, `dispatch-canary.yml`'s existing hourly run also sweeps the stale
+canonical issue and legacy per-run canaries left behind by either orchestrator
 (`run.mjs`'s `sweepStaleCanaries`, `sweep-stale-canaries: true` only on
 that caller): it lists open issues, filters to this canary's own title
 prefix and marker, and for every candidate older than both orchestrators'

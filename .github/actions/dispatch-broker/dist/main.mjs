@@ -662,7 +662,7 @@ function acceptIntent(ledger, intent, now = (/* @__PURE__ */ new Date()).toISOSt
       outcome = "stale-control-state";
       return;
     }
-    if (ledger.control.closed) {
+    if (ledger.control.closed && intent.pipeline !== "canary") {
       generation.state = "superseded-by-close";
       outcome = "closed";
       return;
@@ -705,12 +705,17 @@ function attemptOf(generation) {
   }
   return attempt;
 }
+function canDispatchOnAnchor(ledger, generation) {
+  return !ledger.control.closed || generation.pipeline === "canary";
+}
 function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["accepted", "pending"].includes(generation.state)) {
     throw new Error("Generation is not dispatchable");
   }
-  if (ledger.control.closed) throw new Error("Closed anchor cannot dispatch");
+  if (!canDispatchOnAnchor(ledger, generation)) {
+    throw new Error("Closed anchor cannot dispatch");
+  }
   if (ledger.generations.some((candidate) => ACTIVE_STATES.has(candidate.state))) {
     throw new Error("Another generation is active");
   }
@@ -748,12 +753,10 @@ function markDispatchRejected(ledger, generationNumber, reason, now = (/* @__PUR
     const attempt = attemptOf(generation);
     attempt.rejectedAt = now;
     attempt.rejectionReason = reason;
-    if (!ledger.control.closed) {
-      promoted = ledger.generations.find(
-        (candidate) => candidate.state === "pending"
-      );
-      if (promoted) promoted.state = "accepted";
-    }
+    promoted = ledger.generations.find(
+      (candidate) => candidate.state === "pending" && canDispatchOnAnchor(ledger, candidate)
+    );
+    if (promoted) promoted.state = "accepted";
   });
   return { ledger, promotedGeneration: promoted?.generation };
 }
@@ -835,12 +838,10 @@ function completeRun(ledger, generationNumber, observation, now = (/* @__PURE__ 
     attempt.status = observation.status;
     attempt.conclusion = conclusion;
     attempt.completedAt = observation.completedAt ?? now;
-    if (!ledger.control.closed) {
-      promoted = ledger.generations.find(
-        (candidate) => candidate.state === "pending"
-      );
-      if (promoted) promoted.state = "accepted";
-    }
+    promoted = ledger.generations.find(
+      (candidate) => candidate.state === "pending" && canDispatchOnAnchor(ledger, candidate)
+    );
+    if (promoted) promoted.state = "accepted";
   });
   return { ledger, promotedGeneration: promoted?.generation };
 }
@@ -921,7 +922,7 @@ function applyAnchorControl(ledger, control, now = (/* @__PURE__ */ new Date()).
     };
     if (control.kind === "closed") {
       for (const generation of ledger.generations) {
-        if (generation.state === "pending" || generation.state === "accepted") {
+        if (generation.pipeline !== "canary" && (generation.state === "pending" || generation.state === "accepted")) {
           generation.state = "superseded-by-close";
         }
       }

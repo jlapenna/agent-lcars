@@ -1,8 +1,8 @@
 name: Run dispatch broker canary
 description: >-
-  Create a dedicated, clearly-marked canary issue, dispatch it through the
-  real dispatch broker and a no-op worker, verify the resulting ledger
-  state, and clean up: close the issue on success, or park
+  Reuse one canonical, clearly-marked canary issue, dispatch it through the
+  real dispatch broker and a no-op worker, verify the resulting ledger state,
+  and clean up: close the issue on success, or reopen and park
   status:needs-human on it with failure evidence and fail the job. Never
   invokes a paid model or a self-hosted/privileged runner (#307).
 
@@ -28,7 +28,7 @@ inputs:
     description: >-
       When 'true', sweep and clean up open canary issues from a prior run
       whose own orchestrator never returned (job timeout, workflow
-      cancellation, runner loss) before creating this run's own canary.
+      cancellation, runner loss) before preparing the canonical canary.
       Set only on the hourly scheduled caller (dispatch-canary.yml) so the
       backstop itself runs on a reliable, unconditional cadence.
     required: false
@@ -36,7 +36,7 @@ inputs:
 
 outputs:
   issue:
-    description: The created canary issue number
+    description: The canonical canary issue number
     value: ${{ steps.run.outputs.issue }}
 
 runs:
