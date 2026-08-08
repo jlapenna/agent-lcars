@@ -16,7 +16,7 @@ import { QuickTaskButton } from './quick-task-button';
 
 vi.mock('./actions', () => ({ createQuickTask: vi.fn() }));
 vi.mock('@mantine/notifications', () => ({
-  notifications: { show: vi.fn() },
+  notifications: { show: vi.fn(), update: vi.fn() },
 }));
 
 const REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
@@ -91,7 +91,7 @@ describe('QuickTaskButton', () => {
     submit();
 
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
+      expect(notifications.update).toHaveBeenCalledWith(
         expect.objectContaining({ color: 'green' }),
       ),
     );
@@ -101,19 +101,13 @@ describe('QuickTaskButton', () => {
       pipeline: 'claude',
       description: 'Fix the flaky test',
     });
-    // handleCreate's setOpened(false) runs inside the same startTransition as
-    // the notifications.show call above, so the mock being called does not
-    // guarantee the dialog's own React update has flushed yet. Wait for the
-    // dialog to actually be gone before rendering the captured message into a
-    // second tree, same guard already used elsewhere in this file for the
-    // identical close-transition timing (agent-lcars#420). The default
-    // waitFor timeout (1000ms) still wasn't enough for the Mantine portal to
-    // unmount on a loaded CI runner (agent-lcars#533), so this one gets a
-    // more generous explicit timeout.
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), {
       timeout: 5000,
     });
-    const { message } = (notifications.show as Mock).mock.calls[0][0];
+    const success = (notifications.update as Mock).mock.calls.find(
+      ([update]) => update.color === 'green',
+    )![0];
+    const { message } = success;
     render(<MantineProvider>{message}</MantineProvider>);
     const link = screen.getByRole('link', {
       name: 'Quick task filed as supersprinklesracing/sprinkles#99',
@@ -255,42 +249,77 @@ describe('QuickTaskButton', () => {
     });
   });
 
-  it('keeps the dialog open and reuses the request ID after failure', async () => {
+  it('closes immediately and retries a failed background submission with the same request ID', async () => {
     (createQuickTask as Mock)
-      .mockResolvedValueOnce({ ok: false, message: 'socket timed out' })
+      .mockRejectedValueOnce(new Error('socket timed out'))
       .mockResolvedValueOnce(receipt());
     renderButton();
     await openDialog();
     enterDescription();
     submit();
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith({
-        message: 'socket timed out',
-        color: 'red',
-        autoClose: false,
-        withCloseButton: true,
-      }),
+      expect(notifications.update).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red' }),
+      ),
     );
     const firstRequest = (createQuickTask as Mock).mock.calls[0][0];
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    await waitFor(() =>
-      expect(
-        (
-          screen.getByRole('button', {
-            name: 'File & dispatch',
-          }) as HTMLButtonElement
-        ).disabled,
-      ).toBe(false),
-    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
-    submit();
+    const failure = (notifications.update as Mock).mock.calls.find(
+      ([update]) => update.color === 'red',
+    )![0];
+    render(<MantineProvider>{failure.message}</MantineProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
     await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(2));
     expect((createQuickTask as Mock).mock.calls[1][0].requestId).toBe(
       firstRequest.requestId,
     );
   });
 
-  it('locks the submitted intent until its request finishes', async () => {
+  it('accepts a second task while the first submission is still pending', async () => {
+    let resolveFirst!: (value: ReturnType<typeof receipt>) => void;
+    let resolveSecond!: (value: ReturnType<typeof receipt>) => void;
+    (createQuickTask as Mock)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+      );
+    renderButton();
+    await openDialog();
+    enterDescription('First task');
+    submit();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    await openDialog();
+    enterDescription('Second task');
+    submit();
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(2));
+    const firstRequest = (createQuickTask as Mock).mock.calls[0][0];
+    const secondRequest = (createQuickTask as Mock).mock.calls[1][0];
+    expect(firstRequest.description).toBe('First task');
+    expect(secondRequest.description).toBe('Second task');
+    expect(secondRequest.requestId).not.toBe(firstRequest.requestId);
+    expect(notifications.show).toHaveBeenCalledTimes(2);
+
+    resolveFirst(receipt(REPO, 99));
+    resolveSecond(receipt(REPO, 100));
+    await waitFor(() => {
+      expect(
+        (notifications.update as Mock).mock.calls.filter(
+          ([update]) => update.color === 'green',
+        ),
+      ).toHaveLength(2);
+    });
+  });
+
+  it('prevents duplicate events from submitting the same closing dialog twice', async () => {
     let resolveRequest!: (value: ReturnType<typeof receipt>) => void;
     (createQuickTask as Mock).mockReturnValue(
       new Promise((resolve) => {
@@ -300,23 +329,15 @@ describe('QuickTaskButton', () => {
     renderButton();
     await openDialog();
     enterDescription();
-    submit();
-
-    await waitFor(() =>
-      expect(
-        (screen.getByLabelText('Description') as HTMLTextAreaElement).disabled,
-      ).toBe(true),
-    );
-    expect(
-      (screen.getByRole('combobox', { name: 'Agent' }) as HTMLInputElement)
-        .disabled,
-    ).toBe(true);
-    expect(
-      screen
-        .getByRole('button', { name: 'File & dispatch' })
-        .getAttribute('data-loading'),
-    ).toBe('true');
-    submit();
+    const description = screen.getByLabelText('Description');
+    fireEvent.keyDown(description, {
+      key: 'Enter',
+      ctrlKey: true,
+    });
+    fireEvent.keyDown(description, {
+      key: 'Enter',
+      ctrlKey: true,
+    });
     expect(createQuickTask).toHaveBeenCalledTimes(1);
 
     resolveRequest(receipt());
@@ -334,7 +355,7 @@ describe('QuickTaskButton', () => {
     });
 
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
+      expect(notifications.update).toHaveBeenCalledWith(
         expect.objectContaining({ color: 'green' }),
       ),
     );
@@ -381,34 +402,7 @@ describe('QuickTaskButton', () => {
     expect(createQuickTask).not.toHaveBeenCalled();
   });
 
-  it('ignores ctrl+enter while a submission is already in flight', async () => {
-    let resolveRequest!: (value: ReturnType<typeof receipt>) => void;
-    (createQuickTask as Mock).mockReturnValue(
-      new Promise((resolve) => {
-        resolveRequest = resolve;
-      }),
-    );
-    renderButton();
-    await openDialog();
-    enterDescription();
-    submit();
-
-    await waitFor(() =>
-      expect(
-        (screen.getByLabelText('Description') as HTMLTextAreaElement).disabled,
-      ).toBe(true),
-    );
-    fireEvent.keyDown(screen.getByLabelText('Description'), {
-      key: 'Enter',
-      ctrlKey: true,
-    });
-    expect(createQuickTask).toHaveBeenCalledTimes(1);
-
-    resolveRequest(receipt());
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  });
-
-  it('creates a new request ID when the intent changes after failure', async () => {
+  it('creates a new request ID for a new dialog after a failure', async () => {
     (createQuickTask as Mock)
       .mockResolvedValueOnce({ ok: false, message: 'try again' })
       .mockResolvedValueOnce(receipt());
@@ -419,6 +413,7 @@ describe('QuickTaskButton', () => {
     await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(1));
     const firstId = (createQuickTask as Mock).mock.calls[0][0].requestId;
 
+    await openDialog();
     enterDescription('A changed task');
     submit();
     await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(2));

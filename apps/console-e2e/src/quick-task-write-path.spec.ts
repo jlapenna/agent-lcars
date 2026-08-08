@@ -38,6 +38,7 @@ useCliSessionFixtures();
  * `platform:web` e2e project cannot import from the `platform:nextjs`
  * frontend app). */
 const FORCE_4XX_DESCRIPTION = 'E2E_QUICK_TASK_FORCE_4XX';
+const DELAY_DESCRIPTION = 'E2E_QUICK_TASK_DELAY';
 
 const TASK_REF_RE =
   /^Quick task filed as supersprinklesracing\/sprinkles#(\d+)$/;
@@ -205,6 +206,11 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // that those are different: same content under a *different* ID is a
     // new, unrelated task).
     await openQuickTask(page);
+    const retryActionFinished = page.waitForEvent(
+      'requestfinished',
+      (request) =>
+        request.method() === 'POST' && new URL(request.url()).pathname === '/',
+    );
     await fillAndSubmit(page, description);
     const secondReceipt = taskRefNotification(page);
     await expect(secondReceipt).toBeVisible();
@@ -213,6 +219,47 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // still the right expected value: proof the retry resolved to the
     // exact same issue rather than merely "some" issue.
     await expect(secondReceipt).toHaveAttribute('href', firstHref ?? '');
+    // The receipt is available as soon as the Server Action payload contains
+    // its result; also wait for that exact POST to finish downloading before
+    // Playwright tears down this page, otherwise Next logs a false
+    // "destination stream closed early" server error during context cleanup.
+    await retryActionFinished;
+  });
+
+  test('files a second task while the first Server Action request is still pending', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    await openQuickTask(page);
+    await fillAndSubmit(page, DELAY_DESCRIPTION);
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(
+      page.getByText('Filing and dispatching quick task…'),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Quick task' }),
+    ).toBeEnabled();
+
+    await openQuickTask(page);
+    await fillAndSubmit(page, 'Second quick task while the first is pending');
+    await expect(page.getByRole('dialog')).toBeHidden();
+
+    const seenReceipts = new Set<string>();
+    await expect
+      .poll(
+        async () => {
+          const hrefs = await taskRefNotification(page).evaluateAll((links) =>
+            links.flatMap((link) =>
+              link instanceof HTMLAnchorElement ? [link.href] : [],
+            ),
+          );
+          for (const href of hrefs) seenReceipts.add(href);
+          return seenReceipts.size;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(2);
   });
 
   test('a definitive 4xx from GitHub fails closed with no phantom issue', async ({
@@ -230,10 +277,11 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
       page.getByText('E2E fixture: forced definitive Quick Task failure'),
     ).toBeVisible();
 
-    // Failure never closes the dialog (quick-task-button.tsx only calls
-    // close() on success) and never shows a success receipt - the UI must
-    // not pretend a task was filed when GitHub definitively rejected it.
-    await expect(page.getByRole('dialog')).toBeVisible();
+    // The dialog closes immediately for non-blocking intake, but the failed
+    // snapshot remains retryable under the same request ID. No success
+    // receipt may appear for the rejected write.
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
     await expect(taskRefNotification(page)).toHaveCount(0);
   });
 });

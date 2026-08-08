@@ -573,6 +573,10 @@ export function resetQuickTaskFixtures(): void {
  * a value a real task would use. */
 export const E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION = 'E2E_QUICK_TASK_FORCE_4XX';
 
+/** Description sentinel that makes the E2E GitHub route hold one issue
+ * creation long enough to prove the client can accept another Quick Task. */
+export const E2E_QUICK_TASK_DELAY_DESCRIPTION = 'E2E_QUICK_TASK_DELAY';
+
 export function createQuickTaskClaimTag(
   message: string,
   tag: string,

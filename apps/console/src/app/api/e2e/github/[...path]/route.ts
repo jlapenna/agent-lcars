@@ -7,6 +7,7 @@ import {
   createQuickTaskClaimRef,
   createQuickTaskClaimTag,
   deleteQuickTaskClaimRef,
+  E2E_QUICK_TASK_DELAY_DESCRIPTION,
   E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION,
   enrichmentGraphql,
   getQuickTaskClaimRefSha,
@@ -270,6 +271,9 @@ export async function POST(
         { message: 'E2E fixture: forced definitive Quick Task failure' },
         { status: 422 },
       );
+    }
+    if (body.body?.split('\n', 1)[0] === E2E_QUICK_TASK_DELAY_DESCRIPTION) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
     const pipeline = agentLabels[0].slice('agent:'.length) as
       'claude' | 'codex' | 'opencode';

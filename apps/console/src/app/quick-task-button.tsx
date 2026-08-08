@@ -1,9 +1,18 @@
 'use client';
 
-import { Anchor, Button, Modal, Select, Stack, Textarea } from '@mantine/core';
+import {
+  Anchor,
+  Button,
+  Modal,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+} from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 
+import type { QuickTaskRequest } from '../lib/quick-task-contract';
 import {
   type AgentPipeline,
   repoDisplayName,
@@ -63,8 +72,6 @@ export function QuickTaskButton({
     return String(index >= 0 ? index : 0);
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
-  const [isPending, startTransition] = useTransition();
-  const requestIdRef = useRef<string | undefined>(undefined);
   const submitInFlightRef = useRef(false);
 
   // The modal is closed during hydration, so applying browser-local defaults
@@ -104,9 +111,85 @@ export function QuickTaskButton({
     : supportedPipelines[0];
 
   const close = () => setOpened(false);
-  const changeIntent = () => {
-    requestIdRef.current = undefined;
-  };
+
+  const submissionNotificationId = (request: QuickTaskRequest) =>
+    `quick-task:${request.requestId}`;
+
+  const pendingNotification = (request: QuickTaskRequest) => ({
+    id: submissionNotificationId(request),
+    message: 'Filing and dispatching quick task…',
+    loading: true,
+    autoClose: false as const,
+    withCloseButton: false,
+  });
+
+  function showSubmissionFailure(
+    request: QuickTaskRequest,
+    message: string,
+  ): void {
+    notifications.update({
+      id: submissionNotificationId(request),
+      message: (
+        <Stack gap={6}>
+          <Text size="sm">{message}</Text>
+          <Button
+            size="compact-xs"
+            variant="light"
+            onClick={() => {
+              notifications.update(pendingNotification(request));
+              launchSubmission(request);
+            }}
+          >
+            Retry
+          </Button>
+        </Stack>
+      ),
+      color: 'red',
+      loading: false,
+      autoClose: false,
+      withCloseButton: true,
+    });
+  }
+
+  async function settleSubmission(request: QuickTaskRequest): Promise<void> {
+    try {
+      const result = await createQuickTask(request);
+      if (!result.ok) {
+        showSubmissionFailure(request, result.message);
+        return;
+      }
+      notifications.update({
+        id: submissionNotificationId(request),
+        message: (
+          <Anchor
+            href={result.url}
+            target="_blank"
+            rel="noreferrer"
+            c="inherit"
+          >
+            Quick task filed as {taskRefKey(result.task)}
+          </Anchor>
+        ),
+        color: 'green',
+        loading: false,
+        autoClose: 4000,
+        withCloseButton: true,
+      });
+    } catch (error) {
+      showSubmissionFailure(
+        request,
+        error instanceof Error
+          ? error.message
+          : 'Quick Task submission failed unexpectedly',
+      );
+    }
+  }
+
+  function launchSubmission(request: QuickTaskRequest): void {
+    startTransition(async () => {
+      await settleSubmission(request);
+    });
+  }
 
   /** Ctrl+Enter (Cmd+Enter on Mac) submits from the description, mirroring
    * the "File & dispatch" button click. `handleCreate` already guards
@@ -130,52 +213,27 @@ export function QuickTaskButton({
     ) {
       return;
     }
-    let requestId = requestIdRef.current;
-    if (!requestId) {
-      try {
-        requestId = createRandomId();
-      } catch {
-        showErrorToast('This browser cannot generate a Quick Task request ID');
-        return;
-      }
-      requestIdRef.current = requestId;
+    let requestId: string;
+    try {
+      requestId = createRandomId();
+    } catch {
+      showErrorToast('This browser cannot generate a Quick Task request ID');
+      return;
     }
     submitInFlightRef.current = true;
-    startTransition(async () => {
-      try {
-        const result = await createQuickTask({
-          requestId,
-          repository: {
-            owner: selectedRepo.owner,
-            name: selectedRepo.name,
-          },
-          pipeline: effectivePipeline,
-          description: trimmed,
-        });
-        if (!result.ok) {
-          showErrorToast(result.message);
-          return;
-        }
-        requestIdRef.current = undefined;
-        setDescription('');
-        close();
-        notifications.show({
-          message: (
-            <Anchor
-              href={result.url}
-              target="_blank"
-              rel="noreferrer"
-              c="inherit"
-            >
-              Quick task filed as {taskRefKey(result.task)}
-            </Anchor>
-          ),
-          color: 'green',
-        });
-      } finally {
-        submitInFlightRef.current = false;
-      }
-    });
+    const request: QuickTaskRequest = {
+      requestId,
+      repository: {
+        owner: selectedRepo.owner,
+        name: selectedRepo.name,
+      },
+      pipeline: effectivePipeline,
+      description: trimmed,
+    };
+    setDescription('');
+    close();
+    notifications.show(pendingNotification(request));
+    launchSubmission(request);
   };
 
   return (
@@ -184,20 +242,14 @@ export function QuickTaskButton({
         className="lcars-action-button"
         data-accent="amber"
         size={size}
-        disabled={isPending}
-        loading={isPending}
-        onClick={() => setOpened(true)}
+        onClick={() => {
+          submitInFlightRef.current = false;
+          setOpened(true);
+        }}
       >
         Quick task
       </Button>
-      <Modal
-        opened={opened}
-        onClose={() => {
-          if (!isPending) close();
-        }}
-        closeOnClickOutside={!isPending}
-        title="File a quick task"
-      >
+      <Modal opened={opened} onClose={close} title="File a quick task">
         <Stack gap="sm">
           {watchedRepos.length > 1 && (
             <Select
@@ -208,7 +260,6 @@ export function QuickTaskButton({
               }))}
               value={repoIndex}
               onChange={(value) => {
-                changeIntent();
                 const nextIndex = value ?? '0';
                 const nextRepo = watchedRepos[Number(nextIndex)];
                 const nextPipelines = nextRepo
@@ -227,7 +278,6 @@ export function QuickTaskButton({
                 }
               }}
               allowDeselect={false}
-              disabled={isPending}
             />
           )}
           <Select
@@ -236,7 +286,6 @@ export function QuickTaskButton({
             data={pipelineOptions}
             value={effectivePipeline ?? null}
             onChange={(value) => {
-              changeIntent();
               const nextPipeline = (value as AgentPipeline) ?? 'claude';
               setPipeline(nextPipeline);
               if (selectedRepo) {
@@ -247,25 +296,21 @@ export function QuickTaskButton({
               }
             }}
             allowDeselect={false}
-            disabled={isPending || pipelineOptions.length === 0}
+            disabled={pipelineOptions.length === 0}
           />
           <Textarea
             label="Description"
             value={description}
             onChange={(e) => {
-              changeIntent();
               setDescription(e.currentTarget.value);
             }}
             onKeyDown={handleSubmitShortcut}
             placeholder="Describe the task — this becomes the issue body"
             autosize
             minRows={12}
-            disabled={isPending}
           />
           <Button
-            loading={isPending}
             disabled={
-              isPending ||
               !description.trim() ||
               !selectedRepo ||
               pipelineOptions.length === 0
