@@ -16,6 +16,10 @@
 # by apps/dispatch-broker's `build-rerun-infra-killed-runs` target instead
 # of `build`.
 .github/actions/rerun-infra-killed-runs/dist
+
+# Same generated-bundle exemption as the sibling operational actions above,
+# produced by apps/dispatch-broker's `build-deliverable-watchdog` target.
+.github/actions/deliverable-watchdog/dist
 /.nx/cache
 /.nx/workspace-data
 
