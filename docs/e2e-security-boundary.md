@@ -146,6 +146,14 @@ agent-lcars#352) -- so a genuinely broken WIF grant or a missing sidecar
 binary fails the canary loudly instead of the composite's own
 `continue-on-error: true` silently absorbing it.
 
+Every real worker lane also has a shared, GitHub-hosted
+`agent-fallback-finalize.yml` path (#639). The self-hosted primary gate writes
+a completion output only after no report is needed or its report landed; a
+missing output causes the hosted fallback to comment and park the anchor with
+the native workflow token before doing its own checkout. This is why checkout,
+trusted-snapshot, runner-loss, or primary-reporter failure cannot silence the
+failure signal that is supposed to diagnose it.
+
 `.github/workflows/opencode-model-canary.yml` (hourly + `workflow_dispatch`,
 self-hosted -- the endpoint is LAN-only) is the one lane where "the exact
 configured model actually answers" can be tested honestly and cheaply:

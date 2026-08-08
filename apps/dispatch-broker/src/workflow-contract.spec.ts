@@ -604,6 +604,7 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
     // (see its header comment), which continue-on-error at the step level
     // would silently swallow.
     assert.match(postAgentGates.source, stepField('if', 'always()'));
+    assert.match(postAgentGates.source, stepField('id', 'post_agent_gates'));
     assert.doesNotMatch(postAgentGates.source, /continue-on-error/u);
     assert.match(
       postAgentGates.source,
@@ -669,6 +670,81 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       stepField('worker-workflow', '${{ env.WORKER_WORKFLOW }}', 10),
     );
   }
+});
+
+test('every agent lane has one shared GitHub-hosted fallback finalizer outside the self-hosted bootstrap failure domain (#639)', async () => {
+  const sources = await workflowSources();
+  for (const pipeline of agentWorkerPipelines) {
+    const workflow = workerWorkflow(pipeline);
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    assert.match(
+      source,
+      /^ {4}outputs:\s*\n {6}post_agent_gates_complete:\s*\$\{\{ steps\.post_agent_gates\.outputs\.complete \}\}\s*$/mu,
+      `${workflow} must publish proof that its primary trusted finalizer completed`,
+    );
+    assert.match(source, /^ {2}fallback-finalize:\s*$/mu);
+    assert.match(source, new RegExp(`^ {4}needs:\\s+${pipeline}\\s*$`, 'mu'));
+    assert.match(
+      source,
+      new RegExp(
+        `needs\\.${pipeline}\\.outputs\\.post_agent_gates_complete != 'true'`,
+        'u',
+      ),
+      `${workflow}'s hosted fallback must run unless the primary reporter proved completion`,
+    );
+    assert.match(
+      source,
+      /^ {4}uses:\s+\.\/\.github\/workflows\/agent-fallback-finalize\.yml\s*$/mu,
+    );
+    assert.match(source, /^ {6}actions:\s+write\s*$/mu);
+    assert.match(source, /^ {6}contents:\s+read\s*$/mu);
+    assert.match(source, /^ {6}issues:\s+write\s*$/mu);
+    assert.match(
+      source,
+      new RegExp(
+        `^ {6}worker-result:\\s+\\$\\{\\{ needs\\.${pipeline}\\.result \\}\\}\\s*$`,
+        'mu',
+      ),
+    );
+  }
+
+  const fallbackSource = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-fallback-finalize.yml'),
+    'utf8',
+  );
+  assert.match(fallbackSource, /^ {2}workflow_call:\s*$/mu);
+  assert.match(fallbackSource, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
+  assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
+  const steps = stepBlocks(fallbackSource);
+  assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [
+    'Report and park bootstrap-independent failure',
+    'Checkout trusted revision for controller callback',
+    'Return completion observation to the broker',
+  ]);
+  const report = namedStep(
+    steps,
+    'agent-fallback-finalize.yml',
+    'Report and park bootstrap-independent failure',
+  );
+  assert.match(report.source, stepField('GH_TOKEN', '${{ github.token }}', 10));
+  assert.match(report.source, /agent-lcars:bootstrap-fallback:v1/u);
+  assert.match(report.source, /status:needs-human/u);
+  const callback = namedStep(
+    steps,
+    'agent-fallback-finalize.yml',
+    'Return completion observation to the broker',
+  );
+  assert.match(
+    callback.source,
+    stepField('uses', './.github/actions/dispatch-broker'),
+  );
+  assert.match(
+    callback.source,
+    stepField('operation', 'completion-callback', 10),
+  );
 });
 
 test('worker agent steps never receive github.token under any name (#645 Phase 3)', async () => {

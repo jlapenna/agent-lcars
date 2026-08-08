@@ -72,6 +72,8 @@ permissions:
 
 jobs:
   claude:
+    outputs:
+      post_agent_gates_complete: ${{ steps.post_agent_gates.outputs.complete }}
     # The centralized router (agent-router.yml) authorizes the request -
     # maintainer-only label add, or an OWNER's non-bot `@claude` reply on an
     # issue or PR - before dispatching this worker via workflow_dispatch.
@@ -410,6 +412,7 @@ jobs:
       # composite in the working tree - see "Snapshot post-agent
       # enforcement scripts" above for the full rationale.
       - name: Run post-agent gates
+        id: post_agent_gates
         if: always()
         env:
           # The job's own GITHUB_TOKEN, NOT the minted App token: installation
@@ -466,3 +469,21 @@ jobs:
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
           worker-workflow: ${{ env.WORKER_WORKFLOW }}
+
+  fallback-finalize:
+    needs: claude
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != '' && needs.claude.outputs.post_agent_gates_complete != 'true'
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    uses: ./.github/workflows/agent-fallback-finalize.yml
+    with:
+      issue: ${{ inputs.issue }}
+      generation: ${{ inputs.broker_generation }}
+      intent-id: ${{ inputs.broker_intent_id }}
+      dispatch-token: ${{ inputs.broker_dispatch_token }}
+      worker-workflow: claude.yml
+      worker-result: ${{ needs.claude.result }}
+      agent: Claude
+      maintainer: ${{ vars.MAINTAINER_LOGIN }}

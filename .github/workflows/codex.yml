@@ -67,6 +67,8 @@ permissions:
 
 jobs:
   codex:
+    outputs:
+      post_agent_gates_complete: ${{ steps.post_agent_gates.outputs.complete }}
     # The centralized router authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
@@ -401,6 +403,7 @@ jobs:
       # composite in the working tree - see "Snapshot post-agent
       # enforcement scripts" above.
       - name: Run post-agent gates
+        id: post_agent_gates
         if: always()
         env:
           # The job's own GITHUB_TOKEN, NOT the minted App token: installation
@@ -453,3 +456,21 @@ jobs:
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
           worker-workflow: ${{ env.WORKER_WORKFLOW }}
+
+  fallback-finalize:
+    needs: codex
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != '' && needs.codex.outputs.post_agent_gates_complete != 'true'
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    uses: ./.github/workflows/agent-fallback-finalize.yml
+    with:
+      issue: ${{ inputs.issue }}
+      generation: ${{ inputs.broker_generation }}
+      intent-id: ${{ inputs.broker_intent_id }}
+      dispatch-token: ${{ inputs.broker_dispatch_token }}
+      worker-workflow: codex.yml
+      worker-result: ${{ needs.codex.result }}
+      agent: Codex
+      maintainer: ${{ vars.MAINTAINER_LOGIN }}

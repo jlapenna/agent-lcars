@@ -128,7 +128,9 @@ run_case() {
   mkdir -p "$case_dir"
   export FAKE_GH_DIR="$case_dir"
   export GITHUB_ENV="$case_dir/github-env"
+  export GITHUB_OUTPUT="$case_dir/github-output"
   : > "$GITHUB_ENV"
+  : > "$GITHUB_OUTPUT"
   : > "$FAKE_GH_DIR/calls"
   set +e
   output="$(bash "$script" 2>&1)"
@@ -185,6 +187,7 @@ JSON
   if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
     fail "a found deliverable must never post a failure comment"
   fi
+  grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a clean primary finalizer must suppress the fallback"
 )
 
 # --- Case 2: JOB_STATUS success, genuinely no deliverable - NO_DELIVERABLE
@@ -203,6 +206,7 @@ JSON
   grep -q 'LANE_NO_DELIVERABLE_MARKER' "$FAKE_GH_DIR/calls" || fail "expected the lane-provided NO_DELIVERABLE_REASON text in the report"
   grep -q '/issues/42/labels' "$FAKE_GH_DIR/calls" || fail "expected the status:needs-human label mutation"
   grep -q '/issues/42/assignees' "$FAKE_GH_DIR/calls" || fail "expected the maintainer assignment mutation"
+  grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a landed no-deliverable report must suppress a duplicate fallback"
 )
 
 # --- Case 3: JOB_STATUS success, verify-deliverable's own lookup fails
@@ -305,6 +309,9 @@ SCAN
   : > "$case_dir/comment.fail"
   run_case report-failure-itself-fails
   test "$status" = 1 || fail "a failed failure-report must itself exit 1"
+  if grep -qx 'complete=true' "$GITHUB_OUTPUT"; then
+    fail "a failed primary report must leave the hosted fallback enabled"
+  fi
 )
 
 # --- Case 9: telemetry-finalize's own always()-equivalent behavior holds

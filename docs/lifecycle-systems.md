@@ -315,10 +315,12 @@ invoking the requested agent/provider combination.
 
 **Code:**
 
-- `.github/workflows/claude.yml`, `codex.yml`, `opencode.yml` — one job
-  each. **Not yet split into separate execute/finalize jobs** (Phase 3's
-  "Split execute and finalize jobs" bullet is unstarted); bootstrap, the
-  agent step, and the post-agent gates all run in the same job today. All
+- `.github/workflows/claude.yml`, `codex.yml`, `opencode.yml` — the normal
+  bootstrap, agent step, and post-agent gates remain in one self-hosted job,
+  plus each calls the shared GitHub-hosted
+  `agent-fallback-finalize.yml` when that primary gate cannot prove it
+  completed (#639). This is a bootstrap-independent safety path, not yet a
+  full extraction of every normal finalization into the second job. All
   three share the same sequence: checkout → snapshot enforcement scripts →
   authority-storage auth (authority mode only) → broker preflight → mint
   agent token → claim issue → agent setup → verify agent identity → prepare
@@ -372,25 +374,24 @@ reaches finalization and projection (worker-token minting failing is an
 explicit acceptance scenario in #645), and a provider failure is bounded,
 worker-owned retry, never controller-level retry.
 
-**That "still reaches finalization" guarantee has a gap at the very start
-of bootstrap.** Each worker's post-agent step runs
+**The start-of-bootstrap reporting gap is covered by an independent fallback
+(#639).** Each worker's primary post-agent step runs
 `bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"`
 unconditionally (`if: always()`), but that script is written to
 `$RUNNER_TEMP` only by the earlier "Snapshot post-agent enforcement
 scripts" step (`.github/actions/snapshot-enforcement-scripts`), which in
 turn depends on checkout having already succeeded (it's a local composite
 action, resolvable only once the repo is on disk). If checkout or that
-snapshot step itself fails, `post-agent-gates.sh` was never written, so the
-`if: always()` step fails on a missing file instead of running
-verify-deliverable/report-failure — no finalizer report reaches the issue.
-"Return completion observation to the broker" doesn't cover this either:
-it's also `uses: ./.github/actions/dispatch-broker`, a checkout-local
-composite action GitHub Actions cannot resolve without a successful
-checkout. So a failure in checkout or the enforcement-script snapshot — the
-first two bootstrap steps in `claude.yml`/`codex.yml`/`opencode.yml` — is
-the one bootstrap-failure shape that reaches neither finalization nor the
-controller's completion callback; it surfaces only as a red job with no
-comment, label, or ledger update.
+snapshot step itself fails, that primary path cannot run. The worker therefore
+publishes `post_agent_gates_complete=true` only after either a clean outcome
+needs no report or its failure report actually landed. If that proof is
+missing, `agent-fallback-finalize.yml` runs on `ubuntu-latest`, posts one
+run-keyed report, parks `status:needs-human`, and assigns the maintainer using
+the workflow's native token **before its own checkout**. It then checks out the
+trusted revision solely to send the controller completion callback; scheduled
+controller reconciliation remains the backstop if even that checkout/callback
+fails. Runner loss, checkout failure, snapshot failure, and primary reporter
+failure therefore cannot remain a red job with no anchor-visible state.
 
 **First three things to check:**
 
@@ -412,8 +413,9 @@ comment, label, or ledger update.
 
 **Who/what repairs it:** nothing automatically retries a worker-runtime
 failure at this layer — provider retry is bounded and stays inside the
-worker's own adapter, and a worker that fails bootstrap still reaches
-finalization/reporting rather than being silently swallowed. Recurrence
+worker's own adapter, and a worker that fails bootstrap still reaches the
+primary or hosted fallback finalization/reporting path rather than being
+silently swallowed. Recurrence
 across multiple dispatches is a human problem: a stale credential, a
 provider outage, or a broken bootstrap step needs a maintainer, not a
 reconciler.

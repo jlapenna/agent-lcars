@@ -69,6 +69,17 @@ WRITER_CREDENTIALS_FILE="${WRITER_CREDENTIALS_FILE:-}"
 NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
 
+# The worker job publishes this step output to its independent hosted
+# fallback finalizer. Write it only after either the clean success path needs
+# no report or the primary failure report actually landed. Missing/false means
+# the hosted job must take over; this also covers checkout/snapshot failure,
+# where this trusted script never existed on the self-hosted runner at all.
+mark_post_agent_gates_complete() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo 'complete=true' >> "$GITHUB_OUTPUT"
+  fi
+}
+
 trusted_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- Finalize telemetry sidecar: was if: always(), continue-on-error: true -
@@ -95,6 +106,7 @@ if [ "$JOB_STATUS" = "success" ] && [ "$deliverable_failed" -eq 0 ]; then
   # Nothing failed and nothing needs reporting -- mirrors the original
   # "Determine failure reason"/"Report failure on the issue" steps both
   # being skipped by their own if: failure() || cancelled().
+  mark_post_agent_gates_complete
   exit 0
 fi
 
@@ -112,6 +124,10 @@ GH_TOKEN="$GH_TOKEN" AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
   MAINTAINER="$MAINTAINER" \
   bash "$trusted_dir/report-failure/report-failure.sh"
 report_status=$?
+
+if [ "$report_status" -eq 0 ]; then
+  mark_post_agent_gates_complete
+fi
 
 if [ "$deliverable_failed" -eq 1 ] || [ "$report_status" -ne 0 ]; then
   exit 1
