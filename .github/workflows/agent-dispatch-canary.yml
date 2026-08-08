@@ -190,4 +190,5 @@ jobs:
       worker-workflow: agent-dispatch-canary.yml
       worker-result: ${{ needs.canary.result }}
       agent: Dispatch canary
+      fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       maintainer: ${{ vars.MAINTAINER_LOGIN }}

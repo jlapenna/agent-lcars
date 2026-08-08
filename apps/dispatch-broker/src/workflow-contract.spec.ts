@@ -704,6 +704,10 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     );
     assert.match(source, /^ {6}mode:\s+\$\{\{ inputs\.mode \}\}\s*$/mu);
     assert.match(source, /^ {6}runbook:\s+\$\{\{ inputs\.runbook \}\}\s*$/mu);
+    assert.match(
+      source,
+      /^ {6}fleet-login:\s+\$\{\{ vars\.AGENT_FLEET_LOGIN \}\}\s*$/mu,
+    );
     assert.doesNotMatch(
       source,
       new RegExp(`needs\\.${pipeline}\\.outputs`, 'u'),
@@ -716,6 +720,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     'utf8',
   );
   assert.match(fallbackSource, /^ {2}workflow_call:\s*$/mu);
+  assert.match(fallbackSource, /^ {6}fleet-login:\s*$/mu);
   assert.match(fallbackSource, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
   assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
   assert.match(fallbackSource, /^ {6}actions:\s+read\s*$/mu);
@@ -726,6 +731,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     'Report and park bootstrap-independent failure',
     'Derive trusted completion evidence',
     'Return completion observation to the broker',
+    'Preserve failed callback for scheduled reconciliation',
   ]);
   const report = namedStep(
     steps,
@@ -752,12 +758,20 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     'agent-fallback-finalize.yml',
     'Return completion observation to the broker',
   );
+  const preserveCallback = namedStep(
+    steps,
+    'agent-fallback-finalize.yml',
+    'Preserve failed callback for scheduled reconciliation',
+  );
   assert.match(evidence.source, stepField('if', 'always()'));
   assert.match(evidence.source, /actions\/runs\/\$GITHUB_RUN_ID\/jobs/u);
   assert.match(evidence.source, /<!-- attempt-claim:\$\{attempt_id\} -->/u);
   assert.match(evidence.source, /select\(\.conclusion == "failure"\)/u);
-  assert.match(evidence.source, /Classify Claude credential readiness/u);
-  assert.match(evidence.source, /Classify Claude provider readiness/u);
+  assert.doesNotMatch(evidence.source, /Classify Claude .* readiness/u);
+  assert.match(
+    evidence.source,
+    /Claude's structured execution file lives in the untrusted worker/u,
+  );
   assert.match(evidence.source, /\.started_at \/\/ ""/u);
   assert.match(
     evidence.source,
@@ -789,8 +803,27 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(callback.source, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/u);
   assert.match(callback.source, /data-binary = "@\$payload_file"/u);
   assert.match(callback.source, /steps\.evidence\.outputs\.outcome-kind/u);
+  assert.match(callback.source, /completion-sent=true/u);
   assert.doesNotMatch(callback.source, /dispatch-token[^\n]*argv|set -x/u);
   assert.doesNotMatch(callback.source, /GITHUB_TOKEN|github\.token/u);
+  assert.match(
+    preserveCallback.source,
+    stepField(
+      'if',
+      "always() && steps.callback.outputs.completion-sent != 'true'",
+    ),
+  );
+  assert.match(
+    preserveCallback.source,
+    stepField('FLEET_LOGIN', '${{ inputs.fleet-login }}', 10),
+  );
+  assert.match(preserveCallback.source, /\{assignees: \[\$login\]\}/u);
+  assert.match(preserveCallback.source, /for attempt in 1 2 3/u);
+  assert.match(preserveCallback.source, /fleet-assignee reconcile sweep/u);
+  assert.doesNotMatch(
+    preserveCallback.source,
+    /labels\[\]|assignees\[\]|--silent/u,
+  );
 });
 
 test('workflow-owned assignment mutations use parse-safe JSON bodies (#645)', async () => {
@@ -1131,6 +1164,10 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
   assert.match(
     source,
     /^ {4}uses:\s+\.\/\.github\/workflows\/agent-fallback-finalize\.yml\s*$/mu,
+  );
+  assert.match(
+    source,
+    /^ {6}fleet-login:\s+\$\{\{ vars\.AGENT_FLEET_LOGIN \}\}\s*$/mu,
   );
   assert.doesNotMatch(source, /operation:\s*completion-callback/u);
 });
@@ -1614,7 +1651,7 @@ test("each lane's own no-deliverable wording survives the merge into post-agent-
   }
 });
 
-test("claude's structured failure scan survives as an adapter-style input, absent from codex/opencode", async () => {
+test("claude's structured failure scan remains worker-local and is never promoted to trusted readiness evidence", async () => {
   // claude.yml's original "Determine failure reason" step was materially
   // larger than codex.yml's/opencode.yml's: beyond the shared
   // NO_DELIVERABLE check, it inspects Claude Code Action's structured
@@ -1636,44 +1673,18 @@ test("claude's structured failure scan survives as an adapter-style input, absen
   assert.match(
     claudeSource,
     /CLAUDE_EXECUTION_FILE:\s*\$\{\{ steps\.agent\.outputs\.execution_file \}\}/u,
-    "claude.yml must pass the action's completed structured result to trusted failure classification",
+    "claude.yml must pass the action's completed structured result to its worker-local failure classification",
   );
-  // "Verify Claude run status" (an existing, separate, claude-only gate
-  // unrelated to the four steps this refactor consolidates) must still run
-  // between the agent step and the merged orchestrator, gated on
-  // success() exactly as before -- its own failure must still correctly
-  // skip verify-deliverable inside post-agent-gates.sh via JOB_STATUS.
+  // "Verify Claude run status" remains a worker-local behavior gate. Its
+  // structured input is writable by the untrusted worker, so it must never
+  // be copied into named readiness steps that the hosted finalizer trusts.
   const claudeSteps = stepBlocks(claudeSource);
-  const credentialReadiness = namedStep(
-    claudeSteps,
-    'claude.yml',
-    'Classify Claude credential readiness',
-  );
-  const providerReadiness = namedStep(
-    claudeSteps,
-    'claude.yml',
-    'Classify Claude provider readiness',
-  );
   const runStatus = namedStep(
     claudeSteps,
     'claude.yml',
     'Verify Claude run status',
   );
-  for (const readinessStep of [credentialReadiness, providerReadiness]) {
-    assert.match(readinessStep.source, stepField('if', 'always()'));
-    assert.match(
-      readinessStep.source,
-      stepField(
-        'CLAUDE_EXECUTION_FILE',
-        '${{ steps.agent.outputs.execution_file }}',
-        10,
-      ),
-    );
-    assert.doesNotMatch(readinessStep.source, /continue-on-error/u);
-  }
-  assert.match(credentialReadiness.source, /"api_error_status": 401/u);
-  assert.match(providerReadiness.source, /"is_error": true/u);
-  assert.match(providerReadiness.source, /! echo "\$LOG"/u);
+  assert.doesNotMatch(claudeSource, /Classify Claude .* readiness/u);
   assert.match(runStatus.source, stepField('if', 'success()'));
   assert.match(
     runStatus.source,
@@ -1686,17 +1697,12 @@ test("claude's structured failure scan survives as an adapter-style input, absen
   assert.doesNotMatch(runStatus.source, /gh run view/u);
   const claudeAgentStep = agentAdapterStep(claudeSteps, 'claude.yml');
   const agentIndex = claudeSteps.indexOf(claudeAgentStep);
-  const credentialReadinessIndex = claudeSteps.indexOf(credentialReadiness);
-  const providerReadinessIndex = claudeSteps.indexOf(providerReadiness);
   const runStatusIndex = claudeSteps.indexOf(runStatus);
   const gatesIndex = claudeSteps.findIndex(
     (step) => step.name === 'Run post-agent gates',
   );
   assert.ok(
-    agentIndex < credentialReadinessIndex &&
-      credentialReadinessIndex < providerReadinessIndex &&
-      providerReadinessIndex < runStatusIndex &&
-      runStatusIndex < gatesIndex,
+    agentIndex < runStatusIndex && runStatusIndex < gatesIndex,
     '"Verify Claude run status" must run between the agent step and "Run post-agent gates"',
   );
 

@@ -43,6 +43,9 @@ on:
       agent:
         required: true
         type: string
+      fleet-login:
+        required: true
+        type: string
       maintainer:
         required: false
         default: ''
@@ -178,24 +181,14 @@ jobs:
               if [ "$credential_failure" -gt 0 ]; then
                 readiness_failure='credential'
               fi
-            elif [ "$WORKER_WORKFLOW" = 'claude.yml' ]; then
-              credential_failure="$(jq -r '
-                [ .steps[]?
-                  | select(.name == "Classify Claude credential readiness")
-                  | select(.conclusion == "failure")
-                ] | length' <<<"$worker_job")"
-              provider_failure="$(jq -r '
-                [ .steps[]?
-                  | select(.name == "Classify Claude provider readiness")
-                  | select(.conclusion == "failure")
-                ] | length' <<<"$worker_job")"
-              if [ "$credential_failure" -gt 0 ]; then
-                readiness_failure='credential'
-              elif [ "$provider_failure" -gt 0 ]; then
-                readiness_failure='provider'
-              fi
             fi
           fi
+
+          # Claude's structured execution file lives in the untrusted worker
+          # filesystem. A later GitHub step conclusion cannot make evidence
+          # derived from those bytes authoritative: the worker can rewrite the
+          # file after returning. Until Claude readiness has a distinct probe
+          # unavailable to the worker, omit that signal at this trust boundary.
 
           if [ "$WORKER_RESULT" != 'success' ]; then
             if [ -z "$worker_job" ]; then
@@ -404,6 +397,7 @@ jobs:
           fi
 
       - name: Return completion observation to the broker
+        id: callback
         if: always()
         env:
           ISSUE: ${{ inputs.issue }}
@@ -504,3 +498,35 @@ jobs:
             echo "::error::Hosted completion failed with HTTP $completion_status"
             exit 1
           fi
+          printf '%s\n' 'completion-sent=true' >> "$GITHUB_OUTPUT"
+
+      - name: Preserve failed callback for scheduled reconciliation
+        if: always() && steps.callback.outputs.completion-sent != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue }}
+          FLEET_LOGIN: ${{ inputs.fleet-login }}
+        run: |
+          set -euo pipefail
+          case "$ISSUE" in
+            ''|*[!0-9]*) echo "::error::Invalid fallback issue number"; exit 1 ;;
+          esac
+          if [ -z "$FLEET_LOGIN" ]; then
+            echo "::error::Fleet login is required for callback reconciliation"
+            exit 1
+          fi
+
+          payload_file="$(mktemp)"
+          trap 'rm -f "$payload_file"' EXIT
+          jq -cn --arg login "$FLEET_LOGIN" '{assignees: [$login]}' > "$payload_file"
+          for attempt in 1 2 3; do
+            if timeout 15s gh api "repos/$REPO/issues/$ISSUE/assignees" \
+              --method POST --input "$payload_file" >/dev/null; then
+              echo "::notice::Preserved callback failure for the fleet-assignee reconcile sweep"
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$attempt"; fi
+          done
+          echo "::error::Could not preserve callback failure for scheduled reconciliation"
+          exit 1

@@ -482,4 +482,5 @@ jobs:
       mode: ${{ inputs.mode }}
       runbook: ${{ inputs.runbook }}
       agent: Codex
+      fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       maintainer: ${{ vars.MAINTAINER_LOGIN }}

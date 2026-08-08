@@ -378,43 +378,6 @@ jobs:
             --allowedTools "Bash,Edit,Write,MultiEdit"
             --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task"
 
-      # Publish Claude's two lane-readiness signatures as distinct named
-      # step conclusions. The isolated GitHub-hosted finalizer trusts these
-      # GitHub-controlled conclusions, never the self-hosted job's outputs.
-      # A matching signature already makes the existing run-status check
-      # fail; these steps preserve that behavior while making the exact
-      # credential/provider classification independently observable.
-      - name: Classify Claude credential readiness
-        if: always()
-        env:
-          CLAUDE_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
-        run: |
-          if [ -z "$CLAUDE_EXECUTION_FILE" ] || [ ! -r "$CLAUDE_EXECUTION_FILE" ]; then
-            exit 0
-          fi
-          LOG="$(cat "$CLAUDE_EXECUTION_FILE")"
-          if echo "$LOG" | grep -q '"api_error_status": 401' && \
-             echo "$LOG" | grep -q '"total_cost_usd": 0'; then
-            echo "::error::Claude credential readiness failed"
-            exit 1
-          fi
-
-      - name: Classify Claude provider readiness
-        if: always()
-        env:
-          CLAUDE_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
-        run: |
-          if [ -z "$CLAUDE_EXECUTION_FILE" ] || [ ! -r "$CLAUDE_EXECUTION_FILE" ]; then
-            exit 0
-          fi
-          LOG="$(cat "$CLAUDE_EXECUTION_FILE")"
-          if echo "$LOG" | grep -q '"is_error": true' && \
-             echo "$LOG" | grep -q '"total_cost_usd": 0' && \
-             ! echo "$LOG" | grep -q '"api_error_status": 401'; then
-            echo "::error::Claude provider readiness failed"
-            exit 1
-          fi
-
       # Claude-only trusted adapter check: require the pinned action's
       # completed structured result instead of querying this workflow's own
       # log while the run is still in progress (GitHub often cannot serve it
@@ -526,4 +489,5 @@ jobs:
       mode: ${{ inputs.mode }}
       runbook: ${{ inputs.runbook }}
       agent: Claude
+      fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       maintainer: ${{ vars.MAINTAINER_LOGIN }}
