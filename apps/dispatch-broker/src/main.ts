@@ -250,17 +250,53 @@ async function saveLedger(
     await saveLedgerComment(client, loaded);
     return;
   }
+  if (loaded.projectionAvailable === false) {
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    return;
+  }
   await persistAuthority(loaded.authority, loaded.ledger);
-  if (loaded.projectionAvailable === false) return;
   try {
     await saveLedgerComment(client, loaded);
   } catch (error) {
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
     const message = error instanceof Error ? error.message : String(error);
     console.log(
       `::warning::Dispatch state committed to Firestore, but its GitHub ` +
         `ledger projection failed: ${message}`,
     );
   }
+}
+
+async function saveProjectionCheckpoint(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+): Promise<void> {
+  if (!loaded.authority) {
+    recordProjectionStatus(loaded.ledger, true);
+    await saveLedger(client, loaded);
+    return;
+  }
+  if (loaded.projectionAvailable === false) {
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    return;
+  }
+
+  const beforeProjection = loaded.ledger;
+  const converged = structuredClone(beforeProjection);
+  recordProjectionStatus(converged, true);
+  loaded.ledger = converged;
+  try {
+    await saveLedgerComment(client, loaded);
+  } catch (error) {
+    loaded.ledger = beforeProjection;
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    throw error;
+  }
+  await persistAuthority(loaded.authority, loaded.ledger);
 }
 
 function contextFor(
@@ -1938,8 +1974,7 @@ async function broker(): Promise<void> {
     // failed job or an extra fail-closed park -- so a failure here is
     // logged and discarded, never rethrown, and never reaches `failClosed`.
     try {
-      recordProjectionStatus(loaded.ledger, true);
-      await saveLedger(client, loaded);
+      await saveProjectionCheckpoint(client, loaded);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.log(
@@ -2193,5 +2228,6 @@ export {
   repairMissingIntentFromLabel,
   resolveTask,
   runPhase,
+  saveProjectionCheckpoint,
   wasSupersededEviction,
 };

@@ -47,6 +47,7 @@ import {
   repairMissingIntentFromLabel,
   resolveTask,
   runPhase,
+  saveProjectionCheckpoint,
   wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, normalizeEvent } from './normalize.js';
@@ -170,6 +171,79 @@ test('storage-authoritative dispatch records and resolves the launch outbox befo
   const stored = await port.readTask(task);
   assert.equal(stored?.controllerState?.generations[0].state, 'active');
   assert.equal(stored?.controllerState?.generations[0].attempt?.runId, runId);
+});
+
+test('authority records projection convergence only after the compatibility comment succeeds', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = createLedger(task);
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'projection:success',
+    ledger,
+  );
+  const order = [];
+  const writeTask = port.writeTask.bind(port);
+  port.writeTask = async (...args) => {
+    order.push('storage');
+    return writeTask(...args);
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const client = {
+    request: async () => {
+      throw new Error('unexpected request');
+    },
+    requestOk: async () => {
+      order.push('comment');
+      return { id: 9 };
+    },
+  };
+
+  await saveProjectionCheckpoint(client, loaded);
+
+  assert.deepEqual(order, ['comment', 'storage']);
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.projection.state,
+    'converged',
+  );
+});
+
+test('authority persists a non-converged projection checkpoint when the comment write fails', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = createLedger(task);
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'projection:failure',
+    ledger,
+  );
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const client = {
+    request: async () => {
+      throw new Error('unexpected request');
+    },
+    requestOk: async () => {
+      throw new Error('GitHub projection unavailable');
+    },
+  };
+
+  await assert.rejects(() => saveProjectionCheckpoint(client, loaded));
+
+  const projection = (await port.readTask(task))?.controllerState?.projection;
+  assert.notEqual(projection?.state, 'converged');
+  assert.equal(projection?.observedRevision, 0);
 });
 
 function workerRun(status = 'in_progress') {
