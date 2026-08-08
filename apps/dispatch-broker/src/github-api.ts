@@ -1003,8 +1003,11 @@ async function loadLedgerProjection(
   };
 }
 
+export type AuthorityInitializationEvidence =
+  'compatibility-projection' | 'pre-cutover' | 'post-cutover';
+
 /**
- * Decide whether a missing authority record can be initialized safely.
+ * Classify the evidence available when an authority record is missing.
  *
  * Marker absence is not evidence: a controlled worker can edit or delete
  * comments. The trusted cutover epoch and GitHub's immutable issue/PR
@@ -1013,12 +1016,12 @@ async function loadLedgerProjection(
  * closed even if every compatibility marker has been removed. Tasks created
  * at or after the boundary are genuinely post-authority and may be seeded.
  */
-async function canInitializeAuthorityTask(
+async function classifyAuthorityTaskInitialization(
   api: GitHubApi,
   task: LedgerTaskRef,
   authorityEpoch: string,
   workflowIdentity = 'github-actions[bot]',
-): Promise<boolean> {
+): Promise<AuthorityInitializationEvidence> {
   const comments = await listAll<GitHubIssueComment>(
     api,
     `${repositoryPath(task)}/issues/${task.issue}/comments`,
@@ -1030,7 +1033,7 @@ async function canInitializeAuthorityTask(
       (comment.user.login === workflowIdentity ||
         comment.user.login?.endsWith('[bot]')),
   );
-  if (hasProjection) return false;
+  if (hasProjection) return 'compatibility-projection';
 
   const epoch = Date.parse(authorityEpoch);
   if (!Number.isFinite(epoch)) {
@@ -1047,7 +1050,7 @@ async function canInitializeAuthorityTask(
       `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`,
     );
   }
-  return createdAt >= epoch;
+  return createdAt >= epoch ? 'post-cutover' : 'pre-cutover';
 }
 
 async function saveLedger(
@@ -1446,7 +1449,7 @@ export {
   API_VERSION,
   brokerConcurrencyGroup,
   BrokerConcurrencyMismatchError,
-  canInitializeAuthorityTask,
+  classifyAuthorityTaskInitialization,
   CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,

@@ -40,10 +40,11 @@ import {
   markDispatchUnknown,
   observeCompletion,
   recordControlEvidence,
+  restoreAcceptedForLaunchRetry,
   verifyPreflight,
 } from './broker.js';
 import {
-  canInitializeAuthorityTask,
+  classifyAuthorityTaskInitialization,
   createGitHubApi,
   createReconcileTransport,
   dispatchRouterEvent,
@@ -698,6 +699,17 @@ async function trackMissingRun(
 
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  const attemptId =
+    generation.attempt?.attemptId ?? formatAttemptId(generation);
+  const pendingLaunch =
+    reachedBound && loaded.authority
+      ? await loaded.authority.port.readLaunchOperation(attemptId)
+      : undefined;
+  const retryPendingLaunch = Boolean(
+    pendingLaunch?.status === 'pending' &&
+    pendingLaunch.operationId === attemptId &&
+    pendingLaunch.attemptId === attemptId,
+  );
   // Computed up front, once, so the park gate below and the
   // 'reconcile-parked' anomaly further down share exactly one description
   // of "why parked" rather than two independently-written literals that
@@ -707,15 +719,16 @@ async function trackMissingRun(
   // observation below) to `manual` while `reason` stays
   // `launch_response_lost`. `undefined` when the bound has not been
   // reached -- there is nothing to park yet.
-  const parkFailure = reachedBound
-    ? classifyFailure({
-        phase: 'reconciliation',
-        owningSystem: 'controller',
-        reason: 'launch_response_lost',
-        retryDisposition: 'manual',
-        evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
-      })
-    : undefined;
+  const parkFailure =
+    reachedBound && !retryPendingLaunch
+      ? classifyFailure({
+          phase: 'reconciliation',
+          owningSystem: 'controller',
+          reason: 'launch_response_lost',
+          retryDisposition: 'manual',
+          evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
+        })
+      : undefined;
   // Apply the (idempotent, verify-then-decide) GitHub-side park BEFORE
   // recording it in the ledger: if the mutation throws, the ledger must
   // stay exactly as it was so the next pass retries at the same attempt
@@ -769,6 +782,32 @@ async function trackMissingRun(
       evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`,
     }),
   );
+  if (retryPendingLaunch) {
+    addAnomaly(
+      ledger,
+      'reconcile-launch-retry',
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: 'pending-launch-outbox-bound-exhausted',
+      },
+      now,
+      classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'controller',
+        reason: 'launch_response_lost',
+        retryDisposition: 'immediate',
+        retryBudget: 1,
+        evidence:
+          `the exact launch outbox operation ${attemptId} is still pending ` +
+          `after ${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded searches found no matching workflow run`,
+      }),
+    );
+    restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
+    await saveLedger(client, loaded);
+    return;
+  }
   if (parkFailure) {
     addAnomaly(
       ledger,
@@ -1847,10 +1886,27 @@ async function loadBrokerLedger(
       );
     } catch (error) {
       if (error instanceof AuthorityStateNotFoundError) {
-        if (!(await canInitializeAuthorityTask(client, task, authorityEpoch))) {
+        const initializationEvidence =
+          await classifyAuthorityTaskInitialization(
+            client,
+            task,
+            authorityEpoch,
+          );
+        // Every PR close/reopen is routed here. With no exact state and no
+        // workflow-owned compatibility projection, the PR was never a
+        // dispatch anchor, so it is an intentional no-op regardless of its
+        // age. A projection is durable evidence that the PR *was* tracked;
+        // missing exact state for that case still fails closed as a missed
+        // backfill instead of silently discarding the control event.
+        if (
+          untrackedPullRequestControl &&
+          initializationEvidence !== 'compatibility-projection'
+        ) {
+          return undefined;
+        }
+        if (initializationEvidence !== 'post-cutover') {
           throw new AuthorityStateMissingError(task);
         }
-        if (untrackedPullRequestControl) return undefined;
         authority = await acquireAuthority(
           port,
           task,

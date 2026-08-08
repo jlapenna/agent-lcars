@@ -757,6 +757,19 @@ function markDispatchRejected(ledger, generationNumber, reason, now = (/* @__PUR
   });
   return { ledger, promotedGeneration: promoted?.generation };
 }
+function restoreAcceptedForLaunchRetry(ledger, generationNumber, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state) || generation.attempt?.runId) {
+    throw new Error("Generation is not an unbound launch attempt");
+  }
+  if (ledger.control.closed) {
+    throw new Error("Closed anchor cannot retry a launch");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "accepted";
+    generation.attempt = void 0;
+  });
+}
 function bindRun(ledger, generationNumber, binding, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state)) {
@@ -1257,7 +1270,7 @@ async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "gith
     ...created && { existingComments: comments }
   };
 }
-async function canInitializeAuthorityTask(api2, task, authorityEpoch, workflowIdentity = "github-actions[bot]") {
+async function classifyAuthorityTaskInitialization(api2, task, authorityEpoch, workflowIdentity = "github-actions[bot]") {
   const comments = await listAll(
     api2,
     `${repositoryPath(task)}/issues/${task.issue}/comments`
@@ -1265,7 +1278,7 @@ async function canInitializeAuthorityTask(api2, task, authorityEpoch, workflowId
   const hasProjection = comments.some(
     (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.type === "Bot" && (comment.user.login === workflowIdentity || comment.user.login?.endsWith("[bot]"))
   );
-  if (hasProjection) return false;
+  if (hasProjection) return "compatibility-projection";
   const epoch = Date.parse(authorityEpoch);
   if (!Number.isFinite(epoch)) {
     throw new Error(
@@ -1281,7 +1294,7 @@ async function canInitializeAuthorityTask(api2, task, authorityEpoch, workflowId
       `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`
     );
   }
-  return createdAt >= epoch;
+  return createdAt >= epoch ? "post-cutover" : "pre-cutover";
 }
 async function saveLedger(api2, loaded) {
   const root = repositoryPath(loaded.ledger.task);
@@ -2882,7 +2895,12 @@ async function trackMissingRun(client, loaded, generation, now) {
   }
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
-  const parkFailure = reachedBound ? classifyFailure({
+  const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+  const pendingLaunch = reachedBound && loaded.authority ? await loaded.authority.port.readLaunchOperation(attemptId) : void 0;
+  const retryPendingLaunch = Boolean(
+    pendingLaunch?.status === "pending" && pendingLaunch.operationId === attemptId && pendingLaunch.attemptId === attemptId
+  );
+  const parkFailure = reachedBound && !retryPendingLaunch ? classifyFailure({
     phase: "reconciliation",
     owningSystem: "controller",
     reason: "launch_response_lost",
@@ -2933,6 +2951,30 @@ async function trackMissingRun(client, loaded, generation, now) {
       evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`
     })
   );
+  if (retryPendingLaunch) {
+    addAnomaly(
+      ledger,
+      "reconcile-launch-retry",
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: "pending-launch-outbox-bound-exhausted"
+      },
+      now,
+      classifyFailure({
+        phase: "reconciliation",
+        owningSystem: "controller",
+        reason: "launch_response_lost",
+        retryDisposition: "immediate",
+        retryBudget: 1,
+        evidence: `the exact launch outbox operation ${attemptId} is still pending after ${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded searches found no matching workflow run`
+      })
+    );
+    restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
+    await saveLedger2(client, loaded);
+    return;
+  }
   if (parkFailure) {
     addAnomaly(
       ledger,
@@ -3493,10 +3535,17 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
       );
     } catch (error) {
       if (error instanceof AuthorityStateNotFoundError) {
-        if (!await canInitializeAuthorityTask(client, task, authorityEpoch)) {
+        const initializationEvidence = await classifyAuthorityTaskInitialization(
+          client,
+          task,
+          authorityEpoch
+        );
+        if (untrackedPullRequestControl && initializationEvidence !== "compatibility-projection") {
+          return void 0;
+        }
+        if (initializationEvidence !== "post-cutover") {
           throw new AuthorityStateMissingError(task);
         }
-        if (untrackedPullRequestControl) return void 0;
         authority = await acquireAuthority(
           port,
           task,

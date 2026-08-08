@@ -47,6 +47,7 @@ import {
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
+  restoreAcceptedForLaunchRetry,
   verifyPreflight,
 } from './modules/scheduler.js';
 
@@ -248,6 +249,7 @@ export {
   parseLedgerComment,
   recordControlEvidence,
   renderLedgerComment,
+  restoreAcceptedForLaunchRetry,
   validateIntent,
   validateLedger,
   verifyPreflight,

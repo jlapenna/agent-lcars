@@ -13,7 +13,7 @@ import {
   agentWorkerPipelines,
   API_VERSION,
   brokerConcurrencyGroup,
-  canInitializeAuthorityTask,
+  classifyAuthorityTaskInitialization,
   CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
@@ -934,8 +934,12 @@ test('authority refuses to initialize over an existing workflow-owned projection
   });
 
   assert.equal(
-    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
-    false,
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'compatibility-projection',
   );
 });
 
@@ -957,8 +961,12 @@ test('authority ignores an unowned marker but requires immutable post-cutover cr
   });
 
   assert.equal(
-    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
-    true,
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'post-cutover',
   );
 });
 
@@ -976,8 +984,12 @@ test('authority treats an App-bot marker as existing compatibility state', async
   });
 
   assert.equal(
-    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
-    false,
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'compatibility-projection',
   );
 });
 
@@ -991,8 +1003,12 @@ test('authority refuses a pre-cutover task even after a worker removes every mar
   });
 
   assert.equal(
-    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
-    false,
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'pre-cutover',
   );
 });
 

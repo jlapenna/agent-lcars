@@ -874,6 +874,67 @@ test('authority does not seed a pre-cutover task after its marker is removed', a
   assert.equal(await port.readTask(task), undefined);
 });
 
+test('authority ignores an ordinary pre-cutover pull request close with no compatibility projection', async () => {
+  const port = new InMemoryStoragePort();
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      return path.endsWith('/issues/304')
+        ? { created_at: '2026-08-07T00:00:00.000Z' }
+        : [];
+    },
+  };
+
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'anchor-control' },
+    true,
+    'authority',
+    'delivery:ordinary-pr-close',
+    () => port,
+    '2026-08-08T00:00:00.000Z',
+  );
+
+  assert.equal(loaded, undefined);
+  assert.equal(await port.readTask(task), undefined);
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ['GET', 'GET'],
+  );
+});
+
+test('authority fails closed for a tracked pull request control event that missed backfill', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = createLedger(task);
+  const client = {
+    requestOk: async () => [
+      {
+        id: 9,
+        body: renderLedgerComment(ledger),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+    ],
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'anchor-control' },
+        true,
+        'authority',
+        'delivery:tracked-pr-close',
+        () => port,
+        '2026-08-08T00:00:00.000Z',
+      ),
+    /no exact authoritative controller state/u,
+  );
+  assert.equal(await port.readTask(task), undefined);
+});
+
 test('tracked pull request close and reopen transitions persist to the existing ledger', async () => {
   let persistedBody = renderLedgerComment(
     createLedger(task, '2026-08-05T00:00:00.000Z'),
@@ -1706,6 +1767,75 @@ test('reconcileLedger treats a dispatch-unknown generation identically to dispat
     ).length,
     1,
   );
+});
+
+test('reconcileLedger retries a durably pending launch after bounded run discovery instead of parking it', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = dispatchingLedger().ledger;
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:pending-launch-recovery',
+    seed,
+  );
+  const generation = authority.ledger.generations[0];
+  const attemptId = generation.attempt?.attemptId;
+  assert.ok(attemptId);
+  await port.recordLaunchIntent({
+    operationId: attemptId,
+    task,
+    attemptId,
+  });
+  const { client, calls } = reconcileStubClient();
+  const retriedRunId = 304736;
+  client.request = async () => ({
+    status: 200,
+    data: {
+      workflow_run_id: retriedRunId,
+      run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${retriedRunId}`,
+      html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${retriedRunId}`,
+    },
+    headers: new Headers(),
+  });
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const t1 = addMinutes(RECONCILE_T0, RECONCILE_MISSING_RUN_GRACE_MS / 60_000);
+  const t2 = addMinutes(t1, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+  const t3 = addMinutes(t2, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+
+  await reconcileLedger(client, loaded, t1);
+  await reconcileLedger(client, loaded, t2);
+  await reconcileLedger(client, loaded, t3);
+
+  assert.equal(loaded.ledger.generations[0].state, 'accepted');
+  assert.equal(loaded.ledger.generations[0].attempt, undefined);
+  assert.equal(
+    loaded.ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-launch-retry',
+    ).length,
+    1,
+  );
+  assert.equal(
+    loaded.ledger.anomalies.some(
+      (anomaly) => anomaly.kind === 'reconcile-parked',
+    ),
+    false,
+  );
+  assert.equal(
+    calls.some((call) => call.path.endsWith('/labels')),
+    false,
+  );
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, retriedRunId);
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'launched');
 });
 
 // --- reconcileActive / trackStuckRun (#645 Phase 3) --------------------
