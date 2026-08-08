@@ -2997,7 +2997,7 @@ function assertWorkerRun(run, task, generation, expectedWorkflow) {
     throw new Error("Worker run identity does not match its ledger binding");
   }
 }
-async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString()) {
+async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), maintainer = "") {
   let active = activeGeneration(loaded.ledger);
   if (!active) return;
   const expectedWorkflow = workerWorkflow(active.pipeline);
@@ -3073,7 +3073,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
     await saveLedger2(client, loaded);
     return;
   }
-  await trackStuckRun(client, loaded, active, run, now);
+  await trackStuckRun(client, loaded, active, run, now, maintainer);
 }
 var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
@@ -3102,7 +3102,7 @@ async function readLaunchOperationForReconciliation(loaded, attemptId) {
     return { ok: false };
   }
 }
-async function trackMissingRun(client, loaded, generation, now) {
+async function trackMissingRun(client, loaded, generation, now, maintainer) {
   const ledger = loaded.ledger;
   if (reconcileAnomaliesFor(ledger, generation.generation, "reconcile-parked").length > 0) {
     return;
@@ -3155,12 +3155,7 @@ async function trackMissingRun(client, loaded, generation, now) {
     }
   }
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env("MAINTAINER_LOGIN", false),
-      parkFailure
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -3263,7 +3258,7 @@ async function trackMissingRun(client, loaded, generation, now) {
 var RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
 var RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
 var RECONCILE_STUCK_RUN_MAX_ATTEMPTS = 3;
-async function trackStuckRun(client, loaded, generation, run, now) {
+async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
   const ledger = loaded.ledger;
   if (reconcileAnomaliesFor(
     ledger,
@@ -3296,12 +3291,7 @@ async function trackStuckRun(client, loaded, generation, run, now) {
     evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
   }) : void 0;
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env("MAINTAINER_LOGIN", false),
-      parkFailure
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -3362,7 +3352,7 @@ async function trackStuckRun(client, loaded, generation, run, now) {
   }
   await saveLedger2(client, loaded);
 }
-async function repairMissingIntentFromLabel(client, loaded, now, runId) {
+async function repairMissingIntentFromLabel(client, loaded, now, runId, maintainer = "") {
   const ledger = loaded.ledger;
   const task = ledger.task;
   const root = repositoryPath(task);
@@ -3381,7 +3371,6 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     labelName = pipeline && `review:${pipeline}`;
   }
   if (!pipeline) return;
-  const maintainer = env("MAINTAINER_LOGIN", false);
   const timeline = await listAll(
     client,
     `${root}/issues/${task.issue}/timeline`
@@ -3490,7 +3479,7 @@ async function reconcileControlState(client, loaded, issueClosed, now, runId) {
   }
   return issueClosed;
 }
-async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId, issueClosed) {
+async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId, issueClosed, maintainer = "") {
   const ledger = loaded.ledger;
   const anchorClosed = await reconcileControlState(
     client,
@@ -3510,13 +3499,13 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
       if (!launchRead.ok) return;
       const operation = launchRead.operation;
       if (operation?.operationId === attemptId && operation.attemptId === attemptId && (operation.status === "pending" || operation.resolution?.status === "rejected" && operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)) {
-        await trackMissingRun(client, loaded, active2, now);
+        await trackMissingRun(client, loaded, active2, now, maintainer);
       }
     }
     return;
   }
   if (ledger.generations.length === 0 || !activeGeneration(ledger)) {
-    await repairMissingIntentFromLabel(client, loaded, now, runId);
+    await repairMissingIntentFromLabel(client, loaded, now, runId, maintainer);
   }
   if (ledger.generations.length === 0) return;
   const active = activeGeneration(ledger);
@@ -3534,12 +3523,7 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
       reason: "internal_error",
       retryDisposition: "manual"
     });
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env("MAINTAINER_LOGIN", false),
-      parkFailure
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
     addAnomaly(
       ledger,
       "reconcile-invariant-violation",
@@ -3557,7 +3541,7 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
     return;
   }
   if (active.attempt?.runId) return;
-  await trackMissingRun(client, loaded, active, now);
+  await trackMissingRun(client, loaded, active, now, maintainer);
 }
 async function dispatchReconcileScan2(client, repository, issueNumbers) {
   return dispatchReconcileScan(
@@ -3793,7 +3777,7 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
       generation.pipeline,
       normalized.readinessFailure,
       run.html_url,
-      env("MAINTAINER_LOGIN", false)
+      polling.maintainer ?? ""
     );
   }
   if (generation.state === "completed") {
@@ -4094,7 +4078,12 @@ async function processNormalizedEvent({
           )
         );
       }
-      await reconcileActive(client, loaded);
+      await reconcileActive(
+        client,
+        loaded,
+        (/* @__PURE__ */ new Date()).toISOString(),
+        maintainer
+      );
       if (normalized.kind === "intent") {
         const accepted = await runPhase(
           { client, loaded },
@@ -4112,7 +4101,8 @@ async function processNormalizedEvent({
         await saveLedger2(client, loaded);
       } else if (normalized.kind === "completion") {
         await handleCompletion(client, loaded, normalized, {
-          pollUntilTerminal: pollCompletionUntilTerminal
+          pollUntilTerminal: pollCompletionUntilTerminal,
+          maintainer
         });
       } else if (normalized.kind === "reconcile") {
         await runPhase(
@@ -4123,7 +4113,8 @@ async function processNormalizedEvent({
             loaded,
             (/* @__PURE__ */ new Date()).toISOString(),
             runId,
-            normalized.issueClosed
+            normalized.issueClosed,
+            maintainer
           )
         );
       } else {

@@ -542,6 +542,7 @@ async function reconcileActive(
   client: GitHubApiClient,
   loaded: LoadedLedger,
   now: string = new Date().toISOString(),
+  maintainer = '',
 ): Promise<void> {
   let active = activeGeneration(loaded.ledger);
   if (!active) return;
@@ -629,7 +630,7 @@ async function reconcileActive(
   // bound (unlike trackMissingRun's case below) but GitHub has never once
   // reported it terminal. trackStuckRun applies the same bounded
   // observation-and-escalation shape to that case.
-  await trackStuckRun(client, loaded, active, run, now);
+  await trackStuckRun(client, loaded, active, run, now, maintainer);
 }
 
 // The reconciler's (#305) grace period before a still-runless dispatching
@@ -716,6 +717,7 @@ async function trackMissingRun(
   loaded: LoadedLedger,
   generation: LedgerGeneration,
   now: string,
+  maintainer: string,
 ): Promise<void> {
   const ledger = loaded.ledger;
   if (
@@ -812,12 +814,7 @@ async function trackMissingRun(
   // observable; it is now the projector, not this reconciler, that owns
   // the needs-human decision.
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env('MAINTAINER_LOGIN', false),
-      parkFailure,
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -975,6 +972,7 @@ async function trackStuckRun(
   generation: LedgerGeneration,
   run: WorkflowRun,
   now: string,
+  maintainer: string,
 ): Promise<void> {
   const ledger = loaded.ledger;
   if (
@@ -1036,12 +1034,7 @@ async function trackStuckRun(
   // disposition always satisfies it here, so this changes nothing
   // observable.
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env('MAINTAINER_LOGIN', false),
-      parkFailure,
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -1170,6 +1163,7 @@ async function repairMissingIntentFromLabel(
   loaded: LoadedLedger,
   now: string,
   runId: number,
+  maintainer = '',
 ): Promise<void> {
   const ledger = loaded.ledger;
   const task = ledger.task;
@@ -1194,7 +1188,6 @@ async function repairMissingIntentFromLabel(
     labelName = pipeline && `review:${pipeline}`;
   }
   if (!pipeline) return;
-  const maintainer = env('MAINTAINER_LOGIN', false);
   const timeline: GitHubTimelineEvent[] = await listAll(
     client,
     `${root}/issues/${task.issue}/timeline`,
@@ -1419,6 +1412,7 @@ async function reconcileLedger(
   now: string = new Date().toISOString(),
   runId: number,
   issueClosed?: boolean,
+  maintainer = '',
 ): Promise<void> {
   const ledger = loaded.ledger;
   const anchorClosed = await reconcileControlState(
@@ -1457,7 +1451,7 @@ async function reconcileLedger(
           (operation.resolution?.status === 'rejected' &&
             operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION))
       ) {
-        await trackMissingRun(client, loaded, active, now);
+        await trackMissingRun(client, loaded, active, now, maintainer);
       }
     }
     return;
@@ -1468,7 +1462,7 @@ async function reconcileLedger(
   // the states where a missing current-label source would otherwise remain
   // invisible forever (#639).
   if (ledger.generations.length === 0 || !activeGeneration(ledger)) {
-    await repairMissingIntentFromLabel(client, loaded, now, runId);
+    await repairMissingIntentFromLabel(client, loaded, now, runId, maintainer);
   }
   if (ledger.generations.length === 0) return;
   const active = activeGeneration(ledger);
@@ -1515,12 +1509,7 @@ async function reconcileLedger(
     // Phase 4) rather than calling ensureNeedsHumanParked directly --
     // parkFailure's `manual` disposition always satisfies that gate here,
     // so this changes nothing observable.
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env('MAINTAINER_LOGIN', false),
-      parkFailure,
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
     addAnomaly(
       ledger,
       'reconcile-invariant-violation',
@@ -1538,7 +1527,7 @@ async function reconcileLedger(
     return;
   }
   if (active.attempt?.runId) return;
-  await trackMissingRun(client, loaded, active, now);
+  await trackMissingRun(client, loaded, active, now, maintainer);
 }
 
 // Fires one workflow_dispatch `kind: reconcile` call at agent-router.yml per
@@ -1872,6 +1861,7 @@ async function handleCompletion(
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
     pollUntilTerminal?: boolean;
+    maintainer?: string;
   } = {},
 ): Promise<void> {
   const now = polling.now ?? Date.now;
@@ -1943,7 +1933,7 @@ async function handleCompletion(
       generation.pipeline,
       normalized.readinessFailure,
       run.html_url,
-      env('MAINTAINER_LOGIN', false),
+      polling.maintainer ?? '',
     );
   }
   if (generation.state === 'completed') {
@@ -2474,7 +2464,12 @@ export async function processNormalizedEvent({
           ),
         );
       }
-      await reconcileActive(client, loaded);
+      await reconcileActive(
+        client,
+        loaded,
+        new Date().toISOString(),
+        maintainer,
+      );
       if (normalized.kind === 'intent') {
         const accepted = await runPhase({ client, loaded }, 'intent', () =>
           acceptIntent(loaded.ledger, normalized.intent),
@@ -2499,6 +2494,7 @@ export async function processNormalizedEvent({
       } else if (normalized.kind === 'completion') {
         await handleCompletion(client, loaded, normalized, {
           pollUntilTerminal: pollCompletionUntilTerminal,
+          maintainer,
         });
       } else if (normalized.kind === 'reconcile') {
         await runPhase({ client, loaded }, 'reconciliation', () =>
@@ -2508,6 +2504,7 @@ export async function processNormalizedEvent({
             new Date().toISOString(),
             runId,
             normalized.issueClosed,
+            maintainer,
           ),
         );
       } else {

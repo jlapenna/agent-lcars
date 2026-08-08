@@ -2007,7 +2007,9 @@ test('a trusted credential failure opens the lane breaker before completion can 
       readinessFailure: 'credential',
     };
 
-    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion, {
+      maintainer: 'jlapenna',
+    });
 
     assert.equal(ledger.generations[0].state, 'completed');
     assert.equal(ledger.generations[0].attempt.outcome, 'startup-failure');
@@ -2022,7 +2024,9 @@ test('a trusted credential failure opens the lane breaker before completion can 
     // The already-recorded completion source makes a stale callback a no-op,
     // so it must not recreate the breaker from old evidence.
     openIssues = [];
-    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion, {
+      maintainer: 'jlapenna',
+    });
     assert.equal(
       calls.filter(
         (call) => call.path.endsWith('/issues') && call.method === 'POST',
@@ -2224,7 +2228,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
       RECONCILE_T0,
       RECONCILE_MISSING_RUN_GRACE_MS / 60_000,
     );
-    await reconcileLedger(client, loaded, t1);
+    await reconcileLedger(client, loaded, t1, 0, undefined, 'jlapenna');
     let missing = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     );
@@ -2245,7 +2249,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
     const savesBefore = calls.filter((call) =>
       call.path.includes('/issues/comments/9'),
     ).length;
-    await reconcileLedger(client, loaded, t1);
+    await reconcileLedger(client, loaded, t1, 0, undefined, 'jlapenna');
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-missing-run',
@@ -2265,7 +2269,14 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
       t1,
       RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000 - 1,
     );
-    await reconcileLedger(client, loaded, tStillTooSoon);
+    await reconcileLedger(
+      client,
+      loaded,
+      tStillTooSoon,
+      0,
+      undefined,
+      'jlapenna',
+    );
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-missing-run',
@@ -2276,7 +2287,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
     // Pass 4: a full interval past the last COUNTED observation -- records
     // the second attempt.
     const t2 = addMinutes(t1, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileLedger(client, loaded, t2);
+    await reconcileLedger(client, loaded, t2, 0, undefined, 'jlapenna');
     missing = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     );
@@ -2292,7 +2303,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
     // RECONCILE_MISSING_RUN_MAX_ATTEMPTS -- parks needs-human + maintainer,
     // and records both the observation and the park in the ledger.
     const t3 = addMinutes(t2, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileLedger(client, loaded, t3);
+    await reconcileLedger(client, loaded, t3, 0, undefined, 'jlapenna');
     missing = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     );
@@ -2314,6 +2325,9 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
       client,
       loaded,
       addMinutes(t3, 10 * RECONCILE_MISSING_RUN_MIN_INTERVAL_MS),
+      0,
+      undefined,
+      'jlapenna',
     );
     assert.equal(calls.length, callsBeforeFinal);
     assert.equal(ledger.revision, revisionBeforeFinal);
@@ -2653,7 +2667,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
 
     // Pass 1: grace period has just elapsed -- first counted observation.
     const t1 = addMinutes(RECONCILE_T0, RECONCILE_STUCK_RUN_GRACE_MS / 60_000);
-    await reconcileActive(client, loaded, t1);
+    await reconcileActive(client, loaded, t1, 'jlapenna');
     let stuck = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-stuck-run',
     );
@@ -2675,7 +2689,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
     const savesBefore = calls.filter((call) =>
       call.path.includes('/issues/comments/9'),
     ).length;
-    await reconcileActive(client, loaded, t1);
+    await reconcileActive(client, loaded, t1, 'jlapenna');
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-stuck-run',
@@ -2695,7 +2709,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
       t1,
       RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000 - 1,
     );
-    await reconcileActive(client, loaded, tStillTooSoon);
+    await reconcileActive(client, loaded, tStillTooSoon, 'jlapenna');
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-stuck-run',
@@ -2706,7 +2720,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
     // Pass 4: a full interval past the last COUNTED observation -- records
     // the second attempt.
     const t2 = addMinutes(t1, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileActive(client, loaded, t2);
+    await reconcileActive(client, loaded, t2, 'jlapenna');
     stuck = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-stuck-run',
     );
@@ -2722,7 +2736,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
     // RECONCILE_STUCK_RUN_MAX_ATTEMPTS -- parks needs-human + maintainer,
     // and records both the observation and a distinctly-kinded park anomaly.
     const t3 = addMinutes(t2, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileActive(client, loaded, t3);
+    await reconcileActive(client, loaded, t3, 'jlapenna');
     stuck = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-stuck-run',
     );
@@ -2753,6 +2767,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
       client,
       loaded,
       addMinutes(t3, 10 * RECONCILE_STUCK_RUN_MIN_INTERVAL_MS),
+      'jlapenna',
     );
     assert.equal(ledger.revision, revisionBeforeFinal);
     assert.equal(
@@ -2937,7 +2952,7 @@ function quickTaskRepairIssue({ author = 'jlapenna', persistedDigest } = {}) {
 }
 
 test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a live, unambiguous agent label applied by the maintainer (#520)', async () => {
-  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  delete process.env.MAINTAINER_LOGIN;
   try {
     const ledger = createLedger(task);
     const { client, calls } = reconcileStubClient({
@@ -2950,6 +2965,8 @@ test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a l
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -3000,6 +3017,8 @@ test('reconcileLedger repair falls through to the review:* namespace on a pull r
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -3030,6 +3049,8 @@ test('reconcileLedger repair does NOT fire when the label was most recently appl
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 0);
@@ -3054,6 +3075,8 @@ test('reconcileLedger repairs a creation-time Quick Task label from its digest a
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:00:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -3086,6 +3109,8 @@ test('reconcileLedger does NOT trust a valid creation-time Quick Task marker aut
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:00:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 0);
@@ -3112,6 +3137,8 @@ test('a real non-maintainer label event takes precedence over the original Quick
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:00:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 0);
@@ -3135,6 +3162,8 @@ test('reconcileLedger rejects a maintainer-authored Quick Task whose creation ma
           { ledger, comment: { id: 9 } },
           '2026-08-04T06:00:00.000Z',
           30880000,
+          undefined,
+          'jlapenna',
         ),
       /Quick Task marker digest mismatch/u,
     );
@@ -3163,6 +3192,8 @@ test('reconcileLedger repair does NOT treat an ordinary maintainer-authored issu
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 0);
   } finally {
@@ -3228,6 +3259,8 @@ test('reconcileLedger repair pages through the full timeline: a non-maintainer r
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(
@@ -3258,6 +3291,7 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 1);
     const revisionAfterRepair = ledger.revision;
@@ -3270,6 +3304,8 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
       { ledger, comment: { id: 9 } },
       now,
       30882222,
+      undefined,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 1);
     assert.equal(ledger.revision, revisionAfterRepair);
@@ -3301,6 +3337,8 @@ test('reconcileLedger repairs a queue-evicted relabel after an earlier generatio
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:31:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 2);
@@ -3314,6 +3352,8 @@ test('reconcileLedger repairs a queue-evicted relabel after an earlier generatio
       { ledger, comment: { id: 9 } },
       '2026-08-04T07:01:00.000Z',
       30880001,
+      undefined,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 2);
     assert.equal(ledger.revision, revisionAfterRepair);
@@ -3391,6 +3431,8 @@ test('reconcileLedger repair honors a Quick Task marker for its intentId (dedupe
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -3435,7 +3477,14 @@ test('reconcileLedger surfaces and parks a pending generation stranded with no c
       attempt: undefined,
     });
     const { client, calls } = reconcileStubClient();
-    await reconcileLedger(client, { ledger, comment: { id: 9 } });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      undefined,
+      0,
+      undefined,
+      'jlapenna',
+    );
     assert.ok(
       ledger.anomalies.some(
         (anomaly) => anomaly.kind === 'reconcile-invariant-violation',
@@ -3652,6 +3701,7 @@ test('reconcileLedger with issueClosed: false (the live, common case for an open
       now,
       30880000,
       /* issueClosed */ false,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
