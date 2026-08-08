@@ -33,9 +33,11 @@
  * `verify` CI job -- which is what actually runs `nx test
  * @agent-lcars/dispatch-broker` in CI -- installs no Java at all (see
  * apps/runner-autoscaler/runner-image/Dockerfile); only the separate `e2e`
- * job installs Java 21, and only for Playwright's suite. Making this
- * spec's emulator a hard requirement would therefore break `verify` in CI,
- * not just fail one spec.
+ * job installs Java 21. That job invokes this spec directly before the
+ * Playwright suite, so CI proves the real transactional contract without
+ * adding Java or emulator startup cost to every `verify` run. Making this
+ * spec's emulator a hard requirement in the broker's ordinary test target
+ * would still break `verify` in CI, not just fail one spec.
  *
  * So: if a suitable `java` is not on PATH, this file registers ONE explicit
  * `test.skip` naming exactly why, instead of either (a) hard-failing a CI

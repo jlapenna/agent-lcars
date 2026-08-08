@@ -209,6 +209,14 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # Keep the Firestore-backed StoragePort's transactional contract in
+      # the Java-capable job. The verify job still runs the broker's full
+      # unit suite (where this one spec reports an explicit environment
+      # skip), while this focused invocation proves all 21 cases against a
+      # real emulator, including the concurrent compare-and-swap barrier.
+      - name: Run Firestore storage contract suite
+        run: pnpm exec vitest --config apps/dispatch-broker/vitest.config.mts run apps/dispatch-broker/src/storage/firestore-port.spec.ts
+
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
