@@ -4,8 +4,10 @@ import { pathToFileURL } from 'node:url';
 
 import type {
   DispatchLedger,
+  DispatchOutcomeKind,
   DispatchPipeline,
   FailurePhase,
+  LaneReadinessFailure,
   LedgerGeneration,
   LedgerTaskRef,
   OwningSystem,
@@ -15,6 +17,9 @@ import {
   displayTitleMatchesAttempt,
   formatAttemptId,
   formatFailure,
+  HOSTED_COMPLETION_URL,
+  isDispatchOutcomeKind,
+  isLaneReadinessFailure,
 } from '@agent-lcars/dispatch-contracts';
 import type { ReconcileIssue } from '@agent-lcars/dispatch-reconcile';
 import {
@@ -49,7 +54,6 @@ import {
   classifyAuthorityTaskInitialization,
   createGitHubApi,
   createReconcileTransport,
-  dispatchRouterEvent,
   dispatchWorker,
   ensureLaneReadinessAlert,
   failClosed,
@@ -68,6 +72,7 @@ import {
   verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api';
+import { sendHostedCompletion } from './hosted-completion-client';
 import type { Intent } from './modules/intent';
 import {
   projectComment,
@@ -2799,14 +2804,25 @@ async function loadPreflightLedger(
 }
 
 async function completionCallback(): Promise<void> {
-  const client = api();
-  const task: LedgerTaskRef = {
-    repositoryId: Number(env('GITHUB_REPOSITORY_ID')),
-    repository: env('GITHUB_REPOSITORY'),
-    issue: Number(env('BROKER_ISSUE')),
-  };
-  const outcome = env('BROKER_OUTCOME_KIND', false);
+  const outcomeInput = env('BROKER_OUTCOME_KIND', false);
   const outcomeReference = env('BROKER_OUTCOME_REFERENCE', false);
+  const readinessFailureInput = env('BROKER_READINESS_FAILURE', false);
+  let outcome: DispatchOutcomeKind | undefined;
+  if (outcomeInput) {
+    if (!isDispatchOutcomeKind(outcomeInput)) {
+      throw new Error('BROKER_OUTCOME_KIND is not a recognized outcome');
+    }
+    outcome = outcomeInput;
+  }
+  let readinessFailure: LaneReadinessFailure | undefined;
+  if (readinessFailureInput) {
+    if (!isLaneReadinessFailure(readinessFailureInput)) {
+      throw new Error(
+        'BROKER_READINESS_FAILURE is not a recognized readiness failure',
+      );
+    }
+    readinessFailure = readinessFailureInput;
+  }
   if (outcomeReference) {
     const number = Number(outcomeReference);
     if (
@@ -2819,29 +2835,27 @@ async function completionCallback(): Promise<void> {
       );
     }
   }
-  const completionPayload = encode({
-    workerRunId: Number(env('GITHUB_RUN_ID')),
-    generation: Number(env('BROKER_GENERATION')),
-    intentId: env('BROKER_INTENT_ID'),
-    token: env('BROKER_DISPATCH_TOKEN'),
-    workflow: env('BROKER_WORKER_WORKFLOW'),
-    ...(outcome ? { outcome } : {}),
-    ...(outcomeReference
-      ? {
-          outcomeReference: {
-            kind: 'pull-request',
-            number: Number(outcomeReference),
-          },
-        }
-      : {}),
-    ...(env('BROKER_READINESS_FAILURE', false)
-      ? { readinessFailure: env('BROKER_READINESS_FAILURE') }
-      : {}),
-  });
-  await dispatchRouterEvent(client, task, {
-    kind: 'completion',
-    issue: String(task.issue),
-    completion_payload: completionPayload,
+  await sendHostedCompletion({
+    completionUrl: HOSTED_COMPLETION_URL,
+    oidcRequestUrl: env('ACTIONS_ID_TOKEN_REQUEST_URL'),
+    oidcRequestToken: env('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
+    payload: {
+      issue: Number(env('BROKER_ISSUE')),
+      generation: Number(env('BROKER_GENERATION')),
+      intentId: env('BROKER_INTENT_ID'),
+      token: env('BROKER_DISPATCH_TOKEN'),
+      workflow: env('BROKER_WORKER_WORKFLOW'),
+      ...(outcome ? { outcome } : {}),
+      ...(outcomeReference
+        ? {
+            outcomeReference: {
+              kind: 'pull-request',
+              number: Number(outcomeReference),
+            },
+          }
+        : {}),
+      ...(readinessFailure ? { readinessFailure } : {}),
+    },
   });
 }
 

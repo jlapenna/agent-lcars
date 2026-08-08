@@ -22,6 +22,7 @@ inputs:
       report-failure
       telemetry-finalize
       post-agent-gates
+      dispatch-broker
 
 outputs:
   path:

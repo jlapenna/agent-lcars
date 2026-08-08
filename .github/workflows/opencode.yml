@@ -436,26 +436,23 @@ jobs:
       - name: Return completion observation to the broker
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/dispatch-broker
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          operation: completion-callback
-          issue: ${{ inputs.issue }}
-          generation: ${{ inputs.broker_generation }}
-          intent-id: ${{ inputs.broker_intent_id }}
-          dispatch-token: ${{ inputs.broker_dispatch_token }}
-          worker-workflow: ${{ env.WORKER_WORKFLOW }}
-          outcome-kind: ${{ steps.post_agent_gates.outputs.outcome-kind }}
-          outcome-reference: ${{ steps.post_agent_gates.outputs.outcome-reference }}
-          readiness-failure: ${{ steps.post_agent_gates.outputs.readiness-failure }}
+          BROKER_ISSUE: ${{ inputs.issue }}
+          BROKER_GENERATION: ${{ inputs.broker_generation }}
+          BROKER_INTENT_ID: ${{ inputs.broker_intent_id }}
+          BROKER_DISPATCH_TOKEN: ${{ inputs.broker_dispatch_token }}
+          BROKER_WORKER_WORKFLOW: ${{ env.WORKER_WORKFLOW }}
+          BROKER_OUTCOME_KIND: ${{ steps.post_agent_gates.outputs.outcome-kind }}
+          BROKER_OUTCOME_REFERENCE: ${{ steps.post_agent_gates.outputs.outcome-reference }}
+          BROKER_READINESS_FAILURE: ${{ steps.post_agent_gates.outputs.readiness-failure }}
+        run: node "$RUNNER_TEMP/trusted-actions/dispatch-broker/dist/main.mjs" completion-callback
 
   fallback-finalize:
     needs: opencode
     if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != '' && needs.opencode.outputs.post_agent_gates_complete != 'true'
     permissions:
-      actions: write
       contents: read
+      id-token: write
       issues: write
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:

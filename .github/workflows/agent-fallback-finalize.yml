@@ -9,7 +9,7 @@ name: Agent Bootstrap-Independent Finalizer
 # The report/park step deliberately runs before checkout and uses only
 # github.token plus inline GitHub CLI calls. That makes a failed checkout
 # visible instead of depending on the same repository bootstrap it reports.
-# Checkout remains necessary only for the controller completion callback;
+# Checkout remains necessary only for the frozen hosted-completion client;
 # scheduled controller reconciliation is its lost-callback backstop.
 
 on:
@@ -48,8 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      actions: write
       contents: read
+      id-token: write
       issues: write
     steps:
       - name: Report and park bootstrap-independent failure
@@ -102,8 +102,6 @@ jobs:
 
       - name: Return completion observation to the broker
         uses: ./.github/actions/dispatch-broker
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         with:
           operation: completion-callback
           issue: ${{ inputs.issue }}

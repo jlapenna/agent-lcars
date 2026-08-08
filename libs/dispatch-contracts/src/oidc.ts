@@ -7,3 +7,6 @@ export const COMPLETION_FINALIZER_WORKFLOW_PATH =
 
 /** Public App Hosting route that accepts an authenticated worker completion. */
 export const HOSTED_COMPLETION_PATH = '/api/control-plane/completion';
+
+/** Canonical production endpoint used by the trusted worker callback. */
+export const HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;

@@ -354,6 +354,11 @@ function parseRouterGroupMarker(displayTitle) {
   return match ? { repositoryId: Number(match[1]), issue: Number(match[2]) } : void 0;
 }
 
+// libs/dispatch-contracts/src/oidc.ts
+var COMPLETION_OIDC_AUDIENCE = "agent-lcars-dispatch-completion";
+var HOSTED_COMPLETION_PATH = "/api/control-plane/completion";
+var HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
+
 // libs/dispatch-contracts/src/quick-task.ts
 function serializeIdentity({
   repository,
@@ -1663,6 +1668,139 @@ async function ensureNeedsHumanParked(api2, task, maintainer) {
       body: { assignees: [maintainer] }
     }),
     () => issueHasAssignee(api2, task, maintainer)
+  );
+}
+
+// apps/dispatch-broker/src/hosted-completion-client.ts
+var HostedCompletionRequestError = class extends Error {
+  constructor(message, retryable) {
+    super(message);
+    this.retryable = retryable;
+    this.name = "HostedCompletionRequestError";
+  }
+  retryable;
+};
+function validatedHttpsUrl(value, name) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new HostedCompletionRequestError(`${name} is not a valid URL`, false);
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+    throw new HostedCompletionRequestError(
+      `${name} must be an HTTPS URL without credentials or a fragment`,
+      false
+    );
+  }
+  return url;
+}
+function retryableStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+async function withRetry(operation, {
+  maxAttempts,
+  sleep: sleep2
+}) {
+  let delay = 1e3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const retryable = !(error instanceof HostedCompletionRequestError) || error.retryable;
+      if (!retryable || attempt === maxAttempts) throw error;
+      await sleep2(delay);
+      delay *= 2;
+    }
+  }
+  throw new Error("Hosted completion retry loop exhausted unexpectedly");
+}
+async function requestOidcToken({
+  oidcRequestUrl,
+  oidcRequestToken,
+  fetchImpl,
+  sleep: sleep2,
+  timeoutMs,
+  maxAttempts
+}) {
+  const url = validatedHttpsUrl(oidcRequestUrl, "GitHub OIDC request URL");
+  url.searchParams.set("audience", COMPLETION_OIDC_AUDIENCE);
+  return withRetry(
+    async () => {
+      const response = await fetchImpl(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${oidcRequestToken}`
+        },
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+      if (!response.ok) {
+        throw new HostedCompletionRequestError(
+          `GitHub OIDC token request failed with HTTP ${response.status}`,
+          retryableStatus(response.status)
+        );
+      }
+      const body = await response.json();
+      if (typeof body.value !== "string" || body.value.length === 0) {
+        throw new HostedCompletionRequestError(
+          "GitHub OIDC token response did not contain a token",
+          false
+        );
+      }
+      return body.value;
+    },
+    { maxAttempts, sleep: sleep2 }
+  );
+}
+async function sendHostedCompletion({
+  payload,
+  oidcRequestUrl,
+  oidcRequestToken,
+  completionUrl = HOSTED_COMPLETION_URL,
+  fetchImpl = fetch,
+  sleep: sleep2 = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  timeoutMs = 15e3,
+  maxAttempts = 3
+}) {
+  const endpoint = validatedHttpsUrl(
+    completionUrl,
+    "Hosted completion endpoint"
+  );
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
+    throw new HostedCompletionRequestError(
+      "Hosted completion maxAttempts must be positive",
+      false
+    );
+  }
+  const idToken = await requestOidcToken({
+    oidcRequestUrl,
+    oidcRequestToken,
+    fetchImpl,
+    sleep: sleep2,
+    timeoutMs,
+    maxAttempts
+  });
+  await withRetry(
+    async () => {
+      const response = await fetchImpl(endpoint, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${idToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+      if (!response.ok) {
+        throw new HostedCompletionRequestError(
+          `Hosted completion request failed with HTTP ${response.status}`,
+          retryableStatus(response.status)
+        );
+      }
+    },
+    { maxAttempts, sleep: sleep2 }
   );
 }
 
@@ -4312,14 +4450,25 @@ async function loadPreflightLedger(client, task, storageMode, authorityPort) {
   }))?.ledger;
 }
 async function completionCallback() {
-  const client = api();
-  const task = {
-    repositoryId: Number(env("GITHUB_REPOSITORY_ID")),
-    repository: env("GITHUB_REPOSITORY"),
-    issue: Number(env("BROKER_ISSUE"))
-  };
-  const outcome = env("BROKER_OUTCOME_KIND", false);
+  const outcomeInput = env("BROKER_OUTCOME_KIND", false);
   const outcomeReference = env("BROKER_OUTCOME_REFERENCE", false);
+  const readinessFailureInput = env("BROKER_READINESS_FAILURE", false);
+  let outcome;
+  if (outcomeInput) {
+    if (!isDispatchOutcomeKind(outcomeInput)) {
+      throw new Error("BROKER_OUTCOME_KIND is not a recognized outcome");
+    }
+    outcome = outcomeInput;
+  }
+  let readinessFailure;
+  if (readinessFailureInput) {
+    if (!isLaneReadinessFailure(readinessFailureInput)) {
+      throw new Error(
+        "BROKER_READINESS_FAILURE is not a recognized readiness failure"
+      );
+    }
+    readinessFailure = readinessFailureInput;
+  }
   if (outcomeReference) {
     const number = Number(outcomeReference);
     if (outcome !== "pull-request" || !Number.isSafeInteger(number) || number <= 0) {
@@ -4328,25 +4477,25 @@ async function completionCallback() {
       );
     }
   }
-  const completionPayload = encode({
-    workerRunId: Number(env("GITHUB_RUN_ID")),
-    generation: Number(env("BROKER_GENERATION")),
-    intentId: env("BROKER_INTENT_ID"),
-    token: env("BROKER_DISPATCH_TOKEN"),
-    workflow: env("BROKER_WORKER_WORKFLOW"),
-    ...outcome ? { outcome } : {},
-    ...outcomeReference ? {
-      outcomeReference: {
-        kind: "pull-request",
-        number: Number(outcomeReference)
-      }
-    } : {},
-    ...env("BROKER_READINESS_FAILURE", false) ? { readinessFailure: env("BROKER_READINESS_FAILURE") } : {}
-  });
-  await dispatchRouterEvent(client, task, {
-    kind: "completion",
-    issue: String(task.issue),
-    completion_payload: completionPayload
+  await sendHostedCompletion({
+    completionUrl: HOSTED_COMPLETION_URL,
+    oidcRequestUrl: env("ACTIONS_ID_TOKEN_REQUEST_URL"),
+    oidcRequestToken: env("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+    payload: {
+      issue: Number(env("BROKER_ISSUE")),
+      generation: Number(env("BROKER_GENERATION")),
+      intentId: env("BROKER_INTENT_ID"),
+      token: env("BROKER_DISPATCH_TOKEN"),
+      workflow: env("BROKER_WORKER_WORKFLOW"),
+      ...outcome ? { outcome } : {},
+      ...outcomeReference ? {
+        outcomeReference: {
+          kind: "pull-request",
+          number: Number(outcomeReference)
+        }
+      } : {},
+      ...readinessFailure ? { readinessFailure } : {}
+    }
   });
 }
 async function discoverReconcileCandidates2(client, repository, fleetLogin) {

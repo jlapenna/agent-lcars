@@ -659,20 +659,35 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
     assert.match(completion.source, stepField('continue-on-error', 'true'));
     assert.match(
       completion.source,
-      stepField('uses', './.github/actions/dispatch-broker'),
+      stepField(
+        'run',
+        'node "$RUNNER_TEMP/trusted-actions/dispatch-broker/dist/main.mjs" completion-callback',
+      ),
     );
+    for (const [envField, envValue] of [
+      ['BROKER_ISSUE', '${{ inputs.issue }}'],
+      ['BROKER_GENERATION', '${{ inputs.broker_generation }}'],
+      ['BROKER_INTENT_ID', '${{ inputs.broker_intent_id }}'],
+      ['BROKER_DISPATCH_TOKEN', '${{ inputs.broker_dispatch_token }}'],
+      ['BROKER_WORKER_WORKFLOW', '${{ env.WORKER_WORKFLOW }}'],
+    ]) {
+      assert.match(
+        completion.source,
+        stepField(envField, envValue, 10),
+        `${workflow}'s hosted completion callback must pass ${envField}`,
+      );
+    }
+    assert.doesNotMatch(completion.source, /GITHUB_TOKEN|github\.token/u);
+    assert.doesNotMatch(completion.source, /^ {8}uses:/mu);
     assert.match(
-      completion.source,
-      stepField('operation', 'completion-callback', 10),
-    );
-    assert.match(
-      completion.source,
-      stepField('worker-workflow', '${{ env.WORKER_WORKFLOW }}', 10),
+      source,
+      /^ {2}id-token:\s+write\s*$/mu,
+      `${workflow} must be able to mint the hosted completion OIDC token`,
     );
     assert.match(
       completion.source,
       stepField(
-        'outcome-kind',
+        'BROKER_OUTCOME_KIND',
         '${{ steps.post_agent_gates.outputs.outcome-kind }}',
         10,
       ),
@@ -680,7 +695,7 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
     assert.match(
       completion.source,
       stepField(
-        'outcome-reference',
+        'BROKER_OUTCOME_REFERENCE',
         '${{ steps.post_agent_gates.outputs.outcome-reference }}',
         10,
       ),
@@ -689,13 +704,22 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
     assert.match(
       completion.source,
       stepField(
-        'readiness-failure',
+        'BROKER_READINESS_FAILURE',
         '${{ steps.post_agent_gates.outputs.readiness-failure }}',
         10,
       ),
       `${workflow}'s trusted post-agent classifier must return a lane-readiness failure to the broker`,
     );
   }
+
+  const snapshotAction = await fs.readFile(
+    path.join(
+      workspaceRoot,
+      '.github/actions/snapshot-enforcement-scripts/action.yml',
+    ),
+    'utf8',
+  );
+  assert.match(snapshotAction, /^ {6}dispatch-broker\s*$/mu);
 });
 
 test('every agent lane has one shared GitHub-hosted fallback finalizer outside the self-hosted bootstrap failure domain (#639)', async () => {
@@ -725,8 +749,8 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
       source,
       /^ {4}uses:\s+\.\/\.github\/workflows\/agent-fallback-finalize\.yml\s*$/mu,
     );
-    assert.match(source, /^ {6}actions:\s+write\s*$/mu);
     assert.match(source, /^ {6}contents:\s+read\s*$/mu);
+    assert.match(source, /^ {6}id-token:\s+write\s*$/mu);
     assert.match(source, /^ {6}issues:\s+write\s*$/mu);
     assert.match(
       source,
@@ -744,6 +768,7 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
   assert.match(fallbackSource, /^ {2}workflow_call:\s*$/mu);
   assert.match(fallbackSource, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
   assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
+  assert.match(fallbackSource, /^ {6}id-token:\s+write\s*$/mu);
   const steps = stepBlocks(fallbackSource);
   assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [
     'Report and park bootstrap-independent failure',
@@ -774,6 +799,7 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
     callback.source,
     stepField('operation', 'completion-callback', 10),
   );
+  assert.doesNotMatch(callback.source, /GITHUB_TOKEN|github\.token/u);
 });
 
 test('workflow-owned assignment mutations use parse-safe JSON bodies (#645)', async () => {
@@ -795,11 +821,11 @@ test('workflow-owned assignment mutations use parse-safe JSON bodies (#645)', as
 
 test('worker agent steps never receive github.token under any name (#645 Phase 3)', async () => {
   // github.token is this job's own control-plane credential -- the exact
-  // one dispatch-broker uses to read and write the ledger comment (every
-  // dispatch-broker step in every worker passes
-  // GITHUB_TOKEN: ${{ github.token }}), and it carries the workflow's
-  // full contents/issues/pull-requests/actions write grant. The agent
-  // step runs untrusted, agent-authored code with unrestricted Bash;
+  // one dispatch-broker preflight reads before untrusted execution. The
+  // post-agent completion client deliberately uses OIDC and never receives
+  // this token. The job token carries the workflow's full
+  // contents/issues/pull-requests/actions write grant. The agent step runs
+  // untrusted, agent-authored code with unrestricted Bash;
   // handing it github.token under ANY env-var name would let that code
   // rewrite the ledger and act as the controller -- exactly what #645
   // forbids. All three workers used to do this via ACTIONS_RERUN_TOKEN
@@ -859,7 +885,7 @@ test('worker agent steps never receive github.token under any name (#645 Phase 3
   }
 });
 
-test('router serializes issue and pull-request lifecycle through one normalized group output', async () => {
+test('router retains only the serialized workflow_dispatch rollback path', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
@@ -869,16 +895,11 @@ test('router serializes issue and pull-request lifecycle through one normalized 
     source,
     /^\s+group:\s+\$\{\{ steps\.normalize\.outputs\.group \}\}\s*$/mu,
   );
-  assert.match(source, /^\s+pull_request_target:\s*$/mu);
-  assert.doesNotMatch(
-    source,
-    /^\s+pull_request:\s*$/mu,
-    'the privileged router must execute trusted base-branch code, never a PR merge ref',
-  );
-  assert.match(
-    source,
-    /^\s+types:\s+\[closed, reopened, labeled, unlabeled\]\s*$/mu,
-  );
+  assert.match(source, /^ {2}workflow_dispatch:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}issues:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}issue_comment:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}pull_request_target:\s*$/mu);
+  assert.doesNotMatch(source, /^ {2}pull_request:\s*$/mu);
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
 });
 
@@ -1112,9 +1133,9 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
     /outcome-kind:\s*\$\{\{ steps\.verify\.outputs\.outcome-kind \}\}/u,
     "the canary completion must persist the finalizer's typed outcome",
   );
-  // Every worker calls the broker's completion-callback unconditionally so
-  // a crashed run still clears its ledger generation (#305's reconciler is
-  // only ever a backstop, never the primary path).
+  // The canary calls the hosted completion client unconditionally so a
+  // crashed run still records its completion observation; reconciliation
+  // finalizes the generation once GitHub reports the caller terminal.
   assert.match(source, /operation:\s*completion-callback/u);
   const completionStepIndex = source.indexOf('operation: completion-callback');
   const precedingSource = source.slice(0, completionStepIndex);
@@ -1371,9 +1392,8 @@ test('every worker captures the verified attempt ID via the broker preflight cal
   // byte-identical hand-copied "Publish attempt identity" step (it runs
   // pre-agent, so unlike the post-agent gates it CAN safely become a
   // composite-action step) and folded it into dispatch-broker/action.yml
-  // itself, gated to `operation == 'preflight'` so a later
-  // completion-callback call in the same job never blanks the value back
-  // out. Assert both halves: the composite does the export exactly once,
+  // itself, gated to `operation == 'preflight'`. Assert both halves: the
+  // composite does the export exactly once,
   // and every worker's (and the canary's) preflight call still gives that
   // export something to key off (an `id` on the step).
   const brokerActionSource = await fs.readFile(

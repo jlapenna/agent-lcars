@@ -75,6 +75,7 @@ export {
   COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
   HOSTED_COMPLETION_PATH,
+  HOSTED_COMPLETION_URL,
 } from './oidc';
 export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
 export {
