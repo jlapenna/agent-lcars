@@ -76,8 +76,12 @@ export async function configureAppWebhook({
   }
 
   // GitHub's App webhook-config API can update the URL and secret, but App
-  // activation and event subscriptions are settings-page controls. Validate
-  // both before PATCH so an incomplete manual setup cannot be half-mutated.
+  // activation and event subscriptions are settings-page controls. The
+  // authenticated App response does expose subscriptions, but its
+  // `hook_attributes.active` value is not authoritative for an existing App
+  // (the live registration UI can be active while this field is absent or
+  // false). Validate the events here; activation remains an operator-owned
+  // rollout prerequisite and the production canary proves live delivery.
   const configuredEvents = Array.isArray(app.events) ? app.events : [];
   const missingEvents = REQUIRED_EVENTS.filter(
     (event) => !configuredEvents.includes(event),
@@ -87,10 +91,6 @@ export async function configureAppWebhook({
       `GitHub App is missing required webhook events: ${missingEvents.join(', ')}`,
     );
   }
-  if (app.hook_attributes?.active !== true) {
-    throw new Error('GitHub App webhook is not active');
-  }
-
   await request('/app/hook/config', {
     method: 'PATCH',
     body: JSON.stringify({
@@ -108,7 +108,6 @@ export async function configureAppWebhook({
 
   return {
     app: app.slug,
-    active: true,
     url: config.url,
     contentType: config.content_type,
     events: REQUIRED_EVENTS,
