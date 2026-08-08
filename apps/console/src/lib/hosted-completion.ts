@@ -20,6 +20,9 @@ interface HostedCompletionBody {
   intentId?: unknown;
   token?: unknown;
   workflow: string;
+  outcome?: unknown;
+  outcomeReference?: unknown;
+  readinessFailure?: unknown;
 }
 
 export class HostedCompletionInputError extends Error {}
@@ -52,6 +55,9 @@ function parseBody(body: unknown): HostedCompletionBody {
     intentId: candidate['intentId'],
     token: candidate['token'],
     workflow: candidate['workflow'],
+    outcome: candidate['outcome'],
+    outcomeReference: candidate['outcomeReference'],
+    readinessFailure: candidate['readinessFailure'],
   };
 }
 
@@ -104,6 +110,9 @@ export async function completeHostedWorker({
             intentId: completion.intentId,
             token: completion.token,
             workflow: identity.workflow,
+            outcome: completion.outcome,
+            outcomeReference: completion.outcomeReference,
+            readinessFailure: completion.readinessFailure,
           }),
         ).toString('base64url'),
       },

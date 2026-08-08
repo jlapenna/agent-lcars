@@ -65,6 +65,8 @@ describe('hosted worker completion', () => {
           token: 'abcdefghijklmnop',
           workflow: 'codex.yml',
           workerRunId: 1,
+          outcome: 'pull-request',
+          outcomeReference: { kind: 'pull-request', number: 776 },
         },
         octokit: octokitForIssue(),
         now: '2026-08-08T12:00:00.000Z',
@@ -81,6 +83,8 @@ describe('hosted worker completion', () => {
         workerRunId: 93_099_054_125,
         transportRunId: 93_099_054_125,
         workflow: 'codex.yml',
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 776 },
       }),
       isPullRequest: false,
       transportRunId: 93_099_054_125,
@@ -118,6 +122,25 @@ describe('hosted worker completion', () => {
           intentId: 'intent:abc123',
           token: 'short',
           workflow: 'codex.yml',
+        },
+        octokit: octokitForIssue(),
+      }),
+    ).rejects.toThrow('invalid binding fields');
+    expect(processHostedControllerEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed outcome evidence before controller mutation', async () => {
+    await expect(
+      completeHostedWorker({
+        identity,
+        body: {
+          issue: 736,
+          generation: 2,
+          intentId: 'intent:abc123',
+          token: 'abcdefghijklmnop',
+          workflow: 'codex.yml',
+          outcome: 'pull-request',
+          outcomeReference: { kind: 'pull-request', number: 0 },
         },
         octokit: octokitForIssue(),
       }),
