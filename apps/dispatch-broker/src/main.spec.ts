@@ -23,7 +23,9 @@ import {
 import {
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  assertCompletionLedgerBinding,
   assertWorkerRun,
+  CompletionBindingError,
   completionMatches,
   decode,
   discoverRecentlyClosedReconcileCandidates,
@@ -1484,6 +1486,7 @@ test('completion binding rejects wrong run, intent, and token', () => {
     intentId: 'intent-1',
     token: 'dispatch_token_123456',
     workerRunId: 42,
+    workflow: 'codex.yml',
   };
   assert.equal(completionMatches(generation, normalized, { id: 42 }), true);
   assert.equal(
@@ -1510,6 +1513,38 @@ test('completion binding rejects wrong run, intent, and token', () => {
     ),
     false,
   );
+});
+
+test('authoritative completion binding rejects stale body fields before mutation', () => {
+  const ledger = boundLedger();
+  const before = structuredClone(ledger);
+  const normalized = {
+    kind: 'completion' as const,
+    task,
+    sourceKind: 'completion' as const,
+    sourceId: 'worker-run:42',
+    transportRunId: 42,
+    workerRunId: 42,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workflow: 'codex.yml',
+  };
+
+  assert.equal(assertCompletionLedgerBinding(ledger, normalized).generation, 1);
+  for (const stale of [
+    { ...normalized, generation: 2 },
+    { ...normalized, workerRunId: 43 },
+    { ...normalized, intentId: 'other' },
+    { ...normalized, token: 'other' },
+    { ...normalized, workflow: 'claude.yml' },
+  ]) {
+    assert.throws(
+      () => assertCompletionLedgerBinding(ledger, stale),
+      CompletionBindingError,
+    );
+  }
+  assert.deepEqual(ledger, before);
 });
 
 test('only unambiguous non-transient 4xx dispatch failures are definite rejections', () => {

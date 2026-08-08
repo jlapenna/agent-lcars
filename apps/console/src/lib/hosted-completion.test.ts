@@ -1,11 +1,17 @@
 import type { Octokit } from '@octokit/rest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { processHostedControllerEvent } = vi.hoisted(() => ({
-  processHostedControllerEvent: vi.fn(),
-}));
+const { CompletionBindingError, processHostedControllerEvent } = vi.hoisted(
+  () => ({
+    CompletionBindingError: class CompletionBindingError extends Error {},
+    processHostedControllerEvent: vi.fn(),
+  }),
+);
 
 vi.mock('./hosted-controller', () => ({ processHostedControllerEvent }));
+vi.mock('@agent-lcars/dispatch-controller/main', () => ({
+  CompletionBindingError,
+}));
 
 import type { CompletionOidcIdentity } from './github-actions-oidc';
 import {
@@ -117,6 +123,28 @@ describe('hosted worker completion', () => {
       }),
     ).rejects.toThrow('invalid binding fields');
     expect(processHostedControllerEvent).not.toHaveBeenCalled();
+  });
+
+  it('maps an authoritative binding mismatch to a non-retryable input error', async () => {
+    processHostedControllerEvent.mockRejectedValueOnce(
+      new CompletionBindingError(
+        'Completion callback does not match the bound worker run',
+      ),
+    );
+
+    await expect(
+      completeHostedWorker({
+        identity,
+        body: {
+          issue: 736,
+          generation: 2,
+          intentId: 'intent:stale',
+          token: 'abcdefghijklmnop',
+          workflow: 'codex.yml',
+        },
+        octokit: octokitForIssue(),
+      }),
+    ).rejects.toThrow(HostedCompletionInputError);
   });
 
   it('passes the live pull-request shape to the shared controller', async () => {

@@ -1817,16 +1817,49 @@ async function dispatchAccepted(
   }
 }
 
-function completionMatches(
+export class CompletionBindingError extends Error {}
+
+function completionLedgerMatches(
   generation: LedgerGeneration | undefined,
   normalized: CompletionEvent,
-  run: WorkflowRun,
 ): boolean | undefined {
   return (
     generation &&
     generation.intentId === normalized.intentId &&
     generation.attempt?.token === normalized.token &&
     generation.attempt?.runId === normalized.workerRunId &&
+    normalized.workflow === workerWorkflow(generation.pipeline)
+  );
+}
+
+/**
+ * Reject a completion body that is not bound to the selected task's exact
+ * authoritative generation. This check runs while the task lease is held,
+ * before projection or controller mutation, so a valid worker identity with
+ * stale or caller-selected body fields cannot park an unrelated anchor.
+ */
+export function assertCompletionLedgerBinding(
+  ledger: DispatchLedger,
+  normalized: CompletionEvent,
+): LedgerGeneration {
+  const generation = ledger.generations.find(
+    (candidate) => candidate.generation === normalized.generation,
+  );
+  if (!generation || !completionLedgerMatches(generation, normalized)) {
+    throw new CompletionBindingError(
+      'Completion callback does not match the bound worker run',
+    );
+  }
+  return generation;
+}
+
+function completionMatches(
+  generation: LedgerGeneration | undefined,
+  normalized: CompletionEvent,
+  run: WorkflowRun,
+): boolean | undefined {
+  return (
+    completionLedgerMatches(generation, normalized) &&
     run.id === normalized.workerRunId
   );
 }
@@ -2402,119 +2435,124 @@ export async function processNormalizedEvent({
     );
     return;
   }
-  await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
-    // #715 (Codex P2 review of #645/#663): converge the anchor's live
-    // closed/reopened state -- for a `reconcile` event, the only kind that
-    // carries it (`issueClosed`, threaded from ReconcileEvent in
-    // normalize.mjs) -- BEFORE giving reconcileActive() below any chance to
-    // run at all. reconcileActive() can throw on an anomaly in the
-    // anchor's OWN active generation that has nothing to do with whether
-    // the anchor itself is closed -- most deterministically, a genuine
-    // duplicate-attempt collision when more than one worker run matches
-    // one generation. Previously that throw ran ahead of reconcileLedger()
-    // (and therefore its own reconcileControlState() call) below, so a
-    // duplicate-attempt anomaly on a closed anchor's active generation
-    // permanently starved control-state convergence: every later reconcile
-    // pass re-observed the identical anomaly, reconcileActive() threw
-    // again before reconcileLedger() was ever reached, and control.closed
-    // never became true -- the same repair-defeated-by-something-unrelated
-    // shape as the outage this whole PR set out to fix. This still writes
-    // through the exact same applyAnchorControl call reconcileControlState
-    // (and a genuine live close event) already use -- not a second way to
-    // record the fact -- and reconcileLedger's own reconcileControlState()
-    // call further below simply observes an already-converged ledger and
-    // no-ops, so an OPEN anchor's generation-repair work (the entire reason
-    // reconcileLedger runs) still happens exactly as before.
-    if (normalized.kind === 'reconcile') {
-      await runPhase({ client, loaded }, 'reconciliation', () =>
-        reconcileControlState(
-          client,
-          loaded,
-          normalized.issueClosed,
-          new Date().toISOString(),
-          runId,
-        ),
-      );
+    if (normalized.kind === 'completion') {
+      assertCompletionLedgerBinding(loaded.ledger, normalized);
     }
-    await reconcileActive(client, loaded);
-    if (normalized.kind === 'intent') {
-      const accepted = await runPhase({ client, loaded }, 'intent', () =>
-        acceptIntent(loaded.ledger, normalized.intent),
-      );
-      await saveLedger(client, loaded);
-      // Before dispatching: remove any stale agent:* label a dual-label
-      // self-heal identified (#304 audit item 4) -- but only when this
-      // intent was accepted as the ledger's current desired state
-      // (FRESH_INTENT_OUTCOMES). A duplicate/superseded/closed outcome
-      // means an old or redelivered event, whose stale-label snapshot may
-      // no longer reflect live GitHub state; healStaleAgentLabels'
-      // is-it-actually-still-stale re-check is a second, independent
-      // safeguard on top of this (PR #355 review).
-      if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
-        await healStaleAgentLabels(client, loaded, normalized.intent);
-      }
-    } else if (normalized.kind === 'anchor-control') {
-      await applyAnchorControlTransition(client, loaded, normalized.control);
-    } else if (normalized.kind === 'control-evidence') {
-      recordControlEvidence(loaded.ledger, normalized.evidence);
-      await saveLedger(client, loaded);
-    } else if (normalized.kind === 'completion') {
-      await handleCompletion(client, loaded, normalized, {
-        pollUntilTerminal: pollCompletionUntilTerminal,
-      });
-    } else if (normalized.kind === 'reconcile') {
-      await runPhase({ client, loaded }, 'reconciliation', () =>
-        reconcileLedger(
-          client,
-          loaded,
-          new Date().toISOString(),
-          runId,
-          normalized.issueClosed,
-        ),
-      );
-    } else {
-      // Unreachable given NormalizedEvent's current, exhaustively-handled
-      // kinds -- this branch only guards a future kind added without a
-      // matching arm here, same defensive intent as the untyped original.
-      throw new Error(
-        `Unsupported normalized event kind: ${(normalized as NormalizedEvent).kind}`,
-      );
-    }
-    await dispatchAccepted(client, loaded);
-    // Projector convergence checkpoint (#645 Phase 4 §5): by this point,
-    // every GitHub-facing write this pass required (a needs-human park, a
-    // stale-label removal) has already either succeeded or thrown -- a
-    // throw would already have propagated out of this try block, so
-    // reaching this line means whatever the projector owed GitHub this
-    // pass, it delivered. Recording that here is what makes "has GitHub
-    // caught up with the ledger" answerable from `loaded.ledger.projection`
-    // without re-deriving it from the anomaly log.
-    //
-    // Deliberately isolated in its own try/catch rather than folded into
-    // the block above: recording (or persisting) this checkpoint is itself
-    // a projector/reporting concern, and #645 §5 is explicit that a
-    // reporting failure must never turn an otherwise-successful pass into a
-    // failed job or an extra fail-closed park -- so a failure here is
-    // logged and discarded, never rethrown, and never reaches `failClosed`.
+    await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
     try {
-      await saveProjectionCheckpoint(client, loaded);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(
-        `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
+      // #715 (Codex P2 review of #645/#663): converge the anchor's live
+      // closed/reopened state -- for a `reconcile` event, the only kind that
+      // carries it (`issueClosed`, threaded from ReconcileEvent in
+      // normalize.mjs) -- BEFORE giving reconcileActive() below any chance to
+      // run at all. reconcileActive() can throw on an anomaly in the
+      // anchor's OWN active generation that has nothing to do with whether
+      // the anchor itself is closed -- most deterministically, a genuine
+      // duplicate-attempt collision when more than one worker run matches
+      // one generation. Previously that throw ran ahead of reconcileLedger()
+      // (and therefore its own reconcileControlState() call) below, so a
+      // duplicate-attempt anomaly on a closed anchor's active generation
+      // permanently starved control-state convergence: every later reconcile
+      // pass re-observed the identical anomaly, reconcileActive() threw
+      // again before reconcileLedger() was ever reached, and control.closed
+      // never became true -- the same repair-defeated-by-something-unrelated
+      // shape as the outage this whole PR set out to fix. This still writes
+      // through the exact same applyAnchorControl call reconcileControlState
+      // (and a genuine live close event) already use -- not a second way to
+      // record the fact -- and reconcileLedger's own reconcileControlState()
+      // call further below simply observes an already-converged ledger and
+      // no-ops, so an OPEN anchor's generation-repair work (the entire reason
+      // reconcileLedger runs) still happens exactly as before.
+      if (normalized.kind === 'reconcile') {
+        await runPhase({ client, loaded }, 'reconciliation', () =>
+          reconcileControlState(
+            client,
+            loaded,
+            normalized.issueClosed,
+            new Date().toISOString(),
+            runId,
+          ),
+        );
+      }
+      await reconcileActive(client, loaded);
+      if (normalized.kind === 'intent') {
+        const accepted = await runPhase({ client, loaded }, 'intent', () =>
+          acceptIntent(loaded.ledger, normalized.intent),
+        );
+        await saveLedger(client, loaded);
+        // Before dispatching: remove any stale agent:* label a dual-label
+        // self-heal identified (#304 audit item 4) -- but only when this
+        // intent was accepted as the ledger's current desired state
+        // (FRESH_INTENT_OUTCOMES). A duplicate/superseded/closed outcome
+        // means an old or redelivered event, whose stale-label snapshot may
+        // no longer reflect live GitHub state; healStaleAgentLabels'
+        // is-it-actually-still-stale re-check is a second, independent
+        // safeguard on top of this (PR #355 review).
+        if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
+          await healStaleAgentLabels(client, loaded, normalized.intent);
+        }
+      } else if (normalized.kind === 'anchor-control') {
+        await applyAnchorControlTransition(client, loaded, normalized.control);
+      } else if (normalized.kind === 'control-evidence') {
+        recordControlEvidence(loaded.ledger, normalized.evidence);
+        await saveLedger(client, loaded);
+      } else if (normalized.kind === 'completion') {
+        await handleCompletion(client, loaded, normalized, {
+          pollUntilTerminal: pollCompletionUntilTerminal,
+        });
+      } else if (normalized.kind === 'reconcile') {
+        await runPhase({ client, loaded }, 'reconciliation', () =>
+          reconcileLedger(
+            client,
+            loaded,
+            new Date().toISOString(),
+            runId,
+            normalized.issueClosed,
+          ),
+        );
+      } else {
+        // Unreachable given NormalizedEvent's current, exhaustively-handled
+        // kinds -- this branch only guards a future kind added without a
+        // matching arm here, same defensive intent as the untyped original.
+        throw new Error(
+          `Unsupported normalized event kind: ${(normalized as NormalizedEvent).kind}`,
+        );
+      }
+      await dispatchAccepted(client, loaded);
+      // Projector convergence checkpoint (#645 Phase 4 §5): by this point,
+      // every GitHub-facing write this pass required (a needs-human park, a
+      // stale-label removal) has already either succeeded or thrown -- a
+      // throw would already have propagated out of this try block, so
+      // reaching this line means whatever the projector owed GitHub this
+      // pass, it delivered. Recording that here is what makes "has GitHub
+      // caught up with the ledger" answerable from `loaded.ledger.projection`
+      // without re-deriving it from the anomaly log.
+      //
+      // Deliberately isolated in its own try/catch rather than folded into
+      // the block above: recording (or persisting) this checkpoint is itself
+      // a projector/reporting concern, and #645 §5 is explicit that a
+      // reporting failure must never turn an otherwise-successful pass into a
+      // failed job or an extra fail-closed park -- so a failure here is
+      // logged and discarded, never rethrown, and never reaches `failClosed`.
+      try {
+        await saveProjectionCheckpoint(client, loaded);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
+        );
+      }
+      // Shadow writes the resulting comment-ledger state for comparison.
+      // Authority mode already persisted every checkpoint and this helper is
+      // intentionally inert there; off mode never invokes the port factory.
+      await maybeObserveDispatchStorage(
+        storageMode,
+        storagePortFactory,
+        loaded.ledger,
       );
+    } catch (error) {
+      await failClosed(client, task, maintainer, error);
     }
-    // Shadow writes the resulting comment-ledger state for comparison.
-    // Authority mode already persisted every checkpoint and this helper is
-    // intentionally inert there; off mode never invokes the port factory.
-    await maybeObserveDispatchStorage(
-      storageMode,
-      storagePortFactory,
-      loaded.ledger,
-    );
-  } catch (error) {
-    await failClosed(client, task, maintainer, error);
   } finally {
     if (loaded?.authority) {
       try {

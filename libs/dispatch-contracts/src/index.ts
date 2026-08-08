@@ -71,13 +71,13 @@ export {
   parseRouterGroupMarker,
   textCarriesClaim,
 } from './marker';
+export { COMPLETION_OIDC_AUDIENCE, HOSTED_COMPLETION_PATH } from './oidc';
 export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
 export {
   DISPATCH_OUTCOME_KINDS,
   isDispatchOutcomeKind,
   isDispatchOutcomeReference,
 } from './outcomes';
-export { COMPLETION_OIDC_AUDIENCE, HOSTED_COMPLETION_PATH } from './oidc';
 export type {
   AgentPipeline,
   AgentPipelineContract,

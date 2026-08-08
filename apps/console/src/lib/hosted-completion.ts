@@ -2,6 +2,7 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
+import { CompletionBindingError } from '@agent-lcars/dispatch-controller/main';
 import {
   type IssueOrPullRequest,
   normalizeEvent,
@@ -121,13 +122,20 @@ export async function completeHostedWorker({
     );
   }
 
-  await processHostedControllerEvent({
-    normalized,
-    isPullRequest: Boolean(issue.pull_request),
-    transportRunId: identity.runId,
-    authorityOwner: `completion:${identity.runId}:${invocationId}`,
-    pollCompletionUntilTerminal: false,
-  });
+  try {
+    await processHostedControllerEvent({
+      normalized,
+      isPullRequest: Boolean(issue.pull_request),
+      transportRunId: identity.runId,
+      authorityOwner: `completion:${identity.runId}:${invocationId}`,
+      pollCompletionUntilTerminal: false,
+    });
+  } catch (error) {
+    if (error instanceof CompletionBindingError) {
+      throw new HostedCompletionInputError(error.message);
+    }
+    throw error;
+  }
   return {
     issue: completion.issue,
     workerRunId: identity.runId,

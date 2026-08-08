@@ -3723,8 +3723,24 @@ async function dispatchAccepted(client, loaded) {
     return;
   }
 }
+var CompletionBindingError = class extends Error {
+};
+function completionLedgerMatches(generation, normalized) {
+  return generation && generation.intentId === normalized.intentId && generation.attempt?.token === normalized.token && generation.attempt?.runId === normalized.workerRunId && normalized.workflow === workerWorkflow(generation.pipeline);
+}
+function assertCompletionLedgerBinding(ledger, normalized) {
+  const generation = ledger.generations.find(
+    (candidate) => candidate.generation === normalized.generation
+  );
+  if (!generation || !completionLedgerMatches(generation, normalized)) {
+    throw new CompletionBindingError(
+      "Completion callback does not match the bound worker run"
+    );
+  }
+  return generation;
+}
 function completionMatches(generation, normalized, run) {
-  return generation && generation.intentId === normalized.intentId && generation.attempt?.token === normalized.token && generation.attempt?.runId === normalized.workerRunId && run.id === normalized.workerRunId;
+  return completionLedgerMatches(generation, normalized) && run.id === normalized.workerRunId;
 }
 async function handleCompletion(client, loaded, normalized, polling = {}) {
   const now = polling.now ?? Date.now;
@@ -4059,74 +4075,79 @@ async function processNormalizedEvent({
     );
     return;
   }
-  await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
-    if (normalized.kind === "reconcile") {
-      await runPhase(
-        { client, loaded },
-        "reconciliation",
-        () => reconcileControlState(
-          client,
-          loaded,
-          normalized.issueClosed,
-          (/* @__PURE__ */ new Date()).toISOString(),
-          runId
-        )
-      );
+    if (normalized.kind === "completion") {
+      assertCompletionLedgerBinding(loaded.ledger, normalized);
     }
-    await reconcileActive(client, loaded);
-    if (normalized.kind === "intent") {
-      const accepted = await runPhase(
-        { client, loaded },
-        "intent",
-        () => acceptIntent(loaded.ledger, normalized.intent)
-      );
-      await saveLedger2(client, loaded);
-      if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
-        await healStaleAgentLabels(client, loaded, normalized.intent);
-      }
-    } else if (normalized.kind === "anchor-control") {
-      await applyAnchorControlTransition(client, loaded, normalized.control);
-    } else if (normalized.kind === "control-evidence") {
-      recordControlEvidence(loaded.ledger, normalized.evidence);
-      await saveLedger2(client, loaded);
-    } else if (normalized.kind === "completion") {
-      await handleCompletion(client, loaded, normalized, {
-        pollUntilTerminal: pollCompletionUntilTerminal
-      });
-    } else if (normalized.kind === "reconcile") {
-      await runPhase(
-        { client, loaded },
-        "reconciliation",
-        () => reconcileLedger(
-          client,
-          loaded,
-          (/* @__PURE__ */ new Date()).toISOString(),
-          runId,
-          normalized.issueClosed
-        )
-      );
-    } else {
-      throw new Error(
-        `Unsupported normalized event kind: ${normalized.kind}`
-      );
-    }
-    await dispatchAccepted(client, loaded);
+    await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
     try {
-      await saveProjectionCheckpoint(client, loaded);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(
-        `::warning::Failed to record the projector's convergence checkpoint: ${message}`
+      if (normalized.kind === "reconcile") {
+        await runPhase(
+          { client, loaded },
+          "reconciliation",
+          () => reconcileControlState(
+            client,
+            loaded,
+            normalized.issueClosed,
+            (/* @__PURE__ */ new Date()).toISOString(),
+            runId
+          )
+        );
+      }
+      await reconcileActive(client, loaded);
+      if (normalized.kind === "intent") {
+        const accepted = await runPhase(
+          { client, loaded },
+          "intent",
+          () => acceptIntent(loaded.ledger, normalized.intent)
+        );
+        await saveLedger2(client, loaded);
+        if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
+          await healStaleAgentLabels(client, loaded, normalized.intent);
+        }
+      } else if (normalized.kind === "anchor-control") {
+        await applyAnchorControlTransition(client, loaded, normalized.control);
+      } else if (normalized.kind === "control-evidence") {
+        recordControlEvidence(loaded.ledger, normalized.evidence);
+        await saveLedger2(client, loaded);
+      } else if (normalized.kind === "completion") {
+        await handleCompletion(client, loaded, normalized, {
+          pollUntilTerminal: pollCompletionUntilTerminal
+        });
+      } else if (normalized.kind === "reconcile") {
+        await runPhase(
+          { client, loaded },
+          "reconciliation",
+          () => reconcileLedger(
+            client,
+            loaded,
+            (/* @__PURE__ */ new Date()).toISOString(),
+            runId,
+            normalized.issueClosed
+          )
+        );
+      } else {
+        throw new Error(
+          `Unsupported normalized event kind: ${normalized.kind}`
+        );
+      }
+      await dispatchAccepted(client, loaded);
+      try {
+        await saveProjectionCheckpoint(client, loaded);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to record the projector's convergence checkpoint: ${message}`
+        );
+      }
+      await maybeObserveDispatchStorage(
+        storageMode,
+        storagePortFactory,
+        loaded.ledger
       );
+    } catch (error) {
+      await failClosed(client, task, maintainer, error);
     }
-    await maybeObserveDispatchStorage(
-      storageMode,
-      storagePortFactory,
-      loaded.ledger
-    );
-  } catch (error) {
-    await failClosed(client, task, maintainer, error);
   } finally {
     if (loaded?.authority) {
       try {
@@ -4344,6 +4365,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
 }
 export {
+  CompletionBindingError,
   FRESH_INTENT_OUTCOMES,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
@@ -4354,6 +4376,7 @@ export {
   RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  assertCompletionLedgerBinding,
   assertWorkerRun,
   completionMatches,
   contextFor,
