@@ -1,7 +1,7 @@
 name: Plan image publish
 description: >-
-  Decide which of the three images publish-images.yml produces
-  (control-plane, JIT runner, telemetry-watcher) need building for this
+  Decide which image groups publish-images.yml produces (control-plane,
+  JIT runner, telemetry-watcher, GitHub Actions exporter) need building for this
   push, from the set of changed paths (agent-lcars#441). See plan.mjs for
   the routing rules and the shared-telemetry-input invariant they preserve.
 
@@ -27,6 +27,9 @@ outputs:
   watcher:
     description: 'Whether the telemetry-watcher image should be built ("true"/"false")'
     value: ${{ steps.run.outputs.watcher }}
+  exporter:
+    description: 'Whether the GitHub Actions exporter image should be built ("true"/"false")'
+    value: ${{ steps.run.outputs.exporter }}
 
 runs:
   using: composite

@@ -1,16 +1,17 @@
 // Path-based build planning for publish-images.yml (agent-lcars#441).
 //
-// The workflow publishes three DIFFERENT artifacts from this one repo:
+// The workflow publishes four independently routed image groups from this repo:
 //   - the runner-autoscaler control-plane image
 //   - the JIT worker runner image (bakes in the telemetry-watcher bundle)
 //   - the standalone telemetry-watcher daemon image (the same bundle)
+//   - the standalone GitHub Actions metrics exporter image
 //
-// Building all three serially on every push -- including ones that only
+// Building every group serially on every push -- including ones that only
 // touch one of them, or touch none of them -- is what made a
 // deployment-config-only telemetry-watcher change spend ~20 minutes of
 // builder capacity for zero image builds (see the publish-images.yml
 // header comment and agent-lcars#441 for the concrete evidence). This
-// module decides which of the three actually need building from the set
+// module decides which images actually need building from the set
 // of changed file paths, so the workflow can skip the rest.
 //
 // The invariant this module exists to protect (agent-lcars#441's "Required
@@ -71,6 +72,7 @@ const RUNNER_IMAGE_PREFIX = 'apps/runner-autoscaler/runner-image/';
 // image) since agent-lcars#441's evidence and acceptance criteria are
 // about the watcher/JIT-runner side, not about narrowing this one further.
 const CONTROL_PLANE_PREFIX = 'apps/runner-autoscaler/';
+const EXPORTER_PREFIX = 'apps/github-actions-exporter/';
 
 function startsWithAny(file, prefixes) {
   return prefixes.some((prefix) => file.startsWith(prefix));
@@ -105,13 +107,22 @@ function isControlPlane(file) {
   return file.startsWith(CONTROL_PLANE_PREFIX) && !isRunnerImage(file);
 }
 
+function isExporter(file) {
+  return file.startsWith(EXPORTER_PREFIX);
+}
+
 // `changedFiles === null` is the explicit "no well-defined diff" sentinel
 // (a manual workflow_dispatch republish, or a push whose `before` SHA is
 // unreachable -- see main.mjs) and always plans every image, the same safe
 // default the rest of this workflow already applies to ambiguous input.
 function planImageBuilds(changedFiles) {
   if (changedFiles === null) {
-    return { controlPlane: true, jitRunner: true, watcher: true };
+    return {
+      controlPlane: true,
+      jitRunner: true,
+      watcher: true,
+      exporter: true,
+    };
   }
   const workflow = changedFiles.some(isWorkflowInfra);
   const bundleInput = changedFiles.some(isBundleInput);
@@ -119,6 +130,7 @@ function planImageBuilds(changedFiles) {
     controlPlane: workflow || changedFiles.some(isControlPlane),
     jitRunner: workflow || bundleInput || changedFiles.some(isRunnerImage),
     watcher: workflow || bundleInput,
+    exporter: workflow || changedFiles.some(isExporter),
   };
 }
 
@@ -133,6 +145,7 @@ function parseChangedFiles(diffOutput) {
 export {
   isBundleInput,
   isControlPlane,
+  isExporter,
   isRunnerImage,
   isWorkflowInfra,
   parseChangedFiles,

@@ -1,0 +1,41 @@
+{
+  "name": "@agent-lcars/github-actions-exporter",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/github-actions-exporter",
+  "projectType": "application",
+  "tags": ["platform:server", "scope:observability"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-env-file --frozen python -m py_compile exporter.py",
+        "cwd": "apps/github-actions-exporter"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "uv run --no-env-file --frozen ruff check exporter.py tests",
+          "uv run --no-env-file --frozen ruff format --check exporter.py tests"
+        ],
+        "parallel": false,
+        "cwd": "apps/github-actions-exporter"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-env-file --frozen python -W error::ResourceWarning -m unittest discover -s tests -v",
+        "cwd": "apps/github-actions-exporter"
+      }
+    },
+    "docker-build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker build -t agent-lcars-github-actions-exporter:local .",
+        "cwd": "apps/github-actions-exporter"
+      }
+    }
+  }
+}

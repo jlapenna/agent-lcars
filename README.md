@@ -70,7 +70,12 @@ transient Firestore hiccup never takes the whole console down.
    pools never hold the Docker socket; trusted, workflow-defined-only CI
    that genuinely needs `docker build`/`docker run` gets its own separate,
    socket-enabled scale set.
-4. **Infrastructure** (`infra/terraform`) — the GCP project services, the
+4. **Actions metrics** (`apps/github-actions-exporter`) — a small,
+   independently published Python service that polls explicit repositories,
+   stores restart-safe run/job history in SQLite, and exposes bounded-label
+   Prometheus metrics. It is kept out of the watcher and autoscaler processes
+   so observability failures cannot interrupt transcripts or scheduling.
+5. **Infrastructure** (`infra/terraform`) — the GCP project services, the
    dedicated Firestore database and transcript storage bucket, runtime
    secret containers (values are never stored in Terraform state), service
    accounts, GitHub Workload Identity Federation, and a billing budget.
@@ -87,6 +92,7 @@ full wiring instructions to bring a new repo onto this fleet.
 | `apps/console-e2e`               | Playwright end-to-end specs for the console                                                                         |
 | `apps/telemetry-watcher`         | Host watcher daemon and versioned CI runner-sidecar bundle                                                          |
 | `apps/runner-autoscaler`         | Go control plane for the shared GitHub Actions runner fleet, plus the JIT worker image                              |
+| `apps/github-actions-exporter`   | Durable, low-cardinality GitHub Actions metrics exporter and published image                                        |
 | `libs/telemetry`                 | Pure, source-agnostic reducer: a Claude Code transcript → a structured session summary; Firestore/transcript stores |
 | `libs/app-providers`             | Shared client-side React providers (Firebase client, browser error reporting)                                       |
 | `libs/env-vars`                  | Typed environment-variable accessors                                                                                |
