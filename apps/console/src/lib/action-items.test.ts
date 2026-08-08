@@ -315,7 +315,10 @@ describe('getActionItems', () => {
   it('classifies a groomed ready-for-agent issue as Inbox work', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(7, { labels: ['status:ready-for-agent', 'type:bug'] }),
+        makeItem(7, {
+          body: `Editable issue description\n\n<!-- agent-lcars:quick-task-request:v1 id=11111111-1111-4111-8111-111111111111 digest=${'a'.repeat(64)} -->`,
+          labels: ['status:ready-for-agent', 'type:bug'],
+        }),
       ],
     });
     setupOctokit({ listForRepo });
@@ -325,6 +328,7 @@ describe('getActionItems', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0].actionTypes).toEqual(['ready-for-agent']);
     expect(result.items[0].labels).toEqual(['type:bug']);
+    expect(result.items[0].body).toBe('Editable issue description');
   });
 
   it('selects a dispatched item using its repository integration label', async () => {

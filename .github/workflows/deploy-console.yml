@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   # CI's workflow_run conclusion is a rollup of every job in that run,
-  # including E2E (timeout-minutes: 20, not a required merge gate) -- a
+  # including E2E (timeout-minutes: 30, not a required merge gate) -- a
   # timed-out E2E job reports "cancelled", which drags the whole run's
   # conclusion to "cancelled" even when Verify (the actual required check
   # gating the merge that triggered this run) passed cleanly (#543). Gate

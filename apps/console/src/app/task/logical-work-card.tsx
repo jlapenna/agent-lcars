@@ -18,6 +18,7 @@ import type {
 } from '../../lib/logical-work';
 import { classifyAgentRun } from '../../lib/run-classification';
 import {
+  DispatchOutcomeBadge,
   PipelineBadge,
   RepoBadge,
   STATUS_COLORS,
@@ -176,6 +177,9 @@ export function LogicalWorkCard({
                   </Badge>
                   <PipelineBadge pipeline={intent.pipeline} />
                   <Text size="xs">{intent.state}</Text>
+                  {intent.outcome && (
+                    <DispatchOutcomeBadge outcome={intent.outcome} />
+                  )}
                   {intent.sourceKind && (
                     <Text size="xs" c="dimmed">
                       via {intent.sourceKind}
@@ -212,6 +216,9 @@ export function LogicalWorkCard({
                   {badge.label}
                 </Badge>
                 <PipelineBadge pipeline={attempt.pipeline} />
+                {attempt.outcome && (
+                  <DispatchOutcomeBadge outcome={attempt.outcome} />
+                )}
                 {attempt.generation !== undefined && (
                   <Badge variant="outline" size="xs" color="gray">
                     g{attempt.generation}

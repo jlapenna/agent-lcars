@@ -3,8 +3,9 @@ name: Dispatch Ledger Reconciler
 # Scheduled AND manually runnable maintenance pass over every open,
 # agent-labeled OR agent-fleet-assigned issue/PR (#305, child of the
 # dispatch-broker reliability epic #301; the fleet-assigned lane closes a
-# #363 review gap -- see discoverReconcileCandidates in the shared scan
-# library). The scheduled scan runs in the existing App Hosting backend,
+# #363 review gap -- see `discoverReconcileCandidates` in
+# `libs/dispatch-reconcile/src/scan.ts`). The scheduled scan runs in the
+# existing App Hosting backend,
 # invoked from a GitHub-hosted runner with a narrowly validated GitHub
 # Actions OIDC token.
 # That puts the repair path outside the self-hosted control-plane runner pool
@@ -22,15 +23,21 @@ name: Dispatch Ledger Reconciler
 # exactly one writer and one ordering domain per issue; this workflow adds
 # no new one.
 #
-# What it repairs (main.mjs's reconcileLedger/trackMissingRun): a dispatch
+# What it repairs (`apps/dispatch-broker/src/main.ts`'s
+# reconcileLedger/trackMissingRun): a dispatch
 # generation stuck `dispatching`/`dispatch-unknown` with no worker run ever
 # showing up (a crashed worker, or a queue-evicted intent #345/#347
 # deliberately failed red for) gets bounded-retried and, past the bound,
 # parked `status:needs-human`. A completed worker run whose completion
 # callback never landed (a red pre-#349 run, a timeout, a force-cancel) gets
 # finalized by the same reconcileActive() logic every ordinary event already
-# runs. A pending intent queued behind either of those gets promoted and
-# (re-)dispatched automatically once its blocking generation resolves -- no
+# runs. A current label whose intent was queue-evicted is rebuilt from its
+# real maintainer-authored timeline source even after earlier generations
+# completed (#639), or from a digest-valid, maintainer-authored Quick Task
+# whose agent label was set at creation and has no timeline event (#634).
+# A pending intent queued behind either repair gets promoted once its blocking
+# generation resolves; ordinary work remains held while status:needs-human is
+# live and resumes through the serialized broker after unpark (#720). No
 # separate "stale pending" mechanism is needed. A genuine concurrent
 # duplicate-run collision is surfaced as a `duplicate-attempt` anomaly and
 # parked, never silently resolved.
@@ -121,3 +128,25 @@ jobs:
           AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
         with:
           operation: reconcile
+
+  alert:
+    needs: [hosted-scan, action-fallback]
+    if: always()
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on reconciler failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.hosted-scan.result != 'skipped' && needs.hosted-scan.result || needs.action-fallback.result }}
+          workflow-file: dispatch-reconcile.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

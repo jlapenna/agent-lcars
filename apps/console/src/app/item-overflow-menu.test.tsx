@@ -10,6 +10,7 @@ import {
   closeIssue,
   reassignPipeline,
   rebasePr,
+  updateIssueContent,
 } from './actions';
 import { ItemOverflowMenu } from './item-overflow-menu';
 
@@ -20,6 +21,7 @@ vi.mock('./actions', () => ({
   clearHumanNeeded: vi.fn(),
   reassignPipeline: vi.fn(),
   rebasePr: vi.fn(),
+  updateIssueContent: vi.fn(),
 }));
 
 // No ModalsProvider is mounted in these tests (only MantineProvider, matching
@@ -82,12 +84,69 @@ describe('ItemOverflowMenu', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('offers only Close issue for an issue without needs-human state', async () => {
+  it('offers Edit issue and Close issue for an otherwise plain issue', async () => {
     renderMenu(makeItem());
     await openMenu();
 
+    expect(screen.getByText('Edit issue')).toBeTruthy();
     expect(screen.getByText('Close issue')).toBeTruthy();
     expect(screen.queryByText('Clear needs-human')).toBeNull();
+  });
+
+  it('edits an issue title and body from the shared overflow menu', async () => {
+    (updateIssueContent as Mock).mockResolvedValue({ ok: true });
+    renderMenu(makeItem({ body: 'Original body' }));
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Edit issue'));
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(screen.getByLabelText(/^Title/)).toHaveValue('Stale tracker');
+    expect(screen.getByLabelText('Body')).toHaveValue('Original body');
+
+    fireEvent.change(screen.getByLabelText(/^Title/), {
+      target: { value: 'Updated tracker' },
+    });
+    fireEvent.change(screen.getByLabelText('Body'), {
+      target: { value: 'Updated body' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(updateIssueContent).toHaveBeenCalledWith(DEFAULT_REPO, 42, {
+        title: 'Updated tracker',
+        body: 'Updated body',
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ message: '#42 updated', color: 'green' }),
+    );
+  });
+
+  it('keeps the editor open and surfaces a failed issue update', async () => {
+    (updateIssueContent as Mock).mockResolvedValue({
+      ok: false,
+      message: 'Validation Failed',
+    });
+    renderMenu(makeItem());
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Edit issue'));
+    await screen.findByRole('dialog');
+    fireEvent.change(screen.getByLabelText(/^Title/), {
+      target: { value: 'Rejected title' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Validation Failed',
+          color: 'red',
+        }),
+      ),
+    );
+    expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
   it('offers only Clear needs-human for a PR in needs-human state', async () => {

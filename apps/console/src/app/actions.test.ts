@@ -13,6 +13,7 @@ import {
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
 import { GITHUB_DATA_TAG } from '../lib/cache-tags';
@@ -27,6 +28,7 @@ import {
   rebasePr,
   replyToItem,
   retriggerIssue,
+  updateIssueContent,
 } from './actions';
 
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
@@ -64,6 +66,7 @@ vi.mock('../lib/backend-actions', () => {
     dispatchUnstickPrs: vi.fn(),
     postComment: vi.fn(),
     retriggerIssue: vi.fn(),
+    updateIssueContent: vi.fn(),
     updatePrBranch: vi.fn(),
   };
 });
@@ -96,7 +99,6 @@ const QUICK_TASK_REQUEST = {
   repository: DEFAULT_REPO,
   pipeline: 'claude' as const,
   description: 'Fix the flaky test',
-  title: 'Custom title',
 };
 const QUICK_TASK_RECEIPT = {
   requestId: QUICK_TASK_REQUEST.requestId,
@@ -241,6 +243,22 @@ describe('agent-lcars Server Actions', () => {
       });
     });
 
+    it('updateIssueContent returns { ok: false, message } instead of throwing', async () => {
+      (updateIssueContentLib as Mock).mockRejectedValue(
+        new ActionError('Validation Failed', 422),
+      );
+
+      await expect(
+        updateIssueContent(DEFAULT_REPO, 2709, {
+          title: 'Updated title',
+          body: 'Updated body',
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        message: 'Validation Failed',
+      });
+    });
+
     it('clearHumanNeeded returns { ok: false, message } instead of throwing', async () => {
       (clearHumanNeededLabel as Mock).mockRejectedValue(
         new ActionError('Unexpected error', 500),
@@ -353,6 +371,32 @@ describe('agent-lcars Server Actions', () => {
       });
     });
 
+    it('createQuickTask preserves the previewed evidence body across the Server Action boundary', async () => {
+      (createQuickTaskLib as Mock).mockResolvedValue(QUICK_TASK_RECEIPT);
+      const description = `Fix the session page refresh
+
+## Problem details
+
+### Observed
+The loading state never clears.
+
+### Done when
+The refresh path has browser coverage.
+
+## Source context
+
+- Repository: \`supersprinklesracing/sprinkles\`
+- Console route: \`/sessions/session-123\`
+- Session: session-123`;
+
+      await createQuickTask({ ...QUICK_TASK_REQUEST, description });
+
+      expect(createQuickTaskLib).toHaveBeenCalledWith({
+        ...QUICK_TASK_REQUEST,
+        description,
+      });
+    });
+
     it('closeIssue returns { ok: true } and revalidates', async () => {
       (closeIssueLib as Mock).mockResolvedValue(undefined);
 
@@ -360,6 +404,22 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
       });
       expect(closeIssueLib).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+    });
+
+    it('updateIssueContent returns { ok: true } and revalidates', async () => {
+      (updateIssueContentLib as Mock).mockResolvedValue(undefined);
+      const content = { title: 'Updated title', body: 'Updated body' };
+
+      await expect(
+        updateIssueContent(DEFAULT_REPO, 2709, content),
+      ).resolves.toEqual({ ok: true });
+      expect(updateIssueContentLib).toHaveBeenCalledWith(
+        DEFAULT_REPO,
+        2709,
+        content,
+      );
       expect(revalidatePath).toHaveBeenCalledWith('/');
       expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
     });
@@ -459,6 +519,15 @@ describe('agent-lcars Server Actions', () => {
       const result = await closeIssue(UNWATCHED_REPO, 2709);
       expect(result.ok).toBe(false);
       expect(closeIssueLib).not.toHaveBeenCalled();
+    });
+
+    it('updateIssueContent rejects without calling the lib', async () => {
+      const result = await updateIssueContent(UNWATCHED_REPO, 2709, {
+        title: 'Updated title',
+        body: 'Updated body',
+      });
+      expect(result.ok).toBe(false);
+      expect(updateIssueContentLib).not.toHaveBeenCalled();
     });
 
     it('clearHumanNeeded rejects without calling clearHumanNeededLabel', async () => {

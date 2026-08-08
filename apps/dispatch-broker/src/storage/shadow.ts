@@ -310,6 +310,8 @@ function mapAttempt(generation: LedgerGeneration): AttemptRecord | undefined {
     boundAt: attempt.boundAt,
     completedAt: attempt.completedAt,
     conclusion: attempt.conclusion,
+    outcome: attempt.outcome,
+    outcomeReference: attempt.outcomeReference,
   };
 }
 

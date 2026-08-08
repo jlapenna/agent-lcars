@@ -111,6 +111,79 @@ describe('deriveLogicalWork - one task, one attempt', () => {
     });
     expect(task.anomalies).toEqual([]);
   });
+
+  it('joins the broker lifecycle outcome only onto its exact bound run and intent', () => {
+    const ledger = makeLedger({
+      generations: [
+        {
+          generation: 1,
+          intentId: 'intent-abc123',
+          sourceId: 'src-1',
+          occurredAt: '2026-07-07T00:00:00Z',
+          pipeline: 'claude',
+          mode: 'implement',
+          state: 'completed',
+          attempt: {
+            runId: 1,
+            status: 'completed',
+            conclusion: 'failure',
+            outcome: 'trajectory-failure',
+          },
+        },
+      ],
+    });
+    const { work } = deriveLogicalWork({
+      attempts: [
+        makeRun({ status: 'completed', conclusion: 'failure' }),
+        makeRun({ id: 2, status: 'completed', conclusion: 'failure' }),
+      ],
+      ledgers: new Map([[KEY, ledger]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work[0].intents[0].outcome).toBe('trajectory-failure');
+    expect(work[0].attempts.find((attempt) => attempt.id === 1)?.outcome).toBe(
+      'trajectory-failure',
+    );
+    expect(work[0].attempts.find((attempt) => attempt.id === 2)?.outcome).toBe(
+      undefined,
+    );
+  });
+
+  it('reports merged only when GitHub merged the exact PR reference persisted for this attempt', () => {
+    const ledger = makeLedger({
+      generations: [
+        {
+          generation: 1,
+          intentId: 'intent-abc123',
+          sourceId: 'src-1',
+          occurredAt: '2026-07-07T00:00:00Z',
+          pipeline: 'claude',
+          mode: 'implement',
+          state: 'completed',
+          attempt: {
+            runId: 1,
+            status: 'completed',
+            conclusion: 'success',
+            outcome: 'pull-request',
+            outcomeReference: { kind: 'pull-request', number: 77 },
+          },
+        },
+      ],
+    });
+    const derive = (merged: number[]) =>
+      deriveLogicalWork({
+        attempts: [makeRun({ status: 'completed', conclusion: 'success' })],
+        ledgers: new Map([[KEY, ledger]]),
+        taskMeta: new Map([[KEY, makeTaskMeta()]]),
+        mergedDeliverables: new Map([[KEY, new Set(merged)]]),
+      }).work[0];
+
+    expect(derive([77]).attempts[0].outcome).toBe('merged-deliverable');
+    expect(derive([77]).intents[0].outcome).toBe('merged-deliverable');
+    expect(derive([88]).attempts[0].outcome).toBe('pull-request');
+    expect(derive([88]).intents[0].outcome).toBe('pull-request');
+  });
 });
 
 describe('deriveLogicalWork - pending, zero attempts', () => {

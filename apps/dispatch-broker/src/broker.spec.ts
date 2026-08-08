@@ -117,6 +117,79 @@ test('the canary pipeline (#307) is accepted end to end like any other, and unkn
   );
 });
 
+test('only the no-op canary pipeline can reuse a closed canonical anchor and promote its queued successor (#677)', () => {
+  const ledger = createLedger(task, baseTime);
+  applyAnchorControl(ledger, {
+    kind: 'closed',
+    sourceId: 'close-1',
+    transportRunId: 9000,
+    occurredAt: baseTime,
+    authorization: { observed: true },
+  });
+
+  const first = acceptIntent(
+    ledger,
+    intent({
+      pipeline: 'canary',
+      sourceKind: 'canary',
+      transportRunId: 9001,
+    }),
+  );
+  assert.equal(first.outcome, 'dispatch');
+  beginDispatch(ledger, 1, 'dispatch_token_123456');
+  bindRun(ledger, 1, {
+    runId: 42,
+    runUrl: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+    htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+    workflow: 'agent-dispatch-canary.yml',
+  });
+
+  const second = acceptIntent(
+    ledger,
+    intent({
+      intentId: 'intent-2',
+      sourceKind: 'canary',
+      sourceId: '22222222-2222-4222-8222-222222222222',
+      transportRunId: 9002,
+      occurredAt: '2026-08-01T00:01:00.000Z',
+      pipeline: 'canary',
+    }),
+  );
+  assert.equal(second.outcome, 'pending');
+  applyAnchorControl(ledger, {
+    kind: 'closed',
+    sourceId: 'close-2',
+    transportRunId: 9004,
+    occurredAt: '2026-08-01T00:01:30.000Z',
+    authorization: { observed: true },
+  });
+  assert.equal(
+    ledger.generations[1].state,
+    'pending',
+    'a healthy canonical-issue close must not discard its next no-op probe',
+  );
+  const completed = completeRun(ledger, 1, {
+    runId: 42,
+    status: 'completed',
+    conclusion: 'success',
+  });
+  assert.equal(completed.promotedGeneration, 2);
+  assert.equal(ledger.generations[1].state, 'accepted');
+
+  const ordinary = acceptIntent(
+    ledger,
+    intent({
+      intentId: 'intent-3',
+      sourceId: '33333333-3333-4333-8333-333333333333',
+      transportRunId: 9003,
+      occurredAt: '2026-08-01T00:02:00.000Z',
+      pipeline: 'codex',
+    }),
+  );
+  assert.equal(ordinary.outcome, 'closed');
+  assert.equal(ledger.generations[2].state, 'superseded-by-close');
+});
+
 test('same source and same transport rerun are durable no-ops', () => {
   const ledger = createLedger(task, baseTime);
   assert.equal(acceptIntent(ledger, intent()).outcome, 'dispatch');

@@ -41,6 +41,7 @@ import {
   markDispatchUnknown,
   observeCompletion,
   recordControlEvidence,
+  recordOutcome,
   restoreAcceptedForLaunchRetry,
   verifyPreflight,
 } from './broker';
@@ -50,6 +51,7 @@ import {
   createReconcileTransport,
   dispatchRouterEvent,
   dispatchWorker,
+  ensureLaneReadinessAlert,
   failClosed,
   findRunsForGeneration,
   findSupersedingRouterRun,
@@ -60,6 +62,7 @@ import {
   loadLedger,
   loadLedgerProjection,
   pinLedgerWhenUnoccupied,
+  readLaneReadiness,
   repositoryPath,
   saveLedger as saveLedgerComment,
   verifyBrokerConcurrency,
@@ -67,6 +70,7 @@ import {
 } from './github-api';
 import type { Intent } from './modules/intent';
 import {
+  projectComment,
   projectNeedsHumanPark,
   recordProjectionStatus,
   removeIssueLabel,
@@ -129,6 +133,7 @@ interface GitHubIssueDetail {
   number: number;
   title: string;
   body?: string | null;
+  user?: GitHubUserRef;
   labels?: (string | GitHubLabelRef)[];
   assignees?: GitHubUserRef[];
   pull_request?: unknown;
@@ -1098,12 +1103,12 @@ async function trackStuckRun(
   await saveLedger(client, loaded);
 }
 
-// Repairs an orphan class outside #305's original scope (#520): a
+// Repairs an orphan class outside #305's original scope (#520/#639): a
 // `labeled` event's intent that was queue-evicted (#344/#345) before
-// verifyBrokerConcurrency ever let broker() reach loadLedger/acceptIntent
-// at all. reconcileActive()/trackMissingRun() above can only repair a
-// STUCK generation (dispatching/dispatch-unknown with no bound run) --
-// they have nothing to work with when there is no generation whatsoever.
+// verifyBrokerConcurrency ever let broker() reach acceptIntent. This is not
+// limited to an empty ledger: a relabel can be lost after earlier generations
+// already completed, and the current label remains desired state until its
+// real application event has a corresponding ledger source.
 // dispatchReconcileScan's candidate discovery already found this issue by
 // its current agent:* label, but a `reconcile` payload carries no claim
 // about which label or intent that was (#305's design is "re-observe live
@@ -1116,8 +1121,8 @@ async function trackStuckRun(
 // scope for this repair.
 //
 // No grace period, unlike trackMissingRun: this only fires when the issue
-// currently shows one definite, unambiguous agent:* label AND the ledger
-// has literally zero generations to explain it. If a genuine live
+// currently shows one definite, unambiguous agent:* label and the current
+// label-application source is absent from the ledger. If a genuine live
 // `labeled` event for that very label is still in flight, it shares this
 // issue's own concurrency group (queue: max, cancel-in-progress: false)
 // and is strictly serialized against this run: it either already ran (so
@@ -1125,11 +1130,9 @@ async function trackStuckRun(
 // behind this run and hasn't touched the ledger yet, so there is nothing
 // for this run to race against. A *new* labeled/unlabeled+labeled event
 // arriving afterward -- a genuinely new maintainer action, or the rare
-// case of a manual webhook redelivery -- gets its own generation the same
-// way any ordinary relabel-while-a-generation-exists already does
-// elsewhere in this ledger (acceptIntent's dedup keys on sourceId/intentId,
-// not on {pipeline, mode, ...} alone, so it cannot recognize this repair's
-// synthetic source as "the same" delivery); dispatchAccepted's
+// case of a manual webhook redelivery -- carries the exact same
+// `timeline:<event-id>` source as this repair and is therefore a duplicate,
+// not a second generation. dispatchAccepted's
 // no-second-dispatch-while-one-is-active gate is what keeps that from
 // running two workers concurrently, exactly as it already does for any
 // other legitimate second intent arriving while the first is still active.
@@ -1146,6 +1149,14 @@ async function trackStuckRun(
 // require that actor to be the configured maintainer; an unresolvable or
 // non-maintainer authorship leaves the repair undone (fails closed, same
 // as the live path) rather than guessing.
+//
+// #634's one narrow exception is a digest-valid Quick Task whose agent:*
+// label was part of the issue-creation request. GitHub emits no separate
+// `labeled` timeline event for creation-time labels, so there is no label
+// actor to recover. Only when NO matching label event exists, require both
+// quickTaskRequest()'s existing marker/digest proof and the issue author's
+// login to match the configured maintainer. A real label event always wins:
+// its non-maintainer actor cannot fall back to the issue's original author.
 //
 // Must page through the ENTIRE timeline (listAll), not just its first
 // page (Codex review, P1 follow-up): an issue with over 100 timeline
@@ -1197,20 +1208,80 @@ async function repairMissingIntentFromLabel(
         Date.parse(right.created_at) - Date.parse(left.created_at),
     );
   const mostRecent = labelApplications[0];
-  if (!mostRecent) return;
-  const actor = mostRecent.actor;
-  if (!actor || actor.login !== maintainer) return;
+  let actor: GitHubUserRef | undefined;
+  let authorizationRule = 'reconcile-label-repair';
+  let quickTask: ReturnType<typeof quickTaskRequest>;
+  let sourceKind: string;
+  let sourceId: string;
+  let occurredAt: string;
+  if (mostRecent) {
+    if (!Number.isSafeInteger(mostRecent.id)) return;
+    sourceKind = 'labeled';
+    sourceId = `timeline:${mostRecent.id}`;
+    occurredAt = mostRecent.created_at;
+    if (
+      ledger.sources.some(
+        (source) =>
+          source.sourceKind === sourceKind && source.sourceId === sourceId,
+      )
+    ) {
+      return;
+    }
 
-  const quickTask = quickTaskRequest(issue, task.repository, pipeline);
+    // Compatibility with #520's pre-#639 repair, which used one synthetic
+    // source per issue. Do not replay the same historical label application
+    // merely because the new implementation now knows its real timeline ID.
+    // A later re-application has a later timestamp and is still recovered.
+    const legacySource = ledger.sources.find(
+      (source) =>
+        source.sourceKind === 'reconcile-label-repair' &&
+        source.sourceId === `reconcile-label-repair:${issue.id}`,
+    );
+    const legacyGeneration = ledger.generations.find(
+      (generation) => generation.intentId === legacySource?.intentId,
+    );
+    if (
+      legacySource &&
+      legacyGeneration?.pipeline === pipeline &&
+      legacyGeneration.mode === mode &&
+      Date.parse(legacySource.occurredAt) >= Date.parse(occurredAt)
+    ) {
+      return;
+    }
+
+    actor = mostRecent.actor;
+    if (!actor || actor.login !== maintainer) return;
+    quickTask = quickTaskRequest(issue, task.repository, pipeline);
+  } else {
+    // Check authorship before parsing the marker. This keeps an untrusted
+    // issue author from turning a malformed marker into a reconcile error;
+    // ordinary or malformed maintainer-authored issues still fail closed.
+    actor = issue.user;
+    if (!actor || actor.login !== maintainer) return;
+    sourceKind = 'opened';
+    sourceId = `issue:${issue.id}`;
+    occurredAt = issue.created_at;
+    if (
+      ledger.sources.some(
+        (source) =>
+          source.sourceKind === sourceKind && source.sourceId === sourceId,
+      )
+    ) {
+      return;
+    }
+    quickTask = quickTaskRequest(issue, task.repository, pipeline);
+    if (!quickTask) return;
+    authorizationRule = 'reconcile-quick-task-create-repair';
+  }
   const intent = makeIntent({
     task,
     ...(quickTask && {
       intentId: `quick:${quickTask.requestId}:${quickTask.digest}`,
     }),
-    sourceKind: 'reconcile-label-repair',
-    sourceId: `reconcile-label-repair:${issue.id}`,
+    sourceKind,
+    sourceId,
     transportRunId: runId,
-    occurredAt: now,
+    occurredAt,
     pipeline,
     mode,
     reply: '',
@@ -1223,7 +1294,7 @@ async function repairMissingIntentFromLabel(
       // which cannot equal `maintainer` there without already returning.
       actor: actor.login,
       configuredMaintainer: maintainer,
-      rule: 'reconcile-label-repair',
+      rule: authorizationRule,
     },
   });
   acceptIntent(ledger, intent, now);
@@ -1391,10 +1462,15 @@ async function reconcileLedger(
     }
     return;
   }
-  if (ledger.generations.length === 0) {
+  // A lost relabel that arrived during an active attempt can be recovered
+  // after that attempt terminalizes; avoid adding live issue/timeline reads
+  // to the hot active-run repair path. Empty and terminal-only ledgers are
+  // the states where a missing current-label source would otherwise remain
+  // invisible forever (#639).
+  if (ledger.generations.length === 0 || !activeGeneration(ledger)) {
     await repairMissingIntentFromLabel(client, loaded, now, runId);
-    return;
   }
+  if (ledger.generations.length === 0) return;
   const active = activeGeneration(ledger);
   const pending = ledger.generations.find(
     (candidate) => candidate.state === 'pending',
@@ -1555,6 +1631,61 @@ async function resolvePendingLaunchAsLaunchedBestEffort(
   }
 }
 
+function issueHasNeedsHumanLabel(issue: GitHubIssueDetail): boolean {
+  return (issue.labels ?? []).some((label) =>
+    typeof label === 'string'
+      ? label === 'status:needs-human'
+      : label.name === 'status:needs-human',
+  );
+}
+
+async function anchorNeedsHuman(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+): Promise<boolean> {
+  const issue = await client.requestOk<GitHubIssueDetail>(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  return issueHasNeedsHumanLabel(issue);
+}
+
+async function holdForLaneReadiness(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  generation: LedgerGeneration,
+): Promise<boolean> {
+  const blockers = await readLaneReadiness(
+    client,
+    loaded.ledger.task,
+    generation.pipeline,
+  );
+  if (blockers.length === 0) return false;
+  const display =
+    generation.pipeline[0].toUpperCase() + generation.pipeline.slice(1);
+  await projectComment(
+    client,
+    loaded.ledger.task,
+    'lane-readiness',
+    generation.pipeline,
+    (marker) => `${marker}
+
+### ${display} dispatch paused for lane readiness
+
+The broker held generation ${generation.generation} **before worker allocation** because the following durable health signal${blockers.length === 1 ? ' is' : 's are'} open:
+
+${blockers.map((blocker) => `- [#${blocker.issue}: ${blocker.title}](${blocker.url})`).join('\n')}
+
+This is an automatic infrastructure hold, not a human-owned task park. Repair the linked health incident and close it (or let its canary close it on recovery). Scheduled reconcile will retry the readiness check and resume this accepted generation; do not create another dispatch generation. This notice is live only while a linked health issue remains open.`,
+  );
+  console.log(
+    `::notice::Holding accepted ${generation.pipeline} generation ` +
+      `${generation.generation} for issue #${loaded.ledger.task.issue} ` +
+      `before worker allocation: readiness blocker${blockers.length === 1 ? '' : 's'} ` +
+      blockers.map((blocker) => `#${blocker.issue}`).join(', '),
+  );
+  return true;
+}
+
 async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1564,6 +1695,25 @@ async function dispatchAccepted(
       (candidate) => candidate.state === 'accepted',
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
+    // #720: accepted is ledger readiness, not unconditional permission to
+    // spend another agent run. status:needs-human is the human-facing stop
+    // signal; read it live at the last responsible moment so a generation
+    // promoted while its predecessor completed remains held until the label
+    // is removed. The structurally no-op canary is exempt: its own failure
+    // parks the canonical canary issue, and a later probe must still run to
+    // prove recovery and clear that incident (#677).
+    if (
+      generation.pipeline !== 'canary' &&
+      (await anchorNeedsHuman(client, loaded.ledger.task))
+    ) {
+      console.log(
+        `::notice::Holding accepted generation ${generation.generation} for ` +
+          `issue #${loaded.ledger.task.issue}: status:needs-human is present. ` +
+          'Remove the label to resume through the ordinary serialized broker path.',
+      );
+      return;
+    }
+    if (await holdForLaneReadiness(client, loaded, generation)) return;
     const beforeScheduling = structuredClone(loaded.ledger);
     const scheduled = await runPhase(
       { client, loaded },
@@ -1737,8 +1887,41 @@ async function handleCompletion(
     runId: normalized.workerRunId,
     authorization: { observed: true, workflow: expectedWorkflow },
   });
+  const priorOutcome = generation.attempt?.outcome;
+  const priorOutcomeReference = generation.attempt?.outcomeReference;
+  if (normalized.outcome) {
+    recordOutcome(
+      loaded.ledger,
+      generation.generation,
+      normalized.outcome,
+      normalized.outcomeReference,
+    );
+  }
+  // A lane-health incident is a projection of a trusted worker signal, not
+  // attempt authority. Create it before persisting this callback's evidence:
+  // if the issue mutation fails, redelivery sees no recorded source and can
+  // retry; after both succeed, a later stale redelivery cannot reopen an
+  // incident an operator already closed after remediation.
+  if (normalized.readinessFailure && evidence.outcome === 'recorded') {
+    await ensureLaneReadinessAlert(
+      client,
+      normalized.task,
+      generation.pipeline,
+      normalized.readinessFailure,
+      run.html_url,
+      env('MAINTAINER_LOGIN', false),
+    );
+  }
   if (generation.state === 'completed') {
-    if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
+    if (
+      evidence.outcome === 'recorded' ||
+      (normalized.outcome && priorOutcome !== normalized.outcome) ||
+      (normalized.outcomeReference &&
+        JSON.stringify(priorOutcomeReference) !==
+          JSON.stringify(normalized.outcomeReference))
+    ) {
+      await saveLedger(client, loaded);
+    }
     return;
   }
   if (generation.state === 'active') {
@@ -2425,6 +2608,34 @@ async function preflight(): Promise<void> {
             intentId: expected.intentId,
           }),
         );
+        const priorTerminal = ledger.generations
+          .filter(
+            (candidate) =>
+              candidate.generation < expected.generation &&
+              [
+                'completed',
+                'dispatch-rejected',
+                'superseded',
+                'superseded-by-close',
+              ].includes(candidate.state),
+          )
+          .sort((left, right) => right.generation - left.generation)[0];
+        await output(
+          'prior-terminal-state',
+          JSON.stringify(
+            priorTerminal
+              ? {
+                  generation: priorTerminal.generation,
+                  state: priorTerminal.state,
+                  pipeline: priorTerminal.pipeline,
+                  mode: priorTerminal.mode ?? null,
+                  outcome: priorTerminal.attempt?.outcome ?? null,
+                  conclusion: priorTerminal.attempt?.conclusion ?? null,
+                  completedAt: priorTerminal.attempt?.completedAt ?? null,
+                }
+              : null,
+          ),
+        );
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -2461,12 +2672,38 @@ async function completionCallback(): Promise<void> {
     repository: env('GITHUB_REPOSITORY'),
     issue: Number(env('BROKER_ISSUE')),
   };
+  const outcome = env('BROKER_OUTCOME_KIND', false);
+  const outcomeReference = env('BROKER_OUTCOME_REFERENCE', false);
+  if (outcomeReference) {
+    const number = Number(outcomeReference);
+    if (
+      outcome !== 'pull-request' ||
+      !Number.isSafeInteger(number) ||
+      number <= 0
+    ) {
+      throw new Error(
+        'BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome',
+      );
+    }
+  }
   const completionPayload = encode({
     workerRunId: Number(env('GITHUB_RUN_ID')),
     generation: Number(env('BROKER_GENERATION')),
     intentId: env('BROKER_INTENT_ID'),
     token: env('BROKER_DISPATCH_TOKEN'),
     workflow: env('BROKER_WORKER_WORKFLOW'),
+    ...(outcome ? { outcome } : {}),
+    ...(outcomeReference
+      ? {
+          outcomeReference: {
+            kind: 'pull-request',
+            number: Number(outcomeReference),
+          },
+        }
+      : {}),
+    ...(env('BROKER_READINESS_FAILURE', false)
+      ? { readinessFailure: env('BROKER_READINESS_FAILURE') }
+      : {}),
   });
   await dispatchRouterEvent(client, task, {
     kind: 'completion',
@@ -2581,6 +2818,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 }
 
 export {
+  anchorNeedsHuman,
   applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,
@@ -2594,6 +2832,7 @@ export {
   FRESH_INTENT_OUTCOMES,
   handleCompletion,
   healStaleAgentLabels,
+  holdForLaneReadiness,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,

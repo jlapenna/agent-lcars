@@ -19,9 +19,25 @@ never participate in identity.
 ## Submission contract
 
 The browser creates one UUID v4 for a user intent and sends a complete request:
-request ID, canonical repository, pipeline, optional title, and description.
-Every mutation boundary requires that repository. The Server Action resolves it
-against the configured watched repositories before GitHub is called.
+request ID, canonical repository, pipeline, and the previewed issue body. The
+server derives the issue title from that body's first line. Every mutation
+boundary requires the repository. The Server Action resolves it against the
+configured watched repositories before GitHub is called.
+
+The intake dialog keeps a free-form description as its only required field. An
+optional guided section can add Observed, Expected, Steps to reproduce, Done
+when, and evidence links. Before submission, the dialog previews the derived
+title and exact human-readable body. That body also contains an editable source
+block with the selected canonical repository, capture time, sanitized console
+route, and any Task, pull request, workflow-run, or session identity supplied by
+the detail page.
+
+Automatic route capture is allowlist-based. It serializes only known console
+paths and query parameters whose values match the route's typed contract. It
+never copies the origin, URL credentials, fragment, free-form search query, or
+an unknown query parameter. New parameters remain private until the sanitizer
+explicitly learns their safe value shape. The hidden marker described below is
+appended by the server after the human-readable preview.
 
 The issue is created in one GitHub write with both `intake:quick-task` and the
 selected repository integration's `agent:*` label. There is no intermediate
@@ -49,6 +65,15 @@ the claimant UUID lets that same invocation prove it owns the durable ref and
 continue safely. A different App Hosting instance rechecks the issue marker and
 otherwise fails closed; it never performs another create. Successful claims
 remain as the durable idempotency ledger.
+
+The LCARS issue editor hides the machine marker from the body field. When an
+admin deliberately changes a Quick Task title or description, the server first
+verifies the existing marker against the current content and original pipeline,
+then rewrites that issue marker with a digest of the edited content. The claim
+tag remains the immutable record of the original create attempt. A later retry
+of the original browser request therefore conflicts instead of silently
+overwriting or duplicating the now-edited task; broker normalization continues
+to validate and dispatch the edited task normally.
 
 A definitive GitHub 4xx other than `408 Request Timeout` proves no issue was
 created, so its claim is released. A 408 is ambiguous just like a transport

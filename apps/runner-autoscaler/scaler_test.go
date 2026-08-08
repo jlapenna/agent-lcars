@@ -1376,6 +1376,71 @@ func TestEnsureRunnerImageTrustsDigestCache(t *testing.T) {
 	}
 }
 
+// TestCreateContainerRecoversImageEvictedAfterInspect reproduces #478 at the
+// Docker API boundary: image preparation/inspection succeeded, an external
+// prune removed the image before ContainerCreate, and the daemon returned
+// 404. The create boundary must re-prepare once and retry instead of leaving
+// every periodic sweep to rediscover the same race.
+func TestCreateContainerRecoversImageEvictedAfterInspect(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	fake.mu.Lock()
+	fake.imagePresent = true
+	fake.mu.Unlock()
+	fake.setCreateFailures(http.StatusNotFound)
+	scaler := &Scaler{
+		runnerImage: "registry.example/runner@sha256:" + strings.Repeat("a", 64),
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	created, err := scaler.createContainerWithImageRecovery(
+		context.Background(),
+		fake.client(t),
+		"spark",
+		&container.Config{Image: scaler.runnerImage},
+		&container.HostConfig{},
+		"",
+	)
+	if err != nil {
+		t.Fatalf("createContainerWithImageRecovery: %v", err)
+	}
+	if created.ID != "created-container" {
+		t.Fatalf("created container ID = %q, want created-container", created.ID)
+	}
+	if got := fake.createCount(); got != 2 {
+		t.Fatalf("container creates = %d, want initial miss plus one retry", got)
+	}
+	if got := fake.pullCount(); got != 1 {
+		t.Fatalf("image pulls = %d, want one recovery pull", got)
+	}
+}
+
+func TestCreateContainerDoesNotRetryUnrelatedFailure(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	fake.setCreateFailures(http.StatusInternalServerError)
+	scaler := &Scaler{
+		runnerImage: "registry.example/runner:test",
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	_, err := scaler.createContainerWithImageRecovery(
+		context.Background(),
+		fake.client(t),
+		"spark",
+		&container.Config{Image: scaler.runnerImage},
+		&container.HostConfig{},
+		"",
+	)
+	if err == nil {
+		t.Fatal("an unrelated daemon failure must stay visible")
+	}
+	if got := fake.createCount(); got != 1 {
+		t.Fatalf("container creates = %d, want no retry for non-not-found", got)
+	}
+	if got := fake.pullCount(); got != 0 {
+		t.Fatalf("image pulls = %d, want no image recovery for unrelated failure", got)
+	}
+}
+
 func TestIsDigestRef(t *testing.T) {
 	for ref, want := range map[string]bool{
 		"registry.example/runner:test":                              false,

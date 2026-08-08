@@ -70,6 +70,13 @@ release, and a removed or renamed input or a changed default requires a major
 release. The contract-test manifest diff in review is the "this needs a major
 bump" signal.
 
+`prepare-agent-dispatch` keeps its richer runtime contract backward-compatible
+for moving-`main` consumers: `token` falls back to the caller's
+`github.token`, and the deadline inputs default to a 60-minute budget with
+25-minute durable-artifact and 45-minute finalization checkpoints. Callers
+with a different agent-step timeout must pass all three deadline inputs so the
+brief describes the real runtime bound.
+
 ### The whole-repo-download caveat
 
 A cross-repo `uses:` downloads this entire repository at the resolved ref

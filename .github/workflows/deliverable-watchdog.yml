@@ -1,0 +1,77 @@
+name: Agent Deliverable Watchdog
+
+# #721 closes the seam between "the dispatch produced a PR" and "the PR
+# actually landed". A successful worker can leave an agent-authored PR open
+# indefinitely after a red/missing/stuck required check or a broken auto-merge
+# chain; the dispatch ledger is already terminal and cannot see that decay.
+#
+# This is deliberately independent of dispatch-reconcile and its ledger. It
+# reads open PR/check state and writes only an idempotent marker comment,
+# status:needs-human, and maintainer assignment on the real closing anchor (or
+# the PR itself when no open closing reference exists). It never rebases,
+# merges, closes, or updates a PR branch.
+
+on:
+  schedule:
+    # Hourly at :31, clear of dispatch (:13), infra-rerun (:22/:52),
+    # reconcile (:07/:37), and bootstrap (:43).
+    - cron: '31 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deliverable-watchdog-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Assert required repo variables are set
+        uses: ./.github/actions/assert-repo-vars
+        with:
+          vars: |
+            AGENT_BOT_LOGINS=${{ vars.AGENT_BOT_LOGINS }}
+            MAINTAINER_LOGIN=${{ vars.MAINTAINER_LOGIN }}
+
+      - name: Surface abandoned agent deliverables
+        uses: ./.github/actions/deliverable-watchdog
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          agent-bot-logins: ${{ vars.AGENT_BOT_LOGINS }}
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}
+          required-check: Verify
+          stale-hours: '6'
+
+  alert:
+    needs: scan
+    if: always()
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on watchdog failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.scan.result }}
+          workflow-file: deliverable-watchdog.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

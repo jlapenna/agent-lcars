@@ -38,6 +38,18 @@ inputs:
     description: Worker workflow file sending the completion callback
     required: false
     default: ''
+  outcome-kind:
+    description: Durable worker lifecycle outcome sent with completion
+    required: false
+    default: ''
+  outcome-reference:
+    description: Exact pull request number backing a pull-request outcome
+    required: false
+    default: ''
+  readiness-failure:
+    description: Shared lane prerequisite that failed (credential, provider, or bootstrap)
+    required: false
+    default: ''
 
 outputs:
   eligible:
@@ -77,6 +89,9 @@ outputs:
     # workflow_dispatch inputs drift like that across repos.
     description: The verified attempt's stable identity, g<generation>:<intentId>
     value: ${{ steps.run.outputs.attempt-id }}
+  prior-terminal-state:
+    description: Compact JSON summary of the latest earlier terminal generation
+    value: ${{ steps.run.outputs.prior-terminal-state }}
   candidates:
     description: Number of open agent-labeled issues/PRs the reconcile scan discovered
     value: ${{ steps.run.outputs.candidates }}
@@ -98,6 +113,9 @@ runs:
         BROKER_INTENT_ID: ${{ inputs.intent-id }}
         BROKER_DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
         BROKER_WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
+        BROKER_OUTCOME_KIND: ${{ inputs.outcome-kind }}
+        BROKER_OUTCOME_REFERENCE: ${{ inputs.outcome-reference }}
+        BROKER_READINESS_FAILURE: ${{ inputs.readiness-failure }}
       run: node "$GITHUB_ACTION_PATH/dist/main.mjs" "${{ inputs.operation }}"
 
     # Publish the verified attempt ID to every later step in the caller's

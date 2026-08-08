@@ -2,12 +2,18 @@ import crypto from 'node:crypto';
 
 import type {
   AgentPipeline,
+  DispatchOutcomeKind,
+  DispatchOutcomeReference,
+  LaneReadinessFailure,
   LedgerTaskRef,
   QuickTaskIdentity,
 } from '@agent-lcars/dispatch-contracts';
 import {
   AGENT_LABELS,
   GENERIC_REPLY_COMMAND,
+  isDispatchOutcomeKind,
+  isDispatchOutcomeReference,
+  isLaneReadinessFailure,
   quickTaskDigest,
   quickTaskMarkerMatcher,
   REPLY_COMMANDS,
@@ -132,6 +138,9 @@ export interface CompletionEvent {
   intentId: string;
   token: string;
   workflow: string;
+  outcome?: DispatchOutcomeKind;
+  outcomeReference?: DispatchOutcomeReference;
+  readinessFailure?: LaneReadinessFailure;
 }
 
 export interface IntentEvent {
@@ -374,6 +383,9 @@ interface CompletionPayload {
   intentId: string;
   token: string;
   workflow: string;
+  outcome?: DispatchOutcomeKind;
+  outcomeReference?: DispatchOutcomeReference;
+  readinessFailure?: LaneReadinessFailure;
 }
 
 function normalizeWorkflowDispatch({
@@ -446,7 +458,15 @@ function normalizeWorkflowDispatch({
       (candidate.generation as number) <= 0 ||
       !/^[A-Za-z0-9._:-]{1,200}$/u.test(candidate.intentId ?? '') ||
       !/^[A-Za-z0-9_-]{16,200}$/u.test(candidate.token ?? '') ||
-      !WORKER_WORKFLOWS.has(candidate.workflow as string)
+      !WORKER_WORKFLOWS.has(candidate.workflow as string) ||
+      (candidate.outcome !== undefined &&
+        !isDispatchOutcomeKind(candidate.outcome)) ||
+      (candidate.outcomeReference !== undefined &&
+        !isDispatchOutcomeReference(candidate.outcomeReference)) ||
+      (candidate.outcomeReference !== undefined &&
+        candidate.outcome !== 'pull-request') ||
+      (candidate.readinessFailure !== undefined &&
+        !isLaneReadinessFailure(candidate.readinessFailure))
     ) {
       throw new Error('Completion payload has invalid binding fields');
     }
@@ -461,6 +481,13 @@ function normalizeWorkflowDispatch({
       intentId: candidate.intentId as string,
       token: candidate.token as string,
       workflow: candidate.workflow as string,
+      ...(candidate.outcome ? { outcome: candidate.outcome } : {}),
+      ...(candidate.outcomeReference
+        ? { outcomeReference: candidate.outcomeReference }
+        : {}),
+      ...(candidate.readinessFailure
+        ? { readinessFailure: candidate.readinessFailure }
+        : {}),
     };
   }
   if (inputs.kind === 'canary') {
@@ -718,6 +745,27 @@ function normalizeEvent({
     const isReviewLabel =
       semanticEventName === 'pull_request' &&
       Boolean(labelName?.startsWith('review:'));
+    // #720: status:needs-human is now a real dispatch-admission gate, so
+    // both edges must reach the serialized broker even though neither is a
+    // new intent. `labeled` makes a park observable in the ledger; more
+    // importantly, `unlabeled` wakes dispatchAccepted immediately so a held
+    // accepted generation resumes without waiting for the next scheduled
+    // reconciliation pass. Authorization is observational here, matching
+    // close/reopen control: the broker re-reads the live label at dispatch
+    // time and never trusts this event payload as the gate itself.
+    if (labelName === 'status:needs-human') {
+      return {
+        kind: 'control-evidence',
+        task,
+        evidence: {
+          sourceKind: event.action,
+          ...source,
+          transportRunId: context.runId,
+          label: labelName,
+          authorization: { observed: true, actor: event.sender?.login },
+        },
+      };
+    }
     if (!labelName?.startsWith('agent:') && !isReviewLabel) {
       return { kind: 'ignored', reason: 'non-agent label event' };
     }

@@ -1,7 +1,7 @@
 name: Dispatch Canary
 
 # Scheduled AND manually runnable production canary for the dispatch broker
-# (#307, final child of epic #301). Creates a dedicated, clearly-marked
+# (#307, final child of epic #301). Reuses one canonical, clearly-marked
 # issue, drives it through the real broker + a dedicated no-op worker
 # (agent-dispatch-canary.yml) that never invokes a paid model or a
 # self-hosted/privileged runner, verifies the resulting ledger state, and
@@ -9,8 +9,8 @@ name: Dispatch Canary
 # status:needs-human on it with evidence instead of closing it -- see
 # .github/actions/run-dispatch-canary.
 #
-# This run also sweeps any stale canary issue left behind by a *prior*
-# run of either this workflow or post-deploy-smoke.yml whose own job was
+# This run also sweeps the canonical issue, plus any legacy per-run canary
+# issue left behind by either workflow whose own job was
 # killed by a timeout or cancellation before it reached its own cleanup
 # (run.mjs's sweepStaleCanaries) -- this hourly cadence is the backstop
 # that guarantees "canary artifacts are automatically cleaned up" even
@@ -55,10 +55,10 @@ jobs:
     # canary orchestrators... never reference a self-hosted runner or a
     # secret" asserts this literally; changing it fails CI.
     runs-on: ubuntu-latest
-    # See run.mjs's LEDGER_POLL_TIMEOUT_MS (25 min) for why this needs
-    # headroom well beyond the old 15 min: the self-hosted broker hops this
-    # canary waits on can queue for several minutes under fleet contention
-    # (#436).
+    # See run.mjs's LEDGER_POLL_TIMEOUT_MS (30 min) for why this keeps ten
+    # minutes of teardown/failure-parking headroom: the two self-hosted
+    # broker hops queued for about 24 minutes in production run 31255623033
+    # before the lifecycle converged successfully at about 26 minutes (#772).
     #
     # A job-level timeout-minutes TERMINATES the job the instant it's hit --
     # every remaining step, `if: always()` included, is simply never
@@ -71,7 +71,7 @@ jobs:
     # conclusion `cancelled`) and against GitHub's documented
     # `jobs.<job_id>.result` values (success/failure/cancelled/skipped --
     # no separate "timed_out" outcome reaches that context).
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Assert required repo variables are set
         env:
@@ -107,6 +107,7 @@ jobs:
   alert:
     needs: canary
     if: always()
+    continue-on-error: true
     # Deliberately ubuntu-latest, matching `canary` above: the alert must
     # keep working even when the self-hosted control plane -- the thing
     # dispatch-canary.yml exists to watch -- is itself the thing that's
@@ -141,6 +142,6 @@ jobs:
         uses: ./.github/actions/canary-alert
         with:
           token: ${{ github.token }}
-          canary-status: ${{ needs.canary.result }}
+          workflow-status: ${{ needs.canary.result }}
           workflow-file: dispatch-canary.yml
           maintainer: ${{ vars.MAINTAINER_LOGIN }}

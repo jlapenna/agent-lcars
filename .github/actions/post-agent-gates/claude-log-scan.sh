@@ -37,5 +37,8 @@ fi
 
 if (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
    (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo 'readiness-failure=credential' >> "$GITHUB_OUTPUT"
+  fi
   printf '%s' $'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'
 fi

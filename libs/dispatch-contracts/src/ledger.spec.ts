@@ -306,6 +306,37 @@ describe('isWellFormedLedger', () => {
       }),
     ).toBe(false);
   });
+
+  it('accepts an exact PR outcome reference and rejects malformed or mismatched references', () => {
+    const generation = {
+      generation: 1,
+      intentId: 'i',
+      sourceId: 's',
+      occurredAt: 'now',
+      pipeline: 'codex',
+      state: 'completed',
+      attempt: {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 755 },
+      },
+    };
+    expect(isWellFormedGeneration(generation)).toBe(true);
+    expect(
+      isWellFormedGeneration({
+        ...generation,
+        attempt: {
+          ...generation.attempt,
+          outcomeReference: { kind: 'pull-request', number: 0 },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isWellFormedGeneration({
+        ...generation,
+        attempt: { ...generation.attempt, outcome: 'comment' },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('isWellFormedAnomaly', () => {

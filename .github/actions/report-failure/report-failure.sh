@@ -46,7 +46,7 @@ gh issue comment "$ISSUE_NUM" \
 # inconclusive (not confirmed-present), so it also fails red.
 #
 # The JS-side equivalent of this same verify-then-decide pattern is
-# dispatch-broker/github-api.mjs's ensureNeedsHumanParked -- look there
+# apps/dispatch-broker/src/github-api.ts's ensureNeedsHumanParked -- look there
 # before re-deriving it a third time.
 mutate_or_verify() {
   local endpoint="$1" field_json="$2" jq_path="$3" value="$4" what="$5"

@@ -47,7 +47,8 @@ jlapenna`), and use as the assignee in the parking recipe
   instead of picking a winner, and a comment matching more than one
   recognized command is rejected outright — not dispatched at all — rather
   than resolved in favor of one pipeline (`parseExactCommand` in
-  `normalize.mjs`). One narrow self-heal exception: a `labeled` event whose
+  `apps/dispatch-broker/src/normalize.ts`). One narrow self-heal exception:
+  a `labeled` event whose
   own label disambiguates against exactly one other stale `agent:*` label
   (the transient window a manual GitHub UI relabel opens) makes the newest
   label win, removing the stale one via the API with ledger evidence before
@@ -57,7 +58,8 @@ jlapenna`), and use as the assignee in the parking recipe
   `@agent` (#573), but only when the command is the sole first token of its
   own line (trailing text after it is fine, e.g. `@claude please retry`); a
   command embedded mid-prose, inside a fenced code block, or on a quoted
-  (`>`) line does not count (`parseExactCommand` in `normalize.mjs`). The
+  (`>`) line does not count (`parseExactCommand` in
+  `apps/dispatch-broker/src/normalize.ts`). The
   pipeline-specific commands' pipeline must match the issue's single
   selected `agent:*` label — except `@claude` on a pull request, which
   dispatches regardless of label. `@agent` names no pipeline at all; it
@@ -95,7 +97,8 @@ by #567 once the maintainer picked `review:*` as the dedicated review
 trigger rather than overloading `agent:*` for both meanings). The two
 label families are independent: a PR may carry `agent:*`, `review:*`,
 both, or neither, and each drives its own dispatch mode when applied
-(`normalize.mjs`'s `AGENT_LABELS`/`REVIEW_LABELS`). `review:*` is not a
+(`libs/dispatch-contracts/src/pipelines.ts`'s
+`AGENT_LABELS`/`REVIEW_LABELS`). `review:*` is not a
 recognized label at all on a plain issue — there is no diff to review.
 
 If you are dispatched with `mode: review` in the JSON brief at
@@ -127,7 +130,8 @@ on a pure review).
 `.github/workflows/agent-router.yml` subscribes to pull-request
 `labeled`/`unlabeled` actions in addition to `closed`/`reopened`, so both
 label families reach the same normalized, serialized broker path (#565).
-`normalize.mjs`, `main.mjs`'s timeline fetch, and
+`apps/dispatch-broker/src/normalize.ts`,
+`apps/dispatch-broker/src/main.ts`'s timeline fetch, and
 `verify-deliverable.sh` keep the transport, authorization, and deliverable
 contracts aligned for both modes.
 
@@ -140,8 +144,9 @@ an `agent:*` or `review:*` label, unioned with every open issue/PR assigned to
 `vars.AGENT_FLEET_LOGIN` (`jclaw-bot`) — the durable, label-independent
 signal `claim-issue` already sets at the start of every worker dispatch and
 never clears, which is what still finds a ledger whose last `agent:*` label
-was removed while its generation was active (`main.mjs`'s
-`discoverReconcileCandidates`) — then fires one `workflow_dispatch`
+was removed while its generation was active
+(`libs/dispatch-reconcile/src/scan.ts`'s `discoverReconcileCandidates`) —
+then fires one `workflow_dispatch`
 `kind: reconcile` call at `agent-router.yml` per candidate (`scanReconcile` /
 `dispatchReconcileScan`). It never touches a ledger comment itself — every
 actual repair happens inside the exact same per-issue serialized broker job
@@ -172,10 +177,25 @@ possible:
   (`reconcile-parked`). A generation still within its grace period, or
   re-observed sooner than the minimum interval, is a silent no-op — this is
   what makes overlapping/duplicate scans idempotent.
+- **A current-label intent evicted before the ledger recorded it**: an
+  unambiguous live agent/review label is repaired from its real most-recent
+  maintainer-authored `timeline:<event-id>` source, even after earlier
+  generations completed (#639). That identity makes repeated scans and a
+  delayed original webhook harmless duplicates. The narrow creation-time
+  exception is a digest-valid Quick Task authored by the configured
+  maintainer, because GitHub emits no separate timeline event for labels
+  included in an issue's creation request (#634). A real later label event
+  always takes precedence, so its non-maintainer actor can never fall back to
+  the original author.
 - **Stale pending intents**: queued behind either repair above, they are
-  promoted and (re-)dispatched automatically the moment their blocking
-  generation resolves (`completeRun`'s existing promotion, followed by
-  `dispatchAccepted()`) — there is no separate "stale pending" mechanism.
+  promoted when their blocking generation resolves (`completeRun`'s
+  existing promotion), but promotion is not unconditional launch:
+  `dispatchAccepted()` reads the anchor's live `status:needs-human` label and
+  holds ordinary work while parked. Removing the label emits serialized
+  control evidence and resumes the preserved intent through the same broker;
+  scheduled reconciliation is the lost-webhook backstop. The no-op canary is
+  exempt so a parked failed canary can probe and prove recovery. There is no
+  separate "stale pending" mechanism and no dropped authorization.
 - **Concurrent duplicate attempts**: `reconcileActive()` already records a
   `duplicate-attempt` anomaly naming every matching run and fails closed
   (parked, never silently resolved or auto-canceled) the moment more than

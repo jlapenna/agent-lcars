@@ -123,7 +123,11 @@
  * `listPendingLaunchOperations`.
  */
 
-import type { DispatchLedger } from '@agent-lcars/dispatch-contracts';
+import type {
+  DispatchLedger,
+  DispatchOutcomeKind,
+  DispatchOutcomeReference,
+} from '@agent-lcars/dispatch-contracts';
 
 // ---------------------------------------------------------------------------
 // Task aggregate: signals, authorization decisions, intents, attempts, and
@@ -215,6 +219,8 @@ export interface AttemptRecord {
   boundAt?: string;
   completedAt?: string;
   conclusion?: string;
+  outcome?: DispatchOutcomeKind;
+  outcomeReference?: DispatchOutcomeReference;
 }
 
 export const INTENT_STATES = [

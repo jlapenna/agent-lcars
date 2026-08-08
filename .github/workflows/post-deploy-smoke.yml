@@ -35,8 +35,8 @@ name: Post-Deploy Smoke
 # own.
 #
 # Behavioral check, in order: (1) the live URL answers with a 2xx response,
-# (2) a canary issue created after that round-trips through the real
-# dispatch broker + no-op worker (the same GitHub write/routing path a real
+# (2) the canonical canary issue, refreshed after that, round-trips through
+# the real dispatch broker + no-op worker (the same GitHub write/routing path a real
 # agent dispatch uses) within a bounded window. This proves the deployed
 # revision is reachable and that the broker's GitHub write path still works
 # in production. It deliberately does NOT exercise the deployed console's
@@ -64,11 +64,11 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     # See dispatch-canary.yml's `canary` job for why this stays ubuntu-latest.
     runs-on: ubuntu-latest
-    # See run.mjs's LEDGER_POLL_TIMEOUT_MS (25 min) for why this needs
-    # headroom well beyond the old 15 min: the self-hosted broker hops this
-    # canary waits on can queue for several minutes under fleet contention
-    # (#436).
-    timeout-minutes: 35
+    # See run.mjs's LEDGER_POLL_TIMEOUT_MS (30 min) for why this keeps ten
+    # minutes of teardown/failure-parking headroom: the two self-hosted
+    # broker hops queued for about 24 minutes in production run 31255623033
+    # before the lifecycle converged successfully at about 26 minutes (#772).
+    timeout-minutes: 40
     steps:
       - name: Assert required repo variables are set
         env:
@@ -93,3 +93,25 @@ jobs:
           deploy-run-url: ${{ github.event.workflow_run.html_url }}
           # Matches deploy-console.yml's own hardcoded APP_URL.
           live-url: https://agent-console.supersprinkles.racing
+
+  alert:
+    needs: smoke
+    if: always() && github.event.workflow_run.conclusion == 'success'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on post-deploy failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.smoke.result }}
+          workflow-file: post-deploy-smoke.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

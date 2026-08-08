@@ -129,15 +129,105 @@ test.describe('populated dashboard', () => {
       .click();
     const detail = page.locator('.queue-workspace__detail');
 
-    await detail.getByRole('button', { name: 'Retrigger' }).click();
+    const retrigger = detail.getByRole('button', { name: 'Retrigger' });
+    await retrigger.click();
     await page.getByRole('button', { name: 'Retrigger now' }).click();
     await expect(page.getByText('#9001 retriggered')).toBeVisible();
+    await expect(retrigger).toBeEnabled();
 
+    const overflow = detail.getByRole('button', {
+      name: 'More actions for #9001',
+    });
+    await overflow.click();
+    await page.getByRole('menuitem', { name: 'Reassign to codex' }).click();
+    await expect(page.getByText('#9001 reassigned to codex')).toBeVisible();
+    // Both controls bind their `useTransition` state to disabled/loading;
+    // enabled again is the user-visible proof that the refreshed RSC
+    // payload settled before Playwright closes this test's page.
+    await expect(overflow).toBeEnabled();
+  });
+
+  test('edits issue content from the shared three-dot menu across dashboard surfaces', async ({
+    page,
+  }) => {
+    const updatedTitle = 'Choose the archive retention window';
+    const updatedBody = 'Pick 30 or 90 days before the watcher ships.';
+
+    await page.goto('/inbox');
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
+      .getByRole('link')
+      .click();
+    const detail = page.locator('.queue-workspace__detail');
     await detail
       .getByRole('button', { name: 'More actions for #9001' })
       .click();
-    await page.getByRole('menuitem', { name: 'Reassign to codex' }).click();
-    await expect(page.getByText('#9001 reassigned to codex')).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+
+    const editor = page.getByRole('dialog', { name: 'Edit #9001' });
+    await expect(editor.getByLabel('Title')).toHaveValue(
+      'Decide the retention window for archived agent transcripts',
+    );
+    await expect(editor.getByLabel('Body')).toHaveValue(
+      'The archive TTL was never settled. Needs a call before the watcher ships.',
+    );
+    await editor.getByLabel('Title').fill(updatedTitle);
+    await editor.getByLabel('Body').fill(updatedBody);
+    await editor.getByRole('button', { name: 'Save changes' }).click();
+
+    await expect(page.getByText('#9001 updated')).toBeVisible();
+    await expect(editor).toBeHidden();
+    await expect(detail.getByText(updatedTitle)).toBeVisible();
+
+    // The Bridge intentionally excludes decision work like #9001; its
+    // deploy-wait tier still renders the same shared ItemOverflowMenu. Edit
+    // that surface's own issue through the same production path.
+    await page.goto('/');
+    await page.getByRole('button', { name: 'More actions for #9004' }).click();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+    const bridgeEditor = page.getByRole('dialog', { name: 'Edit #9004' });
+    await expect(bridgeEditor.getByLabel('Title')).toHaveValue(
+      'Verify the session-cost budget alert after the next deploy',
+    );
+    await expect(bridgeEditor.getByLabel('Body')).toHaveValue(
+      'Parked until the alert ships to production.',
+    );
+    await bridgeEditor
+      .getByLabel('Title')
+      .fill('Verify the deployed session-cost alert');
+    await bridgeEditor
+      .getByLabel('Body')
+      .fill('Run the production verification after deploy.');
+    await bridgeEditor.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByText('#9004 updated')).toBeVisible();
+    await expect(
+      page.getByText('Verify the deployed session-cost alert'),
+    ).toBeVisible();
+
+    // The canonical task detail is a separate route backed by a direct
+    // issue lookup rather than the open-item board, but it exposes the same
+    // mutation menu and persisted content too.
+    await page.goto(
+      `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.humanNeeded}`,
+    );
+    await page.getByRole('button', { name: 'More actions for #9001' }).click();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+    const taskEditor = page.getByRole('dialog', { name: 'Edit #9001' });
+    await expect(taskEditor.getByLabel('Title')).toHaveValue(updatedTitle);
+    await expect(taskEditor.getByLabel('Body')).toHaveValue(updatedBody);
+    await taskEditor.getByRole('button', { name: 'Cancel' }).click();
+
+    // Claimed-but-idle rows are the remaining ActionItem surface and now
+    // carry the shared overflow menu alongside their optional session link.
+    await page.goto('/agents');
+    const claimedIdle = page.getByTestId('claimed-idle-section');
+    await claimedIdle
+      .getByRole('button', { name: 'More actions for #9001' })
+      .click();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+    const agentsEditor = page.getByRole('dialog', { name: 'Edit #9001' });
+    await expect(agentsEditor.getByLabel('Title')).toHaveValue(updatedTitle);
+    await expect(agentsEditor.getByLabel('Body')).toHaveValue(updatedBody);
   });
 
   test('renders live and finished run rows across the status palette', async ({

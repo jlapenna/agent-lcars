@@ -11,6 +11,10 @@
     "lint": "nx run-many -t lint --all",
     "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
     "prepare": "if [ -z \"$CI\" ]; then pnpm exec husky; fi",
+    "trajectory:collect": "node tools/trajectory-evaluation/cli.mjs collect",
+    "trajectory:compare": "node tools/trajectory-evaluation/cli.mjs compare --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json --variant tools/trajectory-evaluation/variants/issue-523-reliability-v1.json",
+    "trajectory:report": "node tools/trajectory-evaluation/cli.mjs report --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json",
+    "trajectory:validate": "node tools/trajectory-evaluation/cli.mjs validate --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json",
     "tsc": "nx run-many -t typecheck",
     "lint:circular": "madge --circular --extensions ts,tsx --ts-config tsconfig.base.json --exclude '.*(dist|test|spec).*' libs/ apps/",
     "verify": "pnpm format:check && pnpm lint && pnpm lint:circular && nx run-many -t test typecheck build --all"

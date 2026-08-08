@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # dispatch-canary.yml failed 7 consecutive scheduled runs with nobody
 # notified - a human found it by hand (see this action's directory). This
-# is the fix: track ONE durable issue across a failure streak (the marker
-# below), not one issue per failed run, and auto-resolve it the moment the
-# canary recovers - an alert that only ever opens becomes noise and gets
-# ignored, which is the exact failure mode this closes.
+# is the reusable fix: track ONE durable issue PER WORKFLOW across a failure
+# streak, not one issue per failed run (or one fleet issue that an unrelated
+# healthy workflow can close), and auto-resolve it when that workflow recovers.
 #
 # Deliberately never persists state in a file: a state file is itself a
 # thing that can silently stop being written, which is the same failure
 # mode this whole action exists to catch. The consecutive-failure count is
-# instead re-derived live from the canary workflow's own run history via
+# instead re-derived live from the watched workflow's own run history via
 # the API every time this runs.
 #
 # Left strict (set -uo pipefail, no -e): every gh/API call below is
@@ -17,7 +16,7 @@
 # the script exits 1 - never silently swallowed, never misreported as
 # "nothing to alert on". The caller's composite step is
 # continue-on-error: true (see action.yml) specifically so this script
-# failing loudly here can never flip the canary job's own conclusion.
+# failing loudly here can never flip the watched workflow's own conclusion.
 set -uo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
@@ -26,10 +25,20 @@ set -uo pipefail
 : "${RUN_ID:?RUN_ID is required}"
 : "${CANARY_STATUS:?CANARY_STATUS is required}"
 : "${WORKFLOW_FILE:?WORKFLOW_FILE is required}"
+: "${WORKFLOW_EVENT:=}"
 : "${WORKFLOW_NAME:?WORKFLOW_NAME is required}"
 : "${MAINTAINER:?MAINTAINER is required}"
 
-MARKER='<!-- agent-lcars:canary-alert:v1 -->'
+if [[ ! "$WORKFLOW_FILE" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]]; then
+  echo "::error::Invalid workflow filename for alert identity: $WORKFLOW_FILE"
+  exit 1
+fi
+if [ -n "$WORKFLOW_EVENT" ] && [[ ! "$WORKFLOW_EVENT" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo "::error::Invalid workflow event for alert history: $WORKFLOW_EVENT"
+  exit 1
+fi
+MARKER="<!-- agent-lcars:workflow-alert:v1:$WORKFLOW_FILE -->"
+LEGACY_CANARY_MARKER='<!-- agent-lcars:canary-alert:v1 -->'
 RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -40,8 +49,16 @@ TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # first (same paginate-because-the-marker-is-the-identity-check reasoning
 # as verify-deliverable.sh's clause 0).
 find_open_alert_issues() {
+  local marker_filter
+  marker_filter="select((.body // \"\") | contains(\"$MARKER\"))"
+  # dispatch-canary.yml shipped before alert identity became per-workflow.
+  # Adopt its legacy marker until that incident closes; no other workflow
+  # may see or mutate it.
+  if [ "$WORKFLOW_FILE" = "dispatch-canary.yml" ]; then
+    marker_filter="select(((.body // \"\") | contains(\"$MARKER\")) or ((.body // \"\") | contains(\"$LEGACY_CANARY_MARKER\")))"
+  fi
   gh api "repos/$REPO/issues?state=open&per_page=100" --paginate \
-    --jq ".[] | select(has(\"pull_request\") | not) | select((.body // \"\") | contains(\"$MARKER\")) | .number"
+    --jq ".[] | select(has(\"pull_request\") | not) | $marker_filter | .number"
 }
 
 if ! open_issues_raw=$(find_open_alert_issues 2>&1); then
@@ -51,8 +68,7 @@ fi
 
 open_issue_num=""
 if [ -n "$open_issues_raw" ]; then
-  # More than one match should never happen (dispatch-canary-run's
-  # concurrency group serializes runs), but resolve deterministically to
+  # More than one match should never happen, but resolve deterministically to
   # the oldest rather than picking whichever line the API happened to
   # return first.
   open_issue_num=$(sort -n <<<"$open_issues_raw" | head -n1)
@@ -64,7 +80,7 @@ fi
 
 if [ "$CANARY_STATUS" = "success" ]; then
   if [ -z "$open_issue_num" ]; then
-    echo "::notice::Canary succeeded and no open alert issue is tracked - nothing to do."
+    echo "::notice::$WORKFLOW_NAME succeeded and no open alert issue is tracked - nothing to do."
     exit 0
   fi
   recovery_body="$WORKFLOW_NAME recovered: $RUN_URL succeeded at $TIMESTAMP UTC. Closing this alert."
@@ -73,7 +89,7 @@ if [ "$CANARY_STATUS" = "success" ]; then
     echo "::error::Failed to post recovery comment and close alert issue #$open_issue_num: $close_output"
     exit 1
   fi
-  echo "::notice::Canary recovered - closed alert issue #$open_issue_num."
+  echo "::notice::$WORKFLOW_NAME recovered - closed alert issue #$open_issue_num."
   exit 0
 fi
 
@@ -81,7 +97,7 @@ fi
 # report-failure.sh draws) path below: CANARY_STATUS is anything but
 # "success". ---
 
-# Consecutive-failure count, derived live from the canary workflow's own
+# Consecutive-failure count, derived live from the watched workflow's own
 # run history: status=completed server-side excludes in-progress/queued
 # runs, and THIS run is also explicitly excluded by id as belt-and-braces -
 # it cannot have a final conclusion yet, since we are still executing its
@@ -89,7 +105,7 @@ fi
 # at the first "success" - every other completed conclusion (failure,
 # cancelled, timed_out, action_required, ...) extends the streak, because
 # all of them mean "the canary was not healthy", which is what a human
-# staring at a run of dead canaries actually cares about, not the
+# staring at a run of failed workflows actually cares about, not the
 # fine-grained conclusion label.
 #
 # Paginated: a single page (previously a flat per_page=50, one request) only
@@ -118,7 +134,11 @@ while [ "$page" -le "$MAX_PAGES" ]; do
   # server-side anyway - status=completed already excludes it) would make a
   # genuinely full page look short by exactly one and stop pagination a
   # page early.
-  if ! page_payload=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs?status=completed&per_page=$PER_PAGE&page=$page" \
+  run_history_path="repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs?status=completed&per_page=$PER_PAGE&page=$page"
+  if [ -n "$WORKFLOW_EVENT" ]; then
+    run_history_path="$run_history_path&event=$WORKFLOW_EVENT"
+  fi
+  if ! page_payload=$(gh api "$run_history_path" \
     --jq '{raw_count: (.workflow_runs | length), conclusions: [.workflow_runs[] | select(.id != '"$RUN_ID"') | .conclusion]}' 2>&1); then
     echo "::error::Consecutive-failure count lookup (gh api repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs, page $page) failed: $page_payload"
     exit 1

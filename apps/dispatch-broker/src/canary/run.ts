@@ -1,7 +1,7 @@
 // Production dispatch-broker canary lifecycle (#307, final child of epic
 // #301). Reuses the SAME hardened GitHub API client and ledger parser the
 // broker itself uses (../github-api.ts) rather than a parallel
-// implementation: create a dedicated, clearly-marked issue -> dispatch it
+// implementation: reuse one canonical, clearly-marked issue -> dispatch it
 // through agent-router.yml's real `kind: 'canary'` broker path -> poll the
 // real ledger comment to a terminal state -> clean up (close on success,
 // park status:needs-human with evidence on failure, mirroring
@@ -12,6 +12,7 @@
 //   - post-deploy-smoke.yml: chained off "Deploy console" completing,
 //     supplies live-url so a broken deployed revision is caught before
 //     (and instead of) exercising the broker.
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
@@ -45,6 +46,7 @@ interface GitHubIssueSummary {
   title?: string;
   body?: string | null;
   created_at: string;
+  updated_at?: string;
   labels?: (string | { name?: string })[];
   pull_request?: unknown;
 }
@@ -55,8 +57,13 @@ type FetchLike = (
   init: { method: string; signal: AbortSignal },
 ) => Promise<{ ok: boolean; status: number }>;
 
-const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
+// v1 marked one throwaway issue per run. The distinct v2 marker is the
+// durable identity of the one canonical issue introduced by #677; it must
+// not accidentally adopt one of the many historical v1 artifacts.
+const CANARY_MARKER = '<!-- agent-lcars:dispatch-canary-canonical:v2 -->';
+const LEGACY_CANARY_MARKER = '<!-- agent-lcars:dispatch-canary:v1 -->';
 const CANARY_TITLE_PREFIX = '[dispatch-canary]';
+const CANARY_TITLE = '[dispatch-canary] Production dispatch broker canary';
 const LIVE_URL_PROBE_MAX_ATTEMPTS = 5;
 const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
 // A canary lifecycle round-trips through agent-router.yml's `broker` job
@@ -72,10 +79,13 @@ const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
 // evidence showed one hop alone taking up to ~16.6 minutes, and one
 // two-hop round trip totaling ~20 minutes, while the dispatch broker
 // itself completed every one of those generations successfully -- the
-// ledger just hadn't caught up before this poll gave up. 25 minutes
-// keeps a real, bounded budget (a genuinely wedged broker still fails
-// loud) while comfortably covering the worst round trip observed so far.
-const LEDGER_POLL_TIMEOUT_MS = 25 * 60 * 1000;
+// ledger just hadn't caught up before this poll gave up. Production run
+// 31255623033 then spent about 24 minutes queued across the two broker
+// hops and converged successfully at about 26 minutes, disproving the old
+// 25-minute bound (#772). 30 minutes retains a real failure budget while
+// covering that observed round trip. The two orchestrator jobs keep a
+// separate ten-minute margin for failure parking and action teardown.
+const LEDGER_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 // Mirrors ../main.ts's handleCompletion poll-until-terminal backoff (same
 // start/cap/doubling shape) rather than a flat interval: start small so a
 // fast-completing canary is detected quickly, double each attempt, and cap
@@ -92,8 +102,8 @@ const TERMINAL_REJECTED_STATES = new Set([
 // a job-level `timeout-minutes` or an operator/workflow cancellation tears
 // down the whole runner process, including anything still awaiting inside
 // pollCanaryLedger, before that catch block ever runs. Neither
-// dispatch-canary.yml (timeout-minutes: 35) nor post-deploy-smoke.yml
-// (timeout-minutes: 35) has a separate cleanup job to survive that -- this
+// dispatch-canary.yml (timeout-minutes: 40) nor post-deploy-smoke.yml
+// (timeout-minutes: 40) has a separate cleanup job to survive that -- this
 // canary is a small, self-contained workflow, not embedded in
 // deploy-console.yml's own job, so there is no natural place to split
 // "verify" and "cleanup" into two jobs the way the epic design audit (#301)
@@ -101,11 +111,11 @@ const TERMINAL_REJECTED_STATES = new Set([
 //
 // sweepStaleCanaries below is the deterministic-rediscovery backstop that
 // design explicitly calls for instead: dispatch-canary.yml runs it, hourly,
-// unconditionally, before creating its own new canary, so a killed run's
+// unconditionally, before refreshing the canonical canary, so a killed run's
 // issue is found and closed/parked within one hour at the very most --
 // still "automatically cleaned up" per #307's acceptance bar, just not
 // synchronously. Pinned to exactly both orchestrators' own
-// timeout-minutes: 35 job budget, not padded beyond it (PR #448 review):
+// timeout-minutes: 40 job budget, not padded beyond it (PR #448 review):
 // GitHub Actions kills a job the instant its own runtime hits
 // timeout-minutes, so an open, marked canary issue older than that value
 // can ONLY mean its own orchestrator run was killed before reaching its
@@ -116,10 +126,10 @@ const TERMINAL_REJECTED_STATES = new Set([
 // to sweep but not yet old enough to pass this filter -- for an orphan
 // that lands in that window right before an hourly pass, the janitor
 // skips it and it waits a full extra cycle, silently breaking the "next
-// pass" guarantee above. Keeping this well under the hourly cadence (35
+// pass" guarantee above. Keeping this well under the hourly cadence (40
 // min < 60 min) still guarantees a genuinely killed run is swept by the
 // very next scheduled pass.
-const STALE_CANARY_AGE_MS = 35 * 60 * 1000;
+const STALE_CANARY_AGE_MS = 40 * 60 * 1000;
 
 function env(name: string, required = true): string {
   const value = process.env[name];
@@ -181,12 +191,13 @@ interface IssueBodyContext {
 
 function issueBody({ source, runUrl, deployRunUrl }: IssueBodyContext): string {
   const lines = [
-    'Automated production canary for the dispatch broker (#307). Created, ' +
-      'dispatched through the real dispatch broker and a dedicated no-op ' +
-      'worker (`.github/workflows/agent-dispatch-canary.yml`), verified, ' +
-      'and closed automatically. It never invokes a paid model, GCP ' +
-      'credential, or self-hosted/privileged runner -- see ' +
-      'docs/e2e-security-boundary.md.',
+    'Canonical automated production canary for the dispatch broker ' +
+      '(#307, #677). Every run reuses this issue, dispatches it through ' +
+      'the real broker and a dedicated no-op worker ' +
+      '(`.github/workflows/agent-dispatch-canary.yml`), then closes it on ' +
+      'success or leaves it open as a release blocker on failure. It never ' +
+      'invokes a paid model, GCP credential, or self-hosted/privileged ' +
+      'runner -- see docs/e2e-security-boundary.md.',
     '',
     `Source: ${source}`,
     `Orchestrator run: ${runUrl}`,
@@ -196,22 +207,53 @@ function issueBody({ source, runUrl, deployRunUrl }: IssueBodyContext): string {
   return lines.join('\n');
 }
 
-async function createCanaryIssue(
+async function prepareCanaryIssue(
   api: GitHubApiClient,
   repository: string,
   context: IssueBodyContext,
 ): Promise<{ number: number }> {
   const root = repositoryPath({ repository });
-  const timestamp = new Date().toISOString();
+  const issues = await listAll<GitHubIssueSummary>(
+    api,
+    `${root}/issues?state=all`,
+  );
+  const canonical = issues.filter(
+    (issue) =>
+      !issue.pull_request &&
+      issue.title?.startsWith(CANARY_TITLE_PREFIX) &&
+      issue.body?.includes(CANARY_MARKER),
+  );
+  if (canonical.length > 1) {
+    throw new Error(
+      `Duplicate canonical dispatch canary issues: ${canonical
+        .map((issue) => `#${issue.number}`)
+        .join(', ')}`,
+    );
+  }
+
+  const body = issueBody(context);
+  if (canonical.length === 1) {
+    const existing = canonical[0];
+    await api.requestOk(`${root}/issues/${existing.number}`, {
+      method: 'PATCH',
+      // Reopening before the probe makes a killed orchestrator visible to
+      // the stale-canary janitor. The broker deliberately allows only its
+      // no-op canary pipeline to dispatch against the ledger's possibly
+      // still-closed control projection; ordinary work remains fail-closed.
+      body: { title: CANARY_TITLE, body, state: 'open' },
+    });
+    return { number: existing.number };
+  }
+
   const issue = await api.requestOk<{ number?: unknown }>(`${root}/issues`, {
     method: 'POST',
     body: {
-      title: `[dispatch-canary] Production dispatch broker canary — ${timestamp}`,
-      body: issueBody(context),
+      title: CANARY_TITLE,
+      body,
     },
   });
   if (!Number.isSafeInteger(issue?.number)) {
-    throw new Error('GitHub did not return the created canary issue number');
+    throw new Error('GitHub did not return the canonical canary issue number');
   }
   // isSafeInteger narrows at runtime but not for TS -- same posture as
   // github-api.ts's findSupersedingRouterRun, which casts immediately
@@ -223,11 +265,16 @@ async function dispatchRouterCanary(
   api: GitHubApiClient,
   repository: string,
   issueNumber: number,
-): Promise<void> {
-  await dispatchRouterEvent(
+  callerId: string,
+): Promise<{ runId: number; runUrl: string; htmlUrl: string }> {
+  return dispatchRouterEvent(
     api,
     { repository },
-    { kind: 'canary', issue: String(issueNumber) },
+    {
+      kind: 'canary',
+      issue: String(issueNumber),
+      caller_id: callerId,
+    },
   );
 }
 
@@ -274,14 +321,19 @@ interface FoundGeneration {
 async function findCanaryGeneration(
   api: GitHubApiClient,
   task: LedgerTaskRef,
+  sourceId?: string,
 ): Promise<FoundGeneration | undefined> {
   const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
     createIfMissing: false,
   });
   if (!loaded) return undefined;
-  const generation = loaded.ledger.generations.find(
-    (candidate) => candidate.pipeline === 'canary',
-  );
+  const generation = loaded.ledger.generations
+    .filter(
+      (candidate) =>
+        candidate.pipeline === 'canary' &&
+        (sourceId === undefined || candidate.sourceId === sourceId),
+    )
+    .sort((left, right) => right.generation - left.generation)[0];
   return generation ? { ledger: loaded.ledger, generation } : undefined;
 }
 
@@ -289,6 +341,25 @@ interface PollCanaryLedgerOptions {
   timeoutMs?: number;
   sleepImpl?: SleepImpl;
   now?: () => number;
+  sourceId?: string;
+  log?: (message: string) => void;
+}
+
+function describeCanaryObservation(found?: FoundGeneration): string {
+  if (!found) return 'awaiting a ledger generation for this caller';
+  const { generation } = found;
+  const attempt = generation.attempt;
+  return [
+    `g${generation.generation}`,
+    `state=${generation.state}`,
+    `worker=${attempt?.htmlUrl ?? 'unbound'}`,
+    `status=${attempt?.status ?? 'unknown'}`,
+    `conclusion=${attempt?.conclusion ?? 'unknown'}`,
+  ].join(' ');
+}
+
+function elapsedSeconds(startedAt: number, observedAt: number): number {
+  return Math.max(0, Math.round((observedAt - startedAt) / 1000));
 }
 
 async function pollCanaryLedger(
@@ -298,23 +369,38 @@ async function pollCanaryLedger(
     timeoutMs = LEDGER_POLL_TIMEOUT_MS,
     sleepImpl = sleep,
     now = () => Date.now(),
+    sourceId,
+    log = console.log,
   }: PollCanaryLedgerOptions = {},
 ): Promise<FoundGeneration & { rejected?: boolean }> {
-  const deadline = now() + timeoutMs;
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
   let delay = LEDGER_POLL_BACKOFF_START_MS;
+  let lastObservation: string | undefined;
   while (now() < deadline) {
-    const found = await findCanaryGeneration(api, task);
+    const found = await findCanaryGeneration(api, task, sourceId);
+    const observation = describeCanaryObservation(found);
+    if (observation !== lastObservation) {
+      log(
+        `::notice::canary ledger after ${elapsedSeconds(startedAt, now())}s: ${observation}`,
+      );
+      lastObservation = observation;
+    }
     if (found?.generation.state === 'completed') {
       return found;
     }
     if (found && TERMINAL_REJECTED_STATES.has(found.generation.state)) {
       return { ...found, rejected: true };
     }
-    await sleepImpl(delay);
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await sleepImpl(Math.min(delay, remaining));
     delay = Math.min(delay * 2, LEDGER_POLL_BACKOFF_MAX_MS);
   }
   throw new Error(
-    'Timed out waiting for the canary dispatch ledger to reach a terminal state',
+    'Timed out waiting for the canary dispatch ledger to reach a terminal ' +
+      `state after ${elapsedSeconds(startedAt, now())}s; last observation: ` +
+      `${lastObservation ?? 'poll ended before the first observation'}`,
   );
 }
 
@@ -346,6 +432,17 @@ async function closeCanaryIssue(
     method: 'PATCH',
     body: { state: 'closed', state_reason: 'completed' },
   });
+  const unlabel = await api.request(
+    `${root}/issues/${task.issue}/labels/${encodeURIComponent(
+      'status:needs-human',
+    )}`,
+    { method: 'DELETE' },
+  );
+  if (unlabel.status !== 200 && unlabel.status !== 404) {
+    throw new Error(
+      `Could not clear status:needs-human from canonical canary issue: HTTP ${unlabel.status}`,
+    );
+  }
 }
 
 // Mirrors ../github-api.ts's failClosed/ensureNeedsHumanParked convention:
@@ -359,6 +456,13 @@ async function parkCanaryFailure(
   reason: string,
 ): Promise<void> {
   const root = repositoryPath(task);
+  // A previous successful run leaves the canonical issue closed. Reopen it
+  // before recording a failure so the one durable issue, rather than a new
+  // artifact, becomes the visible release blocker.
+  await api.requestOk(`${root}/issues/${task.issue}`, {
+    method: 'PATCH',
+    body: { state: 'open' },
+  });
   try {
     await api.requestOk(`${root}/issues/${task.issue}/comments`, {
       method: 'POST',
@@ -490,8 +594,16 @@ async function sweepStaleCanaries(
   const stale = openIssues.filter((issue) => {
     if (issue.pull_request) return false;
     if (!issue.title?.startsWith(CANARY_TITLE_PREFIX)) return false;
-    if (!issue.body?.includes(CANARY_MARKER)) return false;
-    const ageMsActual = now() - Date.parse(issue.created_at);
+    const canonical = issue.body?.includes(CANARY_MARKER);
+    const legacy = issue.body?.includes(LEGACY_CANARY_MARKER);
+    if (!canonical && !legacy) return false;
+    // A canonical issue may be years old and still healthy. Its current run
+    // starts when prepareCanaryIssue updates/reopens it, whereas a legacy v1
+    // issue was immutable after creation and keeps the old created-at clock.
+    const activityAt = canonical
+      ? (issue.updated_at ?? issue.created_at)
+      : issue.created_at;
+    const ageMsActual = now() - Date.parse(activityAt);
     return Number.isFinite(ageMsActual) && ageMsActual >= ageMs;
   });
 
@@ -531,6 +643,7 @@ interface RunDispatchCanaryOptions {
   liveUrl?: string;
   probeOptions?: ProbeLiveUrlOptions;
   pollOptions?: PollCanaryLedgerOptions;
+  callerId?: string;
 }
 
 async function runDispatchCanary({
@@ -544,6 +657,7 @@ async function runDispatchCanary({
   liveUrl,
   probeOptions = {},
   pollOptions = {},
+  callerId = randomUUID(),
 }: RunDispatchCanaryOptions): Promise<{ issue: number }> {
   if (liveUrl) {
     const probe = await probeLiveUrl(liveUrl, probeOptions);
@@ -553,7 +667,7 @@ async function runDispatchCanary({
       // trail as every other broker failure instead of a silent log line.
       // A broken deploy is not the broker's fault, so the canary dispatch
       // itself is deliberately skipped -- it would only be misleading.
-      const issue = await createCanaryIssue(api, repository, {
+      const issue = await prepareCanaryIssue(api, repository, {
         source,
         runUrl,
         deployRunUrl,
@@ -565,7 +679,7 @@ async function runDispatchCanary({
     }
   }
 
-  const issue = await createCanaryIssue(api, repository, {
+  const issue = await prepareCanaryIssue(api, repository, {
     source,
     runUrl,
     deployRunUrl,
@@ -573,8 +687,17 @@ async function runDispatchCanary({
   const task = { repositoryId, repository, issue: issue.number };
 
   try {
-    await dispatchRouterCanary(api, repository, issue.number);
-    const result = await pollCanaryLedger(api, task, pollOptions);
+    const routerRun = await dispatchRouterCanary(
+      api,
+      repository,
+      issue.number,
+      callerId,
+    );
+    console.log(`::notice::canary router dispatched: ${routerRun.htmlUrl}`);
+    const result = await pollCanaryLedger(api, task, {
+      ...pollOptions,
+      sourceId: callerId,
+    });
     const conclusion = result.generation?.attempt?.conclusion;
     if (result.rejected || conclusion !== 'success') {
       throw new Error(
@@ -673,11 +796,12 @@ if (
 export {
   CANARY_SWEEP_CONCURRENCY,
   closeCanaryIssue,
-  createCanaryIssue,
   dispatchRouterCanary,
   issueBody,
+  LEDGER_POLL_TIMEOUT_MS,
   parkCanaryFailure,
   pollCanaryLedger,
+  prepareCanaryIssue,
   probeLiveUrl,
   runDispatchCanary,
   STALE_CANARY_AGE_MS,

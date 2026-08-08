@@ -151,6 +151,9 @@ issues and pull requests. GitHub App identities, including
   new GitHub account/repo as a registration on the shared runner fleet.
 - [docs/e2e-security-boundary.md](docs/e2e-security-boundary.md) — the
   credential-free local/CI E2E contract and incident-rotation boundary.
+- [docs/trajectory-evaluation.md](docs/trajectory-evaluation.md) — the
+  reviewed production-trajectory corpus, rolling read-only report, and
+  mutation-free prompt/setup comparison boundary.
 - [docs/bot-identity-formats.md](docs/bot-identity-formats.md) — why
   `claude[bot]` (REST) and `app/claude` (GraphQL) are the same identity in
   two shapes, and which one is canonical here.

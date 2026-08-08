@@ -62,6 +62,9 @@ describe('ClaimedIdleSection', () => {
     expect(screen.getByTestId('compact-item-5')).toHaveTextContent(
       /updated .+ ago/,
     );
+    expect(
+      screen.getByRole('button', { name: 'More actions for #5' }),
+    ).toBeTruthy();
   });
 
   it('shows the takeover command when the item has one', () => {

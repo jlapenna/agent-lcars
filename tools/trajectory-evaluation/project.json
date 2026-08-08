@@ -1,0 +1,30 @@
+{
+  "name": "@agent-lcars/trajectory-evaluation",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "tools/trajectory-evaluation",
+  "projectType": "application",
+  "tags": ["platform:tooling", "scope:observability"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec vitest run --config tools/contract-tests/vitest.config.mts tools/trajectory-evaluation/trajectory-evaluation.test.mjs",
+        "cwd": "."
+      }
+    },
+    "report": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/trajectory-evaluation/cli.mjs report --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json",
+        "cwd": "."
+      }
+    },
+    "compare": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/trajectory-evaluation/cli.mjs compare --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json --variant tools/trajectory-evaluation/variants/issue-523-reliability-v1.json",
+        "cwd": "."
+      }
+    }
+  }
+}

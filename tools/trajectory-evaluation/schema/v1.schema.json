@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jlapenna/agent-lcars/tools/trajectory-evaluation/schema/v1.schema.json",
+  "title": "Agent LCARS production trajectory corpus v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "corpusId",
+    "frozenAt",
+    "sourceWindow",
+    "privacy",
+    "entries"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "agent-lcars.trajectory-corpus/v1"
+    },
+    "corpusId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "frozenAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sourceWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "selection", "sourceRefs"],
+      "properties": {
+        "from": { "type": "string", "format": "date-time" },
+        "to": { "type": "string", "format": "date-time" },
+        "selection": { "type": "string", "minLength": 1 },
+        "sourceRefs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sourceRef" }
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contentPolicy", "redactionPolicy", "transcriptPolicy"],
+      "properties": {
+        "contentPolicy": { "enum": ["public-metadata", "reference-only"] },
+        "redactionPolicy": { "const": "agent-lcars.trajectory-redaction/v1" },
+        "transcriptPolicy": { "const": "protected-reference-only" }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "url", "access"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "workflow-run",
+            "workflow-job",
+            "issue",
+            "pull-request",
+            "dispatch-brief",
+            "dispatch-ledger",
+            "trajectory-archive",
+            "transcript",
+            "review"
+          ]
+        },
+        "url": { "type": "string", "minLength": 1 },
+        "sha256": { "type": ["string", "null"] },
+        "access": { "enum": ["public", "protected"] }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["availability", "capturedAt", "sourceRef"],
+      "properties": {
+        "availability": { "enum": ["captured", "reference-only"] },
+        "capturedAt": { "type": ["string", "null"], "format": "date-time" },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "title": { "type": ["string", "null"] },
+        "state": { "enum": ["open", "closed", "unknown"] },
+        "labels": { "type": "array", "items": { "type": "string" } },
+        "bodySha256": { "type": ["string", "null"] },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "repository",
+        "repositoryVisibility",
+        "anchor",
+        "taskClass",
+        "dispatch",
+        "setup",
+        "protocol",
+        "milestones",
+        "trajectory",
+        "terminal",
+        "quality",
+        "efficiency",
+        "annotations",
+        "sourceRefs"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^run-[0-9]+$" },
+        "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+        "repositoryVisibility": { "enum": ["public", "private"] },
+        "anchor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["number", "type", "snapshot"],
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 },
+            "type": { "enum": ["issue", "pull-request"] },
+            "snapshot": { "$ref": "#/$defs/snapshot" }
+          }
+        },
+        "taskClass": { "type": "string", "minLength": 1 },
+        "dispatch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "generation",
+            "workflowSha",
+            "workflowPath",
+            "runId",
+            "runUrl",
+            "workflowConclusion",
+            "agent",
+            "provider",
+            "model",
+            "budgetMinutes",
+            "brief"
+          ],
+          "properties": {
+            "mode": { "enum": ["implement", "review", "reply", "unknown"] },
+            "generation": { "type": ["integer", "null"], "minimum": 1 },
+            "workflowSha": { "type": "string", "minLength": 7 },
+            "workflowPath": { "type": "string", "minLength": 1 },
+            "runId": { "type": "integer", "minimum": 1 },
+            "runUrl": { "type": "string", "minLength": 1 },
+            "workflowConclusion": {
+              "enum": [
+                "success",
+                "failure",
+                "cancelled",
+                "timed_out",
+                "unknown"
+              ]
+            },
+            "agent": { "enum": ["claude", "codex", "opencode", "unknown"] },
+            "provider": { "type": "string", "minLength": 1 },
+            "model": { "type": ["string", "null"] },
+            "budgetMinutes": { "type": ["integer", "null"], "minimum": 1 },
+            "brief": { "$ref": "#/$defs/snapshot" }
+          }
+        },
+        "setup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "agentProcessStarted", "modelTurnObserved"],
+          "properties": {
+            "outcome": {
+              "enum": [
+                "ready",
+                "credential-failure",
+                "provider-failure",
+                "bootstrap-failure",
+                "unknown"
+              ]
+            },
+            "agentProcessStarted": { "type": ["boolean", "null"] },
+            "modelTurnObserved": { "type": ["boolean", "null"] }
+          }
+        },
+        "protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "takeover",
+            "progress",
+            "durableResult",
+            "terminalBehavior",
+            "adherent"
+          ],
+          "properties": {
+            "takeover": { "$ref": "#/$defs/protocolObservation" },
+            "progress": { "$ref": "#/$defs/protocolObservation" },
+            "durableResult": { "$ref": "#/$defs/protocolObservation" },
+            "terminalBehavior": { "$ref": "#/$defs/protocolObservation" },
+            "adherent": { "type": ["boolean", "null"] }
+          }
+        },
+        "milestones": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "queuedAt",
+            "agentStartedAt",
+            "takeoverAt",
+            "diagnosisAt",
+            "firstDurableArtifactAt",
+            "terminalAt"
+          ],
+          "properties": {
+            "queuedAt": { "type": "string", "format": "date-time" },
+            "agentStartedAt": {
+              "type": ["string", "null"],
+              "format": "date-time"
+            },
+            "takeoverAt": { "type": ["string", "null"], "format": "date-time" },
+            "diagnosisAt": {
+              "type": ["string", "null"],
+              "format": "date-time"
+            },
+            "firstDurableArtifactAt": {
+              "type": ["string", "null"],
+              "format": "date-time"
+            },
+            "terminalAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "trajectory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "archiveRefs"],
+          "properties": {
+            "outcome": {
+              "enum": [
+                "not-started",
+                "productive",
+                "loop",
+                "tool-failure",
+                "provider-delay",
+                "unknown"
+              ]
+            },
+            "archiveRefs": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/sourceRef" }
+            }
+          }
+        },
+        "terminal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "artifactRefs"],
+          "properties": {
+            "kind": {
+              "enum": [
+                "startup-failure",
+                "provider-failure",
+                "trajectory-failure",
+                "correct-park",
+                "correct-no-op",
+                "outcome-gate-failure",
+                "merged-deliverable",
+                "superseded-duplicate",
+                "unknown-success"
+              ]
+            },
+            "artifactRefs": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/sourceRef" }
+            }
+          }
+        },
+        "quality": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accepted", "ci", "review", "merged", "regression"],
+          "properties": {
+            "accepted": { "type": ["boolean", "null"] },
+            "ci": { "enum": ["green", "red", "not-applicable", "unknown"] },
+            "review": {
+              "enum": [
+                "no-objection",
+                "defect-found",
+                "not-applicable",
+                "unknown"
+              ]
+            },
+            "merged": { "type": ["boolean", "null"] },
+            "regression": { "enum": ["none-known", "reverted", "unknown"] }
+          }
+        },
+        "efficiency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "queueSeconds",
+            "modelSeconds",
+            "firstArtifactSeconds",
+            "runnerMinutes",
+            "retries"
+          ],
+          "properties": {
+            "queueSeconds": { "type": ["number", "null"], "minimum": 0 },
+            "modelSeconds": { "type": ["number", "null"], "minimum": 0 },
+            "firstArtifactSeconds": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "runnerMinutes": { "type": ["number", "null"], "minimum": 0 },
+            "retries": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["automatic", "human"],
+          "properties": {
+            "automatic": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["confidence", "sourceRefs"],
+              "properties": {
+                "confidence": { "enum": ["high", "medium", "low", "unknown"] },
+                "sourceRefs": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/sourceRef" }
+                }
+              }
+            },
+            "human": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": [
+                "reviewer",
+                "reviewedAt",
+                "confidence",
+                "useful",
+                "correctness",
+                "notes"
+              ],
+              "properties": {
+                "reviewer": { "type": "string", "minLength": 1 },
+                "reviewedAt": { "type": "string", "format": "date-time" },
+                "confidence": { "enum": ["high", "medium", "low"] },
+                "useful": { "type": "boolean" },
+                "correctness": {
+                  "enum": ["correct", "incorrect", "inconclusive"]
+                },
+                "notes": { "type": "string" }
+              }
+            }
+          }
+        },
+        "sourceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sourceRef" }
+        }
+      }
+    },
+    "protocolObservation": {
+      "enum": ["observed", "missing", "not-applicable", "unknown"]
+    }
+  }
+}

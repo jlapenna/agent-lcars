@@ -39,7 +39,11 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
 
   The action exports `AGENT_PROTOCOL_PATH` and `AGENT_DISPATCH_CONTEXT` for
   subsequent steps and exposes the same values as `protocol-path` and `path`
-  outputs. Do not check this repository out inside the consumer repository;
+  outputs. The example uses the backward-compatible 60-minute runtime defaults
+  (durable artifact by minute 25, scope finalization by minute 45) and the
+  caller's ambient `github.token`. Pass `token` and all three deadline inputs
+  explicitly when the agent step uses different credentials or a different
+  timeout. Do not check this repository out inside the consumer repository;
   runtime-only files must never appear in the consumer's Git status.
 
 - Write that delta skill (mirror `.agents/skills/lcars/lcars-protocol.md`

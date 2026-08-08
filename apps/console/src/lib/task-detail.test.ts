@@ -66,6 +66,7 @@ function issueResponse(overrides: Record<string, unknown> = {}) {
     data: {
       number: 42,
       title: 'Fix the thing',
+      body: `Original task body\n\n<!-- agent-lcars:quick-task-request:v1 id=11111111-1111-4111-8111-111111111111 digest=${'a'.repeat(64)} -->`,
       html_url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
       state: 'open',
       labels: [],
@@ -157,6 +158,7 @@ describe('getTaskDetail', () => {
     if (result.status !== 'ok') return;
     expect(result.anchorState).toBe('open');
     expect(result.work.title).toBe('Fix the thing');
+    expect(result.item.body).toBe('Original task body');
     expect(result.work.provenance).toEqual({ kind: 'legacy' });
     expect(result.work.attempts).toEqual([]);
   });
@@ -257,6 +259,84 @@ describe('getTaskDetail', () => {
     expect(result.work.attempts[0].attribution).toBe('ledger');
     expect(result.work.intents).toHaveLength(1);
     expect(result.work.state).toBe('active');
+  });
+
+  it('reports a closed task as merged only for its attempt-persisted PR number', async () => {
+    const completedLedger = ledgerJson({
+      control: { closed: true },
+      generations: [
+        {
+          generation: 1,
+          intentId: 'intent-abc',
+          sourceId: 'src-1',
+          occurredAt: '2026-07-07T00:00:00Z',
+          pipeline: 'claude',
+          state: 'completed',
+          attempt: {
+            runId: 1,
+            outcome: 'pull-request',
+            outcomeReference: { kind: 'pull-request', number: 77 },
+          },
+        },
+      ],
+    });
+    const issuesGet = vi
+      .fn()
+      .mockResolvedValue(issueResponse({ state: 'closed' }));
+    const graphql = vi.fn().mockResolvedValue({
+      repository: {
+        i42: {
+          __typename: 'Issue',
+          comments: {
+            nodes: [
+              {
+                body: `${LEDGER_MARKER}\n\`\`\`json\n${JSON.stringify(completedLedger)}\n\`\`\``,
+                url: 'https://x/1',
+              },
+            ],
+          },
+          closedByPullRequestsReferences: {
+            nodes: [
+              {
+                number: 77,
+                url: 'https://github.com/supersprinklesracing/sprinkles/pull/77',
+                mergedAt: '2026-07-07T01:00:00Z',
+              },
+            ],
+          },
+        },
+      },
+    });
+    setupOctokit({ issuesGet, graphql });
+    cachedActivity = {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [
+        {
+          id: 1,
+          repo: DEFAULT_REPO,
+          pipeline: 'claude',
+          status: 'completed',
+          conclusion: 'success',
+          event: 'workflow_dispatch',
+          url: 'https://github.com/o/r/actions/runs/1',
+          displayTitle: '#42: Claude issue agent [dispatch:g1:intent-abc]',
+          issueNumber: 42,
+          createdAt: '2026-07-07T00:00:00Z',
+          updatedAt: '2026-07-07T01:00:00Z',
+          elapsedSeconds: 3600,
+        },
+      ],
+    };
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.work.attempts[0].outcome).toBe('merged-deliverable');
+    expect(result.work.intents[0].outcome).toBe('merged-deliverable');
   });
 
   it('resolves the watched repo for a supported owner/repo pair regardless of casing in the URL params', async () => {

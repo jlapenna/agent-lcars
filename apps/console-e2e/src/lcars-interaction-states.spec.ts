@@ -207,4 +207,23 @@ test.describe('overlays inherit the LCARS theme', () => {
     );
     await expect(dialog).toBeHidden();
   });
+
+  test('Quick Task remembers the selected agent after a page reload', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Quick task' }).click();
+    let dialog = page.getByRole('dialog');
+    await dialog.getByRole('combobox', { name: 'Agent' }).click();
+    await page.getByRole('option', { name: 'opencode' }).click();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+
+    await page.reload();
+    await page.getByRole('button', { name: 'Quick task' }).click();
+    dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('combobox', { name: 'Agent' })).toHaveValue(
+      'opencode',
+    );
+  });
 });

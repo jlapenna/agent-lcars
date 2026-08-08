@@ -1,4 +1,4 @@
-import { expect, Page, test } from '@playwright/test';
+import { expect, type Page, type Response, test } from '@playwright/test';
 
 import { useCliSessionFixtures } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
@@ -32,15 +32,13 @@ import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 useE2eAdminBeforeEach();
 useCliSessionFixtures();
 
-/** Mirrors `E2E_QUICK_TASK_FORCE_4XX_TITLE` in
+/** Mirrors `E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION` in
  * `apps/console/src/lib/e2e-github-fixtures.ts` (duplicated for the same
  * module-boundary reason `seed.ts`'s other mirrored constants are - this
  * `platform:web` e2e project cannot import from the `platform:nextjs`
- * frontend app). Typing this into the real "Title" field is the only way to
- * deterministically drive a definitive-4xx fixture response through the
- * real UI: every other field it controls (description, pipeline, repo) is
- * otherwise always valid. */
-const FORCE_4XX_TITLE = 'E2E_QUICK_TASK_FORCE_4XX';
+ * frontend app). */
+const FORCE_4XX_DESCRIPTION = 'E2E_QUICK_TASK_FORCE_4XX';
+const DELAY_DESCRIPTION = 'E2E_QUICK_TASK_DELAY';
 
 const TASK_REF_RE =
   /^Quick task filed as supersprinklesracing\/sprinkles#(\d+)$/;
@@ -77,14 +75,8 @@ async function openQuickTask(page: Page) {
   await expect(page.getByRole('dialog')).toBeVisible();
 }
 
-async function fillAndSubmit(
-  page: Page,
-  { title, description }: { title?: string; description: string },
-) {
+async function fillAndSubmit(page: Page, description: string) {
   const dialog = page.getByRole('dialog');
-  if (title !== undefined) {
-    await dialog.getByLabel('Title').fill(title);
-  }
   await dialog.getByLabel('Description').fill(description);
   await dialog.getByRole('button', { name: 'File & dispatch' }).click();
 }
@@ -93,15 +85,33 @@ function taskRefNotification(page: Page) {
   return page.getByRole('link', { name: TASK_REF_RE });
 }
 
+/** Best-effort drain for Next's streamed Server Action response. The usable
+ * payload can be complete while the framework keeps the stream open; page
+ * cleanup must not turn that into an unbounded test gate (#519). */
+async function drainActionResponse(response: Response): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      response.finished().then(() => undefined),
+      new Promise<void>((resolve) => {
+        timeoutId = setTimeout(resolve, 2_000);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 test.describe('Quick Task write path (agent-lcars#307)', () => {
   test('files a task through the real server action with canonical identity, one-write labels, a broker decision, and attempt presentation', async ({
     page,
   }) => {
     await page.goto('/');
     await openQuickTask(page);
-    await fillAndSubmit(page, {
-      description: 'E2E happy path: investigate the flaky retry test',
-    });
+    await fillAndSubmit(
+      page,
+      'E2E happy path: investigate the flaky retry test',
+    );
 
     const receipt = taskRefNotification(page);
     await expect(receipt).toBeVisible();
@@ -173,9 +183,15 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await page.goto('/');
 
     const description = 'E2E idempotency check: same request ID twice';
+    const capturedAt = '2026-08-08T12:34:56.000Z';
 
     await openQuickTask(page);
-    await fillAndSubmit(page, { description });
+    // Auto-captured context is part of the human-readable issue body and
+    // therefore its digest. Hold this editable field constant so the two
+    // requests are genuinely byte-identical; a fixed UUID with a different
+    // capture time must (correctly) conflict as different content.
+    await page.getByRole('dialog').getByLabel('Captured at').fill(capturedAt);
+    await fillAndSubmit(page, description);
     const firstReceipt = taskRefNotification(page);
     await expect(firstReceipt).toBeVisible();
     await expect(firstReceipt).toHaveAttribute(
@@ -213,7 +229,15 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // that those are different: same content under a *different* ID is a
     // new, unrelated task).
     await openQuickTask(page);
-    await fillAndSubmit(page, { description });
+    await page.getByRole('dialog').getByLabel('Captured at').fill(capturedAt);
+    const retryActionRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        Boolean(request.headers()['next-action']),
+      { timeout: 30_000 },
+    );
+    await fillAndSubmit(page, description);
+    const actionRequest = await retryActionRequest;
     const secondReceipt = taskRefNotification(page);
     await expect(secondReceipt).toBeVisible();
     // Asserted against the locator (not a bare string equality on two
@@ -221,6 +245,144 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // still the right expected value: proof the retry resolved to the
     // exact same issue rather than merely "some" issue.
     await expect(secondReceipt).toHaveAttribute('href', firstHref ?? '');
+    // The receipt proves the Server Action payload already delivered its
+    // result. Give that exact response a short best-effort drain before page
+    // cleanup to avoid Next's false "destination stream closed early" log,
+    // but do not make a framework stream that remains open an unbounded test
+    // gate (#519). In the full serial suite Next can retain this response
+    // after its usable payload is complete even though an isolated run closes
+    // it immediately.
+    const actionResponse = await actionRequest.response();
+    expect(actionResponse).not.toBeNull();
+    await drainActionResponse(actionResponse!);
+  });
+
+  test('files a second task while the first Server Action request is still pending', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    await openQuickTask(page);
+    await fillAndSubmit(page, DELAY_DESCRIPTION);
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(
+      page.getByText('Filing and dispatching quick task…'),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Quick task' }),
+    ).toBeEnabled();
+
+    await openQuickTask(page);
+    await fillAndSubmit(page, 'Second quick task while the first is pending');
+    await expect(page.getByRole('dialog')).toBeHidden();
+
+    const seenReceipts = new Set<string>();
+    await expect
+      .poll(
+        async () => {
+          const hrefs = await taskRefNotification(page).evaluateAll((links) =>
+            links.flatMap((link) =>
+              link instanceof HTMLAnchorElement ? [link.href] : [],
+            ),
+          );
+          for (const href of hrefs) seenReceipts.add(href);
+          return seenReceipts.size;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(2);
+  });
+
+  test('edits a filed Quick Task without exposing or invalidating its identity marker', async ({
+    page,
+  }) => {
+    const originalDescription = 'Original Quick Task description';
+    await page.goto('/');
+    await openQuickTask(page);
+    const intake = page.getByRole('dialog');
+    await intake.getByLabel('Description').fill(originalDescription);
+    await intake.getByRole('button', { name: 'Add guided details' }).click();
+    await intake.getByLabel('Observed').fill('The old behavior is visible.');
+    await intake.getByLabel('Expected').fill('The corrected behavior appears.');
+    await intake
+      .getByLabel('Done when')
+      .fill('The browser regression remains green.');
+    await intake
+      .getByLabel('Evidence links')
+      .fill('https://example.invalid/evidence');
+
+    const previewTitle = intake.getByTestId('quick-task-preview-title');
+    const previewBody = intake.getByTestId('quick-task-preview-body');
+    await expect(previewTitle).toHaveText(originalDescription);
+    await expect(previewBody).toContainText('## Problem details');
+    await expect(previewBody).toContainText(
+      '### Observed\nThe old behavior is visible.',
+    );
+    await expect(previewBody).toContainText('## Source context');
+    await expect(previewBody).toContainText(
+      '- Repository: `supersprinklesracing/sprinkles`',
+    );
+    await expect(previewBody).toContainText('- Console route: `/`');
+    await expect(previewBody).not.toContainText(
+      'agent-lcars:quick-task-request',
+    );
+    const exactPreviewBody = (await previewBody.textContent()) ?? '';
+    await intake.getByRole('button', { name: 'File & dispatch' }).click();
+
+    const receipt = taskRefNotification(page);
+    await expect(receipt).toBeVisible();
+    const href = await receipt.getAttribute('href');
+    const issueNumber = Number(href?.match(/\/issues\/(\d+)$/u)?.[1]);
+    expect(issueNumber).toBeGreaterThan(0);
+
+    await page.goto(`/task/supersprinklesracing/sprinkles/${issueNumber}`);
+    // Detail pages contribute their canonical identity instead of making the
+    // client infer it from hidden page data. The source block remains
+    // editable before the next issue is filed.
+    await openQuickTask(page);
+    await expect(page.getByLabel('Console route')).toHaveValue(
+      `/task/supersprinklesracing/sprinkles/${issueNumber}`,
+    );
+    await expect(page.getByLabel('Related identity')).toHaveValue(
+      `Task: supersprinklesracing/sprinkles#${issueNumber}`,
+    );
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toBeHidden();
+
+    const overflow = page.getByRole('button', {
+      name: `More actions for #${issueNumber}`,
+    });
+    await overflow.click();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+
+    const editor = page.getByRole('dialog', {
+      name: `Edit #${issueNumber}`,
+    });
+    await expect(editor.getByLabel('Title')).toHaveValue(originalDescription);
+    // The exact preview crossed the real Server Action and GitHub fixture
+    // unchanged. The edit path strips only the hidden identity marker.
+    await expect(editor.getByLabel('Body')).toHaveValue(exactPreviewBody);
+    await expect(editor.getByLabel('Body')).not.toHaveValue(
+      /agent-lcars:quick-task-request/u,
+    );
+
+    await editor.getByLabel('Title').fill('Edited Quick Task title');
+    await editor.getByLabel('Body').fill('Edited Quick Task description');
+    await editor.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByText(`#${issueNumber} updated`)).toBeVisible();
+    await expect(overflow).toBeEnabled();
+
+    await overflow.click();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+    const reopened = page.getByRole('dialog', {
+      name: `Edit #${issueNumber}`,
+    });
+    await expect(reopened.getByLabel('Title')).toHaveValue(
+      'Edited Quick Task title',
+    );
+    await expect(reopened.getByLabel('Body')).toHaveValue(
+      'Edited Quick Task description',
+    );
   });
 
   test('a definitive 4xx from GitHub fails closed with no phantom issue', async ({
@@ -228,10 +390,7 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
   }) => {
     await page.goto('/');
     await openQuickTask(page);
-    await fillAndSubmit(page, {
-      title: FORCE_4XX_TITLE,
-      description: 'E2E 4xx check: this attempt must fail closed',
-    });
+    await fillAndSubmit(page, FORCE_4XX_DESCRIPTION);
 
     // The Server Action surfaces GitHub's own error message (see
     // actions.ts's `toUserErrorMessage`) rather than a generic failure -
@@ -241,10 +400,11 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
       page.getByText('E2E fixture: forced definitive Quick Task failure'),
     ).toBeVisible();
 
-    // Failure never closes the dialog (quick-task-button.tsx only calls
-    // close() on success) and never shows a success receipt - the UI must
-    // not pretend a task was filed when GitHub definitively rejected it.
-    await expect(page.getByRole('dialog')).toBeVisible();
+    // The dialog closes immediately for non-blocking intake, but the failed
+    // snapshot remains retryable under the same request ID. No success
+    // receipt may appear for the rejected write.
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
     await expect(taskRefNotification(page)).toHaveCount(0);
   });
 });

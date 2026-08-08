@@ -33,9 +33,11 @@
  * `verify` CI job -- which is what actually runs `nx test
  * @agent-lcars/dispatch-broker` in CI -- installs no Java at all (see
  * apps/runner-autoscaler/runner-image/Dockerfile); only the separate `e2e`
- * job installs Java 21, and only for Playwright's suite. Making this
- * spec's emulator a hard requirement would therefore break `verify` in CI,
- * not just fail one spec.
+ * job installs Java 21. That job invokes this spec directly before the
+ * Playwright suite, so CI proves the real transactional contract without
+ * adding Java or emulator startup cost to every `verify` run. Making this
+ * spec's emulator a hard requirement in the broker's ordinary test target
+ * would still break `verify` in CI, not just fail one spec.
  *
  * So: if a suitable `java` is not on PATH, this file registers ONE explicit
  * `test.skip` naming exactly why, instead of either (a) hard-failing a CI
@@ -228,6 +230,24 @@ if (!javaCheck.ok) {
         }, 100);
       }),
     ]);
+
+    // A listening TCP socket only proves that the Java process bound its
+    // port. On a cold CI host, google-gax can still spend several seconds
+    // initializing its first channel (including the one-time metadata
+    // availability probe) before the first document read. Pay that startup
+    // cost inside beforeAll's explicit 60-second budget so the shared
+    // contract's ordinary five-second per-case timeout measures storage
+    // behavior, not emulator/client boot (#732 CI acceptance).
+    await clearFirestoreData();
+    const warmupPort = new FirestoreStoragePort({
+      projectId: PROJECT_ID,
+      emulatorHost: EMULATOR_HOST,
+    });
+    await warmupPort.readTask({
+      repositoryId: 0,
+      repository: 'warmup/firestore-emulator',
+      issue: 0,
+    });
   }, 60_000);
 
   afterAll(async () => {

@@ -7,7 +7,8 @@ import {
   createQuickTaskClaimRef,
   createQuickTaskClaimTag,
   deleteQuickTaskClaimRef,
-  E2E_QUICK_TASK_FORCE_4XX_TITLE,
+  E2E_QUICK_TASK_DELAY_DESCRIPTION,
+  E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION,
   enrichmentGraphql,
   getQuickTaskClaimRefSha,
   getQuickTaskClaimTag,
@@ -19,6 +20,7 @@ import {
   quickTaskListingIssues,
   recordQuickTaskIssue,
   selfHostedRunners,
+  updateFixtureIssueContent,
   workflowRuns,
 } from '../../../../../lib/e2e-github-fixtures';
 
@@ -195,6 +197,14 @@ export async function POST(
       inputs?: Record<string, string>;
       ref?: string;
     };
+    const issueNumber = body.inputs?.['issue'] ?? '';
+    const isReconcile =
+      body.ref === 'main' &&
+      body.inputs?.['kind'] === 'reconcile' &&
+      /^\d+$/u.test(issueNumber);
+    if (isReconcile) {
+      return NextResponse.json({ workflow_run_id: 99000 });
+    }
     const callerId = body.inputs?.['caller_id'] ?? '';
     if (
       body.ref !== 'main' ||
@@ -202,7 +212,7 @@ export async function POST(
       !['claude', 'codex', 'opencode'].includes(
         body.inputs?.['pipeline'] ?? '',
       ) ||
-      !/^\d+$/u.test(body.inputs?.['issue'] ?? '') ||
+      !/^\d+$/u.test(issueNumber) ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
         callerId,
       )
@@ -263,14 +273,16 @@ export async function POST(
       );
     }
     // Deliberate failure-injection sentinel (see this constant's own doc
-    // comment) - lets a spec drive a definitive, claim-releasing 4xx
-    // through the real "Title" field rather than needing an out-of-band
-    // control channel the real UI has no way to exercise.
-    if (body.title === E2E_QUICK_TASK_FORCE_4XX_TITLE) {
+    // comment) - lets a spec drive a definitive, claim-releasing 4xx through
+    // the real description field rather than an out-of-band control channel.
+    if (body.body?.split('\n', 1)[0] === E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION) {
       return NextResponse.json(
         { message: 'E2E fixture: forced definitive Quick Task failure' },
         { status: 422 },
       );
+    }
+    if (body.body?.split('\n', 1)[0] === E2E_QUICK_TASK_DELAY_DESCRIPTION) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
     const pipeline = agentLabels[0].slice('agent:'.length) as
       'claude' | 'codex' | 'opencode';
@@ -344,6 +356,37 @@ export async function POST(
   }
   console.error(
     'agent-lcars: no e2e GitHub fixture for POST /%s',
+    path.join('/'),
+  );
+  return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  if (!isE2eTesting()) {
+    return NextResponse.json({ message: 'Not Found' }, { status: 404 });
+  }
+  const { path } = await params;
+  if (path[0] === 'repos' && path.length === 5 && path[3] === 'issues') {
+    const body = (await req.json()) as { title?: unknown; body?: unknown };
+    if (typeof body.title !== 'string' || typeof body.body !== 'string') {
+      return NextResponse.json(
+        { message: 'Invalid issue edit fixture request' },
+        { status: 422 },
+      );
+    }
+    const updated = updateFixtureIssueContent(Number(path[4]), {
+      title: body.title,
+      body: body.body,
+    });
+    return updated
+      ? NextResponse.json(updated)
+      : NextResponse.json({ message: 'Not Found' }, { status: 404 });
+  }
+  console.error(
+    'agent-lcars: no e2e GitHub fixture for PATCH /%s',
     path.join('/'),
   );
   return NextResponse.json({ message: 'Not Found' }, { status: 404 });

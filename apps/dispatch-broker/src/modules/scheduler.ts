@@ -16,6 +16,8 @@
 
 import type {
   DispatchLedger,
+  DispatchOutcomeKind,
+  DispatchOutcomeReference,
   LedgerGeneration,
   LedgerRunAttempt,
   LedgerTaskRef,
@@ -34,6 +36,53 @@ interface RunBinding {
   runUrl: string;
   htmlUrl: string;
   workflow?: string;
+}
+
+function recordOutcome(
+  ledger: DispatchLedger,
+  generationNumber: number,
+  outcome: DispatchOutcomeKind,
+  outcomeReference?: DispatchOutcomeReference,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
+  if (
+    !generation ||
+    ![
+      'active',
+      'completion-observed',
+      'completion-awaiting-terminal',
+      'completed',
+    ].includes(generation.state)
+  ) {
+    throw new Error('Generation is not awaiting a worker outcome');
+  }
+  const attempt = attemptOf(generation);
+  if (attempt.outcome && attempt.outcome !== outcome) {
+    throw new Error(
+      `Generation ${generationNumber} already reported outcome ${attempt.outcome}, not ${outcome}`,
+    );
+  }
+  if (
+    outcomeReference &&
+    attempt.outcomeReference &&
+    JSON.stringify(attempt.outcomeReference) !==
+      JSON.stringify(outcomeReference)
+  ) {
+    throw new Error(
+      `Generation ${generationNumber} already reported a different outcome reference`,
+    );
+  }
+  if (
+    attempt.outcome === outcome &&
+    (!outcomeReference || attempt.outcomeReference)
+  ) {
+    return ledger;
+  }
+  return mutate(ledger, now, () => {
+    attempt.outcome = outcome;
+    if (outcomeReference) attempt.outcomeReference = outcomeReference;
+  });
 }
 
 /** What `completeRun` needs from a terminal run observation. */
@@ -75,6 +124,16 @@ function attemptOf(generation: LedgerGeneration): LedgerRunAttempt {
   return attempt;
 }
 
+function canDispatchOnAnchor(
+  ledger: DispatchLedger,
+  generation: LedgerGeneration,
+): boolean {
+  // #677's canonical production canary is deliberately closed while
+  // healthy. Only its structurally no-op pipeline may continue dispatching
+  // against that reused anchor; ordinary work remains blocked by closure.
+  return !ledger.control.closed || generation.pipeline === 'canary';
+}
+
 function beginDispatch(
   ledger: DispatchLedger,
   generationNumber: number,
@@ -85,7 +144,9 @@ function beginDispatch(
   if (!generation || !['accepted', 'pending'].includes(generation.state)) {
     throw new Error('Generation is not dispatchable');
   }
-  if (ledger.control.closed) throw new Error('Closed anchor cannot dispatch');
+  if (!canDispatchOnAnchor(ledger, generation)) {
+    throw new Error('Closed anchor cannot dispatch');
+  }
   if (
     ledger.generations.some((candidate) => ACTIVE_STATES.has(candidate.state))
   ) {
@@ -147,12 +208,11 @@ function markDispatchRejected(
     const attempt = attemptOf(generation);
     attempt.rejectedAt = now;
     attempt.rejectionReason = reason;
-    if (!ledger.control.closed) {
-      promoted = ledger.generations.find(
-        (candidate) => candidate.state === 'pending',
-      );
-      if (promoted) promoted.state = 'accepted';
-    }
+    promoted = ledger.generations.find(
+      (candidate) =>
+        candidate.state === 'pending' && canDispatchOnAnchor(ledger, candidate),
+    );
+    if (promoted) promoted.state = 'accepted';
   });
   return { ledger, promotedGeneration: promoted?.generation };
 }
@@ -308,12 +368,11 @@ function completeRun(
     attempt.status = observation.status;
     attempt.conclusion = conclusion;
     attempt.completedAt = observation.completedAt ?? now;
-    if (!ledger.control.closed) {
-      promoted = ledger.generations.find(
-        (candidate) => candidate.state === 'pending',
-      );
-      if (promoted) promoted.state = 'accepted';
-    }
+    promoted = ledger.generations.find(
+      (candidate) =>
+        candidate.state === 'pending' && canDispatchOnAnchor(ledger, candidate),
+    );
+    if (promoted) promoted.state = 'accepted';
   });
   return { ledger, promotedGeneration: promoted?.generation };
 }
@@ -344,6 +403,7 @@ export {
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
+  recordOutcome,
   restoreAcceptedForLaunchRetry,
   verifyPreflight,
 };

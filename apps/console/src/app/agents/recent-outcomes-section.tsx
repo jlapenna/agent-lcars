@@ -1,3 +1,4 @@
+import type { DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { Card, Stack, Text, Title } from '@mantine/core';
 
@@ -23,11 +24,14 @@ const PIPELINE_TITLES: Record<AgentPipeline, string> = {
 export function RecentOutcomesSection({
   recentRuns,
   sessionsByRunId = {},
+  outcomesByRunId = {},
 }: {
   recentRuns: AgentRun[];
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByNumericRunId` in run-classification.ts. */
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+  /** Broker-owned lifecycle outcomes keyed by the exact bound workflow run. */
+  outcomesByRunId?: Record<number, DispatchOutcomeKind>;
 }) {
   return (
     <Card
@@ -61,6 +65,7 @@ export function RecentOutcomesSection({
                     key={run.id}
                     run={run}
                     session={sessionsByRunId[run.id]}
+                    outcome={outcomesByRunId[run.id]}
                   />
                 ))}
               </Stack>

@@ -66,21 +66,22 @@ confirm the symptom but not the cause.
 The fast path. Match what you're looking at, then go to that system's
 section.
 
-| What you observe                                                                                                                                                                        | Owning system                                                                                                                                                              | Look here first                                                                                                                                 |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue carries the right `agent:*` label but nothing dispatches; `agent-router.yml` runs show `cancelled` with **zero steps executed**                                                   | Dispatch controller                                                                                                                                                        | The run's own step list (0 steps = evicted, not failed) — see worked incident below                                                             |
-| Issue carries the right `agent:*` label but nothing dispatches, and `gh run list --workflow agent-router.yml` shows **no run at all** for the event                                     | Dispatch controller (event-trigger path) — **not** Runner platform: runner selection happens only after GitHub creates the run, so an absent run was never queued anywhere | Whether the event reached GitHub and matched `agent-router.yml`'s trigger filters at all (webhook delivery, event type, label)                  |
-| `agent-router.yml` jobs sit **queued**, never even starting                                                                                                                             | Runner platform                                                                                                                                                            | `gh api repos/<owner>/<repo>/actions/runners` for a runner carrying `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}`                                    |
-| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                                                 | Dispatch controller (hosted reconciliation)                                                                                                                                | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                       |
-| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                                                  | Runner platform                                                                                                                                                            | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                            |
-| A published action (`run-dispatch-canary`, `rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                                                                                                                        | The failing step's raw log, before assuming an authorization/ordering bug                                                                       |
-| A scheduled workflow (canary or otherwise) has been failing quietly and nobody noticed                                                                                                  | _No system owned this until `dispatch-canary.yml` specifically_                                                                                                            | `.github/actions/canary-alert` — open PR [#707](https://github.com/jlapenna/agent-lcars/pull/707), not yet merged; see its own subsection below |
-| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                                                   | Worker runtime (bootstrap phase)                                                                                                                                           | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                         |
-| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                                           | Worker runtime (provider admission/execution)                                                                                                                              | The agent step's own log; `opencode-model-canary.yml`'s last scheduled result                                                                   |
-| Agent process exits 0, but no PR/comment/label shows up, or an unrelated artifact gets credited                                                                                         | Outcome finalizer                                                                                                                                                          | `.github/actions/verify-deliverable`'s log line naming which clause (0, a–e) it evaluated                                                       |
-| Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                                           | Outcome finalizer / Projector (reporting) — see the seam note in that section                                                                                              | `.github/actions/report-failure`'s log                                                                                                          |
-| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                                           | Projector/read model                                                                                                                                                       | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                                    |
-| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                                                  | Dispatch controller (reconciliation)                                                                                                                                       | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                           |
+| What you observe                                                                                                                                                                        | Owning system                                                                                                                                                              | Look here first                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Issue carries the right `agent:*` label but nothing dispatches; `agent-router.yml` runs show `cancelled` with **zero steps executed**                                                   | Dispatch controller                                                                                                                                                        | The run's own step list (0 steps = evicted, not failed) — see worked incident below                                                       |
+| Issue carries the right `agent:*` label but nothing dispatches, and `gh run list --workflow agent-router.yml` shows **no run at all** for the event                                     | Dispatch controller (event-trigger path) — **not** Runner platform: runner selection happens only after GitHub creates the run, so an absent run was never queued anywhere | Whether the event reached GitHub and matched `agent-router.yml`'s trigger filters at all (webhook delivery, event type, label)            |
+| `agent-router.yml` jobs sit **queued**, never even starting                                                                                                                             | Runner platform                                                                                                                                                            | `gh api repos/<owner>/<repo>/actions/runners` for a runner carrying `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}`                              |
+| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                                                 | Dispatch controller (hosted reconciliation)                                                                                                                                | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                 |
+| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                                                  | Runner platform                                                                                                                                                            | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                      |
+| A published action (`run-dispatch-canary`, `rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                                                                                                                        | The failing step's raw log, before assuming an authorization/ordering bug                                                                 |
+| A scheduled workflow (canary or self-healer) fails or times out repeatedly                                                                                                              | Workflow failure alerts                                                                                                                                                    | Its workflow-specific `status:needs-human` issue (`<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`); see the coverage table below |
+| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                                                   | Worker runtime (bootstrap phase)                                                                                                                                           | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                   |
+| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                                           | Worker runtime (provider admission/execution)                                                                                                                              | The agent step's own log; `opencode-model-canary.yml`'s last scheduled result                                                             |
+| Agent process exits 0, but no PR/comment/label shows up, or an unrelated artifact gets credited                                                                                         | Outcome finalizer                                                                                                                                                          | `.github/actions/verify-deliverable`'s log line naming which clause (0, a–e) it evaluated                                                 |
+| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                                                  | Outcome finalizer (post-dispatch landing observer)                                                                                                                         | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment        |
+| Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                                           | Outcome finalizer / Projector (reporting) — see the seam note in that section                                                                                              | `.github/actions/report-failure`'s log                                                                                                    |
+| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                                           | Projector/read model                                                                                                                                                       | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                              |
+| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                                                  | Dispatch controller (reconciliation)                                                                                                                                       | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                     |
 
 ## 1. Dispatch controller
 
@@ -133,6 +134,31 @@ and the dispatch ledger itself.
   `.github/actions/run-dispatch-canary` — the controller's own end-to-end
   canary (structurally incapable of touching self-hosted infra or a paid
   model; runs on `ubuntu-latest`).
+
+**Park admission policy (#720):** `status:needs-human` is a real stop signal
+for ordinary agent spend. A generation may still become `accepted` in the
+ledger when the generation ahead of it resolves — accepted means ordered and
+ready, not unconditionally admitted — but `dispatchAccepted()` re-reads the
+anchor's live labels immediately before launch and holds it while the park is
+present. Removing the label emits serialized control evidence and wakes that
+same broker path; the 30-minute reconciler is a backstop if the webhook is
+lost. Intent is preserved, never dropped, and no second authorization is
+invented. The no-op canary pipeline alone is exempt because a failed canary
+parks its canonical issue and its next probe must still run to prove recovery.
+
+**Lane-readiness admission policy (#523):** worker allocation also stops when
+the repository has a durable, open health incident for the selected lane.
+`readLaneReadiness()` consumes the shared `bootstrap-canary.yml` alert for all
+three lanes, the exact-provider `opencode-model-canary.yml` alert for OpenCode,
+and one lane-specific incident marker for a trusted Claude/Codex credential
+failure. The broker checks this after accepting the ordered generation but
+before `beginDispatch()` or the worker-workflow POST. It projects one
+pipeline-keyed hold comment onto the task and leaves the generation accepted;
+it deliberately does **not** add `status:needs-human` to the task, because that
+label means a human owns the task's next decision and would prevent automatic
+recovery. The health incident itself carries `status:needs-human`. Closing it
+(or letting a canary close it) is the health transition; scheduled reconcile
+then dispatches the same generation without inventing another authorization.
 
 **What breaking looks like (worked incident — PR
 [#703](https://github.com/jlapenna/agent-lcars/pull/703)):** the `normalize`
@@ -191,9 +217,15 @@ agent-labeled or agent-fleet-assigned issue/PR every 30 minutes and
 re-drives a generation stuck `dispatching`/`dispatch-unknown` through the
 same per-issue serialized `agent-router.yml` path every other trigger uses.
 Past a bounded retry count it parks `status:needs-human` instead of retrying
-forever. It **cannot** recover an intent whose labels changed after the
-event that would have carried the real signal was lost — that class needs a
-human to re-apply the correct label or use the console's retrigger action.
+forever. A queued/accepted ordinary generation remains held while that park
+label is present and resumes after a maintainer removes it. The reconciler
+also reconstructs a queue-evicted current agent/review-label intent from its
+real, maintainer-authored timeline source, including a relabel after an
+earlier generation completed (#639). Repeated scans and a delayed original
+webhook reuse that exact source ID and cannot create a second generation. A
+digest-valid, maintainer-authored Quick Task is the narrow creation-time
+fallback because GitHub emits no separate timeline event for labels included
+in the issue-creation request (#634).
 The scheduled scan runs through App Hosting from `ubuntu-latest`, so a
 `CONTROL_PLANE_RUNNER_LABEL` outage can delay the per-issue router repairs
 but cannot prevent their durable `workflow_dispatch` runs from being
@@ -297,10 +329,12 @@ invoking the requested agent/provider combination.
 
 **Code:**
 
-- `.github/workflows/claude.yml`, `codex.yml`, `opencode.yml` — one job
-  each. **Not yet split into separate execute/finalize jobs** (Phase 3's
-  "Split execute and finalize jobs" bullet is unstarted); bootstrap, the
-  agent step, and the post-agent gates all run in the same job today. All
+- `.github/workflows/claude.yml`, `codex.yml`, `opencode.yml` — the normal
+  bootstrap, agent step, and post-agent gates remain in one self-hosted job,
+  plus each calls the shared GitHub-hosted
+  `agent-fallback-finalize.yml` when that primary gate cannot prove it
+  completed (#639). This is a bootstrap-independent safety path, not yet a
+  full extraction of every normal finalization into the second job. All
   three share the same sequence: checkout → snapshot enforcement scripts →
   authority-storage auth (authority mode only) → broker preflight → mint
   agent token → claim issue → agent setup → verify agent identity → prepare
@@ -312,6 +346,20 @@ invoking the requested agent/provider combination.
   lifecycle scaffolding with one worker harness" bullet, done for bootstrap
   and post-agent gates; the harness is these shared composite actions plus
   `post-agent-gates.sh`, not yet a single first-class module).
+- `.github/actions/prepare-agent-dispatch` — immediately before the model
+  step, fetches the live anchor and serializes dispatch-brief schema 2: current
+  state/title/body/labels/assignees, checkbox acceptance criteria, the prior
+  generation's terminal result, the latest structured agent result, requested
+  result kinds, and exact UTC deadline/checkpoint timestamps. Anchor text is
+  explicitly untrusted data, not instructions. Generating this at the last
+  responsible moment prevents an early job-start snapshot from becoming the
+  agent's working context after a long bootstrap.
+- `.github/actions/archive-opencode-trajectory` — after OpenCode runs, exports
+  every workspace-scoped session created after the dispatch start with
+  `opencode export --sanitize`, writes a compact manifest, and uploads it as a
+  30-day artifact. Export failure is visible but fail-soft, so diagnostics
+  cannot replace the worker's real result. The persisted trajectory separates
+  provider delay, repeated model summaries, tool failure, and productive work.
 - `.github/workflows/bootstrap-canary.yml` — proves the self-hosted
   bootstrap sequence (runner allocation, App-token mint, enforcement-script
   snapshot, telemetry sidecar WIF auth) on the real fleet without invoking a
@@ -354,25 +402,24 @@ reaches finalization and projection (worker-token minting failing is an
 explicit acceptance scenario in #645), and a provider failure is bounded,
 worker-owned retry, never controller-level retry.
 
-**That "still reaches finalization" guarantee has a gap at the very start
-of bootstrap.** Each worker's post-agent step runs
+**The start-of-bootstrap reporting gap is covered by an independent fallback
+(#639).** Each worker's primary post-agent step runs
 `bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"`
 unconditionally (`if: always()`), but that script is written to
 `$RUNNER_TEMP` only by the earlier "Snapshot post-agent enforcement
 scripts" step (`.github/actions/snapshot-enforcement-scripts`), which in
 turn depends on checkout having already succeeded (it's a local composite
 action, resolvable only once the repo is on disk). If checkout or that
-snapshot step itself fails, `post-agent-gates.sh` was never written, so the
-`if: always()` step fails on a missing file instead of running
-verify-deliverable/report-failure — no finalizer report reaches the issue.
-"Return completion observation to the broker" doesn't cover this either:
-it's also `uses: ./.github/actions/dispatch-broker`, a checkout-local
-composite action GitHub Actions cannot resolve without a successful
-checkout. So a failure in checkout or the enforcement-script snapshot — the
-first two bootstrap steps in `claude.yml`/`codex.yml`/`opencode.yml` — is
-the one bootstrap-failure shape that reaches neither finalization nor the
-controller's completion callback; it surfaces only as a red job with no
-comment, label, or ledger update.
+snapshot step itself fails, that primary path cannot run. The worker therefore
+publishes `post_agent_gates_complete=true` only after either a clean outcome
+needs no report or its failure report actually landed. If that proof is
+missing, `agent-fallback-finalize.yml` runs on `ubuntu-latest`, posts one
+run-keyed report, parks `status:needs-human`, and assigns the maintainer using
+the workflow's native token **before its own checkout**. It then checks out the
+trusted revision solely to send the controller completion callback; scheduled
+controller reconciliation remains the backstop if even that checkout/callback
+fails. Runner loss, checkout failure, snapshot failure, and primary reporter
+failure therefore cannot remain a red job with no anchor-visible state.
 
 **First three things to check:**
 
@@ -394,18 +441,30 @@ comment, label, or ledger update.
 
 **Who/what repairs it:** nothing automatically retries a worker-runtime
 failure at this layer — provider retry is bounded and stays inside the
-worker's own adapter, and a worker that fails bootstrap still reaches
-finalization/reporting rather than being silently swallowed. Recurrence
+worker's own adapter, and a worker that fails bootstrap still reaches the
+primary or hosted fallback finalization/reporting path rather than being
+silently swallowed. Recurrence
 across multiple dispatches is a human problem: a stale credential, a
 provider outage, or a broken bootstrap step needs a maintainer, not a
 reconciler.
+
+There is one deliberate circuit breaker before that human repair. A trusted
+Codex auth/bootstrap step failure, or Claude's proven zero-cost OAuth failure
+signature, returns a typed readiness signal in the completion callback. The
+broker creates or reuses exactly one lane incident and blocks later allocations
+as described in the Dispatch controller section. A callback write failure is
+retryable; after its completion source is persisted, stale redelivery cannot
+reopen an incident a maintainer already closed. OpenCode provider readiness is
+instead driven proactively by its exact-model canary. No fake Claude/Codex
+"whoami" probe exists: neither credential has an honest cheap network liveness
+check, so local credential presence is never promoted to provider health.
 
 ## 4. Outcome finalizer
 
 **Owns, in principle:** terminal attempt state and deliverable validity —
 independent of the agent filesystem or work credential.
 
-**What actually exists today is split across two places that don't yet
+**What actually exists today is split across three places that don't yet
 share a boundary**, and naming that split is more useful than pretending
 it's already one system:
 
@@ -420,6 +479,14 @@ it's already one system:
   `status:needs-human` label appearing, an expected bot comment on a reply
   or runbook dispatch, or a PR review on a review dispatch). The inference
   path is explicitly kept until soak, per #645, not removed yet.
+  A comment carrying both the exact attempt claim and
+  `<!-- agent-result:v1:no-op -->` is the machine-verifiable already-resolved
+  result; a generic implement-mode comment still does not pass. The verifier
+  publishes a typed lifecycle outcome and, for PR evidence, the exact PR
+  number. `post-agent-gates.sh` separately classifies startup failure, agent
+  trajectory failure, and outcome-gate failure, and the worker's trusted
+  completion callback persists both outcome and PR reference on that exact
+  ledger attempt. GitHub's coarse workflow conclusion remains separate.
 - **Execution-state classification** (`not_started`/`running`/`exited`/
   `timed_out`/`cancelled`/`lost`) — this is decided by the **controller's**
   own reconciliation code: `reconcileActive`, `trackMissingRun`,
@@ -429,6 +496,18 @@ it's already one system:
   intents, not by a dedicated finalizer reconciler. This is precisely the
   entanglement Phase 6's "give each of the five systems its own narrow
   reconciler" is supposed to end; it has not yet.
+- **Post-dispatch deliverable landing observation** —
+  `.github/workflows/deliverable-watchdog.yml` scans open agent-authored PRs
+  independently of the dispatch ledger. If neither the head commit nor the
+  required `Verify` check has moved for six hours, it writes one durable
+  `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment on each
+  open closing anchor (or the PR itself), applies `status:needs-human`, and
+  assigns the maintainer. It also catches the green-but-still-open case: a
+  successful check proves code quality, not that the artifact landed. The
+  observer never rebases, merges, closes, or updates a branch. When activity
+  resumes it transitions its own comment but deliberately leaves the shared
+  needs-human label for a maintainer, because another dispatch/reporting
+  failure may own that same label.
 
 **What breaking looks like:** an agent process exits zero, but
 `verify-deliverable` finds no clause satisfied — no attempt-claim marker, no
@@ -450,15 +529,18 @@ guards against that for the clauses that remain.
 2. Whether the run actually produced the artifact you expect (a PR, a
    comment, a label) and whether that artifact carries the attempt-claim
    marker — if the artifact exists but lacks the marker and doesn't satisfy
-   any inference clause either, that's a real gap, not a false negative.
+   any inference clause either, that's a real gap, not a false negative. If
+   the PR exists but did not land, inspect its required check and the durable
+   deliverable-watchdog comment on its anchor.
 3. If the failure is about execution state (cancelled/lost) rather than
    deliverable validity, check the ledger's `generations` entry directly —
    that classification comes from the controller's reconciliation code
    (`main.ts`), not from `verify-deliverable`.
 
 **Who/what repairs it:** nothing automatically retries a failed
-deliverable-validation gate — a `status:needs-human` label plus a
-maintainer-facing comment from `report-failure` is the terminal state.
+deliverable-validation gate or mutates an abandoned PR — a
+`status:needs-human` label plus a maintainer-facing comment from
+`report-failure` or the deliverable watchdog is the terminal state.
 Post-agent redrive is explicitly disallowed until side-effect
 reconciliation completes (#645's own "must not" list for this system);
 today that boundary is enforced by convention (nothing wired to auto-redrive
@@ -504,6 +586,15 @@ paths plus one read path, not one system:**
   where the owning-system/phase/reason/retry-disposition fields from
   `libs/dispatch-contracts/src/failure.ts` (PR #681, merged) actually
   surface to a maintainer.
+  `logical-work.ts` also joins the exact bound run to its durable outcome, so
+  startup failure, trajectory failure, outcome-gate failure, park, no-op,
+  comment/review/closed, and PR delivery render independently from the Actions
+  conclusion. The Agents page makes one bounded, batched GraphQL enrichment
+  pass for its recent-run window, including anchors that have already closed
+  and disappeared from the open board. It reports `merged-deliverable` only
+  when GitHub's authoritative closing-PR relationship contains the exact PR
+  number persisted by that attempt; another merged PR on the same issue cannot
+  upgrade it by inference.
 
 **What breaking looks like:** the deliverable and the outcome are correct,
 but nothing visible reflects it — no comment, no label change, no console
@@ -541,38 +632,55 @@ runs during the Runner platform outage described above, and `post-deploy-smoke.y
 silently stopped alongside it. **There was no failure alerting anywhere in
 `.github/workflows/` for it.** A human found it by hand.
 
-PR [#707](https://github.com/jlapenna/agent-lcars/pull/707) — **open, not
-yet merged as of this writing** — adds `.github/actions/canary-alert`,
-called from `dispatch-canary.yml` with `if: always()`:
+PR [#707](https://github.com/jlapenna/agent-lcars/pull/707) added
+`.github/actions/canary-alert`; #722 generalized its original dispatch-only
+identity and wired it to the repo's critical scheduled and self-healing
+workflows:
 
-- **On failure:** opens (or comments on) a single tracked issue carrying
-  `<!-- agent-lcars:canary-alert:v1 -->`, labelled `status:needs-human` and
-  assigned to the maintainer. The comment records the failing run URL, a
-  UTC timestamp, and a consecutive-failure count derived **live** from the
-  canary workflow's own run history (walking conclusions most-recent-first
-  until the first success) — deliberately not persisted state, because a
-  state file is itself a thing that can silently stop being written.
+- **On failure:** opens (or comments on) one tracked issue per workflow,
+  carrying `<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`, labelled
+  `status:needs-human`, and assigned to the maintainer. The comment records
+  the failing run URL, a UTC timestamp, and a consecutive-failure count
+  derived **live** from that workflow's own run history (walking conclusions
+  most-recent-first until the first success) — deliberately not persisted
+  state, because a state file is itself a thing that can silently stop being
+  written. The dispatch canary alone adopts its old v1 marker until that
+  legacy incident closes; other workflows cannot see or mutate it.
 - **On success:** closes that tracked issue with a recovery comment, if one
-  is open. This auto-resolution is explicit in the PR description as a
-  requirement, not a nicety — an alert that only ever opens becomes noise
-  and gets ignored, which is the exact failure mode it exists to fix.
-- Two properties are deliberate: the alert path runs on `ubuntu-latest`
-  (same as `dispatch-canary.yml` itself), so it keeps working precisely
-  when the self-hosted control plane is dead; and the alerting step is
-  `continue-on-error: true`, so a transient API hiccup in the alert path
-  itself can log loudly without ever flipping a healthy canary run red —
-  and, since the canary's own step already fixed the job's real conclusion
-  before this step runs, it can't turn a failing run green either.
+  is open. Each workflow owns its own issue, so recovery of one cannot hide
+  a simultaneous failure in another.
+- The alert is a separate dependent job on `ubuntu-latest`, with
+  `if: always()` and job-level `continue-on-error: true`. It therefore still
+  starts after a watched self-hosted job fails, is cancelled by
+  `timeout-minutes`, or never gets a runner, while an alert-path API failure
+  cannot change the watched workflow's conclusion.
 
-Until this PR merges, this system remains exactly as exposed as it was
-today: nothing pages on a dark canary, and only `dispatch-canary.yml`
-specifically will be covered even after it does — no other scheduled
-workflow in this repo gets the same treatment yet.
+### Scheduled/self-healing alert coverage
+
+| Workflow                      | Watched job/path                                             | Scope note                                                                                                         |
+| ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `dispatch-canary.yml`         | `canary`                                                     | Full scheduled/manual dispatch lifecycle                                                                           |
+| `deliverable-watchdog.yml`    | `scan`                                                       | Watches the observer that surfaces agent PRs abandoned after a successful dispatch                                 |
+| `dispatch-reconcile.yml`      | whichever of `hosted-scan` or `action-fallback` was selected | Never treats the intentionally skipped transport as a failure                                                      |
+| `rerun-infra-killed-runs.yml` | `scan`                                                       | Watches the CI self-healing sweep                                                                                  |
+| `post-deploy-smoke.yml`       | `smoke`                                                      | Evaluates only after an upstream deployment actually succeeded; a skipped smoke cannot falsely resolve an incident |
+| `bootstrap-canary.yml`        | `bootstrap`                                                  | Watches the real three-lane runner bootstrap sequence                                                              |
+| `opencode-model-canary.yml`   | `probe`                                                      | Watches the scheduled provider/model probe                                                                         |
+| `label-contract-audit.yml`    | matrix `audit`                                               | Watches the repository label-contract audit                                                                        |
+| `agent-automerge.yml`         | scheduled `close-orphaned-anchors`                           | Filters history to `schedule`, so unrelated PR-event runs cannot reset its failure streak                          |
+
+Required-check CI failures and CodeQL findings already surface through
+GitHub's native check/security notification paths; they are not scheduled
+heartbeats and do not open these issues. More importantly, an alert can only
+watch a signal that exists: the Outcome finalizer and Projector/read model
+still have no standalone contract canary, and the Runner platform is only
+exercised indirectly by `bootstrap-canary.yml`. Those are system-canary gaps,
+not silent-failure-alert wiring gaps; the table below keeps them visible.
 
 ## Canary coverage today, honestly
 
 #645 asks for one end-to-end contract canary per system (Phase 6). What
-exists on `main` right now:
+exists now:
 
 | System               | Canary                                                                                | Status                                                                                                                                       |
 | -------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -595,6 +703,10 @@ exists on `main` right now:
   actions in `.github/actions/` are fleet-consumable, and the post-agent
   snapshot-then-`run:` pattern that keeps an agent's unrestricted Bash
   access from being able to tamper with its own finalization gates.
+- [`docs/trajectory-evaluation.md`](trajectory-evaluation.md) — the
+  privacy-safe frozen and rolling production corpus that distinguishes
+  worker readiness, protocol, trajectory, task outcome, change quality, and
+  efficiency instead of treating workflow color as agent quality.
 - [`docs/github-label-contract.md`](github-label-contract.md) — the
   `agent:*`/`status:*`/`review:*` label vocabulary referenced throughout
   this document.

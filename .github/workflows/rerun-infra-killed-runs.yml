@@ -75,3 +75,25 @@ jobs:
         uses: ./.github/actions/rerun-infra-killed-runs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+  alert:
+    needs: scan
+    if: always()
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted revision
+        uses: actions/checkout@v7
+
+      - name: Alert on scanner failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.scan.result }}
+          workflow-file: rerun-infra-killed-runs.yml
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

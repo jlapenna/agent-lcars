@@ -175,6 +175,33 @@ describe('LogicalWorkCard', () => {
     expect(within(intents).getByText('via labeled')).toBeTruthy();
   });
 
+  it('renders broker outcomes separately from the workflow conclusion', () => {
+    renderCard(
+      makeWork({
+        intents: [
+          {
+            ...makeWork().intents[0],
+            state: 'completed',
+            outcome: 'no-op',
+          },
+        ],
+        attempts: [
+          makeAttempt({
+            status: 'completed',
+            conclusion: 'failure',
+            outcome: 'startup-failure',
+          }),
+        ],
+      }),
+    );
+
+    const intents = screen.getByTestId('logical-work-intents');
+    expect(within(intents).getByText('no-op')).toBeTruthy();
+    const attempt = screen.getByTestId('logical-work-attempt-1');
+    expect(within(attempt).getByText('failed')).toBeTruthy();
+    expect(within(attempt).getByText('startup failure')).toBeTruthy();
+  });
+
   it('auto-opens the intent disclosure when the task carries an anomaly', () => {
     renderCard(
       makeWork({

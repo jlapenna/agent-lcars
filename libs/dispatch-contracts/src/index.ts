@@ -71,6 +71,12 @@ export {
   parseRouterGroupMarker,
   textCarriesClaim,
 } from './marker';
+export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
+export {
+  DISPATCH_OUTCOME_KINDS,
+  isDispatchOutcomeKind,
+  isDispatchOutcomeReference,
+} from './outcomes';
 export type {
   AgentPipeline,
   AgentPipelineContract,
@@ -107,7 +113,10 @@ export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,
   parseQuickTaskMarker,
+  parseTerminalQuickTaskBody,
   QUICK_TASK_MARKER_RE,
   quickTaskDigest,
   quickTaskMarkerMatcher,
 } from './quick-task';
+export type { LaneReadinessFailure } from './readiness';
+export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';

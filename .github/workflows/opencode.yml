@@ -72,6 +72,8 @@ permissions:
 
 jobs:
   opencode:
+    outputs:
+      post_agent_gates_complete: ${{ steps.post_agent_gates.outputs.complete }}
     # The centralized router authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
@@ -191,16 +193,6 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
 
-      - name: Prepare dispatch context
-        uses: ./.github/actions/prepare-agent-dispatch
-        with:
-          agent: ${{ env.AGENT_NAME }}
-          issue: ${{ inputs.issue }}
-          mode: ${{ inputs.mode }}
-          reply: ${{ inputs.reply }}
-          runbook: ${{ inputs.runbook }}
-          context: ${{ inputs.context }}
-
       # Mirrors claude.yml/codex.yml, including export_environment_variables:
       # false. The WIF provider var and telemetry-writer SA are repo-level,
       # shared with the other two pipelines.
@@ -271,6 +263,31 @@ jobs:
         env:
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
 
+      - name: Prepare current dispatch brief and runtime deadline
+        id: dispatch-brief
+        uses: ./.github/actions/prepare-agent-dispatch
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: ${{ env.AGENT_NAME }}
+          issue: ${{ inputs.issue }}
+          mode: ${{ inputs.mode }}
+          reply: ${{ inputs.reply }}
+          runbook: ${{ inputs.runbook }}
+          context: ${{ inputs.context }}
+          prior-terminal-state: ${{ steps.broker-preflight.outputs.prior-terminal-state }}
+          budget-minutes: '120'
+          artifact-checkpoint-minutes: '30'
+          finalize-checkpoint-minutes: '90'
+
+      - name: Preserve protected dispatch snapshot for evaluation
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-dispatch-brief-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.dispatch-brief.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Run OpenCode
         id: agent
         # #51: two dispatches against #44 retried a persistent LiteLLM 429
@@ -315,15 +332,13 @@ jobs:
             headless run: follow the protocol's synchronous-work, parking,
             and visible-deliverable requirements exactly.
 
-            This run has a hard 2-hour execution budget. Do not spend the run
-            on open-ended reconnaissance or repeated summaries. Within the
-            first 5 minutes, read the anchor and latest prior attempt, state
-            the diagnosis and smallest implementation plan, and begin the
-            targeted work. By 30 minutes, produce the first durable artifact:
-            a committed and pushed edit, a PR, or a protocol-safe park/no-op
-            comment. A local source edit alone is not durable on an ephemeral
-            runner. By 90 minutes, stop expanding scope and finalize the
-            artifact.
+            The brief's `runtime` object contains this run's exact hard
+            deadline and takeover, diagnosis, durable-artifact, and finalize
+            checkpoint timestamps. Read those values before starting. Do not
+            spend the run on open-ended reconnaissance or repeated summaries.
+            Reach the first durable artifact checkpoint with pushed or posted
+            evidence; a local source edit alone is not durable on an
+            ephemeral runner.
 
             Every dispatch must end with visible GitHub state. A summary in
             the model response alone is not a deliverable. For implement
@@ -336,6 +351,26 @@ jobs:
             retrying the same approach. End your response with exactly one
             of: PR <url>, REVIEW <evidence>, PARK <blocker and resume
             trigger>, or NO-OP <evidence>.
+
+      - name: Export sanitized OpenCode trajectory
+        id: opencode-trajectory
+        if: always() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
+        uses: ./.github/actions/archive-opencode-trajectory
+        env:
+          ISSUE: ${{ inputs.issue }}
+        with:
+          started-at: ${{ steps.agent-setup.outputs['started-at'] }}
+
+      - name: Persist OpenCode trajectory artifact
+        if: always() && steps.opencode-trajectory.outputs.path != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: opencode-trajectory-${{ github.run_id }}
+          path: ${{ steps.opencode-trajectory.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
 
       # Shared post-agent gate orchestrator (#645 Phase 3): runs
       # telemetry-finalize, verify-deliverable, failure-reason
@@ -357,6 +392,7 @@ jobs:
       # composite in the working tree - see "Snapshot post-agent
       # enforcement scripts" above.
       - name: Run post-agent gates
+        id: post_agent_gates
         if: always()
         env:
           # The job's own GITHUB_TOKEN, NOT the minted App token: installation
@@ -382,6 +418,7 @@ jobs:
           # exclusion on a reply dispatch, where the anchor is explicit.
           EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}
           JOB_STATUS: ${{ job.status }}
+          AGENT_STEP_OUTCOME: ${{ steps.agent.outcome }}
           MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
           # OpenCode's own no-deliverable wording - rendered here with this
@@ -409,3 +446,24 @@ jobs:
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
           worker-workflow: ${{ env.WORKER_WORKFLOW }}
+          outcome-kind: ${{ steps.post_agent_gates.outputs.outcome-kind }}
+          outcome-reference: ${{ steps.post_agent_gates.outputs.outcome-reference }}
+          readiness-failure: ${{ steps.post_agent_gates.outputs.readiness-failure }}
+
+  fallback-finalize:
+    needs: opencode
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != '' && needs.opencode.outputs.post_agent_gates_complete != 'true'
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    uses: ./.github/workflows/agent-fallback-finalize.yml
+    with:
+      issue: ${{ inputs.issue }}
+      generation: ${{ inputs.broker_generation }}
+      intent-id: ${{ inputs.broker_intent_id }}
+      dispatch-token: ${{ inputs.broker_dispatch_token }}
+      worker-workflow: opencode.yml
+      worker-result: ${{ needs.opencode.result }}
+      agent: OpenCode
+      maintainer: ${{ vars.MAINTAINER_LOGIN }}

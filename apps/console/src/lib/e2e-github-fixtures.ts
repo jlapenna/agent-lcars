@@ -478,6 +478,7 @@ const FIXTURE_RUNNERS = [
  * share a JS realm.
  */
 const POPULATED_KEY = '__agentLcarsE2ePopulatedFixtures';
+const ISSUE_CONTENT_EDITS_KEY = '__agentLcarsE2eIssueContentEdits';
 
 export function setPopulatedFixtures(enabled: boolean) {
   (globalThis as Record<string, unknown>)[POPULATED_KEY] = enabled;
@@ -485,6 +486,23 @@ export function setPopulatedFixtures(enabled: boolean) {
 
 export function populatedFixturesEnabled(): boolean {
   return (globalThis as Record<string, unknown>)[POPULATED_KEY] === true;
+}
+
+function issueContentEdits(): Map<number, { title: string; body: string }> {
+  const bag = globalThis as Record<string, unknown>;
+  if (!bag[ISSUE_CONTENT_EDITS_KEY]) {
+    bag[ISSUE_CONTENT_EDITS_KEY] = new Map();
+  }
+  return bag[ISSUE_CONTENT_EDITS_KEY] as Map<
+    number,
+    { title: string; body: string }
+  >;
+}
+
+/** Keeps one E2E spec's issue edit from leaking into the next spec sharing
+ * the standalone server process. */
+export function resetIssueContentEdits(): void {
+  (globalThis as Record<string, unknown>)[ISSUE_CONTENT_EDITS_KEY] = new Map();
 }
 
 /**
@@ -568,12 +586,14 @@ export function resetQuickTaskFixtures(): void {
     freshQuickTaskState();
 }
 
-/** Title sentinel a spec can type into the real "Title" field to make the
- * fixture's issue-create endpoint fail closed with a definitive 4xx - the
- * only way to deterministically exercise that path through the real UI,
- * since every other field it controls (description, pipeline, repo) is
- * otherwise always valid. Never a value a real task would use. */
-export const E2E_QUICK_TASK_FORCE_4XX_TITLE = 'E2E_QUICK_TASK_FORCE_4XX';
+/** Description sentinel a spec can type into the real dialog to make the
+ * fixture's issue-create endpoint fail closed with a definitive 4xx. Never
+ * a value a real task would use. */
+export const E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION = 'E2E_QUICK_TASK_FORCE_4XX';
+
+/** Description sentinel that makes the E2E GitHub route hold one issue
+ * creation long enough to prove the client can accept another Quick Task. */
+export const E2E_QUICK_TASK_DELAY_DESCRIPTION = 'E2E_QUICK_TASK_DELAY';
 
 export function createQuickTaskClaimTag(
   message: string,
@@ -793,10 +813,11 @@ function quickTaskIssueComments(number: number) {
 /** The `issues.listForRepo` row shape - which serves issues and PRs alike,
  * with a PR carrying a `pull_request` key. */
 function issueFor(item: FixtureItem) {
+  const edited = issueContentEdits().get(item.number);
   return {
     number: item.number,
-    title: item.title,
-    body: item.body,
+    title: edited?.title ?? item.title,
+    body: edited?.body ?? item.body,
     html_url: itemUrl(item.number, item.isPr ? 'pull' : 'issues'),
     user: { login: item.author },
     updated_at: item.updatedAt,
@@ -807,6 +828,29 @@ function issueFor(item: FixtureItem) {
       ? { pull_request: { url: itemUrl(item.number, 'pull') } }
       : {}),
   };
+}
+
+/** Stateful target for PATCH /issues/{number}. Supports both the curated
+ * populated-dashboard issues and issues filed through Quick Task. */
+export function updateFixtureIssueContent(
+  number: number,
+  content: { title: string; body: string },
+) {
+  const quickTask = quickTaskState().issues.find(
+    (candidate) => candidate.number === number,
+  );
+  if (quickTask) {
+    quickTask.title = content.title;
+    quickTask.body = content.body;
+    return quickTaskIssueRestShape(quickTask);
+  }
+
+  const item = FIXTURE_ITEMS.find(
+    (candidate) => candidate.number === number && !candidate.isPr,
+  );
+  if (!item) return undefined;
+  issueContentEdits().set(number, content);
+  return issueFor(item);
 }
 
 /** `GET /repos/{owner}/{repo}/issues?state=open` - the board's item universe

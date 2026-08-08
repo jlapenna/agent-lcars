@@ -1,0 +1,112 @@
+name: Agent Bootstrap-Independent Finalizer
+
+# Shared, GitHub-hosted fallback for claude.yml/codex.yml/opencode.yml
+# (#639 / #645 Phase 3). The primary post-agent gates run from a trusted
+# pre-agent snapshot on the self-hosted worker. If checkout, snapshotting,
+# runner loss, or the reporter itself prevents that path from proving it
+# completed, the caller invokes this workflow after the worker job settles.
+#
+# The report/park step deliberately runs before checkout and uses only
+# github.token plus inline GitHub CLI calls. That makes a failed checkout
+# visible instead of depending on the same repository bootstrap it reports.
+# Checkout remains necessary only for the controller completion callback;
+# scheduled controller reconciliation is its lost-callback backstop.
+
+on:
+  workflow_call:
+    inputs:
+      issue:
+        required: true
+        type: string
+      generation:
+        required: true
+        type: string
+      intent-id:
+        required: true
+        type: string
+      dispatch-token:
+        required: true
+        type: string
+      worker-workflow:
+        required: true
+        type: string
+      worker-result:
+        required: true
+        type: string
+      agent:
+        required: true
+        type: string
+      maintainer:
+        required: false
+        default: ''
+        type: string
+
+permissions: {}
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    steps:
+      - name: Report and park bootstrap-independent failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue }}
+          AGENT: ${{ inputs.agent }}
+          WORKER_RESULT: ${{ inputs.worker-result }}
+          MAINTAINER: ${{ inputs.maintainer }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MARKER: <!-- agent-lcars:bootstrap-fallback:v1 run=${{ github.run_id }} -->
+        run: |
+          set -euo pipefail
+          case "$ISSUE" in
+            ''|*[!0-9]*) echo "::error::Invalid fallback issue number"; exit 1 ;;
+          esac
+
+          existing="$(gh api --paginate --slurp \
+            "repos/$REPO/issues/$ISSUE/comments?per_page=100" \
+            --jq "[.[][] | select(.body | contains(\"$MARKER\"))] | first | .id // empty")"
+          if [ -z "$existing" ]; then
+            if [ "$WORKER_RESULT" = "cancelled" ]; then
+              outcome="was cancelled before its primary finalizer completed"
+            else
+              outcome="failed before its primary finalizer completed"
+            fi
+            gh issue comment "$ISSUE" --repo "$REPO" --body "$MARKER
+
+          $AGENT agent run $outcome: $RUN_URL
+
+          The independent GitHub-hosted fallback finalizer reported this because the self-hosted post-agent gate did not prove that reporting completed. This includes checkout, trusted-snapshot, runner-loss, and reporter failures."
+          else
+            echo "::notice::Fallback report already exists as comment $existing"
+          fi
+
+          gh api "repos/$REPO/issues/$ISSUE/labels" \
+            -f 'labels[]=status:needs-human' --silent
+          if [ -n "$MAINTAINER" ]; then
+            gh api "repos/$REPO/issues/$ISSUE/assignees" \
+              -f "assignees[]=$MAINTAINER" --silent
+          else
+            echo "::warning::MAINTAINER_LOGIN is unset; failure was commented and parked but could not be assigned."
+          fi
+
+      - name: Checkout trusted revision for controller callback
+        uses: actions/checkout@v7
+
+      - name: Return completion observation to the broker
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          operation: completion-callback
+          issue: ${{ inputs.issue }}
+          generation: ${{ inputs.generation }}
+          intent-id: ${{ inputs.intent-id }}
+          dispatch-token: ${{ inputs.dispatch-token }}
+          worker-workflow: ${{ inputs.worker-workflow }}
+          outcome-kind: startup-failure

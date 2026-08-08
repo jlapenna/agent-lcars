@@ -18,6 +18,7 @@ import {
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
+  ensureLaneReadinessAlert,
   ensureNeedsHumanParked,
   failClosed,
   findConflictingRouterRun,
@@ -32,6 +33,7 @@ import {
   loadLedgerProjection,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
+  readLaneReadiness,
   removeIssueLabel,
   validateDispatchResponse,
   verifyBrokerConcurrency,
@@ -114,6 +116,100 @@ test('worker pipeline resolves to exactly one worker workflow file, including th
   assert.throws(
     () => workerWorkflow('not-a-real-pipeline'),
     /Unsupported worker pipeline/u,
+  );
+});
+
+test('lane readiness maps only the durable health incidents that apply to the selected agent', async () => {
+  const issues = [
+    {
+      number: 801,
+      title: 'Bootstrap Canary is failing',
+      body: '<!-- agent-lcars:workflow-alert:v1:bootstrap-canary.yml -->',
+      html_url: 'https://github.com/jlapenna/agent-lcars/issues/801',
+    },
+    {
+      number: 802,
+      title: 'OpenCode Model Canary is failing',
+      body: '<!-- agent-lcars:workflow-alert:v1:opencode-model-canary.yml -->',
+      html_url: 'https://github.com/jlapenna/agent-lcars/issues/802',
+    },
+    {
+      number: 803,
+      title: 'Codex agent lane is unavailable',
+      body: '<!-- agent-lcars:lane-readiness:v1:codex -->',
+      html_url: 'https://github.com/jlapenna/agent-lcars/issues/803',
+    },
+    {
+      number: 804,
+      title: 'Unrelated PR',
+      body: '<!-- agent-lcars:lane-readiness:v1:codex -->',
+      pull_request: {},
+    },
+  ];
+  const api = { requestOk: async () => issues };
+
+  assert.deepEqual(
+    (await readLaneReadiness(api, task, 'codex')).map((item) => item.issue),
+    [801, 803],
+  );
+  assert.deepEqual(
+    (await readLaneReadiness(api, task, 'opencode')).map((item) => item.issue),
+    [801, 802],
+  );
+  assert.deepEqual(await readLaneReadiness(api, task, 'canary'), []);
+});
+
+test('a proven shared startup failure creates one actionable lane incident and reuses it on redelivery', async () => {
+  const calls = [];
+  let openIssues = [];
+  const api = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, options });
+      if (path.includes('/issues?state=open')) return openIssues;
+      if (path.endsWith('/issues') && options.method === 'POST') {
+        openIssues = [
+          {
+            number: 850,
+            title: options.body.title,
+            body: options.body.body,
+            html_url: 'https://github.com/jlapenna/agent-lcars/issues/850',
+          },
+        ];
+        return openIssues[0];
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    },
+  };
+
+  const first = await ensureLaneReadinessAlert(
+    api,
+    task,
+    'codex',
+    'credential',
+    'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+    'jlapenna',
+  );
+  const second = await ensureLaneReadinessAlert(
+    api,
+    task,
+    'codex',
+    'credential',
+    'https://github.com/jlapenna/agent-lcars/actions/runs/43',
+    'jlapenna',
+  );
+
+  assert.equal(first.number, 850);
+  assert.equal(second.number, 850);
+  const creates = calls.filter(
+    (call) => call.path.endsWith('/issues') && call.options.method === 'POST',
+  );
+  assert.equal(creates.length, 1);
+  assert.deepEqual(creates[0].options.body.labels, ['status:needs-human']);
+  assert.deepEqual(creates[0].options.body.assignees, ['jlapenna']);
+  assert.match(creates[0].options.body.body, /repair or rotate/u);
+  assert.match(
+    creates[0].options.body.body,
+    /agent-lcars:lane-readiness:v1:codex/u,
   );
 });
 

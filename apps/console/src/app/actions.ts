@@ -21,6 +21,7 @@ import {
   postComment,
   reassignPipeline as reassignPipelineLib,
   retriggerIssue as retriggerIssueLib,
+  updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
 import { GITHUB_DATA_TAG } from '../lib/cache-tags';
@@ -231,6 +232,21 @@ export async function closeIssue(
   await requireAdmin();
   try {
     await closeIssueLib(resolveWatchedRepo(repo), number);
+    revalidateDashboard();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function updateIssueContent(
+  repo: WatchedRepo,
+  number: number,
+  content: { title: string; body: string },
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await updateIssueContentLib(resolveWatchedRepo(repo), number, content);
     revalidateDashboard();
     return { ok: true };
   } catch (error) {

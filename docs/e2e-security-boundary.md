@@ -28,8 +28,8 @@ label-driven dispatch, workflow-run binding, and the explicit worker
 completion callback -- is separately, continuously verified in production by
 `.github/workflows/dispatch-canary.yml` (hourly + `workflow_dispatch`) and
 `.github/workflows/post-deploy-smoke.yml` (chained off `deploy-console.yml`
-completing). Both share `.github/actions/run-dispatch-canary`, which creates
-a dedicated, clearly-marked issue, dispatches it through
+completing). Both share `.github/actions/run-dispatch-canary`, which reuses
+one canonical, clearly-marked issue, dispatches it through
 `agent-router.yml`'s real broker (`apps/dispatch-broker/src/normalize.ts`'s
 `kind: 'canary'` intent, a fourth pipeline alongside claude/codex/opencode --
 see `apps/dispatch-broker/src/broker.ts`), and drives it to a dedicated no-op worker,
@@ -51,10 +51,11 @@ repo's own two trusted canary workflows.
 The post-deploy smoke additionally probes the live console URL for a 2xx
 response before exercising the broker, so a broken deployed revision is
 caught even before the write-path check runs. Either workflow's failure
-parks `status:needs-human` (label + maintainer assignee) on the canary
-issue with evidence and leaves it open, rather than a silent log line; a
-successful run closes its issue automatically -- the acceptance bar for
-"canary artifacts are automatically cleaned up." This proves the broker's
+reopens and parks `status:needs-human` (label + maintainer assignee) on that
+canary issue with evidence, rather than a silent log line; a successful run
+clears that blocker label and closes the same issue automatically. Historical
+per-run v1 artifacts are still swept during the migration. This proves the
+broker's
 GitHub write path, not the deployed console's own server action writing to
 GitHub through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`); that
 remains a separately-scoped write-path E2E fixture effort in `apps/console`.
@@ -67,12 +68,12 @@ executes, identical to the failure mode the epic design audit (#301)
 describes for `deploy-console.yml`'s own job. Neither canary orchestrator
 embeds a real production deploy the way `deploy-console.yml` does, so
 there is no natural split into a separate same-workflow cleanup job here;
-instead, `dispatch-canary.yml`'s existing hourly run also sweeps stale
-canaries left behind by a previous run of either orchestrator
+instead, `dispatch-canary.yml`'s existing hourly run also sweeps the stale
+canonical issue and legacy per-run canaries left behind by either orchestrator
 (`run.mjs`'s `sweepStaleCanaries`, `sweep-stale-canaries: true` only on
 that caller): it lists open issues, filters to this canary's own title
 prefix and marker, and for every candidate older than both orchestrators'
-own `timeout-minutes: 35` job budget -- past which GitHub Actions
+own `timeout-minutes: 40` job budget -- past which GitHub Actions
 guarantees the job was killed if the issue is still open -- closes it if
 its ledger already shows a
 successful completion or parks `status:needs-human` otherwise. This is the
@@ -145,6 +146,14 @@ agent-lcars#352) -- so a genuinely broken WIF grant or a missing sidecar
 binary fails the canary loudly instead of the composite's own
 `continue-on-error: true` silently absorbing it.
 
+Every real worker lane also has a shared, GitHub-hosted
+`agent-fallback-finalize.yml` path (#639). The self-hosted primary gate writes
+a completion output only after no report is needed or its report landed; a
+missing output causes the hosted fallback to comment and park the anchor with
+the native workflow token before doing its own checkout. This is why checkout,
+trusted-snapshot, runner-loss, or primary-reporter failure cannot silence the
+failure signal that is supposed to diagnose it.
+
 `.github/workflows/opencode-model-canary.yml` (hourly + `workflow_dispatch`,
 self-hosted -- the endpoint is LAN-only) is the one lane where "the exact
 configured model actually answers" can be tested honestly and cheaply:
@@ -168,6 +177,19 @@ a canary around either would pass without testing anything, the exact
 failure mode #645 exists to eliminate; proving either lane's exact model
 answers requires the real, paid/subscription-consuming harness, which a
 canary must not invoke.
+
+The broker turns these durable alerts into an allocation circuit breaker; it
+does not merely display them. Every real lane is blocked by an open
+`bootstrap-canary.yml` alert, OpenCode is additionally blocked by the
+exact-model alert above, and a trusted worker can open one lane-specific
+incident after proving a shared credential failure (Codex's auth steps or
+Claude's zero-cost OAuth rejection signature). Admission is checked before
+the launch outbox and worker POST. A held task receives one idempotent,
+pipeline-keyed explanation, while the health incident—not the task—carries
+`status:needs-human`; closing the incident lets scheduled reconcile resume the
+same accepted generation. This preserves the security distinction above:
+Claude/Codex local credential presence still does not masquerade as a provider
+probe, but a proven failure stops repeated spend.
 
 ## Credential incident follow-up
 

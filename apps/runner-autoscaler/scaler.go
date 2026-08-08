@@ -1929,9 +1929,10 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	}
 	hostConfig := runnerHostConfig(binds, groupAdd, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize)
 
-	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
-	c, err := client.ContainerCreate(
-		createCtx,
+	c, err := a.createContainerWithImageRecovery(
+		ctx,
+		client,
+		host,
 		&container.Config{
 			Image: a.runnerImage,
 			User:  "runner",
@@ -1946,10 +1947,8 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			},
 		},
 		hostConfig,
-		nil, nil,
 		name,
 	)
-	cancelCreate()
 	if err != nil {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()
 		// GenerateJitRunnerConfig above already registered `name` with GitHub.
@@ -2096,6 +2095,54 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 	return nil
 }
 
+// createContainerWithImageRecovery closes the remaining inspect/create race
+// around ensureRunnerImage (#478). A host-side `docker image prune -a` runs
+// outside this process and can delete an otherwise valid, digest-pinned image
+// after ensureRunnerImage's successful inspect but before ContainerCreate
+// takes Docker's own reference to it. The daemon then returns not-found even
+// though preparation succeeded moments earlier.
+//
+// Retry exactly once and only for not-found. Re-preparing through the normal
+// host+image lock preserves the existing pull serialization and streamed-error
+// handling; a second miss or any other create error stays loud. All three
+// containers built from runnerImage use this boundary (the real JIT runner,
+// workdir ownership helper, and workdir sweep helper), so the same external
+// prune cannot reappear under a different caller.
+func (a *Scaler) createContainerWithImageRecovery(
+	ctx context.Context,
+	client *dockerclient.Client,
+	host string,
+	config *container.Config,
+	hostConfig *container.HostConfig,
+	name string,
+) (container.CreateResponse, error) {
+	create := func() (container.CreateResponse, error) {
+		createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
+		defer cancelCreate()
+		return client.ContainerCreate(createCtx, config, hostConfig, nil, nil, name)
+	}
+
+	response, err := create()
+	if err == nil || !cerrdefs.IsNotFound(err) {
+		return response, err
+	}
+
+	a.logger.Warn(
+		"Runner image disappeared before container creation; preparing it again",
+		slog.String("host", host),
+		slog.String("image", a.runnerImage),
+		slog.String("error", err.Error()),
+	)
+	if prepareErr := a.ensureRunnerImage(ctx, client, host); prepareErr != nil {
+		return response, fmt.Errorf(
+			"runner image disappeared before container creation (%v) and recovery failed: %w",
+			err,
+			prepareErr,
+		)
+	}
+	return create()
+}
+
 func (a *Scaler) checkHostRunnerLimit(ctx context.Context, client *dockerclient.Client, host string) error {
 	limit, limited := a.hostRunnerLimits[host]
 	if !limited {
@@ -2147,8 +2194,10 @@ for d in /home/runner/_work /home/runner/externals; do
   fi
 done
 `
-	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
-	resp, err := client.ContainerCreate(createCtx,
+	resp, err := a.createContainerWithImageRecovery(
+		ctx,
+		client,
+		host,
 		&container.Config{
 			Image:      a.runnerImage,
 			User:       "root",
@@ -2161,9 +2210,8 @@ done
 				"/home/runner/externals:/home/runner/externals",
 			},
 		},
-		nil, nil, "",
+		"",
 	)
-	cancelCreate()
 	if err != nil {
 		return fmt.Errorf("creating workdir-chown helper on host %q: %w", host, err)
 	}
@@ -2369,7 +2417,7 @@ fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
 
-# Proactively verify (and repair) the shared externals/node24 runtime as
+# Proactively verify (and repair) the shared required Actions Node runtimes as
 # part of this same idle-host maintenance pass (agent-lcars#392), using the
 # identical self-heal logic and lock file entrypoint.sh uses (baked into
 # this same image), so a broken host is caught between real jobs instead of
@@ -2386,7 +2434,7 @@ echo "SWEEP before=$before after=$after cap=$cap"
 if [ -f /usr/local/lib/agent-lcars/externals-health.sh ]; then
   . /usr/local/lib/agent-lcars/externals-health.sh
   repair_externals_if_needed
-  if node24_runs; then
+  if required_node_runtimes_run; then
     echo "EXTERNALS_HEALTHY=1"
   else
     echo "EXTERNALS_HEALTHY=0"
@@ -2396,8 +2444,10 @@ else
 fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
 
-	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
-	resp, err := client.ContainerCreate(createCtx,
+	resp, err := a.createContainerWithImageRecovery(
+		ctx,
+		client,
+		host,
 		&container.Config{
 			Image:      a.runnerImage,
 			User:       "root",
@@ -2411,9 +2461,8 @@ fi
 				"/home/runner/externals:/home/runner/externals",
 			},
 		},
-		nil, nil, "",
+		"",
 	)
-	cancelCreate()
 	if err != nil {
 		return fmt.Errorf("creating workdir-sweep helper on host %q: %w", host, err)
 	}
@@ -2485,7 +2534,7 @@ fi
 		hostExternalsHealthyGauge.WithLabelValues(host).Set(1)
 	} else {
 		hostExternalsHealthyGauge.WithLabelValues(host).Set(0)
-		a.logger.Warn("Shared externals/node24 runtime is still unhealthy after a repair attempt", slog.String("host", host))
+		a.logger.Warn("Shared required Actions Node runtime is still unhealthy after a repair attempt", slog.String("host", host))
 	}
 	return nil
 }

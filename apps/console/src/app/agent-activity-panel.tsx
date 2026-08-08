@@ -1,3 +1,4 @@
+import type { DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import type {
   IssueAgentSessionDoc,
   RunStatusClassification,
@@ -77,6 +78,51 @@ export const STATUS_COLORS: Record<RunStatusClassification, string> = {
   cancelled: 'yellow',
   'silent-error': 'orange',
 };
+
+export const OUTCOME_LABELS: Record<DispatchOutcomeKind, string> = {
+  'startup-failure': 'startup failure',
+  'trajectory-failure': 'trajectory failure',
+  'outcome-gate-failure': 'outcome gate failure',
+  park: 'park',
+  'no-op': 'no-op',
+  'pull-request': 'pull request',
+  'merged-deliverable': 'merged',
+  review: 'review',
+  comment: 'comment',
+  closed: 'closed',
+  'unknown-success': 'unclassified success',
+};
+
+export const OUTCOME_COLORS: Record<DispatchOutcomeKind, string> = {
+  'startup-failure': 'red',
+  'trajectory-failure': 'red',
+  'outcome-gate-failure': 'orange',
+  park: 'yellow',
+  'no-op': 'blue',
+  'pull-request': 'green',
+  'merged-deliverable': 'green',
+  review: 'green',
+  comment: 'blue',
+  closed: 'green',
+  'unknown-success': 'gray',
+};
+
+export function DispatchOutcomeBadge({
+  outcome,
+}: {
+  outcome: DispatchOutcomeKind;
+}) {
+  return (
+    <Badge
+      variant="outline"
+      color={OUTCOME_COLORS[outcome]}
+      size="sm"
+      data-testid="dispatch-outcome"
+    >
+      {OUTCOME_LABELS[outcome]}
+    </Badge>
+  );
+}
 
 function budgetColor(fraction: number): string {
   if (fraction >= 0.8) return 'red';
@@ -503,9 +549,11 @@ export function LiveRunGroupList({
 export function FinishedRunRow({
   run,
   session,
+  outcome,
 }: {
   run: AgentRun;
   session?: IssueAgentSessionDoc;
+  outcome?: DispatchOutcomeKind;
 }) {
   const classification = classifyAgentRun(run, session);
   const issueUrl = issueUrlForRun(run);
@@ -522,6 +570,7 @@ export function FinishedRunRow({
           {STATUS_LABELS[classification.status]}
         </Badge>
         <PipelineBadge pipeline={run.pipeline} />
+        {outcome && <DispatchOutcomeBadge outcome={outcome} />}
         <RepoBadge repo={run.repo} />
         <Anchor
           href={issueUrl ?? run.url}

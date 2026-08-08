@@ -133,6 +133,7 @@ base_env() {
   export RUN_ID=2002
   export CANARY_STATUS=failure
   export WORKFLOW_FILE=dispatch-canary.yml
+  export WORKFLOW_EVENT=""
   export WORKFLOW_NAME="Dispatch Canary"
   export MAINTAINER=maintainer-login
 }
@@ -171,6 +172,7 @@ fail() {
   run_case first-failure
   test "$status" = 0 || fail "first failure should exit 0"
   grep -q 'issue create' "$FAKE_GH_DIR/calls" || fail "expected an issue to be created"
+  grep -q '<!-- agent-lcars:workflow-alert:v1:dispatch-canary.yml -->' "$FAKE_GH_DIR/calls" || fail "expected the workflow-specific marker"
   grep -q -- '--title Dispatch Canary is failing' "$FAKE_GH_DIR/calls" || fail "expected the title to name the canary"
   grep -q -- '--label status:needs-human' "$FAKE_GH_DIR/calls" || fail "expected the status:needs-human label"
   grep -q -- '--assignee maintainer-login' "$FAKE_GH_DIR/calls" || fail "expected the maintainer to be assigned"
@@ -434,6 +436,81 @@ JSON
   if grep -q 'page=11' "$FAKE_GH_DIR/calls"; then
     fail "must not query beyond MAX_PAGES=10 - a page 11 request means the bound wasn't enforced"
   fi
+)
+
+# --- Case 13: alert identity is per workflow. A rerun-infra incident must
+# ignore both dispatch-canary's legacy marker and its new workflow marker,
+# selecting only its own tracked issue. ---
+(
+  base_env
+  export WORKFLOW_FILE=rerun-infra-killed-runs.yml
+  export WORKFLOW_NAME="Rerun Infra-Killed CI Runs"
+  case_dir="$test_root/per-workflow-identity"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/open-issues.json" <<'JSON'
+[
+  {"number":41,"body":"<!-- agent-lcars:canary-alert:v1 -->"},
+  {"number":42,"body":"<!-- agent-lcars:workflow-alert:v1:dispatch-canary.yml -->"},
+  {"number":43,"body":"<!-- agent-lcars:workflow-alert:v1:rerun-infra-killed-runs.yml -->"}
+]
+JSON
+  echo '{"workflow_runs":[{"id":1001,"conclusion":"success"}]}' > "$case_dir/runs.json"
+  run_case per-workflow-identity
+  test "$status" = 0 || fail "per-workflow lookup should exit 0"
+  grep -q 'issue comment 43' "$FAKE_GH_DIR/calls" || fail "expected only the rerun-infra alert issue"
+  if grep -qE 'issue (comment|close) (41|42)' "$FAKE_GH_DIR/calls"; then
+    fail "one workflow must never mutate another workflow's alert"
+  fi
+)
+
+# --- Case 14: workflow-file feeds durable identity and must be a plain
+# workflow filename, never an injectable jq fragment. Reject before reads or
+# writes when it is malformed. ---
+(
+  base_env
+  export WORKFLOW_FILE='bad") | .number #.yml'
+  case_dir="$test_root/invalid-workflow-file"
+  mkdir -p "$case_dir"
+  run_case invalid-workflow-file
+  test "$status" = 1 || fail "an invalid workflow filename must fail"
+  case "$output" in
+    *"::error::Invalid workflow filename"*) ;;
+    *) fail "expected an invalid-workflow identity error" ;;
+  esac
+  test ! -s "$FAKE_GH_DIR/calls" || fail "invalid identity must fail before any gh call"
+)
+
+# --- Case 15: a multi-trigger workflow can scope its streak to the watched
+# event lane, so unrelated successful PR-event runs cannot reset a scheduled
+# health incident's count. ---
+(
+  base_env
+  export WORKFLOW_FILE=agent-automerge.yml
+  export WORKFLOW_EVENT=schedule
+  export WORKFLOW_NAME="Agent PR Auto-Merge"
+  case_dir="$test_root/workflow-event-filter"
+  mkdir -p "$case_dir"
+  echo '[]' > "$case_dir/open-issues.json"
+  echo '{"workflow_runs":[]}' > "$case_dir/runs.json"
+  run_case workflow-event-filter
+  test "$status" = 0 || fail "a valid workflow event filter should exit 0"
+  grep -q 'actions/workflows/agent-automerge.yml/runs?status=completed&per_page=100&page=1&event=schedule' "$FAKE_GH_DIR/calls" || fail "expected the run-history API query to filter to schedule events"
+)
+
+# --- Case 16: the event filter is appended to an API URL, so reject anything
+# outside GitHub's plain event-name alphabet before any gh call. ---
+(
+  base_env
+  export WORKFLOW_EVENT='schedule&status=in_progress'
+  case_dir="$test_root/invalid-workflow-event"
+  mkdir -p "$case_dir"
+  run_case invalid-workflow-event
+  test "$status" = 1 || fail "an invalid workflow event must fail"
+  case "$output" in
+    *"::error::Invalid workflow event"*) ;;
+    *) fail "expected an invalid workflow-event error" ;;
+  esac
+  test ! -s "$FAKE_GH_DIR/calls" || fail "invalid event must fail before any gh call"
 )
 
 echo "canary-alert.test.sh: all cases passed"

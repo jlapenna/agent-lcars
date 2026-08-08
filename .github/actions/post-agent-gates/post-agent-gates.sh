@@ -68,6 +68,37 @@ set -uo pipefail
 WRITER_CREDENTIALS_FILE="${WRITER_CREDENTIALS_FILE:-}"
 NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
+AGENT_STEP_OUTCOME="${AGENT_STEP_OUTCOME:-}"
+READINESS_FAILURE="${READINESS_FAILURE:-}"
+
+case "$READINESS_FAILURE" in
+  ''|credential|provider|bootstrap) ;;
+  *)
+    echo "::error::Invalid READINESS_FAILURE: $READINESS_FAILURE"
+    exit 1
+    ;;
+esac
+
+# The worker job publishes this step output to its independent hosted
+# fallback finalizer. Write it only after either the clean success path needs
+# no report or the primary failure report actually landed. Missing/false means
+# the hosted job must take over; this also covers checkout/snapshot failure,
+# where this trusted script never existed on the self-hosted runner at all.
+mark_post_agent_gates_complete() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo 'complete=true' >> "$GITHUB_OUTPUT"
+  fi
+}
+
+publish_outcome_kind() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "outcome-kind=$1" >> "$GITHUB_OUTPUT"
+  fi
+}
+
+if [ -n "$READINESS_FAILURE" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
+  echo "readiness-failure=$READINESS_FAILURE" >> "$GITHUB_OUTPUT"
+fi
 
 trusted_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -95,10 +126,22 @@ if [ "$JOB_STATUS" = "success" ] && [ "$deliverable_failed" -eq 0 ]; then
   # Nothing failed and nothing needs reporting -- mirrors the original
   # "Determine failure reason"/"Report failure on the issue" steps both
   # being skipped by their own if: failure() || cancelled().
+  if ! grep -q '^outcome-kind=' "${GITHUB_OUTPUT:-/dev/null}" 2>/dev/null; then
+    publish_outcome_kind unknown-success
+  fi
+  mark_post_agent_gates_complete
   exit 0
 fi
 
-# --- Determine failure reason: was if: failure() || cancelled() -------------
+# --- Classify and determine failure reason: was if: failure() || cancelled() -
+if [ "$no_deliverable" -eq 1 ] || [ "$JOB_STATUS" = "success" ]; then
+  publish_outcome_kind outcome-gate-failure
+elif [ -z "$AGENT_STEP_OUTCOME" ] || [ "$AGENT_STEP_OUTCOME" = "skipped" ]; then
+  publish_outcome_kind startup-failure
+else
+  publish_outcome_kind trajectory-failure
+fi
+
 reason=""
 if [ "$no_deliverable" -eq 1 ]; then
   reason=$'\n\n'"$NO_DELIVERABLE_REASON"
@@ -112,6 +155,10 @@ GH_TOKEN="$GH_TOKEN" AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
   MAINTAINER="$MAINTAINER" \
   bash "$trusted_dir/report-failure/report-failure.sh"
 report_status=$?
+
+if [ "$report_status" -eq 0 ]; then
+  mark_post_agent_gates_complete
+fi
 
 if [ "$deliverable_failed" -eq 1 ] || [ "$report_status" -ne 0 ]; then
   exit 1

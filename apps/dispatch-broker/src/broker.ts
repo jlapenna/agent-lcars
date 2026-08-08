@@ -48,6 +48,7 @@ import {
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
+  recordOutcome,
   restoreAcceptedForLaunchRetry,
   verifyPreflight,
 } from './modules/scheduler';
@@ -159,7 +160,10 @@ function applyAnchorControl(
     };
     if (control.kind === 'closed') {
       for (const generation of ledger.generations) {
-        if (generation.state === 'pending' || generation.state === 'accepted') {
+        if (
+          generation.pipeline !== 'canary' &&
+          (generation.state === 'pending' || generation.state === 'accepted')
+        ) {
           generation.state = 'superseded-by-close';
         }
       }
@@ -250,6 +254,7 @@ export {
   observeCompletion,
   parseLedgerComment,
   recordControlEvidence,
+  recordOutcome,
   renderLedgerComment,
   restoreAcceptedForLaunchRetry,
   validateIntent,

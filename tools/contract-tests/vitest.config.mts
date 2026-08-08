@@ -45,6 +45,7 @@ export default defineConfig({
     include: [
       'tools/contract-tests/**/*.test.ts',
       'tools/saved-session/**/*.test.mjs',
+      'tools/trajectory-evaluation/**/*.test.mjs',
     ],
     watch: false,
     globals: false,

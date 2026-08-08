@@ -148,6 +148,36 @@ async function SessionDetailPageContent({ params }: PageProps) {
                 ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
                 : undefined
             }
+            sourceIdentities={
+              detail.status === 'ok'
+                ? [
+                    {
+                      label: 'Session' as const,
+                      value: detail.doc.sessionId,
+                    },
+                    ...(detail.doc.source === 'issue-agent' &&
+                    detail.doc.repo &&
+                    detail.doc.runId
+                      ? [
+                          {
+                            label: 'Workflow run' as const,
+                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.runId}`,
+                          },
+                        ]
+                      : []),
+                    ...(detail.doc.source === 'issue-agent' &&
+                    detail.doc.repo &&
+                    detail.doc.issueNumber
+                      ? [
+                          {
+                            label: 'Task' as const,
+                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.issueNumber}`,
+                          },
+                        ]
+                      : []),
+                  ]
+                : []
+            }
           />
         }
       />

@@ -1,10 +1,20 @@
 'use client';
 
-import { ActionIcon, Menu, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Group,
+  Menu,
+  Modal,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+} from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
-import { useTransition } from 'react';
+import { type FormEvent, useState, useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
 import { type Pipeline } from '../lib/primary-action';
@@ -17,6 +27,7 @@ import {
   closeIssue,
   reassignPipeline,
   rebasePr,
+  updateIssueContent,
 } from './actions';
 import { showErrorToast } from './show-error-toast';
 
@@ -39,7 +50,11 @@ export function ItemOverflowMenu({
   onToggleMute?: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [editOpened, setEditOpened] = useState(false);
+  const [editTitle, setEditTitle] = useState(item.title);
+  const [editBody, setEditBody] = useState(item.body ?? '');
 
+  const canEdit = item.kind === 'issue';
   const canClose = item.kind === 'issue';
   const canClearHumanNeeded = item.actionTypes.includes('needs-human');
   const canMute = Boolean(onToggleMute);
@@ -59,6 +74,7 @@ export function ItemOverflowMenu({
       : [];
   const canReassign = reassignTargets.length > 0;
   if (
+    !canEdit &&
     !canClose &&
     !canClearHumanNeeded &&
     !canMute &&
@@ -76,6 +92,34 @@ export function ItemOverflowMenu({
       }
       notifications.show({
         message: `#${item.number} closed`,
+        color: 'green',
+      });
+    });
+  };
+
+  const openEdit = () => {
+    setEditTitle(item.title);
+    setEditBody(item.body ?? '');
+    setEditOpened(true);
+  };
+
+  const handleEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const title = editTitle.trim();
+    if (!title) return;
+
+    startTransition(async () => {
+      const result = await updateIssueContent(item.repo, item.number, {
+        title,
+        body: editBody,
+      });
+      if (!result.ok) {
+        showErrorToast(result.message);
+        return;
+      }
+      setEditOpened(false);
+      notifications.show({
+        message: `#${item.number} updated`,
         color: 'green',
       });
     });
@@ -137,45 +181,100 @@ export function ItemOverflowMenu({
     });
   };
 
+  const editUnchanged =
+    editTitle.trim() === item.title && editBody === (item.body ?? '');
+
   return (
-    <Menu withinPortal position="bottom-end" shadow="md">
-      <Menu.Target>
-        <ActionIcon
-          variant="subtle"
-          color="gray"
-          disabled={isPending}
-          loading={isPending}
-          aria-label={`More actions for #${item.number}`}
-          style={{ flexShrink: 0 }}
+    <>
+      <Menu withinPortal position="bottom-end" shadow="md">
+        <Menu.Target>
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            disabled={isPending}
+            loading={isPending}
+            aria-label={`More actions for #${item.number}`}
+            style={{ flexShrink: 0 }}
+          >
+            <IconDotsVertical aria-hidden="true" size={18} stroke={1.7} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {canEdit && <Menu.Item onClick={openEdit}>Edit issue</Menu.Item>}
+          {canRebase && (
+            <Menu.Item onClick={handleRebase}>
+              Rebase onto base branch
+            </Menu.Item>
+          )}
+          {reassignTargets.map((target) => (
+            <Menu.Item key={target} onClick={() => handleReassign(target)}>
+              Reassign to {target}
+            </Menu.Item>
+          ))}
+          {canClearHumanNeeded && (
+            <Menu.Item onClick={handleClearHumanNeeded}>
+              Clear needs-human
+            </Menu.Item>
+          )}
+          {canMute && (
+            <Menu.Item onClick={onToggleMute}>
+              {muted ? 'Unmute' : 'Mute'}
+            </Menu.Item>
+          )}
+          {canClose && (
+            <Menu.Item color="red" onClick={confirmClose}>
+              Close issue
+            </Menu.Item>
+          )}
+        </Menu.Dropdown>
+      </Menu>
+      {canEdit && (
+        <Modal
+          opened={editOpened}
+          onClose={() => {
+            if (!isPending) setEditOpened(false);
+          }}
+          closeOnClickOutside={!isPending}
+          title={`Edit #${item.number}`}
         >
-          <IconDotsVertical aria-hidden="true" size={18} stroke={1.7} />
-        </ActionIcon>
-      </Menu.Target>
-      <Menu.Dropdown>
-        {canRebase && (
-          <Menu.Item onClick={handleRebase}>Rebase onto base branch</Menu.Item>
-        )}
-        {reassignTargets.map((target) => (
-          <Menu.Item key={target} onClick={() => handleReassign(target)}>
-            Reassign to {target}
-          </Menu.Item>
-        ))}
-        {canClearHumanNeeded && (
-          <Menu.Item onClick={handleClearHumanNeeded}>
-            Clear needs-human
-          </Menu.Item>
-        )}
-        {canMute && (
-          <Menu.Item onClick={onToggleMute}>
-            {muted ? 'Unmute' : 'Mute'}
-          </Menu.Item>
-        )}
-        {canClose && (
-          <Menu.Item color="red" onClick={confirmClose}>
-            Close issue
-          </Menu.Item>
-        )}
-      </Menu.Dropdown>
-    </Menu>
+          <form onSubmit={handleEdit}>
+            <Stack gap="sm">
+              <TextInput
+                label="Title"
+                required
+                value={editTitle}
+                onChange={(event) => setEditTitle(event.currentTarget.value)}
+                disabled={isPending}
+              />
+              <Textarea
+                label="Body"
+                value={editBody}
+                onChange={(event) => setEditBody(event.currentTarget.value)}
+                autosize
+                minRows={10}
+                disabled={isPending}
+              />
+              <Group justify="flex-end" gap="xs">
+                <Button
+                  type="button"
+                  variant="default"
+                  disabled={isPending}
+                  onClick={() => setEditOpened(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  loading={isPending}
+                  disabled={!editTitle.trim() || editUnchanged}
+                >
+                  Save changes
+                </Button>
+              </Group>
+            </Stack>
+          </form>
+        </Modal>
+      )}
+    </>
   );
 }

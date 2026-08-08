@@ -21,6 +21,7 @@ import {
   verifyBrokerConcurrency,
 } from './github-api.js';
 import {
+  anchorNeedsHuman,
   applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,
@@ -52,7 +53,7 @@ import {
   saveProjectionCheckpoint,
   wasSupersededEviction,
 } from './main.js';
-import { digestQuickTask, normalizeEvent } from './normalize.js';
+import { digestQuickTask, makeIntent, normalizeEvent } from './normalize.js';
 import { acquireAuthority } from './storage/authority.js';
 import { InMemoryStoragePort } from './storage/in-memory-port.js';
 
@@ -160,6 +161,8 @@ test('storage-authoritative dispatch records the outbox and resolves it after pe
       };
     },
     requestOk: async (path, options = {}) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       assert.match(path, /issues\/comments\/9$/u);
       assert.equal(options.method, 'PATCH');
       return { id: 9 };
@@ -222,7 +225,11 @@ test('a launched worker stays active when launch-outbox resolution fails', async
       },
       headers: new Headers(),
     }),
-    requestOk: async () => ({ id: 9 }),
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
+      return { id: 9 };
+    },
   };
   const loaded = {
     ledger: authority.ledger,
@@ -305,7 +312,9 @@ test('authority launches from Firestore while the compatibility projection is un
       },
       headers: new Headers(),
     }),
-    requestOk: async () => {
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       throw new Error('projection must remain untouched');
     },
   };
@@ -369,7 +378,9 @@ test('authority launches when the scheduling projection PATCH fails', async () =
         headers: new Headers(),
       };
     },
-    requestOk: async () => {
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       throw new Error('GitHub projection unavailable');
     },
   };
@@ -512,7 +523,9 @@ test('authority restores accepted state when pre-launch outbox recording fails',
       dispatches += 1;
       throw new Error('worker dispatch must not happen');
     },
-    requestOk: async () => {
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
       projectionWrites += 1;
       return { id: 9 };
     },
@@ -566,7 +579,11 @@ test('authority persists dispatch-unknown when auxiliary outbox resolution fails
     request: async () => {
       throw new Error('dispatch response timeout');
     },
-    requestOk: async () => ({ id: 9 }),
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
+      return { id: 9 };
+    },
   };
   const loaded = {
     ledger: authority.ledger,
@@ -678,6 +695,25 @@ test('authority persists a non-converged projection checkpoint when the comment 
   assert.equal(projection?.observedRevision, 0);
 });
 
+function acceptedLedger(pipeline = 'codex') {
+  const ledger = createLedger(task);
+  acceptIntent(ledger, {
+    task,
+    intentId: 'intent-1',
+    sourceKind: 'manual',
+    sourceId: 'source-1',
+    transportRunId: 9001,
+    occurredAt: '2026-08-01T00:00:00.000Z',
+    pipeline,
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'abc',
+    authorization: { authorized: true },
+  });
+  return ledger;
+}
+
 function workerRun(status = 'in_progress') {
   return {
     id: 42,
@@ -696,6 +732,268 @@ function workerRun(status = 'in_progress') {
 test('normalized payload encoding round-trips without shell quoting', () => {
   const value = { body: "apostrophe ' newline\n and unicode ✅" };
   assert.deepEqual(decode(encode(value)), value);
+});
+
+test('status:needs-human label edges become serialized control evidence so unpark wakes a held generation (#720)', () => {
+  const context = {
+    repository: task.repository,
+    repositoryId: task.repositoryId,
+    issue: task.issue,
+    runId: 9100,
+    now: '2026-08-08T00:00:00.000Z',
+  };
+  for (const action of ['labeled', 'unlabeled']) {
+    const normalized = normalizeEvent({
+      eventName: 'issues',
+      event: {
+        action,
+        issue: {
+          id: 3040,
+          number: task.issue,
+          title: 'Parked task',
+          body: '',
+          labels:
+            action === 'labeled'
+              ? [{ name: 'agent:codex' }, { name: 'status:needs-human' }]
+              : [{ name: 'agent:codex' }],
+          created_at: '2026-08-01T00:00:00.000Z',
+          updated_at: '2026-08-08T00:00:00.000Z',
+        },
+        label: { name: 'status:needs-human' },
+        sender: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+      context,
+      timeline: [
+        {
+          id: action === 'labeled' ? 81 : 82,
+          event: action,
+          created_at: context.now,
+          actor: { login: 'github-actions[bot]' },
+          label: { name: 'status:needs-human' },
+        },
+      ],
+      maintainer: 'jlapenna',
+    });
+    assert.equal(normalized.kind, 'control-evidence');
+    assert.equal(normalized.evidence.sourceKind, action);
+    assert.equal(normalized.evidence.label, 'status:needs-human');
+    assert.equal(normalized.evidence.authorization.observed, true);
+  }
+});
+
+test('dispatch admission holds ordinary accepted work while needs-human is live, then dispatches it exactly once after unpark (#720)', async () => {
+  const ledger = acceptedLedger();
+  const loaded = { ledger, comment: { id: 9 } };
+  const parkedCalls = [];
+  const parkedClient = {
+    requestOk: async (path, options = {}) => {
+      parkedCalls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/issues/304')) {
+        return { labels: [{ name: 'status:needs-human' }] };
+      }
+      throw new Error(`Parked generation must not mutate GitHub: ${path}`);
+    },
+    request: async (path) => {
+      throw new Error(`Parked generation must not dispatch: ${path}`);
+    },
+  };
+
+  await dispatchAccepted(parkedClient, loaded);
+
+  assert.equal(ledger.generations[0].state, 'accepted');
+  assert.deepEqual(parkedCalls, [
+    {
+      path: '/repos/jlapenna/agent-lcars/issues/304',
+      method: 'GET',
+    },
+  ]);
+
+  const resumedCalls = [];
+  const resumedClient = {
+    requestOk: async (path, options = {}) => {
+      resumedCalls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) return [];
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected resumed request: ${path}`);
+    },
+    request: async (path, options = {}) => {
+      resumedCalls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/actions/workflows/codex.yml/dispatches')) {
+        return {
+          status: 200,
+          data: {
+            workflow_run_id: 42,
+            run_url:
+              'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+            html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+          },
+        };
+      }
+      throw new Error(`Unexpected resumed dispatch: ${path}`);
+    },
+  };
+
+  await dispatchAccepted(resumedClient, loaded);
+
+  assert.equal(ledger.generations[0].state, 'active');
+  assert.equal(
+    resumedCalls.filter((call) => call.path.endsWith('/dispatches')).length,
+    1,
+  );
+});
+
+test('dispatch admission parks visibly before allocation while lane health is open and resumes the same accepted generation after recovery (#523)', async () => {
+  const ledger = acceptedLedger('codex');
+  const loaded = { ledger, comment: { id: 9 } };
+  const readinessMarker =
+    '<!-- agent-lcars:workflow-alert:v1:bootstrap-canary.yml -->';
+  let healthy = false;
+  let projectedComment;
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.includes('/issues?state=open')) {
+        return healthy
+          ? []
+          : [
+              {
+                number: 901,
+                title: 'Bootstrap Canary is failing',
+                body: readinessMarker,
+                html_url: 'https://github.com/jlapenna/agent-lcars/issues/901',
+              },
+            ];
+      }
+      if (path.includes('/issues/304/comments?')) {
+        return projectedComment ? [projectedComment] : [];
+      }
+      if (path.endsWith('/issues/304/comments')) {
+        projectedComment = { id: 71, body: options.body.body };
+        return projectedComment;
+      }
+      if (path.endsWith('/issues/comments/71')) {
+        projectedComment = { id: 71, body: options.body.body };
+        return projectedComment;
+      }
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected readiness request: ${path}`);
+    },
+    request: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/actions/workflows/codex.yml/dispatches')) {
+        return {
+          status: 200,
+          data: {
+            workflow_run_id: 42,
+            run_url:
+              'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+            html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+          },
+        };
+      }
+      throw new Error(`Unexpected readiness dispatch: ${path}`);
+    },
+  };
+
+  await dispatchAccepted(client, loaded);
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(ledger.generations[0].state, 'accepted');
+  assert.equal(
+    calls.filter((call) => call.path.endsWith('/dispatches')).length,
+    0,
+  );
+  assert.equal(
+    calls.filter(
+      (call) =>
+        call.path.endsWith('/issues/304/comments') && call.method === 'POST',
+    ).length,
+    1,
+    'repeated health checks must converge on one visible park comment',
+  );
+  assert.match(projectedComment.body, /before worker allocation/u);
+  assert.match(projectedComment.body, /Scheduled reconcile/u);
+
+  healthy = true;
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(ledger.generations[0].state, 'active');
+  assert.equal(
+    calls.filter((call) => call.path.endsWith('/dispatches')).length,
+    1,
+  );
+});
+
+test('the no-op canary bypasses needs-human admission so its next probe can prove recovery (#720/#677)', async () => {
+  const ledger = acceptedLedger('canary');
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/issues/304')) {
+        throw new Error('Canary dispatch must not read the park label');
+      }
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected canary request: ${path}`);
+    },
+    request: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      return {
+        status: 200,
+        data: {
+          workflow_run_id: 43,
+          run_url:
+            'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/43',
+          html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/43',
+        },
+      };
+    },
+  };
+
+  await dispatchAccepted(client, { ledger, comment: { id: 9 } });
+
+  assert.equal(ledger.generations[0].state, 'active');
+  assert.ok(
+    calls.some((call) =>
+      call.path.endsWith(
+        '/actions/workflows/agent-dispatch-canary.yml/dispatches',
+      ),
+    ),
+  );
+  assert.equal(
+    calls.some((call) => call.path.endsWith('/issues/304')),
+    false,
+  );
+});
+
+test('anchorNeedsHuman accepts both REST label shapes and fails closed on lookup errors (#720)', async () => {
+  for (const labels of [
+    ['status:needs-human'],
+    [{ name: 'agent:codex' }, { name: 'status:needs-human' }],
+  ]) {
+    assert.equal(
+      await anchorNeedsHuman({ requestOk: async () => ({ labels }) }, task),
+      true,
+    );
+  }
+  assert.equal(
+    await anchorNeedsHuman(
+      { requestOk: async () => ({ labels: [{ name: 'agent:codex' }] }) },
+      task,
+    ),
+    false,
+  );
+  await assert.rejects(
+    () =>
+      anchorNeedsHuman(
+        { requestOk: async () => Promise.reject(new Error('API down')) },
+        task,
+      ),
+    /API down/u,
+  );
 });
 
 test('resolveTask recovers a canonical TaskRef from real normalize() output for every payload kind (#337)', () => {
@@ -1591,6 +1889,116 @@ test('a redelivered completion after terminal reconciliation is a no-op', async 
   assert.equal(writes, 0);
 });
 
+test('a trusted completion persists the exact PR reference beside its immutable worker outcome', async () => {
+  const ledger = boundLedger();
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) return workerRun('completed');
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+
+  await handleCompletion(
+    client,
+    { ledger, comment: { id: 9 } },
+    {
+      kind: 'completion',
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceKind: 'completion',
+      sourceId: 'worker-run:42',
+      transportRunId: 9003,
+      outcome: 'pull-request',
+      outcomeReference: { kind: 'pull-request', number: 755 },
+    },
+  );
+
+  assert.equal(ledger.generations[0].attempt.outcome, 'pull-request');
+  assert.deepEqual(ledger.generations[0].attempt.outcomeReference, {
+    kind: 'pull-request',
+    number: 755,
+  });
+});
+
+test('a trusted credential failure opens the lane breaker before completion can promote more work, without reopening on stale redelivery (#523)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = boundLedger();
+    const calls = [];
+    let openIssues = [];
+    const client = {
+      requestOk: async (path, options = {}) => {
+        calls.push({
+          path,
+          method: options.method ?? 'GET',
+          body: options.body,
+        });
+        if (path.endsWith('/actions/runs/42')) {
+          return workerRun('completed');
+        }
+        if (path.includes('/issues?state=open')) return openIssues;
+        if (path.endsWith('/issues') && options.method === 'POST') {
+          openIssues = [
+            {
+              number: 902,
+              title: options.body.title,
+              body: options.body.body,
+              html_url: 'https://github.com/jlapenna/agent-lcars/issues/902',
+            },
+          ];
+          return openIssues[0];
+        }
+        if (path.endsWith('/issues/comments/9')) return { id: 9 };
+        throw new Error(`Unexpected completion readiness path: ${path}`);
+      },
+    };
+    const completion = {
+      kind: 'completion',
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceKind: 'completion',
+      sourceId: 'worker-run:42',
+      transportRunId: 9003,
+      outcome: 'startup-failure',
+      readinessFailure: 'credential',
+    };
+
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+
+    assert.equal(ledger.generations[0].state, 'completed');
+    assert.equal(ledger.generations[0].attempt.outcome, 'startup-failure');
+    assert.equal(
+      calls.filter(
+        (call) => call.path.endsWith('/issues') && call.method === 'POST',
+      ).length,
+      1,
+    );
+
+    // Model an operator closing the incident after repairing the credential.
+    // The already-recorded completion source makes a stale callback a no-op,
+    // so it must not recreate the breaker from old evidence.
+    openIssues = [];
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+    assert.equal(
+      calls.filter(
+        (call) => call.path.endsWith('/issues') && call.method === 'POST',
+      ).length,
+      1,
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
 test('authority renews its lease before every completion poll that can cross the original expiry', async () => {
   const port = new InMemoryStoragePort();
   const ledger = boundLedger();
@@ -1702,6 +2110,7 @@ function reconcileStubClient({ failParkStatus, issue, timeline } = {}) {
       if (path.includes(`/issues/${task.issue}/timeline`)) {
         return timeline ?? [];
       }
+      if (path.includes('/issues?state=open')) return [];
       if (path.endsWith(`/issues/${task.issue}`)) {
         return issue ?? { id: 9304, labels: [], assignees: [] };
       }
@@ -2406,15 +2815,49 @@ test('reconcileLedger no-ops on an empty ledger when the live issue carries cont
 // The repair's own authorization check (Codex review, P1) needs a
 // timeline entry showing WHO most recently applied the label, mirroring
 // what a live `labeled` event's `event.sender` would carry.
-function maintainerLabelTimeline(login = 'jlapenna') {
+function maintainerLabelTimeline(
+  login = 'jlapenna',
+  {
+    id = 501,
+    label = 'agent:codex',
+    createdAt = '2026-08-04T05:59:00.000Z',
+  } = {},
+) {
   return [
     {
+      id,
       event: 'labeled',
-      label: { name: 'agent:codex' },
+      label: { name: label },
       actor: { login },
-      created_at: '2026-08-04T05:59:00.000Z',
+      created_at: createdAt,
     },
   ];
+}
+
+function quickTaskRepairIssue({ author = 'jlapenna', persistedDigest } = {}) {
+  const description = 'Repair this Quick Task';
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  const digest = digestQuickTask({
+    repository: task.repository,
+    pipeline: 'codex',
+    title: 'Quick task issue',
+    description,
+  });
+  return {
+    requestId,
+    digest,
+    issue: {
+      id: 9304,
+      number: task.issue,
+      title: 'Quick task issue',
+      body: `${description}\n\n<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${persistedDigest ?? digest} -->`,
+      user: { login: author },
+      labels: [{ name: 'intake:quick-task' }, { name: 'agent:codex' }],
+      assignees: [],
+      created_at: '2026-08-04T05:59:00.000Z',
+      updated_at: '2026-08-04T05:59:00.000Z',
+    },
+  };
 }
 
 test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a live, unambiguous agent label applied by the maintainer (#520)', async () => {
@@ -2440,8 +2883,7 @@ test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a l
     assert.equal(
       ledger.sources.some(
         (source) =>
-          source.sourceKind === 'reconcile-label-repair' &&
-          source.sourceId === 'reconcile-label-repair:9304',
+          source.sourceKind === 'labeled' && source.sourceId === 'timeline:501',
       ),
       true,
     );
@@ -2468,6 +2910,7 @@ test('reconcileLedger repair falls through to the review:* namespace on a pull r
       },
       timeline: [
         {
+          id: 503,
           event: 'labeled',
           label: { name: 'review:codex' },
           actor: { login: 'jlapenna' },
@@ -2524,12 +2967,118 @@ test('reconcileLedger repair does NOT fire when the label was most recently appl
   }
 });
 
-test('reconcileLedger repair does NOT fire when the issue timeline has no matching labeled event at all', async () => {
+test('reconcileLedger repairs a creation-time Quick Task label from its digest and maintainer author when no labeled timeline event exists (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue, requestId, digest } = quickTaskRepairIssue();
+    const { client } = reconcileStubClient({ issue, timeline: [] });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:00:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    assert.equal(
+      ledger.generations[0].intentId,
+      `quick:${requestId}:${digest}`,
+    );
+    assert.equal(ledger.generations[0].state, 'accepted');
+    assert.deepEqual(ledger.sources[0].authorization, {
+      authorized: true,
+      actor: 'jlapenna',
+      configuredMaintainer: 'jlapenna',
+      rule: 'reconcile-quick-task-create-repair',
+    });
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger does NOT trust a valid creation-time Quick Task marker authored by a non-maintainer (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue } = quickTaskRepairIssue({
+      author: 'some-other-collaborator',
+    });
+    const { client, calls } = reconcileStubClient({ issue, timeline: [] });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:00:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 0);
+    assert.equal(
+      calls.some((call) => call.method !== 'GET'),
+      false,
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('a real non-maintainer label event takes precedence over the original Quick Task author (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue } = quickTaskRepairIssue();
+    const { client } = reconcileStubClient({
+      issue,
+      timeline: maintainerLabelTimeline('some-other-collaborator'),
+    });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:00:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 0);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger rejects a maintainer-authored Quick Task whose creation marker digest is invalid (#634)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const { issue } = quickTaskRepairIssue({
+      persistedDigest: '0'.repeat(64),
+    });
+    const { client } = reconcileStubClient({ issue, timeline: [] });
+    await assert.rejects(
+      () =>
+        reconcileLedger(
+          client,
+          { ledger, comment: { id: 9 } },
+          '2026-08-04T06:00:00.000Z',
+          30880000,
+        ),
+      /Quick Task marker digest mismatch/u,
+    );
+    assert.equal(ledger.generations.length, 0);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repair does NOT treat an ordinary maintainer-authored issue as a Quick Task when its timeline has no matching label event (#634)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {
     const ledger = createLedger(task);
     const { client } = reconcileStubClient({
-      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      issue: {
+        id: 9304,
+        user: { login: 'jlapenna' },
+        labels: [{ name: 'agent:codex' }],
+        assignees: [],
+      },
       timeline: [],
     });
     const now = '2026-08-04T06:00:00.000Z';
@@ -2556,6 +3105,7 @@ test('reconcileLedger repair pages through the full timeline: a non-maintainer r
       created_at: `2026-08-01T00:${String(index).padStart(2, '0')}:00.000Z`,
     }));
     page1.push({
+      id: 504,
       event: 'labeled',
       label: { name: 'agent:codex' },
       actor: { login: 'jlapenna' },
@@ -2572,6 +3122,7 @@ test('reconcileLedger repair pages through the full timeline: a non-maintainer r
         created_at: '2026-08-04T05:30:00.000Z',
       },
       {
+        id: 506,
         event: 'labeled',
         label: { name: 'agent:codex' },
         actor: { login: 'some-other-collaborator' },
@@ -2636,10 +3187,8 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
     const revisionAfterRepair = ledger.revision;
 
     // A second reconcile pass (e.g. the next scheduled scan, 30 minutes
-    // later) must not touch the ledger again: generations is no longer
-    // empty, so the repair branch's own gate excludes it, and the resulting
-    // 'accepted' generation isn't in a dispatching/dispatch-unknown state
-    // reconcileActive()/trackMissingRun() would otherwise act on either.
+    // later) sees the same real timeline source and must not touch the ledger
+    // again, even though repair is no longer limited to an empty ledger.
     await reconcileLedger(
       client,
       { ledger, comment: { id: 9 } },
@@ -2648,6 +3197,91 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
     );
     assert.equal(ledger.generations.length, 1);
     assert.equal(ledger.revision, revisionAfterRepair);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repairs a queue-evicted relabel after an earlier generation completed, exactly once (#639)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = completedLedger();
+    const timeline = maintainerLabelTimeline('jlapenna', {
+      id: 502,
+      label: 'agent:claude',
+      createdAt: '2026-08-04T06:30:00.000Z',
+    });
+    const { client } = reconcileStubClient({
+      issue: {
+        id: 9304,
+        labels: [{ name: 'agent:claude' }],
+        assignees: [],
+      },
+      timeline,
+    });
+
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:31:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 2);
+    assert.equal(ledger.generations[1].pipeline, 'claude');
+    assert.equal(ledger.generations[1].state, 'accepted');
+    assert.equal(ledger.generations[1].sourceId, 'timeline:502');
+    const revisionAfterRepair = ledger.revision;
+
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T07:01:00.000Z',
+      30880001,
+    );
+    assert.equal(ledger.generations.length, 2);
+    assert.equal(ledger.revision, revisionAfterRepair);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('the real timeline identity does not replay a label already covered by the legacy synthetic #520 repair source (#639)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    acceptIntent(
+      ledger,
+      makeIntent({
+        task,
+        sourceKind: 'reconcile-label-repair',
+        sourceId: 'reconcile-label-repair:9304',
+        transportRunId: 30870000,
+        occurredAt: '2026-08-04T06:00:00.000Z',
+        pipeline: 'codex',
+        mode: 'implement',
+        reply: '',
+        runbook: '',
+        context: '',
+        authorization: { authorized: true },
+      }),
+      '2026-08-04T06:00:00.000Z',
+    );
+    const revisionBefore = ledger.revision;
+    const { client } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: maintainerLabelTimeline(),
+    });
+
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:30:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    assert.equal(ledger.revision, revisionBefore);
   } finally {
     delete process.env.MAINTAINER_LOGIN;
   }

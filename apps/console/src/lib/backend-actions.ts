@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import {
   formatQuickTaskMarker,
+  parseTerminalQuickTaskBody,
   quickTaskDigest as sharedQuickTaskDigest,
   quickTaskMarkerMatcher,
 } from '@agent-lcars/dispatch-contracts';
@@ -14,6 +15,7 @@ import {
 } from './github-client';
 import { type Pipeline } from './primary-action';
 import type { QuickTaskReceipt, QuickTaskRequest } from './quick-task-contract';
+import { deriveQuickTaskTitle } from './quick-task-evidence';
 import {
   type AgentIntegration,
   agentIntegration,
@@ -281,6 +283,106 @@ export async function closeIssue(
   await notifyReconcile(repo, issueNumber);
 }
 
+/** Updates the human-authored issue content without changing any dispatch
+ * control fields. Title/body edits do not affect the ledger's close/park/
+ * pipeline state, so unlike close and label mutations this deliberately
+ * does not ping reconciliation. */
+export async function updateIssueContent(
+  repo: WatchedRepo,
+  issueNumber: number,
+  content: { title: string; body: string },
+): Promise<void> {
+  if (!content || typeof content.title !== 'string') {
+    throw new ActionError('Issue title is required', 400);
+  }
+  const title = content.title.trim();
+  if (!title) {
+    throw new ActionError('Issue title is required', 400);
+  }
+  if (typeof content.body !== 'string') {
+    throw new ActionError('Issue body must be text', 400);
+  }
+
+  const octokit = getGithubClient();
+  const { data: existing } = await octokit.rest.issues.get({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+  });
+  const existingBody = existing.body ?? '';
+  const quickTask = parseTerminalQuickTaskBody(existingBody);
+  if (
+    existingBody.includes('<!-- agent-lcars:quick-task-request:v1') &&
+    !quickTask
+  ) {
+    throw new ActionError(
+      'Quick Task identity marker is malformed; refusing to edit',
+      409,
+    );
+  }
+
+  let body = content.body;
+  const submittedQuickTask = parseTerminalQuickTaskBody(content.body);
+  if (
+    content.body.includes('<!-- agent-lcars:quick-task-request:v1') &&
+    !submittedQuickTask
+  ) {
+    throw new ActionError('Quick Task identity marker is malformed', 400);
+  }
+  if (!quickTask && submittedQuickTask) {
+    throw new ActionError(
+      'A Quick Task identity marker cannot be added through issue editing',
+      400,
+    );
+  }
+  if (quickTask) {
+    const originalPipeline = supportedAgentPipelines(repo).find(
+      (pipeline) =>
+        sharedQuickTaskDigest(
+          {
+            repository: repoKey(repo),
+            pipeline,
+            title: existing.title,
+            description: quickTask.description,
+          },
+          sha256Hex,
+        ) === quickTask.digest,
+    );
+    if (!originalPipeline) {
+      throw new ActionError(
+        'Quick Task identity digest does not match its current content; refusing to edit',
+        409,
+      );
+    }
+
+    const description = (
+      submittedQuickTask?.description ?? content.body
+    ).trim();
+    const digest = sharedQuickTaskDigest(
+      {
+        repository: repoKey(repo),
+        pipeline: originalPipeline,
+        title,
+        description,
+      },
+      sha256Hex,
+    );
+    const marker = formatQuickTaskMarker({
+      requestId: quickTask.requestId,
+      digest,
+    });
+    body = description ? `${description}\n\n${marker}` : marker;
+  }
+
+  await octokit.rest.issues.update({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+    title,
+    body,
+  });
+}
+
 export async function cancelWorkflowRun(
   repo: WatchedRepo,
   runId: number,
@@ -314,7 +416,8 @@ const DISPATCH_CALLER_ID_PATTERN =
 // dispatch with a 422 naming exactly the inputs it doesn't recognize
 // (`Unexpected inputs provided: ["caller_id"]`) rather than ignoring them.
 // Since every optional input this call sends has a documented fallback on
-// the receiving end (see normalize.mjs's resolveCallerSourceId), retrying
+// the receiving end (see apps/dispatch-broker/src/normalize.ts's
+// resolveCallerSourceId), retrying
 // once without the rejected keys degrades gracefully instead of leaving
 // retrigger permanently broken for a lagging repo.
 const UNEXPECTED_INPUTS_PATTERN = /Unexpected inputs provided: (\[.*\])/u;
@@ -625,16 +728,9 @@ const QUICK_TASK_RECENT_ISSUE_LIMIT = 100;
 const QUICK_TASK_CLAIM_REF_PREFIX = 'tags/agent-lcars/quick-task/';
 const QUICK_TASK_CLAIM_TAG_PREFIX = 'agent-lcars/quick-task/';
 const QUICK_TASK_CLAIM_MESSAGE_PREFIX = 'agent-lcars:quick-task-claim:v1 ';
-// Issue titles show up in list views and the run-name banner - a raw,
-// possibly multi-paragraph task description would blow both out, so this
-// keeps just the first line and clips it to something scannable.
-const QUICK_TASK_TITLE_MAX_LENGTH = 80;
-
-export function deriveQuickTaskTitle(description: string): string {
-  const firstLine = description.split('\n', 1)[0].replace(/\s+/g, ' ').trim();
-  if (firstLine.length <= QUICK_TASK_TITLE_MAX_LENGTH) return firstLine;
-  return `${firstLine.slice(0, QUICK_TASK_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
-}
+// Kept exported from this long-standing module for callers/tests while the
+// client-safe implementation also powers the exact issue preview.
+export { deriveQuickTaskTitle } from './quick-task-evidence';
 
 interface NormalizedQuickTaskRequest extends QuickTaskRequest {
   repository: WatchedRepo;
@@ -666,7 +762,7 @@ function normalizeQuickTaskRequest(
   return {
     ...request,
     description: trimmed,
-    title: request.title?.trim() || deriveQuickTaskTitle(trimmed),
+    title: deriveQuickTaskTitle(trimmed),
   };
 }
 
