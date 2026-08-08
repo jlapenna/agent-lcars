@@ -5,6 +5,7 @@ import { test } from 'vitest';
 import { createLedger, LEDGER_MARKER, renderLedgerComment } from '../broker.js';
 import { createGitHubApi } from '../github-api.js';
 import {
+  assertCanaryContracts,
   CANARY_SWEEP_CONCURRENCY,
   closeCanaryIssue,
   dispatchRouterCanary,
@@ -44,17 +45,23 @@ function ledgerCommentWithGeneration(options = {}) {
     issue = task.issue,
     user = { login: 'github-actions[bot]', type: 'Bot' },
     sourceId = '11111111-1111-4111-8111-111111111111',
+    projectionState = 'converged',
   } = options;
+  const outcome = Object.hasOwn(options, 'outcome')
+    ? options.outcome
+    : 'comment';
   const conclusion = Object.hasOwn(options, 'conclusion')
     ? options.conclusion
     : 'success';
   const ledger = createLedger({ ...task, issue }, '2026-08-01T00:00:00.000Z');
   const attempt = {
+    attemptId: 'g1:intent-1',
     token: 'dispatch_token_123456',
     runId: 42,
     runUrl: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
     htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
     status,
+    ...(outcome !== undefined && { outcome }),
     ...(conclusion !== undefined && { conclusion }),
   };
   ledger.generations.push({
@@ -71,6 +78,14 @@ function ledgerCommentWithGeneration(options = {}) {
     state,
     attempt,
   });
+  if (projectionState !== undefined) {
+    ledger.projection = {
+      desiredRevision: 7,
+      observedRevision: projectionState === 'converged' ? 7 : 6,
+      state: projectionState,
+      observedAt: '2026-08-01T00:01:00.000Z',
+    };
+  }
   return {
     id: 5,
     body: renderLedgerComment(ledger),
@@ -225,6 +240,43 @@ test('pollCanaryLedger resolves once the canary generation reaches completed/suc
   assert.equal(result.generation.state, 'completed');
   assert.equal(result.generation.attempt.conclusion, 'success');
   assert.equal(call, 3);
+});
+
+test('assertCanaryContracts requires the exact finalizer outcome and a converged projector', () => {
+  const comment = ledgerCommentWithGeneration();
+  const parsed = JSON.parse(comment.body.match(/```json\n([^]*?)\n```/u)[1]);
+  assert.doesNotThrow(() =>
+    assertCanaryContracts({
+      ledger: parsed,
+      generation: parsed.generations[0],
+    }),
+  );
+});
+
+test('assertCanaryContracts rejects a controller-only green with no typed finalizer outcome', () => {
+  const comment = ledgerCommentWithGeneration({ outcome: undefined });
+  const parsed = JSON.parse(comment.body.match(/```json\n([^]*?)\n```/u)[1]);
+  assert.throws(
+    () =>
+      assertCanaryContracts({
+        ledger: parsed,
+        generation: parsed.generations[0],
+      }),
+    /finalizer contract failed.*missing/u,
+  );
+});
+
+test('assertCanaryContracts rejects a green outcome with a divergent projector', () => {
+  const comment = ledgerCommentWithGeneration({ projectionState: 'diverged' });
+  const parsed = JSON.parse(comment.body.match(/```json\n([^]*?)\n```/u)[1]);
+  assert.throws(
+    () =>
+      assertCanaryContracts({
+        ledger: parsed,
+        generation: parsed.generations[0],
+      }),
+    /projector contract failed/u,
+  );
 });
 
 test('pollCanaryLedger logs only meaningful caller-specific state transitions with elapsed time', async () => {
