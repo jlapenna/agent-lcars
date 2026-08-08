@@ -15,5 +15,6 @@
     // buries the handful of casts that carry real information.
     "noImplicitAny": false
   },
-  "include": ["src/**/*.spec.ts", "src/**/*.d.ts"]
+  "include": ["src/**/*.spec.ts", "src/**/*.d.ts"],
+  "references": [{ "path": "../../libs/dispatch-reconcile/tsconfig.lib.json" }]
 }

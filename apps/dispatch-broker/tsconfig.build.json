@@ -8,5 +8,8 @@
     "tsBuildInfoFile": "dist/tsconfig.build.tsbuildinfo",
     "rootDir": "src"
   },
-  "references": [{ "path": "../../libs/dispatch-contracts/tsconfig.lib.json" }]
+  "references": [
+    { "path": "../../libs/dispatch-contracts/tsconfig.lib.json" },
+    { "path": "../../libs/dispatch-reconcile/tsconfig.lib.json" }
+  ]
 }

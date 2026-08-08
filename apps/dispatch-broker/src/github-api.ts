@@ -6,11 +6,22 @@ import type {
 import type { DispatchLedger } from '@agent-lcars/dispatch-contracts';
 import {
   AGENT_PIPELINES,
-  DISPATCH_LABELS,
   displayTitleMatchesAttempt,
   parseRouterGroupMarker,
   workerWorkflow,
 } from '@agent-lcars/dispatch-contracts';
+import type {
+  ReconcileIssue,
+  ReconcileIssueQuery,
+  ReconcileTransport,
+} from '@agent-lcars/dispatch-reconcile';
+import {
+  CLOSED_SWEEP_WINDOW_MS,
+  listOpenAgentLabeledIssues as listOpenAgentLabeledIssuesShared,
+  listOpenIssuesAssignedTo as listOpenIssuesAssignedToShared,
+  listRecentlyClosedAgentLabeledIssues as listRecentlyClosedAgentLabeledIssuesShared,
+  listRecentlyClosedIssuesAssignedTo as listRecentlyClosedIssuesAssignedToShared,
+} from '@agent-lcars/dispatch-reconcile';
 
 import {
   createLedger,
@@ -716,53 +727,41 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-// The six `agent:*`/`review:*` labels dispatch-capable issues/PRs carry.
-// GitHub's issues-list-by-label filter is an AND across a comma-separated
-// `labels` value, so discovering "any agent:*/review:* label" requires one
-// query per label rather than one combined query -- each is independently
-// cheap and reliably paginated (no search-index replication lag), unlike a
-// full-text search over the ledger's hidden marker comment, which the epic
-// design audit (#301) explicitly rejected as a discovery mechanism.
-const RECONCILE_DISCOVERY_LABELS = DISPATCH_LABELS;
+function createReconcileTransport(api: GitHubApi): ReconcileTransport {
+  return {
+    listIssues: async (query: ReconcileIssueQuery) => {
+      const root = repositoryPath({ repository: query.repository });
+      const parameters = new URLSearchParams({
+        state: query.state,
+        per_page: String(query.perPage),
+        page: String(query.page),
+      });
+      if (query.label) parameters.set('labels', query.label);
+      if (query.assignee) parameters.set('assignee', query.assignee);
+      if (query.since) parameters.set('since', query.since);
+      return api.requestOk<ReconcileIssue[]>(
+        `${root}/issues?${parameters.toString()}`,
+      );
+    },
+    dispatchReconcile: (repository, issue) =>
+      dispatchRouterEvent(
+        api,
+        { repository },
+        {
+          kind: 'reconcile',
+          issue: String(issue),
+        },
+      ),
+  };
+}
 
-// Read-only discovery for dispatch-reconcile.yml's scan job (#305): every
-// currently open issue or pull request carrying any `agent:*`/`review:*`
-// label (the Issues API returns both; a PR item carries a `pull_request`
-// key). Merges and deduplicates by issue number across the per-label
-// queries so an issue with (invalidly) more than one label in the same
-// namespace is still only scanned once.
-//
-// Cost: up to 6 paginated `state=open&labels=<agent|review>:<pipeline>`
-// requests per scan (almost always a single page each at this repo's scale
-// -- a healthy dispatch backlog is a handful of issues, not hundreds), well
-// inside the 1,000 requests/hour GITHUB_TOKEN budget even at a 30-minute
-// cadence, before adding one workflow_dispatch call per discovered
-// candidate (see dispatchReconcileScan in main.mjs). A scan pass now feeds
-// on four sweeps in total, not two: this open-labels lane; its closed
-// counterpart just below (up to 6 more paginated
-// `state=closed&since=<CLOSED_SWEEP_WINDOW_MS ago>&labels=...` requests --
-// same shape, same per-label cost); and the two single-query fleet-assignee
-// lanes (listOpenIssuesAssignedTo / listRecentlyClosedIssuesAssignedTo,
-// both below) -- each adds one more (paginated) request per scan, not one
-// per label, so the label lanes above still dominate this budget line.
-// Still comfortably inside budget.
 async function listOpenAgentLabeledIssues(
   api: GitHubApi,
   task: RepositoryRef,
-): Promise<GitHubIssueDetail[]> {
-  const root = repositoryPath(task);
-  const byNumber = new Map<number, GitHubIssueDetail>();
-  for (const label of RECONCILE_DISCOVERY_LABELS) {
-    const items = await listAll<GitHubIssueDetail>(
-      api,
-      `${root}/issues?state=open&labels=${encodeURIComponent(label)}`,
-    );
-    for (const item of items) {
-      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
-    }
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number,
+): Promise<ReconcileIssue[]> {
+  return listOpenAgentLabeledIssuesShared(
+    createReconcileTransport(api),
+    task.repository,
   );
 }
 
@@ -793,29 +792,15 @@ async function listOpenAgentLabeledIssues(
 // of how the candidate was discovered, so a maintainer can always force one
 // through by hand with a manual `workflow_dispatch` (`kind: reconcile`,
 // that issue number).
-const CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1000;
-
 async function listRecentlyClosedAgentLabeledIssues(
   api: GitHubApi,
   task: RepositoryRef,
   now: Date | string = new Date(),
-): Promise<GitHubIssueDetail[]> {
-  const root = repositoryPath(task);
-  const since = new Date(
-    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS,
-  ).toISOString();
-  const byNumber = new Map<number, GitHubIssueDetail>();
-  for (const label of RECONCILE_DISCOVERY_LABELS) {
-    const items = await listAll<GitHubIssueDetail>(
-      api,
-      `${root}/issues?state=closed&since=${encodeURIComponent(since)}&labels=${encodeURIComponent(label)}`,
-    );
-    for (const item of items) {
-      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
-    }
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number,
+): Promise<ReconcileIssue[]> {
+  return listRecentlyClosedAgentLabeledIssuesShared(
+    createReconcileTransport(api),
+    task.repository,
+    now,
   );
 }
 
@@ -843,12 +828,11 @@ async function listOpenIssuesAssignedTo(
   api: GitHubApi,
   task: RepositoryRef,
   login: string,
-): Promise<GitHubIssueDetail[]> {
-  if (!login) return [];
-  const root = repositoryPath(task);
-  return listAll<GitHubIssueDetail>(
-    api,
-    `${root}/issues?state=open&assignee=${encodeURIComponent(login)}`,
+): Promise<ReconcileIssue[]> {
+  return listOpenIssuesAssignedToShared(
+    createReconcileTransport(api),
+    task.repository,
+    login,
   );
 }
 
@@ -872,15 +856,12 @@ async function listRecentlyClosedIssuesAssignedTo(
   task: RepositoryRef,
   login: string,
   now: Date | string = new Date(),
-): Promise<GitHubIssueDetail[]> {
-  if (!login) return [];
-  const root = repositoryPath(task);
-  const since = new Date(
-    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS,
-  ).toISOString();
-  return listAll<GitHubIssueDetail>(
-    api,
-    `${root}/issues?state=closed&since=${encodeURIComponent(since)}&assignee=${encodeURIComponent(login)}`,
+): Promise<ReconcileIssue[]> {
+  return listRecentlyClosedIssuesAssignedToShared(
+    createReconcileTransport(api),
+    task.repository,
+    login,
+    now,
   );
 }
 
@@ -1336,6 +1317,7 @@ export {
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
   createGitHubApi,
+  createReconcileTransport,
   dispatchRouterEvent,
   dispatchWorker,
   ensureNeedsHumanParked,

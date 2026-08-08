@@ -56,6 +56,15 @@ export function consoleRepositoryUrl(): string {
   return 'https://github.com/jlapenna/agent-lcars';
 }
 
+/** Repository whose controller this backend hosts. GitHub Actions OIDC
+ * callers must carry this exact repository claim, and reconciliation only
+ * scans this repository. */
+export function controlPlaneRepository(): string {
+  return (
+    optional('AGENT_LCARS_CONTROL_PLANE_REPOSITORY') ?? 'jlapenna/agent-lcars'
+  );
+}
+
 /** Checkout-relative script used to restore archived Claude transcripts. */
 export function agentSessionResumeScript(): string {
   return 'tools/claude-agent-session.sh';

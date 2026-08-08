@@ -14,7 +14,11 @@ export const config = {
 };
 
 export default createAuthProxy({
-  publicRoutes: ['/login', '/api/logs/error'],
+  // The reconcile route performs stronger request authentication itself:
+  // it verifies a GitHub Actions OIDC signature plus repository/workflow/
+  // ref/event claims before doing any work. It cannot require a browser
+  // session because the scheduled workflow is its caller.
+  publicRoutes: ['/login', '/api/logs/error', '/api/control-plane/reconcile'],
   // Both routes are guarded by isE2eTesting() themselves (403 outside e2e);
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page

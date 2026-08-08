@@ -347,6 +347,168 @@ function quickTaskMarkerMatcher() {
   return new RegExp(QUICK_TASK_MARKER_SOURCE, "gu");
 }
 
+// libs/dispatch-reconcile/src/scan.ts
+var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
+var RECONCILE_DISPATCH_CONCURRENCY = 5;
+async function listAllIssues(transport, query) {
+  const all = [];
+  for (let page = 1; page <= 100; page += 1) {
+    const items = await transport.listIssues({
+      ...query,
+      page,
+      perPage: 100
+    });
+    if (!Array.isArray(items)) {
+      throw new Error("GitHub issue listing response is not an array");
+    }
+    all.push(...items);
+    if (items.length < 100) return all;
+  }
+  throw new Error("GitHub issue pagination exceeded safety bound");
+}
+function dedupeIssues(lanes) {
+  const byNumber = /* @__PURE__ */ new Map();
+  for (const issue of lanes.flat()) {
+    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
+  }
+  return [...byNumber.values()].sort(
+    (left, right) => left.number - right.number
+  );
+}
+async function listLabeledIssues(transport, repository, state, since) {
+  const lanes = await Promise.all(
+    DISPATCH_LABELS.map(
+      (label) => listAllIssues(transport, {
+        repository,
+        state,
+        label,
+        ...since && { since }
+      })
+    )
+  );
+  return dedupeIssues(lanes);
+}
+async function listAssignedIssues(transport, repository, state, assignee, since) {
+  if (!assignee) return [];
+  return listAllIssues(transport, {
+    repository,
+    state,
+    assignee,
+    ...since && { since }
+  });
+}
+function listOpenAgentLabeledIssues(transport, repository) {
+  return listLabeledIssues(transport, repository, "open");
+}
+function listOpenIssuesAssignedTo(transport, repository, fleetLogin) {
+  return listAssignedIssues(transport, repository, "open", fleetLogin);
+}
+function listRecentlyClosedAgentLabeledIssues(transport, repository, now = /* @__PURE__ */ new Date()) {
+  const since = new Date(
+    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
+  ).toISOString();
+  return listLabeledIssues(transport, repository, "closed", since);
+}
+function listRecentlyClosedIssuesAssignedTo(transport, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
+  const since = new Date(
+    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
+  ).toISOString();
+  return listAssignedIssues(transport, repository, "closed", fleetLogin, since);
+}
+async function discoverReconcileCandidates(transport, repository, fleetLogin) {
+  return dedupeIssues(
+    await Promise.all([
+      listOpenAgentLabeledIssues(transport, repository),
+      listOpenIssuesAssignedTo(transport, repository, fleetLogin)
+    ])
+  );
+}
+async function discoverRecentlyClosedReconcileCandidates(transport, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
+  return dedupeIssues(
+    await Promise.all([
+      listRecentlyClosedAgentLabeledIssues(transport, repository, now),
+      listRecentlyClosedIssuesAssignedTo(
+        transport,
+        repository,
+        fleetLogin,
+        now
+      )
+    ])
+  );
+}
+async function mapWithConcurrency(items, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function runNext() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        await worker(items[index]);
+        results[index] = { status: "fulfilled" };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(RECONCILE_DISPATCH_CONCURRENCY, items.length) },
+      () => runNext()
+    )
+  );
+  return results;
+}
+function errorMessage(reason) {
+  return reason instanceof Error ? reason.message : String(reason);
+}
+async function dispatchReconcileScan(transport, repository, issueNumbers) {
+  const outcomes = await mapWithConcurrency(
+    issueNumbers,
+    (issue) => transport.dispatchReconcile(repository, issue)
+  );
+  const result = {
+    dispatched: 0,
+    failed: []
+  };
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === "fulfilled") {
+      result.dispatched += 1;
+    } else {
+      result.failed.push({
+        issue: issueNumbers[index],
+        message: errorMessage(outcome.reason)
+      });
+    }
+  });
+  return result;
+}
+async function runReconcileScan(transport, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
+  const [open, closed] = await Promise.all([
+    discoverReconcileCandidates(transport, repository, fleetLogin),
+    discoverRecentlyClosedReconcileCandidates(
+      transport,
+      repository,
+      fleetLogin,
+      now
+    )
+  ]);
+  const issueNumbers = dedupeIssues([open, closed]).map(
+    (issue) => issue.number
+  );
+  const dispatched = await dispatchReconcileScan(
+    transport,
+    repository,
+    issueNumbers
+  );
+  return {
+    candidates: issueNumbers.length,
+    ...dispatched,
+    openCandidates: open.length,
+    closedCandidates: closed.length
+  };
+}
+
 // apps/dispatch-broker/src/broker.ts
 import crypto from "node:crypto";
 
@@ -972,85 +1134,31 @@ async function listAll(api2, path) {
   }
   throw new Error("GitHub pagination exceeded safety bound");
 }
-async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  async function runNext() {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      try {
-        results[index] = {
-          status: "fulfilled",
-          value: await worker(items[index], index)
-        };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
+function createReconcileTransport(api2) {
+  return {
+    listIssues: async (query) => {
+      const root = repositoryPath({ repository: query.repository });
+      const parameters = new URLSearchParams({
+        state: query.state,
+        per_page: String(query.perPage),
+        page: String(query.page)
+      });
+      if (query.label) parameters.set("labels", query.label);
+      if (query.assignee) parameters.set("assignee", query.assignee);
+      if (query.since) parameters.set("since", query.since);
+      return api2.requestOk(
+        `${root}/issues?${parameters.toString()}`
+      );
+    },
+    dispatchReconcile: (repository, issue) => dispatchRouterEvent(
+      api2,
+      { repository },
+      {
+        kind: "reconcile",
+        issue: String(issue)
       }
-    }
-  }
-  const workers = [];
-  for (let i = 0; i < Math.min(limit, items.length); i += 1) {
-    workers.push(runNext());
-  }
-  await Promise.all(workers);
-  return results;
-}
-var RECONCILE_DISCOVERY_LABELS = DISPATCH_LABELS;
-async function listOpenAgentLabeledIssues(api2, task) {
-  const root = repositoryPath(task);
-  const byNumber = /* @__PURE__ */ new Map();
-  for (const label of RECONCILE_DISCOVERY_LABELS) {
-    const items = await listAll(
-      api2,
-      `${root}/issues?state=open&labels=${encodeURIComponent(label)}`
-    );
-    for (const item of items) {
-      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
-    }
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number
-  );
-}
-var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
-async function listRecentlyClosedAgentLabeledIssues(api2, task, now = /* @__PURE__ */ new Date()) {
-  const root = repositoryPath(task);
-  const since = new Date(
-    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
-  ).toISOString();
-  const byNumber = /* @__PURE__ */ new Map();
-  for (const label of RECONCILE_DISCOVERY_LABELS) {
-    const items = await listAll(
-      api2,
-      `${root}/issues?state=closed&since=${encodeURIComponent(since)}&labels=${encodeURIComponent(label)}`
-    );
-    for (const item of items) {
-      if (Number.isSafeInteger(item?.number)) byNumber.set(item.number, item);
-    }
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number
-  );
-}
-async function listOpenIssuesAssignedTo(api2, task, login) {
-  if (!login) return [];
-  const root = repositoryPath(task);
-  return listAll(
-    api2,
-    `${root}/issues?state=open&assignee=${encodeURIComponent(login)}`
-  );
-}
-async function listRecentlyClosedIssuesAssignedTo(api2, task, login, now = /* @__PURE__ */ new Date()) {
-  if (!login) return [];
-  const root = repositoryPath(task);
-  const since = new Date(
-    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
-  ).toISOString();
-  return listAll(
-    api2,
-    `${root}/issues?state=closed&since=${encodeURIComponent(since)}&assignee=${encodeURIComponent(login)}`
-  );
+    )
+  };
 }
 async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", { createIfMissing = true } = {}) {
   const root = repositoryPath(task);
@@ -2834,32 +2942,12 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
   if (active.attempt?.runId) return;
   await trackMissingRun(client, loaded, active, now);
 }
-var RECONCILE_DISPATCH_CONCURRENCY = 5;
-async function dispatchReconcileScan(client, repository, issueNumbers) {
-  const task = { repository };
-  const outcomes = await mapWithConcurrency(
-    issueNumbers,
-    RECONCILE_DISPATCH_CONCURRENCY,
-    (issueNumber) => dispatchRouterEvent(client, task, {
-      kind: "reconcile",
-      issue: String(issueNumber)
-    })
+async function dispatchReconcileScan2(client, repository, issueNumbers) {
+  return dispatchReconcileScan(
+    createReconcileTransport(client),
+    repository,
+    issueNumbers
   );
-  const results = { dispatched: 0, failed: [] };
-  outcomes.forEach((outcome, index) => {
-    if (outcome.status === "fulfilled") {
-      results.dispatched += 1;
-    } else {
-      results.failed.push({
-        issue: issueNumbers[index],
-        // Assumed Error-shaped, exactly as the untyped original assumed --
-        // mapWithConcurrency's `reason` is whatever the worker callback
-        // threw, unchanged.
-        message: outcome.reason.message
-      });
-    }
-  });
-  return results;
 }
 function isDefiniteDispatchRejection(error) {
   return error instanceof GitHubApiError && Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status);
@@ -3257,61 +3345,43 @@ async function completionCallback() {
     completion_payload: completionPayload
   });
 }
-async function discoverReconcileCandidates(client, repository, fleetLogin) {
-  const task = { repository };
-  const [labeled, assigned] = await Promise.all([
-    listOpenAgentLabeledIssues(client, task),
-    listOpenIssuesAssignedTo(client, task, fleetLogin)
-  ]);
-  const byNumber = /* @__PURE__ */ new Map();
-  for (const issue of [...labeled, ...assigned]) {
-    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number
+async function discoverReconcileCandidates2(client, repository, fleetLogin) {
+  return discoverReconcileCandidates(
+    createReconcileTransport(client),
+    repository,
+    fleetLogin
   );
 }
-async function discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
-  const task = { repository };
-  const [labeled, assigned] = await Promise.all([
-    listRecentlyClosedAgentLabeledIssues(client, task, now),
-    listRecentlyClosedIssuesAssignedTo(client, task, fleetLogin, now)
-  ]);
-  const byNumber = /* @__PURE__ */ new Map();
-  for (const issue of [...labeled, ...assigned]) {
-    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number
+async function discoverRecentlyClosedReconcileCandidates2(client, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
+  return discoverRecentlyClosedReconcileCandidates(
+    createReconcileTransport(client),
+    repository,
+    fleetLogin,
+    now
   );
 }
 async function scanReconcile() {
   const client = api();
   const repository = env("GITHUB_REPOSITORY");
   const fleetLogin = env("AGENT_FLEET_LOGIN", false);
-  const [openCandidates, closedCandidates] = await Promise.all([
-    discoverReconcileCandidates(client, repository, fleetLogin),
-    discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin)
-  ]);
-  const byNumber = /* @__PURE__ */ new Map();
-  for (const issue of [...openCandidates, ...closedCandidates]) {
-    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
-  }
-  const issueNumbers = [...byNumber.keys()].sort((left, right) => left - right);
-  const results = await dispatchReconcileScan(client, repository, issueNumbers);
+  const results = await runReconcileScan(
+    createReconcileTransport(client),
+    repository,
+    fleetLogin
+  );
   console.log(
-    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${issueNumbers.length} candidate(s) (${openCandidates.length} open agent-labeled/fleet-assigned, ${closedCandidates.length} recently-closed agent-labeled/fleet-assigned).`
+    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${results.candidates} candidate(s) (${results.openCandidates} open agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed agent-labeled/fleet-assigned).`
   );
   for (const failure of results.failed) {
     console.log(
       `::error::dispatch-reconcile: failed to dispatch reconcile for #${failure.issue}: ${failure.message}`
     );
   }
-  await output("candidates", String(issueNumbers.length));
+  await output("candidates", String(results.candidates));
   await output("dispatched", String(results.dispatched));
   if (results.failed.length > 0) {
     throw new Error(
-      `Reconcile scan failed to dispatch ${results.failed.length}/${issueNumbers.length} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
+      `Reconcile scan failed to dispatch ${results.failed.length}/${results.candidates} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
     );
   }
 }
@@ -3338,10 +3408,10 @@ export {
   completionMatches,
   contextFor,
   decode,
-  discoverRecentlyClosedReconcileCandidates,
-  discoverReconcileCandidates,
+  discoverRecentlyClosedReconcileCandidates2 as discoverRecentlyClosedReconcileCandidates,
+  discoverReconcileCandidates2 as discoverReconcileCandidates,
   dispatchAccepted,
-  dispatchReconcileScan,
+  dispatchReconcileScan2 as dispatchReconcileScan,
   encode,
   handleCompletion,
   healStaleAgentLabels,
