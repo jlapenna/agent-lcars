@@ -2895,6 +2895,21 @@ function reconcileAnomaliesFor(ledger, generationNumber, kind) {
     anomaly.detail?.generation === generationNumber
   );
 }
+async function readLaunchOperationForReconciliation(loaded, attemptId) {
+  if (!loaded.authority) return { ok: true, operation: void 0 };
+  try {
+    return {
+      ok: true,
+      operation: await loaded.authority.port.readLaunchOperation(attemptId)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Deferring launch reconciliation for ${attemptId} until its outbox record can be read: ${message}`
+    );
+    return { ok: false };
+  }
+}
 async function trackMissingRun(client, loaded, generation, now) {
   const ledger = loaded.ledger;
   if (reconcileAnomaliesFor(ledger, generation.generation, "reconcile-parked").length > 0) {
@@ -2917,7 +2932,9 @@ async function trackMissingRun(client, loaded, generation, now) {
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
   const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
-  const launchOperation = reachedBound && loaded.authority ? await loaded.authority.port.readLaunchOperation(attemptId) : void 0;
+  const launchRead = reachedBound && loaded.authority ? await readLaunchOperationForReconciliation(loaded, attemptId) : { ok: true, operation: void 0 };
+  if (!launchRead.ok) return;
+  const launchOperation = launchRead.operation;
   const retryPendingLaunch = Boolean(
     !ledger.control.closed && launchOperation?.status === "pending" && launchOperation.operationId === attemptId && launchOperation.attemptId === attemptId
   );
@@ -3255,7 +3272,12 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
     const active2 = activeGeneration(ledger);
     const attemptId = active2?.attempt?.attemptId;
     if (loaded.authority && active2 && attemptId && ["dispatching", "dispatch-unknown"].includes(active2.state) && !active2.attempt?.runId) {
-      const operation = await loaded.authority.port.readLaunchOperation(attemptId);
+      const launchRead = await readLaunchOperationForReconciliation(
+        loaded,
+        attemptId
+      );
+      if (!launchRead.ok) return;
+      const operation = launchRead.operation;
       if (operation?.operationId === attemptId && operation.attemptId === attemptId && (operation.status === "pending" || operation.resolution?.status === "rejected" && operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)) {
         await trackMissingRun(client, loaded, active2, now);
       }

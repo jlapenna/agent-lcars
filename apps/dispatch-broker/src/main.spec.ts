@@ -1900,6 +1900,15 @@ test('reconcileLedger abandons a closed anchor pending launch after bounded disc
   const attemptId = authority.ledger.generations[0].attempt?.attemptId;
   assert.ok(attemptId);
   await port.recordLaunchIntent({ operationId: attemptId, task, attemptId });
+  const readLaunchOperation = port.readLaunchOperation.bind(port);
+  let failNextOutboxRead = true;
+  port.readLaunchOperation = async (operationId) => {
+    if (failNextOutboxRead) {
+      failNextOutboxRead = false;
+      throw new Error('transient outbox read failure');
+    }
+    return readLaunchOperation(operationId);
+  };
   const { client, calls } = reconcileStubClient();
   const loaded = {
     ledger: authority.ledger,
@@ -1912,6 +1921,12 @@ test('reconcileLedger abandons a closed anchor pending launch after bounded disc
   const t2 = addMinutes(t1, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
   const t3 = addMinutes(t2, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
 
+  await reconcileLedger(client, loaded, t1, 304738, true);
+  assert.equal(
+    loaded.ledger.anomalies.length,
+    0,
+    'a failed outbox read must defer without consuming an observation',
+  );
   await reconcileLedger(client, loaded, t1, 304738, true);
   await reconcileLedger(client, loaded, t2, 304739, true);
   await reconcileLedger(client, loaded, t3, 304740, true);

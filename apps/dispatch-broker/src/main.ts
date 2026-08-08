@@ -96,7 +96,7 @@ import {
   TaskLeaseBusyError,
 } from './storage/authority.js';
 import { FirestoreRestStoragePort } from './storage/firestore-rest-port.js';
-import type { StoragePort } from './storage/port.js';
+import type { LaunchOutboxOperation, StoragePort } from './storage/port.js';
 import {
   maybeObserveDispatchStorage,
   parseDispatchStorageMode,
@@ -654,6 +654,28 @@ function reconcileAnomaliesFor(
   );
 }
 
+async function readLaunchOperationForReconciliation(
+  loaded: LoadedLedger,
+  attemptId: string,
+): Promise<
+  { ok: true; operation: LaunchOutboxOperation | undefined } | { ok: false }
+> {
+  if (!loaded.authority) return { ok: true, operation: undefined };
+  try {
+    return {
+      ok: true,
+      operation: await loaded.authority.port.readLaunchOperation(attemptId),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Deferring launch reconciliation for ${attemptId} until ` +
+        `its outbox record can be read: ${message}`,
+    );
+    return { ok: false };
+  }
+}
+
 // Repairs orphan classes 2 and 4 from #305's production audit: a dispatch
 // whose POST outcome was genuinely lost (queue-evicted per #345/#347, or a
 // worker that crashed before ever registering a matching run) leaves a
@@ -709,10 +731,12 @@ async function trackMissingRun(
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
   const attemptId =
     generation.attempt?.attemptId ?? formatAttemptId(generation);
-  const launchOperation =
+  const launchRead =
     reachedBound && loaded.authority
-      ? await loaded.authority.port.readLaunchOperation(attemptId)
-      : undefined;
+      ? await readLaunchOperationForReconciliation(loaded, attemptId)
+      : { ok: true as const, operation: undefined };
+  if (!launchRead.ok) return;
+  const launchOperation = launchRead.operation;
   const retryPendingLaunch = Boolean(
     !ledger.control.closed &&
     launchOperation?.status === 'pending' &&
@@ -1337,8 +1361,12 @@ async function reconcileLedger(
       ['dispatching', 'dispatch-unknown'].includes(active.state) &&
       !active.attempt?.runId
     ) {
-      const operation =
-        await loaded.authority.port.readLaunchOperation(attemptId);
+      const launchRead = await readLaunchOperationForReconciliation(
+        loaded,
+        attemptId,
+      );
+      if (!launchRead.ok) return;
+      const operation = launchRead.operation;
       if (
         operation?.operationId === attemptId &&
         operation.attemptId === attemptId &&
