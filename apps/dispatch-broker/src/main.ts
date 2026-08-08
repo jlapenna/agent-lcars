@@ -1397,16 +1397,6 @@ async function dispatchAccepted(
           generation.generation,
           crypto.randomBytes(24).toString('base64url'),
         );
-        await saveLedger(client, loaded);
-        if (loaded.authority && loaded.projectionAvailable === false) {
-          // No worker dispatch has happened yet. Restore the accepted
-          // generation so a later reconcile can retry once its preflight
-          // projection is writable; do not strand it in dispatching state.
-          loaded.ledger = beforeScheduling;
-          recordProjectionStatus(loaded.ledger, false);
-          await persistAuthority(loaded.authority, loaded.ledger);
-          return false;
-        }
         if (loaded.authority) {
           const attemptId =
             generation.attempt?.attemptId ?? formatAttemptId(generation);
@@ -1417,11 +1407,10 @@ async function dispatchAccepted(
               attemptId,
             });
           } catch (error) {
-            // The workflow dispatch has not happened. Restore accepted state
-            // and its projection so a later delivery can retry safely; a
-            // response-lost outbox create is idempotent on the same attemptId.
+            // No scheduling state or workflow dispatch has been persisted.
+            // Restore the in-memory aggregate; a response-lost outbox create
+            // is idempotent on the same stable attemptId during the retry.
             loaded.ledger = beforeScheduling;
-            await saveLedger(client, loaded);
             const message =
               error instanceof Error ? error.message : String(error);
             console.log(
@@ -1430,6 +1419,20 @@ async function dispatchAccepted(
             );
             return false;
           }
+        }
+        // The outbox intent is durable before `dispatching` becomes durable.
+        // A crash on either side of this checkpoint is retryable: before it,
+        // persisted state is still accepted; after it, reconciliation has the
+        // pending operation proving that no launch outcome was lost.
+        await saveLedger(client, loaded);
+        if (loaded.authority && loaded.projectionAvailable === false) {
+          // No worker dispatch has happened yet. Restore the accepted
+          // generation so a later reconcile can retry once its preflight
+          // projection is writable; the pending outbox entry is idempotent.
+          loaded.ledger = beforeScheduling;
+          recordProjectionStatus(loaded.ledger, false);
+          await persistAuthority(loaded.authority, loaded.ledger);
+          return false;
         }
         return true;
       },

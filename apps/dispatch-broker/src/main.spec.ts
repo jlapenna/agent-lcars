@@ -136,6 +136,15 @@ test('storage-authoritative dispatch records the outbox and resolves it after pe
     'delivery:authority',
     seed,
   );
+  const recordLaunchIntent = port.recordLaunchIntent.bind(port);
+  port.recordLaunchIntent = async (operation, now) => {
+    assert.equal(
+      (await port.readTask(task))?.controllerState?.generations[0].state,
+      'accepted',
+      'the outbox intent must exist before dispatching state is persisted',
+    );
+    return recordLaunchIntent(operation, now);
+  };
   const runId = 73601;
   const runUrl = `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`;
   const htmlUrl = `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`;
@@ -328,8 +337,9 @@ test('authority restores accepted state when the scheduling projection PATCH fai
     'accepted',
   );
   assert.equal(
-    await port.readLaunchOperation('g1:intent-scheduling-projection-failure'),
-    undefined,
+    (await port.readLaunchOperation('g1:intent-scheduling-projection-failure'))
+      ?.status,
+    'pending',
   );
 });
 
@@ -382,7 +392,7 @@ test('authority restores accepted state when pre-launch outbox recording fails',
   await dispatchAccepted(client, loaded);
 
   assert.equal(dispatches, 0);
-  assert.equal(projectionWrites, 2);
+  assert.equal(projectionWrites, 0);
   assert.equal(loaded.ledger.generations[0].state, 'accepted');
   assert.equal(
     (await port.readTask(task))?.controllerState?.generations[0].state,

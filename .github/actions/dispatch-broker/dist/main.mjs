@@ -3240,13 +3240,6 @@ async function dispatchAccepted(client, loaded) {
           generation.generation,
           crypto3.randomBytes(24).toString("base64url")
         );
-        await saveLedger2(client, loaded);
-        if (loaded.authority && loaded.projectionAvailable === false) {
-          loaded.ledger = beforeScheduling;
-          recordProjectionStatus(loaded.ledger, false);
-          await persistAuthority(loaded.authority, loaded.ledger);
-          return false;
-        }
         if (loaded.authority) {
           const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
           try {
@@ -3257,13 +3250,19 @@ async function dispatchAccepted(client, loaded) {
             });
           } catch (error) {
             loaded.ledger = beforeScheduling;
-            await saveLedger2(client, loaded);
             const message = error instanceof Error ? error.message : String(error);
             console.log(
               `::warning::Deferring worker dispatch after launch-outbox recording failed: ${message}`
             );
             return false;
           }
+        }
+        await saveLedger2(client, loaded);
+        if (loaded.authority && loaded.projectionAvailable === false) {
+          loaded.ledger = beforeScheduling;
+          recordProjectionStatus(loaded.ledger, false);
+          await persistAuthority(loaded.authority, loaded.ledger);
+          return false;
         }
         return true;
       }
