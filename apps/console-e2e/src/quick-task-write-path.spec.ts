@@ -206,12 +206,14 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // that those are different: same content under a *different* ID is a
     // new, unrelated task).
     await openQuickTask(page);
-    const retryActionFinished = page.waitForEvent(
-      'requestfinished',
+    const retryActionRequest = page.waitForRequest(
       (request) =>
-        request.method() === 'POST' && new URL(request.url()).pathname === '/',
+        request.method() === 'POST' &&
+        Boolean(request.headers()['next-action']),
+      { timeout: 30_000 },
     );
     await fillAndSubmit(page, description);
+    const actionRequest = await retryActionRequest;
     const secondReceipt = taskRefNotification(page);
     await expect(secondReceipt).toBeVisible();
     // Asserted against the locator (not a bare string equality on two
@@ -220,10 +222,12 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // exact same issue rather than merely "some" issue.
     await expect(secondReceipt).toHaveAttribute('href', firstHref ?? '');
     // The receipt is available as soon as the Server Action payload contains
-    // its result; also wait for that exact POST to finish downloading before
-    // Playwright tears down this page, otherwise Next logs a false
+    // its result; also wait for that exact response to finish downloading
+    // before Playwright tears down this page, otherwise Next logs a false
     // "destination stream closed early" server error during context cleanup.
-    await retryActionFinished;
+    // Match Next's protocol header, not a route pathname: the framework is
+    // free to target a different URL without changing Server Action identity.
+    await (await actionRequest.response())?.finished();
   });
 
   test('files a second task while the first Server Action request is still pending', async ({

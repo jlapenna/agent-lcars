@@ -63,6 +63,7 @@ export function QuickTaskButton({
   initialRepoKey?: string;
   size?: string;
 }) {
+  const [hydrated, setHydrated] = useState(false);
   const [opened, setOpened] = useState(false);
   const [description, setDescription] = useState('');
   const [repoIndex, setRepoIndex] = useState(() => {
@@ -73,6 +74,13 @@ export function QuickTaskButton({
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
   const submitInFlightRef = useRef(false);
+
+  // The server-rendered trigger is visible before this client component's
+  // click handler is attached. Keep it disabled for that brief window so a
+  // fast click is queued by the browser/test runner instead of being lost.
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   // The modal is closed during hydration, so applying browser-local defaults
   // in an effect is SSR-safe without flashing a different visible selection.
@@ -242,6 +250,7 @@ export function QuickTaskButton({
         className="lcars-action-button"
         data-accent="amber"
         size={size}
+        disabled={!hydrated}
         onClick={() => {
           submitInFlightRef.current = false;
           setOpened(true);
