@@ -215,10 +215,9 @@ test('critical scheduled workflows report one isolated durable alert and recover
     {
       workflow: 'dispatch-reconcile.yml',
       job: 'alert',
-      needs: '[hosted-scan, action-fallback]',
+      needs: 'hosted-scan',
       guard: 'always()',
-      status:
-        "${{ needs.hosted-scan.result != 'skipped' && needs.hosted-scan.result || needs.action-fallback.result }}",
+      status: '${{ needs.hosted-scan.result }}',
     },
     {
       workflow: 'label-contract-audit.yml',
@@ -983,7 +982,7 @@ test('worker agent steps never receive github.token under any name (#645 Phase 3
   }
 });
 
-test('router retains only the serialized workflow_dispatch rollback path', async () => {
+test('router retains only a serialized canary workflow_dispatch path (#798)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
@@ -999,6 +998,22 @@ test('router retains only the serialized workflow_dispatch rollback path', async
   assert.doesNotMatch(source, /^ {2}pull_request_target:\s*$/mu);
   assert.doesNotMatch(source, /^ {2}pull_request:\s*$/mu);
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
+  assert.match(source, /^\s+options:\s+\[canary\]\s*$/mu);
+  assert.match(source, /^ {4}if:\s+inputs\.kind == 'canary'\s*$/mu);
+  for (const retiredInput of [
+    'pipeline',
+    'mode',
+    'reply',
+    'runbook',
+    'context',
+    'completion_payload',
+  ]) {
+    assert.doesNotMatch(
+      source,
+      new RegExp(`^ {6}${retiredInput}:\\s*$`, 'mu'),
+      `agent-router.yml must not restore retired ${retiredInput} input`,
+    );
+  }
 });
 
 test('agent-router.yml scopes id-token: write to the broker job alone, restating every other permission it uses (#645 Phase 6)', async () => {
@@ -1130,7 +1145,7 @@ test('agent-router carries workflow-dispatch PR identity into the broker (#736)'
   );
 });
 
-test('router run-name embeds the router-group marker for every trigger type (#545)', async () => {
+test('canary router run-name embeds the router-group marker (#545/#798)', async () => {
   // findConflictingRouterRun (github-api.mjs) identifies a conflicting
   // in-progress agent-router.yml run by matching this marker on the
   // reliable run listing instead of fetching each candidate's unreliable
@@ -1144,38 +1159,31 @@ test('router run-name embeds the router-group marker for every trigger type (#54
   );
   const marker = formatRouterGroupMarker({
     repositoryId: '${{ github.repository_id }}',
-    issue:
-      '${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}',
+    issue: '${{ inputs.issue }}',
   });
   assert.ok(
     source.includes(marker),
     'agent-router.yml run-name must embed the router-group marker via ' +
-      'formatRouterGroupMarker, derived from the same issue-number fallback ' +
-      'chain (event issue -> event PR -> manual input) the run-name prefix ' +
-      'already uses, so it is set unconditionally for every trigger type.',
+      'formatRouterGroupMarker and the same canonical canary issue input.',
   );
 });
 
-test('router control-plane jobs use the protected self-hosted control pool', async () => {
+test('the canary-only router is independent of the retired self-hosted control pool (#798)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
   );
   assert.equal(
-    (
-      source.match(
-        /^\s+runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/gmu,
-      ) ?? []
-    ).length,
+    (source.match(/^\s+runs-on:\s+ubuntu-latest\s*$/gmu) ?? []).length,
     2,
   );
   assert.doesNotMatch(
     source,
-    /ubuntu-latest|DEFAULT_RUNNER_LABEL|CI_RUNNER_LABEL/u,
+    /CONTROL_PLANE_RUNNER_LABEL|DEFAULT_RUNNER_LABEL|CI_RUNNER_LABEL/u,
   );
 });
 
-test('scheduled reconciliation runs through the OIDC-authenticated hosted service, with a manual Action fallback (#736)', async () => {
+test('all reconciliation runs through the OIDC-authenticated hosted service with no Action fallback (#736/#798)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, path.basename(RECONCILE_WORKFLOW_PATH)),
     'utf8',
@@ -1189,16 +1197,9 @@ test('scheduled reconciliation runs through the OIDC-authenticated hosted servic
   assert.match(source, /\/api\/control-plane\/reconcile/u);
   assert.doesNotMatch(source, /secrets\./u);
 
-  assert.match(source, /^ {2}action-fallback:\s*$/mu);
-  assert.match(
-    source,
-    /^ {4}if:\s+github\.event_name == 'workflow_dispatch' && inputs\.transport == 'action-fallback'\s*$/mu,
-  );
-  assert.match(
-    source,
-    /^ {4}runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/mu,
-  );
-  assert.match(source, /^\s+operation:\s+reconcile\s*$/mu);
+  assert.doesNotMatch(source, /action-fallback|CONTROL_PLANE_RUNNER_LABEL/u);
+  assert.doesNotMatch(source, /^\s+operation:\s+reconcile\s*$/mu);
+  assert.doesNotMatch(source, /^\s+transport:\s*$/mu);
 });
 
 test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {
@@ -1257,8 +1258,8 @@ test('the canary orchestrators (#307) never reference a self-hosted runner or a 
     assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
     assert.match(
       source,
-      /^\s+timeout-minutes:\s+40\s*$/mu,
-      `${workflow} must retain ten minutes beyond the 30-minute ledger poll for failure parking and teardown (#772)`,
+      /^\s+timeout-minutes:\s+15\s*$/mu,
+      `${workflow} must retain five minutes beyond the hosted 10-minute ledger poll for failure parking and teardown (#798)`,
     );
   }
 });

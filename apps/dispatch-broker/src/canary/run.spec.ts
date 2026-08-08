@@ -469,10 +469,10 @@ test('pollCanaryLedger times out loudly rather than polling forever', async () =
   );
 });
 
-test('the production timeout contract covers the observed 26-minute lifecycle and preserves ten minutes of job cleanup headroom (#772)', async () => {
-  assert.equal(LEDGER_POLL_TIMEOUT_MS, 30 * 60 * 1000);
-  assert.equal(STALE_CANARY_AGE_MS, 40 * 60 * 1000);
-  assert.equal(STALE_CANARY_AGE_MS - LEDGER_POLL_TIMEOUT_MS, 10 * 60 * 1000);
+test('the retired self-hosted path cannot hold canary failure detection open for its former 30-minute queue budget (#798)', async () => {
+  assert.equal(LEDGER_POLL_TIMEOUT_MS, 10 * 60 * 1000);
+  assert.equal(STALE_CANARY_AGE_MS, 15 * 60 * 1000);
+  assert.equal(STALE_CANARY_AGE_MS - LEDGER_POLL_TIMEOUT_MS, 5 * 60 * 1000);
 
   const client = api(async () => response(200, []));
   let clock = 0;
@@ -485,7 +485,7 @@ test('the production timeout contract covers the observed 26-minute lifecycle an
         },
         log: () => undefined,
       }),
-    /after 1800s/u,
+    /after 600s/u,
   );
   assert.equal(
     clock,

@@ -29,11 +29,9 @@ jobs:
     # longer needs the ubuntu-latest carve-out it had between #408 and #410.
     #
     # CI_RUNNER_LABEL, not DEFAULT_RUNNER_LABEL (#451): this job runs up to
-    # 30 minutes, and DEFAULT_RUNNER_LABEL's pool is a 2-runner glue-job
-    # pool that agent-router.yml's own dispatch-broker routing depends on
-    # staying fast -- sharing it with this job queued broker-job pickup for
-    # up to 16.6 minutes and produced #425/#435/#436's false-positive
-    # dispatch-canary timeouts. CI_RUNNER_LABEL is its own dedicated pool
+    # 30 minutes, while the former DEFAULT_RUNNER_LABEL glue-job dependency
+    # was retired from agent-router.yml in #798. CI_RUNNER_LABEL remains its
+    # own dedicated pool
     # (homelab's homelab-autoscale-lcars-ci) sized for long-running jobs.
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_RUNNER_LABEL }}
     timeout-minutes: 30

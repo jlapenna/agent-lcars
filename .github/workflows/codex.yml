@@ -30,7 +30,7 @@ on:
         description: 'Issue number to run against (manual testing)'
         required: true
       mode:
-        description: 'Dispatch mode for router-triggered issue work'
+        description: 'Dispatch mode for hosted-controller issue work'
         required: false
         default: 'implement'
       reply:
@@ -67,7 +67,7 @@ permissions:
 
 jobs:
   codex:
-    # The centralized router authorizes the request and enforces exactly one
+    # The hosted controller authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
     # Serialize every subscription-authenticated run: two agents must never

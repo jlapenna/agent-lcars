@@ -1,65 +1,35 @@
-name: Agent Issue Router
-# Control-plane runner policy: keep normalization and broker admission on the
-# dedicated self-hosted CI pool, separate from the agent worker fleet.
+name: Dispatch Canary Router
 
-# Manual rollback transport only. Production issue/comment/pull-request events
-# enter through the GitHub App webhook and the hosted controller. This Action
-# keeps workflow_dispatch so an operator can re-drive one canonical anchor
-# without restoring the lossy event-trigger queue.
+# Canary-only compatibility transport. Production issue/comment/pull-request
+# events and manual maintainer intents enter through the GitHub App webhook and
+# hosted controller. The former rollback inputs are intentionally absent: this
+# workflow exists only so the secretless production canary can exercise the
+# historical Actions admission boundary while that boundary remains observable.
 #
 # The trailing [router-group:...] marker (formatRouterGroupMarker,
 # libs/dispatch-contracts/src/marker.js) is what lets
 # findConflictingRouterRun (apps/dispatch-broker/src/github-api.ts)
 # identify a conflicting run straight off the run listing (#545) instead of
 # fetching each candidate's unreliable /concurrency_groups sub-resource.
-# The event issue/PR fallbacks remain in the run name for rollback safety if
-# an event trigger must be restored temporarily; workflow_dispatch supplies
-# `inputs.issue` during normal fallback use.
 run-name: >-
-  route #${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}:
-  ${{ github.event.issue.title || github.event.pull_request.title || inputs.kind || 'manual' }}
-  [router-group:${{ github.repository_id }}:${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}]
+  canary #${{ inputs.issue }}
+  [router-group:${{ github.repository_id }}:${{ inputs.issue }}]
 
 on:
   workflow_dispatch:
     inputs:
       kind:
-        description: Broker input kind
-        required: false
-        default: intent
-        type: choice
-        options: [intent, completion, reconcile, canary]
-      issue:
-        description: Issue number to route
+        description: Canary broker input kind
         required: true
-      pipeline:
-        description: Agent pipeline for an intent
-        required: false
+        default: canary
         type: choice
-        options: [claude, codex, opencode]
-      mode:
-        description: Dispatch mode
-        required: false
-        default: implement
-      reply:
-        description: Original maintainer reply when explicitly routed
-        required: false
-        default: ''
-      runbook:
-        description: Optional skill for a runbook dispatch
-        required: false
-        default: ''
-      context:
-        description: Optional deployment or router context
-        required: false
-        default: ''
+        options: [canary]
+      issue:
+        description: Canonical canary issue number
+        required: true
       caller_id:
-        description: Caller-generated UUID reused across HTTP retries
-        required: false
-        default: ''
-      completion_payload:
-        description: Base64url worker binding for a completion observation
-        required: false
+        description: Canary caller UUID reused across HTTP retries
+        required: true
         default: ''
 
 permissions:
@@ -70,8 +40,8 @@ permissions:
 
 jobs:
   normalize:
-    # Control-plane work has a protected, always-warm self-hosted pool.
-    runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
+    if: inputs.kind == 'canary'
+    runs-on: ubuntu-latest
     # Deliberately NO concurrency group here. This job used to take a
     # repository-wide `-control-plane-normalize` queue to keep normalize load
     # off the small control-plane pool -- but a GitHub concurrency group is a
@@ -123,8 +93,9 @@ jobs:
   broker:
     needs: normalize
     if: needs.normalize.outputs.eligible == 'true'
-    # Broker writes stay on the protected self-hosted control-plane pool.
-    runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
+    # The compatibility boundary is now independent of the retired
+    # self-hosted control-plane pool. Per-task serialization remains below.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     # Job-level `permissions:` REPLACES the workflow-level block above
     # entirely for this job (GitHub Actions semantics) rather than adding to

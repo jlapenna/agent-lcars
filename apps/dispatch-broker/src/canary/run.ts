@@ -67,26 +67,13 @@ const CANARY_TITLE_PREFIX = '[dispatch-canary]';
 const CANARY_TITLE = '[dispatch-canary] Production dispatch broker canary';
 const LIVE_URL_PROBE_MAX_ATTEMPTS = 5;
 const LIVE_URL_PROBE_RETRY_DELAY_MS = 15_000;
-// A canary lifecycle round-trips through agent-router.yml's `broker` job
-// TWICE (once to dispatch the worker for the `canary` intent, once to
-// process the worker's `completion` callback), and each hop needs the
-// self-hosted DEFAULT_RUNNER_LABEL fleet to pick up a fresh job. That
-// pickup is normally sub-second (apps/runner-autoscaler provisions a
-// runner container on an always-on host, not a VM boot -- see its own
-// `runner_start_duration_seconds` metric, bucketed to a 10s ceiling), but
-// fleet-capacity contention can occasionally queue a `broker` job for
-// several minutes before any runner claims it. #436 (and #425, #435)
-// were false-positive canary failures caused by exactly this: production
-// evidence showed one hop alone taking up to ~16.6 minutes, and one
-// two-hop round trip totaling ~20 minutes, while the dispatch broker
-// itself completed every one of those generations successfully -- the
-// ledger just hadn't caught up before this poll gave up. Production run
-// 31255623033 then spent about 24 minutes queued across the two broker
-// hops and converged successfully at about 26 minutes, disproving the old
-// 25-minute bound (#772). 30 minutes retains a real failure budget while
-// covering that observed round trip. The two orchestrator jobs keep a
-// separate ten-minute margin for failure parking and action teardown.
-const LEDGER_POLL_TIMEOUT_MS = 30 * 60 * 1000;
+// #798 retires the self-hosted router and Action completion callback. The
+// remaining canary-only router starts on GitHub-hosted infrastructure and the
+// worker returns completion directly to the hosted controller, so the old
+// 30-minute capacity-contention allowance would only delay a real alert.
+// Ten minutes remains deliberately generous for GitHub scheduling, the
+// worker/finalizer chain, projection convergence, and bounded API retries.
+const LEDGER_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 // Mirrors ../main.ts's handleCompletion poll-until-terminal backoff (same
 // start/cap/doubling shape) rather than a flat interval: start small so a
 // fast-completing canary is detected quickly, double each attempt, and cap
@@ -103,8 +90,8 @@ const TERMINAL_REJECTED_STATES = new Set([
 // a job-level `timeout-minutes` or an operator/workflow cancellation tears
 // down the whole runner process, including anything still awaiting inside
 // pollCanaryLedger, before that catch block ever runs. Neither
-// dispatch-canary.yml (timeout-minutes: 40) nor post-deploy-smoke.yml
-// (timeout-minutes: 40) has a separate cleanup job to survive that -- this
+// dispatch-canary.yml (timeout-minutes: 15) nor post-deploy-smoke.yml
+// (timeout-minutes: 15) has a separate cleanup job to survive that -- this
 // canary is a small, self-contained workflow, not embedded in
 // deploy-console.yml's own job, so there is no natural place to split
 // "verify" and "cleanup" into two jobs the way the epic design audit (#301)
@@ -116,7 +103,7 @@ const TERMINAL_REJECTED_STATES = new Set([
 // issue is found and closed/parked within one hour at the very most --
 // still "automatically cleaned up" per #307's acceptance bar, just not
 // synchronously. Pinned to exactly both orchestrators' own
-// timeout-minutes: 40 job budget, not padded beyond it (PR #448 review):
+// timeout-minutes: 15 job budget, not padded beyond it (PR #448 review):
 // GitHub Actions kills a job the instant its own runtime hits
 // timeout-minutes, so an open, marked canary issue older than that value
 // can ONLY mean its own orchestrator run was killed before reaching its
@@ -127,10 +114,10 @@ const TERMINAL_REJECTED_STATES = new Set([
 // to sweep but not yet old enough to pass this filter -- for an orphan
 // that lands in that window right before an hourly pass, the janitor
 // skips it and it waits a full extra cycle, silently breaking the "next
-// pass" guarantee above. Keeping this well under the hourly cadence (40
+// pass" guarantee above. Keeping this well under the hourly cadence (15
 // min < 60 min) still guarantees a genuinely killed run is swept by the
 // very next scheduled pass.
-const STALE_CANARY_AGE_MS = 40 * 60 * 1000;
+const STALE_CANARY_AGE_MS = 15 * 60 * 1000;
 
 function env(name: string, required = true): string {
   const value = process.env[name];

@@ -64,8 +64,8 @@ permissions:
   id-token: write
 
 # No per-issue concurrency group here, for the same reason claude.yml has
-# none (#321): agent-router.yml's own reserved concurrency group already
-# serializes dispatch per issue before this worker is ever started.
+# none (#321): the canary-only router's reserved concurrency group already
+# serializes dispatch for the canonical issue before this worker is started.
 jobs:
   canary:
     # agent-router.yml's broker job authorizes and dispatches this worker
