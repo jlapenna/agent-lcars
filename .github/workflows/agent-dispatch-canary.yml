@@ -2,8 +2,9 @@ name: Dispatch Canary Worker
 
 # Fourth dispatch-broker pipeline (#307, final child of epic #301),
 # alongside claude.yml, codex.yml, and opencode.yml. Structurally incapable
-# of invoking a paid or privileged agent: no model invocation, no GCP
-# credential, and -- unlike those three -- no self-hosted runner (runs-on:
+# of invoking a paid or privileged agent: no model invocation, only the
+# short-lived authority-preflight reader credential, and -- unlike those
+# three -- no self-hosted runner (runs-on:
 # ubuntu-latest, never vars.AGENT_RUNNER_LABEL). Dispatched exclusively by
 # agent-router.yml's broker job for the dedicated `canary` pipeline
 # (apps/dispatch-broker/src/normalize.ts's `kind: 'canary'` workflow_dispatch
@@ -56,13 +57,15 @@ on:
 # actions:write is required for the completion-callback step's own
 # workflow_dispatch POST back to agent-router.yml -- the exact reason
 # claude.yml/codex.yml/opencode.yml all declare it too. Deliberately no
-# contents:write, pull-requests:write, id-token:write, and no secret at
-# all -- there is nothing here for the canary to authenticate to beyond
-# GitHub's own ambient per-job token.
+# contents:write, pull-requests:write, and no secret at all. Authority mode
+# adds only a short-lived, read-before-agent Firestore
+# token for exact broker preflight; this workflow still has no model or App
+# secret and never runs agent code.
 permissions:
   contents: read
   issues: write
   actions: write
+  id-token: write
 
 # No per-issue concurrency group here, for the same reason claude.yml has
 # none (#321): agent-router.yml's own reserved concurrency group already
@@ -99,11 +102,26 @@ jobs:
       # The worker is untrusted until its own Actions run ID is durably
       # bound to this exact task/generation/intent/token in the serialized
       # ledger -- identical to claude.yml/codex.yml/opencode.yml.
+      - name: Authenticate to authoritative dispatch storage
+        id: worker-storage-auth
+        if: vars.DISPATCH_STORAGE_MODE == 'authority'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+
       - name: Verify broker binding
         id: broker-preflight
         uses: ./.github/actions/dispatch-broker
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          DISPATCH_STORAGE_MODE: ${{ vars.DISPATCH_STORAGE_MODE }}
+          DISPATCH_STORAGE_TOKEN: ${{ steps.worker-storage-auth.outputs.access_token }}
+          DISPATCH_FIRESTORE_DATABASE_ID: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         with:
           operation: preflight
           issue: ${{ inputs.issue }}
@@ -131,7 +149,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh issue comment "$ISSUE" --repo "$REPO" --body \
-            "🤖 Dispatch canary worker verified claim + broker preflight binding. No model, GCP credential, or self-hosted runner was used. Run: $RUN_URL"
+            "🤖 Dispatch canary worker verified claim + broker preflight binding. No model or self-hosted runner was used. Run: $RUN_URL"
 
       - name: Return completion observation to the broker
         if: always()

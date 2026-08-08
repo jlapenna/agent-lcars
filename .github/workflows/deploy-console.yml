@@ -75,16 +75,10 @@ jobs:
       - uses: google-github-actions/auth@v3
         id: gcp-auth
         with:
-          # Variables, not secrets: neither value is confidential, and both
-          # are fully determined by infra/terraform/main.tf -- it defines
-          # exactly one workload identity pool ("github") and one provider
-          # ("github") in project agent-lcars (number 611425338852), so the
-          # provider path has no other possible value, and the deployer SA
-          # is google_service_account.github_deployer's account_id. The
-          # agent workflows read the same GCP_WIF_PROVIDER variable, so
-          # there is now one place to change it instead of a secret and a
-          # variable that had to be kept in sync by hand.
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          # This provider accepts only deploy-console.yml from main. The
+          # project-IAM deployer is intentionally unreachable through the
+          # repository-wide worker provider.
+          workload_identity_provider: ${{ vars.GCP_DEPLOYER_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
           token_format: access_token
 

@@ -11,7 +11,9 @@
  *
  * `DISPATCH_STORAGE_MODE` (a repo variable, read via `env()` by main.ts's
  * `broker()`) is `'off'` (default -- also what an unset/empty variable
- * means) or `'shadow'`. `parseDispatchStorageMode` is the one place that
+ * means), `'shadow'`, or `'authority'`. Authority behavior lives in
+ * `authority.ts`; this module's observer remains shadow-only.
+ * `parseDispatchStorageMode` is the one place that
  * turns the raw string into a `DispatchStorageMode`, and it throws loudly
  * for anything else -- a typo in the repo variable (e.g. "authoritative",
  * "on") must fail the run, not silently behave like `'off'`. main.ts calls
@@ -151,7 +153,7 @@ import {
 // The switch.
 // ---------------------------------------------------------------------------
 
-export const DISPATCH_STORAGE_MODES = ['off', 'shadow'] as const;
+export const DISPATCH_STORAGE_MODES = ['off', 'shadow', 'authority'] as const;
 export type DispatchStorageMode = (typeof DISPATCH_STORAGE_MODES)[number];
 
 /**
@@ -159,7 +161,8 @@ export type DispatchStorageMode = (typeof DISPATCH_STORAGE_MODES)[number];
  * an undeclared GitHub Actions repo variable reads as) is `'off'`, matching
  * this switch's documented default and rollback position. Anything other
  * than `'off'`/`'shadow'` throws -- a typo must fail loudly, never be
- * treated as a deliberate rollback.
+ * treated as a deliberate rollback. `authority` selects Firestore as the
+ * controller state authority and the comment as a compatibility projection.
  */
 export function parseDispatchStorageMode(
   raw: string | undefined,
@@ -167,8 +170,9 @@ export function parseDispatchStorageMode(
   const value = (raw ?? '').trim();
   if (value === '' || value === 'off') return 'off';
   if (value === 'shadow') return 'shadow';
+  if (value === 'authority') return 'authority';
   throw new Error(
-    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset) or 'shadow'.`,
+    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset), 'shadow', or 'authority'.`,
   );
 }
 
@@ -348,6 +352,7 @@ export function projectLedgerToStoredTask(
     desiredIntentId,
     signals: ledger.sources.map(mapSignal),
     intents: ledger.generations.map(mapIntent),
+    controllerState: structuredClone(ledger),
   };
 }
 
@@ -358,7 +363,8 @@ export function projectLedgerToStoredTask(
 // ---------------------------------------------------------------------------
 
 export interface FieldDivergence {
-  field: 'desiredIntentId' | 'signals' | 'intents' | 'revision';
+  field:
+    'desiredIntentId' | 'signals' | 'intents' | 'controllerState' | 'revision';
   expected: unknown;
   actual: unknown;
 }
@@ -424,11 +430,9 @@ export function checkRoundTrip(
       { field: 'revision', expected: written.revision, actual: undefined },
     ];
   }
-  const fields: Array<'desiredIntentId' | 'signals' | 'intents'> = [
-    'desiredIntentId',
-    'signals',
-    'intents',
-  ];
+  const fields: Array<
+    'desiredIntentId' | 'signals' | 'intents' | 'controllerState'
+  > = ['desiredIntentId', 'signals', 'intents', 'controllerState'];
   const divergences: FieldDivergence[] = [];
   for (const field of fields) {
     const expected = written[field];

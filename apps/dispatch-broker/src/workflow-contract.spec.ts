@@ -592,7 +592,12 @@ test('router serializes issue and pull-request lifecycle through one normalized 
     source,
     /^\s+group:\s+\$\{\{ steps\.normalize\.outputs\.group \}\}\s*$/mu,
   );
-  assert.match(source, /^\s+pull_request:\s*$/mu);
+  assert.match(source, /^\s+pull_request_target:\s*$/mu);
+  assert.doesNotMatch(
+    source,
+    /^\s+pull_request:\s*$/mu,
+    'the privileged router must execute trusted base-branch code, never a PR merge ref',
+  );
   assert.match(
     source,
     /^\s+types:\s+\[closed, reopened, labeled, unlabeled\]\s*$/mu,
@@ -642,7 +647,7 @@ test('agent-router.yml scopes id-token: write to the broker job alone, restating
   );
 });
 
-test('agent-router.yml gates dispatch-storage GCP auth on shadow mode and wires the token/mode into the broker action (#645 Phase 6)', async () => {
+test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mode and wires the token/mode into the broker action (#736)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
@@ -651,18 +656,25 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow mode and wires 
   const auth = namedStep(
     steps,
     'agent-router.yml',
-    'Authenticate to GCP for dispatch storage shadow observation',
+    'Authenticate to GCP for dispatch storage',
   );
   assert.match(auth.source, stepField('id', 'gcp-auth'));
   assert.match(
     auth.source,
-    stepField('if', "vars.DISPATCH_STORAGE_MODE == 'shadow'"),
-    'the auth step must be conditional on shadow mode, so an off run mints no token at all',
+    stepField(
+      'if',
+      "vars.DISPATCH_STORAGE_MODE == 'shadow' || vars.DISPATCH_STORAGE_MODE == 'authority'",
+    ),
+    'the auth step must be conditional on a storage-writing mode, so an off run mints no token at all',
   );
   assert.match(auth.source, stepField('uses', 'google-github-actions/auth@v3'));
   assert.match(
     auth.source,
-    stepField('workload_identity_provider', '${{ vars.GCP_WIF_PROVIDER }}', 10),
+    stepField(
+      'workload_identity_provider',
+      '${{ vars.GCP_DISPATCH_BROKER_WIF_PROVIDER }}',
+      10,
+    ),
   );
   assert.match(
     auth.source,
@@ -684,6 +696,22 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow mode and wires 
     stepField(
       'DISPATCH_STORAGE_TOKEN',
       '${{ steps.gcp-auth.outputs.access_token }}',
+      10,
+    ),
+  );
+  assert.match(
+    brokerStep.source,
+    stepField(
+      'DISPATCH_FIRESTORE_DATABASE_ID',
+      '${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}',
+      10,
+    ),
+  );
+  assert.match(
+    brokerStep.source,
+    stepField(
+      'DISPATCH_AUTHORITY_EPOCH',
+      '${{ vars.DISPATCH_AUTHORITY_EPOCH }}',
       10,
     ),
   );
@@ -775,10 +803,11 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
   // claude.yml/codex.yml/opencode.yml use.
   assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
   assert.doesNotMatch(source, /\$\{\{\s*vars\.AGENT_RUNNER_LABEL\s*\}\}/u);
-  // No secret of any kind -- no model credential, no GCP workload identity,
-  // no App token mint. The only credential in scope is GitHub's own
-  // ambient per-job token.
+  // No secret of any kind -- no model credential and no App token mint.
+  // Authority preflight uses only repo-configured WIF to mint a short-lived
+  // Firestore reader token before any untrusted code runs.
   assert.doesNotMatch(source, /secrets\./u);
+  assert.match(source, /^\s+id-token:\s+write\s*$/mu);
   // Every worker calls the broker's completion-callback unconditionally so
   // a crashed run still clears its ledger generation (#305's reconciler is
   // only ever a backstop, never the primary path).
@@ -1042,13 +1071,56 @@ test('every worker captures the verified attempt ID via the broker preflight cal
     assert.ok(source, `${workflow} is missing`);
     const steps = stepBlocks(source);
 
-    const preflight = namedStep(
+    const preflight = namedStep(steps, workflow, 'Verify broker binding');
+    const storageAuth = namedStep(
       steps,
       workflow,
-      'Verify broker binding',
-    ).source;
+      'Authenticate to authoritative dispatch storage',
+    );
     assert.match(
-      preflight,
+      storageAuth.source,
+      stepField('if', "vars.DISPATCH_STORAGE_MODE == 'authority'"),
+      `${workflow} must mint a storage token only after authority cutover`,
+    );
+    assert.match(
+      storageAuth.source,
+      stepField('uses', 'google-github-actions/auth@v3'),
+    );
+    assert.match(
+      storageAuth.source,
+      stepField('service_account', '${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}', 10),
+    );
+    assert.match(
+      preflight.source,
+      stepField(
+        'DISPATCH_STORAGE_MODE',
+        '${{ vars.DISPATCH_STORAGE_MODE }}',
+        10,
+      ),
+    );
+    assert.match(
+      preflight.source,
+      stepField(
+        'DISPATCH_STORAGE_TOKEN',
+        '${{ steps.worker-storage-auth.outputs.access_token }}',
+        10,
+      ),
+    );
+    assert.match(
+      preflight.source,
+      stepField(
+        'DISPATCH_FIRESTORE_DATABASE_ID',
+        '${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}',
+        10,
+      ),
+    );
+    assert.match(
+      preflight.source,
+      stepField('GCP_PROJECT_ID', '${{ vars.GCP_PROJECT_ID }}', 10),
+    );
+    assertOrderedSteps(steps, workflow, [storageAuth.name, preflight.name]);
+    assert.match(
+      preflight.source,
       /^\s+id:\s+broker-preflight\s*$/mu,
       `${workflow}'s preflight step needs an id for dispatch-broker/action.yml's own attempt-id output to resolve`,
     );
@@ -1059,6 +1131,40 @@ test('every worker captures the verified attempt ID via the broker preflight cal
       `${workflow} must not hand-copy a "Publish attempt identity" step -- dispatch-broker/action.yml now does this once, internally, on every preflight call`,
     );
   }
+});
+
+test('deploy-console.yml uses a workflow-restricted provider for its project-IAM identity', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'deploy-console.yml'),
+    'utf8',
+  );
+  const lines = source.split('\n');
+  const authStart = lines.findIndex(
+    (line) => line.trim() === '- uses: google-github-actions/auth@v3',
+  );
+  assert.notEqual(
+    authStart,
+    -1,
+    'deploy-console.yml must retain its GCP auth action',
+  );
+  const authEnd = lines.findIndex(
+    (line, index) => index > authStart && /^\s+- (?:name|uses):/u.test(line),
+  );
+  assert.notEqual(authEnd, -1, 'the deploy GCP auth block must be bounded');
+  const auth = lines.slice(authStart, authEnd).join('\n');
+  assert.match(auth, /^\s+id: gcp-auth$/mu);
+  assert.match(
+    auth,
+    stepField(
+      'workload_identity_provider',
+      '${{ vars.GCP_DEPLOYER_WIF_PROVIDER }}',
+      10,
+    ),
+  );
+  assert.match(
+    auth,
+    stepField('service_account', '${{ vars.GCP_DEPLOYER_SA }}', 10),
+  );
 });
 
 test('no worker invokes a post-agent gate via `uses:` (#645 Phase 3 security invariant)', async () => {

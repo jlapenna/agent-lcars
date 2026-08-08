@@ -592,6 +592,27 @@ test('an agent:* labeled event on a pull request dispatches an implement-mode in
   assert.equal(normalized.intent.pipeline, 'codex');
 });
 
+test('pull_request_target preserves pull-request intent identity from trusted main', () => {
+  const event = prEvent('labeled');
+  const eventTimeline = timeline('labeled');
+  const legacy = normalizeEvent({
+    eventName: 'pull_request',
+    event,
+    context,
+    timeline: eventTimeline,
+    maintainer: 'jlapenna',
+  });
+  const trustedTarget = normalizeEvent({
+    eventName: 'pull_request_target',
+    event,
+    context,
+    timeline: eventTimeline,
+    maintainer: 'jlapenna',
+  });
+
+  assert.deepEqual(trustedTarget, legacy);
+});
+
 test('a review:* labeled event on a pull request dispatches a review-mode intent', () => {
   const normalized = normalizeEvent({
     eventName: 'pull_request',

@@ -1,5 +1,9 @@
 output "workload_identity_provider" { value = google_iam_workload_identity_pool_provider.github.name }
+output "deployer_workload_identity_provider" { value = google_iam_workload_identity_pool_provider.github_deployer.name }
+output "dispatch_workload_identity_provider" { value = google_iam_workload_identity_pool_provider.dispatch_controller.name }
 output "deployer_service_account" { value = google_service_account.github_deployer.email }
 output "telemetry_writer_service_account" { value = google_service_account.telemetry_writer.email }
 output "dispatch_broker_service_account" { value = google_service_account.dispatch_broker.email }
+output "dispatch_preflight_service_account" { value = google_service_account.dispatch_preflight.email }
+output "dispatch_firestore_database_id" { value = google_firestore_database.dispatch_controller.name }
 output "transcript_bucket" { value = google_storage_bucket.transcripts.name }

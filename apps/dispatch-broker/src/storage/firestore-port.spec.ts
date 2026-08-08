@@ -251,6 +251,7 @@ if (!javaCheck.ok) {
     await clearFirestoreData();
     return new FirestoreStoragePort({
       projectId: PROJECT_ID,
+      databaseId: '(default)',
       emulatorHost: EMULATOR_HOST,
     });
   }

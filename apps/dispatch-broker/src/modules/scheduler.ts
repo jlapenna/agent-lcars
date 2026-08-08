@@ -157,6 +157,60 @@ function markDispatchRejected(
   return { ledger, promotedGeneration: promoted?.generation };
 }
 
+/**
+ * Return a launch whose durable outbox intent is still pending to the
+ * dispatchable state after reconciliation has exhausted its bounded search
+ * for a matching real-world run. The attempt marker remains stable because
+ * it is derived from immutable generation identity; beginDispatch will mint
+ * a fresh bearer token for the retried worker preflight.
+ */
+function restoreAcceptedForLaunchRetry(
+  ledger: DispatchLedger,
+  generationNumber: number,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
+  if (
+    !generation ||
+    !['dispatching', 'dispatch-unknown'].includes(generation.state) ||
+    generation.attempt?.runId
+  ) {
+    throw new Error('Generation is not an unbound launch attempt');
+  }
+  if (ledger.control.closed) {
+    throw new Error('Closed anchor cannot retry a launch');
+  }
+  return mutate(ledger, now, () => {
+    generation.state = 'accepted';
+    generation.attempt = undefined;
+  });
+}
+
+function abandonPendingLaunchForClosedAnchor(
+  ledger: DispatchLedger,
+  generationNumber: number,
+  reason: string,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
+  if (
+    !generation ||
+    !['dispatching', 'dispatch-unknown'].includes(generation.state) ||
+    generation.attempt?.runId
+  ) {
+    throw new Error('Generation is not an unbound launch attempt');
+  }
+  if (!ledger.control.closed) {
+    throw new Error('Open anchor cannot abandon a pending launch');
+  }
+  return mutate(ledger, now, () => {
+    generation.state = 'superseded-by-close';
+    const attempt = attemptOf(generation);
+    attempt.rejectedAt = now;
+    attempt.rejectionReason = reason;
+  });
+}
+
 function bindRun(
   ledger: DispatchLedger,
   generationNumber: number,
@@ -282,6 +336,7 @@ function verifyPreflight(
 }
 
 export {
+  abandonPendingLaunchForClosedAnchor,
   awaitTerminal,
   beginDispatch,
   bindRun,
@@ -289,5 +344,6 @@ export {
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
+  restoreAcceptedForLaunchRetry,
   verifyPreflight,
 };

@@ -757,6 +757,34 @@ function markDispatchRejected(ledger, generationNumber, reason, now = (/* @__PUR
   });
   return { ledger, promotedGeneration: promoted?.generation };
 }
+function restoreAcceptedForLaunchRetry(ledger, generationNumber, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state) || generation.attempt?.runId) {
+    throw new Error("Generation is not an unbound launch attempt");
+  }
+  if (ledger.control.closed) {
+    throw new Error("Closed anchor cannot retry a launch");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "accepted";
+    generation.attempt = void 0;
+  });
+}
+function abandonPendingLaunchForClosedAnchor(ledger, generationNumber, reason, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state) || generation.attempt?.runId) {
+    throw new Error("Generation is not an unbound launch attempt");
+  }
+  if (!ledger.control.closed) {
+    throw new Error("Open anchor cannot abandon a pending launch");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "superseded-by-close";
+    const attempt = attemptOf(generation);
+    attempt.rejectedAt = now;
+    attempt.rejectionReason = reason;
+  });
+}
 function bindRun(ledger, generationNumber, binding, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state)) {
@@ -936,6 +964,18 @@ var GitHubApiError = class extends Error {
     this.status = status;
     this.data = data;
   }
+};
+var LedgerProjectionRepairError = class extends Error {
+  constructor(commentId, status) {
+    super(
+      `Failed to remove extra dispatch-ledger marker comment ${commentId}: HTTP ${status}`
+    );
+    this.commentId = commentId;
+    this.status = status;
+    this.name = "LedgerProjectionRepairError";
+  }
+  commentId;
+  status;
 };
 var BrokerConcurrencyMismatchError = class extends Error {
   retryable;
@@ -1196,6 +1236,80 @@ async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", 
     throw new Error("GitHub did not return the created ledger comment ID");
   }
   return { comment, ledger, created: true, existingComments: comments };
+}
+async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "github-actions[bot]") {
+  const root = repositoryPath(task);
+  const comments = await listAll(
+    api2,
+    `${root}/issues/${task.issue}/comments`
+  );
+  const markerCandidates = comments.filter(
+    (comment2) => comment2.body?.includes(LEDGER_MARKER)
+  );
+  const ownedCandidates = markerCandidates.filter(
+    (comment2) => comment2.body?.includes(LEDGER_MARKER) && comment2.user?.login === workflowIdentity && comment2.user?.type === "Bot"
+  ).sort((left, right) => left.id - right.id);
+  let comment = ownedCandidates[0];
+  let created = false;
+  if (!comment) {
+    comment = await api2.requestOk(
+      `${root}/issues/${task.issue}/comments`,
+      {
+        method: "POST",
+        body: { body: renderLedgerComment2(ledger) }
+      }
+    );
+    if (!Number.isSafeInteger(comment?.id)) {
+      throw new Error("GitHub did not return the created ledger comment ID");
+    }
+    created = true;
+  }
+  for (const duplicate of markerCandidates.filter(
+    (candidate) => candidate.id !== comment.id
+  )) {
+    const response = await api2.request(
+      `${root}/issues/comments/${duplicate.id}`,
+      { method: "DELETE" }
+    );
+    if (response.status !== 404 && (response.status < 200 || response.status >= 300)) {
+      throw new LedgerProjectionRepairError(duplicate.id, response.status);
+    }
+    console.log(
+      `::notice::Removed extra dispatch-ledger marker comment ${duplicate.id}.`
+    );
+  }
+  return {
+    comment,
+    ledger,
+    created,
+    ...created && { existingComments: comments }
+  };
+}
+async function classifyAuthorityTaskInitialization(api2, task, authorityEpoch, workflowIdentity = "github-actions[bot]") {
+  const comments = await listAll(
+    api2,
+    `${repositoryPath(task)}/issues/${task.issue}/comments`
+  );
+  const hasProjection = comments.some(
+    (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.type === "Bot" && comment.user.login === workflowIdentity
+  );
+  if (hasProjection) return "compatibility-projection";
+  const epoch = Date.parse(authorityEpoch);
+  if (!Number.isFinite(epoch)) {
+    throw new Error(
+      `DISPATCH_AUTHORITY_EPOCH must be a valid timestamp, got ${JSON.stringify(authorityEpoch)}`
+    );
+  }
+  const issue = await api2.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`
+  );
+  const createdAt = Date.parse(issue.created_at);
+  if (!Number.isFinite(createdAt)) {
+    throw new Error(
+      `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`
+    );
+  }
+  return createdAt >= epoch ? "post-cutover" : "pre-cutover";
 }
 async function saveLedger(api2, loaded) {
   const root = repositoryPath(loaded.ledger.task);
@@ -1695,7 +1809,8 @@ function normalizeEvent({
   timeline = [],
   maintainer
 }) {
-  if (eventName === "workflow_dispatch") {
+  const semanticEventName = eventName === "pull_request_target" ? "pull_request" : eventName;
+  if (semanticEventName === "workflow_dispatch") {
     return normalizeWorkflowDispatch({
       inputs,
       context,
@@ -1707,7 +1822,7 @@ function normalizeEvent({
   if (!issue) return { kind: "ignored", reason: "event has no issue" };
   const task = taskRef(context, issue);
   const pipeline = selectedPipeline(issue);
-  if (eventName === "issue_comment" && event.action === "created") {
+  if (semanticEventName === "issue_comment" && event.action === "created") {
     const parsed = parseExactCommand(event.comment?.body ?? "");
     if (!parsed) return { kind: "ignored", reason: "no exact agent command" };
     const resolvedPipeline = parsed.pipeline ?? pipeline;
@@ -1755,7 +1870,7 @@ function normalizeEvent({
       })
     };
   }
-  if (eventName === "pull_request") {
+  if (semanticEventName === "pull_request") {
     if (["closed", "reopened"].includes(event.action)) {
       if (!issue.id || Number.isNaN(Date.parse(issue.updated_at))) {
         throw new Error("Malformed pull request anchor event");
@@ -1780,7 +1895,7 @@ function normalizeEvent({
       return { kind: "ignored", reason: "unsupported pull request action" };
     }
   }
-  if (!["issues", "pull_request"].includes(eventName))
+  if (!["issues", "pull_request"].includes(semanticEventName))
     return { kind: "ignored", reason: "unsupported event" };
   const auth = authorization(
     event.sender?.login,
@@ -1815,7 +1930,7 @@ function normalizeEvent({
     };
   }
   if (["labeled", "unlabeled", "closed", "reopened"].includes(event.action)) {
-    const source = timelineSource(timeline, eventName, event);
+    const source = timelineSource(timeline, semanticEventName, event);
     if (event.action === "closed" || event.action === "reopened") {
       return {
         kind: "anchor-control",
@@ -1830,7 +1945,7 @@ function normalizeEvent({
       };
     }
     const labelName = event.label?.name;
-    const isReviewLabel = eventName === "pull_request" && Boolean(labelName?.startsWith("review:"));
+    const isReviewLabel = semanticEventName === "pull_request" && Boolean(labelName?.startsWith("review:"));
     if (!labelName?.startsWith("agent:") && !isReviewLabel) {
       return { kind: "ignored", reason: "non-agent label event" };
     }
@@ -1900,9 +2015,6 @@ function normalizeEvent({
   return { kind: "ignored", reason: "unsupported issue action" };
 }
 
-// apps/dispatch-broker/src/storage/firestore-rest-port.ts
-import { isDeepStrictEqual } from "node:util";
-
 // apps/dispatch-broker/src/storage/port.ts
 function taskKey(task) {
   return `${task.repositoryId}:${task.issue}`;
@@ -1922,14 +2034,303 @@ var TaskWriteConflictError = class extends Error {
   actualRevision;
 };
 
+// apps/dispatch-broker/src/storage/shadow.ts
+import { isDeepStrictEqual } from "node:util";
+function parseDispatchStorageMode(raw) {
+  const value = (raw ?? "").trim();
+  if (value === "" || value === "off") return "off";
+  if (value === "shadow") return "shadow";
+  if (value === "authority") return "authority";
+  throw new Error(
+    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset), 'shadow', or 'authority'.`
+  );
+}
+function mapGenerationState(state) {
+  switch (state) {
+    case "accepted":
+      return "accepted";
+    case "pending":
+      return "pending";
+    case "dispatching":
+    case "dispatch-unknown":
+      return "dispatching";
+    case "active":
+    case "completion-observed":
+    case "completion-awaiting-terminal":
+      return "active";
+    case "completed":
+      return "completed";
+    case "dispatch-rejected":
+    case "superseded":
+    case "superseded-by-close":
+      return "superseded";
+    default: {
+      const exhaustive = state;
+      throw new Error(
+        `Unhandled ledger generation state: ${String(exhaustive)}`
+      );
+    }
+  }
+}
+function mapAuthorization(authorization2) {
+  if (!authorization2) return { observed: true };
+  if ("authorized" in authorization2) {
+    return {
+      authorized: authorization2.authorized,
+      actor: authorization2.actor,
+      rule: authorization2.rule
+    };
+  }
+  return {
+    observed: true,
+    actor: authorization2.actor,
+    workflow: authorization2.workflow
+  };
+}
+function mapSignal(source) {
+  return {
+    sourceKind: source.sourceKind,
+    sourceId: source.sourceId,
+    occurredAt: source.occurredAt,
+    authorization: mapAuthorization(source.authorization)
+  };
+}
+function mapAttempt(generation) {
+  const attempt = generation.attempt;
+  if (!attempt) return void 0;
+  return {
+    attemptId: attempt.attemptId ?? formatAttemptId({
+      generation: generation.generation,
+      intentId: generation.intentId
+    }),
+    token: attempt.token ?? "",
+    dispatchStartedAt: attempt.dispatchStartedAt ?? generation.occurredAt,
+    runId: attempt.runId,
+    runUrl: attempt.runUrl,
+    htmlUrl: attempt.htmlUrl,
+    boundAt: attempt.boundAt,
+    completedAt: attempt.completedAt,
+    conclusion: attempt.conclusion
+  };
+}
+function mapIntent(generation) {
+  return {
+    intentId: generation.intentId,
+    sourceId: generation.sourceId,
+    occurredAt: generation.occurredAt,
+    state: mapGenerationState(generation.state),
+    attempt: mapAttempt(generation)
+  };
+}
+function projectLedgerToStoredTask(ledger) {
+  const activeGeneration2 = ledger.generations.find(
+    (generation) => LEDGER_ACTIVE_GENERATION_STATES.has(generation.state)
+  );
+  const pendingGeneration = ledger.generations.find(
+    (generation) => generation.state === "pending"
+  );
+  const acceptedGeneration = ledger.generations.find(
+    (generation) => generation.state === "accepted"
+  );
+  const desiredIntentId = activeGeneration2?.intentId ?? pendingGeneration?.intentId ?? acceptedGeneration?.intentId;
+  return {
+    desiredIntentId,
+    signals: ledger.sources.map(mapSignal),
+    intents: ledger.generations.map(mapIntent),
+    controllerState: structuredClone(ledger)
+  };
+}
+function storageComparable(value) {
+  if (Array.isArray(value)) {
+    return value.filter((element) => element !== void 0).map(storageComparable);
+  }
+  if (value && typeof value === "object") {
+    const comparable = {};
+    for (const [key, fieldValue] of Object.entries(value)) {
+      if (fieldValue === void 0) continue;
+      comparable[key] = storageComparable(fieldValue);
+    }
+    return comparable;
+  }
+  return value;
+}
+function checkRoundTrip(written, after) {
+  if (!after) {
+    return [
+      { field: "revision", expected: written.revision, actual: void 0 }
+    ];
+  }
+  const fields = ["desiredIntentId", "signals", "intents", "controllerState"];
+  const divergences = [];
+  for (const field of fields) {
+    const expected = written[field];
+    const actual = after[field];
+    if (!isDeepStrictEqual(storageComparable(expected), storageComparable(actual))) {
+      divergences.push({ field, expected, actual });
+    }
+  }
+  if (after.revision !== written.revision) {
+    divergences.push({
+      field: "revision",
+      expected: written.revision,
+      actual: after.revision
+    });
+  }
+  return divergences;
+}
+function logRoundTripMismatches(task, divergences) {
+  for (const divergence of divergences) {
+    console.log(
+      `::warning::dispatch-storage shadow round-trip mismatch for ${task.repository}#${task.issue}, field '${divergence.field}': expected=${JSON.stringify(divergence.expected)} actual=${JSON.stringify(divergence.actual)}`
+    );
+  }
+}
+async function observeDispatchStorage(port, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const task = ledger.task;
+  const before = await port.readTask(task);
+  const desired = projectLedgerToStoredTask(ledger);
+  const written = await port.writeTask(task, before?.revision, desired, now);
+  const after = await port.readTask(task);
+  logRoundTripMismatches(task, checkRoundTrip(written, after));
+}
+async function maybeObserveDispatchStorage(mode, createPort, ledger, now) {
+  if (mode !== "shadow") return;
+  try {
+    await observeDispatchStorage(createPort(), ledger, now);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::dispatch-storage shadow observation failed for ${ledger.task.repository}#${ledger.task.issue}: ${message}`
+    );
+  }
+}
+
+// apps/dispatch-broker/src/storage/authority.ts
+var DEFAULT_TASK_LEASE_MS = 2 * 60 * 1e3;
+var DEFAULT_CAS_ATTEMPTS = 8;
+var TaskLeaseBusyError = class extends Error {
+  constructor(task, lease) {
+    super(
+      `Task ${task.repository}#${task.issue} is already leased by ${lease.owner} until ${lease.expiresAt}`
+    );
+    this.task = task;
+    this.lease = lease;
+    this.name = "TaskLeaseBusyError";
+  }
+  task;
+  lease;
+};
+var AuthorityStateNotFoundError = class extends Error {
+  constructor(task) {
+    super(
+      `No authoritative controller state exists for ${task.repository}#${task.issue}`
+    );
+    this.task = task;
+    this.name = "AuthorityStateNotFoundError";
+  }
+  task;
+};
+var AuthorityStateMissingError = class extends Error {
+  constructor(task) {
+    super(
+      `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; return to shadow mode and backfill it before authority cutover`
+    );
+    this.task = task;
+    this.name = "AuthorityStateMissingError";
+  }
+  task;
+};
+function leaseIsLive(lease, now) {
+  return Boolean(lease && Date.parse(lease.expiresAt) > Date.parse(now));
+}
+async function acquireAuthority(port, task, owner, seed, options = {}) {
+  const now = options.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
+  const leaseMs = options.leaseMs ?? DEFAULT_TASK_LEASE_MS;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_CAS_ATTEMPTS;
+  const createIfMissing = options.createIfMissing ?? true;
+  const busyWaitMs = options.busyWaitMs ?? 0;
+  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const busyDeadline = Date.now() + busyWaitMs;
+  let lastConflict;
+  let conflicts = 0;
+  while (conflicts < maxAttempts) {
+    const observedAt = now();
+    const current = await port.readTask(task);
+    if (!current && !createIfMissing) {
+      throw new AuthorityStateNotFoundError(task);
+    }
+    if (current && !current.controllerState) {
+      throw new AuthorityStateMissingError(task);
+    }
+    if (current?.lease && current.lease.owner !== owner && leaseIsLive(current.lease, observedAt)) {
+      const remainingBudget = busyDeadline - Date.now();
+      if (remainingBudget <= 0) {
+        throw new TaskLeaseBusyError(task, current.lease);
+      }
+      const remainingLease = Date.parse(current.lease.expiresAt) - Date.parse(observedAt);
+      await sleep2(
+        Math.max(1, Math.min(1e3, remainingBudget, remainingLease))
+      );
+      continue;
+    }
+    const ledger = structuredClone(current?.controllerState ?? seed);
+    const lease = {
+      owner,
+      acquiredAt: current?.lease?.owner === owner ? current.lease.acquiredAt : observedAt,
+      expiresAt: new Date(Date.parse(observedAt) + leaseMs).toISOString()
+    };
+    try {
+      const stored = await port.writeTask(
+        task,
+        current?.revision,
+        { ...projectLedgerToStoredTask(ledger), lease },
+        observedAt
+      );
+      return {
+        ledger,
+        session: { port, owner, revision: stored.revision, lease }
+      };
+    } catch (error) {
+      if (!(error instanceof TaskWriteConflictError)) throw error;
+      lastConflict = error;
+      conflicts += 1;
+    }
+  }
+  throw lastConflict;
+}
+async function persistAuthority(session, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  session.lease = {
+    ...session.lease,
+    expiresAt: new Date(Date.parse(now) + DEFAULT_TASK_LEASE_MS).toISOString()
+  };
+  const written = await session.port.writeTask(
+    ledger.task,
+    session.revision,
+    { ...projectLedgerToStoredTask(ledger), lease: session.lease },
+    now
+  );
+  session.revision = written.revision;
+  return written;
+}
+async function releaseAuthority(session, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const written = await session.port.writeTask(
+    ledger.task,
+    session.revision,
+    projectLedgerToStoredTask(ledger),
+    now
+  );
+  session.revision = written.revision;
+}
+
 // apps/dispatch-broker/src/storage/firestore-rest-port.ts
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var TASKS_COLLECTION = "dispatchTasks";
 var LAUNCH_OUTBOX_COLLECTION = "dispatchLaunchOutbox";
 function defaultNow() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
 function sameResolution(a, b) {
-  return isDeepStrictEqual(a, b);
+  return isDeepStrictEqual2(a, b);
 }
 function toFirestoreValue(value) {
   if (value === null) return { nullValue: null };
@@ -2009,7 +2410,7 @@ var FirestoreRestStoragePort = class {
   #baseUrl;
   constructor(options) {
     this.#token = options.token;
-    this.#documentsRoot = `projects/${options.projectId}/databases/(default)/documents`;
+    this.#documentsRoot = `projects/${options.projectId}/databases/${options.databaseId}/documents`;
     const emulatorHost = options.emulatorHost ?? process.env.FIRESTORE_EMULATOR_HOST;
     this.#baseUrl = emulatorHost ? `http://${emulatorHost}/v1/${this.#documentsRoot}` : `https://firestore.googleapis.com/v1/${this.#documentsRoot}`;
   }
@@ -2225,179 +2626,6 @@ var FirestoreRestStoragePort = class {
   }
 };
 
-// apps/dispatch-broker/src/storage/shadow.ts
-import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
-function parseDispatchStorageMode(raw) {
-  const value = (raw ?? "").trim();
-  if (value === "" || value === "off") return "off";
-  if (value === "shadow") return "shadow";
-  throw new Error(
-    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset) or 'shadow'.`
-  );
-}
-function mapGenerationState(state) {
-  switch (state) {
-    case "accepted":
-      return "accepted";
-    case "pending":
-      return "pending";
-    case "dispatching":
-    case "dispatch-unknown":
-      return "dispatching";
-    case "active":
-    case "completion-observed":
-    case "completion-awaiting-terminal":
-      return "active";
-    case "completed":
-      return "completed";
-    case "dispatch-rejected":
-    case "superseded":
-    case "superseded-by-close":
-      return "superseded";
-    default: {
-      const exhaustive = state;
-      throw new Error(
-        `Unhandled ledger generation state: ${String(exhaustive)}`
-      );
-    }
-  }
-}
-function mapAuthorization(authorization2) {
-  if (!authorization2) return { observed: true };
-  if ("authorized" in authorization2) {
-    return {
-      authorized: authorization2.authorized,
-      actor: authorization2.actor,
-      rule: authorization2.rule
-    };
-  }
-  return {
-    observed: true,
-    actor: authorization2.actor,
-    workflow: authorization2.workflow
-  };
-}
-function mapSignal(source) {
-  return {
-    sourceKind: source.sourceKind,
-    sourceId: source.sourceId,
-    occurredAt: source.occurredAt,
-    authorization: mapAuthorization(source.authorization)
-  };
-}
-function mapAttempt(generation) {
-  const attempt = generation.attempt;
-  if (!attempt) return void 0;
-  return {
-    attemptId: attempt.attemptId ?? formatAttemptId({
-      generation: generation.generation,
-      intentId: generation.intentId
-    }),
-    token: attempt.token ?? "",
-    dispatchStartedAt: attempt.dispatchStartedAt ?? generation.occurredAt,
-    runId: attempt.runId,
-    runUrl: attempt.runUrl,
-    htmlUrl: attempt.htmlUrl,
-    boundAt: attempt.boundAt,
-    completedAt: attempt.completedAt,
-    conclusion: attempt.conclusion
-  };
-}
-function mapIntent(generation) {
-  return {
-    intentId: generation.intentId,
-    sourceId: generation.sourceId,
-    occurredAt: generation.occurredAt,
-    state: mapGenerationState(generation.state),
-    attempt: mapAttempt(generation)
-  };
-}
-function projectLedgerToStoredTask(ledger) {
-  const activeGeneration2 = ledger.generations.find(
-    (generation) => LEDGER_ACTIVE_GENERATION_STATES.has(generation.state)
-  );
-  const pendingGeneration = ledger.generations.find(
-    (generation) => generation.state === "pending"
-  );
-  const acceptedGeneration = ledger.generations.find(
-    (generation) => generation.state === "accepted"
-  );
-  const desiredIntentId = activeGeneration2?.intentId ?? pendingGeneration?.intentId ?? acceptedGeneration?.intentId;
-  return {
-    desiredIntentId,
-    signals: ledger.sources.map(mapSignal),
-    intents: ledger.generations.map(mapIntent)
-  };
-}
-function storageComparable(value) {
-  if (Array.isArray(value)) {
-    return value.filter((element) => element !== void 0).map(storageComparable);
-  }
-  if (value && typeof value === "object") {
-    const comparable = {};
-    for (const [key, fieldValue] of Object.entries(value)) {
-      if (fieldValue === void 0) continue;
-      comparable[key] = storageComparable(fieldValue);
-    }
-    return comparable;
-  }
-  return value;
-}
-function checkRoundTrip(written, after) {
-  if (!after) {
-    return [
-      { field: "revision", expected: written.revision, actual: void 0 }
-    ];
-  }
-  const fields = [
-    "desiredIntentId",
-    "signals",
-    "intents"
-  ];
-  const divergences = [];
-  for (const field of fields) {
-    const expected = written[field];
-    const actual = after[field];
-    if (!isDeepStrictEqual2(storageComparable(expected), storageComparable(actual))) {
-      divergences.push({ field, expected, actual });
-    }
-  }
-  if (after.revision !== written.revision) {
-    divergences.push({
-      field: "revision",
-      expected: written.revision,
-      actual: after.revision
-    });
-  }
-  return divergences;
-}
-function logRoundTripMismatches(task, divergences) {
-  for (const divergence of divergences) {
-    console.log(
-      `::warning::dispatch-storage shadow round-trip mismatch for ${task.repository}#${task.issue}, field '${divergence.field}': expected=${JSON.stringify(divergence.expected)} actual=${JSON.stringify(divergence.actual)}`
-    );
-  }
-}
-async function observeDispatchStorage(port, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const task = ledger.task;
-  const before = await port.readTask(task);
-  const desired = projectLedgerToStoredTask(ledger);
-  const written = await port.writeTask(task, before?.revision, desired, now);
-  const after = await port.readTask(task);
-  logRoundTripMismatches(task, checkRoundTrip(written, after));
-}
-async function maybeObserveDispatchStorage(mode, createPort, ledger, now) {
-  if (mode !== "shadow") return;
-  try {
-    await observeDispatchStorage(createPort(), ledger, now);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(
-      `::warning::dispatch-storage shadow observation failed for ${ledger.task.repository}#${ledger.task.issue}: ${message}`
-    );
-  }
-}
-
 // apps/dispatch-broker/src/main.ts
 function env(name, required = true) {
   const value = process.env[name];
@@ -2418,11 +2646,60 @@ function decode(value) {
 function api() {
   return createGitHubApi({ token: env("GITHUB_TOKEN") });
 }
-function createShadowStoragePort() {
+function createStoragePort() {
   return new FirestoreRestStoragePort({
     projectId: env("GCP_PROJECT_ID"),
+    databaseId: env("DISPATCH_FIRESTORE_DATABASE_ID"),
     token: env("DISPATCH_STORAGE_TOKEN")
   });
+}
+async function saveLedger2(client, loaded) {
+  if (!loaded.authority) {
+    await saveLedger(client, loaded);
+    return;
+  }
+  if (loaded.projectionAvailable === false) {
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    return;
+  }
+  await persistAuthority(loaded.authority, loaded.ledger);
+  try {
+    await saveLedger(client, loaded);
+  } catch (error) {
+    loaded.projectionAvailable = false;
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Dispatch state committed to Firestore, but its GitHub ledger projection failed: ${message}`
+    );
+  }
+}
+async function saveProjectionCheckpoint(client, loaded) {
+  if (!loaded.authority) {
+    recordProjectionStatus(loaded.ledger, true);
+    await saveLedger2(client, loaded);
+    return;
+  }
+  if (loaded.projectionAvailable === false) {
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    return;
+  }
+  const beforeProjection = loaded.ledger;
+  const converged = structuredClone(beforeProjection);
+  recordProjectionStatus(converged, true);
+  loaded.ledger = converged;
+  try {
+    await saveLedger(client, loaded);
+  } catch (error) {
+    loaded.ledger = beforeProjection;
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    throw error;
+  }
+  await persistAuthority(loaded.authority, loaded.ledger);
 }
 function contextFor(event, inputs) {
   return {
@@ -2456,7 +2733,7 @@ async function runPhase(ledgerContext, phase, step, owningSystem = "controller")
           void 0,
           failure
         );
-        await saveLedger(ledgerContext.client, ledgerContext.loaded);
+        await saveLedger2(ledgerContext.client, ledgerContext.loaded);
       } catch (recordingError) {
         const recordingMessage = recordingError instanceof Error ? recordingError.message : String(recordingError);
         console.log(
@@ -2482,7 +2759,7 @@ async function normalize() {
     event.issue = issue2;
   }
   let timeline = [];
-  const wantsTimeline = eventName === "issues" && ["labeled", "unlabeled", "closed", "reopened"].includes(event.action) || eventName === "pull_request" && ["labeled", "unlabeled"].includes(event.action);
+  const wantsTimeline = eventName === "issues" && ["labeled", "unlabeled", "closed", "reopened"].includes(event.action) || ["pull_request", "pull_request_target"].includes(eventName) && ["labeled", "unlabeled"].includes(event.action);
   if (wantsTimeline) {
     const numbered = event.issue ?? event.pull_request;
     if (!numbered) {
@@ -2568,7 +2845,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
         retryDisposition: "never"
       })
     );
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     throw new Error("Multiple worker runs match one dispatch generation");
   }
   if (["dispatching", "dispatch-unknown"].includes(active.state) && matchingRuns.length === 1) {
@@ -2580,7 +2857,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
       htmlUrl: run2.html_url,
       workflow: expectedWorkflow
     });
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     active = activeGeneration(loaded.ledger);
   }
   if (!active?.attempt?.runId) return;
@@ -2590,6 +2867,11 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
     active.attempt.runId
   );
   assertWorkerRun(run, loaded.ledger.task, active, expectedWorkflow);
+  await resolvePendingLaunchAsLaunchedBestEffort(loaded, active, {
+    runId: run.id,
+    runUrl: run.url,
+    htmlUrl: run.html_url
+  });
   if (run.status === "completed") {
     completeRun(loaded.ledger, active.generation, {
       runId: run.id,
@@ -2597,7 +2879,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
       conclusion: run.conclusion,
       completedAt: run.updated_at
     });
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     return;
   }
   await trackStuckRun(client, loaded, active, run, now);
@@ -2605,6 +2887,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
 var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
+var CLOSED_ANCHOR_LAUNCH_REJECTION = "anchor closed before launch was observed";
 function reconcileAnomaliesFor(ledger, generationNumber, kind) {
   return ledger.anomalies.filter(
     (anomaly) => anomaly.kind === kind && // `detail` is deliberately untyped on LedgerAnomaly (each kind owns
@@ -2612,6 +2895,21 @@ function reconcileAnomaliesFor(ledger, generationNumber, kind) {
     // these two kinds always includes a numeric `generation` field.
     anomaly.detail?.generation === generationNumber
   );
+}
+async function readLaunchOperationForReconciliation(loaded, attemptId) {
+  if (!loaded.authority) return { ok: true, operation: void 0 };
+  try {
+    return {
+      ok: true,
+      operation: await loaded.authority.port.readLaunchOperation(attemptId)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Deferring launch reconciliation for ${attemptId} until its outbox record can be read: ${message}`
+    );
+    return { ok: false };
+  }
 }
 async function trackMissingRun(client, loaded, generation, now) {
   const ledger = loaded.ledger;
@@ -2634,13 +2932,37 @@ async function trackMissingRun(client, loaded, generation, now) {
   }
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
-  const parkFailure = reachedBound ? classifyFailure({
+  const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+  const launchRead = reachedBound && loaded.authority ? await readLaunchOperationForReconciliation(loaded, attemptId) : { ok: true, operation: void 0 };
+  if (!launchRead.ok) return;
+  const launchOperation = launchRead.operation;
+  const retryPendingLaunch = Boolean(
+    !ledger.control.closed && launchOperation?.status === "pending" && launchOperation.operationId === attemptId && launchOperation.attemptId === attemptId
+  );
+  const abandonClosedLaunch = Boolean(
+    ledger.control.closed && launchOperation?.operationId === attemptId && launchOperation.attemptId === attemptId && (launchOperation.status === "pending" || launchOperation.resolution?.status === "rejected" && launchOperation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)
+  );
+  const parkFailure = reachedBound && !retryPendingLaunch && !abandonClosedLaunch ? classifyFailure({
     phase: "reconciliation",
     owningSystem: "controller",
     reason: "launch_response_lost",
     retryDisposition: "manual",
     evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
   }) : void 0;
+  if (abandonClosedLaunch && launchOperation?.status === "pending") {
+    try {
+      await loaded.authority?.port.resolveLaunchOutcome(attemptId, {
+        status: "rejected",
+        reason: CLOSED_ANCHOR_LAUNCH_REJECTION
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Deferring closed-anchor launch abandonment for ${attemptId} until its outbox record can be resolved: ${message}`
+      );
+      return;
+    }
+  }
   if (parkFailure) {
     await projectNeedsHumanPark(
       client,
@@ -2685,6 +3007,51 @@ async function trackMissingRun(client, loaded, generation, now) {
       evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`
     })
   );
+  if (retryPendingLaunch) {
+    addAnomaly(
+      ledger,
+      "reconcile-launch-retry",
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: "pending-launch-outbox-bound-exhausted"
+      },
+      now,
+      classifyFailure({
+        phase: "reconciliation",
+        owningSystem: "controller",
+        reason: "launch_response_lost",
+        retryDisposition: "immediate",
+        retryBudget: 1,
+        evidence: `the exact launch outbox operation ${attemptId} is still pending after ${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded searches found no matching workflow run`
+      })
+    );
+    restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
+    await saveLedger2(client, loaded);
+    return;
+  }
+  if (abandonClosedLaunch) {
+    addAnomaly(
+      ledger,
+      "reconcile-launch-abandoned",
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: "anchor-closed-before-launch-observed"
+      },
+      now
+    );
+    abandonPendingLaunchForClosedAnchor(
+      ledger,
+      generation.generation,
+      CLOSED_ANCHOR_LAUNCH_REJECTION,
+      now
+    );
+    await saveLedger2(client, loaded);
+    return;
+  }
   if (parkFailure) {
     addAnomaly(
       ledger,
@@ -2700,7 +3067,7 @@ async function trackMissingRun(client, loaded, generation, now) {
       parkFailure
     );
   }
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 var RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
 var RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
@@ -2802,7 +3169,7 @@ async function trackStuckRun(client, loaded, generation, run, now) {
       parkFailure
     );
   }
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   const ledger = loaded.ledger;
@@ -2863,7 +3230,7 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     }
   });
   acceptIntent(ledger, intent, now);
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 async function reconcileControlState(client, loaded, issueClosed, now, runId) {
   const ledger = loaded.ledger;
@@ -2889,13 +3256,33 @@ async function reconcileControlState(client, loaded, issueClosed, now, runId) {
       },
       now
     );
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
   }
   return issueClosed;
 }
 async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId, issueClosed) {
   const ledger = loaded.ledger;
-  if (await reconcileControlState(client, loaded, issueClosed, now, runId)) {
+  const anchorClosed = await reconcileControlState(
+    client,
+    loaded,
+    issueClosed,
+    now,
+    runId
+  );
+  if (anchorClosed) {
+    const active2 = activeGeneration(ledger);
+    const attemptId = active2?.attempt?.attemptId;
+    if (loaded.authority && active2 && attemptId && ["dispatching", "dispatch-unknown"].includes(active2.state) && !active2.attempt?.runId) {
+      const launchRead = await readLaunchOperationForReconciliation(
+        loaded,
+        attemptId
+      );
+      if (!launchRead.ok) return;
+      const operation = launchRead.operation;
+      if (operation?.operationId === attemptId && operation.attemptId === attemptId && (operation.status === "pending" || operation.resolution?.status === "rejected" && operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)) {
+        await trackMissingRun(client, loaded, active2, now);
+      }
+    }
     return;
   }
   if (ledger.generations.length === 0) {
@@ -2933,7 +3320,7 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
       now,
       parkFailure
     );
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     return;
   }
   if (!active || !["dispatching", "dispatch-unknown"].includes(active.state)) {
@@ -2952,25 +3339,76 @@ async function dispatchReconcileScan2(client, repository, issueNumbers) {
 function isDefiniteDispatchRejection(error) {
   return error instanceof GitHubApiError && Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status);
 }
+async function resolveLaunchOutcomeBestEffort(loaded, generation, resolution) {
+  if (!loaded.authority) return;
+  const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+  try {
+    await loaded.authority.port.resolveLaunchOutcome(attemptId, resolution);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Primary dispatch state was persisted, but launch-outbox resolution for ${attemptId} will need reconciliation: ${message}`
+    );
+  }
+}
+async function resolvePendingLaunchAsLaunchedBestEffort(loaded, generation, binding) {
+  if (!loaded.authority) return;
+  const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+  try {
+    const operation = await loaded.authority.port.readLaunchOperation(attemptId);
+    if (operation?.status !== "pending") return;
+    await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+      status: "launched",
+      binding
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Reconciliation confirmed workflow run ${binding.runId}, but launch-outbox resolution for ${attemptId} will need another pass: ${message}`
+    );
+  }
+}
 async function dispatchAccepted(client, loaded) {
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
       (candidate) => candidate.state === "accepted"
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
-    await runPhase({ client, loaded }, "scheduling", async () => {
-      beginDispatch(
-        loaded.ledger,
-        generation.generation,
-        crypto3.randomBytes(24).toString("base64url")
-      );
-      await saveLedger(client, loaded);
-    });
+    const beforeScheduling = structuredClone(loaded.ledger);
+    const scheduled = await runPhase(
+      { client, loaded },
+      "scheduling",
+      async () => {
+        beginDispatch(
+          loaded.ledger,
+          generation.generation,
+          crypto3.randomBytes(24).toString("base64url")
+        );
+        if (loaded.authority) {
+          const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+          try {
+            await loaded.authority.port.recordLaunchIntent({
+              operationId: attemptId,
+              task: loaded.ledger.task,
+              attemptId
+            });
+          } catch (error) {
+            loaded.ledger = beforeScheduling;
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(
+              `::warning::Deferring worker dispatch after launch-outbox recording failed: ${message}`
+            );
+            return false;
+          }
+        }
+        await saveLedger2(client, loaded);
+        return true;
+      }
+    );
+    if (!scheduled) return;
+    let binding;
     try {
-      const binding = await dispatchWorker(client, generation, loaded.ledger.task);
-      bindRun(loaded.ledger, generation.generation, binding);
-      await saveLedger(client, loaded);
-      return;
+      binding = await dispatchWorker(client, generation, loaded.ledger.task);
     } catch (error) {
       if (isDefiniteDispatchRejection(error)) {
         await runPhase({ client, loaded }, "launch", async () => {
@@ -2979,7 +3417,11 @@ async function dispatchAccepted(client, loaded) {
             generation.generation,
             `HTTP ${error.status}`
           );
-          await saveLedger(client, loaded);
+          await saveLedger2(client, loaded);
+          await resolveLaunchOutcomeBestEffort(loaded, generation, {
+            status: "rejected",
+            reason: `HTTP ${error.status}`
+          });
           throw error;
         });
       }
@@ -2989,15 +3431,28 @@ async function dispatchAccepted(client, loaded) {
         // Assumed Error-shaped, exactly as the untyped original assumed.
         error.message.slice(0, 300)
       );
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
+      await resolveLaunchOutcomeBestEffort(loaded, generation, {
+        status: "unknown",
+        reason: error.message.slice(0, 300)
+      });
       return;
     }
+    bindRun(loaded.ledger, generation.generation, binding);
+    await saveLedger2(client, loaded);
+    await resolveLaunchOutcomeBestEffort(loaded, generation, {
+      status: "launched",
+      binding
+    });
+    return;
   }
 }
 function completionMatches(generation, normalized, run) {
   return generation && generation.intentId === normalized.intentId && generation.attempt?.token === normalized.token && generation.attempt?.runId === normalized.workerRunId && run.id === normalized.workerRunId;
 }
-async function handleCompletion(client, loaded, normalized) {
+async function handleCompletion(client, loaded, normalized, polling = {}) {
+  const now = polling.now ?? Date.now;
+  const sleep2 = polling.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const generation = loaded.ledger.generations.find(
     (candidate) => candidate.generation === normalized.generation
   );
@@ -3030,18 +3485,25 @@ async function handleCompletion(client, loaded, normalized) {
     authorization: { observed: true, workflow: expectedWorkflow }
   });
   if (generation.state === "completed") {
-    if (evidence.outcome === "recorded") await saveLedger(client, loaded);
+    if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
     return;
   }
   if (generation.state === "active") {
     observeCompletion(loaded.ledger, generation.generation, run.id);
   }
-  await saveLedger(client, loaded);
-  const deadline = Date.now() + 12e4;
+  await saveLedger2(client, loaded);
+  const deadline = now() + 12e4;
   let delay = 2e3;
-  while (run.status !== "completed" && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, delay));
+  while (run.status !== "completed" && now() < deadline) {
+    await sleep2(delay);
     delay = Math.min(delay * 2, 15e3);
+    if (loaded.authority) {
+      await persistAuthority(
+        loaded.authority,
+        loaded.ledger,
+        new Date(now()).toISOString()
+      );
+    }
     try {
       run = await getWorkflowRun(
         client,
@@ -3064,7 +3526,7 @@ async function handleCompletion(client, loaded, normalized) {
   if (run.status !== "completed") {
     if (generation.state === "completion-observed") {
       awaitTerminal(loaded.ledger, generation.generation);
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
     }
     return;
   }
@@ -3074,7 +3536,7 @@ async function handleCompletion(client, loaded, normalized) {
     conclusion: run.conclusion,
     completedAt: run.updated_at
   });
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 function resolveTask(normalized) {
   return normalized.kind === "intent" ? normalized.intent.task : (
@@ -3147,17 +3609,86 @@ async function healStaleAgentLabels(client, loaded, intent) {
     labels: removable,
     authorization: { observed: true, actor: "dispatch-broker" }
   });
-  if (evidence.outcome === "recorded") await saveLedger(client, loaded);
+  if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest) {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "") {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
-  return loadLedger(client, task, void 0, {
-    createIfMissing: !untrackedPullRequestControl
-  });
+  if (storageMode === "authority") {
+    const port = storagePortFactory();
+    let authority;
+    try {
+      authority = await acquireAuthority(
+        port,
+        task,
+        leaseOwner,
+        createLedger(task),
+        {
+          // Missing state needs a GitHub projection check below before a new
+          // empty aggregate can be created safely.
+          createIfMissing: false,
+          busyWaitMs: 13e4
+        }
+      );
+    } catch (error) {
+      if (error instanceof AuthorityStateNotFoundError) {
+        const initializationEvidence = await classifyAuthorityTaskInitialization(
+          client,
+          task,
+          authorityEpoch
+        );
+        if (untrackedPullRequestControl && initializationEvidence !== "compatibility-projection") {
+          return void 0;
+        }
+        if (initializationEvidence !== "post-cutover") {
+          throw new AuthorityStateMissingError(task);
+        }
+        authority = await acquireAuthority(
+          port,
+          task,
+          leaseOwner,
+          createLedger(task),
+          { busyWaitMs: 13e4 }
+        );
+      } else {
+        throw error;
+      }
+    }
+    try {
+      const projected = await loadLedgerProjection(
+        client,
+        task,
+        authority.ledger
+      );
+      projected.authority = authority.session;
+      projected.projectionAvailable = true;
+      return projected;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Loaded authoritative Firestore state for ${task.repository}#${task.issue}, but its GitHub ledger projection is unavailable this pass: ${message}`
+      );
+      return {
+        ledger: authority.ledger,
+        comment: { id: 0, body: "", created_at: "" },
+        created: false,
+        authority: authority.session,
+        projectionAvailable: false
+      };
+    }
+  }
+  const loaded = await loadLedger(
+    client,
+    task,
+    void 0,
+    {
+      createIfMissing: !untrackedPullRequestControl
+    }
+  );
+  return loaded;
 }
 async function applyAnchorControlTransition(client, loaded, control) {
   applyAnchorControl(loaded.ledger, control);
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 async function broker() {
   const normalized = decode(env("BROKER_PAYLOAD"));
@@ -3165,6 +3696,7 @@ async function broker() {
   const storageMode = parseDispatchStorageMode(
     env("DISPATCH_STORAGE_MODE", false)
   );
+  const authorityEpoch = storageMode === "authority" ? env("DISPATCH_AUTHORITY_EPOCH") : "";
   const task = resolveTask(normalized);
   const client = api();
   const isPullRequest = env("ANCHOR_IS_PR", false) === "true";
@@ -3188,8 +3720,23 @@ async function broker() {
   }
   let loaded;
   try {
-    loaded = await loadBrokerLedger(client, task, normalized, isPullRequest);
+    loaded = await loadBrokerLedger(
+      client,
+      task,
+      normalized,
+      isPullRequest,
+      storageMode,
+      `action:${runId}`,
+      createStoragePort,
+      authorityEpoch
+    );
   } catch (error) {
+    if (error instanceof TaskLeaseBusyError) {
+      console.log(
+        `::warning::Deferring ${task.repository}#${task.issue}: ${error.message}`
+      );
+      throw error;
+    }
     await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
   }
   if (!loaded) {
@@ -3223,7 +3770,7 @@ async function broker() {
         "intent",
         () => acceptIntent(loaded.ledger, normalized.intent)
       );
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
       if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
         await healStaleAgentLabels(client, loaded, normalized.intent);
       }
@@ -3231,7 +3778,7 @@ async function broker() {
       await applyAnchorControlTransition(client, loaded, normalized.control);
     } else if (normalized.kind === "control-evidence") {
       recordControlEvidence(loaded.ledger, normalized.evidence);
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
     } else if (normalized.kind === "completion") {
       await handleCompletion(client, loaded, normalized);
     } else if (normalized.kind === "reconcile") {
@@ -3253,8 +3800,7 @@ async function broker() {
     }
     await dispatchAccepted(client, loaded);
     try {
-      recordProjectionStatus(loaded.ledger, true);
-      await saveLedger(client, loaded);
+      await saveProjectionCheckpoint(client, loaded);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.log(
@@ -3263,11 +3809,22 @@ async function broker() {
     }
     await maybeObserveDispatchStorage(
       storageMode,
-      createShadowStoragePort,
+      createStoragePort,
       loaded.ledger
     );
   } catch (error) {
     await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
+  } finally {
+    if (loaded?.authority) {
+      try {
+        await releaseAuthority(loaded.authority, loaded.ledger);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to release dispatch-storage authority lease; it will expire automatically: ${message}`
+        );
+      }
+    }
   }
 }
 async function preflight() {
@@ -3284,17 +3841,21 @@ async function preflight() {
     runId: Number(env("GITHUB_RUN_ID"))
   };
   const client = api();
+  const storageMode = parseDispatchStorageMode(
+    env("DISPATCH_STORAGE_MODE", false)
+  );
+  const authorityPort = storageMode === "authority" ? createStoragePort() : void 0;
   await runPhase(void 0, "authorization", async () => {
     const deadline = Date.now() + 6e4;
     while (Date.now() < deadline) {
-      const loaded = await loadLedger(
+      const ledger = await loadPreflightLedger(
         client,
         task,
-        "github-actions[bot]",
-        { createIfMissing: false }
+        storageMode,
+        authorityPort
       );
-      if (loaded && verifyPreflight(loaded.ledger, expected)) {
-        const generation = loaded.ledger.generations.find(
+      if (ledger && verifyPreflight(ledger, expected)) {
+        const generation = ledger.generations.find(
           (candidate) => candidate.generation === expected.generation
         );
         const run = await getWorkflowRun(
@@ -3324,6 +3885,17 @@ async function preflight() {
       "Worker preflight could not verify an exact broker binding"
     );
   });
+}
+async function loadPreflightLedger(client, task, storageMode, authorityPort) {
+  if (storageMode === "authority") {
+    if (!authorityPort) {
+      throw new Error("Authority preflight requires a dispatch storage port");
+    }
+    return (await authorityPort.readTask(task))?.controllerState;
+  }
+  return (await loadLedger(client, task, "github-actions[bot]", {
+    createIfMissing: false
+  }))?.ledger;
 }
 async function completionCallback() {
   const client = api();
@@ -3417,11 +3989,13 @@ export {
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
+  loadPreflightLedger,
   reconcileActive,
   reconcileControlState,
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
   runPhase,
+  saveProjectionCheckpoint,
   wasSupersededEviction
 };

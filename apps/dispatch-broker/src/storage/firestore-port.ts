@@ -123,6 +123,9 @@ function sameResolution(
 
 export interface FirestoreStoragePortOptions {
   projectId: string;
+  /** Firestore database containing controller authority. Required so a
+   *  caller can never silently fall back to the telemetry/default database. */
+  databaseId: string;
   /** Parsed contents of a Firestore writer service-account key. Omit to
    *  fall back to ambient Application Default Credentials -- see the
    *  module header's "Credential resolution" section. */
@@ -146,6 +149,7 @@ export class FirestoreStoragePort implements StoragePort {
   constructor(options: FirestoreStoragePortOptions) {
     this.#firestore = new Firestore({
       projectId: options.projectId,
+      databaseId: options.databaseId,
       // Every field this port stores is plain JSON with optional properties
       // (e.g. `StoredTask.desiredIntentId?`, several `AttemptRecord`
       // fields) that a caller may legitimately construct via an object

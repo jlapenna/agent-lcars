@@ -27,6 +27,7 @@ import {
 
 import type { AnchorControl } from './broker.js';
 import {
+  abandonPendingLaunchForClosedAnchor,
   acceptIntent,
   ACTIVE_STATES,
   addAnomaly,
@@ -35,13 +36,16 @@ import {
   beginDispatch,
   bindRun,
   completeRun,
+  createLedger,
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
   recordControlEvidence,
+  restoreAcceptedForLaunchRetry,
   verifyPreflight,
 } from './broker.js';
 import {
+  classifyAuthorityTaskInitialization,
   createGitHubApi,
   createReconcileTransport,
   dispatchRouterEvent,
@@ -53,9 +57,10 @@ import {
   GitHubApiError,
   listAll,
   loadLedger,
+  loadLedgerProjection,
   pinLedgerWhenUnoccupied,
   repositoryPath,
-  saveLedger,
+  saveLedger as saveLedgerComment,
   verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api.js';
@@ -80,8 +85,17 @@ import {
   selectedPipeline,
   selectedPipelineFrom,
 } from './normalize.js';
+import {
+  acquireAuthority,
+  type AuthoritySession,
+  AuthorityStateMissingError,
+  AuthorityStateNotFoundError,
+  persistAuthority,
+  releaseAuthority,
+  TaskLeaseBusyError,
+} from './storage/authority.js';
 import { FirestoreRestStoragePort } from './storage/firestore-rest-port.js';
-import type { StoragePort } from './storage/port.js';
+import type { LaunchOutboxOperation, StoragePort } from './storage/port.js';
 import {
   maybeObserveDispatchStorage,
   parseDispatchStorageMode,
@@ -185,6 +199,8 @@ interface LoadedLedger {
   comment: GitHubIssueComment;
   created: boolean;
   existingComments?: GitHubIssueComment[];
+  authority?: AuthoritySession;
+  projectionAvailable?: boolean;
 }
 
 interface LedgerContext {
@@ -215,21 +231,78 @@ function api(): GitHubApiClient {
   return createGitHubApi({ token: env('GITHUB_TOKEN') });
 }
 
-// #645 Phase 6 (shadow mode): the one place a `FirestoreRestStoragePort` is
-// ever constructed. Deliberately a lazy factory, never called eagerly --
-// `maybeObserveDispatchStorage` (storage/shadow.ts) only invokes this when
-// `DISPATCH_STORAGE_MODE` is `'shadow'`, so an `'off'` run never reads
-// GCP_PROJECT_ID/DISPATCH_STORAGE_TOKEN, never constructs this class, and
-// never makes a Firestore request -- see that module's own "Inertness of
-// 'off'" section. Credential resolution stays out of the adapter itself
+// The Action adapter's one `FirestoreRestStoragePort` factory. Shadow mode
+// invokes it lazily after a comment-ledger transition; authority mode uses
+// it before any transition to acquire the shared per-task lease. An `off`
+// run reaches neither path, so it reads no storage credential and performs
+// no Firestore request. Credential resolution stays out of the adapter itself
 // (firestore-rest-port.ts's own "Auth" section): agent-router.yml's
 // google-github-actions/auth step mints the access token and this file only
 // ever reads the resulting env var, never derives one itself.
-function createShadowStoragePort(): StoragePort {
+function createStoragePort(): StoragePort {
   return new FirestoreRestStoragePort({
     projectId: env('GCP_PROJECT_ID'),
+    databaseId: env('DISPATCH_FIRESTORE_DATABASE_ID'),
     token: env('DISPATCH_STORAGE_TOKEN'),
   });
+}
+
+async function saveLedger(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+): Promise<void> {
+  if (!loaded.authority) {
+    await saveLedgerComment(client, loaded);
+    return;
+  }
+  if (loaded.projectionAvailable === false) {
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    return;
+  }
+  await persistAuthority(loaded.authority, loaded.ledger);
+  try {
+    await saveLedgerComment(client, loaded);
+  } catch (error) {
+    loaded.projectionAvailable = false;
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Dispatch state committed to Firestore, but its GitHub ` +
+        `ledger projection failed: ${message}`,
+    );
+  }
+}
+
+async function saveProjectionCheckpoint(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+): Promise<void> {
+  if (!loaded.authority) {
+    recordProjectionStatus(loaded.ledger, true);
+    await saveLedger(client, loaded);
+    return;
+  }
+  if (loaded.projectionAvailable === false) {
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    return;
+  }
+
+  const beforeProjection = loaded.ledger;
+  const converged = structuredClone(beforeProjection);
+  recordProjectionStatus(converged, true);
+  loaded.ledger = converged;
+  try {
+    await saveLedgerComment(client, loaded);
+  } catch (error) {
+    loaded.ledger = beforeProjection;
+    recordProjectionStatus(loaded.ledger, false);
+    await persistAuthority(loaded.authority, loaded.ledger);
+    throw error;
+  }
+  await persistAuthority(loaded.authority, loaded.ledger);
 }
 
 function contextFor(
@@ -359,20 +432,23 @@ async function normalize(): Promise<void> {
   }
   let timeline: GitHubTimelineEvent[] = [];
   // The Issue Timeline API also covers pull requests (a PR number IS an
-  // issue number under the hood), so a pull_request labeled/unlabeled event
+  // issue number under the hood), so a pull_request_target labeled/unlabeled
+  // event
   // -- the review-dispatch counterpart to an issue's labeled/unlabeled --
   // needs the same timeline fetch normalizeEvent's timelineSource() relies
-  // on to disambiguate which delivery this webhook is. pull_request's own
-  // closed/reopened actions don't need it: normalizeEvent resolves their
-  // sourceId directly from the payload, not the timeline.
+  // on to disambiguate which delivery this webhook is. The target event is
+  // required here because it runs this privileged controller from trusted
+  // main rather than from a PR-controlled merge ref. Its own closed/reopened
+  // actions don't need the timeline: normalizeEvent resolves their sourceId
+  // directly from the payload.
   const wantsTimeline =
     (eventName === 'issues' &&
       ['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)) ||
-    (eventName === 'pull_request' &&
+    (['pull_request', 'pull_request_target'].includes(eventName) &&
       ['labeled', 'unlabeled'].includes(event.action));
   if (wantsTimeline) {
-    // wantsTimeline is only true for an `issues`/`pull_request` event, both
-    // of which always carry one of the two -- recomputed independently here
+    // wantsTimeline is only true for an issue or pull-request event, each of
+    // which always carries one of the two -- recomputed independently here
     // exactly as the original did.
     const numbered = event.issue ?? event.pull_request;
     if (!numbered) {
@@ -515,6 +591,11 @@ async function reconcileActive(
     active.attempt.runId,
   );
   assertWorkerRun(run, loaded.ledger.task, active, expectedWorkflow);
+  await resolvePendingLaunchAsLaunchedBestEffort(loaded, active, {
+    runId: run.id,
+    runUrl: run.url,
+    htmlUrl: run.html_url,
+  });
   if (run.status === 'completed') {
     // Cancelled and timed-out runs land here too -- GitHub reports
     // `status: 'completed'` regardless of `conclusion`, so a cancellation or
@@ -556,6 +637,8 @@ const RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1000;
 // the repo's general bounded-retry posture (#343/#344) rather than
 // retrying forever.
 const RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
+const CLOSED_ANCHOR_LAUNCH_REJECTION =
+  'anchor closed before launch was observed';
 
 function reconcileAnomaliesFor(
   ledger: DispatchLedger,
@@ -571,6 +654,28 @@ function reconcileAnomaliesFor(
       (anomaly.detail as { generation?: number } | undefined)?.generation ===
         generationNumber,
   );
+}
+
+async function readLaunchOperationForReconciliation(
+  loaded: LoadedLedger,
+  attemptId: string,
+): Promise<
+  { ok: true; operation: LaunchOutboxOperation | undefined } | { ok: false }
+> {
+  if (!loaded.authority) return { ok: true, operation: undefined };
+  try {
+    return {
+      ok: true,
+      operation: await loaded.authority.port.readLaunchOperation(attemptId),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Deferring launch reconciliation for ${attemptId} until ` +
+        `its outbox record can be read: ${message}`,
+    );
+    return { ok: false };
+  }
 }
 
 // Repairs orphan classes 2 and 4 from #305's production audit: a dispatch
@@ -626,6 +731,28 @@ async function trackMissingRun(
 
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  const attemptId =
+    generation.attempt?.attemptId ?? formatAttemptId(generation);
+  const launchRead =
+    reachedBound && loaded.authority
+      ? await readLaunchOperationForReconciliation(loaded, attemptId)
+      : { ok: true as const, operation: undefined };
+  if (!launchRead.ok) return;
+  const launchOperation = launchRead.operation;
+  const retryPendingLaunch = Boolean(
+    !ledger.control.closed &&
+    launchOperation?.status === 'pending' &&
+    launchOperation.operationId === attemptId &&
+    launchOperation.attemptId === attemptId,
+  );
+  const abandonClosedLaunch = Boolean(
+    ledger.control.closed &&
+    launchOperation?.operationId === attemptId &&
+    launchOperation.attemptId === attemptId &&
+    (launchOperation.status === 'pending' ||
+      (launchOperation.resolution?.status === 'rejected' &&
+        launchOperation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)),
+  );
   // Computed up front, once, so the park gate below and the
   // 'reconcile-parked' anomaly further down share exactly one description
   // of "why parked" rather than two independently-written literals that
@@ -635,15 +762,31 @@ async function trackMissingRun(
   // observation below) to `manual` while `reason` stays
   // `launch_response_lost`. `undefined` when the bound has not been
   // reached -- there is nothing to park yet.
-  const parkFailure = reachedBound
-    ? classifyFailure({
-        phase: 'reconciliation',
-        owningSystem: 'controller',
-        reason: 'launch_response_lost',
-        retryDisposition: 'manual',
-        evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
-      })
-    : undefined;
+  const parkFailure =
+    reachedBound && !retryPendingLaunch && !abandonClosedLaunch
+      ? classifyFailure({
+          phase: 'reconciliation',
+          owningSystem: 'controller',
+          reason: 'launch_response_lost',
+          retryDisposition: 'manual',
+          evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
+        })
+      : undefined;
+  if (abandonClosedLaunch && launchOperation?.status === 'pending') {
+    try {
+      await loaded.authority?.port.resolveLaunchOutcome(attemptId, {
+        status: 'rejected',
+        reason: CLOSED_ANCHOR_LAUNCH_REJECTION,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Deferring closed-anchor launch abandonment for ` +
+          `${attemptId} until its outbox record can be resolved: ${message}`,
+      );
+      return;
+    }
+  }
   // Apply the (idempotent, verify-then-decide) GitHub-side park BEFORE
   // recording it in the ledger: if the mutation throws, the ledger must
   // stay exactly as it was so the next pass retries at the same attempt
@@ -697,6 +840,53 @@ async function trackMissingRun(
       evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`,
     }),
   );
+  if (retryPendingLaunch) {
+    addAnomaly(
+      ledger,
+      'reconcile-launch-retry',
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: 'pending-launch-outbox-bound-exhausted',
+      },
+      now,
+      classifyFailure({
+        phase: 'reconciliation',
+        owningSystem: 'controller',
+        reason: 'launch_response_lost',
+        retryDisposition: 'immediate',
+        retryBudget: 1,
+        evidence:
+          `the exact launch outbox operation ${attemptId} is still pending ` +
+          `after ${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded searches found no matching workflow run`,
+      }),
+    );
+    restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
+    await saveLedger(client, loaded);
+    return;
+  }
+  if (abandonClosedLaunch) {
+    addAnomaly(
+      ledger,
+      'reconcile-launch-abandoned',
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: 'anchor-closed-before-launch-observed',
+      },
+      now,
+    );
+    abandonPendingLaunchForClosedAnchor(
+      ledger,
+      generation.generation,
+      CLOSED_ANCHOR_LAUNCH_REJECTION,
+      now,
+    );
+    await saveLedger(client, loaded);
+    return;
+  }
   if (parkFailure) {
     addAnomaly(
       ledger,
@@ -1074,14 +1264,13 @@ async function repairMissingIntentFromLabel(
 //
 // Returns whether the issue IS closed (whether or not this call is what
 // converged it) so reconcileLedger can skip every generation-repair branch
-// below for a closed anchor -- including repairMissingIntentFromLabel, the
-// one branch that CAN create a fresh generation. That return-and-skip is
-// what makes "reconciling a closed issue never dispatches a new
-// generation" structural: this function itself contains no path that
-// creates a generation, and even if it did, dispatchAccepted's own
-// `while (!ledger.control.closed)` gate -- already what the live-close path
-// depends on -- reads this same field again immediately afterward, in the
-// same broker() pass.
+// that could create/retry work -- including repairMissingIntentFromLabel,
+// the one branch that CAN create a fresh generation. Its one closed-only
+// exception terminalizes a durable pre-launch outbox operation after bounded
+// run discovery; it can only abandon work, never create it. That boundary is
+// what makes "reconciling a closed issue never dispatches a new generation"
+// structural, reinforced by dispatchAccepted's own
+// `while (!ledger.control.closed)` gate in the same broker() pass.
 async function reconcileControlState(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1127,8 +1316,9 @@ async function reconcileControlState(
 //
 // `issueClosed` (from ReconcileEvent, normalize.mjs) is checked first, via
 // reconcileControlState, before any of the generation-repair logic below --
-// see that function's own header for why a closed anchor returns
-// immediately rather than falling through. broker() (#715) already made
+// see that function's own header for why a closed anchor can only enter the
+// narrow pending-launch abandonment path rather than falling through.
+// broker() (#715) already made
 // this exact reconcileControlState call itself, ahead of reconcileActive(),
 // before ever reaching this function -- so by the time reconcileLedger runs
 // at all, this call is normally a no-op re-observation of an
@@ -1150,7 +1340,45 @@ async function reconcileLedger(
   issueClosed?: boolean,
 ): Promise<void> {
   const ledger = loaded.ledger;
-  if (await reconcileControlState(client, loaded, issueClosed, now, runId)) {
+  const anchorClosed = await reconcileControlState(
+    client,
+    loaded,
+    issueClosed,
+    now,
+    runId,
+  );
+  if (anchorClosed) {
+    // Closed anchors normally skip every generation repair below. The sole
+    // exception is a durable pre-launch outbox operation: it must age
+    // through the same bounded run-discovery window as an open attempt, then
+    // be terminalized as abandoned rather than retried or parked. Restrict
+    // this path to the exact known operation so an unrelated closed active
+    // generation retains the historical no-op behavior.
+    const active = activeGeneration(ledger);
+    const attemptId = active?.attempt?.attemptId;
+    if (
+      loaded.authority &&
+      active &&
+      attemptId &&
+      ['dispatching', 'dispatch-unknown'].includes(active.state) &&
+      !active.attempt?.runId
+    ) {
+      const launchRead = await readLaunchOperationForReconciliation(
+        loaded,
+        attemptId,
+      );
+      if (!launchRead.ok) return;
+      const operation = launchRead.operation;
+      if (
+        operation?.operationId === attemptId &&
+        operation.attemptId === attemptId &&
+        (operation.status === 'pending' ||
+          (operation.resolution?.status === 'rejected' &&
+            operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION))
+      ) {
+        await trackMissingRun(client, loaded, active, now);
+      }
+    }
     return;
   }
   if (ledger.generations.length === 0) {
@@ -1272,6 +1500,51 @@ function isDefiniteDispatchRejection(error: unknown): error is GitHubApiError {
   );
 }
 
+async function resolveLaunchOutcomeBestEffort(
+  loaded: LoadedLedger,
+  generation: LedgerGeneration,
+  resolution: Parameters<StoragePort['resolveLaunchOutcome']>[1],
+): Promise<void> {
+  if (!loaded.authority) return;
+  const attemptId =
+    generation.attempt?.attemptId ?? formatAttemptId(generation);
+  try {
+    await loaded.authority.port.resolveLaunchOutcome(attemptId, resolution);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Primary dispatch state was persisted, but launch-outbox ` +
+        `resolution for ${attemptId} will need reconciliation: ${message}`,
+    );
+  }
+}
+
+async function resolvePendingLaunchAsLaunchedBestEffort(
+  loaded: LoadedLedger,
+  generation: LedgerGeneration,
+  binding: { runId: number; runUrl: string; htmlUrl: string },
+): Promise<void> {
+  if (!loaded.authority) return;
+  const attemptId =
+    generation.attempt?.attemptId ?? formatAttemptId(generation);
+  try {
+    const operation =
+      await loaded.authority.port.readLaunchOperation(attemptId);
+    if (operation?.status !== 'pending') return;
+    await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+      status: 'launched',
+      binding,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Reconciliation confirmed workflow run ${binding.runId}, ` +
+        `but launch-outbox resolution for ${attemptId} will need another ` +
+        `pass: ${message}`,
+    );
+  }
+}
+
 async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1281,24 +1554,56 @@ async function dispatchAccepted(
       (candidate) => candidate.state === 'accepted',
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
-    await runPhase({ client, loaded }, 'scheduling', async () => {
-      beginDispatch(
-        loaded.ledger,
-        generation.generation,
-        crypto.randomBytes(24).toString('base64url'),
-      );
-      await saveLedger(client, loaded);
-    });
+    const beforeScheduling = structuredClone(loaded.ledger);
+    const scheduled = await runPhase(
+      { client, loaded },
+      'scheduling',
+      async () => {
+        beginDispatch(
+          loaded.ledger,
+          generation.generation,
+          crypto.randomBytes(24).toString('base64url'),
+        );
+        if (loaded.authority) {
+          const attemptId =
+            generation.attempt?.attemptId ?? formatAttemptId(generation);
+          try {
+            await loaded.authority.port.recordLaunchIntent({
+              operationId: attemptId,
+              task: loaded.ledger.task,
+              attemptId,
+            });
+          } catch (error) {
+            // No scheduling state or workflow dispatch has been persisted.
+            // Restore the in-memory aggregate; a response-lost outbox create
+            // is idempotent on the same stable attemptId during the retry.
+            loaded.ledger = beforeScheduling;
+            const message =
+              error instanceof Error ? error.message : String(error);
+            console.log(
+              `::warning::Deferring worker dispatch after launch-outbox ` +
+                `recording failed: ${message}`,
+            );
+            return false;
+          }
+        }
+        // The outbox intent is durable before `dispatching` becomes durable.
+        // A crash on either side of this checkpoint is retryable: before it,
+        // persisted state is still accepted; after it, reconciliation has the
+        // pending operation proving that no launch outcome was lost.
+        await saveLedger(client, loaded);
+        return true;
+      },
+    );
+    if (!scheduled) return;
+    let binding: {
+      runId: number;
+      runUrl: string;
+      htmlUrl: string;
+      workflow: string;
+    };
     try {
-      const binding: {
-        runId: number;
-        runUrl: string;
-        htmlUrl: string;
-        workflow: string;
-      } = await dispatchWorker(client, generation, loaded.ledger.task);
-      bindRun(loaded.ledger, generation.generation, binding);
-      await saveLedger(client, loaded);
-      return;
+      binding = await dispatchWorker(client, generation, loaded.ledger.task);
     } catch (error) {
       if (isDefiniteDispatchRejection(error)) {
         // Definite: the dispatch POST itself was rejected, so this
@@ -1312,6 +1617,10 @@ async function dispatchAccepted(
             `HTTP ${error.status}`,
           );
           await saveLedger(client, loaded);
+          await resolveLaunchOutcomeBestEffort(loaded, generation, {
+            status: 'rejected',
+            reason: `HTTP ${error.status}`,
+          });
           throw error;
         });
       }
@@ -1327,8 +1636,24 @@ async function dispatchAccepted(
         (error as Error).message.slice(0, 300),
       );
       await saveLedger(client, loaded);
+      await resolveLaunchOutcomeBestEffort(loaded, generation, {
+        status: 'unknown',
+        reason: (error as Error).message.slice(0, 300),
+      });
       return;
     }
+
+    // A validated 200 response makes the launch outcome known. Persist its
+    // exact run binding before resolving the auxiliary outbox record, so a
+    // transient outbox failure can never be reclassified as an ambiguous
+    // workflow dispatch or park a successfully launched worker.
+    bindRun(loaded.ledger, generation.generation, binding);
+    await saveLedger(client, loaded);
+    await resolveLaunchOutcomeBestEffort(loaded, generation, {
+      status: 'launched',
+      binding,
+    });
+    return;
   }
 }
 
@@ -1350,7 +1675,15 @@ async function handleCompletion(
   client: GitHubApiClient,
   loaded: LoadedLedger,
   normalized: CompletionEvent,
+  polling: {
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
 ): Promise<void> {
+  const now = polling.now ?? Date.now;
+  const sleep =
+    polling.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const generation = loaded.ledger.generations.find(
     (candidate) => candidate.generation === normalized.generation,
   );
@@ -1403,11 +1736,22 @@ async function handleCompletion(
   }
   await saveLedger(client, loaded);
 
-  const deadline = Date.now() + 120_000;
+  const deadline = now() + 120_000;
   let delay = 2_000;
-  while (run.status !== 'completed' && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, delay));
+  while (run.status !== 'completed' && now() < deadline) {
+    await sleep(delay);
     delay = Math.min(delay * 2, 15_000);
+    // Completion polling can run for the full two-minute lease interval and
+    // its final sleep may cross the deadline. Renew before every remote read
+    // so another Action or hosted delivery cannot take the lease while this
+    // completion handler still owns and is about to persist the aggregate.
+    if (loaded.authority) {
+      await persistAuthority(
+        loaded.authority,
+        loaded.ledger,
+        new Date(now()).toISOString(),
+      );
+    }
     try {
       run = await getWorkflowRun(
         client,
@@ -1630,6 +1974,10 @@ async function loadBrokerLedger(
   task: LedgerTaskRef,
   normalized: NormalizedEvent,
   isPullRequest: boolean,
+  storageMode: ReturnType<typeof parseDispatchStorageMode> = 'off',
+  leaseOwner = '',
+  storagePortFactory: () => StoragePort = createStoragePort,
+  authorityEpoch = '',
 ): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
@@ -1639,9 +1987,90 @@ async function loadBrokerLedger(
   // ledger normally.
   const untrackedPullRequestControl =
     isPullRequest && normalized.kind === 'anchor-control';
-  return loadLedger(client, task, undefined, {
-    createIfMissing: !untrackedPullRequestControl,
-  });
+  if (storageMode === 'authority') {
+    const port = storagePortFactory();
+    let authority;
+    try {
+      authority = await acquireAuthority(
+        port,
+        task,
+        leaseOwner,
+        createLedger(task),
+        {
+          // Missing state needs a GitHub projection check below before a new
+          // empty aggregate can be created safely.
+          createIfMissing: false,
+          busyWaitMs: 130_000,
+        },
+      );
+    } catch (error) {
+      if (error instanceof AuthorityStateNotFoundError) {
+        const initializationEvidence =
+          await classifyAuthorityTaskInitialization(
+            client,
+            task,
+            authorityEpoch,
+          );
+        // Every PR close/reopen is routed here. With no exact state and no
+        // workflow-owned compatibility projection, the PR was never a
+        // dispatch anchor, so it is an intentional no-op regardless of its
+        // age. A projection is durable evidence that the PR *was* tracked;
+        // missing exact state for that case still fails closed as a missed
+        // backfill instead of silently discarding the control event.
+        if (
+          untrackedPullRequestControl &&
+          initializationEvidence !== 'compatibility-projection'
+        ) {
+          return undefined;
+        }
+        if (initializationEvidence !== 'post-cutover') {
+          throw new AuthorityStateMissingError(task);
+        }
+        authority = await acquireAuthority(
+          port,
+          task,
+          leaseOwner,
+          createLedger(task),
+          { busyWaitMs: 130_000 },
+        );
+      } else {
+        throw error;
+      }
+    }
+    try {
+      const projected: LoadedLedger = await loadLedgerProjection(
+        client,
+        task,
+        authority.ledger,
+      );
+      projected.authority = authority.session;
+      projected.projectionAvailable = true;
+      return projected;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Loaded authoritative Firestore state for ` +
+          `${task.repository}#${task.issue}, but its GitHub ledger ` +
+          `projection is unavailable this pass: ${message}`,
+      );
+      return {
+        ledger: authority.ledger,
+        comment: { id: 0, body: '', created_at: '' },
+        created: false,
+        authority: authority.session,
+        projectionAvailable: false,
+      };
+    }
+  }
+  const loaded: LoadedLedger | undefined = await loadLedger(
+    client,
+    task,
+    undefined,
+    {
+      createIfMissing: !untrackedPullRequestControl,
+    },
+  );
+  return loaded;
 }
 
 async function applyAnchorControlTransition(
@@ -1668,6 +2097,8 @@ async function broker(): Promise<void> {
   const storageMode = parseDispatchStorageMode(
     env('DISPATCH_STORAGE_MODE', false),
   );
+  const authorityEpoch =
+    storageMode === 'authority' ? env('DISPATCH_AUTHORITY_EPOCH') : '';
   const task = resolveTask(normalized);
   const client = api();
   const isPullRequest = env('ANCHOR_IS_PR', false) === 'true';
@@ -1703,8 +2134,23 @@ async function broker(): Promise<void> {
   }
   let loaded: LoadedLedger | undefined;
   try {
-    loaded = await loadBrokerLedger(client, task, normalized, isPullRequest);
+    loaded = await loadBrokerLedger(
+      client,
+      task,
+      normalized,
+      isPullRequest,
+      storageMode,
+      `action:${runId}`,
+      createStoragePort,
+      authorityEpoch,
+    );
   } catch (error) {
+    if (error instanceof TaskLeaseBusyError) {
+      console.log(
+        `::warning::Deferring ${task.repository}#${task.issue}: ${error.message}`,
+      );
+      throw error;
+    }
     await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
   }
   if (!loaded) {
@@ -1811,28 +2257,35 @@ async function broker(): Promise<void> {
     // failed job or an extra fail-closed park -- so a failure here is
     // logged and discarded, never rethrown, and never reaches `failClosed`.
     try {
-      recordProjectionStatus(loaded.ledger, true);
-      await saveLedger(client, loaded);
+      await saveProjectionCheckpoint(client, loaded);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.log(
         `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
       );
     }
-    // #645 Phase 6 (shadow mode): observe this pass's resulting ledger
-    // state against durable storage. Runs last, after every ledger-
-    // authoritative write this pass made -- the ledger stays sole
-    // authority; this is purely an observer. maybeObserveDispatchStorage's
-    // own containment (storage/shadow.ts) means a storage failure here can
-    // never turn this otherwise-successful pass into a failed job, and
-    // 'off' never reaches this call's port factory at all.
+    // Shadow writes the resulting comment-ledger state for comparison.
+    // Authority mode already persisted every checkpoint and this helper is
+    // intentionally inert there; off mode never invokes the port factory.
     await maybeObserveDispatchStorage(
       storageMode,
-      createShadowStoragePort,
+      createStoragePort,
       loaded.ledger,
     );
   } catch (error) {
     await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
+  } finally {
+    if (loaded?.authority) {
+      try {
+        await releaseAuthority(loaded.authority, loaded.ledger);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to release dispatch-storage authority lease; ` +
+            `it will expire automatically: ${message}`,
+        );
+      }
+    }
   }
 }
 
@@ -1850,6 +2303,11 @@ async function preflight(): Promise<void> {
     runId: Number(env('GITHUB_RUN_ID')),
   };
   const client = api();
+  const storageMode = parseDispatchStorageMode(
+    env('DISPATCH_STORAGE_MODE', false),
+  );
+  const authorityPort =
+    storageMode === 'authority' ? createStoragePort() : undefined;
   // This job (a worker run's own preflight step) never writes the ledger --
   // control-plane writes are only ever made from the serialized broker job
   // (see healStaleAgentLabels' comment for the same invariant) -- so
@@ -1858,14 +2316,14 @@ async function preflight(): Promise<void> {
   await runPhase(undefined, 'authorization', async () => {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
-      const loaded: LoadedLedger | undefined = await loadLedger(
+      const ledger = await loadPreflightLedger(
         client,
         task,
-        'github-actions[bot]',
-        { createIfMissing: false },
+        storageMode,
+        authorityPort,
       );
-      if (loaded && verifyPreflight(loaded.ledger, expected)) {
-        const generation = loaded.ledger.generations.find(
+      if (ledger && verifyPreflight(ledger, expected)) {
+        const generation = ledger.generations.find(
           (candidate) => candidate.generation === expected.generation,
         );
         const run: WorkflowRun = await getWorkflowRun(
@@ -1901,6 +2359,25 @@ async function preflight(): Promise<void> {
       'Worker preflight could not verify an exact broker binding',
     );
   });
+}
+
+async function loadPreflightLedger(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+  storageMode: ReturnType<typeof parseDispatchStorageMode>,
+  authorityPort?: StoragePort,
+): Promise<DispatchLedger | undefined> {
+  if (storageMode === 'authority') {
+    if (!authorityPort) {
+      throw new Error('Authority preflight requires a dispatch storage port');
+    }
+    return (await authorityPort.readTask(task))?.controllerState;
+  }
+  return (
+    await loadLedger(client, task, 'github-actions[bot]', {
+      createIfMissing: false,
+    })
+  )?.ledger;
 }
 
 async function completionCallback(): Promise<void> {
@@ -2045,6 +2522,7 @@ export {
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
+  loadPreflightLedger,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
@@ -2058,5 +2536,6 @@ export {
   repairMissingIntentFromLabel,
   resolveTask,
   runPhase,
+  saveProjectionCheckpoint,
   wasSupersededEviction,
 };

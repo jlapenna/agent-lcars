@@ -545,7 +545,13 @@ function normalizeEvent({
   timeline?: TimelineEvent[];
   maintainer: string | undefined;
 }): NormalizedEvent {
-  if (eventName === 'workflow_dispatch') {
+  // The privileged Action lane uses pull_request_target so its workflow and
+  // checked-out broker bundle come from trusted main. Preserve the historical
+  // pull_request spelling inside semantic identity and source derivation so
+  // the transport switch cannot mint a second intent for the same delivery.
+  const semanticEventName =
+    eventName === 'pull_request_target' ? 'pull_request' : eventName;
+  if (semanticEventName === 'workflow_dispatch') {
     return normalizeWorkflowDispatch({
       inputs,
       context,
@@ -558,7 +564,7 @@ function normalizeEvent({
   const task = taskRef(context, issue);
   const pipeline = selectedPipeline(issue);
 
-  if (eventName === 'issue_comment' && event.action === 'created') {
+  if (semanticEventName === 'issue_comment' && event.action === 'created') {
     const parsed = parseExactCommand(event.comment?.body ?? '');
     if (!parsed) return { kind: 'ignored', reason: 'no exact agent command' };
     // `@agent` (#573) carries no pipeline of its own (parsed.pipeline is
@@ -622,7 +628,7 @@ function normalizeEvent({
     };
   }
 
-  if (eventName === 'pull_request') {
+  if (semanticEventName === 'pull_request') {
     if (['closed', 'reopened'].includes(event.action)) {
       if (!issue.id || Number.isNaN(Date.parse(issue.updated_at))) {
         throw new Error('Malformed pull request anchor event');
@@ -654,7 +660,7 @@ function normalizeEvent({
     }
   }
 
-  if (!['issues', 'pull_request'].includes(eventName))
+  if (!['issues', 'pull_request'].includes(semanticEventName))
     return { kind: 'ignored', reason: 'unsupported event' };
   const auth = authorization(
     event.sender?.login,
@@ -691,7 +697,7 @@ function normalizeEvent({
   }
 
   if (['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)) {
-    const source = timelineSource(timeline, eventName, event);
+    const source = timelineSource(timeline, semanticEventName, event);
     if (event.action === 'closed' || event.action === 'reopened') {
       return {
         kind: 'anchor-control',
@@ -710,7 +716,8 @@ function normalizeEvent({
     // at all on an `issues` event; agent:* is recognized on either.
     const labelName = event.label?.name;
     const isReviewLabel =
-      eventName === 'pull_request' && Boolean(labelName?.startsWith('review:'));
+      semanticEventName === 'pull_request' &&
+      Boolean(labelName?.startsWith('review:'));
     if (!labelName?.startsWith('agent:') && !isReviewLabel) {
       return { kind: 'ignored', reason: 'non-agent label event' };
     }

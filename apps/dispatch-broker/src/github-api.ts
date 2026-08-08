@@ -62,6 +62,18 @@ class GitHubApiError extends Error {
   }
 }
 
+class LedgerProjectionRepairError extends Error {
+  constructor(
+    public readonly commentId: number,
+    public readonly status: number,
+  ) {
+    super(
+      `Failed to remove extra dispatch-ledger marker comment ${commentId}: HTTP ${status}`,
+    );
+    this.name = 'LedgerProjectionRepairError';
+  }
+}
+
 // Thrown by `checkIndirectBrokerConcurrency`, the sole concurrency-
 // verification path (#348's third round retired the direct, own-listing
 // check; #545 then replaced the indirect path's own flaky per-candidate
@@ -917,6 +929,132 @@ async function loadLedger(
   return { comment, ledger, created: true, existingComments: comments };
 }
 
+/**
+ * Locate or create the human-facing ledger comment without parsing it as
+ * controller state. Authority mode calls this only after Firestore has been
+ * read and leased, so a controlled worker can neither corrupt nor duplicate
+ * comments to block the controller from reaching its real state.
+ */
+async function loadLedgerProjection(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  ledger: DispatchLedger,
+  workflowIdentity = 'github-actions[bot]',
+): Promise<LoadedLedger> {
+  const root = repositoryPath(task);
+  const comments = await listAll<GitHubIssueComment>(
+    api,
+    `${root}/issues/${task.issue}/comments`,
+  );
+  const markerCandidates = comments.filter((comment) =>
+    comment.body?.includes(LEDGER_MARKER),
+  );
+  const ownedCandidates = markerCandidates
+    .filter(
+      (comment) =>
+        comment.body?.includes(LEDGER_MARKER) &&
+        comment.user?.login === workflowIdentity &&
+        comment.user?.type === 'Bot',
+    )
+    .sort((left, right) => left.id - right.id);
+  let comment = ownedCandidates[0];
+  let created = false;
+  if (!comment) {
+    comment = await api.requestOk<GitHubIssueComment>(
+      `${root}/issues/${task.issue}/comments`,
+      {
+        method: 'POST',
+        body: { body: renderLedgerComment(ledger) },
+      },
+    );
+    if (!Number.isSafeInteger(comment?.id)) {
+      throw new Error('GitHub did not return the created ledger comment ID');
+    }
+    created = true;
+  }
+
+  // Worker preflight remains a strict compatibility reader until that
+  // capability moves into the hosted controller. Repair every extra marker
+  // while this authority holder owns the task lease, regardless of author:
+  // controlled workers comment through the App bot rather than the workflow
+  // bot, and strict preflight rejects duplicate markers before author checks.
+  for (const duplicate of markerCandidates.filter(
+    (candidate) => candidate.id !== comment.id,
+  )) {
+    const response = await api.request(
+      `${root}/issues/comments/${duplicate.id}`,
+      { method: 'DELETE' },
+    );
+    if (
+      response.status !== 404 &&
+      (response.status < 200 || response.status >= 300)
+    ) {
+      throw new LedgerProjectionRepairError(duplicate.id, response.status);
+    }
+    console.log(
+      `::notice::Removed extra dispatch-ledger marker comment ${duplicate.id}.`,
+    );
+  }
+  return {
+    comment,
+    ledger,
+    created,
+    ...(created && { existingComments: comments }),
+  };
+}
+
+export type AuthorityInitializationEvidence =
+  'compatibility-projection' | 'pre-cutover' | 'post-cutover';
+
+/**
+ * Classify the evidence available when an authority record is missing.
+ *
+ * Marker absence is not evidence: a controlled worker can edit or delete
+ * comments. The trusted cutover epoch and GitHub's immutable issue/PR
+ * `created_at` are the non-forgeable boundary. Tasks created before that
+ * boundary must already have been shadow-backfilled, so missing state fails
+ * closed even if every compatibility marker has been removed. Tasks created
+ * at or after the boundary are genuinely post-authority and may be seeded.
+ */
+async function classifyAuthorityTaskInitialization(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  authorityEpoch: string,
+  workflowIdentity = 'github-actions[bot]',
+): Promise<AuthorityInitializationEvidence> {
+  const comments = await listAll<GitHubIssueComment>(
+    api,
+    `${repositoryPath(task)}/issues/${task.issue}/comments`,
+  );
+  // Projection presence is tracking evidence only when the canonical
+  // controller identity authored it. Other App/bot credentials are
+  // available to controlled worker jobs and cannot prove authority history.
+  const hasProjection = comments.some(
+    (comment) =>
+      comment.body?.includes(LEDGER_MARKER) &&
+      comment.user?.type === 'Bot' &&
+      comment.user.login === workflowIdentity,
+  );
+  if (hasProjection) return 'compatibility-projection';
+
+  const epoch = Date.parse(authorityEpoch);
+  if (!Number.isFinite(epoch)) {
+    throw new Error(
+      `DISPATCH_AUTHORITY_EPOCH must be a valid timestamp, got ${JSON.stringify(authorityEpoch)}`,
+    );
+  }
+  const issue = await api.requestOk<GitHubIssueDetail>(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  const createdAt = Date.parse(issue.created_at);
+  if (!Number.isFinite(createdAt)) {
+    throw new Error(
+      `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`,
+    );
+  }
+  return createdAt >= epoch ? 'post-cutover' : 'pre-cutover';
+}
+
 async function saveLedger(
   api: GitHubApi,
   loaded: LoadedLedger,
@@ -1313,6 +1451,7 @@ export {
   API_VERSION,
   brokerConcurrencyGroup,
   BrokerConcurrencyMismatchError,
+  classifyAuthorityTaskInitialization,
   CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
@@ -1327,12 +1466,14 @@ export {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  LedgerProjectionRepairError,
   listAll,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   listRecentlyClosedAgentLabeledIssues,
   listRecentlyClosedIssuesAssignedTo,
   loadLedger,
+  loadLedgerProjection,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,

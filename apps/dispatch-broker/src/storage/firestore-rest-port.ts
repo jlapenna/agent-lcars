@@ -7,13 +7,10 @@
  * correctness under real contention is exactly the property a mock cannot
  * prove.
  *
- * `main.ts` imports this class as of #645 Phase 6 (shadow mode) --
- * `createShadowStoragePort` there is the one place it is constructed, and
- * only when `DISPATCH_STORAGE_MODE` is `'shadow'` (see `./shadow.ts`'s
- * header for the inertness argument). That is observation only: the
- * comment ledger stays sole authority, and this class is never consulted
- * to decide anything about a live dispatch, only written to and diffed
- * against afterward. Still deliberately NOT imported from `canary/run.ts`
+ * `main.ts` imports this class for both shadow observation and Action-side
+ * authority. Its storage factory is never invoked in `'off'` mode (see
+ * `./shadow.ts`'s inertness argument). It is still deliberately NOT imported
+ * from `canary/run.ts`
  * or `rerun-infra-killed-runs/main.ts` -- neither has a shadow-mode
  * observation step of its own -- and `./firestore-port.ts` (the client-
  * library adapter) stays unimported everywhere in the live dispatch path
@@ -269,6 +266,9 @@ type Precondition = { exists: false } | { updateTime: string };
 
 export interface FirestoreRestStoragePortOptions {
   projectId: string;
+  /** Firestore database containing controller authority. Required so a
+   *  caller can never silently fall back to the telemetry/default database. */
+  databaseId: string;
   /** Bearer token for the `Authorization` header, or a callback that
    *  returns one -- invoked fresh on every request, so a caller holding a
    *  short-lived token (e.g. from `google-github-actions/auth`) can refresh
@@ -292,7 +292,7 @@ export class FirestoreRestStoragePort implements StoragePort {
 
   constructor(options: FirestoreRestStoragePortOptions) {
     this.#token = options.token;
-    this.#documentsRoot = `projects/${options.projectId}/databases/(default)/documents`;
+    this.#documentsRoot = `projects/${options.projectId}/databases/${options.databaseId}/documents`;
     const emulatorHost =
       options.emulatorHost ?? process.env.FIRESTORE_EMULATOR_HOST;
     this.#baseUrl = emulatorHost

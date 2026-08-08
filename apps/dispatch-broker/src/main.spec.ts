@@ -5,6 +5,7 @@ import { test } from 'vitest';
 
 import {
   acceptIntent,
+  applyAnchorControl,
   beginDispatch,
   bindRun,
   completeRun,
@@ -34,6 +35,7 @@ import {
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
+  loadPreflightLedger,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
@@ -47,9 +49,12 @@ import {
   repairMissingIntentFromLabel,
   resolveTask,
   runPhase,
+  saveProjectionCheckpoint,
   wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, normalizeEvent } from './normalize.js';
+import { acquireAuthority } from './storage/authority.js';
+import { InMemoryStoragePort } from './storage/in-memory-port.js';
 
 const task = {
   repositoryId: 123,
@@ -108,6 +113,570 @@ function boundLedger() {
   });
   return ledger;
 }
+
+test('storage-authoritative dispatch records the outbox and resolves it after persisting the run binding', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-authority',
+    sourceKind: 'manual',
+    sourceId: 'source-authority',
+    transportRunId: 736,
+    occurredAt: '2026-08-08T06:00:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'authority',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:authority',
+    seed,
+  );
+  const recordLaunchIntent = port.recordLaunchIntent.bind(port);
+  port.recordLaunchIntent = async (operation, now) => {
+    assert.equal(
+      (await port.readTask(task))?.controllerState?.generations[0].state,
+      'accepted',
+      'the outbox intent must exist before dispatching state is persisted',
+    );
+    return recordLaunchIntent(operation, now);
+  };
+  const runId = 73601;
+  const runUrl = `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`;
+  const htmlUrl = `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`;
+  const client = {
+    request: async (path, options = {}) => {
+      assert.match(path, /actions\/workflows\/codex.yml\/dispatches$/u);
+      assert.equal(options.method, 'POST');
+      return {
+        status: 200,
+        data: { workflow_run_id: runId, run_url: runUrl, html_url: htmlUrl },
+        headers: new Headers(),
+      };
+    },
+    requestOk: async (path, options = {}) => {
+      assert.match(path, /issues\/comments\/9$/u);
+      assert.equal(options.method, 'PATCH');
+      return { id: 9 };
+    },
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  const attemptId = loaded.ledger.generations[0].attempt?.attemptId;
+  assert.ok(attemptId);
+  const operation = await port.readLaunchOperation(attemptId);
+  assert.equal(operation?.status, 'launched');
+  assert.equal(operation?.resolution?.status, 'launched');
+  const stored = await port.readTask(task);
+  assert.equal(stored?.controllerState?.generations[0].state, 'active');
+  assert.equal(stored?.controllerState?.generations[0].attempt?.runId, runId);
+});
+
+test('a launched worker stays active when launch-outbox resolution fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-outbox-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-outbox-failure',
+    transportRunId: 737,
+    occurredAt: '2026-08-08T06:45:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'outbox-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:outbox-failure',
+    seed,
+  );
+  const resolveLaunchOutcome = port.resolveLaunchOutcome.bind(port);
+  port.resolveLaunchOutcome = async () => {
+    throw new Error('transient Firestore failure');
+  };
+  const runId = 73701;
+  const client = {
+    request: async () => ({
+      status: 200,
+      data: {
+        workflow_run_id: runId,
+        run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+        html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+      },
+      headers: new Headers(),
+    }),
+    requestOk: async () => ({ id: 9 }),
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, runId);
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'active',
+  );
+  const attemptId = loaded.ledger.generations[0].attempt?.attemptId;
+  assert.ok(attemptId);
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'pending');
+
+  port.resolveLaunchOutcome = resolveLaunchOutcome;
+  const run = {
+    id: runId,
+    repository: { id: task.repositoryId },
+    event: 'workflow_dispatch',
+    path: '.github/workflows/codex.yml',
+    display_title: '#304: Codex [dispatch:g1:intent-outbox-failure]',
+    status: 'in_progress',
+    conclusion: null,
+    updated_at: new Date().toISOString(),
+    url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+    html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+  };
+  const reconcileClient = {
+    requestOk: async (path) => {
+      if (path.includes('/workflows/codex.yml/runs?')) {
+        return { workflow_runs: [run] };
+      }
+      if (path.endsWith(`/actions/runs/${runId}`)) return run;
+      throw new Error(`Unexpected reconciliation request: ${path}`);
+    },
+  };
+
+  await reconcileActive(reconcileClient, loaded);
+
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'launched');
+});
+
+test('authority launches from Firestore while the compatibility projection is unavailable', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-projection-unavailable',
+    sourceKind: 'manual',
+    sourceId: 'source-projection-unavailable',
+    transportRunId: 738,
+    occurredAt: '2026-08-08T07:00:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'projection-unavailable',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:projection-unavailable',
+    seed,
+  );
+  const runId = 73801;
+  const client = {
+    request: async () => ({
+      status: 200,
+      data: {
+        workflow_run_id: runId,
+        run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+        html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+      },
+      headers: new Headers(),
+    }),
+    requestOk: async () => {
+      throw new Error('projection must remain untouched');
+    },
+  };
+
+  await dispatchAccepted(client, {
+    ledger: authority.ledger,
+    comment: { id: 0 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: false,
+  });
+
+  assert.equal(authority.ledger.generations[0].state, 'active');
+  assert.equal(authority.ledger.generations[0].attempt?.runId, runId);
+  assert.equal(
+    (await port.readLaunchOperation('g1:intent-projection-unavailable'))
+      ?.status,
+    'launched',
+  );
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'active',
+  );
+});
+
+test('authority launches when the scheduling projection PATCH fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-scheduling-projection-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-scheduling-projection-failure',
+    transportRunId: 739,
+    occurredAt: '2026-08-08T07:15:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'scheduling-projection-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:scheduling-projection-failure',
+    seed,
+  );
+  const runId = 73901;
+  let dispatches = 0;
+  const client = {
+    request: async () => {
+      dispatches += 1;
+      return {
+        status: 200,
+        data: {
+          workflow_run_id: runId,
+          run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+          html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+        },
+        headers: new Headers(),
+      };
+    },
+    requestOk: async () => {
+      throw new Error('GitHub projection unavailable');
+    },
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(dispatches, 1);
+  assert.equal(loaded.projectionAvailable, false);
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, runId);
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'active',
+  );
+  assert.equal(
+    (await port.readLaunchOperation('g1:intent-scheduling-projection-failure'))
+      ?.status,
+    'launched',
+  );
+});
+
+test('authority launches when duplicate projection cleanup is rejected', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-duplicate-projection',
+    sourceKind: 'manual',
+    sourceId: 'source-duplicate-projection',
+    transportRunId: 740,
+    occurredAt: '2026-08-08T07:19:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'duplicate-projection',
+    authorization: { authorized: true },
+  });
+  await acquireAuthority(port, task, 'delivery:duplicate-projection', seed);
+  const runId = 74001;
+  let cleanupAttempts = 0;
+  let dispatches = 0;
+  const client = {
+    request: async (path, options = {}) => {
+      if (options.method === 'DELETE') {
+        cleanupAttempts += 1;
+        return {
+          status: 503,
+          data: { message: 'projection cleanup unavailable' },
+          headers: new Headers(),
+        };
+      }
+      assert.match(path, /actions\/workflows\/codex.yml\/dispatches$/u);
+      dispatches += 1;
+      return {
+        status: 200,
+        data: {
+          workflow_run_id: runId,
+          run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+          html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+        },
+        headers: new Headers(),
+      };
+    },
+    requestOk: async () => [
+      {
+        id: 2,
+        body: renderLedgerComment(seed),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+      {
+        id: 4,
+        body: renderLedgerComment(seed),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+    ],
+  };
+
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'reconcile', task },
+    false,
+    'authority',
+    'delivery:duplicate-projection',
+    () => port,
+  );
+  assert.ok(loaded);
+  assert.equal(loaded.projectionAvailable, false);
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(cleanupAttempts, 1);
+  assert.equal(dispatches, 1);
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, runId);
+  assert.equal(
+    (await port.readLaunchOperation('g1:intent-duplicate-projection'))?.status,
+    'launched',
+  );
+});
+
+test('authority restores accepted state when pre-launch outbox recording fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-outbox-record-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-outbox-record-failure',
+    transportRunId: 740,
+    occurredAt: '2026-08-08T07:20:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'outbox-record-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:outbox-record-failure',
+    seed,
+  );
+  port.recordLaunchIntent = async () => {
+    throw new Error('transient outbox write failure');
+  };
+  let dispatches = 0;
+  let projectionWrites = 0;
+  const client = {
+    request: async () => {
+      dispatches += 1;
+      throw new Error('worker dispatch must not happen');
+    },
+    requestOk: async () => {
+      projectionWrites += 1;
+      return { id: 9 };
+    },
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(dispatches, 0);
+  assert.equal(projectionWrites, 0);
+  assert.equal(loaded.ledger.generations[0].state, 'accepted');
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'accepted',
+  );
+});
+
+test('authority persists dispatch-unknown when auxiliary outbox resolution fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-unknown-outbox-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-unknown-outbox-failure',
+    transportRunId: 741,
+    occurredAt: '2026-08-08T07:21:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'unknown-outbox-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:unknown-outbox-failure',
+    seed,
+  );
+  port.resolveLaunchOutcome = async () => {
+    throw new Error('transient outbox resolution failure');
+  };
+  const client = {
+    request: async () => {
+      throw new Error('dispatch response timeout');
+    },
+    requestOk: async () => ({ id: 9 }),
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(loaded.ledger.generations[0].state, 'dispatch-unknown');
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'dispatch-unknown',
+  );
+});
+
+test('authority preflight reads the exact Firestore binding without touching corrupt comments', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = boundLedger();
+  await acquireAuthority(port, task, 'delivery:preflight', ledger);
+  const explosiveClient = {
+    requestOk: async () => {
+      throw new Error('comment-backed preflight must not run in authority');
+    },
+  };
+
+  const loaded = await loadPreflightLedger(
+    explosiveClient,
+    task,
+    'authority',
+    port,
+  );
+
+  assert.equal(loaded?.generations[0].attempt?.runId, 42);
+});
+
+test('authority records projection convergence only after the compatibility comment succeeds', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = createLedger(task);
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'projection:success',
+    ledger,
+  );
+  const order = [];
+  const writeTask = port.writeTask.bind(port);
+  port.writeTask = async (...args) => {
+    order.push('storage');
+    return writeTask(...args);
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const client = {
+    request: async () => {
+      throw new Error('unexpected request');
+    },
+    requestOk: async () => {
+      order.push('comment');
+      return { id: 9 };
+    },
+  };
+
+  await saveProjectionCheckpoint(client, loaded);
+
+  assert.deepEqual(order, ['comment', 'storage']);
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.projection.state,
+    'converged',
+  );
+});
+
+test('authority persists a non-converged projection checkpoint when the comment write fails', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = createLedger(task);
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'projection:failure',
+    ledger,
+  );
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const client = {
+    request: async () => {
+      throw new Error('unexpected request');
+    },
+    requestOk: async () => {
+      throw new Error('GitHub projection unavailable');
+    },
+  };
+
+  await assert.rejects(() => saveProjectionCheckpoint(client, loaded));
+
+  const projection = (await port.readTask(task))?.controllerState?.projection;
+  assert.notEqual(projection?.state, 'converged');
+  assert.equal(projection?.observedRevision, 0);
+});
 
 function workerRun(status = 'in_progress') {
   return {
@@ -344,6 +913,168 @@ test('an issue close keeps the existing create-if-missing ledger behavior', asyn
     calls.map((call) => call.method),
     ['GET', 'POST'],
   );
+});
+
+test('authority rejects an existing comment-backed task that missed exact-state backfill', async () => {
+  const ledger = createLedger(task);
+  const port = new InMemoryStoragePort();
+  const client = {
+    requestOk: async () => [
+      {
+        id: 9,
+        body: renderLedgerComment(ledger),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+    ],
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'reconcile', task },
+        false,
+        'authority',
+        'delivery:missing-backfill',
+        () => port,
+      ),
+    /no exact authoritative controller state/u,
+  );
+  assert.equal(await port.readTask(task), undefined);
+});
+
+test('authority may seed a genuinely new task with no compatibility projection', async () => {
+  const port = new InMemoryStoragePort();
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if ((options.method ?? 'GET') === 'GET' && path.endsWith('/issues/304')) {
+        return { created_at: '2026-08-09T00:00:00.000Z' };
+      }
+      if ((options.method ?? 'GET') === 'GET') return [];
+      if (options.method === 'POST') {
+        return {
+          id: 9,
+          body: options.body.body,
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        };
+      }
+      throw new Error(`Unexpected API request: ${options.method} ${path}`);
+    },
+  };
+
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'reconcile', task },
+    false,
+    'authority',
+    'delivery:new-task',
+    () => port,
+    '2026-08-08T00:00:00.000Z',
+  );
+
+  assert.equal(loaded.ledger.generations.length, 0);
+  assert.ok((await port.readTask(task))?.controllerState);
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ['GET', 'GET', 'GET', 'POST'],
+  );
+});
+
+test('authority does not seed a pre-cutover task after its marker is removed', async () => {
+  const port = new InMemoryStoragePort();
+  const client = {
+    requestOk: async (path) =>
+      path.endsWith('/issues/304')
+        ? { created_at: '2026-08-07T00:00:00.000Z' }
+        : [],
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'reconcile', task },
+        false,
+        'authority',
+        'delivery:removed-marker',
+        () => port,
+        '2026-08-08T00:00:00.000Z',
+      ),
+    /no exact authoritative controller state/u,
+  );
+  assert.equal(await port.readTask(task), undefined);
+});
+
+test('authority ignores an ordinary pre-cutover pull request close with no compatibility projection', async () => {
+  const port = new InMemoryStoragePort();
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      return path.endsWith('/issues/304')
+        ? { created_at: '2026-08-07T00:00:00.000Z' }
+        : [
+            {
+              id: 9,
+              body: renderLedgerComment(createLedger(task)),
+              user: { login: 'agent-lcars[bot]', type: 'Bot' },
+            },
+          ];
+    },
+  };
+
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'anchor-control' },
+    true,
+    'authority',
+    'delivery:ordinary-pr-close',
+    () => port,
+    '2026-08-08T00:00:00.000Z',
+  );
+
+  assert.equal(loaded, undefined);
+  assert.equal(await port.readTask(task), undefined);
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ['GET', 'GET'],
+  );
+});
+
+test('authority fails closed for a tracked pull request control event that missed backfill', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = createLedger(task);
+  const client = {
+    requestOk: async () => [
+      {
+        id: 9,
+        body: renderLedgerComment(ledger),
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+    ],
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'anchor-control' },
+        true,
+        'authority',
+        'delivery:tracked-pr-close',
+        () => port,
+        '2026-08-08T00:00:00.000Z',
+      ),
+    /no exact authoritative controller state/u,
+  );
+  assert.equal(await port.readTask(task), undefined);
 });
 
 test('tracked pull request close and reopen transitions persist to the existing ledger', async () => {
@@ -860,6 +1591,63 @@ test('a redelivered completion after terminal reconciliation is a no-op', async 
   assert.equal(writes, 0);
 });
 
+test('authority renews its lease before every completion poll that can cross the original expiry', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = boundLedger();
+  const startedAt = Date.now();
+  let clock = startedAt;
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:completion-poll',
+    ledger,
+    { now: () => new Date(clock).toISOString() },
+  );
+  let crossedOriginalExpiry = false;
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) {
+        if (clock - startedAt >= 120_000) {
+          crossedOriginalExpiry = true;
+          assert.ok(Date.parse(authority.session.lease.expiresAt) > clock);
+          return workerRun('completed');
+        }
+        return workerRun();
+      }
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+
+  await handleCompletion(
+    client,
+    {
+      ledger: authority.ledger,
+      comment: { id: 9 },
+      authority: authority.session,
+    },
+    {
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceId: 'worker-run:42',
+      transportRunId: 9003,
+    },
+    {
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    },
+  );
+
+  assert.equal(crossedOriginalExpiry, true);
+  assert.equal(authority.ledger.generations[0].state, 'completed');
+});
+
 // --- reconcileLedger / trackMissingRun (#305) -------------------------
 
 const RECONCILE_T0 = '2026-08-01T00:00:00.000Z';
@@ -1120,6 +1908,154 @@ test('reconcileLedger treats a dispatch-unknown generation identically to dispat
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     ).length,
     1,
+  );
+});
+
+test('reconcileLedger retries a durably pending launch after bounded run discovery instead of parking it', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = dispatchingLedger().ledger;
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:pending-launch-recovery',
+    seed,
+  );
+  const generation = authority.ledger.generations[0];
+  const attemptId = generation.attempt?.attemptId;
+  assert.ok(attemptId);
+  await port.recordLaunchIntent({
+    operationId: attemptId,
+    task,
+    attemptId,
+  });
+  const { client, calls } = reconcileStubClient();
+  const retriedRunId = 304736;
+  client.request = async () => ({
+    status: 200,
+    data: {
+      workflow_run_id: retriedRunId,
+      run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${retriedRunId}`,
+      html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${retriedRunId}`,
+    },
+    headers: new Headers(),
+  });
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const t1 = addMinutes(RECONCILE_T0, RECONCILE_MISSING_RUN_GRACE_MS / 60_000);
+  const t2 = addMinutes(t1, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+  const t3 = addMinutes(t2, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+
+  await reconcileLedger(client, loaded, t1);
+  await reconcileLedger(client, loaded, t2);
+  await reconcileLedger(client, loaded, t3);
+
+  assert.equal(loaded.ledger.generations[0].state, 'accepted');
+  assert.equal(loaded.ledger.generations[0].attempt, undefined);
+  assert.equal(
+    loaded.ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-launch-retry',
+    ).length,
+    1,
+  );
+  assert.equal(
+    loaded.ledger.anomalies.some(
+      (anomaly) => anomaly.kind === 'reconcile-parked',
+    ),
+    false,
+  );
+  assert.equal(
+    calls.some((call) => call.path.endsWith('/labels')),
+    false,
+  );
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, retriedRunId);
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'launched');
+});
+
+test('reconcileLedger abandons a closed anchor pending launch after bounded discovery without retrying or parking', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = dispatchingLedger().ledger;
+  applyAnchorControl(
+    seed,
+    {
+      kind: 'closed',
+      sourceId: 'closed:pending-launch',
+      occurredAt: RECONCILE_T0,
+      transportRunId: 304737,
+      authorization: { observed: true, actor: 'dispatch-broker' },
+      merged: false,
+    },
+    RECONCILE_T0,
+  );
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:closed-pending-launch',
+    seed,
+  );
+  const attemptId = authority.ledger.generations[0].attempt?.attemptId;
+  assert.ok(attemptId);
+  await port.recordLaunchIntent({ operationId: attemptId, task, attemptId });
+  const readLaunchOperation = port.readLaunchOperation.bind(port);
+  let failNextOutboxRead = true;
+  port.readLaunchOperation = async (operationId) => {
+    if (failNextOutboxRead) {
+      failNextOutboxRead = false;
+      throw new Error('transient outbox read failure');
+    }
+    return readLaunchOperation(operationId);
+  };
+  const { client, calls } = reconcileStubClient();
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const t1 = addMinutes(RECONCILE_T0, RECONCILE_MISSING_RUN_GRACE_MS / 60_000);
+  const t2 = addMinutes(t1, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+  const t3 = addMinutes(t2, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+
+  await reconcileLedger(client, loaded, t1, 304738, true);
+  assert.equal(
+    loaded.ledger.anomalies.length,
+    0,
+    'a failed outbox read must defer without consuming an observation',
+  );
+  await reconcileLedger(client, loaded, t1, 304738, true);
+  await reconcileLedger(client, loaded, t2, 304739, true);
+  await reconcileLedger(client, loaded, t3, 304740, true);
+
+  assert.equal(loaded.ledger.generations[0].state, 'superseded-by-close');
+  assert.equal(
+    loaded.ledger.generations[0].attempt?.rejectionReason,
+    'anchor closed before launch was observed',
+  );
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'rejected');
+  assert.equal(
+    loaded.ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-launch-abandoned',
+    ).length,
+    1,
+  );
+  assert.equal(
+    loaded.ledger.anomalies.some(
+      (anomaly) => anomaly.kind === 'reconcile-parked',
+    ),
+    false,
+  );
+  assert.equal(
+    calls.some((call) => call.path.endsWith('/labels')),
+    false,
   );
 });
 

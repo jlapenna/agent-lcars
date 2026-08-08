@@ -52,6 +52,15 @@ run "renders_exact_repository_authorization" {
     }
   }
 
+  override_resource {
+    target          = google_service_account.dispatch_preflight
+    override_during = plan
+    values = {
+      email = "dispatch-preflight@agent-lcars.iam.gserviceaccount.com"
+      name  = "projects/agent-lcars/serviceAccounts/dispatch-preflight@agent-lcars.iam.gserviceaccount.com"
+    }
+  }
+
   assert {
     condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab']"
     error_message = "The WIF provider must authorize exactly Agent LCARS, Sprinkles, and Homelab."
@@ -113,23 +122,59 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_service_account_iam_member.dispatch_broker_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/agent-lcars"
-    error_message = "The dispatch broker must be impersonable from agent-lcars only -- it runs nowhere else, so sprinkles and homelab must never hold this grant."
+    condition     = google_service_account_iam_member.dispatch_controller_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.dispatch_controller.name}/attribute.repository/jlapenna/agent-lcars"
+    error_message = "The dispatch broker must be impersonable only through its dedicated workflow-restricted pool."
   }
 
   assert {
-    condition     = google_service_account_iam_member.dispatch_broker_impersonation.service_account_id == google_service_account.dispatch_broker.name && google_service_account_iam_member.dispatch_broker_impersonation.service_account_id != google_service_account.telemetry_writer.name
+    condition     = google_service_account_iam_member.dispatch_controller_impersonation.service_account_id == google_service_account.dispatch_broker.name && google_service_account_iam_member.dispatch_controller_impersonation.service_account_id != google_service_account.telemetry_writer.name
     error_message = "The dispatch broker grant must target its own service account, never telemetry_writer -- keeping dispatch authority and telemetry authority separable is the entire reason this account exists."
   }
 
   assert {
-    condition     = google_service_account_iam_member.dispatch_broker_impersonation.role == "roles/iam.workloadIdentityUser"
+    condition     = google_service_account_iam_member.dispatch_controller_impersonation.role == "roles/iam.workloadIdentityUser"
     error_message = "The dispatch broker grant must use roles/iam.workloadIdentityUser."
   }
 
   assert {
-    condition     = google_project_iam_member.dispatch_broker_firestore.role == "roles/datastore.user" && google_project_iam_member.dispatch_broker_firestore.member == "serviceAccount:${google_service_account.dispatch_broker.email}"
+    condition     = google_project_iam_member.dispatch_controller_firestore.role == "roles/datastore.user" && google_project_iam_member.dispatch_controller_firestore.member == "serviceAccount:${google_service_account.dispatch_broker.email}"
     error_message = "The dispatch broker must hold roles/datastore.user on its own account and nothing broader -- it writes the dispatch ledger, not project configuration."
+  }
+
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.dispatch_controller.attribute_condition == "assertion.repository == 'jlapenna/agent-lcars' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == 'jlapenna/agent-lcars/.github/workflows/agent-router.yml@refs/heads/main'"
+    error_message = "The controller writer provider must accept only agent-router.yml from main."
+  }
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.github_deployer.attribute_condition == "assertion.repository == 'jlapenna/agent-lcars' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == 'jlapenna/agent-lcars/.github/workflows/deploy-console.yml@refs/heads/main'"
+    error_message = "The project-IAM deployer provider must accept only deploy-console.yml from main."
+  }
+
+  assert {
+    condition     = google_service_account_iam_member.github_deployer_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_deployer.name}/attribute.repository/jlapenna/agent-lcars"
+    error_message = "The project-IAM deployer must not be impersonable through the repo-wide worker pool."
+  }
+
+  assert {
+    condition     = google_service_account_iam_member.dispatch_preflight_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/agent-lcars" && google_service_account_iam_member.dispatch_preflight_impersonation.service_account_id == google_service_account.dispatch_preflight.name
+    error_message = "Workers may impersonate only the dedicated dispatch preflight reader through the shared pool."
+  }
+
+  assert {
+    condition     = google_project_iam_member.dispatch_preflight_firestore.role == "roles/datastore.viewer" && google_project_iam_member.dispatch_preflight_firestore.member == "serviceAccount:${google_service_account.dispatch_preflight.email}"
+    error_message = "Worker preflight must be read-only."
+  }
+
+  assert {
+    condition     = google_project_iam_member.dispatch_controller_firestore.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/dispatch-controller\"" && google_project_iam_member.dispatch_preflight_firestore.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/dispatch-controller\""
+    error_message = "Controller writer and preflight reader must be confined to the dedicated dispatch database."
+  }
+
+  assert {
+    condition     = google_project_iam_member.writer_firestore.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/(default)\"" && google_project_iam_member.apphosting_firestore.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/(default)\""
+    error_message = "Telemetry identities must remain confined to the default database and unable to access dispatch authority."
   }
 }
 

@@ -13,6 +13,7 @@ import {
   agentWorkerPipelines,
   API_VERSION,
   brokerConcurrencyGroup,
+  classifyAuthorityTaskInitialization,
   CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
@@ -28,6 +29,7 @@ import {
   listRecentlyClosedAgentLabeledIssues,
   listRecentlyClosedIssuesAssignedTo,
   loadLedger,
+  loadLedgerProjection,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
@@ -806,6 +808,210 @@ test('ledger loading rejects duplicates and unexpected authors', async () => {
     });
     await assert.rejects(() => loadLedger(api, task));
   }
+});
+
+test('authority projection repairs every extra corrupt marker and selects the workflow-owned comment without parsing it', async () => {
+  const authoritative = createLedger(task);
+  authoritative.control.closed = true;
+  const requests = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (options.method === 'DELETE') return response(204);
+      return response(200, [
+        {
+          id: 4,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> corrupt',
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> also corrupt',
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+        {
+          id: 1,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> attacker',
+          user: { login: 'worker', type: 'User' },
+        },
+      ]);
+    },
+  });
+
+  const projected = await loadLedgerProjection(api, task, authoritative);
+
+  assert.equal(projected.comment.id, 2);
+  assert.equal(projected.ledger, authoritative);
+  assert.equal(projected.ledger.control.closed, true);
+  assert.equal(
+    requests.filter(({ options }) => options.method === 'DELETE').length,
+    2,
+  );
+  assert.deepEqual(
+    requests
+      .filter(({ options }) => options.method === 'DELETE')
+      .map(({ url }) => Number(url.split('/').at(-1)))
+      .sort((left, right) => left - right),
+    [1, 4],
+  );
+});
+
+test('authority projection reports when duplicate repair is rejected', async () => {
+  const authoritative = createLedger(task);
+  const body = renderLedgerComment(authoritative);
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (_url, options) =>
+      options.method === 'DELETE'
+        ? response(403, { message: 'forbidden' })
+        : response(200, [
+            {
+              id: 2,
+              body,
+              user: { login: 'github-actions[bot]', type: 'Bot' },
+            },
+            {
+              id: 4,
+              body,
+              user: { login: 'github-actions[bot]', type: 'Bot' },
+            },
+          ]),
+  });
+
+  await assert.rejects(
+    () => loadLedgerProjection(api, task, authoritative),
+    /Failed to remove extra dispatch-ledger marker comment 4: HTTP 403/u,
+  );
+});
+
+test('authority creates its canonical projection and removes an App-bot marker', async () => {
+  const authoritative = createLedger(task);
+  const requests = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (options.method === 'POST') {
+        return response(201, {
+          id: 9,
+          body: JSON.parse(options.body).body,
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        });
+      }
+      if (options.method === 'DELETE') return response(204);
+      return response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+        },
+      ]);
+    },
+  });
+
+  const projected = await loadLedgerProjection(api, task, authoritative);
+
+  assert.equal(projected.comment.id, 9);
+  assert.equal(projected.created, true);
+  assert.deepEqual(
+    requests.map(({ options }) => options.method ?? 'GET'),
+    ['GET', 'POST', 'DELETE'],
+  );
+});
+
+test('authority refuses to initialize over an existing workflow-owned projection', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () =>
+      response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> corrupt',
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+      ]),
+  });
+
+  assert.equal(
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'compatibility-projection',
+  );
+});
+
+test('authority ignores an unowned marker but requires immutable post-cutover creation evidence', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) => {
+      if (url.endsWith('/issues/304')) {
+        return response(200, { created_at: '2026-08-09T00:00:00.000Z' });
+      }
+      return response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> attacker',
+          user: { login: 'worker', type: 'User' },
+        },
+      ]);
+    },
+  });
+
+  assert.equal(
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'post-cutover',
+  );
+});
+
+test('authority does not trust an App-bot marker as controller projection evidence', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) =>
+      url.endsWith('/issues/304')
+        ? response(200, { created_at: '2026-08-07T00:00:00.000Z' })
+        : response(200, [
+            {
+              id: 2,
+              body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
+              user: { login: 'agent-lcars[bot]', type: 'Bot' },
+            },
+          ]),
+  });
+
+  assert.equal(
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'pre-cutover',
+  );
+});
+
+test('authority refuses a pre-cutover task even after a worker removes every marker', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) =>
+      url.endsWith('/issues/304')
+        ? response(200, { created_at: '2026-08-07T23:59:59.000Z' })
+        : response(200, []),
+  });
+
+  assert.equal(
+    await classifyAuthorityTaskInitialization(
+      api,
+      task,
+      '2026-08-08T00:00:00.000Z',
+    ),
+    'pre-cutover',
+  );
 });
 
 test('missing ledger is created once and pinned only with an unoccupied issue pin', async () => {

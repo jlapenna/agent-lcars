@@ -40,6 +40,7 @@ import {
   validateLedger,
 } from './modules/ledger-core.js';
 import {
+  abandonPendingLaunchForClosedAnchor,
   awaitTerminal,
   beginDispatch,
   bindRun,
@@ -47,6 +48,7 @@ import {
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
+  restoreAcceptedForLaunchRetry,
   verifyPreflight,
 } from './modules/scheduler.js';
 
@@ -226,6 +228,7 @@ function addAnomaly(
 }
 
 export {
+  abandonPendingLaunchForClosedAnchor,
   acceptIntent,
   ACTIVE_STATES,
   addAnomaly,
@@ -248,6 +251,7 @@ export {
   parseLedgerComment,
   recordControlEvidence,
   renderLedgerComment,
+  restoreAcceptedForLaunchRetry,
   validateIntent,
   validateLedger,
   verifyPreflight,

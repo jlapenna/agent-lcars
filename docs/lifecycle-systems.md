@@ -8,24 +8,33 @@ label. This document is that issue's Phase 6 checkbox, "Document operational
 ownership and runbooks for all five systems." It answers one question per
 system: when this breaks, whose problem is it, and what do you check first.
 
-**Read this before trusting any of it as an architecture diagram.** #645's
-own exit criterion — "one authority exists for every lifecycle fact, and no
-recovery path can mutate another system's truth" — is **not true today**.
-Phase 6 (the cutover this document is part of) has not started. Phase 5
-(durable controller storage) shipped only a storage-port _interface_ and an
-in-memory reference implementation with contract tests
-(`apps/dispatch-broker/src/storage/`); it is deliberately not wired into the
-live dispatch path. `broker.ts`/`main.ts` are unchanged, and every existing
-test still exercises only the comment ledger. The **actual** authority for
-dispatch state today is the issue-comment ledger — a single pinned comment
-per issue/PR carrying the `<!-- agent-lcars:dispatch-ledger:v1 -->` marker,
-written and read by `apps/dispatch-broker/src/github-api.ts`'s
-`loadLedger`/`saveLedger`. Everything below describes the code as it exists
-on `main`, not the target state.
+The dispatch controller has an explicit migration switch:
+`DISPATCH_STORAGE_MODE=shadow` projects the issue-comment ledger into
+Firestore for comparison, while `authority` makes the Firestore task
+aggregate authoritative under a compare-and-swap lease. In authority mode
+the pinned `<!-- agent-lcars:dispatch-ledger:v1 -->` comment remains a
+human-readable compatibility projection, but a forged comment cannot change
+controller truth. Worker preflight also reads the exact Firestore aggregate
+in authority mode, using a short-lived, read-only WIF identity minted before
+any untrusted agent code runs. Controller state lives in the dedicated
+`dispatch-controller` database; both the worker's preflight identity and the
+telemetry writer are constrained with per-database IAM Conditions, so neither
+can write controller state. The controller writer is reachable only from
+`agent-router.yml` on `main`. Shadow/off preflight retains the comment reader
+for rollback compatibility. `off` is the rollback position before authority
+cutover.
+
+Authority initialization fails closed across the migration boundary.
+`DISPATCH_AUTHORITY_EPOCH` records the trusted cutover instant. If a task
+created before that instant has no Firestore aggregate, it must have missed
+shadow backfill and is rejected even when its compatibility comment is absent;
+workers can delete comments, but they cannot change GitHub's `created_at` or
+the repository configuration. Only tasks GitHub created at or after the epoch
+may initialize an empty aggregate automatically.
 
 Two seams are load-bearing enough to read before anything else:
 
-- **The comment ledger is forgeable by the agents it controls.**
+- **The compatibility comment is forgeable by the agents it controls.**
   `loadLedger` authenticates the ledger by comment _author_ — it must be
   posted by the workflow identity and be of type `Bot`
   (`github-api.ts:815-822`). `saveLedger` updates it with a `PATCH`
@@ -34,8 +43,8 @@ Two seams are load-bearing enough to read before anything else:
   job includes commenting on an issue necessarily holds — can rewrite the
   ledger while the author check keeps passing, because nothing about
   authorship changed. This is why `apps/dispatch-broker/src/storage/port.ts`
-  exists (see its own header for the full finding): the property it
-  eventually provides is state the controlled code cannot write, and no
+  exists (see its own header for the full finding): in authority mode it
+  provides state the controlled code cannot write, and no
   credential-scoping fix closes the gap, because the capability that lets an
   agent do its job is the same capability that lets it rewrite the ledger.
 - **A GitHub concurrency group is a lossy queue, not a throughput limiter.**
@@ -293,9 +302,10 @@ invoking the requested agent/provider combination.
   "Split execute and finalize jobs" bullet is unstarted); bootstrap, the
   agent step, and the post-agent gates all run in the same job today. All
   three share the same sequence: checkout → snapshot enforcement scripts →
-  broker preflight → mint agent token → claim issue → agent setup → verify
-  agent identity → prepare dispatch context → start telemetry sidecar →
-  run the agent → run post-agent gates.
+  authority-storage auth (authority mode only) → broker preflight → mint
+  agent token → claim issue → agent setup → verify agent identity → prepare
+  dispatch context → start telemetry sidecar → run the agent → run
+  post-agent gates.
 - `.github/actions/agent-setup`, `mint-agent-token`, `verify-agent-identity`,
   `prepare-agent-dispatch`, `setup-opencode`, `telemetry-start` — the shared
   bootstrap pieces (Phase 3's "replace duplicated Claude/Codex/OpenCode
