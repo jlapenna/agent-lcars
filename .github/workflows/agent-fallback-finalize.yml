@@ -86,11 +86,13 @@ jobs:
             echo "::notice::Fallback report already exists as comment $existing"
           fi
 
-          gh api "repos/$REPO/issues/$ISSUE/labels" \
-            -f 'labels[]=status:needs-human' --silent
+          jq -cn '{labels: ["status:needs-human"]}' |
+            gh api "repos/$REPO/issues/$ISSUE/labels" \
+              --method POST --input - >/dev/null
           if [ -n "$MAINTAINER" ]; then
-            gh api "repos/$REPO/issues/$ISSUE/assignees" \
-              -f "assignees[]=$MAINTAINER" --silent
+            jq -cn --arg login "$MAINTAINER" '{assignees: [$login]}' |
+              gh api "repos/$REPO/issues/$ISSUE/assignees" \
+                --method POST --input - >/dev/null
           else
             echo "::warning::MAINTAINER_LOGIN is unset; failure was commented and parked but could not be assigned."
           fi

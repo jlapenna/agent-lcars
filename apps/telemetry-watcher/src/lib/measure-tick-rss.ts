@@ -1,10 +1,10 @@
 /**
  * Standalone entry point (not a Vitest test itself) run in a child `node
- * --expose-gc` process by `daemon.memory.spec.ts`, so RSS growth from a real
- * `tick()` against a large on-disk corpus can be measured in isolation,
- * without Vitest's own baseline memory usage muddying the delta. Its optional
- * materializing mode deliberately retains the whole corpus to prove the RSS
- * guard still detects the pre-streaming failure shape.
+ * --expose-gc` process by `daemon.memory.spec.ts`, so RSS and V8-managed
+ * memory growth from a real `tick()` against a large on-disk corpus can be
+ * measured in isolation, without Vitest's own baseline memory usage muddying
+ * the delta. Its optional materializing mode deliberately retains the whole
+ * corpus to prove the guard still detects the pre-streaming failure shape.
  */
 import * as fs from 'fs';
 
@@ -32,7 +32,7 @@ async function main() {
   });
 
   global.gc?.();
-  const rssBefore = process.memoryUsage().rss;
+  const before = process.memoryUsage();
   const retainedCorpus = materializeCorpus
     ? discoverTranscriptFiles(claudeProjectsDir, ['*']).map((filePath) =>
         fs.readFileSync(filePath),
@@ -40,7 +40,7 @@ async function main() {
     : [];
   await daemon.tick();
   global.gc?.();
-  const rssAfter = process.memoryUsage().rss;
+  const after = process.memoryUsage();
   // Read after the final GC/RSS sample so V8 must keep every control Buffer
   // alive through the measurement.
   const materializedBytes = retainedCorpus.reduce(
@@ -50,7 +50,10 @@ async function main() {
 
   process.stdout.write(
     JSON.stringify({
-      rssDeltaMb: (rssAfter - rssBefore) / 1e6,
+      rssDeltaMb: (after.rss - before.rss) / 1e6,
+      managedDeltaMb:
+        (after.heapUsed - before.heapUsed + after.external - before.external) /
+        1e6,
       materializedBytes,
     }),
   );

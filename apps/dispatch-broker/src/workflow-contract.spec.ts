@@ -758,6 +758,9 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
   assert.match(report.source, stepField('GH_TOKEN', '${{ github.token }}', 10));
   assert.match(report.source, /agent-lcars:bootstrap-fallback:v1/u);
   assert.match(report.source, /status:needs-human/u);
+  assert.match(report.source, /\{labels: \["status:needs-human"\]\}/u);
+  assert.match(report.source, /\{assignees: \[\$login\]\}/u);
+  assert.doesNotMatch(report.source, /labels\[\]|assignees\[\]|--silent/u);
   const callback = namedStep(
     steps,
     'agent-fallback-finalize.yml',
@@ -771,6 +774,23 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
     callback.source,
     stepField('operation', 'completion-callback', 10),
   );
+});
+
+test('workflow-owned assignment mutations use parse-safe JSON bodies (#645)', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-automerge.yml'),
+    'utf8',
+  );
+  const steps = stepBlocks(source);
+  const assign = namedStep(
+    steps,
+    'agent-automerge.yml',
+    'Claim the PR as jclaw-bot',
+  );
+
+  assert.match(assign.source, /\{assignees: \[\$login\]\}/u);
+  assert.match(assign.source, /--method POST --input - >\/dev\/null/u);
+  assert.doesNotMatch(assign.source, /assignees\[\]|--silent/u);
 });
 
 test('worker agent steps never receive github.token under any name (#645 Phase 3)', async () => {

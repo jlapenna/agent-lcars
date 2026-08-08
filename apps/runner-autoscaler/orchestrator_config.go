@@ -29,7 +29,7 @@ type OrchestratorConfig struct {
 	// above, authenticated from the environment (APP_CLIENT_ID /
 	// APP_INSTALLATION_ID / APP_PRIVATE_KEY_FILE) exactly as before
 	// homelab#97 -- this is the "primary" registration, kept for back-compat
-	// so today's members deployment needs zero config-shape changes.
+	// so today's Sprinkles deployment needs zero config-shape changes.
 	ScaleSets []ScaleSetConfigFile `yaml:"scale_sets"`
 	// Registrations are ADDITIONAL GitHub scale-set registrations beyond the
 	// primary one above (homelab#97) -- each is a distinct GitHub

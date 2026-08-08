@@ -66,8 +66,13 @@ test.describe('/sessions workspace @smoke', () => {
     const sessionRow = page.getByTestId(
       `session-card-${E2E_ISSUE_AGENT_SESSION_ID}`,
     );
-    await expect(header).toBeVisible();
+    // Wait for the resolved archive body before asserting the header. The
+    // outer Suspense fallback intentionally renders a real, shape-matched
+    // ConsoleHeader while auth/search params resolve; querying the header
+    // first can strict-mode-match both sides of that streamed handoff.
     await expect(workspace).toBeVisible();
+    await expect(header).toHaveCount(1);
+    await expect(header).toBeVisible();
     await expect(header.getByRole('link', { name: 'Sessions' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
     await expect(page.getByTestId('session-cards')).toBeVisible();

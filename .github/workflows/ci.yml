@@ -73,6 +73,9 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
+      - name: Test issue claiming
+        run: bash .github/actions/claim-issue/claim.test.sh
+
       - name: Test image publish path-based routing (#441)
         run: node --test .github/actions/plan-image-publish/*.test.mjs
 

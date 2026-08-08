@@ -48,7 +48,7 @@ pull-request state.
 | `agent-option:*`  | Long run                                 | Long run                                          | Long run                                 |
 | Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                              | Quick task, Renovate                     |
 | Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, E2E, snapshots | None                                     |
-| Apps              | Console, telemetry, runner autoscaler    | Members, OneCake, Primes                          | None                                     |
+| Apps              | Console, telemetry, runner autoscaler    | Sprinkles, OneCake, Primes                        | None                                     |
 | Planning          | `planning`                               | `planning`                                        | `planning`                               |
 
 Repository profiles deliberately share names without requiring every

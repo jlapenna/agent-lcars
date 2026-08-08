@@ -31,7 +31,17 @@ const agentsPill = (page: Page) =>
 const backgroundOf = (page: Page, name: string) =>
   nav(page)
     .getByRole('link', { name })
-    .evaluate((el) => getComputedStyle(el).backgroundColor);
+    .evaluate((el) => {
+      const background = getComputedStyle(el).backgroundColor;
+      // Chromium can serialize the same fully transparent computed value as
+      // either an empty string during the streamed-page handoff or the
+      // canonical rgba form once the settled page owns the node. Treat
+      // those representations as the same state; a real hover tint remains
+      // non-transparent and still has to differ.
+      return background === '' || background === 'transparent'
+        ? 'rgba(0, 0, 0, 0)'
+        : background;
+    });
 
 useE2eAdminBeforeEach();
 
