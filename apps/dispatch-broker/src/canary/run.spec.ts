@@ -46,6 +46,8 @@ function ledgerCommentWithGeneration(options = {}) {
     user = { login: 'github-actions[bot]', type: 'Bot' },
     sourceId = '11111111-1111-4111-8111-111111111111',
     projectionState = 'converged',
+    ledgerRevision = 8,
+    projectionDesiredRevision = ledgerRevision - 1,
   } = options;
   const outcome = Object.hasOwn(options, 'outcome')
     ? options.outcome
@@ -81,10 +83,13 @@ function ledgerCommentWithGeneration(options = {}) {
   if (projectionState !== undefined) {
     // recordProjectionStatus targets the current ledger revision, then its
     // own checkpoint mutation advances the ledger exactly once.
-    ledger.revision = 8;
+    ledger.revision = ledgerRevision;
     ledger.projection = {
-      desiredRevision: 7,
-      observedRevision: projectionState === 'converged' ? 7 : 6,
+      desiredRevision: projectionDesiredRevision,
+      observedRevision:
+        projectionState === 'converged'
+          ? projectionDesiredRevision
+          : Math.max(0, projectionDesiredRevision - 1),
       state: projectionState,
       observedAt: '2026-08-01T00:01:00.000Z',
     };
@@ -243,6 +248,55 @@ test('pollCanaryLedger resolves once the canary generation reaches completed/suc
   assert.equal(result.generation.state, 'completed');
   assert.equal(result.generation.attempt.conclusion, 'success');
   assert.equal(call, 3);
+});
+
+test('pollCanaryLedger waits for the finalizer outcome and current projector checkpoint after controller success', async () => {
+  let call = 0;
+  const client = api(async () => {
+    call += 1;
+    return response(200, [
+      call === 1
+        ? ledgerCommentWithGeneration({
+            outcome: undefined,
+            ledgerRevision: 9,
+            projectionDesiredRevision: 7,
+          })
+        : ledgerCommentWithGeneration(),
+    ]);
+  });
+  let clock = 0;
+  const notices = [];
+  const result = await pollCanaryLedger(client, task, {
+    now: () => clock,
+    sleepImpl: async (delay) => {
+      clock += delay;
+    },
+    log: (message) => notices.push(message),
+  });
+
+  assert.equal(call, 2);
+  assert.equal(result.generation.attempt.outcome, 'comment');
+  assert.equal(result.ledger.projection.state, 'converged');
+  assert.match(notices[0], /outcome=missing/u);
+  assert.match(notices[0], /projection=converged:7\/7@r9/u);
+  assert.match(notices[1], /outcome=comment/u);
+  assert.match(notices[1], /projection=converged:7\/7@r8/u);
+});
+
+test('pollCanaryLedger fails immediately when a populated finalizer contract is wrong', async () => {
+  let call = 0;
+  const client = api(async () => {
+    call += 1;
+    return response(200, [
+      ledgerCommentWithGeneration({ outcome: 'artifact' }),
+    ]);
+  });
+
+  await assert.rejects(
+    () => pollCanaryLedger(client, task, { log: () => undefined }),
+    /finalizer contract failed.*artifact/u,
+  );
+  assert.equal(call, 1);
 });
 
 test('assertCanaryContracts requires the exact finalizer outcome and a converged projector', () => {

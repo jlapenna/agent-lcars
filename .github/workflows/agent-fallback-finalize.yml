@@ -197,13 +197,13 @@ jobs:
             fi
             agent_conclusion="$(jq -r --arg step "$agent_step" \
               '[.steps[]? | select(.name == $step)] | last | .conclusion // ""' \
-              <<<"${worker_job:-{}}")"
+              <<<"$worker_job")"
             case "$agent_conclusion" in
               ''|skipped) outcome_kind='startup-failure' ;;
               success)
                 post_gate_conclusion="$(jq -r \
                   '[.steps[]? | select(.name == "Run post-agent gates")] | last | .conclusion // ""' \
-                  <<<"${worker_job:-{}}")"
+                  <<<"$worker_job")"
                 if [ "$post_gate_conclusion" = 'failure' ]; then
                   outcome_kind='outcome-gate-failure'
                 else
@@ -289,7 +289,7 @@ jobs:
           # never accept the worker's own output file across this boundary.
           started_at="$(jq -r --arg step "$agent_step" \
             '[.steps[]? | select(.name == $step)] | last | .started_at // ""' \
-            <<<"${worker_job:-{}}")"
+            <<<"$worker_job")"
           if [ -z "$outcome_kind" ] && \
             [ "$WORKER_WORKFLOW" != 'agent-dispatch-canary.yml' ] && \
             [ -n "$started_at" ]; then

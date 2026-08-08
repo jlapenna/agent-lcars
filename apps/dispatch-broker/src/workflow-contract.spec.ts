@@ -783,6 +783,16 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     evidence.source,
     /Could not read trusted worker job metadata[\s\S]{0,200}outcome-kind=startup-failure/u,
   );
+  // `${worker_job:-{}}` looks like an empty-object fallback, but Bash parses
+  // the first `}` as the parameter-expansion terminator and appends the
+  // second one to every populated value. Production g7 proved the result:
+  // a 3,101-byte job object reached jq with an unmatched `}` at byte 3,102.
+  assert.doesNotMatch(evidence.source, /\$\{worker_job:-\{\}\}/u);
+  assert.equal(
+    evidence.source.match(/<<<"\$worker_job"/gu)?.length,
+    4,
+    'every trusted worker-job jq read must consume the exact JSON bytes',
+  );
   assert.match(
     evidence.source,
     /Successful dispatch canary lacks its exact comment outcome/u,
