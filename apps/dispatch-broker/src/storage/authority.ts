@@ -9,7 +9,7 @@ import {
 } from './port.js';
 import { projectLedgerToStoredTask } from './shadow.js';
 
-export const DEFAULT_TASK_LEASE_MS = 5 * 60 * 1000;
+export const DEFAULT_TASK_LEASE_MS = 2 * 60 * 1000;
 const DEFAULT_CAS_ATTEMPTS = 8;
 
 export class TaskLeaseBusyError extends Error {
@@ -21,6 +21,24 @@ export class TaskLeaseBusyError extends Error {
       `Task ${task.repository}#${task.issue} is already leased by ${lease.owner} until ${lease.expiresAt}`,
     );
     this.name = 'TaskLeaseBusyError';
+  }
+}
+
+export class AuthorityStateNotFoundError extends Error {
+  constructor(public readonly task: TaskRef) {
+    super(
+      `No authoritative controller state exists for ${task.repository}#${task.issue}`,
+    );
+    this.name = 'AuthorityStateNotFoundError';
+  }
+}
+
+export class AuthorityStateMissingError extends Error {
+  constructor(public readonly task: TaskRef) {
+    super(
+      `Stored task ${task.repository}#${task.issue} predates exact controller state; return to shadow mode and backfill it before authority cutover`,
+    );
+    this.name = 'AuthorityStateMissingError';
   }
 }
 
@@ -50,22 +68,47 @@ export async function acquireAuthority(
     now?: () => string;
     leaseMs?: number;
     maxAttempts?: number;
+    createIfMissing?: boolean;
+    busyWaitMs?: number;
+    sleep?: (ms: number) => Promise<void>;
   } = {},
 ): Promise<AuthorityState> {
   const now = options.now ?? (() => new Date().toISOString());
   const leaseMs = options.leaseMs ?? DEFAULT_TASK_LEASE_MS;
   const maxAttempts = options.maxAttempts ?? DEFAULT_CAS_ATTEMPTS;
+  const createIfMissing = options.createIfMissing ?? true;
+  const busyWaitMs = options.busyWaitMs ?? 0;
+  const sleep =
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const busyDeadline = Date.now() + busyWaitMs;
   let lastConflict: TaskWriteConflictError | undefined;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  let conflicts = 0;
+  while (conflicts < maxAttempts) {
     const observedAt = now();
     const current = await port.readTask(task);
+    if (!current && !createIfMissing) {
+      throw new AuthorityStateNotFoundError(task);
+    }
+    if (current && !current.controllerState) {
+      throw new AuthorityStateMissingError(task);
+    }
     if (
       current?.lease &&
       current.lease.owner !== owner &&
       leaseIsLive(current.lease, observedAt)
     ) {
-      throw new TaskLeaseBusyError(task, current.lease);
+      const remainingBudget = busyDeadline - Date.now();
+      if (remainingBudget <= 0) {
+        throw new TaskLeaseBusyError(task, current.lease);
+      }
+      const remainingLease =
+        Date.parse(current.lease.expiresAt) - Date.parse(observedAt);
+      await sleep(
+        Math.max(1, Math.min(1_000, remainingBudget, remainingLease)),
+      );
+      continue;
     }
     const ledger = structuredClone(current?.controllerState ?? seed);
     const lease: TaskLease = {
@@ -88,6 +131,7 @@ export async function acquireAuthority(
     } catch (error) {
       if (!(error instanceof TaskWriteConflictError)) throw error;
       lastConflict = error;
+      conflicts += 1;
     }
   }
   throw lastConflict;

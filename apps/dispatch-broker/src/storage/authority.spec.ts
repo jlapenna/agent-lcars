@@ -88,6 +88,35 @@ describe('storage authority lease', () => {
     expect(second.session.lease.acquiredAt).toBe(
       first.session.lease.acquiredAt,
     );
-    expect(second.session.lease.expiresAt).toBe('2026-08-08T06:07:00.000Z');
+    expect(second.session.lease.expiresAt).toBe('2026-08-08T06:04:00.000Z');
+  });
+
+  test('waits for a transient live lease and acquires after it expires', async () => {
+    const port = new InMemoryStoragePort();
+    const ledger = createLedger(task, '2026-08-08T06:00:00.000Z');
+    await acquireAuthority(port, task, 'delivery:one', ledger, {
+      now: () => '2026-08-08T06:01:00.000Z',
+      leaseMs: 1_000,
+    });
+    let observedMs = Date.parse('2026-08-08T06:01:00.250Z');
+    let waits = 0;
+
+    const acquired = await acquireAuthority(
+      port,
+      task,
+      'delivery:two',
+      ledger,
+      {
+        now: () => new Date(observedMs).toISOString(),
+        busyWaitMs: 5_000,
+        sleep: async (ms) => {
+          waits += 1;
+          observedMs += ms;
+        },
+      },
+    );
+
+    expect(waits).toBeGreaterThan(0);
+    expect(acquired.session.owner).toBe('delivery:two');
   });
 });

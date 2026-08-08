@@ -917,6 +917,51 @@ async function loadLedger(
   return { comment, ledger, created: true, existingComments: comments };
 }
 
+/**
+ * Locate or create the human-facing ledger comment without parsing it as
+ * controller state. Authority mode calls this only after Firestore has been
+ * read and leased, so a controlled worker can neither corrupt nor duplicate
+ * comments to block the controller from reaching its real state.
+ */
+async function loadLedgerProjection(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  ledger: DispatchLedger,
+  workflowIdentity = 'github-actions[bot]',
+): Promise<LoadedLedger> {
+  const root = repositoryPath(task);
+  const comments = await listAll<GitHubIssueComment>(
+    api,
+    `${root}/issues/${task.issue}/comments`,
+  );
+  const ownedCandidates = comments
+    .filter(
+      (comment) =>
+        comment.body?.includes(LEDGER_MARKER) &&
+        comment.user?.login === workflowIdentity &&
+        comment.user?.type === 'Bot',
+    )
+    .sort((left, right) => left.id - right.id);
+  if (ownedCandidates[0]) {
+    return {
+      comment: ownedCandidates[0],
+      ledger,
+      created: false,
+    };
+  }
+  const comment = await api.requestOk<GitHubIssueComment>(
+    `${root}/issues/${task.issue}/comments`,
+    {
+      method: 'POST',
+      body: { body: renderLedgerComment(ledger) },
+    },
+  );
+  if (!Number.isSafeInteger(comment?.id)) {
+    throw new Error('GitHub did not return the created ledger comment ID');
+  }
+  return { comment, ledger, created: true, existingComments: comments };
+}
+
 async function saveLedger(
   api: GitHubApi,
   loaded: LoadedLedger,
@@ -1333,6 +1378,7 @@ export {
   listRecentlyClosedAgentLabeledIssues,
   listRecentlyClosedIssuesAssignedTo,
   loadLedger,
+  loadLedgerProjection,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,

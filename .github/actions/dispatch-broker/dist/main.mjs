@@ -1197,6 +1197,34 @@ async function loadLedger(api2, task, workflowIdentity = "github-actions[bot]", 
   }
   return { comment, ledger, created: true, existingComments: comments };
 }
+async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "github-actions[bot]") {
+  const root = repositoryPath(task);
+  const comments = await listAll(
+    api2,
+    `${root}/issues/${task.issue}/comments`
+  );
+  const ownedCandidates = comments.filter(
+    (comment2) => comment2.body?.includes(LEDGER_MARKER) && comment2.user?.login === workflowIdentity && comment2.user?.type === "Bot"
+  ).sort((left, right) => left.id - right.id);
+  if (ownedCandidates[0]) {
+    return {
+      comment: ownedCandidates[0],
+      ledger,
+      created: false
+    };
+  }
+  const comment = await api2.requestOk(
+    `${root}/issues/${task.issue}/comments`,
+    {
+      method: "POST",
+      body: { body: renderLedgerComment2(ledger) }
+    }
+  );
+  if (!Number.isSafeInteger(comment?.id)) {
+    throw new Error("GitHub did not return the created ledger comment ID");
+  }
+  return { comment, ledger, created: true, existingComments: comments };
+}
 async function saveLedger(api2, loaded) {
   const root = repositoryPath(loaded.ledger.task);
   const comment = await api2.requestOk(
@@ -2091,7 +2119,7 @@ async function maybeObserveDispatchStorage(mode, createPort, ledger, now) {
 }
 
 // apps/dispatch-broker/src/storage/authority.ts
-var DEFAULT_TASK_LEASE_MS = 5 * 60 * 1e3;
+var DEFAULT_TASK_LEASE_MS = 2 * 60 * 1e3;
 var DEFAULT_CAS_ATTEMPTS = 8;
 var TaskLeaseBusyError = class extends Error {
   constructor(task, lease) {
@@ -2105,6 +2133,26 @@ var TaskLeaseBusyError = class extends Error {
   task;
   lease;
 };
+var AuthorityStateNotFoundError = class extends Error {
+  constructor(task) {
+    super(
+      `No authoritative controller state exists for ${task.repository}#${task.issue}`
+    );
+    this.task = task;
+    this.name = "AuthorityStateNotFoundError";
+  }
+  task;
+};
+var AuthorityStateMissingError = class extends Error {
+  constructor(task) {
+    super(
+      `Stored task ${task.repository}#${task.issue} predates exact controller state; return to shadow mode and backfill it before authority cutover`
+    );
+    this.task = task;
+    this.name = "AuthorityStateMissingError";
+  }
+  task;
+};
 function leaseIsLive(lease, now) {
   return Boolean(lease && Date.parse(lease.expiresAt) > Date.parse(now));
 }
@@ -2112,12 +2160,31 @@ async function acquireAuthority(port, task, owner, seed, options = {}) {
   const now = options.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
   const leaseMs = options.leaseMs ?? DEFAULT_TASK_LEASE_MS;
   const maxAttempts = options.maxAttempts ?? DEFAULT_CAS_ATTEMPTS;
+  const createIfMissing = options.createIfMissing ?? true;
+  const busyWaitMs = options.busyWaitMs ?? 0;
+  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const busyDeadline = Date.now() + busyWaitMs;
   let lastConflict;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  let conflicts = 0;
+  while (conflicts < maxAttempts) {
     const observedAt = now();
     const current = await port.readTask(task);
+    if (!current && !createIfMissing) {
+      throw new AuthorityStateNotFoundError(task);
+    }
+    if (current && !current.controllerState) {
+      throw new AuthorityStateMissingError(task);
+    }
     if (current?.lease && current.lease.owner !== owner && leaseIsLive(current.lease, observedAt)) {
-      throw new TaskLeaseBusyError(task, current.lease);
+      const remainingBudget = busyDeadline - Date.now();
+      if (remainingBudget <= 0) {
+        throw new TaskLeaseBusyError(task, current.lease);
+      }
+      const remainingLease = Date.parse(current.lease.expiresAt) - Date.parse(observedAt);
+      await sleep2(
+        Math.max(1, Math.min(1e3, remainingBudget, remainingLease))
+      );
+      continue;
     }
     const ledger = structuredClone(current?.controllerState ?? seed);
     const lease = {
@@ -2139,6 +2206,7 @@ async function acquireAuthority(port, task, owner, seed, options = {}) {
     } catch (error) {
       if (!(error instanceof TaskWriteConflictError)) throw error;
       lastConflict = error;
+      conflicts += 1;
     }
   }
   throw lastConflict;
@@ -2503,6 +2571,7 @@ async function saveLedger2(client, loaded) {
     return;
   }
   await persistAuthority(loaded.authority, loaded.ledger);
+  if (loaded.projectionAvailable === false) return;
   try {
     await saveLedger(client, loaded);
   } catch (error) {
@@ -3268,6 +3337,46 @@ async function healStaleAgentLabels(client, loaded, intent) {
 }
 async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "") {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
+  if (storageMode === "authority") {
+    let authority;
+    try {
+      authority = await acquireAuthority(
+        createStoragePort(),
+        task,
+        leaseOwner,
+        createLedger(task),
+        {
+          createIfMissing: !untrackedPullRequestControl,
+          busyWaitMs: 13e4
+        }
+      );
+    } catch (error) {
+      if (error instanceof AuthorityStateNotFoundError) return void 0;
+      throw error;
+    }
+    try {
+      const projected = await loadLedgerProjection(
+        client,
+        task,
+        authority.ledger
+      );
+      projected.authority = authority.session;
+      projected.projectionAvailable = true;
+      return projected;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Loaded authoritative Firestore state for ${task.repository}#${task.issue}, but its GitHub ledger projection is unavailable this pass: ${message}`
+      );
+      return {
+        ledger: authority.ledger,
+        comment: { id: 0, body: "", created_at: "" },
+        created: false,
+        authority: authority.session,
+        projectionAvailable: false
+      };
+    }
+  }
   const loaded = await loadLedger(
     client,
     task,
@@ -3276,15 +3385,6 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
       createIfMissing: !untrackedPullRequestControl
     }
   );
-  if (!loaded || storageMode !== "authority") return loaded;
-  const authority = await acquireAuthority(
-    createStoragePort(),
-    task,
-    leaseOwner,
-    loaded.ledger
-  );
-  loaded.ledger = authority.ledger;
-  loaded.authority = authority.session;
   return loaded;
 }
 async function applyAnchorControlTransition(client, loaded, control) {
@@ -3329,6 +3429,12 @@ async function broker() {
       `action:${runId}`
     );
   } catch (error) {
+    if (error instanceof TaskLeaseBusyError) {
+      console.log(
+        `::warning::Deferring ${task.repository}#${task.issue}: ${error.message}`
+      );
+      throw error;
+    }
     await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
   }
   if (!loaded) {

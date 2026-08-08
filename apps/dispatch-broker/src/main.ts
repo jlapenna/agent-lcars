@@ -35,6 +35,7 @@ import {
   beginDispatch,
   bindRun,
   completeRun,
+  createLedger,
   markDispatchRejected,
   markDispatchUnknown,
   observeCompletion,
@@ -53,6 +54,7 @@ import {
   GitHubApiError,
   listAll,
   loadLedger,
+  loadLedgerProjection,
   pinLedgerWhenUnoccupied,
   repositoryPath,
   saveLedger as saveLedgerComment,
@@ -83,8 +85,10 @@ import {
 import {
   acquireAuthority,
   type AuthoritySession,
+  AuthorityStateNotFoundError,
   persistAuthority,
   releaseAuthority,
+  TaskLeaseBusyError,
 } from './storage/authority.js';
 import { FirestoreRestStoragePort } from './storage/firestore-rest-port.js';
 import type { StoragePort } from './storage/port.js';
@@ -192,6 +196,7 @@ interface LoadedLedger {
   created: boolean;
   existingComments?: GitHubIssueComment[];
   authority?: AuthoritySession;
+  projectionAvailable?: boolean;
 }
 
 interface LedgerContext {
@@ -246,6 +251,7 @@ async function saveLedger(
     return;
   }
   await persistAuthority(loaded.authority, loaded.ledger);
+  if (loaded.projectionAvailable === false) return;
   try {
     await saveLedgerComment(client, loaded);
   } catch (error) {
@@ -1699,6 +1705,48 @@ async function loadBrokerLedger(
   // ledger normally.
   const untrackedPullRequestControl =
     isPullRequest && normalized.kind === 'anchor-control';
+  if (storageMode === 'authority') {
+    let authority;
+    try {
+      authority = await acquireAuthority(
+        createStoragePort(),
+        task,
+        leaseOwner,
+        createLedger(task),
+        {
+          createIfMissing: !untrackedPullRequestControl,
+          busyWaitMs: 130_000,
+        },
+      );
+    } catch (error) {
+      if (error instanceof AuthorityStateNotFoundError) return undefined;
+      throw error;
+    }
+    try {
+      const projected: LoadedLedger = await loadLedgerProjection(
+        client,
+        task,
+        authority.ledger,
+      );
+      projected.authority = authority.session;
+      projected.projectionAvailable = true;
+      return projected;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Loaded authoritative Firestore state for ` +
+          `${task.repository}#${task.issue}, but its GitHub ledger ` +
+          `projection is unavailable this pass: ${message}`,
+      );
+      return {
+        ledger: authority.ledger,
+        comment: { id: 0, body: '', created_at: '' },
+        created: false,
+        authority: authority.session,
+        projectionAvailable: false,
+      };
+    }
+  }
   const loaded: LoadedLedger | undefined = await loadLedger(
     client,
     task,
@@ -1707,15 +1755,6 @@ async function loadBrokerLedger(
       createIfMissing: !untrackedPullRequestControl,
     },
   );
-  if (!loaded || storageMode !== 'authority') return loaded;
-  const authority = await acquireAuthority(
-    createStoragePort(),
-    task,
-    leaseOwner,
-    loaded.ledger,
-  );
-  loaded.ledger = authority.ledger;
-  loaded.authority = authority.session;
   return loaded;
 }
 
@@ -1787,6 +1826,12 @@ async function broker(): Promise<void> {
       `action:${runId}`,
     );
   } catch (error) {
+    if (error instanceof TaskLeaseBusyError) {
+      console.log(
+        `::warning::Deferring ${task.repository}#${task.issue}: ${error.message}`,
+      );
+      throw error;
+    }
     await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
   }
   if (!loaded) {

@@ -28,6 +28,7 @@ import {
   listRecentlyClosedAgentLabeledIssues,
   listRecentlyClosedIssuesAssignedTo,
   loadLedger,
+  loadLedgerProjection,
   mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   removeIssueLabel,
@@ -806,6 +807,38 @@ test('ledger loading rejects duplicates and unexpected authors', async () => {
     });
     await assert.rejects(() => loadLedger(api, task));
   }
+});
+
+test('authority projection ignores duplicate or corrupt marker bodies and selects the workflow-owned comment without parsing it', async () => {
+  const authoritative = createLedger(task);
+  authoritative.control.closed = true;
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () =>
+      response(200, [
+        {
+          id: 4,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> corrupt',
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> also corrupt',
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+        {
+          id: 1,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> attacker',
+          user: { login: 'worker', type: 'User' },
+        },
+      ]),
+  });
+
+  const projected = await loadLedgerProjection(api, task, authoritative);
+
+  assert.equal(projected.comment.id, 2);
+  assert.equal(projected.ledger, authoritative);
+  assert.equal(projected.ledger.control.closed, true);
 });
 
 test('missing ledger is created once and pinned only with an unoccupied issue pin', async () => {
