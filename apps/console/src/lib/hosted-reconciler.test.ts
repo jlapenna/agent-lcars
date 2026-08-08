@@ -150,56 +150,51 @@ describe('hosted reconciler GitHub transport', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('quarantines a closed pre-cutover fleet task with no dispatch label', async () => {
-    const get = vi.fn().mockResolvedValue({
-      data: {
-        id: 20,
-        number: 20,
-        title: 'Retired legacy task',
-        body: '',
-        labels: [{ name: 'status:needs-human' }],
-        created_at: '2026-08-07T00:00:00.000Z',
-        updated_at: '2026-08-08T00:00:00.000Z',
-        state: 'closed',
-      },
-    });
-    const octokit = {
-      rest: {
-        issues: { listForRepo: vi.fn(), get },
-      },
-    } as unknown as Octokit;
-    processHostedControllerEvent.mockRejectedValueOnce(
-      new AuthorityStateMissingError(
-        {
-          repository: 'jlapenna/agent-lcars',
-          repositoryId: 1_307_149_765,
-          issue: 20,
+  it.each([true, false])(
+    'quarantines a closed pre-cutover fleet task with no dispatch label (compatibilityQuiescent=%s)',
+    async (compatibilityQuiescent) => {
+      const get = vi.fn().mockResolvedValue({
+        data: {
+          id: 20,
+          number: 20,
+          title: 'Retired legacy task',
+          body: '',
+          labels: [{ name: 'status:needs-human' }],
+          created_at: '2026-08-07T00:00:00.000Z',
+          updated_at: '2026-08-08T00:00:00.000Z',
+          state: 'closed',
         },
-        true,
-      ),
-    );
-    const transport = createOctokitReconcileTransport(
-      octokit,
-      identity,
-      '2026-08-08T12:00:00.000Z',
-      'request-1',
-      '2026-08-08T00:00:00.000Z',
-    );
+      });
+      const octokit = {
+        rest: {
+          issues: { listForRepo: vi.fn(), get },
+        },
+      } as unknown as Octokit;
+      processHostedControllerEvent.mockRejectedValueOnce(
+        new AuthorityStateMissingError(
+          {
+            repository: 'jlapenna/agent-lcars',
+            repositoryId: 1_307_149_765,
+            issue: 20,
+          },
+          compatibilityQuiescent,
+        ),
+      );
+      const transport = createOctokitReconcileTransport(
+        octokit,
+        identity,
+        '2026-08-08T12:00:00.000Z',
+        'request-1',
+        '2026-08-08T00:00:00.000Z',
+      );
 
-    await expect(
-      transport.dispatchReconcile('jlapenna/agent-lcars', 20),
-    ).resolves.toBeUndefined();
-  });
+      await expect(
+        transport.dispatchReconcile('jlapenna/agent-lcars', 20),
+      ).resolves.toBeUndefined();
+    },
+  );
 
   it.each([
-    {
-      name: 'a non-quiescent compatibility projection',
-      state: 'closed',
-      labels: [] as { name: string }[],
-      createdAt: '2026-08-07T00:00:00.000Z',
-      epoch: '2026-08-08T00:00:00.000Z',
-      compatibilityQuiescent: false,
-    },
     {
       name: 'an open pre-cutover task',
       state: 'open',

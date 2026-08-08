@@ -1,25 +1,81 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listEventsForTimeline, paginate } = vi.hoisted(() => ({
+const {
+  getIssue,
+  listEventsForTimeline,
+  paginate,
+  processHostedControllerEvent,
+} = vi.hoisted(() => ({
+  getIssue: vi.fn(),
   listEventsForTimeline: vi.fn(),
   paginate: vi.fn(),
+  processHostedControllerEvent: vi.fn(),
 }));
+
+vi.mock('./hosted-controller', () => ({ processHostedControllerEvent }));
 
 vi.mock('./github-client', () => ({
   getGithubClient: () => ({
     paginate,
-    rest: { issues: { listEventsForTimeline } },
+    rest: { issues: { get: getIssue, listEventsForTimeline } },
   }),
 }));
 
+import { AuthorityStateMissingError } from '@agent-lcars/dispatch-controller/storage/authority';
+
 import {
+  admitGitHubWebhook,
   deliveryTransportId,
   loadTimeline,
   parseHostedAdmissionMode,
 } from './hosted-admission';
 
+const repository = 'jlapenna/agent-lcars';
+const repositoryId = 1_307_149_765;
+const issueNumber = 20;
+const eventTime = '2026-08-08T12:00:00.000Z';
+const deliveryId = '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820';
+
+function statusLabelPayload() {
+  return {
+    action: 'labeled',
+    label: { name: 'status:needs-human' },
+    repository: { id: repositoryId, full_name: repository },
+    sender: { login: 'github-actions[bot]' },
+    issue: {
+      id: 2_000,
+      number: issueNumber,
+      title: 'Retired task',
+      body: '',
+      state: 'closed',
+      labels: [{ name: 'status:needs-human' }],
+      created_at: '2026-08-07T00:00:00.000Z',
+      updated_at: eventTime,
+    },
+  };
+}
+
+function authorityGap(compatibilityQuiescent: boolean) {
+  return new AuthorityStateMissingError(
+    { repository, repositoryId, issue: issueNumber },
+    compatibilityQuiescent,
+  );
+}
+
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  vi.stubEnv('DISPATCH_AUTHORITY_EPOCH', '2026-08-08T00:00:00.000Z');
+  processHostedControllerEvent.mockResolvedValue(undefined);
+  paginate.mockResolvedValue([
+    {
+      id: 42,
+      event: 'labeled',
+      label: { name: 'status:needs-human' },
+      actor: { login: 'github-actions[bot]' },
+      created_at: eventTime,
+    },
+  ]);
+  getIssue.mockResolvedValue({ data: statusLabelPayload().issue });
 });
 
 describe('hosted webhook admission primitives', () => {
@@ -68,5 +124,68 @@ describe('hosted webhook admission primitives', () => {
       issue_number: 736,
       per_page: 100,
     });
+  });
+
+  it.each([true, false])(
+    'acknowledges a retired replay after checking live GitHub state (compatibilityQuiescent=%s)',
+    async (compatibilityQuiescent) => {
+      processHostedControllerEvent.mockRejectedValueOnce(
+        authorityGap(compatibilityQuiescent),
+      );
+
+      await expect(
+        admitGitHubWebhook({
+          deliveryId,
+          eventName: 'issues',
+          payload: statusLabelPayload(),
+          mode: 'authority',
+        }),
+      ).resolves.toMatchObject({
+        outcome: 'ignored',
+        reason: 'retired pre-cutover task quarantined',
+      });
+      expect(getIssue).toHaveBeenCalledWith({
+        owner: 'jlapenna',
+        repo: 'agent-lcars',
+        issue_number: issueNumber,
+      });
+    },
+  );
+
+  it.each([
+    {
+      name: 'the issue is still open',
+      compatibilityQuiescent: true,
+      liveIssue: { ...statusLabelPayload().issue, state: 'open' },
+    },
+    {
+      name: 'live dispatch intent remains',
+      compatibilityQuiescent: true,
+      liveIssue: {
+        ...statusLabelPayload().issue,
+        labels: [{ name: 'agent:codex' }],
+      },
+    },
+    {
+      name: 'the issue was created after cutover',
+      compatibilityQuiescent: true,
+      liveIssue: {
+        ...statusLabelPayload().issue,
+        created_at: '2026-08-09T00:00:00.000Z',
+      },
+    },
+  ])('keeps failing closed when $name', async (scenario) => {
+    const gap = authorityGap(scenario.compatibilityQuiescent);
+    processHostedControllerEvent.mockRejectedValueOnce(gap);
+    getIssue.mockResolvedValueOnce({ data: scenario.liveIssue });
+
+    await expect(
+      admitGitHubWebhook({
+        deliveryId,
+        eventName: 'issues',
+        payload: statusLabelPayload(),
+        mode: 'authority',
+      }),
+    ).rejects.toBe(gap);
   });
 });
