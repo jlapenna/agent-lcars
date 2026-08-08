@@ -18,9 +18,18 @@ PORTS=(4200 4000 4400 9099 8080 9299)
 
 for port in "${PORTS[@]}"; do
   pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  # Some container/runner kernels expose socket owners through /proc to
+  # fuser/ss while lsof returns an empty result even for a listening process.
+  # Falling back only when lsof found nothing keeps the usual path portable,
+  # while still cleaning up orphaned Playwright webServer children on those
+  # hosts instead of letting the next run fail with a misleading EADDRINUSE.
+  if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
+    pids=$(fuser -n tcp "$port" 2>/dev/null || true)
+  fi
   if [ -n "$pids" ]; then
-    echo "kill-e2e-ports: freeing port $port (pid(s): $pids)"
-    kill -9 $pids 2>/dev/null || true
+    read -r -a port_pids <<<"${pids//$'\n'/ }"
+    echo "kill-e2e-ports: freeing port $port (pid(s): ${port_pids[*]})"
+    kill -9 "${port_pids[@]}" 2>/dev/null || true
   fi
 done
 
