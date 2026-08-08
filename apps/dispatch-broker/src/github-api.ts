@@ -62,6 +62,18 @@ class GitHubApiError extends Error {
   }
 }
 
+class LedgerProjectionRepairError extends Error {
+  constructor(
+    public readonly commentId: number,
+    public readonly status: number,
+  ) {
+    super(
+      `Failed to remove duplicate workflow-owned ledger comment ${commentId}: HTTP ${status}`,
+    );
+    this.name = 'LedgerProjectionRepairError';
+  }
+}
+
 // Thrown by `checkIndirectBrokerConcurrency`, the sole concurrency-
 // verification path (#348's third round retired the direct, own-listing
 // check; #545 then replaced the indirect path's own flaky per-candidate
@@ -943,6 +955,26 @@ async function loadLedgerProjection(
     )
     .sort((left, right) => left.id - right.id);
   if (ownedCandidates[0]) {
+    // Worker preflight remains a strict compatibility reader until that
+    // capability moves into the hosted controller. Repair the projection
+    // set while this authority holder owns the task lease, so a prior
+    // controlled worker cannot leave a second workflow-authored marker that
+    // permanently denies every later worker at preflight.
+    for (const duplicate of ownedCandidates.slice(1)) {
+      const response = await api.request(
+        `${root}/issues/comments/${duplicate.id}`,
+        { method: 'DELETE' },
+      );
+      if (
+        response.status !== 404 &&
+        (response.status < 200 || response.status >= 300)
+      ) {
+        throw new LedgerProjectionRepairError(duplicate.id, response.status);
+      }
+      console.log(
+        `::notice::Removed duplicate workflow-owned dispatch-ledger projection comment ${duplicate.id}.`,
+      );
+    }
     return {
       comment: ownedCandidates[0],
       ledger,
@@ -1372,6 +1404,7 @@ export {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  LedgerProjectionRepairError,
   listAll,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,

@@ -52,6 +52,7 @@ import {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
+  LedgerProjectionRepairError,
   listAll,
   loadLedger,
   loadLedgerProjection,
@@ -1365,24 +1366,14 @@ async function dispatchAccepted(
       }
       await saveLedger(client, loaded);
     });
+    let binding: {
+      runId: number;
+      runUrl: string;
+      htmlUrl: string;
+      workflow: string;
+    };
     try {
-      const binding: {
-        runId: number;
-        runUrl: string;
-        htmlUrl: string;
-        workflow: string;
-      } = await dispatchWorker(client, generation, loaded.ledger.task);
-      bindRun(loaded.ledger, generation.generation, binding);
-      if (loaded.authority) {
-        const attemptId =
-          generation.attempt?.attemptId ?? formatAttemptId(generation);
-        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
-          status: 'launched',
-          binding,
-        });
-      }
-      await saveLedger(client, loaded);
-      return;
+      binding = await dispatchWorker(client, generation, loaded.ledger.task);
     } catch (error) {
       if (isDefiniteDispatchRejection(error)) {
         // Definite: the dispatch POST itself was rejected, so this
@@ -1429,6 +1420,30 @@ async function dispatchAccepted(
       await saveLedger(client, loaded);
       return;
     }
+
+    // A validated 200 response makes the launch outcome known. Persist its
+    // exact run binding before resolving the auxiliary outbox record, so a
+    // transient outbox failure can never be reclassified as an ambiguous
+    // workflow dispatch or park a successfully launched worker.
+    bindRun(loaded.ledger, generation.generation, binding);
+    await saveLedger(client, loaded);
+    if (loaded.authority) {
+      const attemptId =
+        generation.attempt?.attemptId ?? formatAttemptId(generation);
+      try {
+        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+          status: 'launched',
+          binding,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Worker ${binding.runId} was launched and bound, but ` +
+            `its launch-outbox resolution will need reconciliation: ${message}`,
+        );
+      }
+    }
+    return;
   }
 }
 
@@ -1768,6 +1783,11 @@ async function loadBrokerLedger(
       projected.projectionAvailable = true;
       return projected;
     } catch (error) {
+      // Duplicate workflow-owned projections make the still-comment-backed
+      // worker preflight reject every future launch. Never downgrade a
+      // failed repair to a best-effort projection warning and dispatch into
+      // that known-denied state.
+      if (error instanceof LedgerProjectionRepairError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       console.log(
         `::warning::Loaded authoritative Firestore state for ` +

@@ -809,13 +809,16 @@ test('ledger loading rejects duplicates and unexpected authors', async () => {
   }
 });
 
-test('authority projection ignores duplicate or corrupt marker bodies and selects the workflow-owned comment without parsing it', async () => {
+test('authority projection repairs duplicate corrupt markers and selects the workflow-owned comment without parsing it', async () => {
   const authoritative = createLedger(task);
   authoritative.control.closed = true;
+  const requests = [];
   const api = createGitHubApi({
     token: 'token',
-    fetchImpl: async () =>
-      response(200, [
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (options.method === 'DELETE') return response(204);
+      return response(200, [
         {
           id: 4,
           body: '<!-- agent-lcars:dispatch-ledger:v1 --> corrupt',
@@ -831,7 +834,8 @@ test('authority projection ignores duplicate or corrupt marker bodies and select
           body: '<!-- agent-lcars:dispatch-ledger:v1 --> attacker',
           user: { login: 'worker', type: 'User' },
         },
-      ]),
+      ]);
+    },
   });
 
   const projected = await loadLedgerProjection(api, task, authoritative);
@@ -839,6 +843,39 @@ test('authority projection ignores duplicate or corrupt marker bodies and select
   assert.equal(projected.comment.id, 2);
   assert.equal(projected.ledger, authoritative);
   assert.equal(projected.ledger.control.closed, true);
+  assert.equal(
+    requests.filter(({ options }) => options.method === 'DELETE').length,
+    1,
+  );
+  assert.match(requests.at(-1).url, /issues\/comments\/4$/u);
+});
+
+test('authority projection fails closed when duplicate repair is rejected', async () => {
+  const authoritative = createLedger(task);
+  const body = renderLedgerComment(authoritative);
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (_url, options) =>
+      options.method === 'DELETE'
+        ? response(403, { message: 'forbidden' })
+        : response(200, [
+            {
+              id: 2,
+              body,
+              user: { login: 'github-actions[bot]', type: 'Bot' },
+            },
+            {
+              id: 4,
+              body,
+              user: { login: 'github-actions[bot]', type: 'Bot' },
+            },
+          ]),
+  });
+
+  await assert.rejects(
+    () => loadLedgerProjection(api, task, authoritative),
+    /Failed to remove duplicate workflow-owned ledger comment 4: HTTP 403/u,
+  );
 });
 
 test('missing ledger is created once and pinned only with an unoccupied issue pin', async () => {

@@ -112,7 +112,7 @@ function boundLedger() {
   return ledger;
 }
 
-test('storage-authoritative dispatch records and resolves the launch outbox before binding the run', async () => {
+test('storage-authoritative dispatch records the outbox and resolves it after persisting the run binding', async () => {
   const port = new InMemoryStoragePort();
   const seed = createLedger(task);
   acceptIntent(seed, {
@@ -171,6 +171,62 @@ test('storage-authoritative dispatch records and resolves the launch outbox befo
   const stored = await port.readTask(task);
   assert.equal(stored?.controllerState?.generations[0].state, 'active');
   assert.equal(stored?.controllerState?.generations[0].attempt?.runId, runId);
+});
+
+test('a launched worker stays active when launch-outbox resolution fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-outbox-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-outbox-failure',
+    transportRunId: 737,
+    occurredAt: '2026-08-08T06:45:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'outbox-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:outbox-failure',
+    seed,
+  );
+  port.resolveLaunchOutcome = async () => {
+    throw new Error('transient Firestore failure');
+  };
+  const runId = 73701;
+  const client = {
+    request: async () => ({
+      status: 200,
+      data: {
+        workflow_run_id: runId,
+        run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+        html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+      },
+      headers: new Headers(),
+    }),
+    requestOk: async () => ({ id: 9 }),
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(loaded.ledger.generations[0].state, 'active');
+  assert.equal(loaded.ledger.generations[0].attempt?.runId, runId);
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'active',
+  );
 });
 
 test('authority records projection convergence only after the compatibility comment succeeds', async () => {

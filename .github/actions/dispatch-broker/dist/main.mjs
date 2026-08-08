@@ -937,6 +937,18 @@ var GitHubApiError = class extends Error {
     this.data = data;
   }
 };
+var LedgerProjectionRepairError = class extends Error {
+  constructor(commentId, status) {
+    super(
+      `Failed to remove duplicate workflow-owned ledger comment ${commentId}: HTTP ${status}`
+    );
+    this.commentId = commentId;
+    this.status = status;
+    this.name = "LedgerProjectionRepairError";
+  }
+  commentId;
+  status;
+};
 var BrokerConcurrencyMismatchError = class extends Error {
   retryable;
   constructor(message, { retryable = false } = {}) {
@@ -1207,6 +1219,18 @@ async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "gith
     (comment2) => comment2.body?.includes(LEDGER_MARKER) && comment2.user?.login === workflowIdentity && comment2.user?.type === "Bot"
   ).sort((left, right) => left.id - right.id);
   if (ownedCandidates[0]) {
+    for (const duplicate of ownedCandidates.slice(1)) {
+      const response = await api2.request(
+        `${root}/issues/comments/${duplicate.id}`,
+        { method: "DELETE" }
+      );
+      if (response.status !== 404 && (response.status < 200 || response.status >= 300)) {
+        throw new LedgerProjectionRepairError(duplicate.id, response.status);
+      }
+      console.log(
+        `::notice::Removed duplicate workflow-owned dispatch-ledger projection comment ${duplicate.id}.`
+      );
+    }
     return {
       comment: ownedCandidates[0],
       ledger,
@@ -3162,18 +3186,9 @@ async function dispatchAccepted(client, loaded) {
       }
       await saveLedger2(client, loaded);
     });
+    let binding;
     try {
-      const binding = await dispatchWorker(client, generation, loaded.ledger.task);
-      bindRun(loaded.ledger, generation.generation, binding);
-      if (loaded.authority) {
-        const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
-        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
-          status: "launched",
-          binding
-        });
-      }
-      await saveLedger2(client, loaded);
-      return;
+      binding = await dispatchWorker(client, generation, loaded.ledger.task);
     } catch (error) {
       if (isDefiniteDispatchRejection(error)) {
         await runPhase({ client, loaded }, "launch", async () => {
@@ -3209,6 +3224,23 @@ async function dispatchAccepted(client, loaded) {
       await saveLedger2(client, loaded);
       return;
     }
+    bindRun(loaded.ledger, generation.generation, binding);
+    await saveLedger2(client, loaded);
+    if (loaded.authority) {
+      const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+      try {
+        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+          status: "launched",
+          binding
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Worker ${binding.runId} was launched and bound, but its launch-outbox resolution will need reconciliation: ${message}`
+        );
+      }
+    }
+    return;
   }
 }
 function completionMatches(generation, normalized, run) {
@@ -3395,6 +3427,7 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
       projected.projectionAvailable = true;
       return projected;
     } catch (error) {
+      if (error instanceof LedgerProjectionRepairError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       console.log(
         `::warning::Loaded authoritative Firestore state for ${task.repository}#${task.issue}, but its GitHub ledger projection is unavailable this pass: ${message}`
