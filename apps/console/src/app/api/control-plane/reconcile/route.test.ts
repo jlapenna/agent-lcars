@@ -19,7 +19,11 @@ function request(token?: string): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  verifyReconcileOidcToken.mockResolvedValue({});
+  verifyReconcileOidcToken.mockResolvedValue({
+    repository: 'jlapenna/agent-lcars',
+    repositoryId: 1_307_149_765,
+    runId: 93_099_054_125,
+  });
   runHostedReconcile.mockResolvedValue({
     candidates: 2,
     dispatched: 2,
@@ -43,6 +47,11 @@ describe('POST /api/control-plane/reconcile', () => {
       'signed-token',
       'jlapenna/agent-lcars',
     );
+    expect(runHostedReconcile).toHaveBeenCalledWith({
+      repository: 'jlapenna/agent-lcars',
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_125,
+    });
     await expect(response.json()).resolves.toMatchObject({
       candidates: 2,
       dispatched: 2,

@@ -139,23 +139,23 @@ contracts aligned for both modes.
 
 `.github/workflows/dispatch-reconcile.yml` runs every 30 minutes (offset
 from :00/:30, cron `7,37 * * * *`) and on manual `workflow_dispatch`. Its own
-job is read-only discovery: it lists every currently open issue/PR carrying
+GitHub-hosted job authenticates to the App Hosting control plane with OIDC.
+The hosted endpoint lists every currently open issue/PR carrying
 an `agent:*` or `review:*` label, unioned with every open issue/PR assigned to
 `vars.AGENT_FLEET_LOGIN` (`jclaw-bot`) — the durable, label-independent
 signal `claim-issue` already sets at the start of every worker dispatch and
 never clears, which is what still finds a ledger whose last `agent:*` label
 was removed while its generation was active
 (`libs/dispatch-reconcile/src/scan.ts`'s `discoverReconcileCandidates`) —
-then fires one `workflow_dispatch`
-`kind: reconcile` call at `agent-router.yml` per candidate (`scanReconcile` /
-`dispatchReconcileScan`). It never touches a ledger comment itself — every
-actual repair happens inside the exact same per-issue serialized broker job
-every other trigger already goes through (the reserved
-`agent-lcars-dispatch-v1-<repositoryId>-<issue>` concurrency group, #349's
-indirect concurrency corroboration for workflow_dispatch-triggered runs, and
-the usual fail-closed → `status:needs-human` + maintainer parking path). See
-`apps/dispatch-broker/src/main.ts`'s `reconcileLedger` and
-`trackMissingRun` for the pure repair logic and
+then normalizes and processes each candidate
+directly through the shared controller under the Firestore authority lease.
+It does not create one `agent-router.yml` run per candidate; that removes the
+repair path's dependency on the self-hosted control-plane pool. Every hosted
+invocation uses a request-unique lease owner so overlapping scheduled/manual
+calls serialize through Firestore instead of bypassing the live lease as the
+same owner. The manual `action-fallback` transport retains the prior
+self-hosted scanner for rollback. See `apps/dispatch-broker/src/main.ts`'s
+`reconcileLedger` and `trackMissingRun` for the pure repair logic and
 `apps/dispatch-broker/src/main.spec.ts` for its interruption/
 idempotency test coverage.
 

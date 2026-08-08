@@ -2997,7 +2997,7 @@ function assertWorkerRun(run, task, generation, expectedWorkflow) {
     throw new Error("Worker run identity does not match its ledger binding");
   }
 }
-async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString()) {
+async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), maintainer = "") {
   let active = activeGeneration(loaded.ledger);
   if (!active) return;
   const expectedWorkflow = workerWorkflow(active.pipeline);
@@ -3073,7 +3073,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
     await saveLedger2(client, loaded);
     return;
   }
-  await trackStuckRun(client, loaded, active, run, now);
+  await trackStuckRun(client, loaded, active, run, now, maintainer);
 }
 var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
@@ -3102,7 +3102,7 @@ async function readLaunchOperationForReconciliation(loaded, attemptId) {
     return { ok: false };
   }
 }
-async function trackMissingRun(client, loaded, generation, now) {
+async function trackMissingRun(client, loaded, generation, now, maintainer) {
   const ledger = loaded.ledger;
   if (reconcileAnomaliesFor(ledger, generation.generation, "reconcile-parked").length > 0) {
     return;
@@ -3155,12 +3155,7 @@ async function trackMissingRun(client, loaded, generation, now) {
     }
   }
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env("MAINTAINER_LOGIN", false),
-      parkFailure
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -3263,7 +3258,7 @@ async function trackMissingRun(client, loaded, generation, now) {
 var RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
 var RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
 var RECONCILE_STUCK_RUN_MAX_ATTEMPTS = 3;
-async function trackStuckRun(client, loaded, generation, run, now) {
+async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
   const ledger = loaded.ledger;
   if (reconcileAnomaliesFor(
     ledger,
@@ -3296,12 +3291,7 @@ async function trackStuckRun(client, loaded, generation, run, now) {
     evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
   }) : void 0;
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env("MAINTAINER_LOGIN", false),
-      parkFailure
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -3362,7 +3352,7 @@ async function trackStuckRun(client, loaded, generation, run, now) {
   }
   await saveLedger2(client, loaded);
 }
-async function repairMissingIntentFromLabel(client, loaded, now, runId) {
+async function repairMissingIntentFromLabel(client, loaded, now, runId, maintainer = "") {
   const ledger = loaded.ledger;
   const task = ledger.task;
   const root = repositoryPath(task);
@@ -3381,7 +3371,6 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     labelName = pipeline && `review:${pipeline}`;
   }
   if (!pipeline) return;
-  const maintainer = env("MAINTAINER_LOGIN", false);
   const timeline = await listAll(
     client,
     `${root}/issues/${task.issue}/timeline`
@@ -3490,7 +3479,7 @@ async function reconcileControlState(client, loaded, issueClosed, now, runId) {
   }
   return issueClosed;
 }
-async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId, issueClosed) {
+async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId, issueClosed, maintainer = "") {
   const ledger = loaded.ledger;
   const anchorClosed = await reconcileControlState(
     client,
@@ -3510,13 +3499,13 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
       if (!launchRead.ok) return;
       const operation = launchRead.operation;
       if (operation?.operationId === attemptId && operation.attemptId === attemptId && (operation.status === "pending" || operation.resolution?.status === "rejected" && operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)) {
-        await trackMissingRun(client, loaded, active2, now);
+        await trackMissingRun(client, loaded, active2, now, maintainer);
       }
     }
     return;
   }
   if (ledger.generations.length === 0 || !activeGeneration(ledger)) {
-    await repairMissingIntentFromLabel(client, loaded, now, runId);
+    await repairMissingIntentFromLabel(client, loaded, now, runId, maintainer);
   }
   if (ledger.generations.length === 0) return;
   const active = activeGeneration(ledger);
@@ -3534,12 +3523,7 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
       reason: "internal_error",
       retryDisposition: "manual"
     });
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env("MAINTAINER_LOGIN", false),
-      parkFailure
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
     addAnomaly(
       ledger,
       "reconcile-invariant-violation",
@@ -3557,7 +3541,7 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
     return;
   }
   if (active.attempt?.runId) return;
-  await trackMissingRun(client, loaded, active, now);
+  await trackMissingRun(client, loaded, active, now, maintainer);
 }
 async function dispatchReconcileScan2(client, repository, issueNumbers) {
   return dispatchReconcileScan(
@@ -3723,8 +3707,35 @@ async function dispatchAccepted(client, loaded) {
     return;
   }
 }
+var CompletionBindingError = class extends Error {
+};
+function completionLedgerMatches(generation, normalized) {
+  return generation && generation.intentId === normalized.intentId && generation.attempt?.token === normalized.token && generation.attempt?.runId === normalized.workerRunId && normalized.workflow === workerWorkflow(generation.pipeline);
+}
+function assertCompletionLedgerBinding(ledger, normalized) {
+  const generation = ledger.generations.find(
+    (candidate) => candidate.generation === normalized.generation
+  );
+  if (!generation || !completionLedgerMatches(generation, normalized)) {
+    throw new CompletionBindingError(
+      "Completion callback does not match the bound worker run"
+    );
+  }
+  return generation;
+}
+async function assertCompletionBindingBeforeInitialization(client, task, normalized, storageMode, storagePortFactory) {
+  const ledger = storageMode === "authority" ? (await storagePortFactory().readTask(task))?.controllerState : (await loadLedger(client, task, void 0, {
+    createIfMissing: false
+  }))?.ledger;
+  if (!ledger) {
+    throw new CompletionBindingError(
+      "Completion callback does not match the bound worker run"
+    );
+  }
+  assertCompletionLedgerBinding(ledger, normalized);
+}
 function completionMatches(generation, normalized, run) {
-  return generation && generation.intentId === normalized.intentId && generation.attempt?.token === normalized.token && generation.attempt?.runId === normalized.workerRunId && run.id === normalized.workerRunId;
+  return completionLedgerMatches(generation, normalized) && run.id === normalized.workerRunId;
 }
 async function handleCompletion(client, loaded, normalized, polling = {}) {
   const now = polling.now ?? Date.now;
@@ -3777,7 +3788,7 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
       generation.pipeline,
       normalized.readinessFailure,
       run.html_url,
-      env("MAINTAINER_LOGIN", false)
+      polling.maintainer ?? ""
     );
   }
   if (generation.state === "completed") {
@@ -3790,6 +3801,7 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
     observeCompletion(loaded.ledger, generation.generation, run.id);
   }
   await saveLedger2(client, loaded);
+  if (polling.pollUntilTerminal === false) return;
   const deadline = now() + 12e4;
   let delay = 2e3;
   while (run.status !== "completed" && now() < deadline) {
@@ -3909,7 +3921,7 @@ async function healStaleAgentLabels(client, loaded, intent) {
   });
   if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities) {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities, authorityBusyWaitMs = 13e4) {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
   if (storageMode === "authority") {
     const port = storagePortFactory();
@@ -3924,10 +3936,15 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
           // Missing state needs a GitHub projection check below before a new
           // empty aggregate can be created safely.
           createIfMissing: false,
-          busyWaitMs: 13e4
+          busyWaitMs: authorityBusyWaitMs
         }
       );
     } catch (error) {
+      if (normalized.kind === "completion" && (error instanceof AuthorityStateNotFoundError || error instanceof AuthorityStateMissingError)) {
+        throw new CompletionBindingError(
+          "Completion callback does not match the bound worker run"
+        );
+      }
       if (error instanceof AuthorityStateNotFoundError) {
         const initializationEvidence = await classifyAuthorityTaskInitialization(
           client,
@@ -3946,9 +3963,24 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
           task,
           leaseOwner,
           createLedger(task),
-          { busyWaitMs: 13e4 }
+          { busyWaitMs: authorityBusyWaitMs }
         );
       } else {
+        throw error;
+      }
+    }
+    if (normalized.kind === "completion") {
+      try {
+        assertCompletionLedgerBinding(authority.ledger, normalized);
+      } catch (error) {
+        try {
+          await releaseAuthority(authority.session, authority.ledger);
+        } catch (releaseError) {
+          const message = releaseError instanceof Error ? releaseError.message : String(releaseError);
+          console.log(
+            `::warning::Failed to release rejected completion lease; it will expire automatically: ${message}`
+          );
+        }
         throw error;
       }
     }
@@ -4001,7 +4033,9 @@ async function processNormalizedEvent({
   authorityOwner,
   maintainer = "",
   actionConcurrency,
-  projectionIdentities
+  projectionIdentities,
+  pollCompletionUntilTerminal = true,
+  authorityBusyWaitMs = 13e4
 }) {
   if (normalized.kind === "ignored") return;
   const storageMode = parseDispatchStorageMode(storageModeInput);
@@ -4026,6 +4060,15 @@ async function processNormalizedEvent({
       throw error;
     }
   }
+  if (normalized.kind === "completion" && storageMode !== "authority") {
+    await assertCompletionBindingBeforeInitialization(
+      client,
+      task,
+      normalized,
+      storageMode,
+      storagePortFactory
+    );
+  }
   let loaded;
   try {
     loaded = await loadBrokerLedger(
@@ -4037,7 +4080,8 @@ async function processNormalizedEvent({
       authorityOwner,
       storagePortFactory,
       authorityEpoch,
-      projectionIdentities
+      projectionIdentities,
+      authorityBusyWaitMs
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {
@@ -4046,6 +4090,7 @@ async function processNormalizedEvent({
       );
       throw error;
     }
+    if (error instanceof CompletionBindingError) throw error;
     await failClosed(client, task, maintainer, error);
   }
   if (!loaded) {
@@ -4057,72 +4102,86 @@ async function processNormalizedEvent({
     );
     return;
   }
-  await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
-    if (normalized.kind === "reconcile") {
-      await runPhase(
-        { client, loaded },
-        "reconciliation",
-        () => reconcileControlState(
-          client,
-          loaded,
-          normalized.issueClosed,
-          (/* @__PURE__ */ new Date()).toISOString(),
-          runId
-        )
-      );
+    if (normalized.kind === "completion") {
+      assertCompletionLedgerBinding(loaded.ledger, normalized);
     }
-    await reconcileActive(client, loaded);
-    if (normalized.kind === "intent") {
-      const accepted = await runPhase(
-        { client, loaded },
-        "intent",
-        () => acceptIntent(loaded.ledger, normalized.intent)
-      );
-      await saveLedger2(client, loaded);
-      if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
-        await healStaleAgentLabels(client, loaded, normalized.intent);
-      }
-    } else if (normalized.kind === "anchor-control") {
-      await applyAnchorControlTransition(client, loaded, normalized.control);
-    } else if (normalized.kind === "control-evidence") {
-      recordControlEvidence(loaded.ledger, normalized.evidence);
-      await saveLedger2(client, loaded);
-    } else if (normalized.kind === "completion") {
-      await handleCompletion(client, loaded, normalized);
-    } else if (normalized.kind === "reconcile") {
-      await runPhase(
-        { client, loaded },
-        "reconciliation",
-        () => reconcileLedger(
-          client,
-          loaded,
-          (/* @__PURE__ */ new Date()).toISOString(),
-          runId,
-          normalized.issueClosed
-        )
-      );
-    } else {
-      throw new Error(
-        `Unsupported normalized event kind: ${normalized.kind}`
-      );
-    }
-    await dispatchAccepted(client, loaded);
+    await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
     try {
-      await saveProjectionCheckpoint(client, loaded);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(
-        `::warning::Failed to record the projector's convergence checkpoint: ${message}`
+      if (normalized.kind === "reconcile") {
+        await runPhase(
+          { client, loaded },
+          "reconciliation",
+          () => reconcileControlState(
+            client,
+            loaded,
+            normalized.issueClosed,
+            (/* @__PURE__ */ new Date()).toISOString(),
+            runId
+          )
+        );
+      }
+      await reconcileActive(
+        client,
+        loaded,
+        (/* @__PURE__ */ new Date()).toISOString(),
+        maintainer
       );
+      if (normalized.kind === "intent") {
+        const accepted = await runPhase(
+          { client, loaded },
+          "intent",
+          () => acceptIntent(loaded.ledger, normalized.intent)
+        );
+        await saveLedger2(client, loaded);
+        if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
+          await healStaleAgentLabels(client, loaded, normalized.intent);
+        }
+      } else if (normalized.kind === "anchor-control") {
+        await applyAnchorControlTransition(client, loaded, normalized.control);
+      } else if (normalized.kind === "control-evidence") {
+        recordControlEvidence(loaded.ledger, normalized.evidence);
+        await saveLedger2(client, loaded);
+      } else if (normalized.kind === "completion") {
+        await handleCompletion(client, loaded, normalized, {
+          pollUntilTerminal: pollCompletionUntilTerminal,
+          maintainer
+        });
+      } else if (normalized.kind === "reconcile") {
+        await runPhase(
+          { client, loaded },
+          "reconciliation",
+          () => reconcileLedger(
+            client,
+            loaded,
+            (/* @__PURE__ */ new Date()).toISOString(),
+            runId,
+            normalized.issueClosed,
+            maintainer
+          )
+        );
+      } else {
+        throw new Error(
+          `Unsupported normalized event kind: ${normalized.kind}`
+        );
+      }
+      await dispatchAccepted(client, loaded);
+      try {
+        await saveProjectionCheckpoint(client, loaded);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to record the projector's convergence checkpoint: ${message}`
+        );
+      }
+      await maybeObserveDispatchStorage(
+        storageMode,
+        storagePortFactory,
+        loaded.ledger
+      );
+    } catch (error) {
+      await failClosed(client, task, maintainer, error);
     }
-    await maybeObserveDispatchStorage(
-      storageMode,
-      storagePortFactory,
-      loaded.ledger
-    );
-  } catch (error) {
-    await failClosed(client, task, maintainer, error);
   } finally {
     if (loaded?.authority) {
       try {
@@ -4340,6 +4399,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
 }
 export {
+  CompletionBindingError,
   FRESH_INTENT_OUTCOMES,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
@@ -4350,6 +4410,8 @@ export {
   RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  assertCompletionBindingBeforeInitialization,
+  assertCompletionLedgerBinding,
   assertWorkerRun,
   completionMatches,
   contextFor,

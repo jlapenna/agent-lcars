@@ -23,7 +23,10 @@ import {
 import {
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  assertCompletionBindingBeforeInitialization,
+  assertCompletionLedgerBinding,
   assertWorkerRun,
+  CompletionBindingError,
   completionMatches,
   decode,
   discoverRecentlyClosedReconcileCandidates,
@@ -54,7 +57,11 @@ import {
   wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, makeIntent, normalizeEvent } from './normalize.js';
-import { acquireAuthority } from './storage/authority.js';
+import {
+  acquireAuthority,
+  persistAuthority,
+  releaseAuthority,
+} from './storage/authority.js';
 import { InMemoryStoragePort } from './storage/in-memory-port.js';
 
 const task = {
@@ -1242,6 +1249,33 @@ test('authority rejects an existing comment-backed task that missed exact-state 
   assert.equal(await port.readTask(task), undefined);
 });
 
+test('authority supports immediate lease deferral for unbounded hosted scans', async () => {
+  const port = new InMemoryStoragePort();
+  await acquireAuthority(port, task, 'other-controller', boundLedger());
+  const client = {
+    requestOk: async () => {
+      throw new Error('A contended lease must defer before GitHub projection');
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'reconcile', task },
+        false,
+        'authority',
+        'hosted-scan',
+        () => port,
+        '',
+        undefined,
+        0,
+      ),
+    /already leased/u,
+  );
+});
+
 test('authority may seed a genuinely new task with no compatibility projection', async () => {
   const port = new InMemoryStoragePort();
   const calls = [];
@@ -1484,6 +1518,7 @@ test('completion binding rejects wrong run, intent, and token', () => {
     intentId: 'intent-1',
     token: 'dispatch_token_123456',
     workerRunId: 42,
+    workflow: 'codex.yml',
   };
   assert.equal(completionMatches(generation, normalized, { id: 42 }), true);
   assert.equal(
@@ -1510,6 +1545,238 @@ test('completion binding rejects wrong run, intent, and token', () => {
     ),
     false,
   );
+});
+
+test('authoritative completion binding rejects stale body fields before mutation', () => {
+  const ledger = boundLedger();
+  const before = structuredClone(ledger);
+  const normalized = {
+    kind: 'completion' as const,
+    task,
+    sourceKind: 'completion' as const,
+    sourceId: 'worker-run:42',
+    transportRunId: 42,
+    workerRunId: 42,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workflow: 'codex.yml',
+  };
+
+  assert.equal(assertCompletionLedgerBinding(ledger, normalized).generation, 1);
+  for (const stale of [
+    { ...normalized, generation: 2 },
+    { ...normalized, workerRunId: 43 },
+    { ...normalized, intentId: 'other' },
+    { ...normalized, token: 'other' },
+    { ...normalized, workflow: 'claude.yml' },
+  ]) {
+    assert.throws(
+      () => assertCompletionLedgerBinding(ledger, stale),
+      CompletionBindingError,
+    );
+  }
+  assert.deepEqual(ledger, before);
+});
+
+test('completion binding rejects missing authority state before initialization', async () => {
+  const port = new InMemoryStoragePort();
+  const requests = [];
+  const normalized = {
+    kind: 'completion' as const,
+    task,
+    sourceKind: 'completion' as const,
+    sourceId: 'worker-run:42',
+    transportRunId: 42,
+    workerRunId: 42,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workflow: 'codex.yml',
+  };
+
+  await assert.rejects(
+    () =>
+      assertCompletionBindingBeforeInitialization(
+        {
+          request: async (...args) => {
+            requests.push(args);
+            throw new Error('Completion preflight must not call GitHub');
+          },
+          requestOk: async (...args) => {
+            requests.push(args);
+            throw new Error('Completion preflight must not call GitHub');
+          },
+        },
+        task,
+        normalized,
+        'authority',
+        () => port,
+      ),
+    CompletionBindingError,
+  );
+  assert.equal(await port.readTask(task), undefined);
+  assert.deepEqual(requests, []);
+});
+
+test('authority completion waits for bindRun before validating and projecting', async () => {
+  const port = new InMemoryStoragePort();
+  const dispatching = dispatchingLedger().ledger;
+  const controller = await acquireAuthority(
+    port,
+    task,
+    'dispatch-controller',
+    dispatching,
+  );
+  let controllerReleased = false;
+  const projectionCalls = [];
+  const client = {
+    request: async () => {
+      throw new Error('No projection mutation expected');
+    },
+    requestOk: async (path) => {
+      assert.equal(controllerReleased, true);
+      projectionCalls.push(path);
+      return [
+        {
+          id: 9,
+          body: renderLedgerComment(controller.ledger),
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        },
+      ];
+    },
+  };
+  const normalized = {
+    kind: 'completion' as const,
+    task,
+    sourceKind: 'completion' as const,
+    sourceId: 'worker-run:42',
+    transportRunId: 42,
+    workerRunId: 42,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workflow: 'codex.yml',
+  };
+
+  const load = loadBrokerLedger(
+    client,
+    task,
+    normalized,
+    false,
+    'authority',
+    'completion:42',
+    () => port,
+    '',
+    undefined,
+    500,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  bindRun(controller.ledger, 1, {
+    runId: 42,
+    runUrl: 'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+    htmlUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+    workflow: 'codex.yml',
+  });
+  await persistAuthority(controller.session, controller.ledger);
+  await releaseAuthority(controller.session, controller.ledger);
+  controllerReleased = true;
+
+  const loaded = await load;
+  assert.equal(loaded?.ledger.generations[0].attempt?.runId, 42);
+  assert.equal(projectionCalls.length, 1);
+  assert.ok(loaded?.authority);
+  await releaseAuthority(loaded.authority, loaded.ledger);
+});
+
+test('authority completion rejects an invalid binding before GitHub projection', async () => {
+  const port = new InMemoryStoragePort();
+  const seeded = await acquireAuthority(
+    port,
+    task,
+    'seed-controller',
+    boundLedger(),
+  );
+  await releaseAuthority(seeded.session, seeded.ledger);
+  const client = {
+    request: async () => {
+      throw new Error('Invalid completion must not mutate GitHub projection');
+    },
+    requestOk: async () => {
+      throw new Error('Invalid completion must not read GitHub projection');
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        {
+          kind: 'completion',
+          task,
+          sourceKind: 'completion',
+          sourceId: 'worker-run:99',
+          transportRunId: 99,
+          workerRunId: 99,
+          generation: 1,
+          intentId: 'intent-1',
+          token: 'dispatch_token_123456',
+          workflow: 'codex.yml',
+        },
+        false,
+        'authority',
+        'completion:99',
+        () => port,
+      ),
+    CompletionBindingError,
+  );
+  assert.equal((await port.readTask(task))?.lease, undefined);
+});
+
+test('authority completion rejects shadow-only state before fail-closed side effects', async () => {
+  const port = new InMemoryStoragePort();
+  await port.writeTask(
+    task,
+    undefined,
+    { signals: [], intents: [] },
+    '2026-08-08T00:00:00.000Z',
+  );
+  const client = {
+    request: async () => {
+      throw new Error('Shadow-only completion must not mutate GitHub');
+    },
+    requestOk: async () => {
+      throw new Error('Shadow-only completion must not read GitHub');
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        {
+          kind: 'completion',
+          task,
+          sourceKind: 'completion',
+          sourceId: 'worker-run:42',
+          transportRunId: 42,
+          workerRunId: 42,
+          generation: 1,
+          intentId: 'intent-1',
+          token: 'dispatch_token_123456',
+          workflow: 'codex.yml',
+        },
+        false,
+        'authority',
+        'completion:42',
+        () => port,
+      ),
+    CompletionBindingError,
+  );
+  assert.equal((await port.readTask(task))?.controllerState, undefined);
+  assert.equal((await port.readTask(task))?.lease, undefined);
 });
 
 test('only unambiguous non-transient 4xx dispatch failures are definite rejections', () => {
@@ -1972,7 +2239,9 @@ test('a trusted credential failure opens the lane breaker before completion can 
       readinessFailure: 'credential',
     };
 
-    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion, {
+      maintainer: 'jlapenna',
+    });
 
     assert.equal(ledger.generations[0].state, 'completed');
     assert.equal(ledger.generations[0].attempt.outcome, 'startup-failure');
@@ -1987,7 +2256,9 @@ test('a trusted credential failure opens the lane breaker before completion can 
     // The already-recorded completion source makes a stale callback a no-op,
     // so it must not recreate the breaker from old evidence.
     openIssues = [];
-    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion);
+    await handleCompletion(client, { ledger, comment: { id: 9 } }, completion, {
+      maintainer: 'jlapenna',
+    });
     assert.equal(
       calls.filter(
         (call) => call.path.endsWith('/issues') && call.method === 'POST',
@@ -1997,6 +2268,47 @@ test('a trusted credential failure opens the lane breaker before completion can 
   } finally {
     delete process.env.MAINTAINER_LOGIN;
   }
+});
+
+test('a hosted completion records the observation without polling its caller', async () => {
+  const ledger = boundLedger();
+  let runReads = 0;
+  let sleeps = 0;
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) {
+        runReads += 1;
+        return workerRun();
+      }
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+
+  await handleCompletion(
+    client,
+    { ledger, comment: { id: 9 } },
+    {
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceId: 'worker-run:42',
+      transportRunId: 42,
+    },
+    {
+      pollUntilTerminal: false,
+      sleep: async () => {
+        sleeps += 1;
+      },
+    },
+  );
+
+  assert.equal(runReads, 1);
+  assert.equal(sleeps, 0);
+  assert.equal(ledger.generations[0].state, 'completion-observed');
 });
 
 test('authority renews its lease before every completion poll that can cross the original expiry', async () => {
@@ -2148,7 +2460,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
       RECONCILE_T0,
       RECONCILE_MISSING_RUN_GRACE_MS / 60_000,
     );
-    await reconcileLedger(client, loaded, t1);
+    await reconcileLedger(client, loaded, t1, 0, undefined, 'jlapenna');
     let missing = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     );
@@ -2169,7 +2481,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
     const savesBefore = calls.filter((call) =>
       call.path.includes('/issues/comments/9'),
     ).length;
-    await reconcileLedger(client, loaded, t1);
+    await reconcileLedger(client, loaded, t1, 0, undefined, 'jlapenna');
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-missing-run',
@@ -2189,7 +2501,14 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
       t1,
       RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000 - 1,
     );
-    await reconcileLedger(client, loaded, tStillTooSoon);
+    await reconcileLedger(
+      client,
+      loaded,
+      tStillTooSoon,
+      0,
+      undefined,
+      'jlapenna',
+    );
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-missing-run',
@@ -2200,7 +2519,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
     // Pass 4: a full interval past the last COUNTED observation -- records
     // the second attempt.
     const t2 = addMinutes(t1, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileLedger(client, loaded, t2);
+    await reconcileLedger(client, loaded, t2, 0, undefined, 'jlapenna');
     missing = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     );
@@ -2216,7 +2535,7 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
     // RECONCILE_MISSING_RUN_MAX_ATTEMPTS -- parks needs-human + maintainer,
     // and records both the observation and the park in the ledger.
     const t3 = addMinutes(t2, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileLedger(client, loaded, t3);
+    await reconcileLedger(client, loaded, t3, 0, undefined, 'jlapenna');
     missing = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-missing-run',
     );
@@ -2238,6 +2557,9 @@ test('reconcileLedger walks a stuck dispatching generation through grace, idempo
       client,
       loaded,
       addMinutes(t3, 10 * RECONCILE_MISSING_RUN_MIN_INTERVAL_MS),
+      0,
+      undefined,
+      'jlapenna',
     );
     assert.equal(calls.length, callsBeforeFinal);
     assert.equal(ledger.revision, revisionBeforeFinal);
@@ -2577,7 +2899,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
 
     // Pass 1: grace period has just elapsed -- first counted observation.
     const t1 = addMinutes(RECONCILE_T0, RECONCILE_STUCK_RUN_GRACE_MS / 60_000);
-    await reconcileActive(client, loaded, t1);
+    await reconcileActive(client, loaded, t1, 'jlapenna');
     let stuck = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-stuck-run',
     );
@@ -2599,7 +2921,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
     const savesBefore = calls.filter((call) =>
       call.path.includes('/issues/comments/9'),
     ).length;
-    await reconcileActive(client, loaded, t1);
+    await reconcileActive(client, loaded, t1, 'jlapenna');
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-stuck-run',
@@ -2619,7 +2941,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
       t1,
       RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000 - 1,
     );
-    await reconcileActive(client, loaded, tStillTooSoon);
+    await reconcileActive(client, loaded, tStillTooSoon, 'jlapenna');
     assert.equal(
       ledger.anomalies.filter(
         (anomaly) => anomaly.kind === 'reconcile-stuck-run',
@@ -2630,7 +2952,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
     // Pass 4: a full interval past the last COUNTED observation -- records
     // the second attempt.
     const t2 = addMinutes(t1, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileActive(client, loaded, t2);
+    await reconcileActive(client, loaded, t2, 'jlapenna');
     stuck = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-stuck-run',
     );
@@ -2646,7 +2968,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
     // RECONCILE_STUCK_RUN_MAX_ATTEMPTS -- parks needs-human + maintainer,
     // and records both the observation and a distinctly-kinded park anomaly.
     const t3 = addMinutes(t2, RECONCILE_STUCK_RUN_MIN_INTERVAL_MS / 60_000);
-    await reconcileActive(client, loaded, t3);
+    await reconcileActive(client, loaded, t3, 'jlapenna');
     stuck = ledger.anomalies.filter(
       (anomaly) => anomaly.kind === 'reconcile-stuck-run',
     );
@@ -2677,6 +2999,7 @@ test('reconcileActive walks a stuck bound run through grace, idempotent re-obser
       client,
       loaded,
       addMinutes(t3, 10 * RECONCILE_STUCK_RUN_MIN_INTERVAL_MS),
+      'jlapenna',
     );
     assert.equal(ledger.revision, revisionBeforeFinal);
     assert.equal(
@@ -2861,7 +3184,7 @@ function quickTaskRepairIssue({ author = 'jlapenna', persistedDigest } = {}) {
 }
 
 test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a live, unambiguous agent label applied by the maintainer (#520)', async () => {
-  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  delete process.env.MAINTAINER_LOGIN;
   try {
     const ledger = createLedger(task);
     const { client, calls } = reconcileStubClient({
@@ -2874,6 +3197,8 @@ test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a l
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -2924,6 +3249,8 @@ test('reconcileLedger repair falls through to the review:* namespace on a pull r
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -2954,6 +3281,8 @@ test('reconcileLedger repair does NOT fire when the label was most recently appl
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 0);
@@ -2978,6 +3307,8 @@ test('reconcileLedger repairs a creation-time Quick Task label from its digest a
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:00:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -3010,6 +3341,8 @@ test('reconcileLedger does NOT trust a valid creation-time Quick Task marker aut
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:00:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 0);
@@ -3036,6 +3369,8 @@ test('a real non-maintainer label event takes precedence over the original Quick
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:00:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 0);
@@ -3059,6 +3394,8 @@ test('reconcileLedger rejects a maintainer-authored Quick Task whose creation ma
           { ledger, comment: { id: 9 } },
           '2026-08-04T06:00:00.000Z',
           30880000,
+          undefined,
+          'jlapenna',
         ),
       /Quick Task marker digest mismatch/u,
     );
@@ -3087,6 +3424,8 @@ test('reconcileLedger repair does NOT treat an ordinary maintainer-authored issu
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 0);
   } finally {
@@ -3152,6 +3491,8 @@ test('reconcileLedger repair pages through the full timeline: a non-maintainer r
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(
@@ -3182,6 +3523,7 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 1);
     const revisionAfterRepair = ledger.revision;
@@ -3194,6 +3536,8 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
       { ledger, comment: { id: 9 } },
       now,
       30882222,
+      undefined,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 1);
     assert.equal(ledger.revision, revisionAfterRepair);
@@ -3225,6 +3569,8 @@ test('reconcileLedger repairs a queue-evicted relabel after an earlier generatio
       { ledger, comment: { id: 9 } },
       '2026-08-04T06:31:00.000Z',
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 2);
@@ -3238,6 +3584,8 @@ test('reconcileLedger repairs a queue-evicted relabel after an earlier generatio
       { ledger, comment: { id: 9 } },
       '2026-08-04T07:01:00.000Z',
       30880001,
+      undefined,
+      'jlapenna',
     );
     assert.equal(ledger.generations.length, 2);
     assert.equal(ledger.revision, revisionAfterRepair);
@@ -3315,6 +3663,8 @@ test('reconcileLedger repair honors a Quick Task marker for its intentId (dedupe
       { ledger, comment: { id: 9 } },
       now,
       30880000,
+      undefined,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);
@@ -3359,7 +3709,14 @@ test('reconcileLedger surfaces and parks a pending generation stranded with no c
       attempt: undefined,
     });
     const { client, calls } = reconcileStubClient();
-    await reconcileLedger(client, { ledger, comment: { id: 9 } });
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      undefined,
+      0,
+      undefined,
+      'jlapenna',
+    );
     assert.ok(
       ledger.anomalies.some(
         (anomaly) => anomaly.kind === 'reconcile-invariant-violation',
@@ -3576,6 +3933,7 @@ test('reconcileLedger with issueClosed: false (the live, common case for an open
       now,
       30880000,
       /* issueClosed */ false,
+      'jlapenna',
     );
 
     assert.equal(ledger.generations.length, 1);

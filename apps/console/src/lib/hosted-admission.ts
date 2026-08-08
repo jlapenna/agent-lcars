@@ -2,18 +2,17 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
-import { processNormalizedEvent } from '@agent-lcars/dispatch-controller/main';
 import {
   normalizeEvent,
   type TimelineEvent,
   type WebhookEvent,
 } from '@agent-lcars/dispatch-controller/normalize';
-import { FirestoreStoragePort } from '@agent-lcars/dispatch-controller/storage/firestore-port';
-import { optional, required } from '@agent-lcars/util-server';
+import { optional } from '@agent-lcars/util-server';
 
 import { controlPlaneRepository, maintainerLogin } from './deployment';
 import { getGithubClient } from './github-client';
 import { assertGitHubDeliveryId } from './github-webhook-auth';
+import { processHostedControllerEvent } from './hosted-controller';
 
 const SUPPORTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
 
@@ -164,24 +163,11 @@ export async function admitGitHubWebhook({
     };
   }
 
-  await processNormalizedEvent({
+  await processHostedControllerEvent({
     normalized,
-    githubToken: required('AGENT_LCARS_GITHUB_TOKEN'),
-    storageMode: 'authority',
-    authorityEpoch: required('DISPATCH_AUTHORITY_EPOCH'),
-    storagePortFactory: () =>
-      new FirestoreStoragePort({
-        projectId: required('PROJECT_ID'),
-        databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
-      }),
     isPullRequest: Boolean(payload.pull_request ?? payload.issue?.pull_request),
     transportRunId,
     authorityOwner: `webhook:${deliveryId}`,
-    maintainer: maintainerLogin(),
-    projectionIdentities: [
-      { login: 'github-actions[bot]', type: 'Bot' },
-      { login: maintainerLogin(), type: 'User' },
-    ],
   });
 
   return { deliveryId, eventName, mode, outcome: 'processed' };

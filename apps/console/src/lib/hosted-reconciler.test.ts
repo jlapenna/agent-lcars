@@ -1,21 +1,55 @@
+import { TaskLeaseBusyError } from '@agent-lcars/dispatch-controller/storage/authority';
 import type { Octokit } from '@octokit/rest';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { processHostedControllerEvent } = vi.hoisted(() => ({
+  processHostedControllerEvent: vi.fn(),
+}));
+
+vi.mock('./hosted-controller', () => ({ processHostedControllerEvent }));
 
 import { createOctokitReconcileTransport } from './hosted-reconciler';
 
+const identity = {
+  repository: 'jlapenna/agent-lcars',
+  repositoryId: 1_307_149_765,
+  runId: 93_099_054_125,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  processHostedControllerEvent.mockResolvedValue(undefined);
+});
+
 describe('hosted reconciler GitHub transport', () => {
-  it('maps bounded discovery queries and reconcile dispatches to Octokit', async () => {
+  it('maps bounded discovery queries and processes candidates directly', async () => {
     const listForRepo = vi.fn().mockResolvedValue({
       data: [{ number: 10 }, { number: 20 }],
     });
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        id: 20,
+        number: 20,
+        title: 'Reconcile me',
+        body: '',
+        labels: ['agent:codex'],
+        created_at: '2026-08-07T00:00:00.000Z',
+        updated_at: '2026-08-08T00:00:00.000Z',
+        state: 'closed',
+        pull_request: {},
+      },
+    });
     const octokit = {
       rest: {
-        issues: { listForRepo },
-        actions: { createWorkflowDispatch },
+        issues: { listForRepo, get },
       },
     } as unknown as Octokit;
-    const transport = createOctokitReconcileTransport(octokit);
+    const transport = createOctokitReconcileTransport(
+      octokit,
+      identity,
+      '2026-08-08T12:00:00.000Z',
+      'request-1',
+    );
 
     await expect(
       transport.listIssues({
@@ -40,25 +74,76 @@ describe('hosted reconciler GitHub transport', () => {
     });
 
     await transport.dispatchReconcile('jlapenna/agent-lcars', 20);
-    expect(createWorkflowDispatch).toHaveBeenCalledWith({
+    expect(get).toHaveBeenCalledWith({
       owner: 'jlapenna',
       repo: 'agent-lcars',
-      workflow_id: 'agent-router.yml',
-      ref: 'main',
-      inputs: { kind: 'reconcile', issue: '20' },
+      issue_number: 20,
+    });
+    expect(processHostedControllerEvent).toHaveBeenCalledWith({
+      normalized: {
+        kind: 'reconcile',
+        task: {
+          repository: 'jlapenna/agent-lcars',
+          repositoryId: 1_307_149_765,
+          issue: 20,
+        },
+        issueClosed: true,
+      },
+      isPullRequest: true,
+      transportRunId: 93_099_054_125,
+      authorityOwner: 'reconcile:93099054125:20:request-1',
+      authorityBusyWaitMs: 0,
     });
   });
 
   it('rejects a malformed repository before making a GitHub request', async () => {
     const octokit = {
       rest: {
-        issues: { listForRepo: vi.fn() },
-        actions: { createWorkflowDispatch: vi.fn() },
+        issues: { listForRepo: vi.fn(), get: vi.fn() },
       },
     } as unknown as Octokit;
-    const transport = createOctokitReconcileTransport(octokit);
+    const transport = createOctokitReconcileTransport(octokit, identity);
     await expect(
       transport.dispatchReconcile('not-a-repository', 1),
     ).rejects.toThrow('Invalid GitHub repository');
+  });
+
+  it('defers a candidate with a live authority lease without failing the scan', async () => {
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        id: 20,
+        number: 20,
+        title: 'Already reconciling',
+        body: '',
+        labels: ['agent:codex'],
+        created_at: '2026-08-07T00:00:00.000Z',
+        updated_at: '2026-08-08T00:00:00.000Z',
+        state: 'open',
+      },
+    });
+    const octokit = {
+      rest: {
+        issues: { listForRepo: vi.fn(), get },
+      },
+    } as unknown as Octokit;
+    processHostedControllerEvent.mockRejectedValueOnce(
+      new TaskLeaseBusyError(
+        {
+          repository: 'jlapenna/agent-lcars',
+          repositoryId: 1_307_149_765,
+          issue: 20,
+        },
+        {
+          owner: 'webhook:delivery-1',
+          acquiredAt: '2026-08-08T12:00:00.000Z',
+          expiresAt: '2026-08-08T12:02:00.000Z',
+        },
+      ),
+    );
+    const transport = createOctokitReconcileTransport(octokit, identity);
+
+    await expect(
+      transport.dispatchReconcile('jlapenna/agent-lcars', 20),
+    ).resolves.toBeUndefined();
   });
 });

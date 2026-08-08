@@ -542,6 +542,7 @@ async function reconcileActive(
   client: GitHubApiClient,
   loaded: LoadedLedger,
   now: string = new Date().toISOString(),
+  maintainer = '',
 ): Promise<void> {
   let active = activeGeneration(loaded.ledger);
   if (!active) return;
@@ -629,7 +630,7 @@ async function reconcileActive(
   // bound (unlike trackMissingRun's case below) but GitHub has never once
   // reported it terminal. trackStuckRun applies the same bounded
   // observation-and-escalation shape to that case.
-  await trackStuckRun(client, loaded, active, run, now);
+  await trackStuckRun(client, loaded, active, run, now, maintainer);
 }
 
 // The reconciler's (#305) grace period before a still-runless dispatching
@@ -716,6 +717,7 @@ async function trackMissingRun(
   loaded: LoadedLedger,
   generation: LedgerGeneration,
   now: string,
+  maintainer: string,
 ): Promise<void> {
   const ledger = loaded.ledger;
   if (
@@ -812,12 +814,7 @@ async function trackMissingRun(
   // observable; it is now the projector, not this reconciler, that owns
   // the needs-human decision.
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env('MAINTAINER_LOGIN', false),
-      parkFailure,
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -975,6 +972,7 @@ async function trackStuckRun(
   generation: LedgerGeneration,
   run: WorkflowRun,
   now: string,
+  maintainer: string,
 ): Promise<void> {
   const ledger = loaded.ledger;
   if (
@@ -1036,12 +1034,7 @@ async function trackStuckRun(
   // disposition always satisfies it here, so this changes nothing
   // observable.
   if (parkFailure) {
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env('MAINTAINER_LOGIN', false),
-      parkFailure,
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
   }
   addAnomaly(
     ledger,
@@ -1170,6 +1163,7 @@ async function repairMissingIntentFromLabel(
   loaded: LoadedLedger,
   now: string,
   runId: number,
+  maintainer = '',
 ): Promise<void> {
   const ledger = loaded.ledger;
   const task = ledger.task;
@@ -1194,7 +1188,6 @@ async function repairMissingIntentFromLabel(
     labelName = pipeline && `review:${pipeline}`;
   }
   if (!pipeline) return;
-  const maintainer = env('MAINTAINER_LOGIN', false);
   const timeline: GitHubTimelineEvent[] = await listAll(
     client,
     `${root}/issues/${task.issue}/timeline`,
@@ -1419,6 +1412,7 @@ async function reconcileLedger(
   now: string = new Date().toISOString(),
   runId: number,
   issueClosed?: boolean,
+  maintainer = '',
 ): Promise<void> {
   const ledger = loaded.ledger;
   const anchorClosed = await reconcileControlState(
@@ -1457,7 +1451,7 @@ async function reconcileLedger(
           (operation.resolution?.status === 'rejected' &&
             operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION))
       ) {
-        await trackMissingRun(client, loaded, active, now);
+        await trackMissingRun(client, loaded, active, now, maintainer);
       }
     }
     return;
@@ -1468,7 +1462,7 @@ async function reconcileLedger(
   // the states where a missing current-label source would otherwise remain
   // invisible forever (#639).
   if (ledger.generations.length === 0 || !activeGeneration(ledger)) {
-    await repairMissingIntentFromLabel(client, loaded, now, runId);
+    await repairMissingIntentFromLabel(client, loaded, now, runId, maintainer);
   }
   if (ledger.generations.length === 0) return;
   const active = activeGeneration(ledger);
@@ -1515,12 +1509,7 @@ async function reconcileLedger(
     // Phase 4) rather than calling ensureNeedsHumanParked directly --
     // parkFailure's `manual` disposition always satisfies that gate here,
     // so this changes nothing observable.
-    await projectNeedsHumanPark(
-      client,
-      ledger.task,
-      env('MAINTAINER_LOGIN', false),
-      parkFailure,
-    );
+    await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
     addAnomaly(
       ledger,
       'reconcile-invariant-violation',
@@ -1538,7 +1527,7 @@ async function reconcileLedger(
     return;
   }
   if (active.attempt?.runId) return;
-  await trackMissingRun(client, loaded, active, now);
+  await trackMissingRun(client, loaded, active, now, maintainer);
 }
 
 // Fires one workflow_dispatch `kind: reconcile` call at agent-router.yml per
@@ -1817,16 +1806,79 @@ async function dispatchAccepted(
   }
 }
 
-function completionMatches(
+export class CompletionBindingError extends Error {}
+
+function completionLedgerMatches(
   generation: LedgerGeneration | undefined,
   normalized: CompletionEvent,
-  run: WorkflowRun,
 ): boolean | undefined {
   return (
     generation &&
     generation.intentId === normalized.intentId &&
     generation.attempt?.token === normalized.token &&
     generation.attempt?.runId === normalized.workerRunId &&
+    normalized.workflow === workerWorkflow(generation.pipeline)
+  );
+}
+
+/**
+ * Reject a completion body that is not bound to the selected task's exact
+ * authoritative generation. This check runs while the task lease is held,
+ * before projection or controller mutation, so a valid worker identity with
+ * stale or caller-selected body fields cannot park an unrelated anchor.
+ */
+export function assertCompletionLedgerBinding(
+  ledger: DispatchLedger,
+  normalized: CompletionEvent,
+): LedgerGeneration {
+  const generation = ledger.generations.find(
+    (candidate) => candidate.generation === normalized.generation,
+  );
+  if (!generation || !completionLedgerMatches(generation, normalized)) {
+    throw new CompletionBindingError(
+      'Completion callback does not match the bound worker run',
+    );
+  }
+  return generation;
+}
+
+/**
+ * Authenticate a completion against existing compatibility state without
+ * creating state, projecting a comment, or invoking fail-closed parking.
+ * Authority mode instead acquires its shared lease in loadBrokerLedger before
+ * validating, so a fast callback cannot race the controller's bindRun write.
+ * The loaded copy is checked again below before mutation in either mode.
+ */
+export async function assertCompletionBindingBeforeInitialization(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+  normalized: CompletionEvent,
+  storageMode: ReturnType<typeof parseDispatchStorageMode>,
+  storagePortFactory: () => StoragePort,
+): Promise<void> {
+  const ledger =
+    storageMode === 'authority'
+      ? (await storagePortFactory().readTask(task))?.controllerState
+      : (
+          await loadLedger(client, task, undefined, {
+            createIfMissing: false,
+          })
+        )?.ledger;
+  if (!ledger) {
+    throw new CompletionBindingError(
+      'Completion callback does not match the bound worker run',
+    );
+  }
+  assertCompletionLedgerBinding(ledger, normalized);
+}
+
+function completionMatches(
+  generation: LedgerGeneration | undefined,
+  normalized: CompletionEvent,
+  run: WorkflowRun,
+): boolean | undefined {
+  return (
+    completionLedgerMatches(generation, normalized) &&
     run.id === normalized.workerRunId
   );
 }
@@ -1838,6 +1890,8 @@ async function handleCompletion(
   polling: {
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
+    pollUntilTerminal?: boolean;
+    maintainer?: string;
   } = {},
 ): Promise<void> {
   const now = polling.now ?? Date.now;
@@ -1909,7 +1963,7 @@ async function handleCompletion(
       generation.pipeline,
       normalized.readinessFailure,
       run.html_url,
-      env('MAINTAINER_LOGIN', false),
+      polling.maintainer ?? '',
     );
   }
   if (generation.state === 'completed') {
@@ -1928,6 +1982,13 @@ async function handleCompletion(
     observeCompletion(loaded.ledger, generation.generation, run.id);
   }
   await saveLedger(client, loaded);
+
+  // A hosted callback is made by the worker run whose terminal state this
+  // loop observes. Holding that HTTP request open while polling the caller
+  // creates a circular wait: the run cannot finish until the callback
+  // returns. Persist the authenticated completion observation and let the
+  // hosted reconciler finalize it once GitHub reports the run terminal.
+  if (polling.pollUntilTerminal === false) return;
 
   const deadline = now() + 120_000;
   let delay = 2_000;
@@ -2172,6 +2233,7 @@ async function loadBrokerLedger(
   storagePortFactory: () => StoragePort = createStoragePort,
   authorityEpoch = '',
   projectionIdentities?: readonly LedgerProjectionIdentity[],
+  authorityBusyWaitMs = 130_000,
 ): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
@@ -2194,10 +2256,23 @@ async function loadBrokerLedger(
           // Missing state needs a GitHub projection check below before a new
           // empty aggregate can be created safely.
           createIfMissing: false,
-          busyWaitMs: 130_000,
+          busyWaitMs: authorityBusyWaitMs,
         },
       );
     } catch (error) {
+      // Neither an absent task nor a compatibility-only shadow record can
+      // authenticate a hosted completion. Convert both before the generic
+      // initialization/fail-closed paths so caller-selected input cannot
+      // create projection or parking side effects.
+      if (
+        normalized.kind === 'completion' &&
+        (error instanceof AuthorityStateNotFoundError ||
+          error instanceof AuthorityStateMissingError)
+      ) {
+        throw new CompletionBindingError(
+          'Completion callback does not match the bound worker run',
+        );
+      }
       if (error instanceof AuthorityStateNotFoundError) {
         const initializationEvidence =
           await classifyAuthorityTaskInitialization(
@@ -2226,9 +2301,34 @@ async function loadBrokerLedger(
           task,
           leaseOwner,
           createLedger(task),
-          { busyWaitMs: 130_000 },
+          { busyWaitMs: authorityBusyWaitMs },
         );
       } else {
+        throw error;
+      }
+    }
+    if (normalized.kind === 'completion') {
+      try {
+        // Acquire the shared lease before deciding that a callback is
+        // unbound. A just-dispatched worker can reach this endpoint while
+        // the dispatching controller still owns the lease and is about to
+        // persist bindRun; acquireAuthority waits behind that owner. Keep
+        // this check ahead of loadLedgerProjection so a genuinely invalid
+        // callback cannot create or repair GitHub projection state.
+        assertCompletionLedgerBinding(authority.ledger, normalized);
+      } catch (error) {
+        try {
+          await releaseAuthority(authority.session, authority.ledger);
+        } catch (releaseError) {
+          const message =
+            releaseError instanceof Error
+              ? releaseError.message
+              : String(releaseError);
+          console.log(
+            `::warning::Failed to release rejected completion lease; ` +
+              `it will expire automatically: ${message}`,
+          );
+        }
         throw error;
       }
     }
@@ -2294,6 +2394,12 @@ export interface BrokerPassOptions {
   /** Identities allowed to own the compatibility projection. Firestore,
    * never the comment, remains controller authority. */
   projectionIdentities?: readonly LedgerProjectionIdentity[];
+  /** How long this transport may wait for another authority lease. */
+  authorityBusyWaitMs?: number;
+  /** Hosted worker callbacks must return after recording the observation:
+   * the calling workflow cannot become terminal while its HTTP request is
+   * still waiting. Action callbacks retain the bounded terminal poll. */
+  pollCompletionUntilTerminal?: boolean;
 }
 
 /**
@@ -2316,6 +2422,8 @@ export async function processNormalizedEvent({
   maintainer = '',
   actionConcurrency,
   projectionIdentities,
+  pollCompletionUntilTerminal = true,
+  authorityBusyWaitMs = 130_000,
 }: BrokerPassOptions): Promise<void> {
   if (normalized.kind === 'ignored') return;
   // #645 Phase 6: parsed once, up front, before any ledger work -- a
@@ -2357,6 +2465,15 @@ export async function processNormalizedEvent({
       throw error;
     }
   }
+  if (normalized.kind === 'completion' && storageMode !== 'authority') {
+    await assertCompletionBindingBeforeInitialization(
+      client,
+      task,
+      normalized,
+      storageMode,
+      storagePortFactory,
+    );
+  }
   let loaded: LoadedLedger | undefined;
   try {
     loaded = await loadBrokerLedger(
@@ -2369,6 +2486,7 @@ export async function processNormalizedEvent({
       storagePortFactory,
       authorityEpoch,
       projectionIdentities,
+      authorityBusyWaitMs,
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {
@@ -2377,6 +2495,7 @@ export async function processNormalizedEvent({
       );
       throw error;
     }
+    if (error instanceof CompletionBindingError) throw error;
     await failClosed(client, task, maintainer, error);
   }
   if (!loaded) {
@@ -2389,117 +2508,131 @@ export async function processNormalizedEvent({
     );
     return;
   }
-  await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
   try {
-    // #715 (Codex P2 review of #645/#663): converge the anchor's live
-    // closed/reopened state -- for a `reconcile` event, the only kind that
-    // carries it (`issueClosed`, threaded from ReconcileEvent in
-    // normalize.mjs) -- BEFORE giving reconcileActive() below any chance to
-    // run at all. reconcileActive() can throw on an anomaly in the
-    // anchor's OWN active generation that has nothing to do with whether
-    // the anchor itself is closed -- most deterministically, a genuine
-    // duplicate-attempt collision when more than one worker run matches
-    // one generation. Previously that throw ran ahead of reconcileLedger()
-    // (and therefore its own reconcileControlState() call) below, so a
-    // duplicate-attempt anomaly on a closed anchor's active generation
-    // permanently starved control-state convergence: every later reconcile
-    // pass re-observed the identical anomaly, reconcileActive() threw
-    // again before reconcileLedger() was ever reached, and control.closed
-    // never became true -- the same repair-defeated-by-something-unrelated
-    // shape as the outage this whole PR set out to fix. This still writes
-    // through the exact same applyAnchorControl call reconcileControlState
-    // (and a genuine live close event) already use -- not a second way to
-    // record the fact -- and reconcileLedger's own reconcileControlState()
-    // call further below simply observes an already-converged ledger and
-    // no-ops, so an OPEN anchor's generation-repair work (the entire reason
-    // reconcileLedger runs) still happens exactly as before.
-    if (normalized.kind === 'reconcile') {
-      await runPhase({ client, loaded }, 'reconciliation', () =>
-        reconcileControlState(
-          client,
-          loaded,
-          normalized.issueClosed,
-          new Date().toISOString(),
-          runId,
-        ),
-      );
+    if (normalized.kind === 'completion') {
+      assertCompletionLedgerBinding(loaded.ledger, normalized);
     }
-    await reconcileActive(client, loaded);
-    if (normalized.kind === 'intent') {
-      const accepted = await runPhase({ client, loaded }, 'intent', () =>
-        acceptIntent(loaded.ledger, normalized.intent),
-      );
-      await saveLedger(client, loaded);
-      // Before dispatching: remove any stale agent:* label a dual-label
-      // self-heal identified (#304 audit item 4) -- but only when this
-      // intent was accepted as the ledger's current desired state
-      // (FRESH_INTENT_OUTCOMES). A duplicate/superseded/closed outcome
-      // means an old or redelivered event, whose stale-label snapshot may
-      // no longer reflect live GitHub state; healStaleAgentLabels'
-      // is-it-actually-still-stale re-check is a second, independent
-      // safeguard on top of this (PR #355 review).
-      if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
-        await healStaleAgentLabels(client, loaded, normalized.intent);
-      }
-    } else if (normalized.kind === 'anchor-control') {
-      await applyAnchorControlTransition(client, loaded, normalized.control);
-    } else if (normalized.kind === 'control-evidence') {
-      recordControlEvidence(loaded.ledger, normalized.evidence);
-      await saveLedger(client, loaded);
-    } else if (normalized.kind === 'completion') {
-      await handleCompletion(client, loaded, normalized);
-    } else if (normalized.kind === 'reconcile') {
-      await runPhase({ client, loaded }, 'reconciliation', () =>
-        reconcileLedger(
-          client,
-          loaded,
-          new Date().toISOString(),
-          runId,
-          normalized.issueClosed,
-        ),
-      );
-    } else {
-      // Unreachable given NormalizedEvent's current, exhaustively-handled
-      // kinds -- this branch only guards a future kind added without a
-      // matching arm here, same defensive intent as the untyped original.
-      throw new Error(
-        `Unsupported normalized event kind: ${(normalized as NormalizedEvent).kind}`,
-      );
-    }
-    await dispatchAccepted(client, loaded);
-    // Projector convergence checkpoint (#645 Phase 4 §5): by this point,
-    // every GitHub-facing write this pass required (a needs-human park, a
-    // stale-label removal) has already either succeeded or thrown -- a
-    // throw would already have propagated out of this try block, so
-    // reaching this line means whatever the projector owed GitHub this
-    // pass, it delivered. Recording that here is what makes "has GitHub
-    // caught up with the ledger" answerable from `loaded.ledger.projection`
-    // without re-deriving it from the anomaly log.
-    //
-    // Deliberately isolated in its own try/catch rather than folded into
-    // the block above: recording (or persisting) this checkpoint is itself
-    // a projector/reporting concern, and #645 §5 is explicit that a
-    // reporting failure must never turn an otherwise-successful pass into a
-    // failed job or an extra fail-closed park -- so a failure here is
-    // logged and discarded, never rethrown, and never reaches `failClosed`.
+    await pinLedgerWhenUnoccupied(client, loaded, isPullRequest);
     try {
-      await saveProjectionCheckpoint(client, loaded);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(
-        `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
+      // #715 (Codex P2 review of #645/#663): converge the anchor's live
+      // closed/reopened state -- for a `reconcile` event, the only kind that
+      // carries it (`issueClosed`, threaded from ReconcileEvent in
+      // normalize.mjs) -- BEFORE giving reconcileActive() below any chance to
+      // run at all. reconcileActive() can throw on an anomaly in the
+      // anchor's OWN active generation that has nothing to do with whether
+      // the anchor itself is closed -- most deterministically, a genuine
+      // duplicate-attempt collision when more than one worker run matches
+      // one generation. Previously that throw ran ahead of reconcileLedger()
+      // (and therefore its own reconcileControlState() call) below, so a
+      // duplicate-attempt anomaly on a closed anchor's active generation
+      // permanently starved control-state convergence: every later reconcile
+      // pass re-observed the identical anomaly, reconcileActive() threw
+      // again before reconcileLedger() was ever reached, and control.closed
+      // never became true -- the same repair-defeated-by-something-unrelated
+      // shape as the outage this whole PR set out to fix. This still writes
+      // through the exact same applyAnchorControl call reconcileControlState
+      // (and a genuine live close event) already use -- not a second way to
+      // record the fact -- and reconcileLedger's own reconcileControlState()
+      // call further below simply observes an already-converged ledger and
+      // no-ops, so an OPEN anchor's generation-repair work (the entire reason
+      // reconcileLedger runs) still happens exactly as before.
+      if (normalized.kind === 'reconcile') {
+        await runPhase({ client, loaded }, 'reconciliation', () =>
+          reconcileControlState(
+            client,
+            loaded,
+            normalized.issueClosed,
+            new Date().toISOString(),
+            runId,
+          ),
+        );
+      }
+      await reconcileActive(
+        client,
+        loaded,
+        new Date().toISOString(),
+        maintainer,
       );
+      if (normalized.kind === 'intent') {
+        const accepted = await runPhase({ client, loaded }, 'intent', () =>
+          acceptIntent(loaded.ledger, normalized.intent),
+        );
+        await saveLedger(client, loaded);
+        // Before dispatching: remove any stale agent:* label a dual-label
+        // self-heal identified (#304 audit item 4) -- but only when this
+        // intent was accepted as the ledger's current desired state
+        // (FRESH_INTENT_OUTCOMES). A duplicate/superseded/closed outcome
+        // means an old or redelivered event, whose stale-label snapshot may
+        // no longer reflect live GitHub state; healStaleAgentLabels'
+        // is-it-actually-still-stale re-check is a second, independent
+        // safeguard on top of this (PR #355 review).
+        if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
+          await healStaleAgentLabels(client, loaded, normalized.intent);
+        }
+      } else if (normalized.kind === 'anchor-control') {
+        await applyAnchorControlTransition(client, loaded, normalized.control);
+      } else if (normalized.kind === 'control-evidence') {
+        recordControlEvidence(loaded.ledger, normalized.evidence);
+        await saveLedger(client, loaded);
+      } else if (normalized.kind === 'completion') {
+        await handleCompletion(client, loaded, normalized, {
+          pollUntilTerminal: pollCompletionUntilTerminal,
+          maintainer,
+        });
+      } else if (normalized.kind === 'reconcile') {
+        await runPhase({ client, loaded }, 'reconciliation', () =>
+          reconcileLedger(
+            client,
+            loaded,
+            new Date().toISOString(),
+            runId,
+            normalized.issueClosed,
+            maintainer,
+          ),
+        );
+      } else {
+        // Unreachable given NormalizedEvent's current, exhaustively-handled
+        // kinds -- this branch only guards a future kind added without a
+        // matching arm here, same defensive intent as the untyped original.
+        throw new Error(
+          `Unsupported normalized event kind: ${(normalized as NormalizedEvent).kind}`,
+        );
+      }
+      await dispatchAccepted(client, loaded);
+      // Projector convergence checkpoint (#645 Phase 4 §5): by this point,
+      // every GitHub-facing write this pass required (a needs-human park, a
+      // stale-label removal) has already either succeeded or thrown -- a
+      // throw would already have propagated out of this try block, so
+      // reaching this line means whatever the projector owed GitHub this
+      // pass, it delivered. Recording that here is what makes "has GitHub
+      // caught up with the ledger" answerable from `loaded.ledger.projection`
+      // without re-deriving it from the anomaly log.
+      //
+      // Deliberately isolated in its own try/catch rather than folded into
+      // the block above: recording (or persisting) this checkpoint is itself
+      // a projector/reporting concern, and #645 §5 is explicit that a
+      // reporting failure must never turn an otherwise-successful pass into a
+      // failed job or an extra fail-closed park -- so a failure here is
+      // logged and discarded, never rethrown, and never reaches `failClosed`.
+      try {
+        await saveProjectionCheckpoint(client, loaded);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
+        );
+      }
+      // Shadow writes the resulting comment-ledger state for comparison.
+      // Authority mode already persisted every checkpoint and this helper is
+      // intentionally inert there; off mode never invokes the port factory.
+      await maybeObserveDispatchStorage(
+        storageMode,
+        storagePortFactory,
+        loaded.ledger,
+      );
+    } catch (error) {
+      await failClosed(client, task, maintainer, error);
     }
-    // Shadow writes the resulting comment-ledger state for comparison.
-    // Authority mode already persisted every checkpoint and this helper is
-    // intentionally inert there; off mode never invokes the port factory.
-    await maybeObserveDispatchStorage(
-      storageMode,
-      storagePortFactory,
-      loaded.ledger,
-    );
-  } catch (error) {
-    await failClosed(client, task, maintainer, error);
   } finally {
     if (loaded?.authority) {
       try {

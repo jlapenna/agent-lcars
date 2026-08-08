@@ -15,11 +15,12 @@ export const config = {
 
 export default createAuthProxy({
   // These control-plane routes perform stronger request authentication
-  // themselves: reconcile verifies GitHub Actions OIDC claims, and webhook
-  // verifies GitHub's raw-body HMAC. Neither caller has a browser session.
+  // themselves: reconcile and completion verify GitHub Actions OIDC claims,
+  // and webhook verifies GitHub's raw-body HMAC. None has a browser session.
   publicRoutes: [
     '/login',
     '/api/logs/error',
+    '/api/control-plane/completion',
     '/api/control-plane/reconcile',
     '/api/control-plane/webhook',
     '/api/control-plane/webhook/process',

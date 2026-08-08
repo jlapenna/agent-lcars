@@ -71,6 +71,11 @@ export {
   parseRouterGroupMarker,
   textCarriesClaim,
 } from './marker';
+export {
+  COMPLETION_FINALIZER_WORKFLOW_PATH,
+  COMPLETION_OIDC_AUDIENCE,
+  HOSTED_COMPLETION_PATH,
+} from './oidc';
 export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
 export {
   DISPATCH_OUTCOME_KINDS,
