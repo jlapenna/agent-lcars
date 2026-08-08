@@ -18,6 +18,8 @@ import {
   quickTaskMarkerMatcher,
   REPLY_COMMANDS,
   REVIEW_LABELS,
+  WEBHOOK_INGRESS_CANARY_MARKER,
+  WEBHOOK_INGRESS_CANARY_TITLE,
   WORKER_WORKFLOW_FILES,
 } from '@agent-lcars/dispatch-contracts';
 
@@ -76,6 +78,16 @@ export interface WebhookEvent {
   comment?: GitHubComment;
   sender?: GitHubUser;
   label?: { name: string };
+}
+
+function isWebhookIngressCanary(
+  issue: IssueOrPullRequest | undefined,
+): boolean {
+  return Boolean(
+    issue &&
+    issue.title === WEBHOOK_INGRESS_CANARY_TITLE &&
+    issue.body?.includes(WEBHOOK_INGRESS_CANARY_MARKER),
+  );
 }
 
 export interface TimelineEvent {
@@ -578,6 +590,16 @@ function normalizeEvent({
   // the transport switch cannot mint a second intent for the same delivery.
   const semanticEventName =
     eventName === 'pull_request_target' ? 'pull_request' : eventName;
+  const issue = event.issue ?? event.pull_request;
+  if (
+    isWebhookIngressCanary(issue) &&
+    !(
+      semanticEventName === 'issues' &&
+      ['closed', 'reopened'].includes(event.action)
+    )
+  ) {
+    return { kind: 'ignored', reason: 'webhook ingress canary sentinel' };
+  }
   if (semanticEventName === 'workflow_dispatch') {
     return normalizeWorkflowDispatch({
       inputs,
@@ -586,7 +608,6 @@ function normalizeEvent({
       issue: event.issue,
     });
   }
-  const issue = event.issue ?? event.pull_request;
   if (!issue) return { kind: 'ignored', reason: 'event has no issue' };
   const task = taskRef(context, issue);
   const pipeline = selectedPipeline(issue);

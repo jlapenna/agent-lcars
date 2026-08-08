@@ -1,0 +1,66 @@
+name: GitHub App Webhook Ingress Canary
+
+# This is the recurring behavioral proof for production event admission.
+# Unlike the dispatch lifecycle canary, it does not invoke the manual router or
+# allocate even the no-op worker. It toggles one permanently non-dispatch sentinel,
+# finds the exact GitHub App delivery by App JWT, and polls an OIDC-protected
+# read endpoint until that delivery's immutable timeline source and derived
+# transport ID exist in Firestore controller authority.
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: webhook-ingress-canary-run
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      issue: ${{ steps.probe.outputs.issue }}
+      failure-category: ${{ steps.probe.outputs.failure-category }}
+      failure-detail: ${{ steps.probe.outputs.failure-detail }}
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    steps:
+      - name: Checkout trusted probe revision
+        uses: actions/checkout@v7
+
+      - name: Exercise real GitHub App ingress
+        id: probe
+        uses: ./.github/actions/run-webhook-ingress-canary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          app-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          app-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+
+  alert:
+    needs: probe
+    if: always()
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted alert revision
+        uses: actions/checkout@v7
+
+      - name: Alert on ingress failure / resolve on recovery
+        uses: ./.github/actions/canary-alert
+        with:
+          token: ${{ github.token }}
+          workflow-status: ${{ needs.probe.result }}
+          workflow-file: webhook-ingress-canary.yml
+          failure-detail: >-
+            ${{ format('{0}: {1}', needs.probe.outputs.failure-category,
+            needs.probe.outputs.failure-detail) }}
+          maintainer: ${{ vars.MAINTAINER_LOGIN }}

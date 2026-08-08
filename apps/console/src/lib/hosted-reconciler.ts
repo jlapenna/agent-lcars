@@ -2,17 +2,22 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
+import { DISPATCH_LABELS } from '@agent-lcars/dispatch-contracts';
 import {
   type IssueOrPullRequest,
   normalizeEvent,
 } from '@agent-lcars/dispatch-controller/normalize';
-import { TaskLeaseBusyError } from '@agent-lcars/dispatch-controller/storage/authority';
+import {
+  AuthorityStateMissingError,
+  TaskLeaseBusyError,
+} from '@agent-lcars/dispatch-controller/storage/authority';
 import type {
   ReconcileIssueQuery,
   ReconcileScanResult,
   ReconcileTransport,
 } from '@agent-lcars/dispatch-reconcile';
 import { runReconcileScan } from '@agent-lcars/dispatch-reconcile';
+import { required } from '@agent-lcars/util-server';
 import type { Octokit } from '@octokit/rest';
 
 import {
@@ -32,11 +37,49 @@ function splitRepository(repository: string): { owner: string; repo: string } {
   return { owner, repo };
 }
 
+const dispatchLabels = new Set<string>(DISPATCH_LABELS);
+
+/**
+ * The authority cutover deliberately fails closed when an old task missed
+ * exact-state backfill. A recently closed issue assigned to the fleet is one
+ * safe exception: if it predates the immutable cutover epoch and carries no
+ * current dispatch label, GitHub proves there is no work left to admit or
+ * repair. Leave the compatibility-only record quarantined and let the
+ * bounded closed sweep age it out instead of failing every unrelated task in
+ * the scan.
+ *
+ * Keep this narrower than "closed means safe". A post-cutover gap indicates
+ * a new writer bug, and a closed issue that still carries agent/review intent
+ * may need controller convergence; both must remain visible failures. An
+ * invalid epoch also fails closed.
+ */
+function isRetiredLegacyCandidate(
+  issue: IssueOrPullRequest,
+  authorityEpoch: string,
+): boolean {
+  if (issue.state !== 'closed') return false;
+  if (
+    (issue.labels ?? []).some((label) =>
+      dispatchLabels.has(typeof label === 'string' ? label : label.name),
+    )
+  ) {
+    return false;
+  }
+  const createdAt = Date.parse(issue.created_at);
+  const cutoverAt = Date.parse(authorityEpoch);
+  return (
+    Number.isFinite(createdAt) &&
+    Number.isFinite(cutoverAt) &&
+    createdAt < cutoverAt
+  );
+}
+
 export function createOctokitReconcileTransport(
   octokit: Octokit,
   identity: ReconcileOidcIdentity,
   now: Date | string = new Date(),
   invocationId: string = crypto.randomUUID(),
+  authorityEpoch = '',
 ): ReconcileTransport {
   return {
     listIssues: async (query: ReconcileIssueQuery) => {
@@ -99,6 +142,17 @@ export function createOctokitReconcileTransport(
           );
           return;
         }
+        if (
+          error instanceof AuthorityStateMissingError &&
+          error.compatibilityQuiescent &&
+          isRetiredLegacyCandidate(liveIssue, authorityEpoch)
+        ) {
+          console.info(
+            `agent-lcars: quarantined compatibility-only state for retired ` +
+              `${repository}#${issue}; the closed sweep will age it out`,
+          );
+          return;
+        }
         throw error;
       }
     },
@@ -113,7 +167,13 @@ export function runHostedReconcile(
   now: Date | string = new Date(),
 ): Promise<ReconcileScanResult> {
   return runReconcileScan(
-    createOctokitReconcileTransport(octokit, identity, now),
+    createOctokitReconcileTransport(
+      octokit,
+      identity,
+      now,
+      crypto.randomUUID(),
+      required('DISPATCH_AUTHORITY_EPOCH'),
+    ),
     repository,
     fleetLogin,
     now,

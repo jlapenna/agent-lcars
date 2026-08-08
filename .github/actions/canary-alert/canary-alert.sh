@@ -26,6 +26,7 @@ set -uo pipefail
 : "${CANARY_STATUS:?CANARY_STATUS is required}"
 : "${WORKFLOW_FILE:?WORKFLOW_FILE is required}"
 : "${WORKFLOW_EVENT:=}"
+: "${FAILURE_DETAIL:=}"
 : "${WORKFLOW_NAME:?WORKFLOW_NAME is required}"
 : "${MAINTAINER:?MAINTAINER is required}"
 
@@ -189,6 +190,11 @@ body="$WORKFLOW_NAME failed.
 - Run: $RUN_URL
 - Time (UTC): $TIMESTAMP
 - Consecutive failures: $count_label"
+
+if [ -n "$FAILURE_DETAIL" ]; then
+  body="$body
+- Failure detail: $FAILURE_DETAIL"
+fi
 
 if [ -n "$open_issue_num" ]; then
   if ! comment_output=$(gh issue comment "$open_issue_num" --repo "$REPO" --body "$body" 2>&1); then

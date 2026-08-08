@@ -3,6 +3,8 @@ import 'server-only';
 import {
   COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
+  WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
+  WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH,
   WORKER_WORKFLOW_FILES,
 } from '@agent-lcars/dispatch-contracts';
 import {
@@ -28,6 +30,8 @@ export interface ReconcileOidcIdentity {
   repositoryId: number;
   runId: number;
 }
+
+export type WebhookIngressCanaryOidcIdentity = ReconcileOidcIdentity;
 
 function positiveIntegerClaim(value: unknown, name: string): number {
   const parsed =
@@ -80,6 +84,50 @@ export async function verifyReconcileOidcToken(
     audience: RECONCILE_OIDC_AUDIENCE,
   });
   return assertReconcileOidcClaims(payload, repository);
+}
+
+export function assertWebhookIngressCanaryOidcClaims(
+  claims: JWTPayload,
+  repository: string,
+): WebhookIngressCanaryOidcIdentity {
+  const expectedWorkflowRef = `${repository}/${WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH}@refs/heads/main`;
+  if (claims['repository'] !== repository) {
+    throw new Error('OIDC repository claim does not match the control plane');
+  }
+  if (claims['workflow_ref'] !== expectedWorkflowRef) {
+    throw new Error(
+      'OIDC workflow_ref claim is not the webhook ingress canary on main',
+    );
+  }
+  if (claims['ref'] !== 'refs/heads/main') {
+    throw new Error('OIDC ref claim is not main');
+  }
+  if (
+    !['schedule', 'workflow_dispatch'].includes(String(claims['event_name']))
+  ) {
+    throw new Error(
+      'OIDC event_name claim is not an allowed webhook ingress canary event',
+    );
+  }
+  return {
+    repository,
+    repositoryId: positiveIntegerClaim(
+      claims['repository_id'],
+      'repository_id',
+    ),
+    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
+  };
+}
+
+export async function verifyWebhookIngressCanaryOidcToken(
+  token: string,
+  repository: string,
+): Promise<WebhookIngressCanaryOidcIdentity> {
+  const { payload } = await jwtVerify(token, githubActionsJwks, {
+    issuer: GITHUB_ACTIONS_ISSUER,
+    audience: WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
+  });
+  return assertWebhookIngressCanaryOidcClaims(payload, repository);
 }
 
 export function assertCompletionOidcClaims(

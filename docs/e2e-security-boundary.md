@@ -60,9 +60,19 @@ canary issue with evidence, rather than a silent log line; a successful run
 clears that blocker label and closes the same issue automatically. Historical
 per-run v1 artifacts are still swept during the migration. This proves the
 manual rollback dispatch path and the hosted controller's completion write
-path through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`). Ordinary
-event admission through the GitHub App webhook is verified separately by
-delivery, Cloud Tasks, and hosted-processing evidence.
+path through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`).
+
+`webhook-ingress-canary.yml` separately proves ordinary production admission.
+Once per hour (or on manual invocation), a GitHub-hosted job alternates a
+dedicated non-dispatch sentinel between open and closed. It identifies the
+exact timeline event and GitHub App delivery, requires a successful public
+webhook response, then uses a workflow-specific OIDC token to read the
+delivery's durable ingress checkpoints and authoritative controller state.
+Success requires the same timeline source ID and delivery-derived transport ID;
+a later reconciliation write cannot repair the proof. The probe never invokes
+a worker workflow or model, retains its delivery/checkpoint evidence, and has
+an independent `canary-alert` job that distinguishes missing delivery, HMAC or
+enqueue rejection, processor failure, and missing durable observation.
 
 Cleanup above runs inside the same orchestrator process as the rest of the
 lifecycle (a `try`/`catch` around create-dispatch-poll), so it cannot

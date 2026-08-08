@@ -3,7 +3,13 @@ import { NextResponse } from 'next/server';
 
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
+import type { GitHubWebhookPayload } from '@/lib/hosted-admission';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
+import {
+  identifyWebhookIngressCanary,
+  recordWebhookIngressEnqueued,
+  recordWebhookIngressReceived,
+} from '@/lib/webhook-ingress-receipt';
 
 const ADMITTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
 
@@ -40,9 +46,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  let repository: unknown;
+  let payload: GitHubWebhookPayload;
   try {
-    repository = JSON.parse(rawBody.toString('utf8'))?.repository?.full_name;
+    payload = JSON.parse(rawBody.toString('utf8')) as GitHubWebhookPayload;
   } catch {
     console.warn('agent-lcars: ignored malformed signed GitHub webhook');
     return NextResponse.json(
@@ -50,6 +56,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 202, headers: { 'Cache-Control': 'no-store' } },
     );
   }
+  const repository = payload.repository?.full_name;
   if (repository !== controlPlaneRepository()) {
     console.info('agent-lcars: ignored webhook outside control plane', {
       deliveryId,
@@ -68,12 +75,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
+    const canary = identifyWebhookIngressCanary(deliveryId, eventName, payload);
+    if (canary) await recordWebhookIngressReceived(canary);
     const result = await enqueueGitHubWebhook({
       rawBody,
       deliveryId,
       eventName,
       signature: header(request, 'x-hub-signature-256'),
     });
+    if (canary) {
+      await recordWebhookIngressEnqueued(canary, result.outcome);
+    }
     console.info('agent-lcars: hosted admission durably queued', result);
     return NextResponse.json(result, {
       status: 202,

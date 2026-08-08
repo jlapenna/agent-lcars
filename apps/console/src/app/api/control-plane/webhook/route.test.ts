@@ -2,12 +2,25 @@ import crypto from 'node:crypto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { enqueueGitHubWebhook } = vi.hoisted(() => ({
+const {
+  enqueueGitHubWebhook,
+  identifyWebhookIngressCanary,
+  recordWebhookIngressEnqueued,
+  recordWebhookIngressReceived,
+} = vi.hoisted(() => ({
   enqueueGitHubWebhook: vi.fn(),
+  identifyWebhookIngressCanary: vi.fn(),
+  recordWebhookIngressEnqueued: vi.fn(),
+  recordWebhookIngressReceived: vi.fn(),
 }));
 
 vi.mock('@/lib/hosted-webhook-queue', () => ({
   enqueueGitHubWebhook,
+}));
+vi.mock('@/lib/webhook-ingress-receipt', () => ({
+  identifyWebhookIngressCanary,
+  recordWebhookIngressEnqueued,
+  recordWebhookIngressReceived,
 }));
 
 import { POST } from './route';
@@ -44,6 +57,9 @@ function request({
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv('AGENT_LCARS_WEBHOOK_SECRET', SECRET);
+  identifyWebhookIngressCanary.mockReturnValue(undefined);
+  recordWebhookIngressReceived.mockResolvedValue(undefined);
+  recordWebhookIngressEnqueued.mockResolvedValue(undefined);
   enqueueGitHubWebhook.mockResolvedValue({
     deliveryId: '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
     eventName: 'issues',
@@ -124,5 +140,32 @@ describe('POST /api/control-plane/webhook', () => {
     enqueueGitHubWebhook.mockRejectedValue(new Error('unavailable'));
     const response = await POST(request());
     expect(response.status).toBe(500);
+  });
+
+  it('checkpoints the signed sentinel before and after durable enqueue', async () => {
+    const identity = {
+      deliveryId: '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
+      eventName: 'issues',
+      action: 'closed',
+      repository: 'jlapenna/agent-lcars',
+      repositoryId: 1_307_149_765,
+      issue: 796,
+    };
+    identifyWebhookIngressCanary.mockReturnValue(identity);
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(202);
+    expect(recordWebhookIngressReceived).toHaveBeenCalledWith(identity);
+    expect(recordWebhookIngressEnqueued).toHaveBeenCalledWith(
+      identity,
+      'enqueued',
+    );
+    expect(
+      recordWebhookIngressReceived.mock.invocationCallOrder[0],
+    ).toBeLessThan(enqueueGitHubWebhook.mock.invocationCallOrder[0]);
+    expect(enqueueGitHubWebhook.mock.invocationCallOrder[0]).toBeLessThan(
+      recordWebhookIngressEnqueued.mock.invocationCallOrder[0],
+    );
   });
 });

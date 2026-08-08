@@ -1,4 +1,7 @@
-import { TaskLeaseBusyError } from '@agent-lcars/dispatch-controller/storage/authority';
+import {
+  AuthorityStateMissingError,
+  TaskLeaseBusyError,
+} from '@agent-lcars/dispatch-controller/storage/authority';
 import type { Octokit } from '@octokit/rest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -145,5 +148,127 @@ describe('hosted reconciler GitHub transport', () => {
     await expect(
       transport.dispatchReconcile('jlapenna/agent-lcars', 20),
     ).resolves.toBeUndefined();
+  });
+
+  it('quarantines a closed pre-cutover fleet task with no dispatch label', async () => {
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        id: 20,
+        number: 20,
+        title: 'Retired legacy task',
+        body: '',
+        labels: [{ name: 'status:needs-human' }],
+        created_at: '2026-08-07T00:00:00.000Z',
+        updated_at: '2026-08-08T00:00:00.000Z',
+        state: 'closed',
+      },
+    });
+    const octokit = {
+      rest: {
+        issues: { listForRepo: vi.fn(), get },
+      },
+    } as unknown as Octokit;
+    processHostedControllerEvent.mockRejectedValueOnce(
+      new AuthorityStateMissingError(
+        {
+          repository: 'jlapenna/agent-lcars',
+          repositoryId: 1_307_149_765,
+          issue: 20,
+        },
+        true,
+      ),
+    );
+    const transport = createOctokitReconcileTransport(
+      octokit,
+      identity,
+      '2026-08-08T12:00:00.000Z',
+      'request-1',
+      '2026-08-08T00:00:00.000Z',
+    );
+
+    await expect(
+      transport.dispatchReconcile('jlapenna/agent-lcars', 20),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    {
+      name: 'a non-quiescent compatibility projection',
+      state: 'closed',
+      labels: [] as { name: string }[],
+      createdAt: '2026-08-07T00:00:00.000Z',
+      epoch: '2026-08-08T00:00:00.000Z',
+      compatibilityQuiescent: false,
+    },
+    {
+      name: 'an open pre-cutover task',
+      state: 'open',
+      labels: [] as { name: string }[],
+      createdAt: '2026-08-07T00:00:00.000Z',
+      epoch: '2026-08-08T00:00:00.000Z',
+      compatibilityQuiescent: true,
+    },
+    {
+      name: 'a closed pre-cutover task with dispatch intent',
+      state: 'closed',
+      labels: [{ name: 'agent:codex' }],
+      createdAt: '2026-08-07T00:00:00.000Z',
+      epoch: '2026-08-08T00:00:00.000Z',
+      compatibilityQuiescent: true,
+    },
+    {
+      name: 'a closed post-cutover task',
+      state: 'closed',
+      labels: [] as { name: string }[],
+      createdAt: '2026-08-09T00:00:00.000Z',
+      epoch: '2026-08-08T00:00:00.000Z',
+      compatibilityQuiescent: true,
+    },
+    {
+      name: 'a closed task with an invalid cutover epoch',
+      state: 'closed',
+      labels: [] as { name: string }[],
+      createdAt: '2026-08-07T00:00:00.000Z',
+      epoch: 'not-a-timestamp',
+      compatibilityQuiescent: true,
+    },
+  ])('keeps failing closed for $name', async (scenario) => {
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        id: 20,
+        number: 20,
+        title: 'Authority gap remains actionable',
+        body: '',
+        labels: scenario.labels,
+        created_at: scenario.createdAt,
+        updated_at: '2026-08-08T00:00:00.000Z',
+        state: scenario.state,
+      },
+    });
+    const octokit = {
+      rest: {
+        issues: { listForRepo: vi.fn(), get },
+      },
+    } as unknown as Octokit;
+    const gap = new AuthorityStateMissingError(
+      {
+        repository: 'jlapenna/agent-lcars',
+        repositoryId: 1_307_149_765,
+        issue: 20,
+      },
+      scenario.compatibilityQuiescent,
+    );
+    processHostedControllerEvent.mockRejectedValueOnce(gap);
+    const transport = createOctokitReconcileTransport(
+      octokit,
+      identity,
+      '2026-08-08T12:00:00.000Z',
+      'request-1',
+      scenario.epoch,
+    );
+
+    await expect(
+      transport.dispatchReconcile('jlapenna/agent-lcars', 20),
+    ).rejects.toBe(gap);
   });
 });

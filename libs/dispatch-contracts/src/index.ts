@@ -76,6 +76,10 @@ export {
   COMPLETION_OIDC_AUDIENCE,
   HOSTED_COMPLETION_PATH,
   HOSTED_COMPLETION_URL,
+  WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
+  WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH,
+  WEBHOOK_INGRESS_PROBE_PATH,
+  WEBHOOK_INGRESS_PROBE_URL,
 } from './oidc';
 export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
 export {
@@ -126,3 +130,10 @@ export {
 } from './quick-task';
 export type { LaneReadinessFailure } from './readiness';
 export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';
+export type { WebhookIngressCanaryAction } from './webhook-ingress';
+export {
+  isWebhookIngressCanaryAction,
+  WEBHOOK_INGRESS_CANARY_ACTIONS,
+  WEBHOOK_INGRESS_CANARY_MARKER,
+  WEBHOOK_INGRESS_CANARY_TITLE,
+} from './webhook-ingress';

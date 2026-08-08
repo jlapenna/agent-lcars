@@ -26,6 +26,7 @@ export default createAuthProxy({
     '/api/control-plane/reconcile',
     '/api/control-plane/webhook',
     '/api/control-plane/webhook/process',
+    '/api/control-plane/webhook/probe',
   ],
   // Both routes are guarded by isE2eTesting() themselves (403 outside e2e);
   // they must be reachable without a session because the Playwright test
