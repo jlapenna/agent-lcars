@@ -2,17 +2,31 @@
 
 import {
   Anchor,
+  Box,
   Button,
+  Divider,
+  Group,
   Modal,
+  Paper,
   Select,
   Stack,
   Text,
   Textarea,
+  TextInput,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { startTransition, useEffect, useRef, useState } from 'react';
 
 import type { QuickTaskRequest } from '../lib/quick-task-contract';
+import {
+  captureQuickTaskSource,
+  composeQuickTaskIssueBody,
+  deriveQuickTaskTitle,
+  lowInformationQuickTaskGuidance,
+  type QuickTaskSourceContext,
+  type QuickTaskSourceIdentity,
+  type QuickTaskStructuredEvidence,
+} from '../lib/quick-task-evidence';
 import {
   type AgentPipeline,
   repoDisplayName,
@@ -35,6 +49,20 @@ const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'opencode', label: 'opencode' },
 ];
 
+const emptyStructuredEvidence = (): QuickTaskStructuredEvidence => ({
+  observed: '',
+  expected: '',
+  stepsToReproduce: '',
+  doneWhen: '',
+  evidenceLinks: '',
+});
+
+const emptySourceContext = (): QuickTaskSourceContext => ({
+  route: '',
+  identities: '',
+  capturedAt: '',
+});
+
 /**
  * Files a new `intake:quick-task`-labeled issue from a free-text description and
  * hands it to the selected agent pipeline. The intake and pipeline labels
@@ -51,6 +79,7 @@ const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
 export function QuickTaskButton({
   watchedRepos,
   initialRepoKey,
+  sourceIdentities = [],
   size = 'compact-sm',
 }: {
   /** Passed down from the server component that already resolved
@@ -61,11 +90,21 @@ export function QuickTaskButton({
    * the surrounding page. The picker falls back to the first watched repo
    * only when that identity is absent or no longer configured. */
   initialRepoKey?: string;
+  /** Canonical identity already resolved by a detail page. It is rendered
+   * into the editable source block; browser code never guesses PR/run
+   * identity from unrelated hidden page data. */
+  sourceIdentities?: QuickTaskSourceIdentity[];
   size?: string;
 }) {
   const [hydrated, setHydrated] = useState(false);
   const [opened, setOpened] = useState(false);
   const [description, setDescription] = useState('');
+  const [showGuided, setShowGuided] = useState(false);
+  const [structured, setStructured] = useState<QuickTaskStructuredEvidence>(
+    emptyStructuredEvidence,
+  );
+  const [source, setSource] =
+    useState<QuickTaskSourceContext>(emptySourceContext);
   const [repoIndex, setRepoIndex] = useState(() => {
     const index = watchedRepos.findIndex(
       (repo) => repoKey(repo) === initialRepoKey,
@@ -118,7 +157,38 @@ export function QuickTaskButton({
     ? pipeline
     : supportedPipelines[0];
 
+  const issueBody = selectedRepo
+    ? composeQuickTaskIssueBody(
+        { description, structured, source },
+        {
+          owner: selectedRepo.owner,
+          name: selectedRepo.name,
+        },
+      )
+    : '';
+  const issueTitle = deriveQuickTaskTitle(description);
+  const lowInformationGuidance = lowInformationQuickTaskGuidance(description);
+
   const close = () => setOpened(false);
+
+  const open = () => {
+    submitInFlightRef.current = false;
+    // Preserve a draft when the modal is merely closed and reopened. A new
+    // source snapshot is captured after each successful submission, when
+    // handleCreate clears capturedAt along with the rest of the draft.
+    if (!source.capturedAt) {
+      setSource(
+        captureQuickTaskSource(
+          {
+            pathname: window.location.pathname,
+            search: window.location.search,
+          },
+          sourceIdentities,
+        ),
+      );
+    }
+    setOpened(true);
+  };
 
   const submissionNotificationId = (request: QuickTaskRequest) =>
     `quick-task:${request.requestId}`;
@@ -236,9 +306,12 @@ export function QuickTaskButton({
         name: selectedRepo.name,
       },
       pipeline: effectivePipeline,
-      description: trimmed,
+      description: issueBody,
     };
     setDescription('');
+    setStructured(emptyStructuredEvidence());
+    setSource(emptySourceContext());
+    setShowGuided(false);
     close();
     notifications.show(pendingNotification(request));
     launchSubmission(request);
@@ -251,14 +324,16 @@ export function QuickTaskButton({
         data-accent="amber"
         size={size}
         disabled={!hydrated}
-        onClick={() => {
-          submitInFlightRef.current = false;
-          setOpened(true);
-        }}
+        onClick={open}
       >
         Quick task
       </Button>
-      <Modal opened={opened} onClose={close} title="File a quick task">
+      <Modal
+        opened={opened}
+        onClose={close}
+        title="File a quick task"
+        size="lg"
+      >
         <Stack gap="sm">
           {watchedRepos.length > 1 && (
             <Select
@@ -316,8 +391,175 @@ export function QuickTaskButton({
             onKeyDown={handleSubmitShortcut}
             placeholder="Describe the task — this becomes the issue body"
             autosize
-            minRows={12}
+            minRows={5}
           />
+          {lowInformationGuidance && (
+            <Text size="xs" c="orange" role="status">
+              {lowInformationGuidance} You can still file this task as-is.
+            </Text>
+          )}
+
+          <Button
+            variant="light"
+            size="compact-sm"
+            onClick={() => setShowGuided((current) => !current)}
+            aria-expanded={showGuided}
+          >
+            {showGuided ? 'Hide guided details' : 'Add guided details'}
+          </Button>
+          {showGuided && (
+            <Stack gap="xs">
+              <Textarea
+                label="Observed"
+                description="What happened, including visible errors or timing"
+                value={structured.observed}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setStructured((current) => ({
+                    ...current,
+                    observed: value,
+                  }));
+                }}
+                autosize
+                minRows={2}
+              />
+              <Textarea
+                label="Expected"
+                value={structured.expected}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setStructured((current) => ({
+                    ...current,
+                    expected: value,
+                  }));
+                }}
+                autosize
+                minRows={2}
+              />
+              <Textarea
+                label="Steps to reproduce"
+                value={structured.stepsToReproduce}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setStructured((current) => ({
+                    ...current,
+                    stepsToReproduce: value,
+                  }));
+                }}
+                autosize
+                minRows={3}
+              />
+              <Textarea
+                label="Done when"
+                value={structured.doneWhen}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setStructured((current) => ({
+                    ...current,
+                    doneWhen: value,
+                  }));
+                }}
+                autosize
+                minRows={2}
+              />
+              <Textarea
+                label="Evidence links"
+                description="Screenshot, video, console, network, or workflow-run links"
+                value={structured.evidenceLinks}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setStructured((current) => ({
+                    ...current,
+                    evidenceLinks: value,
+                  }));
+                }}
+                autosize
+                minRows={2}
+              />
+            </Stack>
+          )}
+
+          <Divider label="Source context" labelPosition="left" />
+          <Text size="xs" c="dimmed">
+            Automatically captured fields are visible and editable. Only known
+            relative console routes and typed query values are included.
+          </Text>
+          <TextInput
+            label="Console route"
+            value={source.route}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setSource((current) => ({
+                ...current,
+                route: value,
+              }));
+            }}
+          />
+          <Textarea
+            label="Related identity"
+            description="One canonical Task, Pull request, Workflow run, or Session identity per line"
+            value={source.identities}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setSource((current) => ({
+                ...current,
+                identities: value,
+              }));
+            }}
+            autosize
+            minRows={source.identities ? 2 : 1}
+          />
+          <TextInput
+            label="Captured at"
+            value={source.capturedAt}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setSource((current) => ({
+                ...current,
+                capturedAt: value,
+              }));
+            }}
+          />
+
+          {description.trim() && (
+            <Paper withBorder p="sm" data-testid="quick-task-preview">
+              <Stack gap="xs">
+                <Text fw={700} size="sm">
+                  Issue preview
+                </Text>
+                <Group gap="xs" align="flex-start" wrap="nowrap">
+                  <Text fw={600} size="xs">
+                    Title
+                  </Text>
+                  <Text size="xs" data-testid="quick-task-preview-title">
+                    {issueTitle}
+                  </Text>
+                </Group>
+                <Text fw={600} size="xs">
+                  Body
+                </Text>
+                <Box
+                  component="pre"
+                  data-testid="quick-task-preview-body"
+                  m={0}
+                  p="xs"
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: 'var(--mantine-font-size-xs)',
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {issueBody}
+                </Box>
+                <Text size="xs" c="dimmed">
+                  The server appends the hidden Quick Task identity marker; the
+                  title and human-readable body above are otherwise sent
+                  unchanged.
+                </Text>
+              </Stack>
+            </Paper>
+          )}
           <Button
             disabled={
               !description.trim() ||

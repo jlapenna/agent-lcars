@@ -58,6 +58,7 @@ function submit() {
 describe('QuickTaskButton', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.history.replaceState(null, '', '/');
   });
 
   afterEach(() => {
@@ -99,7 +100,9 @@ describe('QuickTaskButton', () => {
       requestId: expect.stringMatching(UUID_PATTERN),
       repository: REPO,
       pipeline: 'claude',
-      description: 'Fix the flaky test',
+      description: expect.stringMatching(
+        /^Fix the flaky test\n\n## Source context\n\n- Repository: `supersprinklesracing\/sprinkles`\n- Console route: `\/`\n- Captured: \d{4}-\d{2}-\d{2}T/u,
+      ),
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), {
       timeout: 5000,
@@ -303,8 +306,12 @@ describe('QuickTaskButton', () => {
     await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(2));
     const firstRequest = (createQuickTask as Mock).mock.calls[0][0];
     const secondRequest = (createQuickTask as Mock).mock.calls[1][0];
-    expect(firstRequest.description).toBe('First task');
-    expect(secondRequest.description).toBe('Second task');
+    expect(firstRequest.description).toMatch(
+      /^First task\n\n## Source context/u,
+    );
+    expect(secondRequest.description).toMatch(
+      /^Second task\n\n## Source context/u,
+    );
     expect(secondRequest.requestId).not.toBe(firstRequest.requestId);
     expect(notifications.show).toHaveBeenCalledTimes(2);
 
@@ -363,8 +370,93 @@ describe('QuickTaskButton', () => {
       requestId: expect.stringMatching(UUID_PATTERN),
       repository: REPO,
       pipeline: 'claude',
-      description: 'Fix the flaky test',
+      description: expect.stringMatching(
+        /^Fix the flaky test\n\n## Source context/u,
+      ),
     });
+  });
+
+  it('previews and submits optional structured evidence plus editable canonical source identity', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/task/supersprinklesracing/sprinkles/42?token=secret',
+    );
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    render(
+      <MantineProvider>
+        <QuickTaskButton
+          watchedRepos={[REPO]}
+          sourceIdentities={[
+            {
+              label: 'Task',
+              value: 'supersprinklesracing/sprinkles#42',
+            },
+          ]}
+        />
+      </MantineProvider>,
+    );
+    await openDialog();
+    enterDescription('The task page hangs after refresh');
+    fireEvent.click(screen.getByRole('button', { name: 'Add guided details' }));
+    fireEvent.change(screen.getByLabelText('Observed'), {
+      target: { value: 'The loading state never clears.' },
+    });
+    fireEvent.change(screen.getByLabelText('Expected'), {
+      target: { value: 'The task card becomes visible.' },
+    });
+    fireEvent.change(screen.getByLabelText('Done when'), {
+      target: { value: 'A browser regression test covers refresh.' },
+    });
+    fireEvent.change(screen.getByLabelText('Evidence links'), {
+      target: { value: 'https://example.invalid/screenshot' },
+    });
+
+    expect(screen.getByLabelText('Console route')).toHaveValue(
+      '/task/supersprinklesracing/sprinkles/42',
+    );
+    expect(screen.getByLabelText('Related identity')).toHaveValue(
+      'Task: supersprinklesracing/sprinkles#42',
+    );
+    expect(screen.getByTestId('quick-task-preview-title')).toHaveTextContent(
+      'The task page hangs after refresh',
+    );
+    const previewBody = screen.getByTestId(
+      'quick-task-preview-body',
+    ).textContent;
+    expect(previewBody).toContain(
+      '### Observed\nThe loading state never clears.',
+    );
+    expect(previewBody).toContain(
+      '### Expected\nThe task card becomes visible.',
+    );
+    expect(previewBody).toContain(
+      '### Done when\nA browser regression test covers refresh.',
+    );
+    expect(previewBody).toContain('- Task: supersprinklesracing/sprinkles#42');
+    expect(previewBody).not.toContain('token=secret');
+
+    submit();
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(1));
+    expect((createQuickTask as Mock).mock.calls[0][0].description).toBe(
+      previewBody,
+    );
+  });
+
+  it('keeps low-information guidance advisory', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    renderButton();
+    await openDialog();
+    enterDescription('please fix:');
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'You can still file this task as-is.',
+    );
+    expect(
+      screen.getByRole('button', { name: 'File & dispatch' }),
+    ).toBeEnabled();
+    submit();
+    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(1));
   });
 
   it('submits via cmd+enter (metaKey) in the description field', async () => {

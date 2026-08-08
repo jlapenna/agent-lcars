@@ -19,9 +19,25 @@ never participate in identity.
 ## Submission contract
 
 The browser creates one UUID v4 for a user intent and sends a complete request:
-request ID, canonical repository, pipeline, optional title, and description.
-Every mutation boundary requires that repository. The Server Action resolves it
-against the configured watched repositories before GitHub is called.
+request ID, canonical repository, pipeline, and the previewed issue body. The
+server derives the issue title from that body's first line. Every mutation
+boundary requires the repository. The Server Action resolves it against the
+configured watched repositories before GitHub is called.
+
+The intake dialog keeps a free-form description as its only required field. An
+optional guided section can add Observed, Expected, Steps to reproduce, Done
+when, and evidence links. Before submission, the dialog previews the derived
+title and exact human-readable body. That body also contains an editable source
+block with the selected canonical repository, capture time, sanitized console
+route, and any Task, pull request, workflow-run, or session identity supplied by
+the detail page.
+
+Automatic route capture is allowlist-based. It serializes only known console
+paths and query parameters whose values match the route's typed contract. It
+never copies the origin, URL credentials, fragment, free-form search query, or
+an unknown query parameter. New parameters remain private until the sanitizer
+explicitly learns their safe value shape. The hidden marker described below is
+appended by the server after the human-readable preview.
 
 The issue is created in one GitHub write with both `intake:quick-task` and the
 selected repository integration's `agent:*` label. There is no intermediate

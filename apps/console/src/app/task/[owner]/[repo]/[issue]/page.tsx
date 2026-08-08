@@ -87,6 +87,17 @@ async function TaskDetailPageContent({ params }: PageProps) {
                 ? `${detail.repo.owner}/${detail.repo.name}`
                 : undefined
             }
+            sourceIdentities={
+              detail.status === 'ok'
+                ? [
+                    {
+                      label:
+                        detail.item.kind === 'pr' ? 'Pull request' : 'Task',
+                      value: `${detail.repo.owner}/${detail.repo.name}#${detail.item.number}`,
+                    },
+                  ]
+                : []
+            }
           />
         }
       />

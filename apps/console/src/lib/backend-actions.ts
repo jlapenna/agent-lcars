@@ -15,6 +15,7 @@ import {
 } from './github-client';
 import { type Pipeline } from './primary-action';
 import type { QuickTaskReceipt, QuickTaskRequest } from './quick-task-contract';
+import { deriveQuickTaskTitle } from './quick-task-evidence';
 import {
   type AgentIntegration,
   agentIntegration,
@@ -727,16 +728,9 @@ const QUICK_TASK_RECENT_ISSUE_LIMIT = 100;
 const QUICK_TASK_CLAIM_REF_PREFIX = 'tags/agent-lcars/quick-task/';
 const QUICK_TASK_CLAIM_TAG_PREFIX = 'agent-lcars/quick-task/';
 const QUICK_TASK_CLAIM_MESSAGE_PREFIX = 'agent-lcars:quick-task-claim:v1 ';
-// Issue titles show up in list views and the run-name banner - a raw,
-// possibly multi-paragraph task description would blow both out, so this
-// keeps just the first line and clips it to something scannable.
-const QUICK_TASK_TITLE_MAX_LENGTH = 80;
-
-export function deriveQuickTaskTitle(description: string): string {
-  const firstLine = description.split('\n', 1)[0].replace(/\s+/g, ' ').trim();
-  if (firstLine.length <= QUICK_TASK_TITLE_MAX_LENGTH) return firstLine;
-  return `${firstLine.slice(0, QUICK_TASK_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
-}
+// Kept exported from this long-standing module for callers/tests while the
+// client-safe implementation also powers the exact issue preview.
+export { deriveQuickTaskTitle } from './quick-task-evidence';
 
 interface NormalizedQuickTaskRequest extends QuickTaskRequest {
   repository: WatchedRepo;

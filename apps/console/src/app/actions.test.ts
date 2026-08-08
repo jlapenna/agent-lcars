@@ -371,6 +371,32 @@ describe('agent-lcars Server Actions', () => {
       });
     });
 
+    it('createQuickTask preserves the previewed evidence body across the Server Action boundary', async () => {
+      (createQuickTaskLib as Mock).mockResolvedValue(QUICK_TASK_RECEIPT);
+      const description = `Fix the session page refresh
+
+## Problem details
+
+### Observed
+The loading state never clears.
+
+### Done when
+The refresh path has browser coverage.
+
+## Source context
+
+- Repository: \`supersprinklesracing/sprinkles\`
+- Console route: \`/sessions/session-123\`
+- Session: session-123`;
+
+      await createQuickTask({ ...QUICK_TASK_REQUEST, description });
+
+      expect(createQuickTaskLib).toHaveBeenCalledWith({
+        ...QUICK_TASK_REQUEST,
+        description,
+      });
+    });
+
     it('closeIssue returns { ok: true } and revalidates', async () => {
       (closeIssueLib as Mock).mockResolvedValue(undefined);
 

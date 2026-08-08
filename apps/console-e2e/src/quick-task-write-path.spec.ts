@@ -1,4 +1,4 @@
-import { expect, Page, test } from '@playwright/test';
+import { expect, type Page, type Response, test } from '@playwright/test';
 
 import { useCliSessionFixtures } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
@@ -85,6 +85,23 @@ function taskRefNotification(page: Page) {
   return page.getByRole('link', { name: TASK_REF_RE });
 }
 
+/** Best-effort drain for Next's streamed Server Action response. The usable
+ * payload can be complete while the framework keeps the stream open; page
+ * cleanup must not turn that into an unbounded test gate (#519). */
+async function drainActionResponse(response: Response): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      response.finished().then(() => undefined),
+      new Promise<void>((resolve) => {
+        timeoutId = setTimeout(resolve, 2_000);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 test.describe('Quick Task write path (agent-lcars#307)', () => {
   test('files a task through the real server action with canonical identity, one-write labels, a broker decision, and attempt presentation', async ({
     page,
@@ -166,8 +183,14 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await page.goto('/');
 
     const description = 'E2E idempotency check: same request ID twice';
+    const capturedAt = '2026-08-08T12:34:56.000Z';
 
     await openQuickTask(page);
+    // Auto-captured context is part of the human-readable issue body and
+    // therefore its digest. Hold this editable field constant so the two
+    // requests are genuinely byte-identical; a fixed UUID with a different
+    // capture time must (correctly) conflict as different content.
+    await page.getByRole('dialog').getByLabel('Captured at').fill(capturedAt);
     await fillAndSubmit(page, description);
     const firstReceipt = taskRefNotification(page);
     await expect(firstReceipt).toBeVisible();
@@ -206,6 +229,7 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // that those are different: same content under a *different* ID is a
     // new, unrelated task).
     await openQuickTask(page);
+    await page.getByRole('dialog').getByLabel('Captured at').fill(capturedAt);
     const retryActionRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
@@ -221,13 +245,16 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // still the right expected value: proof the retry resolved to the
     // exact same issue rather than merely "some" issue.
     await expect(secondReceipt).toHaveAttribute('href', firstHref ?? '');
-    // The receipt is available as soon as the Server Action payload contains
-    // its result; also wait for that exact response to finish downloading
-    // before Playwright tears down this page, otherwise Next logs a false
-    // "destination stream closed early" server error during context cleanup.
-    // Match Next's protocol header, not a route pathname: the framework is
-    // free to target a different URL without changing Server Action identity.
-    await (await actionRequest.response())?.finished();
+    // The receipt proves the Server Action payload already delivered its
+    // result. Give that exact response a short best-effort drain before page
+    // cleanup to avoid Next's false "destination stream closed early" log,
+    // but do not make a framework stream that remains open an unbounded test
+    // gate (#519). In the full serial suite Next can retain this response
+    // after its usable payload is complete even though an isolated run closes
+    // it immediately.
+    const actionResponse = await actionRequest.response();
+    expect(actionResponse).not.toBeNull();
+    await drainActionResponse(actionResponse!);
   });
 
   test('files a second task while the first Server Action request is still pending', async ({
@@ -272,7 +299,35 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     const originalDescription = 'Original Quick Task description';
     await page.goto('/');
     await openQuickTask(page);
-    await fillAndSubmit(page, originalDescription);
+    const intake = page.getByRole('dialog');
+    await intake.getByLabel('Description').fill(originalDescription);
+    await intake.getByRole('button', { name: 'Add guided details' }).click();
+    await intake.getByLabel('Observed').fill('The old behavior is visible.');
+    await intake.getByLabel('Expected').fill('The corrected behavior appears.');
+    await intake
+      .getByLabel('Done when')
+      .fill('The browser regression remains green.');
+    await intake
+      .getByLabel('Evidence links')
+      .fill('https://example.invalid/evidence');
+
+    const previewTitle = intake.getByTestId('quick-task-preview-title');
+    const previewBody = intake.getByTestId('quick-task-preview-body');
+    await expect(previewTitle).toHaveText(originalDescription);
+    await expect(previewBody).toContainText('## Problem details');
+    await expect(previewBody).toContainText(
+      '### Observed\nThe old behavior is visible.',
+    );
+    await expect(previewBody).toContainText('## Source context');
+    await expect(previewBody).toContainText(
+      '- Repository: `supersprinklesracing/sprinkles`',
+    );
+    await expect(previewBody).toContainText('- Console route: `/`');
+    await expect(previewBody).not.toContainText(
+      'agent-lcars:quick-task-request',
+    );
+    const exactPreviewBody = (await previewBody.textContent()) ?? '';
+    await intake.getByRole('button', { name: 'File & dispatch' }).click();
 
     const receipt = taskRefNotification(page);
     await expect(receipt).toBeVisible();
@@ -281,6 +336,19 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     expect(issueNumber).toBeGreaterThan(0);
 
     await page.goto(`/task/supersprinklesracing/sprinkles/${issueNumber}`);
+    // Detail pages contribute their canonical identity instead of making the
+    // client infer it from hidden page data. The source block remains
+    // editable before the next issue is filed.
+    await openQuickTask(page);
+    await expect(page.getByLabel('Console route')).toHaveValue(
+      `/task/supersprinklesracing/sprinkles/${issueNumber}`,
+    );
+    await expect(page.getByLabel('Related identity')).toHaveValue(
+      `Task: supersprinklesracing/sprinkles#${issueNumber}`,
+    );
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toBeHidden();
+
     const overflow = page.getByRole('button', {
       name: `More actions for #${issueNumber}`,
     });
@@ -291,7 +359,9 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
       name: `Edit #${issueNumber}`,
     });
     await expect(editor.getByLabel('Title')).toHaveValue(originalDescription);
-    await expect(editor.getByLabel('Body')).toHaveValue(originalDescription);
+    // The exact preview crossed the real Server Action and GitHub fixture
+    // unchanged. The edit path strips only the hidden identity marker.
+    await expect(editor.getByLabel('Body')).toHaveValue(exactPreviewBody);
     await expect(editor.getByLabel('Body')).not.toHaveValue(
       /agent-lcars:quick-task-request/u,
     );

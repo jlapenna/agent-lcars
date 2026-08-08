@@ -1,0 +1,143 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  captureQuickTaskSource,
+  composeQuickTaskIssueBody,
+  deriveQuickTaskTitle,
+  lowInformationQuickTaskGuidance,
+  sanitizeQuickTaskSourceRoute,
+} from './quick-task-evidence';
+
+const EMPTY_STRUCTURED = {
+  observed: '',
+  expected: '',
+  stepsToReproduce: '',
+  doneWhen: '',
+  evidenceLinks: '',
+};
+
+describe('sanitizeQuickTaskSourceRoute', () => {
+  it('keeps only typed, allowlisted console query state', () => {
+    expect(
+      sanitizeQuickTaskSourceRoute({
+        pathname: '/inbox',
+        search:
+          '?repo=jlapenna%2Fagent-lcars&item=jlapenna%2Fagent-lcars%23524&reason=ready-for-agent&sort=newest&q=private+search&token=secret',
+      }),
+    ).toBe(
+      '/inbox?repo=jlapenna%2Fagent-lcars&item=jlapenna%2Fagent-lcars%23524&reason=ready-for-agent&sort=newest',
+    );
+  });
+
+  it('never carries origins, URL credentials, fragments, or arbitrary parameters', () => {
+    expect(
+      sanitizeQuickTaskSourceRoute(
+        'https://admin:secret@console.example/agents?repo=jlapenna%2Fagent-lcars&access_token=top-secret#private',
+      ),
+    ).toBe('/agents?repo=jlapenna%2Fagent-lcars');
+  });
+
+  it('rejects unknown and credential-shaped paths instead of guessing', () => {
+    expect(
+      sanitizeQuickTaskSourceRoute('/debug/bearer-secret?repo=a%2Fb'),
+    ).toBe('');
+    expect(sanitizeQuickTaskSourceRoute('not a URL')).toBe('');
+  });
+
+  it('preserves canonical detail routes without unrelated query state', () => {
+    expect(
+      sanitizeQuickTaskSourceRoute(
+        '/task/jlapenna/agent-lcars/524?token=nope&repo=jlapenna%2Fagent-lcars',
+      ),
+    ).toBe('/task/jlapenna/agent-lcars/524?repo=jlapenna%2Fagent-lcars');
+    expect(sanitizeQuickTaskSourceRoute('/sessions/session-123?debug=1')).toBe(
+      '/sessions/session-123',
+    );
+  });
+});
+
+describe('Quick Task evidence composition', () => {
+  it('captures sanitized route state and canonical identities', () => {
+    expect(
+      captureQuickTaskSource(
+        { pathname: '/task/org/repo/42', search: '?token=secret' },
+        [{ label: 'Task', value: 'org/repo#42' }],
+        new Date('2026-08-08T12:34:56.000Z'),
+      ),
+    ).toEqual({
+      route: '/task/org/repo/42',
+      identities: 'Task: org/repo#42',
+      capturedAt: '2026-08-08T12:34:56.000Z',
+    });
+  });
+
+  it('keeps the fast free-form path while adding readable source context', () => {
+    expect(
+      composeQuickTaskIssueBody(
+        {
+          description: 'Update the stale docs',
+          structured: EMPTY_STRUCTURED,
+          source: {
+            route: '/agents?token=secret&repo=org%2Frepo',
+            identities: '',
+            capturedAt: '2026-08-08T12:34:56.000Z',
+          },
+        },
+        { owner: 'org', name: 'repo' },
+      ),
+    ).toBe(`Update the stale docs
+
+## Source context
+
+- Repository: \`org/repo\`
+- Console route: \`/agents?repo=org%2Frepo\`
+- Captured: 2026-08-08T12:34:56.000Z`);
+  });
+
+  it('renders only the guided sections that contain evidence', () => {
+    const body = composeQuickTaskIssueBody(
+      {
+        description: 'The task list hangs after refresh',
+        structured: {
+          ...EMPTY_STRUCTURED,
+          observed: 'The spinner never clears.',
+          expected: 'The task list appears.',
+          doneWhen: 'A regression test covers the refresh path.',
+        },
+        source: {
+          route: '/inbox',
+          identities: 'Task: org/repo#42\nWorkflow run: org/repo#1234',
+          capturedAt: 'invalid timestamp',
+        },
+      },
+      { owner: 'org', name: 'repo' },
+    );
+
+    expect(body).toContain('## Problem details');
+    expect(body).toContain('### Observed\nThe spinner never clears.');
+    expect(body).toContain('### Expected\nThe task list appears.');
+    expect(body).not.toContain('### Steps to reproduce');
+    expect(body).toContain('- Task: org/repo#42');
+    expect(body).toContain('- Workflow run: org/repo#1234');
+    expect(body).not.toContain('Captured:');
+  });
+});
+
+describe('Quick Task title guidance', () => {
+  it('derives a bounded title from the first line', () => {
+    expect(deriveQuickTaskTitle('Fix the   flaky test\nDetails')).toBe(
+      'Fix the flaky test',
+    );
+    expect(deriveQuickTaskTitle('x'.repeat(120))).toHaveLength(80);
+  });
+
+  it('warns without rejecting generic or very short titles', () => {
+    expect(lowInformationQuickTaskGuidance('please fix:')).toContain(
+      'failing behavior',
+    );
+    expect(lowInformationQuickTaskGuidance('Docs')).toContain('terse');
+    expect(
+      lowInformationQuickTaskGuidance('Fix the session archive pagination'),
+    ).toBeUndefined();
+  });
+});
