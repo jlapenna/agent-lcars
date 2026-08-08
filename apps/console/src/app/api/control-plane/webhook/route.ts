@@ -1,8 +1,11 @@
 import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
+import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
+
+const ADMITTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
 
 function header(request: Request, name: string): string {
   const value = request.headers.get(name)?.trim();
@@ -23,11 +26,52 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const deliveryId = header(request, 'x-github-delivery');
+  const eventName = header(request, 'x-github-event');
+  if (eventName === 'ping' || !ADMITTED_EVENTS.has(eventName)) {
+    return NextResponse.json(
+      {
+        deliveryId,
+        eventName,
+        outcome: 'ignored',
+        reason: eventName === 'ping' ? 'ping' : 'unsupported event',
+      },
+      { status: 202, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  let repository: unknown;
+  try {
+    repository = JSON.parse(rawBody.toString('utf8'))?.repository?.full_name;
+  } catch {
+    console.warn('agent-lcars: ignored malformed signed GitHub webhook');
+    return NextResponse.json(
+      { deliveryId, eventName, outcome: 'ignored', reason: 'malformed JSON' },
+      { status: 202, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+  if (repository !== controlPlaneRepository()) {
+    console.info('agent-lcars: ignored webhook outside control plane', {
+      deliveryId,
+      eventName,
+      repository,
+    });
+    return NextResponse.json(
+      {
+        deliveryId,
+        eventName,
+        outcome: 'ignored',
+        reason: 'repository outside control plane',
+      },
+      { status: 202, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
   try {
     const result = await enqueueGitHubWebhook({
       rawBody,
-      deliveryId: header(request, 'x-github-delivery'),
-      eventName: header(request, 'x-github-event'),
+      deliveryId,
+      eventName,
       signature: header(request, 'x-hub-signature-256'),
     });
     console.info('agent-lcars: hosted admission durably queued', result);
