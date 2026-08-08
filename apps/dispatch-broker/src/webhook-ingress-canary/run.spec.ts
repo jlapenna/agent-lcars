@@ -11,6 +11,7 @@ import {
   classifyDeliveryFailure,
   createAppJwt,
   deliveryMatchesProbe,
+  parseAppDeliverySummaries,
 } from './run.js';
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
@@ -43,6 +44,15 @@ describe('real GitHub App webhook ingress canary', () => {
         Buffer.from(signature, 'base64url'),
       ),
     ).toBe(true);
+  });
+
+  it('preserves GitHub int64 delivery IDs losslessly for the detail request', () => {
+    const [delivery] = parseAppDeliverySummaries(
+      '[{"id":3835871140509647001,"guid":"delivery-guid","delivered_at":"2026-08-08T19:07:40Z","event":"issues","repository_id":1307149765}]',
+    );
+
+    expect(delivery.id).toBe('3835871140509647001');
+    expect(delivery.repository_id).toBe(1_307_149_765);
   });
 
   it('refuses to operate if the sentinel can dispatch an agent or review', () => {

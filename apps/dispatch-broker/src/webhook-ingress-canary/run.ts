@@ -33,7 +33,8 @@ interface TimelineEvent {
 }
 
 interface AppDeliverySummary {
-  id: number;
+  /** GitHub returns an int64 that routinely exceeds Number.MAX_SAFE_INTEGER. */
+  id: string;
   guid: string;
   delivered_at: string;
   event: string;
@@ -42,7 +43,14 @@ interface AppDeliverySummary {
   status_code?: number;
 }
 
-interface AppDeliveryDetail extends AppDeliverySummary {
+interface AppDeliveryDetail {
+  id: number;
+  guid: string;
+  delivered_at: string;
+  event: string;
+  action?: string;
+  repository_id?: number;
+  status_code?: number;
   request?: {
     payload?: {
       action?: string;
@@ -110,6 +118,7 @@ async function requestJson<T>(
   url: string,
   token: string,
   options: RequestInit = {},
+  parse: (body: string) => T = (body) => JSON.parse(body) as T,
 ): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/vnd.github+json');
@@ -120,12 +129,36 @@ async function requestJson<T>(
     ...options,
     headers,
   });
+  const body = await response.text();
   if (!response.ok) {
     throw new Error(
-      `HTTP ${response.status} ${options.method ?? 'GET'} ${new URL(url).pathname}: ${await response.text()}`,
+      `HTTP ${response.status} ${options.method ?? 'GET'} ${new URL(url).pathname}: ${body}`,
     );
   }
-  return (await response.json()) as T;
+  return parse(body);
+}
+
+export function parseAppDeliverySummaries(body: string): AppDeliverySummary[] {
+  // `JSON.parse()` coerces GitHub's int64 delivery ID to an imprecise number
+  // before a reviver can observe it. Quote only the summary object's exact
+  // `id` key in the raw JSON first; repository_id and every other field retain
+  // their ordinary types. The resulting decimal string is safe in the detail
+  // endpoint path regardless of its size.
+  const lossless = body.replace(/("id"\s*:\s*)([1-9]\d*)/gu, '$1"$2"');
+  const parsed = JSON.parse(lossless) as unknown;
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some(
+      (delivery) =>
+        !delivery ||
+        typeof delivery !== 'object' ||
+        typeof (delivery as { id?: unknown }).id !== 'string' ||
+        !/^[1-9]\d*$/u.test((delivery as { id: string }).id),
+    )
+  ) {
+    throw new Error('GitHub App delivery list contains an invalid int64 ID');
+  }
+  return parsed as AppDeliverySummary[];
 }
 
 function api(path: string): string {
@@ -280,11 +313,13 @@ async function pollAppDelivery(
   startedAt: number,
 ): Promise<AppDeliveryDetail> {
   const deadline = Date.now() + DELIVERY_TIMEOUT_MS;
-  const inspected = new Set<number>();
+  const inspected = new Set<string>();
   while (Date.now() < deadline) {
     const summaries = await requestJson<AppDeliverySummary[]>(
       api('/app/hook/deliveries?per_page=100'),
       appToken,
+      {},
+      parseAppDeliverySummaries,
     );
     const candidates = summaries.filter(
       (delivery) =>

@@ -159,7 +159,7 @@ function createAppJwt(clientId, privateKey, now = Date.now()) {
   );
   return `${signingInput}.${signature.toString("base64url")}`;
 }
-async function requestJson(url, token, options = {}) {
+async function requestJson(url, token, options = {}, parse = (body) => JSON.parse(body)) {
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/vnd.github+json");
   headers.set("Authorization", `Bearer ${token}`);
@@ -169,12 +169,23 @@ async function requestJson(url, token, options = {}) {
     ...options,
     headers
   });
+  const body = await response.text();
   if (!response.ok) {
     throw new Error(
-      `HTTP ${response.status} ${options.method ?? "GET"} ${new URL(url).pathname}: ${await response.text()}`
+      `HTTP ${response.status} ${options.method ?? "GET"} ${new URL(url).pathname}: ${body}`
     );
   }
-  return await response.json();
+  return parse(body);
+}
+function parseAppDeliverySummaries(body) {
+  const lossless = body.replace(/("id"\s*:\s*)([1-9]\d*)/gu, '$1"$2"');
+  const parsed = JSON.parse(lossless);
+  if (!Array.isArray(parsed) || parsed.some(
+    (delivery) => !delivery || typeof delivery !== "object" || typeof delivery.id !== "string" || !/^[1-9]\d*$/u.test(delivery.id)
+  )) {
+    throw new Error("GitHub App delivery list contains an invalid int64 ID");
+  }
+  return parsed;
 }
 function api(path) {
   return `https://api.github.com${path}`;
@@ -270,7 +281,9 @@ async function pollAppDelivery(appToken, repository, repositoryId, issue, action
   while (Date.now() < deadline) {
     const summaries = await requestJson(
       api("/app/hook/deliveries?per_page=100"),
-      appToken
+      appToken,
+      {},
+      parseAppDeliverySummaries
     );
     const candidates = summaries.filter(
       (delivery) => !inspected.has(delivery.id) && delivery.event === "issues" && delivery.action === action && delivery.repository_id === repositoryId && Date.parse(delivery.delivered_at) >= startedAt - 1e4
@@ -453,5 +466,6 @@ export {
   classifyDeliveryFailure,
   createAppJwt,
   deliveryMatchesProbe,
+  parseAppDeliverySummaries,
   runWebhookIngressCanary
 };
