@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
   WORKER_WORKFLOW_FILES,
 } from '@agent-lcars/dispatch-contracts';
@@ -93,6 +94,12 @@ export function assertCompletionOidcClaims(
   }
   if (claims['event_name'] !== 'workflow_dispatch') {
     throw new Error('OIDC event_name claim is not workflow_dispatch');
+  }
+  const expectedFinalizerRef = `${repository}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`;
+  if (claims['job_workflow_ref'] !== expectedFinalizerRef) {
+    throw new Error(
+      'OIDC job_workflow_ref claim is not the trusted completion finalizer on main',
+    );
   }
   const workflow = [...WORKER_WORKFLOW_FILES].find(
     (candidate) =>

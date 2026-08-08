@@ -1,4 +1,7 @@
-import { COMPLETION_OIDC_AUDIENCE } from '@agent-lcars/dispatch-contracts';
+import {
+  COMPLETION_FINALIZER_WORKFLOW_PATH,
+  COMPLETION_OIDC_AUDIENCE,
+} from '@agent-lcars/dispatch-contracts';
 import {
   RECONCILE_OIDC_AUDIENCE,
   RECONCILE_WORKFLOW_PATH,
@@ -65,6 +68,7 @@ describe('GitHub Actions completion OIDC claims', () => {
     repository_id: '1307149765',
     run_id: '93099054125',
     workflow_ref: `${repository}/.github/workflows/codex.yml@refs/heads/main`,
+    job_workflow_ref: `${repository}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`,
     ref: 'refs/heads/main',
     event_name: 'workflow_dispatch',
   };
@@ -82,6 +86,14 @@ describe('GitHub Actions completion OIDC claims', () => {
     [{ ...completionClaims, repository: 'attacker/fork' }, 'repository'],
     [{ ...completionClaims, ref: 'refs/heads/feature' }, 'ref'],
     [{ ...completionClaims, event_name: 'pull_request' }, 'event_name'],
+    [{ ...completionClaims, job_workflow_ref: undefined }, 'job_workflow_ref'],
+    [
+      {
+        ...completionClaims,
+        job_workflow_ref: `${repository}/.github/workflows/codex.yml@refs/heads/main`,
+      },
+      'job_workflow_ref',
+    ],
     [
       {
         ...completionClaims,
