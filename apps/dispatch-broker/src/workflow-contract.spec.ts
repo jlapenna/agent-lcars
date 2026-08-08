@@ -702,6 +702,8 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
         'mu',
       ),
     );
+    assert.match(source, /^ {6}mode:\s+\$\{\{ inputs\.mode \}\}\s*$/mu);
+    assert.match(source, /^ {6}runbook:\s+\$\{\{ inputs\.runbook \}\}\s*$/mu);
     assert.doesNotMatch(
       source,
       new RegExp(`needs\\.${pipeline}\\.outputs`, 'u'),
@@ -754,6 +756,14 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(evidence.source, /actions\/runs\/\$GITHUB_RUN_ID\/jobs/u);
   assert.match(evidence.source, /<!-- attempt-claim:\$\{attempt_id\} -->/u);
   assert.match(evidence.source, /select\(\.conclusion == "failure"\)/u);
+  assert.match(evidence.source, /Classify Claude credential readiness/u);
+  assert.match(evidence.source, /Classify Claude provider readiness/u);
+  assert.match(evidence.source, /\.started_at \/\/ ""/u);
+  assert.match(
+    evidence.source,
+    /status:needs-human[\s\S]*comments\?since=\$started_at[\s\S]*submitted_at >= \$started/u,
+    'the isolated finalizer must preserve the trusted gate inference outcomes',
+  );
   assert.match(evidence.source, /Omitting unverified lifecycle outcome/u);
   assert.doesNotMatch(
     evidence.source,
@@ -1634,11 +1644,36 @@ test("claude's structured failure scan survives as an adapter-style input, absen
   // success() exactly as before -- its own failure must still correctly
   // skip verify-deliverable inside post-agent-gates.sh via JOB_STATUS.
   const claudeSteps = stepBlocks(claudeSource);
+  const credentialReadiness = namedStep(
+    claudeSteps,
+    'claude.yml',
+    'Classify Claude credential readiness',
+  );
+  const providerReadiness = namedStep(
+    claudeSteps,
+    'claude.yml',
+    'Classify Claude provider readiness',
+  );
   const runStatus = namedStep(
     claudeSteps,
     'claude.yml',
     'Verify Claude run status',
   );
+  for (const readinessStep of [credentialReadiness, providerReadiness]) {
+    assert.match(readinessStep.source, stepField('if', 'always()'));
+    assert.match(
+      readinessStep.source,
+      stepField(
+        'CLAUDE_EXECUTION_FILE',
+        '${{ steps.agent.outputs.execution_file }}',
+        10,
+      ),
+    );
+    assert.doesNotMatch(readinessStep.source, /continue-on-error/u);
+  }
+  assert.match(credentialReadiness.source, /"api_error_status": 401/u);
+  assert.match(providerReadiness.source, /"is_error": true/u);
+  assert.match(providerReadiness.source, /! echo "\$LOG"/u);
   assert.match(runStatus.source, stepField('if', 'success()'));
   assert.match(
     runStatus.source,
@@ -1651,12 +1686,17 @@ test("claude's structured failure scan survives as an adapter-style input, absen
   assert.doesNotMatch(runStatus.source, /gh run view/u);
   const claudeAgentStep = agentAdapterStep(claudeSteps, 'claude.yml');
   const agentIndex = claudeSteps.indexOf(claudeAgentStep);
+  const credentialReadinessIndex = claudeSteps.indexOf(credentialReadiness);
+  const providerReadinessIndex = claudeSteps.indexOf(providerReadiness);
   const runStatusIndex = claudeSteps.indexOf(runStatus);
   const gatesIndex = claudeSteps.findIndex(
     (step) => step.name === 'Run post-agent gates',
   );
   assert.ok(
-    agentIndex < runStatusIndex && runStatusIndex < gatesIndex,
+    agentIndex < credentialReadinessIndex &&
+      credentialReadinessIndex < providerReadinessIndex &&
+      providerReadinessIndex < runStatusIndex &&
+      runStatusIndex < gatesIndex,
     '"Verify Claude run status" must run between the agent step and "Run post-agent gates"',
   );
 
@@ -1671,5 +1711,6 @@ test("claude's structured failure scan survives as an adapter-style input, absen
       `${workflow} must not gain claude's log-scan signal -- it never had one`,
     );
     assert.doesNotMatch(source, /Verify Claude run status/u);
+    assert.doesNotMatch(source, /Classify Claude .* readiness/u);
   }
 });

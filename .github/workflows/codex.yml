@@ -479,5 +479,7 @@ jobs:
       dispatch-token: ${{ inputs.broker_dispatch_token }}
       worker-workflow: codex.yml
       worker-result: ${{ needs.codex.result }}
+      mode: ${{ inputs.mode }}
+      runbook: ${{ inputs.runbook }}
       agent: Codex
       maintainer: ${{ vars.MAINTAINER_LOGIN }}
