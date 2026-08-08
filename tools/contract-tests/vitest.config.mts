@@ -1,7 +1,8 @@
 import path from 'node:path';
 
-import tsconfigPaths from 'vite-tsconfig-paths';
 import { defineConfig } from 'vitest/config';
+
+import { vitestTsconfigPaths } from '../../vitest.config.base.mts';
 
 // Standalone config for repository tooling and cross-project contracts.
 // These tests span the repo root (.github/workflows/*.yml),
@@ -10,17 +11,24 @@ import { defineConfig } from 'vitest/config';
 // (see package.json) from the CI Verify job, not through
 // `nx run-many -t test`.
 export default defineConfig({
-  root: path.resolve(__dirname, '../..'),
+  root: path.resolve(import.meta.dirname, '../..'),
   plugins: [
-    tsconfigPaths({
-      projects: [
-        path.resolve(__dirname, '../../apps/console/tsconfig.typecheck.json'),
-        path.resolve(__dirname, '../../libs/util-server/tsconfig.lib.json'),
-        path.resolve(__dirname, '../../libs/util/tsconfig.lib.json'),
-        path.resolve(__dirname, '../../libs/logging/tsconfig.lib.json'),
-        path.resolve(__dirname, '../../libs/env-vars/tsconfig.lib.json'),
-      ],
-    }),
+    vitestTsconfigPaths([
+      path.resolve(
+        import.meta.dirname,
+        '../../apps/console/tsconfig.typecheck.json',
+      ),
+      path.resolve(
+        import.meta.dirname,
+        '../../libs/util-server/tsconfig.lib.json',
+      ),
+      path.resolve(import.meta.dirname, '../../libs/util/tsconfig.lib.json'),
+      path.resolve(import.meta.dirname, '../../libs/logging/tsconfig.lib.json'),
+      path.resolve(
+        import.meta.dirname,
+        '../../libs/env-vars/tsconfig.lib.json',
+      ),
+    ]),
   ],
   resolve: {
     // Keep standalone contract tests aligned with the workspace-wide Vitest
@@ -28,7 +36,7 @@ export default defineConfig({
     // runners resolve that marker to the existing no-op test shim.
     alias: {
       'server-only': path.resolve(
-        __dirname,
+        import.meta.dirname,
         '../../libs/test-utils/src/server-only-mock.js',
       ),
     },
