@@ -32,4 +32,11 @@ runs:
       env:
         APP_CLIENT_ID: ${{ inputs.app-client-id }}
         APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
-      run: node "$GITHUB_ACTION_PATH/dist/run.mjs"
+      run: |
+        if [ ! -f "$GITHUB_ACTION_PATH/dist/run.mjs" ]; then
+          echo "failure-category=probe_bundle_missing" >> "$GITHUB_OUTPUT"
+          echo "failure-detail=Committed webhook ingress probe bundle is missing" >> "$GITHUB_OUTPUT"
+          echo "::error::Committed webhook ingress probe bundle is missing"
+          exit 1
+        fi
+        node "$GITHUB_ACTION_PATH/dist/run.mjs"

@@ -330,6 +330,21 @@ test('the webhook ingress canary proves App delivery without dispatching a worke
     implementation,
     /agent-router\.yml|AGENT_RUNNER_LABEL|workerWorkflow\(/u,
   );
+
+  const action = await fs.readFile(
+    path.join(
+      workspaceRoot,
+      '.github/actions/run-webhook-ingress-canary/action.yml',
+    ),
+    'utf8',
+  );
+  assert.match(action, /probe_bundle_missing/u);
+  await fs.access(
+    path.join(
+      workspaceRoot,
+      '.github/actions/run-webhook-ingress-canary/dist/run.mjs',
+    ),
+  );
 });
 
 test('the deliverable watchdog observes stale agent PRs without broker or merge authority (#721)', async () => {

@@ -39,6 +39,12 @@ __pycache__/
 !.github/actions/deliverable-watchdog/dist
 !.github/actions/deliverable-watchdog/dist/**
 
+# run-webhook-ingress-canary/dist is #796's real GitHub App ingress probe.
+# It executes directly from a GitHub-hosted workflow and must be committed,
+# rebuilt, and drift-checked like the operational action bundles above.
+!.github/actions/run-webhook-ingress-canary/dist
+!.github/actions/run-webhook-ingress-canary/dist/**
+
 # dependencies
 node_modules
 # pnpm falls back to a project-local store here when run inside
