@@ -3940,12 +3940,12 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
         }
       );
     } catch (error) {
+      if (normalized.kind === "completion" && (error instanceof AuthorityStateNotFoundError || error instanceof AuthorityStateMissingError)) {
+        throw new CompletionBindingError(
+          "Completion callback does not match the bound worker run"
+        );
+      }
       if (error instanceof AuthorityStateNotFoundError) {
-        if (normalized.kind === "completion") {
-          throw new CompletionBindingError(
-            "Completion callback does not match the bound worker run"
-          );
-        }
         const initializationEvidence = await classifyAuthorityTaskInitialization(
           client,
           task,

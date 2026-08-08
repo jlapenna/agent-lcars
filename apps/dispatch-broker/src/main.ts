@@ -2260,15 +2260,20 @@ async function loadBrokerLedger(
         },
       );
     } catch (error) {
+      // Neither an absent task nor a compatibility-only shadow record can
+      // authenticate a hosted completion. Convert both before the generic
+      // initialization/fail-closed paths so caller-selected input cannot
+      // create projection or parking side effects.
+      if (
+        normalized.kind === 'completion' &&
+        (error instanceof AuthorityStateNotFoundError ||
+          error instanceof AuthorityStateMissingError)
+      ) {
+        throw new CompletionBindingError(
+          'Completion callback does not match the bound worker run',
+        );
+      }
       if (error instanceof AuthorityStateNotFoundError) {
-        // A completion callback may authenticate only against an existing
-        // bound generation. Never inspect compatibility projection or seed
-        // state for an unbound completion request.
-        if (normalized.kind === 'completion') {
-          throw new CompletionBindingError(
-            'Completion callback does not match the bound worker run',
-          );
-        }
         const initializationEvidence =
           await classifyAuthorityTaskInitialization(
             client,

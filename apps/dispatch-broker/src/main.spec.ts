@@ -1734,6 +1734,51 @@ test('authority completion rejects an invalid binding before GitHub projection',
   assert.equal((await port.readTask(task))?.lease, undefined);
 });
 
+test('authority completion rejects shadow-only state before fail-closed side effects', async () => {
+  const port = new InMemoryStoragePort();
+  await port.writeTask(
+    task,
+    undefined,
+    { signals: [], intents: [] },
+    '2026-08-08T00:00:00.000Z',
+  );
+  const client = {
+    request: async () => {
+      throw new Error('Shadow-only completion must not mutate GitHub');
+    },
+    requestOk: async () => {
+      throw new Error('Shadow-only completion must not read GitHub');
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        {
+          kind: 'completion',
+          task,
+          sourceKind: 'completion',
+          sourceId: 'worker-run:42',
+          transportRunId: 42,
+          workerRunId: 42,
+          generation: 1,
+          intentId: 'intent-1',
+          token: 'dispatch_token_123456',
+          workflow: 'codex.yml',
+        },
+        false,
+        'authority',
+        'completion:42',
+        () => port,
+      ),
+    CompletionBindingError,
+  );
+  assert.equal((await port.readTask(task))?.controllerState, undefined);
+  assert.equal((await port.readTask(task))?.lease, undefined);
+});
+
 test('only unambiguous non-transient 4xx dispatch failures are definite rejections', () => {
   for (const status of [400, 401, 403, 404, 422]) {
     assert.equal(
