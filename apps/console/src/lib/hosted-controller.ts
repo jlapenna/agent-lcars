@@ -11,7 +11,11 @@ import { maintainerLogin } from './deployment';
 
 type HostedControllerEvent = Pick<
   BrokerPassOptions,
-  'normalized' | 'isPullRequest' | 'transportRunId' | 'authorityOwner'
+  | 'normalized'
+  | 'isPullRequest'
+  | 'transportRunId'
+  | 'authorityOwner'
+  | 'pollCompletionUntilTerminal'
 >;
 
 /**
@@ -24,6 +28,7 @@ export function processHostedControllerEvent({
   isPullRequest,
   transportRunId,
   authorityOwner,
+  pollCompletionUntilTerminal,
 }: HostedControllerEvent): Promise<void> {
   return processNormalizedEvent({
     normalized,
@@ -38,6 +43,7 @@ export function processHostedControllerEvent({
     isPullRequest,
     transportRunId,
     authorityOwner,
+    pollCompletionUntilTerminal,
     maintainer: maintainerLogin(),
     projectionIdentities: [
       { login: 'github-actions[bot]', type: 'Bot' },

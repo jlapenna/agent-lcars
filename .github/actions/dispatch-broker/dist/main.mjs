@@ -3790,6 +3790,7 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
     observeCompletion(loaded.ledger, generation.generation, run.id);
   }
   await saveLedger2(client, loaded);
+  if (polling.pollUntilTerminal === false) return;
   const deadline = now() + 12e4;
   let delay = 2e3;
   while (run.status !== "completed" && now() < deadline) {
@@ -4001,7 +4002,8 @@ async function processNormalizedEvent({
   authorityOwner,
   maintainer = "",
   actionConcurrency,
-  projectionIdentities
+  projectionIdentities,
+  pollCompletionUntilTerminal = true
 }) {
   if (normalized.kind === "ignored") return;
   const storageMode = parseDispatchStorageMode(storageModeInput);
@@ -4089,7 +4091,9 @@ async function processNormalizedEvent({
       recordControlEvidence(loaded.ledger, normalized.evidence);
       await saveLedger2(client, loaded);
     } else if (normalized.kind === "completion") {
-      await handleCompletion(client, loaded, normalized);
+      await handleCompletion(client, loaded, normalized, {
+        pollUntilTerminal: pollCompletionUntilTerminal
+      });
     } else if (normalized.kind === "reconcile") {
       await runPhase(
         { client, loaded },

@@ -1999,6 +1999,47 @@ test('a trusted credential failure opens the lane breaker before completion can 
   }
 });
 
+test('a hosted completion records the observation without polling its caller', async () => {
+  const ledger = boundLedger();
+  let runReads = 0;
+  let sleeps = 0;
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) {
+        runReads += 1;
+        return workerRun();
+      }
+      if (path.includes('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+
+  await handleCompletion(
+    client,
+    { ledger, comment: { id: 9 } },
+    {
+      task,
+      generation: 1,
+      intentId: 'intent-1',
+      token: 'dispatch_token_123456',
+      workerRunId: 42,
+      workflow: 'codex.yml',
+      sourceId: 'worker-run:42',
+      transportRunId: 42,
+    },
+    {
+      pollUntilTerminal: false,
+      sleep: async () => {
+        sleeps += 1;
+      },
+    },
+  );
+
+  assert.equal(runReads, 1);
+  assert.equal(sleeps, 0);
+  assert.equal(ledger.generations[0].state, 'completion-observed');
+});
+
 test('authority renews its lease before every completion poll that can cross the original expiry', async () => {
   const port = new InMemoryStoragePort();
   const ledger = boundLedger();

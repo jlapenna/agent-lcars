@@ -122,6 +122,7 @@ export async function completeHostedWorker({
     isPullRequest: Boolean(issue.pull_request),
     transportRunId: identity.runId,
     authorityOwner: `completion:${identity.runId}`,
+    pollCompletionUntilTerminal: false,
   });
   return {
     issue: completion.issue,

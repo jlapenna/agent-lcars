@@ -78,6 +78,7 @@ describe('hosted worker completion', () => {
       isPullRequest: false,
       transportRunId: 93_099_054_125,
       authorityOwner: 'completion:93099054125',
+      pollCompletionUntilTerminal: false,
     });
   });
 

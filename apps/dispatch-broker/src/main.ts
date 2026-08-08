@@ -1838,6 +1838,7 @@ async function handleCompletion(
   polling: {
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
+    pollUntilTerminal?: boolean;
   } = {},
 ): Promise<void> {
   const now = polling.now ?? Date.now;
@@ -1928,6 +1929,13 @@ async function handleCompletion(
     observeCompletion(loaded.ledger, generation.generation, run.id);
   }
   await saveLedger(client, loaded);
+
+  // A hosted callback is made by the worker run whose terminal state this
+  // loop observes. Holding that HTTP request open while polling the caller
+  // creates a circular wait: the run cannot finish until the callback
+  // returns. Persist the authenticated completion observation and let the
+  // hosted reconciler finalize it once GitHub reports the run terminal.
+  if (polling.pollUntilTerminal === false) return;
 
   const deadline = now() + 120_000;
   let delay = 2_000;
@@ -2294,6 +2302,10 @@ export interface BrokerPassOptions {
   /** Identities allowed to own the compatibility projection. Firestore,
    * never the comment, remains controller authority. */
   projectionIdentities?: readonly LedgerProjectionIdentity[];
+  /** Hosted worker callbacks must return after recording the observation:
+   * the calling workflow cannot become terminal while its HTTP request is
+   * still waiting. Action callbacks retain the bounded terminal poll. */
+  pollCompletionUntilTerminal?: boolean;
 }
 
 /**
@@ -2316,6 +2328,7 @@ export async function processNormalizedEvent({
   maintainer = '',
   actionConcurrency,
   projectionIdentities,
+  pollCompletionUntilTerminal = true,
 }: BrokerPassOptions): Promise<void> {
   if (normalized.kind === 'ignored') return;
   // #645 Phase 6: parsed once, up front, before any ledger work -- a
@@ -2447,7 +2460,9 @@ export async function processNormalizedEvent({
       recordControlEvidence(loaded.ledger, normalized.evidence);
       await saveLedger(client, loaded);
     } else if (normalized.kind === 'completion') {
-      await handleCompletion(client, loaded, normalized);
+      await handleCompletion(client, loaded, normalized, {
+        pollUntilTerminal: pollCompletionUntilTerminal,
+      });
     } else if (normalized.kind === 'reconcile') {
       await runPhase({ client, loaded }, 'reconciliation', () =>
         reconcileLedger(
