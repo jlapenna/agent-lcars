@@ -1257,14 +1257,31 @@ async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "gith
     ...created && { existingComments: comments }
   };
 }
-async function hasLedgerProjection(api2, task, workflowIdentity = "github-actions[bot]") {
+async function canInitializeAuthorityTask(api2, task, authorityEpoch, workflowIdentity = "github-actions[bot]") {
   const comments = await listAll(
     api2,
     `${repositoryPath(task)}/issues/${task.issue}/comments`
   );
-  return comments.some(
+  const hasProjection = comments.some(
     (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.type === "Bot" && (comment.user.login === workflowIdentity || comment.user.login?.endsWith("[bot]"))
   );
+  if (hasProjection) return false;
+  const epoch = Date.parse(authorityEpoch);
+  if (!Number.isFinite(epoch)) {
+    throw new Error(
+      `DISPATCH_AUTHORITY_EPOCH must be a valid timestamp, got ${JSON.stringify(authorityEpoch)}`
+    );
+  }
+  const issue = await api2.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`
+  );
+  const createdAt = Date.parse(issue.created_at);
+  if (!Number.isFinite(createdAt)) {
+    throw new Error(
+      `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`
+    );
+  }
+  return createdAt >= epoch;
 }
 async function saveLedger(api2, loaded) {
   const root = repositoryPath(loaded.ledger.task);
@@ -2364,7 +2381,7 @@ var FirestoreRestStoragePort = class {
   #baseUrl;
   constructor(options) {
     this.#token = options.token;
-    this.#documentsRoot = `projects/${options.projectId}/databases/(default)/documents`;
+    this.#documentsRoot = `projects/${options.projectId}/databases/${options.databaseId}/documents`;
     const emulatorHost = options.emulatorHost ?? process.env.FIRESTORE_EMULATOR_HOST;
     this.#baseUrl = emulatorHost ? `http://${emulatorHost}/v1/${this.#documentsRoot}` : `https://firestore.googleapis.com/v1/${this.#documentsRoot}`;
   }
@@ -2603,6 +2620,7 @@ function api() {
 function createStoragePort() {
   return new FirestoreRestStoragePort({
     projectId: env("GCP_PROJECT_ID"),
+    databaseId: env("DISPATCH_FIRESTORE_DATABASE_ID"),
     token: env("DISPATCH_STORAGE_TOKEN")
   });
 }
@@ -3456,7 +3474,7 @@ async function healStaleAgentLabels(client, loaded, intent) {
   });
   if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort) {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "") {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
   if (storageMode === "authority") {
     const port = storagePortFactory();
@@ -3476,7 +3494,7 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, storage
       );
     } catch (error) {
       if (error instanceof AuthorityStateNotFoundError) {
-        if (await hasLedgerProjection(client, task)) {
+        if (!await canInitializeAuthorityTask(client, task, authorityEpoch)) {
           throw new AuthorityStateMissingError(task);
         }
         if (untrackedPullRequestControl) return void 0;
@@ -3535,6 +3553,7 @@ async function broker() {
   const storageMode = parseDispatchStorageMode(
     env("DISPATCH_STORAGE_MODE", false)
   );
+  const authorityEpoch = storageMode === "authority" ? env("DISPATCH_AUTHORITY_EPOCH") : "";
   const task = resolveTask(normalized);
   const client = api();
   const isPullRequest = env("ANCHOR_IS_PR", false) === "true";
@@ -3564,7 +3583,9 @@ async function broker() {
       normalized,
       isPullRequest,
       storageMode,
-      `action:${runId}`
+      `action:${runId}`,
+      createStoragePort,
+      authorityEpoch
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {

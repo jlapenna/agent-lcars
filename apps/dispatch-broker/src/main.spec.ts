@@ -804,6 +804,9 @@ test('authority may seed a genuinely new task with no compatibility projection',
   const client = {
     requestOk: async (path, options = {}) => {
       calls.push({ path, method: options.method ?? 'GET' });
+      if ((options.method ?? 'GET') === 'GET' && path.endsWith('/issues/304')) {
+        return { created_at: '2026-08-09T00:00:00.000Z' };
+      }
       if ((options.method ?? 'GET') === 'GET') return [];
       if (options.method === 'POST') {
         return {
@@ -824,14 +827,41 @@ test('authority may seed a genuinely new task with no compatibility projection',
     'authority',
     'delivery:new-task',
     () => port,
+    '2026-08-08T00:00:00.000Z',
   );
 
   assert.equal(loaded.ledger.generations.length, 0);
   assert.ok((await port.readTask(task))?.controllerState);
   assert.deepEqual(
     calls.map(({ method }) => method),
-    ['GET', 'GET', 'POST'],
+    ['GET', 'GET', 'GET', 'POST'],
   );
+});
+
+test('authority does not seed a pre-cutover task after its marker is removed', async () => {
+  const port = new InMemoryStoragePort();
+  const client = {
+    requestOk: async (path) =>
+      path.endsWith('/issues/304')
+        ? { created_at: '2026-08-07T00:00:00.000Z' }
+        : [],
+  };
+
+  await assert.rejects(
+    () =>
+      loadBrokerLedger(
+        client,
+        task,
+        { kind: 'reconcile', task },
+        false,
+        'authority',
+        'delivery:removed-marker',
+        () => port,
+        '2026-08-08T00:00:00.000Z',
+      ),
+    /no exact authoritative controller state/u,
+  );
+  assert.equal(await port.readTask(task), undefined);
 });
 
 test('tracked pull request close and reopen transitions persist to the existing ledger', async () => {

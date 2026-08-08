@@ -54,6 +54,21 @@ resource "google_firestore_database" "default" {
   depends_on              = [google_firebase_project.this]
 }
 
+# Controller state is isolated from worker telemetry at the Firestore database
+# boundary. IAM Conditions below grant every runtime identity access to exactly
+# one database; a worker-held telemetry credential can therefore never mutate
+# dispatchTasks or dispatchLaunchOutbox.
+resource "google_firestore_database" "dispatch_controller" {
+  provider                = google-beta
+  project                 = var.project_id
+  name                    = "dispatch-controller"
+  location_id             = "nam5"
+  type                    = "FIRESTORE_NATIVE"
+  delete_protection_state = "DELETE_PROTECTION_ENABLED"
+  deletion_policy         = "ABANDON"
+  depends_on              = [google_firebase_project.this]
+}
+
 resource "google_storage_bucket" "transcripts" {
   name                        = "${var.project_id}-session-transcripts"
   location                    = "US"
@@ -79,37 +94,47 @@ resource "google_project_iam_member" "writer_firestore" {
   project = var.project_id
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.telemetry_writer.email}"
+  condition {
+    title       = "telemetry-default-database"
+    description = "Telemetry writers cannot access dispatch-controller."
+    expression  = "resource.name == \"projects/${var.project_id}/databases/${google_firestore_database.default.name}\""
+  }
 }
 
-# The dispatch controller's durable authority (#645 Phase 6).
-#
-# Be precise about what this separation does and does not buy, because the
-# obvious reading is wrong in two ways:
-#
-#   1. It is NOT impersonation isolation. The WIF provider above maps only
-#      attribute.repository, so any workflow in this repository can already
-#      assume either this account or telemetry_writer.
-#   2. It is NOT data isolation. roles/datastore.user is a PROJECT-level
-#      grant covering every database, and writer_firestore already gives
-#      telemetry_writer exactly that role -- so telemetry_writer can write
-#      dispatchTasks and dispatchLaunchOutbox whether or not this account
-#      exists. An earlier revision of this comment claimed a blast-radius
-#      boundary here; that claim was simply false.
-#
-# What it does buy: the two callers are distinguishable in the audit log,
-# and a separate principal is the prerequisite for ever scoping either one
-# down. Real isolation needs a dedicated Firestore database plus IAM
-# conditions narrowing BOTH grants -- including telemetry_writer's live one
-# -- and is tracked separately rather than bolted on here.
+# The controller writer is reachable only through the workflow-specific WIF
+# pool below and can write only the dedicated controller database.
 resource "google_service_account" "dispatch_broker" {
   account_id   = "dispatch-broker"
   display_name = "Agent LCARS dispatch broker"
 }
 
-resource "google_project_iam_member" "dispatch_broker_firestore" {
+# Worker preflight deliberately has no write permission. Agent code can mint
+# this identity, so it must remain harmless even when fully compromised.
+resource "google_service_account" "dispatch_preflight" {
+  account_id   = "dispatch-preflight"
+  display_name = "Agent LCARS dispatch preflight reader"
+}
+
+resource "google_project_iam_member" "dispatch_controller_firestore" {
   project = var.project_id
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.dispatch_broker.email}"
+  condition {
+    title       = "dispatch-controller-writer"
+    description = "Controller writes are confined to the dispatch database."
+    expression  = "resource.name == \"projects/${var.project_id}/databases/${google_firestore_database.dispatch_controller.name}\""
+  }
+}
+
+resource "google_project_iam_member" "dispatch_preflight_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.viewer"
+  member  = "serviceAccount:${google_service_account.dispatch_preflight.email}"
+  condition {
+    title       = "dispatch-controller-reader"
+    description = "Workers may verify bindings but cannot mutate controller state."
+    expression  = "resource.name == \"projects/${var.project_id}/databases/${google_firestore_database.dispatch_controller.name}\""
+  }
 }
 
 resource "google_project_iam_member" "apphosting_firestore" {
@@ -117,6 +142,11 @@ resource "google_project_iam_member" "apphosting_firestore" {
   role       = "roles/datastore.viewer"
   member     = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
   depends_on = [google_firebase_project.this]
+  condition {
+    title       = "console-default-database-reader"
+    description = "The console reads telemetry only; controller access is granted separately at hosted cutover."
+    expression  = "resource.name == \"projects/${var.project_id}/databases/${google_firestore_database.default.name}\""
+  }
 }
 
 resource "google_storage_bucket_iam_member" "apphosting_transcripts" {
@@ -174,10 +204,48 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
 
-resource "google_service_account_iam_member" "github_impersonation" {
+# Privileged identities never trust the repository-wide pool. A separate pool
+# is required (not merely another provider in the shared pool), because WIF
+# service-account principals are pool-scoped and otherwise indistinguishable
+# after token exchange.
+resource "google_iam_workload_identity_pool" "github_deployer" {
+  workload_identity_pool_id = "github-deployer"
+  display_name              = "GitHub console deployer"
+}
+
+resource "google_iam_workload_identity_pool_provider" "github_deployer" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_deployer.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github"
+  display_name                       = "GitHub deploy-console main"
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+  }
+  attribute_condition = "assertion.repository == '${var.github_owner}/${var.github_repository}' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == '${var.github_owner}/${var.github_repository}/.github/workflows/deploy-console.yml@refs/heads/main'"
+  oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
+}
+
+resource "google_iam_workload_identity_pool" "dispatch_controller" {
+  workload_identity_pool_id = "dispatch-controller"
+  display_name              = "GitHub dispatch controller"
+}
+
+resource "google_iam_workload_identity_pool_provider" "dispatch_controller" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.dispatch_controller.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github"
+  display_name                       = "GitHub agent-router main"
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+  }
+  attribute_condition = "assertion.repository == '${var.github_owner}/${var.github_repository}' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == '${var.github_owner}/${var.github_repository}/.github/workflows/agent-router.yml@refs/heads/main'"
+  oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
+}
+
+resource "google_service_account_iam_member" "github_deployer_impersonation" {
   service_account_id = google_service_account.github_deployer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_deployer.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
 resource "google_service_account_iam_member" "members_writer_impersonation" {
@@ -186,14 +254,14 @@ resource "google_service_account_iam_member" "members_writer_impersonation" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.sprinkles_repository}"
 }
 
-# Only this repo, unlike telemetry_writer's three-repo grant: the dispatch
-# controller runs solely in agent-lcars, so sprinkles and homelab have no
-# reason to impersonate it. Note this binding is as narrow as the provider
-# permits today -- attribute_mapping above maps only attribute.repository,
-# so this cannot yet be scoped to agent-router.yml specifically, and any
-# workflow in this repo can assume it.
-resource "google_service_account_iam_member" "dispatch_broker_impersonation" {
+resource "google_service_account_iam_member" "dispatch_controller_impersonation" {
   service_account_id = google_service_account.dispatch_broker.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.dispatch_controller.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+}
+
+resource "google_service_account_iam_member" "dispatch_preflight_impersonation" {
+  service_account_id = google_service_account.dispatch_preflight.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }

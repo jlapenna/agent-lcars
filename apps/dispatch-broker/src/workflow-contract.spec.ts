@@ -665,7 +665,11 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mo
   assert.match(auth.source, stepField('uses', 'google-github-actions/auth@v3'));
   assert.match(
     auth.source,
-    stepField('workload_identity_provider', '${{ vars.GCP_WIF_PROVIDER }}', 10),
+    stepField(
+      'workload_identity_provider',
+      '${{ vars.GCP_DISPATCH_BROKER_WIF_PROVIDER }}',
+      10,
+    ),
   );
   assert.match(
     auth.source,
@@ -687,6 +691,22 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mo
     stepField(
       'DISPATCH_STORAGE_TOKEN',
       '${{ steps.gcp-auth.outputs.access_token }}',
+      10,
+    ),
+  );
+  assert.match(
+    brokerStep.source,
+    stepField(
+      'DISPATCH_FIRESTORE_DATABASE_ID',
+      '${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}',
+      10,
+    ),
+  );
+  assert.match(
+    brokerStep.source,
+    stepField(
+      'DISPATCH_AUTHORITY_EPOCH',
+      '${{ vars.DISPATCH_AUTHORITY_EPOCH }}',
       10,
     ),
   );
@@ -1063,7 +1083,7 @@ test('every worker captures the verified attempt ID via the broker preflight cal
     );
     assert.match(
       storageAuth.source,
-      stepField('service_account', '${{ vars.GCP_DISPATCH_BROKER_SA }}', 10),
+      stepField('service_account', '${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}', 10),
     );
     assert.match(
       preflight.source,
@@ -1078,6 +1098,14 @@ test('every worker captures the verified attempt ID via the broker preflight cal
       stepField(
         'DISPATCH_STORAGE_TOKEN',
         '${{ steps.worker-storage-auth.outputs.access_token }}',
+        10,
+      ),
+    );
+    assert.match(
+      preflight.source,
+      stepField(
+        'DISPATCH_FIRESTORE_DATABASE_ID',
+        '${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}',
         10,
       ),
     );
@@ -1098,6 +1126,30 @@ test('every worker captures the verified attempt ID via the broker preflight cal
       `${workflow} must not hand-copy a "Publish attempt identity" step -- dispatch-broker/action.yml now does this once, internally, on every preflight call`,
     );
   }
+});
+
+test('deploy-console.yml uses a workflow-restricted provider for its project-IAM identity', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'deploy-console.yml'),
+    'utf8',
+  );
+  const auth =
+    /\n\s+- uses: google-github-actions\/auth@v3\n\s+id: gcp-auth\n(?<body>(?:\s+.*\n)+?)(?=\s+- (?:name|uses):)/u.exec(
+      source,
+    )?.groups?.body;
+  assert.ok(auth, 'deploy-console.yml must retain its gcp-auth step');
+  assert.match(
+    auth,
+    stepField(
+      'workload_identity_provider',
+      '${{ vars.GCP_DEPLOYER_WIF_PROVIDER }}',
+      10,
+    ),
+  );
+  assert.match(
+    auth,
+    stepField('service_account', '${{ vars.GCP_DEPLOYER_SA }}', 10),
+  );
 });
 
 test('no worker invokes a post-agent gate via `uses:` (#645 Phase 3 security invariant)', async () => {

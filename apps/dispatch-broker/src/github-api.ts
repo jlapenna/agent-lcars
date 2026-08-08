@@ -1004,28 +1004,50 @@ async function loadLedgerProjection(
 }
 
 /**
- * Detect whether a task already has a bot-owned compatibility ledger
- * without parsing that projection as controller state. Authority cutover
- * uses this only when Firestore has no task document: an existing marker
- * means shadow backfill was incomplete and an empty aggregate must not be
- * seeded over the live task history.
+ * Decide whether a missing authority record can be initialized safely.
+ *
+ * Marker absence is not evidence: a controlled worker can edit or delete
+ * comments. The trusted cutover epoch and GitHub's immutable issue/PR
+ * `created_at` are the non-forgeable boundary. Tasks created before that
+ * boundary must already have been shadow-backfilled, so missing state fails
+ * closed even if every compatibility marker has been removed. Tasks created
+ * at or after the boundary are genuinely post-authority and may be seeded.
  */
-async function hasLedgerProjection(
+async function canInitializeAuthorityTask(
   api: GitHubApi,
   task: LedgerTaskRef,
+  authorityEpoch: string,
   workflowIdentity = 'github-actions[bot]',
 ): Promise<boolean> {
   const comments = await listAll<GitHubIssueComment>(
     api,
     `${repositoryPath(task)}/issues/${task.issue}/comments`,
   );
-  return comments.some(
+  const hasProjection = comments.some(
     (comment) =>
       comment.body?.includes(LEDGER_MARKER) &&
       comment.user?.type === 'Bot' &&
       (comment.user.login === workflowIdentity ||
         comment.user.login?.endsWith('[bot]')),
   );
+  if (hasProjection) return false;
+
+  const epoch = Date.parse(authorityEpoch);
+  if (!Number.isFinite(epoch)) {
+    throw new Error(
+      `DISPATCH_AUTHORITY_EPOCH must be a valid timestamp, got ${JSON.stringify(authorityEpoch)}`,
+    );
+  }
+  const issue = await api.requestOk<GitHubIssueDetail>(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  const createdAt = Date.parse(issue.created_at);
+  if (!Number.isFinite(createdAt)) {
+    throw new Error(
+      `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`,
+    );
+  }
+  return createdAt >= epoch;
 }
 
 async function saveLedger(
@@ -1424,6 +1446,7 @@ export {
   API_VERSION,
   brokerConcurrencyGroup,
   BrokerConcurrencyMismatchError,
+  canInitializeAuthorityTask,
   CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
@@ -1438,7 +1461,6 @@ export {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
-  hasLedgerProjection,
   LedgerProjectionRepairError,
   listAll,
   listOpenAgentLabeledIssues,

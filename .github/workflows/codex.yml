@@ -139,7 +139,7 @@ jobs:
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DISPATCH_BROKER_SA }}
+          service_account: ${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}
           token_format: access_token
           create_credentials_file: false
           export_environment_variables: false
@@ -151,6 +151,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           DISPATCH_STORAGE_MODE: ${{ vars.DISPATCH_STORAGE_MODE }}
           DISPATCH_STORAGE_TOKEN: ${{ steps.worker-storage-auth.outputs.access_token }}
+          DISPATCH_FIRESTORE_DATABASE_ID: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         with:
           operation: preflight

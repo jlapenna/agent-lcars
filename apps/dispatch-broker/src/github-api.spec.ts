@@ -13,6 +13,7 @@ import {
   agentWorkerPipelines,
   API_VERSION,
   brokerConcurrencyGroup,
+  canInitializeAuthorityTask,
   CLOSED_SWEEP_WINDOW_MS,
   CONCURRENCY_VERIFY_MAX_ATTEMPTS,
   CONCURRENCY_VERIFY_RETRY_DELAY_MS,
@@ -23,7 +24,6 @@ import {
   findRunsForGeneration,
   findSupersedingRouterRun,
   GitHubApiError,
-  hasLedgerProjection,
   listOpenAgentLabeledIssues,
   listOpenIssuesAssignedTo,
   listRecentlyClosedAgentLabeledIssues,
@@ -920,7 +920,7 @@ test('authority creates its canonical projection and removes an App-bot marker',
   );
 });
 
-test('authority detects an existing workflow-owned projection without parsing it', async () => {
+test('authority refuses to initialize over an existing workflow-owned projection', async () => {
   const api = createGitHubApi({
     token: 'token',
     fetchImpl: async () =>
@@ -933,23 +933,33 @@ test('authority detects an existing workflow-owned projection without parsing it
       ]),
   });
 
-  assert.equal(await hasLedgerProjection(api, task), true);
+  assert.equal(
+    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
+    false,
+  );
 });
 
-test('authority does not treat an unowned marker as an existing projection', async () => {
+test('authority ignores an unowned marker but requires immutable post-cutover creation evidence', async () => {
   const api = createGitHubApi({
     token: 'token',
-    fetchImpl: async () =>
-      response(200, [
+    fetchImpl: async (url) => {
+      if (url.endsWith('/issues/304')) {
+        return response(200, { created_at: '2026-08-09T00:00:00.000Z' });
+      }
+      return response(200, [
         {
           id: 2,
           body: '<!-- agent-lcars:dispatch-ledger:v1 --> attacker',
           user: { login: 'worker', type: 'User' },
         },
-      ]),
+      ]);
+    },
   });
 
-  assert.equal(await hasLedgerProjection(api, task), false);
+  assert.equal(
+    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
+    true,
+  );
 });
 
 test('authority treats an App-bot marker as existing compatibility state', async () => {
@@ -965,7 +975,25 @@ test('authority treats an App-bot marker as existing compatibility state', async
       ]),
   });
 
-  assert.equal(await hasLedgerProjection(api, task), true);
+  assert.equal(
+    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
+    false,
+  );
+});
+
+test('authority refuses a pre-cutover task even after a worker removes every marker', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url) =>
+      url.endsWith('/issues/304')
+        ? response(200, { created_at: '2026-08-07T23:59:59.000Z' })
+        : response(200, []),
+  });
+
+  assert.equal(
+    await canInitializeAuthorityTask(api, task, '2026-08-08T00:00:00.000Z'),
+    false,
+  );
 });
 
 test('missing ledger is created once and pinned only with an unoccupied issue pin', async () => {

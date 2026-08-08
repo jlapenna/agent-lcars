@@ -225,6 +225,7 @@ if (!javaCheck.ok) {
     // google-github-actions/auth.
     return new FirestoreRestStoragePort({
       projectId: PROJECT_ID,
+      databaseId: '(default)',
       token: 'owner',
       emulatorHost: EMULATOR_HOST,
     });

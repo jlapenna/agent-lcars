@@ -266,6 +266,9 @@ type Precondition = { exists: false } | { updateTime: string };
 
 export interface FirestoreRestStoragePortOptions {
   projectId: string;
+  /** Firestore database containing controller authority. Required so a
+   *  caller can never silently fall back to the telemetry/default database. */
+  databaseId: string;
   /** Bearer token for the `Authorization` header, or a callback that
    *  returns one -- invoked fresh on every request, so a caller holding a
    *  short-lived token (e.g. from `google-github-actions/auth`) can refresh
@@ -289,7 +292,7 @@ export class FirestoreRestStoragePort implements StoragePort {
 
   constructor(options: FirestoreRestStoragePortOptions) {
     this.#token = options.token;
-    this.#documentsRoot = `projects/${options.projectId}/databases/(default)/documents`;
+    this.#documentsRoot = `projects/${options.projectId}/databases/${options.databaseId}/documents`;
     const emulatorHost =
       options.emulatorHost ?? process.env.FIRESTORE_EMULATOR_HOST;
     this.#baseUrl = emulatorHost

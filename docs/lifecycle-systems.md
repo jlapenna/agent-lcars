@@ -15,9 +15,22 @@ aggregate authoritative under a compare-and-swap lease. In authority mode
 the pinned `<!-- agent-lcars:dispatch-ledger:v1 -->` comment remains a
 human-readable compatibility projection, but a forged comment cannot change
 controller truth. Worker preflight also reads the exact Firestore aggregate
-in authority mode, using a short-lived WIF token minted before any untrusted
-agent code runs; shadow/off preflight retains the comment reader for rollback
-compatibility. `off` is the rollback position before authority cutover.
+in authority mode, using a short-lived, read-only WIF identity minted before
+any untrusted agent code runs. Controller state lives in the dedicated
+`dispatch-controller` database; both the worker's preflight identity and the
+telemetry writer are constrained with per-database IAM Conditions, so neither
+can write controller state. The controller writer is reachable only from
+`agent-router.yml` on `main`. Shadow/off preflight retains the comment reader
+for rollback compatibility. `off` is the rollback position before authority
+cutover.
+
+Authority initialization fails closed across the migration boundary.
+`DISPATCH_AUTHORITY_EPOCH` records the trusted cutover instant. If a task
+created before that instant has no Firestore aggregate, it must have missed
+shadow backfill and is rejected even when its compatibility comment is absent;
+workers can delete comments, but they cannot change GitHub's `created_at` or
+the repository configuration. Only tasks GitHub created at or after the epoch
+may initialize an empty aggregate automatically.
 
 Two seams are load-bearing enough to read before anything else:
 

@@ -43,6 +43,7 @@ import {
   verifyPreflight,
 } from './broker.js';
 import {
+  canInitializeAuthorityTask,
   createGitHubApi,
   createReconcileTransport,
   dispatchRouterEvent,
@@ -52,7 +53,6 @@ import {
   findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
-  hasLedgerProjection,
   LedgerProjectionRepairError,
   listAll,
   loadLedger,
@@ -241,6 +241,7 @@ function api(): GitHubApiClient {
 function createStoragePort(): StoragePort {
   return new FirestoreRestStoragePort({
     projectId: env('GCP_PROJECT_ID'),
+    databaseId: env('DISPATCH_FIRESTORE_DATABASE_ID'),
     token: env('DISPATCH_STORAGE_TOKEN'),
   });
 }
@@ -1815,6 +1816,7 @@ async function loadBrokerLedger(
   storageMode: ReturnType<typeof parseDispatchStorageMode> = 'off',
   leaseOwner = '',
   storagePortFactory: () => StoragePort = createStoragePort,
+  authorityEpoch = '',
 ): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
@@ -1842,7 +1844,7 @@ async function loadBrokerLedger(
       );
     } catch (error) {
       if (error instanceof AuthorityStateNotFoundError) {
-        if (await hasLedgerProjection(client, task)) {
+        if (!(await canInitializeAuthorityTask(client, task, authorityEpoch))) {
           throw new AuthorityStateMissingError(task);
         }
         if (untrackedPullRequestControl) return undefined;
@@ -1922,6 +1924,8 @@ async function broker(): Promise<void> {
   const storageMode = parseDispatchStorageMode(
     env('DISPATCH_STORAGE_MODE', false),
   );
+  const authorityEpoch =
+    storageMode === 'authority' ? env('DISPATCH_AUTHORITY_EPOCH') : '';
   const task = resolveTask(normalized);
   const client = api();
   const isPullRequest = env('ANCHOR_IS_PR', false) === 'true';
@@ -1964,6 +1968,8 @@ async function broker(): Promise<void> {
       isPullRequest,
       storageMode,
       `action:${runId}`,
+      createStoragePort,
+      authorityEpoch,
     );
   } catch (error) {
     if (error instanceof TaskLeaseBusyError) {
