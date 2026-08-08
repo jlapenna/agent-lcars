@@ -3,8 +3,9 @@ description: Write routed issue context as data for a headless coding agent.
 
 inputs:
   token:
-    description: GitHub token used only to read the current anchor context.
-    required: true
+    description: Optional GitHub token used only to read the current anchor context; defaults to github.token.
+    required: false
+    default: ''
   agent:
     description: Name of the agent receiving the dispatch.
     required: true
@@ -32,13 +33,16 @@ inputs:
     default: 'null'
   budget-minutes:
     description: Actual timeout of the upcoming agent step.
-    required: true
+    required: false
+    default: '60'
   artifact-checkpoint-minutes:
     description: Minutes after start by which a durable artifact is required.
-    required: true
+    required: false
+    default: '25'
   finalize-checkpoint-minutes:
     description: Minutes after start by which scope expansion must stop.
-    required: true
+    required: false
+    default: '45'
 
 outputs:
   path:
@@ -55,7 +59,7 @@ runs:
       id: prepare
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.token }}
+        GH_TOKEN: ${{ inputs.token || github.token }}
         AGENT: ${{ inputs.agent }}
         ISSUE: ${{ inputs.issue }}
         MODE: ${{ inputs.mode }}

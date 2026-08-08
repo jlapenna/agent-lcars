@@ -69,12 +69,17 @@ const PUBLISHED = {
   },
   'prepare-agent-dispatch': {
     inputs: {
+      token: { required: false, default: '' },
       agent: { required: true },
       issue: { required: true },
       mode: { required: true },
       reply: { required: false, default: '' },
       runbook: { required: false, default: '' },
       context: { required: false, default: '' },
+      'prior-terminal-state': { required: false, default: 'null' },
+      'budget-minutes': { required: false, default: '60' },
+      'artifact-checkpoint-minutes': { required: false, default: '25' },
+      'finalize-checkpoint-minutes': { required: false, default: '45' },
     },
     outputs: ['path', 'protocol-path'],
   },
