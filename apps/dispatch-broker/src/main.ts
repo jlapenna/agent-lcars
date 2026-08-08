@@ -27,6 +27,7 @@ import {
 
 import type { AnchorControl } from './broker.js';
 import {
+  abandonPendingLaunchForClosedAnchor,
   acceptIntent,
   ACTIVE_STATES,
   addAnomaly,
@@ -634,6 +635,8 @@ const RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1000;
 // the repo's general bounded-retry posture (#343/#344) rather than
 // retrying forever.
 const RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
+const CLOSED_ANCHOR_LAUNCH_REJECTION =
+  'anchor closed before launch was observed';
 
 function reconcileAnomaliesFor(
   ledger: DispatchLedger,
@@ -706,14 +709,23 @@ async function trackMissingRun(
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
   const attemptId =
     generation.attempt?.attemptId ?? formatAttemptId(generation);
-  const pendingLaunch =
+  const launchOperation =
     reachedBound && loaded.authority
       ? await loaded.authority.port.readLaunchOperation(attemptId)
       : undefined;
   const retryPendingLaunch = Boolean(
-    pendingLaunch?.status === 'pending' &&
-    pendingLaunch.operationId === attemptId &&
-    pendingLaunch.attemptId === attemptId,
+    !ledger.control.closed &&
+    launchOperation?.status === 'pending' &&
+    launchOperation.operationId === attemptId &&
+    launchOperation.attemptId === attemptId,
+  );
+  const abandonClosedLaunch = Boolean(
+    ledger.control.closed &&
+    launchOperation?.operationId === attemptId &&
+    launchOperation.attemptId === attemptId &&
+    (launchOperation.status === 'pending' ||
+      (launchOperation.resolution?.status === 'rejected' &&
+        launchOperation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)),
   );
   // Computed up front, once, so the park gate below and the
   // 'reconcile-parked' anomaly further down share exactly one description
@@ -725,7 +737,7 @@ async function trackMissingRun(
   // `launch_response_lost`. `undefined` when the bound has not been
   // reached -- there is nothing to park yet.
   const parkFailure =
-    reachedBound && !retryPendingLaunch
+    reachedBound && !retryPendingLaunch && !abandonClosedLaunch
       ? classifyFailure({
           phase: 'reconciliation',
           owningSystem: 'controller',
@@ -734,6 +746,21 @@ async function trackMissingRun(
           evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`,
         })
       : undefined;
+  if (abandonClosedLaunch && launchOperation?.status === 'pending') {
+    try {
+      await loaded.authority?.port.resolveLaunchOutcome(attemptId, {
+        status: 'rejected',
+        reason: CLOSED_ANCHOR_LAUNCH_REJECTION,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Deferring closed-anchor launch abandonment for ` +
+          `${attemptId} until its outbox record can be resolved: ${message}`,
+      );
+      return;
+    }
+  }
   // Apply the (idempotent, verify-then-decide) GitHub-side park BEFORE
   // recording it in the ledger: if the mutation throws, the ledger must
   // stay exactly as it was so the next pass retries at the same attempt
@@ -810,6 +837,27 @@ async function trackMissingRun(
       }),
     );
     restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
+    await saveLedger(client, loaded);
+    return;
+  }
+  if (abandonClosedLaunch) {
+    addAnomaly(
+      ledger,
+      'reconcile-launch-abandoned',
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: 'anchor-closed-before-launch-observed',
+      },
+      now,
+    );
+    abandonPendingLaunchForClosedAnchor(
+      ledger,
+      generation.generation,
+      CLOSED_ANCHOR_LAUNCH_REJECTION,
+      now,
+    );
     await saveLedger(client, loaded);
     return;
   }
@@ -1190,14 +1238,13 @@ async function repairMissingIntentFromLabel(
 //
 // Returns whether the issue IS closed (whether or not this call is what
 // converged it) so reconcileLedger can skip every generation-repair branch
-// below for a closed anchor -- including repairMissingIntentFromLabel, the
-// one branch that CAN create a fresh generation. That return-and-skip is
-// what makes "reconciling a closed issue never dispatches a new
-// generation" structural: this function itself contains no path that
-// creates a generation, and even if it did, dispatchAccepted's own
-// `while (!ledger.control.closed)` gate -- already what the live-close path
-// depends on -- reads this same field again immediately afterward, in the
-// same broker() pass.
+// that could create/retry work -- including repairMissingIntentFromLabel,
+// the one branch that CAN create a fresh generation. Its one closed-only
+// exception terminalizes a durable pre-launch outbox operation after bounded
+// run discovery; it can only abandon work, never create it. That boundary is
+// what makes "reconciling a closed issue never dispatches a new generation"
+// structural, reinforced by dispatchAccepted's own
+// `while (!ledger.control.closed)` gate in the same broker() pass.
 async function reconcileControlState(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1243,8 +1290,9 @@ async function reconcileControlState(
 //
 // `issueClosed` (from ReconcileEvent, normalize.mjs) is checked first, via
 // reconcileControlState, before any of the generation-repair logic below --
-// see that function's own header for why a closed anchor returns
-// immediately rather than falling through. broker() (#715) already made
+// see that function's own header for why a closed anchor can only enter the
+// narrow pending-launch abandonment path rather than falling through.
+// broker() (#715) already made
 // this exact reconcileControlState call itself, ahead of reconcileActive(),
 // before ever reaching this function -- so by the time reconcileLedger runs
 // at all, this call is normally a no-op re-observation of an
@@ -1266,7 +1314,41 @@ async function reconcileLedger(
   issueClosed?: boolean,
 ): Promise<void> {
   const ledger = loaded.ledger;
-  if (await reconcileControlState(client, loaded, issueClosed, now, runId)) {
+  const anchorClosed = await reconcileControlState(
+    client,
+    loaded,
+    issueClosed,
+    now,
+    runId,
+  );
+  if (anchorClosed) {
+    // Closed anchors normally skip every generation repair below. The sole
+    // exception is a durable pre-launch outbox operation: it must age
+    // through the same bounded run-discovery window as an open attempt, then
+    // be terminalized as abandoned rather than retried or parked. Restrict
+    // this path to the exact known operation so an unrelated closed active
+    // generation retains the historical no-op behavior.
+    const active = activeGeneration(ledger);
+    const attemptId = active?.attempt?.attemptId;
+    if (
+      loaded.authority &&
+      active &&
+      attemptId &&
+      ['dispatching', 'dispatch-unknown'].includes(active.state) &&
+      !active.attempt?.runId
+    ) {
+      const operation =
+        await loaded.authority.port.readLaunchOperation(attemptId);
+      if (
+        operation?.operationId === attemptId &&
+        operation.attemptId === attemptId &&
+        (operation.status === 'pending' ||
+          (operation.resolution?.status === 'rejected' &&
+            operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION))
+      ) {
+        await trackMissingRun(client, loaded, active, now);
+      }
+    }
     return;
   }
   if (ledger.generations.length === 0) {

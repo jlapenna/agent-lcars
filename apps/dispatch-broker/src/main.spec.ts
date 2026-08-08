@@ -5,6 +5,7 @@ import { test } from 'vitest';
 
 import {
   acceptIntent,
+  applyAnchorControl,
   beginDispatch,
   bindRun,
   completeRun,
@@ -1873,6 +1874,70 @@ test('reconcileLedger retries a durably pending launch after bounded run discove
   assert.equal(loaded.ledger.generations[0].state, 'active');
   assert.equal(loaded.ledger.generations[0].attempt?.runId, retriedRunId);
   assert.equal((await port.readLaunchOperation(attemptId))?.status, 'launched');
+});
+
+test('reconcileLedger abandons a closed anchor pending launch after bounded discovery without retrying or parking', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = dispatchingLedger().ledger;
+  applyAnchorControl(
+    seed,
+    {
+      kind: 'closed',
+      sourceId: 'closed:pending-launch',
+      occurredAt: RECONCILE_T0,
+      transportRunId: 304737,
+      authorization: { observed: true, actor: 'dispatch-broker' },
+      merged: false,
+    },
+    RECONCILE_T0,
+  );
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:closed-pending-launch',
+    seed,
+  );
+  const attemptId = authority.ledger.generations[0].attempt?.attemptId;
+  assert.ok(attemptId);
+  await port.recordLaunchIntent({ operationId: attemptId, task, attemptId });
+  const { client, calls } = reconcileStubClient();
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+  const t1 = addMinutes(RECONCILE_T0, RECONCILE_MISSING_RUN_GRACE_MS / 60_000);
+  const t2 = addMinutes(t1, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+  const t3 = addMinutes(t2, RECONCILE_MISSING_RUN_MIN_INTERVAL_MS / 60_000);
+
+  await reconcileLedger(client, loaded, t1, 304738, true);
+  await reconcileLedger(client, loaded, t2, 304739, true);
+  await reconcileLedger(client, loaded, t3, 304740, true);
+
+  assert.equal(loaded.ledger.generations[0].state, 'superseded-by-close');
+  assert.equal(
+    loaded.ledger.generations[0].attempt?.rejectionReason,
+    'anchor closed before launch was observed',
+  );
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'rejected');
+  assert.equal(
+    loaded.ledger.anomalies.filter(
+      (anomaly) => anomaly.kind === 'reconcile-launch-abandoned',
+    ).length,
+    1,
+  );
+  assert.equal(
+    loaded.ledger.anomalies.some(
+      (anomaly) => anomaly.kind === 'reconcile-parked',
+    ),
+    false,
+  );
+  assert.equal(
+    calls.some((call) => call.path.endsWith('/labels')),
+    false,
+  );
 });
 
 // --- reconcileActive / trackStuckRun (#645 Phase 3) --------------------

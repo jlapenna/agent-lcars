@@ -40,6 +40,7 @@ import {
   validateLedger,
 } from './modules/ledger-core.js';
 import {
+  abandonPendingLaunchForClosedAnchor,
   awaitTerminal,
   beginDispatch,
   bindRun,
@@ -227,6 +228,7 @@ function addAnomaly(
 }
 
 export {
+  abandonPendingLaunchForClosedAnchor,
   acceptIntent,
   ACTIVE_STATES,
   addAnomaly,

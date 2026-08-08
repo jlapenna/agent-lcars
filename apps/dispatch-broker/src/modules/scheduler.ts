@@ -186,6 +186,31 @@ function restoreAcceptedForLaunchRetry(
   });
 }
 
+function abandonPendingLaunchForClosedAnchor(
+  ledger: DispatchLedger,
+  generationNumber: number,
+  reason: string,
+  now: string = new Date().toISOString(),
+): DispatchLedger {
+  const generation = findGeneration(ledger, generationNumber);
+  if (
+    !generation ||
+    !['dispatching', 'dispatch-unknown'].includes(generation.state) ||
+    generation.attempt?.runId
+  ) {
+    throw new Error('Generation is not an unbound launch attempt');
+  }
+  if (!ledger.control.closed) {
+    throw new Error('Open anchor cannot abandon a pending launch');
+  }
+  return mutate(ledger, now, () => {
+    generation.state = 'superseded-by-close';
+    const attempt = attemptOf(generation);
+    attempt.rejectedAt = now;
+    attempt.rejectionReason = reason;
+  });
+}
+
 function bindRun(
   ledger: DispatchLedger,
   generationNumber: number,
@@ -311,6 +336,7 @@ function verifyPreflight(
 }
 
 export {
+  abandonPendingLaunchForClosedAnchor,
   awaitTerminal,
   beginDispatch,
   bindRun,

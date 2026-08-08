@@ -770,6 +770,21 @@ function restoreAcceptedForLaunchRetry(ledger, generationNumber, now = (/* @__PU
     generation.attempt = void 0;
   });
 }
+function abandonPendingLaunchForClosedAnchor(ledger, generationNumber, reason, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const generation = findGeneration(ledger, generationNumber);
+  if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state) || generation.attempt?.runId) {
+    throw new Error("Generation is not an unbound launch attempt");
+  }
+  if (!ledger.control.closed) {
+    throw new Error("Open anchor cannot abandon a pending launch");
+  }
+  return mutate(ledger, now, () => {
+    generation.state = "superseded-by-close";
+    const attempt = attemptOf(generation);
+    attempt.rejectedAt = now;
+    attempt.rejectionReason = reason;
+  });
+}
 function bindRun(ledger, generationNumber, binding, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const generation = findGeneration(ledger, generationNumber);
   if (!generation || !["dispatching", "dispatch-unknown"].includes(generation.state)) {
@@ -2871,6 +2886,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
 var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
 var RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
+var CLOSED_ANCHOR_LAUNCH_REJECTION = "anchor closed before launch was observed";
 function reconcileAnomaliesFor(ledger, generationNumber, kind) {
   return ledger.anomalies.filter(
     (anomaly) => anomaly.kind === kind && // `detail` is deliberately untyped on LedgerAnomaly (each kind owns
@@ -2901,17 +2917,34 @@ async function trackMissingRun(client, loaded, generation, now) {
   const attempt = priorObservations.length + 1;
   const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
   const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
-  const pendingLaunch = reachedBound && loaded.authority ? await loaded.authority.port.readLaunchOperation(attemptId) : void 0;
+  const launchOperation = reachedBound && loaded.authority ? await loaded.authority.port.readLaunchOperation(attemptId) : void 0;
   const retryPendingLaunch = Boolean(
-    pendingLaunch?.status === "pending" && pendingLaunch.operationId === attemptId && pendingLaunch.attemptId === attemptId
+    !ledger.control.closed && launchOperation?.status === "pending" && launchOperation.operationId === attemptId && launchOperation.attemptId === attemptId
   );
-  const parkFailure = reachedBound && !retryPendingLaunch ? classifyFailure({
+  const abandonClosedLaunch = Boolean(
+    ledger.control.closed && launchOperation?.operationId === attemptId && launchOperation.attemptId === attemptId && (launchOperation.status === "pending" || launchOperation.resolution?.status === "rejected" && launchOperation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)
+  );
+  const parkFailure = reachedBound && !retryPendingLaunch && !abandonClosedLaunch ? classifyFailure({
     phase: "reconciliation",
     owningSystem: "controller",
     reason: "launch_response_lost",
     retryDisposition: "manual",
     evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
   }) : void 0;
+  if (abandonClosedLaunch && launchOperation?.status === "pending") {
+    try {
+      await loaded.authority?.port.resolveLaunchOutcome(attemptId, {
+        status: "rejected",
+        reason: CLOSED_ANCHOR_LAUNCH_REJECTION
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        `::warning::Deferring closed-anchor launch abandonment for ${attemptId} until its outbox record can be resolved: ${message}`
+      );
+      return;
+    }
+  }
   if (parkFailure) {
     await projectNeedsHumanPark(
       client,
@@ -2977,6 +3010,27 @@ async function trackMissingRun(client, loaded, generation, now) {
       })
     );
     restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
+    await saveLedger2(client, loaded);
+    return;
+  }
+  if (abandonClosedLaunch) {
+    addAnomaly(
+      ledger,
+      "reconcile-launch-abandoned",
+      {
+        generation: generation.generation,
+        intentId: generation.intentId,
+        operationId: attemptId,
+        reason: "anchor-closed-before-launch-observed"
+      },
+      now
+    );
+    abandonPendingLaunchForClosedAnchor(
+      ledger,
+      generation.generation,
+      CLOSED_ANCHOR_LAUNCH_REJECTION,
+      now
+    );
     await saveLedger2(client, loaded);
     return;
   }
@@ -3190,7 +3244,22 @@ async function reconcileControlState(client, loaded, issueClosed, now, runId) {
 }
 async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()).toISOString(), runId, issueClosed) {
   const ledger = loaded.ledger;
-  if (await reconcileControlState(client, loaded, issueClosed, now, runId)) {
+  const anchorClosed = await reconcileControlState(
+    client,
+    loaded,
+    issueClosed,
+    now,
+    runId
+  );
+  if (anchorClosed) {
+    const active2 = activeGeneration(ledger);
+    const attemptId = active2?.attempt?.attemptId;
+    if (loaded.authority && active2 && attemptId && ["dispatching", "dispatch-unknown"].includes(active2.state) && !active2.attempt?.runId) {
+      const operation = await loaded.authority.port.readLaunchOperation(attemptId);
+      if (operation?.operationId === attemptId && operation.attemptId === attemptId && (operation.status === "pending" || operation.resolution?.status === "rejected" && operation.resolution.reason === CLOSED_ANCHOR_LAUNCH_REJECTION)) {
+        await trackMissingRun(client, loaded, active2, now);
+      }
+    }
     return;
   }
   if (ledger.generations.length === 0) {
