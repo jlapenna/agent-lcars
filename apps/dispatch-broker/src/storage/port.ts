@@ -155,16 +155,45 @@ export function taskKey(task: TaskRef): string {
 }
 
 /**
- * A real authorization decision, or the absence of one. Mirrors
- * `LedgerAuthorizationDecision`'s shape deliberately -- see `TaskRef` above
- * for why this port reuses the domain's existing vocabulary rather than
- * inventing a parallel one.
+ * A real authorization decision: some actor did something and policy either
+ * admitted it or did not. Mirrors `LedgerAuthorizationDecision`'s shape
+ * deliberately -- see `TaskRef` above for why this port reuses the domain's
+ * existing vocabulary rather than inventing a parallel one.
  */
-export interface AuthorizationRecord {
+export interface AuthorizationDecisionRecord {
   authorized: boolean;
   actor?: string;
   rule?: string;
 }
+
+/**
+ * Evidence that something *happened*, carrying no decision at all. Mirrors
+ * `LedgerAuthorizationObservation` (../../../../libs/dispatch-contracts/src/
+ * ledger.ts) -- see that interface's own comment for why this must stay a
+ * distinct variant rather than being collapsed into
+ * `AuthorizationDecisionRecord`: a completion callback, close/reopen,
+ * reconciliation, or label self-heal source was never evaluated against
+ * authorization policy, so a record derived from one must not claim
+ * `authorized: true` (or any `authorized` value at all) -- that would
+ * fabricate a positive policy decision that was never made. Discriminate on
+ * `observed` before reading `authorized`.
+ */
+export interface AuthorizationObservationRecord {
+  observed: true;
+  actor?: string;
+  workflow?: string;
+}
+
+/**
+ * A real authorization decision, or the absence of one -- mirrors
+ * `LedgerAuthorization`'s own two-variant union (ledger.ts) for the same
+ * "reuse the domain's existing vocabulary" reason `TaskRef` gives. This
+ * union is what makes it possible for a projection like dispatch-broker's
+ * `shadow.ts` to represent observational evidence faithfully instead of
+ * mapping it onto a fabricated decision.
+ */
+export type AuthorizationRecord =
+  AuthorizationDecisionRecord | AuthorizationObservationRecord;
 
 /** One accepted external signal: the evidence a task's desired state changed
  *  and the decision that admitted it. */

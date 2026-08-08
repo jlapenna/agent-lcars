@@ -42,19 +42,61 @@
  * this function's whole job is to observe it, not to gate it -- so nothing
  * about the dispatch this pass is doing may depend on whether this
  * succeeds. `observeDispatchStorage` itself is intentionally NOT wrapped:
- * it is the plain read-compare-write primitive, reused directly by tests
- * that want a throw to surface rather than be swallowed.
+ * it is the plain read-write-read-back primitive, reused directly by tests
+ * that want a throw (e.g. a CAS conflict) to surface rather than be
+ * swallowed.
  *
- * ## Divergence
+ * ## Storage integrity signals
  *
- * `diffStoredTask` compares what storage held BEFORE this write (the
- * `readTask` result) against the state this pass is about to write --
- * `projectLedgerToStoredTask`'s own reading of the ledger, which is always
- * the operative comparison: shadow mode's whole purpose is asking "does
- * storage already agree with what the ledger says right now". Logged via
- * `::warning::` (visible in the run log without opening a job summary),
- * naming the task, the field, and both values -- enough to diagnose without
- * re-deriving anything.
+ * An earlier version of this file compared what storage held BEFORE this
+ * pass's write (`readTask`, run before writing) against what THIS pass's
+ * ledger says right now (`projectLedgerToStoredTask`'s output). That
+ * comparison is pure noise: on every pass after the first, `before` is
+ * necessarily the projection this same observer wrote during the PREVIOUS
+ * pass, while the thing it was being diffed against is the ledger AFTER the
+ * current transition -- so a completion callback moving `active` ->
+ * `completed`, a newly-accepted source, or a new generation all make the
+ * two sides disagree by design, every single pass, with nothing wrong
+ * having happened. Firing a warning on ordinary change trains an operator
+ * to ignore it -- the same failure mode that left `bootstrap-canary` red on
+ * every run in this repo with nobody noticing.
+ *
+ * What actually indicates a problem is the integrity of the storage path
+ * itself, not whether the ledger changed between two passes (it is
+ * *supposed* to). This file emits two signals, and only these two:
+ *
+ *   - `checkRoundTrip`: after `writeTask` returns, a FRESH `readTask` of the
+ *     very task just written must hand back exactly what was written. A
+ *     mismatch (a field differs, or the task is missing entirely) means
+ *     storage did not durably hold what this pass just gave it -- lost
+ *     bytes, a broken (de)serializer (see firestore-rest-port.ts's
+ *     hand-rolled field marshalling), or a second writer landing in the gap
+ *     between this pass's own commit and its own next read. This observer
+ *     is meant to be the only writer to storage (see "Shadow-mode failure
+ *     containment" above), so any of these is a real storage-path defect
+ *     worth investigating -- it says nothing about whether the ledger's
+ *     *decision* was correct, only whether storage faithfully held it.
+ *     Logged via `::warning::`, naming the task, the field, and both the
+ *     expected and actual value.
+ *
+ *   - A compare-and-swap conflict: `writeTask` throwing
+ *     `TaskWriteConflictError` when some other write landed between this
+ *     pass's `readTask` and its own `writeTask`. For a single-writer
+ *     control plane, that means a second writer exists -- itself the
+ *     finding, not a transient hiccup to shrug off. This is not raised from
+ *     `checkRoundTrip`: the error propagates unwrapped out of
+ *     `observeDispatchStorage` (deliberately not caught here -- see
+ *     "Shadow-mode failure containment" above) up to
+ *     `maybeObserveDispatchStorage`'s containment catch, whose warning
+ *     already includes the error's own message -- and
+ *     `TaskWriteConflictError`'s message already names both the expected
+ *     and the actual revision, so nothing is lost by not special-casing it
+ *     here.
+ *
+ * Neither signal fires on an ordinary pass-to-pass ledger transition --
+ * see ./shadow.spec.ts's "a normal pass-to-pass transition... produces no
+ * divergence warning" test, the regression test for the noise this section
+ * replaces.
  *
  * ## The ledger -> StoredTask projection
  *
@@ -68,6 +110,17 @@
  * contractually bound to -- shadow mode's job is to surface disagreement
  * for a human to look at, not to be the last word on what "equivalent"
  * means.
+ *
+ * Authorization is projected faithfully, not fabricated: `mapAuthorization`
+ * below maps a real ledger decision to a decision record and a bare
+ * observation (completion callbacks, close/reopen, reconciliation, label
+ * self-heal -- see ledger.ts's `LedgerAuthorizationObservation`) to an
+ * observation record, never synthesizing `authorized: true` for evidence
+ * that was merely observed. This matters specifically because this
+ * projection is headed toward becoming the authority (#645 Phase 6): a
+ * later storage-authoritative cutover must inherit an audit trail that
+ * still distinguishes "policy admitted this" from "this was merely seen to
+ * happen", not one that was flattened into looking authorized here.
  */
 
 import { isDeepStrictEqual } from 'node:util';
@@ -176,18 +229,32 @@ function mapGenerationState(state: LedgerGenerationState): IntentState {
 /**
  * `LedgerAuthorization` is a union of a real decision (`authorized:
  * boolean`) or a bare observation (`observed: true`, no decision at all --
- * see ledger.ts's own `LedgerAuthorizationObservation` comment).
- * `AuthorizationRecord` only has room for the decision shape, so an
- * observation -- evidence the broker already accepted, by definition,
- * since it is in `ledger.sources` at all -- maps to `{ authorized: true }`:
- * the broker recording it IS the admission decision for observational
- * evidence. Absent entirely (an older ledger predating this field) maps
- * the same way, for the same reason.
+ * see ledger.ts's own `LedgerAuthorizationObservation` comment, and
+ * port.ts's `AuthorizationObservationRecord`, which mirrors it for exactly
+ * this reason). This mapping preserves that distinction rather than
+ * collapsing it: a decision maps to a decision, an observation maps to an
+ * observation. Mapping an observation to `{ authorized: true }` -- what an
+ * earlier version of this function did, reasoning that the broker having
+ * accepted the evidence at all is itself an admission decision -- was
+ * wrong: `ledger.sources` entries for a completion callback, close/reopen,
+ * reconciliation, or label self-heal were never evaluated against
+ * authorization policy at all, so writing `authorized: true` for them
+ * fabricates a positive policy decision that this projection becomes the
+ * durable record of. That matters most because this projection is headed
+ * toward being the authority (#645 Phase 6) -- a later storage-authoritative
+ * cutover must not inherit an audit trail that claims evidence was
+ * authorized when it was merely observed.
+ *
+ * Absent entirely (an older ledger predating this field, or any future
+ * source kind that legitimately carries no authorization at all) maps to
+ * `{ observed: true }` with no `actor` -- still never a fabricated
+ * decision, just the honest "no decision is known" case with the least
+ * information available.
  */
 function mapAuthorization(
   authorization: LedgerAuthorization | undefined,
 ): AuthorizationRecord {
-  if (!authorization) return { authorized: true };
+  if (!authorization) return { observed: true };
   if ('authorized' in authorization) {
     return {
       authorized: authorization.authorized,
@@ -195,7 +262,11 @@ function mapAuthorization(
       rule: authorization.rule,
     };
   }
-  return { authorized: true, actor: authorization.actor };
+  return {
+    observed: true,
+    actor: authorization.actor,
+    workflow: authorization.workflow,
+  };
 }
 
 function mapSignal(source: LedgerSource): SignalRecord {
@@ -281,50 +352,81 @@ export function projectLedgerToStoredTask(
 }
 
 // ---------------------------------------------------------------------------
-// Divergence.
+// Storage integrity signals. See this file's header "Storage integrity
+// signals" for why this compares a write against its own read-back rather
+// than comparing storage's pre-write state against the current ledger.
 // ---------------------------------------------------------------------------
 
 export interface FieldDivergence {
-  field: 'desiredIntentId' | 'signals' | 'intents';
-  ledgerValue: unknown;
-  storedValue: unknown;
+  field: 'desiredIntentId' | 'signals' | 'intents' | 'revision';
+  expected: unknown;
+  actual: unknown;
 }
 
 /**
- * Compares what storage held BEFORE this pass's write (`before`, possibly
- * `undefined` if this task has never been observed) against what the
- * ledger says right now (`desired`, from `projectLedgerToStoredTask`).
- * `before === undefined` is never a divergence -- there is no baseline yet
- * to disagree with, just a first observation.
+ * Round-trip integrity for this pass's own write: `written` is what
+ * `writeTask` reported it stored (the values this process asked storage to
+ * hold, stamped with the revision storage assigned). `after` is a FRESH
+ * `readTask`, performed immediately afterward -- never `written` itself,
+ * since that would only prove this process's local object round-trips
+ * through itself, not that storage's real persistence/(de)serialization
+ * path does.
+ *
+ * `after === undefined` (storage now has nothing for a task this pass just
+ * wrote) is reported as a `revision` divergence with `actual: undefined` --
+ * the clearest case of "a write that did not land as issued". Otherwise
+ * each of `desiredIntentId`/`signals`/`intents` that differs is reported
+ * individually, and a `revision` divergence is reported if the freshly-read
+ * revision does not equal what this pass's own write just produced -- which,
+ * since this observer is meant to be the only writer (see the header's
+ * "Shadow-mode failure containment"), can only mean a second writer touched
+ * this task in the instant between this pass's commit and its own next read.
+ *
+ * This says nothing about whether the LEDGER's decision was correct -- only
+ * whether storage faithfully held what shadow mode just gave it.
  */
-export function diffStoredTask(
-  before: StoredTask | undefined,
-  desired: StoredTaskInput,
+export function checkRoundTrip(
+  written: StoredTask,
+  after: StoredTask | undefined,
 ): FieldDivergence[] {
-  if (!before) return [];
-  const fields: FieldDivergence['field'][] = [
+  if (!after) {
+    return [
+      { field: 'revision', expected: written.revision, actual: undefined },
+    ];
+  }
+  const fields: Array<'desiredIntentId' | 'signals' | 'intents'> = [
     'desiredIntentId',
     'signals',
     'intents',
   ];
   const divergences: FieldDivergence[] = [];
   for (const field of fields) {
-    const ledgerValue = desired[field];
-    const storedValue = before[field];
-    if (!isDeepStrictEqual(ledgerValue, storedValue)) {
-      divergences.push({ field, ledgerValue, storedValue });
+    const expected = written[field];
+    const actual = after[field];
+    if (!isDeepStrictEqual(expected, actual)) {
+      divergences.push({ field, expected, actual });
     }
+  }
+  if (after.revision !== written.revision) {
+    divergences.push({
+      field: 'revision',
+      expected: written.revision,
+      actual: after.revision,
+    });
   }
   return divergences;
 }
 
-function logDivergences(task: TaskRef, divergences: FieldDivergence[]): void {
+function logRoundTripMismatches(
+  task: TaskRef,
+  divergences: FieldDivergence[],
+): void {
   for (const divergence of divergences) {
     console.log(
-      `::warning::dispatch-storage shadow divergence for ` +
+      `::warning::dispatch-storage shadow round-trip mismatch for ` +
         `${task.repository}#${task.issue}, field '${divergence.field}': ` +
-        `ledger=${JSON.stringify(divergence.ledgerValue)} ` +
-        `storage=${JSON.stringify(divergence.storedValue)}`,
+        `expected=${JSON.stringify(divergence.expected)} ` +
+        `actual=${JSON.stringify(divergence.actual)}`,
     );
   }
 }
@@ -334,12 +436,15 @@ function logDivergences(task: TaskRef, divergences: FieldDivergence[]): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Read storage's current state for `ledger.task`, log any divergence
- * against what the ledger says right now, and write the ledger's projected
- * state forward. Deliberately unwrapped -- a throw (a real outage, an
- * expired token, a CAS conflict) propagates -- so `maybeObserveDispatchStorage`
- * below is the one place that decides what "best-effort" means, and this
- * function stays a plain, directly testable primitive.
+ * Write the ledger's projected state forward, read it back, and log any
+ * round-trip mismatch (see `checkRoundTrip`). A compare-and-swap conflict
+ * from `writeTask` (another writer raced this same task) is a separate,
+ * also-meaningful signal but is not caught here -- see this file's header
+ * "Storage integrity signals" for why letting it propagate loses nothing.
+ * Deliberately unwrapped -- a throw (a real outage, an expired token, a CAS
+ * conflict) propagates -- so `maybeObserveDispatchStorage` below is the one
+ * place that decides what "best-effort" means, and this function stays a
+ * plain, directly testable primitive.
  */
 export async function observeDispatchStorage(
   port: StoragePort,
@@ -349,8 +454,9 @@ export async function observeDispatchStorage(
   const task: TaskRef = ledger.task;
   const before = await port.readTask(task);
   const desired = projectLedgerToStoredTask(ledger);
-  logDivergences(task, diffStoredTask(before, desired));
-  await port.writeTask(task, before?.revision, desired, now);
+  const written = await port.writeTask(task, before?.revision, desired, now);
+  const after = await port.readTask(task);
+  logRoundTripMismatches(task, checkRoundTrip(written, after));
 }
 
 /**

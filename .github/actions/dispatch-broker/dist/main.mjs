@@ -2155,7 +2155,7 @@ function mapGenerationState(state) {
   }
 }
 function mapAuthorization(authorization2) {
-  if (!authorization2) return { authorized: true };
+  if (!authorization2) return { observed: true };
   if ("authorized" in authorization2) {
     return {
       authorized: authorization2.authorized,
@@ -2163,7 +2163,11 @@ function mapAuthorization(authorization2) {
       rule: authorization2.rule
     };
   }
-  return { authorized: true, actor: authorization2.actor };
+  return {
+    observed: true,
+    actor: authorization2.actor,
+    workflow: authorization2.workflow
+  };
 }
 function mapSignal(source) {
   return {
@@ -2217,8 +2221,12 @@ function projectLedgerToStoredTask(ledger) {
     intents: ledger.generations.map(mapIntent)
   };
 }
-function diffStoredTask(before, desired) {
-  if (!before) return [];
+function checkRoundTrip(written, after) {
+  if (!after) {
+    return [
+      { field: "revision", expected: written.revision, actual: void 0 }
+    ];
+  }
   const fields = [
     "desiredIntentId",
     "signals",
@@ -2226,18 +2234,25 @@ function diffStoredTask(before, desired) {
   ];
   const divergences = [];
   for (const field of fields) {
-    const ledgerValue = desired[field];
-    const storedValue = before[field];
-    if (!isDeepStrictEqual2(ledgerValue, storedValue)) {
-      divergences.push({ field, ledgerValue, storedValue });
+    const expected = written[field];
+    const actual = after[field];
+    if (!isDeepStrictEqual2(expected, actual)) {
+      divergences.push({ field, expected, actual });
     }
+  }
+  if (after.revision !== written.revision) {
+    divergences.push({
+      field: "revision",
+      expected: written.revision,
+      actual: after.revision
+    });
   }
   return divergences;
 }
-function logDivergences(task, divergences) {
+function logRoundTripMismatches(task, divergences) {
   for (const divergence of divergences) {
     console.log(
-      `::warning::dispatch-storage shadow divergence for ${task.repository}#${task.issue}, field '${divergence.field}': ledger=${JSON.stringify(divergence.ledgerValue)} storage=${JSON.stringify(divergence.storedValue)}`
+      `::warning::dispatch-storage shadow round-trip mismatch for ${task.repository}#${task.issue}, field '${divergence.field}': expected=${JSON.stringify(divergence.expected)} actual=${JSON.stringify(divergence.actual)}`
     );
   }
 }
@@ -2245,8 +2260,9 @@ async function observeDispatchStorage(port, ledger, now = (/* @__PURE__ */ new D
   const task = ledger.task;
   const before = await port.readTask(task);
   const desired = projectLedgerToStoredTask(ledger);
-  logDivergences(task, diffStoredTask(before, desired));
-  await port.writeTask(task, before?.revision, desired, now);
+  const written = await port.writeTask(task, before?.revision, desired, now);
+  const after = await port.readTask(task);
+  logRoundTripMismatches(task, checkRoundTrip(written, after));
 }
 async function maybeObserveDispatchStorage(mode, createPort, ledger, now) {
   if (mode !== "shadow") return;
