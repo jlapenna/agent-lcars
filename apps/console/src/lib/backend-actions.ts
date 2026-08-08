@@ -6,6 +6,7 @@ import {
   quickTaskMarkerMatcher,
 } from '@agent-lcars/dispatch-contracts';
 
+import { issueNumberFromDisplayTitle } from './agent-activity';
 import {
   getGithubClient,
   primaryWatchedRepo,
@@ -118,7 +119,14 @@ export async function clearNeedsHumanLabel(
         error,
       );
     }
+    // Either way, the label write itself did not happen (already absent, or
+    // failed outright) - the park state the ledger cares about is
+    // unchanged, so there is nothing new for the controller to converge.
+    return;
   }
+  // The park state the ledger tracks just changed on GitHub - nudge the
+  // controller to pick it up now instead of on the next scheduled sweep.
+  await notifyReconcile(repo, issueNumber);
 }
 
 // Server-action API compatibility; the GitHub label itself is
@@ -168,6 +176,16 @@ export async function approveAndMergePr(
     pull_number: prNumber,
     merge_method: 'squash',
   });
+
+  // Reconcile the PR anchor the console actually knows. A `Fixes #N` in the
+  // PR body can also auto-close a *linked issue* as a side effect of this
+  // merge - a second anchor this function was never given and has no
+  // reliable way to identify from prNumber alone (the PR body would have to
+  // be parsed for closing keywords, which is exactly the kind of guessing
+  // this ping is meant to avoid). That anchor is left to
+  // dispatch-reconcile.yml's scheduled sweep, which #715 already taught to
+  // converge a closed anchor's `control.closed` on its own.
+  await notifyReconcile(repo, prNumber);
 }
 
 // Resolves the `behind` mergeable_state ("Base branch has moved" in
@@ -256,6 +274,11 @@ export async function closeIssue(
     issue_number: issueNumber,
     state: 'closed',
   });
+  // `control.closed` just changed on GitHub without the router ever seeing
+  // an `issues: closed` event (this console action, not a webhook, wrote
+  // it) - nudge the controller to converge now instead of waiting on
+  // dispatch-reconcile.yml's next scheduled sweep.
+  await notifyReconcile(repo, issueNumber);
 }
 
 export async function cancelWorkflowRun(
@@ -268,6 +291,12 @@ export async function cancelWorkflowRun(
     repo: repo.name,
     run_id: runId,
   });
+  // The run just killed may be the attempt.runId the ledger has bound as an
+  // active generation - reconcile it now rather than waiting on the
+  // scheduled sweep. cancelWorkflowRun's own signature carries no anchor
+  // number, so notifyReconcileForCancelledRun looks one up from the run
+  // itself before pinging.
+  await notifyReconcileForCancelledRun(repo, runId);
 }
 
 // Dispatches the same workflow_dispatch event a human triggers from the
@@ -312,6 +341,130 @@ function withoutUnexpectedInputs(
   }
   return Object.fromEntries(
     Object.entries(inputs).filter(([key]) => !unexpectedKeys.includes(key)),
+  );
+}
+
+// One workflow_dispatch POST at this repo's own agent-router.yml, with the
+// same lagging-repo degrade every caller needs (see withoutUnexpectedInputs
+// above): retry once with any input GitHub's 422 names as unrecognized,
+// and only then let the failure propagate. retriggerIssue's own intent
+// dispatch and notifyReconcile's follow-up `kind: reconcile` ping both
+// route through this single function rather than each re-implementing the
+// same retry dance.
+async function dispatchAgentRouter(
+  repo: WatchedRepo,
+  inputs: Record<string, string>,
+): Promise<void> {
+  const octokit = getGithubClient();
+  try {
+    await octokit.rest.actions.createWorkflowDispatch({
+      owner: repo.owner,
+      repo: repo.name,
+      workflow_id: AGENT_ROUTER_WORKFLOW,
+      ref: DEFAULT_BRANCH,
+      inputs,
+    });
+  } catch (error) {
+    const retryInputs = withoutUnexpectedInputs(error, inputs);
+    if (!retryInputs) throw error;
+    await octokit.rest.actions.createWorkflowDispatch({
+      owner: repo.owner,
+      repo: repo.name,
+      workflow_id: AGENT_ROUTER_WORKFLOW,
+      ref: DEFAULT_BRANCH,
+      inputs: retryInputs,
+    });
+  }
+}
+
+// After a console action mutates a fact the dispatch ledger tracks (a
+// park-state label, `control.closed`, a merge, a cancelled active-
+// generation run) without going through agent-router.yml itself, ping it
+// with `kind: reconcile` for the affected anchor so the controller
+// converges immediately instead of only picking up the change on
+// dispatch-reconcile.yml's next scheduled sweep (up to 30 minutes later).
+// #715 taught that scheduled sweep to eventually repair a diverged
+// `control.closed`; this closes the latency gap at the source instead of
+// relying solely on that backstop.
+//
+// The mutation this follows has already landed on GitHub by the time this
+// runs, so any failure here - a lagging watched repo whose agent-router.yml
+// predates `kind: reconcile` (422, degraded by dispatchAgentRouter above
+// same as any other unrecognised input), one with no agent-router.yml at
+// all (404), or a transient GitHub error - is logged and swallowed rather
+// than surfaced to the caller. A red toast over a best-effort follow-up
+// ping would be a worse bug than the stale ledger entry this exists to
+// shrink; the scheduled sweep remains the backstop either way.
+async function notifyReconcile(
+  repo: WatchedRepo,
+  anchorNumber: number,
+): Promise<void> {
+  try {
+    await dispatchAgentRouter(repo, {
+      kind: 'reconcile',
+      issue: String(anchorNumber),
+    });
+  } catch (error) {
+    console.error(
+      'agent-lcars: failed to notify the dispatch controller to reconcile #%s:',
+      anchorNumber,
+      error,
+    );
+  }
+}
+
+// cancelWorkflowRun's own signature carries only a run id, not the
+// issue/PR anchor closeIssue/approveAndMergePr's callers already supply -
+// so the anchor is looked up from the run itself rather than threaded in.
+// claude.yml/codex.yml/opencode.yml's `run-name` renders `#<N>: ...` into
+// the run's `display_title`, the same field agent-activity.ts's
+// issueNumberFromDisplayTitle already trusts to join a live run back to
+// its issue for the dashboard. A run whose title doesn't parse (predates
+// the run-name rollout, or was dispatched by hand outside the broker) has
+// no anchor this console can identify from the run alone - reconcile is
+// skipped for it and left to the scheduled sweep, the same "don't guess"
+// posture approveAndMergePr takes for a merge's linked-issue anchor.
+async function notifyReconcileForCancelledRun(
+  repo: WatchedRepo,
+  runId: number,
+): Promise<void> {
+  // GitHub acknowledges a cancellation request before the run becomes
+  // terminal. Reconcile only after `status: completed`; an earlier pass sees
+  // the still-active attempt and is a no-op. Keep this wait bounded so the
+  // console action remains responsive, with the scheduled sweep as the
+  // fallback when GitHub takes longer to finish cancellation.
+  const pollDelaysMs = [0, 250, 500, 1000, 2000, 4000];
+  let anchorNumber: number | undefined;
+  for (const delayMs of pollDelaysMs) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      const octokit = getGithubClient();
+      const { data: run } = await octokit.rest.actions.getWorkflowRun({
+        owner: repo.owner,
+        repo: repo.name,
+        run_id: runId,
+      });
+      anchorNumber ??= issueNumberFromDisplayTitle(run.display_title);
+      if (run.status !== 'completed') continue;
+    } catch (error) {
+      console.error(
+        'agent-lcars: failed to identify the anchor for cancelled run #%s:',
+        runId,
+        error,
+      );
+      return;
+    }
+    if (anchorNumber !== undefined) {
+      await notifyReconcile(repo, anchorNumber);
+    }
+    return;
+  }
+
+  console.warn(
+    'agent-lcars: cancelled run #%s did not become terminal before the reconcile wait expired; the scheduled sweep will converge it',
+    runId,
   );
 }
 
@@ -405,25 +558,7 @@ export async function retriggerIssue(
     mode: 'implement',
     caller_id: callerId,
   };
-  try {
-    await octokit.rest.actions.createWorkflowDispatch({
-      owner: repo.owner,
-      repo: repo.name,
-      workflow_id: AGENT_ROUTER_WORKFLOW,
-      ref: DEFAULT_BRANCH,
-      inputs,
-    });
-  } catch (error) {
-    const retryInputs = withoutUnexpectedInputs(error, inputs);
-    if (!retryInputs) throw error;
-    await octokit.rest.actions.createWorkflowDispatch({
-      owner: repo.owner,
-      repo: repo.name,
-      workflow_id: AGENT_ROUTER_WORKFLOW,
-      ref: DEFAULT_BRANCH,
-      inputs: retryInputs,
-    });
-  }
+  await dispatchAgentRouter(repo, inputs);
 }
 
 // The console's "hand this off to a different agent" action (#143) - e.g. a
