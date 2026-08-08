@@ -519,13 +519,15 @@ function isCanaryContractObservationPending({
     return false;
   }
   const projection = ledger.projection;
-  if (projection?.state === "diverged") return false;
+  if (projection?.state === "diverged" && projection.desiredRevision === ledger.revision - 1) {
+    return false;
+  }
   if (projection?.state === "converged" && projection.desiredRevision === ledger.revision - 1 && projection.observedRevision !== projection.desiredRevision) {
     return false;
   }
   if (attempt.outcome === void 0) return true;
   if (!projection || projection.state === "pending") return true;
-  return projection.state === "converged" && projection.desiredRevision !== ledger.revision - 1;
+  return (projection.state === "converged" || projection.state === "diverged") && projection.desiredRevision !== ledger.revision - 1;
 }
 async function findCanaryGeneration(api, task, sourceId) {
   const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
