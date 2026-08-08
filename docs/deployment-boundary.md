@@ -107,6 +107,19 @@ gh variable set GCP_WEBHOOK_CONFIG_WIF_PROVIDER --body "$(terraform -chdir=infra
 gh variable set GCP_WEBHOOK_CONFIG_SA --body "$(terraform -chdir=infra/terraform output -raw github_app_webhook_configurator_service_account)"
 ```
 
+The webhook configuration workflow deliberately does not read the `latest`
+secret version. App Hosting resolves Secret Manager values into a serving
+revision during deployment, so a newer secret version can exist before that
+revision is live. Deploy and verify App Hosting first, then configure GitHub
+with the exact positive-integer version used by that deployment:
+
+```sh
+gh workflow run configure-github-app-webhook.yml --ref main -f webhook_secret_version=1
+```
+
+For a rotation, replace `1` with the new version only after the deployment
+carrying that version has completed and the production route is healthy.
+
 Two values in `publish-images.yml` are deliberately **not**
 variables — its `runs-on: lcars-build-client` and its BuildKit
 `endpoint:`. That workflow publishes the images the entire fleet pulls and

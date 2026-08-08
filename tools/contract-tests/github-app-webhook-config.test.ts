@@ -112,7 +112,11 @@ describe('GitHub App webhook configuration', () => {
     );
 
     expect(workflow).toContain('google-github-actions/auth@v3');
-    expect(workflow).toContain('gcloud secrets versions access latest');
+    expect(workflow).toContain('webhook_secret_version:');
+    expect(workflow).toContain(
+      'gcloud secrets versions access "$WEBHOOK_SECRET_VERSION"',
+    );
+    expect(workflow).not.toContain('gcloud secrets versions access latest');
     expect(workflow).toContain('--out-file="$webhook_secret_file"');
     expect(workflow).not.toMatch(/WEBHOOK_SECRET="\$\(/u);
     expect(workflow).not.toContain('secrets.AGENT_LCARS_WEBHOOK_SECRET');
