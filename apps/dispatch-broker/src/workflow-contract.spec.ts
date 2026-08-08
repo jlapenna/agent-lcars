@@ -745,10 +745,25 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(report.source, /\{labels: \["status:needs-human"\]\}/u);
   assert.match(report.source, /\{assignees: \[\$login\]\}/u);
   assert.doesNotMatch(report.source, /labels\[\]|assignees\[\]|--silent/u);
+  const checkout = namedStep(
+    steps,
+    'agent-fallback-finalize.yml',
+    'Checkout trusted revision for controller callback',
+  );
   const callback = namedStep(
     steps,
     'agent-fallback-finalize.yml',
     'Return completion observation to the broker',
+  );
+  assert.match(
+    checkout.source,
+    stepField('if', 'always()'),
+    'a reporting failure must not skip the trusted callback checkout',
+  );
+  assert.match(
+    callback.source,
+    stepField('if', 'always()'),
+    'a reporting failure must not skip the hosted completion callback',
   );
   assert.match(
     callback.source,

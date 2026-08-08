@@ -116,9 +116,11 @@ jobs:
           fi
 
       - name: Checkout trusted revision for controller callback
+        if: always()
         uses: actions/checkout@v7
 
       - name: Return completion observation to the broker
+        if: always()
         uses: ./.github/actions/dispatch-broker
         with:
           operation: completion-callback
