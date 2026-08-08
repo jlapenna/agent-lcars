@@ -6,7 +6,10 @@ set -e
 # stat it. Shared with the control plane's periodic idle-host maintenance
 # sweep (scaler.go:sweepHostWorkDir, agent-lcars#392) so both call sites use
 # identical logic instead of two copies that can drift apart.
+# shellcheck source=externals-health.sh
 source /usr/local/lib/agent-lcars/externals-health.sh
+# shellcheck source=toolchain-health.sh
+source /usr/local/lib/agent-lcars/toolchain-health.sh
 
 repair_externals_if_needed
 
@@ -19,6 +22,16 @@ repair_externals_if_needed
 # used for a dead host or a crash-looping image.
 if ! node24_runs; then
   echo "FATAL: /home/runner/externals/node24/bin/node failed a preflight invocation" >&2
+  exit 1
+fi
+
+# Corepack/pnpm is smoke-checked and warmed for this user while the image is
+# built, but runner registration is the last safe point to catch a damaged or
+# missing shim in the filesystem that actually reached a host (#468). Keep the
+# probe to a version invocation: it exercises shim resolution and the cached
+# package-manager binary without performing an install or touching a repo.
+if ! pnpm_runs; then
+  echo "FATAL: pnpm/corepack failed a preflight invocation" >&2
   exit 1
 fi
 

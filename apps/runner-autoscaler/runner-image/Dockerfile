@@ -210,6 +210,12 @@ RUN chmod +x /entrypoint.sh
 COPY externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
 RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 
+# Cheap runtime toolchain probes consumed by entrypoint.sh before the runner
+# registers with GitHub. Kept separate from the entrypoint so the predicates
+# can be exercised without starting a real JIT runner (#468).
+COPY toolchain-health.sh /usr/local/lib/agent-lcars/toolchain-health.sh
+RUN chmod +r /usr/local/lib/agent-lcars/toolchain-health.sh
+
 # agent-lcars#30: baked-in telemetry sidecar/finalize tool (built above).
 # Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 # start|finalize — a thin process-management wrapper (background+PID-file
