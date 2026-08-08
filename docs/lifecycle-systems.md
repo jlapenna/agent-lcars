@@ -205,9 +205,13 @@ same per-issue serialized `agent-router.yml` path every other trigger uses.
 Past a bounded retry count it parks `status:needs-human` instead of retrying
 forever. A queued/accepted ordinary generation remains held while that park
 label is present and resumes after a maintainer removes it. The reconciler
-**cannot** recover an intent whose labels changed after the
-event that would have carried the real signal was lost — that class needs a
-human to re-apply the correct label or use the console's retrigger action.
+also reconstructs a queue-evicted current agent/review-label intent from its
+real, maintainer-authored timeline source, including a relabel after an
+earlier generation completed (#639). Repeated scans and a delayed original
+webhook reuse that exact source ID and cannot create a second generation. A
+digest-valid, maintainer-authored Quick Task is the narrow creation-time
+fallback because GitHub emits no separate timeline event for labels included
+in the issue-creation request (#634).
 The scheduled scan runs through App Hosting from `ubuntu-latest`, so a
 `CONTROL_PLANE_RUNNER_LABEL` outage can delay the per-issue router repairs
 but cannot prevent their durable `workflow_dispatch` runs from being

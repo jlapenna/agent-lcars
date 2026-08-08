@@ -3234,13 +3234,42 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   let actor;
   let authorizationRule = "reconcile-label-repair";
   let quickTask;
+  let sourceKind;
+  let sourceId;
+  let occurredAt;
   if (mostRecent) {
+    if (!Number.isSafeInteger(mostRecent.id)) return;
+    sourceKind = "labeled";
+    sourceId = `timeline:${mostRecent.id}`;
+    occurredAt = mostRecent.created_at;
+    if (ledger.sources.some(
+      (source) => source.sourceKind === sourceKind && source.sourceId === sourceId
+    )) {
+      return;
+    }
+    const legacySource = ledger.sources.find(
+      (source) => source.sourceKind === "reconcile-label-repair" && source.sourceId === `reconcile-label-repair:${issue.id}`
+    );
+    const legacyGeneration = ledger.generations.find(
+      (generation) => generation.intentId === legacySource?.intentId
+    );
+    if (legacySource && legacyGeneration?.pipeline === pipeline && legacyGeneration.mode === mode && Date.parse(legacySource.occurredAt) >= Date.parse(occurredAt)) {
+      return;
+    }
     actor = mostRecent.actor;
     if (!actor || actor.login !== maintainer) return;
     quickTask = quickTaskRequest(issue, task.repository, pipeline);
   } else {
     actor = issue.user;
     if (!actor || actor.login !== maintainer) return;
+    sourceKind = "opened";
+    sourceId = `issue:${issue.id}`;
+    occurredAt = issue.created_at;
+    if (ledger.sources.some(
+      (source) => source.sourceKind === sourceKind && source.sourceId === sourceId
+    )) {
+      return;
+    }
     quickTask = quickTaskRequest(issue, task.repository, pipeline);
     if (!quickTask) return;
     authorizationRule = "reconcile-quick-task-create-repair";
@@ -3250,10 +3279,10 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     ...quickTask && {
       intentId: `quick:${quickTask.requestId}:${quickTask.digest}`
     },
-    sourceKind: "reconcile-label-repair",
-    sourceId: `reconcile-label-repair:${issue.id}`,
+    sourceKind,
+    sourceId,
     transportRunId: runId,
-    occurredAt: now,
+    occurredAt,
     pipeline,
     mode,
     reply: "",
@@ -3325,10 +3354,10 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
     }
     return;
   }
-  if (ledger.generations.length === 0) {
+  if (ledger.generations.length === 0 || !activeGeneration(ledger)) {
     await repairMissingIntentFromLabel(client, loaded, now, runId);
-    return;
   }
+  if (ledger.generations.length === 0) return;
   const active = activeGeneration(ledger);
   const pending = ledger.generations.find(
     (candidate) => candidate.state === "pending"

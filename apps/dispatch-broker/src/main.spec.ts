@@ -53,7 +53,7 @@ import {
   saveProjectionCheckpoint,
   wasSupersededEviction,
 } from './main.js';
-import { digestQuickTask, normalizeEvent } from './normalize.js';
+import { digestQuickTask, makeIntent, normalizeEvent } from './normalize.js';
 import { acquireAuthority } from './storage/authority.js';
 import { InMemoryStoragePort } from './storage/in-memory-port.js';
 
@@ -2607,13 +2607,21 @@ test('reconcileLedger no-ops on an empty ledger when the live issue carries cont
 // The repair's own authorization check (Codex review, P1) needs a
 // timeline entry showing WHO most recently applied the label, mirroring
 // what a live `labeled` event's `event.sender` would carry.
-function maintainerLabelTimeline(login = 'jlapenna') {
+function maintainerLabelTimeline(
+  login = 'jlapenna',
+  {
+    id = 501,
+    label = 'agent:codex',
+    createdAt = '2026-08-04T05:59:00.000Z',
+  } = {},
+) {
   return [
     {
+      id,
       event: 'labeled',
-      label: { name: 'agent:codex' },
+      label: { name: label },
       actor: { login },
-      created_at: '2026-08-04T05:59:00.000Z',
+      created_at: createdAt,
     },
   ];
 }
@@ -2667,8 +2675,7 @@ test('reconcileLedger repairs a queue-evicted labeled intent: empty ledger + a l
     assert.equal(
       ledger.sources.some(
         (source) =>
-          source.sourceKind === 'reconcile-label-repair' &&
-          source.sourceId === 'reconcile-label-repair:9304',
+          source.sourceKind === 'labeled' && source.sourceId === 'timeline:501',
       ),
       true,
     );
@@ -2695,6 +2702,7 @@ test('reconcileLedger repair falls through to the review:* namespace on a pull r
       },
       timeline: [
         {
+          id: 503,
           event: 'labeled',
           label: { name: 'review:codex' },
           actor: { login: 'jlapenna' },
@@ -2889,6 +2897,7 @@ test('reconcileLedger repair pages through the full timeline: a non-maintainer r
       created_at: `2026-08-01T00:${String(index).padStart(2, '0')}:00.000Z`,
     }));
     page1.push({
+      id: 504,
       event: 'labeled',
       label: { name: 'agent:codex' },
       actor: { login: 'jlapenna' },
@@ -2905,6 +2914,7 @@ test('reconcileLedger repair pages through the full timeline: a non-maintainer r
         created_at: '2026-08-04T05:30:00.000Z',
       },
       {
+        id: 506,
         event: 'labeled',
         label: { name: 'agent:codex' },
         actor: { login: 'some-other-collaborator' },
@@ -2969,10 +2979,8 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
     const revisionAfterRepair = ledger.revision;
 
     // A second reconcile pass (e.g. the next scheduled scan, 30 minutes
-    // later) must not touch the ledger again: generations is no longer
-    // empty, so the repair branch's own gate excludes it, and the resulting
-    // 'accepted' generation isn't in a dispatching/dispatch-unknown state
-    // reconcileActive()/trackMissingRun() would otherwise act on either.
+    // later) sees the same real timeline source and must not touch the ledger
+    // again, even though repair is no longer limited to an empty ledger.
     await reconcileLedger(
       client,
       { ledger, comment: { id: 9 } },
@@ -2981,6 +2989,91 @@ test('reconcileLedger repair is idempotent: a second reconcile pass creates no s
     );
     assert.equal(ledger.generations.length, 1);
     assert.equal(ledger.revision, revisionAfterRepair);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('reconcileLedger repairs a queue-evicted relabel after an earlier generation completed, exactly once (#639)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = completedLedger();
+    const timeline = maintainerLabelTimeline('jlapenna', {
+      id: 502,
+      label: 'agent:claude',
+      createdAt: '2026-08-04T06:30:00.000Z',
+    });
+    const { client } = reconcileStubClient({
+      issue: {
+        id: 9304,
+        labels: [{ name: 'agent:claude' }],
+        assignees: [],
+      },
+      timeline,
+    });
+
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:31:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 2);
+    assert.equal(ledger.generations[1].pipeline, 'claude');
+    assert.equal(ledger.generations[1].state, 'accepted');
+    assert.equal(ledger.generations[1].sourceId, 'timeline:502');
+    const revisionAfterRepair = ledger.revision;
+
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T07:01:00.000Z',
+      30880001,
+    );
+    assert.equal(ledger.generations.length, 2);
+    assert.equal(ledger.revision, revisionAfterRepair);
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
+test('the real timeline identity does not replay a label already covered by the legacy synthetic #520 repair source (#639)', async () => {
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    acceptIntent(
+      ledger,
+      makeIntent({
+        task,
+        sourceKind: 'reconcile-label-repair',
+        sourceId: 'reconcile-label-repair:9304',
+        transportRunId: 30870000,
+        occurredAt: '2026-08-04T06:00:00.000Z',
+        pipeline: 'codex',
+        mode: 'implement',
+        reply: '',
+        runbook: '',
+        context: '',
+        authorization: { authorized: true },
+      }),
+      '2026-08-04T06:00:00.000Z',
+    );
+    const revisionBefore = ledger.revision;
+    const { client } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: maintainerLabelTimeline(),
+    });
+
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:30:00.000Z',
+      30880000,
+    );
+
+    assert.equal(ledger.generations.length, 1);
+    assert.equal(ledger.revision, revisionBefore);
   } finally {
     delete process.env.MAINTAINER_LOGIN;
   }

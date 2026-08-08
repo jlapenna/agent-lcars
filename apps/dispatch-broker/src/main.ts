@@ -1099,12 +1099,12 @@ async function trackStuckRun(
   await saveLedger(client, loaded);
 }
 
-// Repairs an orphan class outside #305's original scope (#520): a
+// Repairs an orphan class outside #305's original scope (#520/#639): a
 // `labeled` event's intent that was queue-evicted (#344/#345) before
-// verifyBrokerConcurrency ever let broker() reach loadLedger/acceptIntent
-// at all. reconcileActive()/trackMissingRun() above can only repair a
-// STUCK generation (dispatching/dispatch-unknown with no bound run) --
-// they have nothing to work with when there is no generation whatsoever.
+// verifyBrokerConcurrency ever let broker() reach acceptIntent. This is not
+// limited to an empty ledger: a relabel can be lost after earlier generations
+// already completed, and the current label remains desired state until its
+// real application event has a corresponding ledger source.
 // dispatchReconcileScan's candidate discovery already found this issue by
 // its current agent:* label, but a `reconcile` payload carries no claim
 // about which label or intent that was (#305's design is "re-observe live
@@ -1117,8 +1117,8 @@ async function trackStuckRun(
 // scope for this repair.
 //
 // No grace period, unlike trackMissingRun: this only fires when the issue
-// currently shows one definite, unambiguous agent:* label AND the ledger
-// has literally zero generations to explain it. If a genuine live
+// currently shows one definite, unambiguous agent:* label and the current
+// label-application source is absent from the ledger. If a genuine live
 // `labeled` event for that very label is still in flight, it shares this
 // issue's own concurrency group (queue: max, cancel-in-progress: false)
 // and is strictly serialized against this run: it either already ran (so
@@ -1126,11 +1126,9 @@ async function trackStuckRun(
 // behind this run and hasn't touched the ledger yet, so there is nothing
 // for this run to race against. A *new* labeled/unlabeled+labeled event
 // arriving afterward -- a genuinely new maintainer action, or the rare
-// case of a manual webhook redelivery -- gets its own generation the same
-// way any ordinary relabel-while-a-generation-exists already does
-// elsewhere in this ledger (acceptIntent's dedup keys on sourceId/intentId,
-// not on {pipeline, mode, ...} alone, so it cannot recognize this repair's
-// synthetic source as "the same" delivery); dispatchAccepted's
+// case of a manual webhook redelivery -- carries the exact same
+// `timeline:<event-id>` source as this repair and is therefore a duplicate,
+// not a second generation. dispatchAccepted's
 // no-second-dispatch-while-one-is-active gate is what keeps that from
 // running two workers concurrently, exactly as it already does for any
 // other legitimate second intent arriving while the first is still active.
@@ -1209,7 +1207,44 @@ async function repairMissingIntentFromLabel(
   let actor: GitHubUserRef | undefined;
   let authorizationRule = 'reconcile-label-repair';
   let quickTask: ReturnType<typeof quickTaskRequest>;
+  let sourceKind: string;
+  let sourceId: string;
+  let occurredAt: string;
   if (mostRecent) {
+    if (!Number.isSafeInteger(mostRecent.id)) return;
+    sourceKind = 'labeled';
+    sourceId = `timeline:${mostRecent.id}`;
+    occurredAt = mostRecent.created_at;
+    if (
+      ledger.sources.some(
+        (source) =>
+          source.sourceKind === sourceKind && source.sourceId === sourceId,
+      )
+    ) {
+      return;
+    }
+
+    // Compatibility with #520's pre-#639 repair, which used one synthetic
+    // source per issue. Do not replay the same historical label application
+    // merely because the new implementation now knows its real timeline ID.
+    // A later re-application has a later timestamp and is still recovered.
+    const legacySource = ledger.sources.find(
+      (source) =>
+        source.sourceKind === 'reconcile-label-repair' &&
+        source.sourceId === `reconcile-label-repair:${issue.id}`,
+    );
+    const legacyGeneration = ledger.generations.find(
+      (generation) => generation.intentId === legacySource?.intentId,
+    );
+    if (
+      legacySource &&
+      legacyGeneration?.pipeline === pipeline &&
+      legacyGeneration.mode === mode &&
+      Date.parse(legacySource.occurredAt) >= Date.parse(occurredAt)
+    ) {
+      return;
+    }
+
     actor = mostRecent.actor;
     if (!actor || actor.login !== maintainer) return;
     quickTask = quickTaskRequest(issue, task.repository, pipeline);
@@ -1219,6 +1254,17 @@ async function repairMissingIntentFromLabel(
     // ordinary or malformed maintainer-authored issues still fail closed.
     actor = issue.user;
     if (!actor || actor.login !== maintainer) return;
+    sourceKind = 'opened';
+    sourceId = `issue:${issue.id}`;
+    occurredAt = issue.created_at;
+    if (
+      ledger.sources.some(
+        (source) =>
+          source.sourceKind === sourceKind && source.sourceId === sourceId,
+      )
+    ) {
+      return;
+    }
     quickTask = quickTaskRequest(issue, task.repository, pipeline);
     if (!quickTask) return;
     authorizationRule = 'reconcile-quick-task-create-repair';
@@ -1228,10 +1274,10 @@ async function repairMissingIntentFromLabel(
     ...(quickTask && {
       intentId: `quick:${quickTask.requestId}:${quickTask.digest}`,
     }),
-    sourceKind: 'reconcile-label-repair',
-    sourceId: `reconcile-label-repair:${issue.id}`,
+    sourceKind,
+    sourceId,
     transportRunId: runId,
-    occurredAt: now,
+    occurredAt,
     pipeline,
     mode,
     reply: '',
@@ -1412,10 +1458,15 @@ async function reconcileLedger(
     }
     return;
   }
-  if (ledger.generations.length === 0) {
+  // A lost relabel that arrived during an active attempt can be recovered
+  // after that attempt terminalizes; avoid adding live issue/timeline reads
+  // to the hot active-run repair path. Empty and terminal-only ledgers are
+  // the states where a missing current-label source would otherwise remain
+  // invisible forever (#639).
+  if (ledger.generations.length === 0 || !activeGeneration(ledger)) {
     await repairMissingIntentFromLabel(client, loaded, now, runId);
-    return;
   }
+  if (ledger.generations.length === 0) return;
   const active = activeGeneration(ledger);
   const pending = ledger.generations.find(
     (candidate) => candidate.state === 'pending',

@@ -31,9 +31,10 @@ name: Dispatch Ledger Reconciler
 # parked `status:needs-human`. A completed worker run whose completion
 # callback never landed (a red pre-#349 run, a timeout, a force-cancel) gets
 # finalized by the same reconcileActive() logic every ordinary event already
-# runs. An empty ledger whose original intent was queue-evicted is rebuilt
-# from either a maintainer-applied label event or a digest-valid,
-# maintainer-authored Quick Task whose agent label was set at creation (#634).
+# runs. A current label whose intent was queue-evicted is rebuilt from its
+# real maintainer-authored timeline source even after earlier generations
+# completed (#639), or from a digest-valid, maintainer-authored Quick Task
+# whose agent label was set at creation and has no timeline event (#634).
 # A pending intent queued behind either repair gets promoted once its blocking
 # generation resolves; ordinary work remains held while status:needs-human is
 # live and resumes through the serialized broker after unpark (#720). No
