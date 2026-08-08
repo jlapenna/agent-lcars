@@ -7,7 +7,7 @@ import {
   createQuickTaskClaimRef,
   createQuickTaskClaimTag,
   deleteQuickTaskClaimRef,
-  E2E_QUICK_TASK_FORCE_4XX_TITLE,
+  E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION,
   enrichmentGraphql,
   getQuickTaskClaimRefSha,
   getQuickTaskClaimTag,
@@ -263,10 +263,9 @@ export async function POST(
       );
     }
     // Deliberate failure-injection sentinel (see this constant's own doc
-    // comment) - lets a spec drive a definitive, claim-releasing 4xx
-    // through the real "Title" field rather than needing an out-of-band
-    // control channel the real UI has no way to exercise.
-    if (body.title === E2E_QUICK_TASK_FORCE_4XX_TITLE) {
+    // comment) - lets a spec drive a definitive, claim-releasing 4xx through
+    // the real description field rather than an out-of-band control channel.
+    if (body.body?.split('\n', 1)[0] === E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION) {
       return NextResponse.json(
         { message: 'E2E fixture: forced definitive Quick Task failure' },
         { status: 422 },

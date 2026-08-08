@@ -1762,24 +1762,4 @@ describe('createQuickTask', () => {
     expect(deleteRef).toHaveBeenCalledTimes(3);
     expect(createIssue).toHaveBeenCalledTimes(1);
   });
-
-  it('uses the explicit title instead of deriving one when provided', async () => {
-    const { createIssue } = mockOctokit({});
-
-    await createQuickTask({ ...request, title: '  Custom title  ' });
-
-    expect(createIssue).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Custom title' }),
-    );
-  });
-
-  it('falls back to the derived title when the explicit title is blank', async () => {
-    const { createIssue } = mockOctokit({});
-
-    await createQuickTask({ ...request, title: '   ' });
-
-    expect(createIssue).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Fix the flaky test' }),
-    );
-  });
 });

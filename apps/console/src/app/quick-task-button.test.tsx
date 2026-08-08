@@ -99,7 +99,6 @@ describe('QuickTaskButton', () => {
       requestId: expect.stringMatching(UUID_PATTERN),
       repository: REPO,
       pipeline: 'claude',
-      title: '',
       description: 'Fix the flaky test',
     });
     // handleCreate's setOpened(false) runs inside the same startTransition as
@@ -143,13 +142,11 @@ describe('QuickTaskButton', () => {
     );
   });
 
-  it('forwards an explicit title and selected pipeline', async () => {
+  it('derives the issue title server-side and forwards the selected pipeline', async () => {
     (createQuickTask as Mock).mockResolvedValue(receipt());
     renderButton();
     await openDialog();
-    fireEvent.change(screen.getByLabelText('Title'), {
-      target: { value: 'Custom title' },
-    });
+    expect(screen.queryByLabelText('Title')).toBeNull();
     fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
     fireEvent.click(await screen.findByText('opencode'));
     enterDescription();
@@ -158,10 +155,12 @@ describe('QuickTaskButton', () => {
     await waitFor(() =>
       expect(createQuickTask).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: 'Custom title',
           pipeline: 'opencode',
         }),
       ),
+    );
+    expect((createQuickTask as Mock).mock.calls[0][0]).not.toHaveProperty(
+      'title',
     );
   });
 
@@ -308,9 +307,6 @@ describe('QuickTaskButton', () => {
         (screen.getByLabelText('Description') as HTMLTextAreaElement).disabled,
       ).toBe(true),
     );
-    expect((screen.getByLabelText('Title') as HTMLInputElement).disabled).toBe(
-      true,
-    );
     expect(
       (screen.getByRole('combobox', { name: 'Agent' }) as HTMLInputElement)
         .disabled,
@@ -346,17 +342,16 @@ describe('QuickTaskButton', () => {
       requestId: expect.stringMatching(UUID_PATTERN),
       repository: REPO,
       pipeline: 'claude',
-      title: '',
       description: 'Fix the flaky test',
     });
   });
 
-  it('submits via cmd+enter (metaKey) in the title field', async () => {
+  it('submits via cmd+enter (metaKey) in the description field', async () => {
     (createQuickTask as Mock).mockResolvedValue(receipt());
     renderButton();
     await openDialog();
     enterDescription();
-    fireEvent.keyDown(screen.getByLabelText('Title'), {
+    fireEvent.keyDown(screen.getByLabelText('Description'), {
       key: 'Enter',
       metaKey: true,
     });

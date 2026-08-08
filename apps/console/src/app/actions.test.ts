@@ -96,7 +96,6 @@ const QUICK_TASK_REQUEST = {
   repository: DEFAULT_REPO,
   pipeline: 'claude' as const,
   description: 'Fix the flaky test',
-  title: 'Custom title',
 };
 const QUICK_TASK_RECEIPT = {
   requestId: QUICK_TASK_REQUEST.requestId,

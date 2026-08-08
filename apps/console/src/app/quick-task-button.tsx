@@ -1,14 +1,6 @@
 'use client';
 
-import {
-  Anchor,
-  Button,
-  Modal,
-  Select,
-  Stack,
-  Textarea,
-  TextInput,
-} from '@mantine/core';
+import { Anchor, Button, Modal, Select, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useEffect, useRef, useState, useTransition } from 'react';
 
@@ -63,7 +55,6 @@ export function QuickTaskButton({
   size?: string;
 }) {
   const [opened, setOpened] = useState(false);
-  const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [repoIndex, setRepoIndex] = useState(() => {
     const index = watchedRepos.findIndex(
@@ -117,7 +108,7 @@ export function QuickTaskButton({
     requestIdRef.current = undefined;
   };
 
-  /** Ctrl+Enter (Cmd+Enter on Mac) submits from either text field, mirroring
+  /** Ctrl+Enter (Cmd+Enter on Mac) submits from the description, mirroring
    * the "File & dispatch" button click. `handleCreate` already guards
    * against an empty description, a missing repo/pipeline, and a submission
    * already in flight, so this reuses that same guard rather than
@@ -159,7 +150,6 @@ export function QuickTaskButton({
             name: selectedRepo.name,
           },
           pipeline: effectivePipeline,
-          title: title.trim(),
           description: trimmed,
         });
         if (!result.ok) {
@@ -167,7 +157,6 @@ export function QuickTaskButton({
           return;
         }
         requestIdRef.current = undefined;
-        setTitle('');
         setDescription('');
         close();
         notifications.show({
@@ -259,18 +248,6 @@ export function QuickTaskButton({
             }}
             allowDeselect={false}
             disabled={isPending || pipelineOptions.length === 0}
-          />
-          <TextInput
-            label="Title"
-            description="Optional — defaults to the first line of the description"
-            value={title}
-            onChange={(e) => {
-              changeIntent();
-              setTitle(e.currentTarget.value);
-            }}
-            onKeyDown={handleSubmitShortcut}
-            placeholder="Short summary for the issue title"
-            disabled={isPending}
           />
           <Textarea
             label="Description"

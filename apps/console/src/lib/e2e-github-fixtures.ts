@@ -568,12 +568,10 @@ export function resetQuickTaskFixtures(): void {
     freshQuickTaskState();
 }
 
-/** Title sentinel a spec can type into the real "Title" field to make the
- * fixture's issue-create endpoint fail closed with a definitive 4xx - the
- * only way to deterministically exercise that path through the real UI,
- * since every other field it controls (description, pipeline, repo) is
- * otherwise always valid. Never a value a real task would use. */
-export const E2E_QUICK_TASK_FORCE_4XX_TITLE = 'E2E_QUICK_TASK_FORCE_4XX';
+/** Description sentinel a spec can type into the real dialog to make the
+ * fixture's issue-create endpoint fail closed with a definitive 4xx. Never
+ * a value a real task would use. */
+export const E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION = 'E2E_QUICK_TASK_FORCE_4XX';
 
 export function createQuickTaskClaimTag(
   message: string,

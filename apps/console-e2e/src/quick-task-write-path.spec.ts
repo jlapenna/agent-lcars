@@ -32,15 +32,12 @@ import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 useE2eAdminBeforeEach();
 useCliSessionFixtures();
 
-/** Mirrors `E2E_QUICK_TASK_FORCE_4XX_TITLE` in
+/** Mirrors `E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION` in
  * `apps/console/src/lib/e2e-github-fixtures.ts` (duplicated for the same
  * module-boundary reason `seed.ts`'s other mirrored constants are - this
  * `platform:web` e2e project cannot import from the `platform:nextjs`
- * frontend app). Typing this into the real "Title" field is the only way to
- * deterministically drive a definitive-4xx fixture response through the
- * real UI: every other field it controls (description, pipeline, repo) is
- * otherwise always valid. */
-const FORCE_4XX_TITLE = 'E2E_QUICK_TASK_FORCE_4XX';
+ * frontend app). */
+const FORCE_4XX_DESCRIPTION = 'E2E_QUICK_TASK_FORCE_4XX';
 
 const TASK_REF_RE =
   /^Quick task filed as supersprinklesracing\/sprinkles#(\d+)$/;
@@ -77,14 +74,8 @@ async function openQuickTask(page: Page) {
   await expect(page.getByRole('dialog')).toBeVisible();
 }
 
-async function fillAndSubmit(
-  page: Page,
-  { title, description }: { title?: string; description: string },
-) {
+async function fillAndSubmit(page: Page, description: string) {
   const dialog = page.getByRole('dialog');
-  if (title !== undefined) {
-    await dialog.getByLabel('Title').fill(title);
-  }
   await dialog.getByLabel('Description').fill(description);
   await dialog.getByRole('button', { name: 'File & dispatch' }).click();
 }
@@ -99,9 +90,10 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
   }) => {
     await page.goto('/');
     await openQuickTask(page);
-    await fillAndSubmit(page, {
-      description: 'E2E happy path: investigate the flaky retry test',
-    });
+    await fillAndSubmit(
+      page,
+      'E2E happy path: investigate the flaky retry test',
+    );
 
     const receipt = taskRefNotification(page);
     await expect(receipt).toBeVisible();
@@ -175,7 +167,7 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     const description = 'E2E idempotency check: same request ID twice';
 
     await openQuickTask(page);
-    await fillAndSubmit(page, { description });
+    await fillAndSubmit(page, description);
     const firstReceipt = taskRefNotification(page);
     await expect(firstReceipt).toBeVisible();
     await expect(firstReceipt).toHaveAttribute(
@@ -213,7 +205,7 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // that those are different: same content under a *different* ID is a
     // new, unrelated task).
     await openQuickTask(page);
-    await fillAndSubmit(page, { description });
+    await fillAndSubmit(page, description);
     const secondReceipt = taskRefNotification(page);
     await expect(secondReceipt).toBeVisible();
     // Asserted against the locator (not a bare string equality on two
@@ -228,10 +220,7 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
   }) => {
     await page.goto('/');
     await openQuickTask(page);
-    await fillAndSubmit(page, {
-      title: FORCE_4XX_TITLE,
-      description: 'E2E 4xx check: this attempt must fail closed',
-    });
+    await fillAndSubmit(page, FORCE_4XX_DESCRIPTION);
 
     // The Server Action surfaces GitHub's own error message (see
     // actions.ts's `toUserErrorMessage`) rather than a generic failure -

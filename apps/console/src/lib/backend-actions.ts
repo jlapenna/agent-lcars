@@ -667,7 +667,7 @@ function normalizeQuickTaskRequest(
   return {
     ...request,
     description: trimmed,
-    title: request.title?.trim() || deriveQuickTaskTitle(trimmed),
+    title: deriveQuickTaskTitle(trimmed),
   };
 }
 

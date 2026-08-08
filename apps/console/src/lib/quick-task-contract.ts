@@ -5,7 +5,6 @@ export interface QuickTaskRequest {
   requestId: string;
   repository: RepositoryRef;
   pipeline: AgentPipeline;
-  title?: string;
   description: string;
 }
 
