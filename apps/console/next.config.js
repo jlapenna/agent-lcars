@@ -9,6 +9,16 @@ const nextConfig = {
   // dynamic require. Keep it as a Node dependency in the standalone server;
   // Turbopack cannot statically bundle that generated lookup.
   serverExternalPackages: ['@google-cloud/tasks'],
+  // The generated JSON loader above resolves this file dynamically, so
+  // Next's standalone trace sees protos.js but misses its sibling JSON file.
+  // Pin the runtime asset into the webhook route trace explicitly. The pnpm
+  // version segment is intentionally globbed so dependency updates do not
+  // silently drop it from production again.
+  outputFileTracingIncludes: {
+    '/api/control-plane/webhook*': [
+      '../../node_modules/.pnpm/@google-cloud+tasks@*/node_modules/@google-cloud/tasks/build/protos/protos.json',
+    ],
+  },
   // Next 16's native cache model, enabling `"use cache"` +
   // `cacheTag`/`cacheLife` (see lib/dashboard-data.ts for why the legacy
   // `unstable_cache` was not an option). It also requires every uncached

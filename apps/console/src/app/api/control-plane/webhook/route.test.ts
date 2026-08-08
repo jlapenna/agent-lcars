@@ -72,12 +72,52 @@ describe('POST /api/control-plane/webhook', () => {
     });
   });
 
-  it('queues authenticated bytes without doing broker work in the request', async () => {
+  it('acknowledges malformed signed JSON without creating a retrying task', async () => {
     const response = await POST(request({ body: '{' }));
     expect(response.status).toBe(202);
-    expect(enqueueGitHubWebhook).toHaveBeenCalledWith(
-      expect.objectContaining({ rawBody: Buffer.from('{') }),
+    expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      outcome: 'ignored',
+      reason: 'malformed JSON',
+    });
+  });
+
+  it('acknowledges a fleet App delivery outside this control plane without queueing it', async () => {
+    const body = JSON.stringify({
+      action: 'opened',
+      repository: { id: 123, full_name: 'supersprinklesracing/sprinkles' },
+      issue: { number: 1 },
+    });
+    const response = await POST(request({ body }));
+    expect(response.status).toBe(202);
+    expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      outcome: 'ignored',
+      reason: 'repository outside control plane',
+    });
+  });
+
+  it('acknowledges App ping deliveries without queueing them', async () => {
+    const body = JSON.stringify({ zen: 'Keep it logically awesome.' });
+    const pingRequest = new Request(
+      'https://console.test/api/control-plane/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'x-github-delivery': '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
+          'x-github-event': 'ping',
+          'x-hub-signature-256': signature(body),
+        },
+        body,
+      },
     );
+    const response = await POST(pingRequest);
+    expect(response.status).toBe(202);
+    expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      outcome: 'ignored',
+      reason: 'ping',
+    });
   });
 
   it('does not acknowledge an enqueue failure', async () => {

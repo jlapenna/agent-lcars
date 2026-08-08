@@ -168,6 +168,15 @@ jobs:
           CGO_ENABLED: '1'
         run: pnpm exec nx run-many -t test typecheck build test-race --all --parallel=2
 
+      # `next build` does not execute dynamic server-route imports. Exercise
+      # the actual standalone artifact so traced runtime assets (notably the
+      # Cloud Tasks GAPIC JSON used by hosted webhook admission) cannot pass
+      # CI and then fail only after an App Hosting rollout.
+      - name: Smoke test deployable console bundle
+        run: |
+          pnpm nx bundle @agent-lcars/console
+          ./tools/console-standalone-smoke.sh
+
   e2e:
     name: E2E
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
