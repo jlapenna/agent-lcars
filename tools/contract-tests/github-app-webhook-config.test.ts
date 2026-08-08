@@ -133,7 +133,7 @@ describe('GitHub App webhook configuration', () => {
     }
   });
 
-  it('fails loudly when GitHub still has the webhook disabled', async () => {
+  it('does not mutate GitHub when the App webhook is disabled', async () => {
     const fetchImpl = vi.fn(async (url: string | URL) => {
       if (new URL(String(url)).pathname === '/app') {
         return response({
@@ -157,5 +157,32 @@ describe('GitHub App webhook configuration', () => {
         fetchImpl,
       }),
     ).rejects.toThrow('webhook is not active');
+    expect(
+      fetchImpl.mock.calls.map(([url, options]) => ({
+        path: new URL(String(url)).pathname,
+        method: options?.method ?? 'GET',
+      })),
+    ).toEqual([{ path: '/app', method: 'GET' }]);
+  });
+
+  it('does not mutate GitHub when a required event is missing', async () => {
+    const fetchImpl = vi.fn(async () =>
+      response({
+        slug: 'agent-lcars',
+        events: ['issues', 'pull_request'],
+        hook_attributes: { active: true },
+      }),
+    );
+
+    await expect(
+      configureAppWebhook({
+        clientId: 'Iv1.client',
+        privateKey: privatePem,
+        webhookSecret: 'secret',
+        webhookUrl: 'https://console.test/api/control-plane/webhook',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('missing required webhook events: issue_comment');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

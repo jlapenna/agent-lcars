@@ -75,6 +75,22 @@ export async function configureAppWebhook({
     );
   }
 
+  // GitHub's App webhook-config API can update the URL and secret, but App
+  // activation and event subscriptions are settings-page controls. Validate
+  // both before PATCH so an incomplete manual setup cannot be half-mutated.
+  const configuredEvents = Array.isArray(app.events) ? app.events : [];
+  const missingEvents = REQUIRED_EVENTS.filter(
+    (event) => !configuredEvents.includes(event),
+  );
+  if (missingEvents.length > 0) {
+    throw new Error(
+      `GitHub App is missing required webhook events: ${missingEvents.join(', ')}`,
+    );
+  }
+  if (app.hook_attributes?.active !== true) {
+    throw new Error('GitHub App webhook is not active');
+  }
+
   await request('/app/hook/config', {
     method: 'PATCH',
     body: JSON.stringify({
@@ -88,21 +104,6 @@ export async function configureAppWebhook({
   const config = await request('/app/hook/config');
   if (config.url !== webhookUrl || config.content_type !== 'json') {
     throw new Error('GitHub App webhook configuration did not converge');
-  }
-
-  const configuredEvents = Array.isArray(app.events) ? app.events : [];
-  const missingEvents = REQUIRED_EVENTS.filter(
-    (event) => !configuredEvents.includes(event),
-  );
-  if (missingEvents.length > 0) {
-    throw new Error(
-      `GitHub App is missing required webhook events: ${missingEvents.join(', ')}`,
-    );
-  }
-  if (app.hook_attributes?.active !== true) {
-    throw new Error(
-      'GitHub App webhook configuration is saved but the webhook is not active',
-    );
   }
 
   return {
