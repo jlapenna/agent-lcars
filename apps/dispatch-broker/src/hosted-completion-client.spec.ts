@@ -66,7 +66,8 @@ test('retries a retryable hosted failure without minting another token', async (
   const delays: number[] = [];
   const fetchImpl = async (input: string | URL | Request) => {
     if (
-      String(input).startsWith('https://token.actions.githubusercontent.com')
+      new URL(String(input)).origin ===
+      'https://token.actions.githubusercontent.com'
     ) {
       tokenRequests += 1;
       return new Response(JSON.stringify({ value: 'signed-worker-token' }), {
@@ -99,7 +100,8 @@ test('retries a transient OIDC token failure before posting completion', async (
   const delays: number[] = [];
   const fetchImpl = async (input: string | URL | Request) => {
     if (
-      String(input).startsWith('https://token.actions.githubusercontent.com')
+      new URL(String(input)).origin ===
+      'https://token.actions.githubusercontent.com'
     ) {
       tokenRequests += 1;
       if (tokenRequests === 1) return new Response('', { status: 503 });
@@ -131,7 +133,8 @@ test('does not retry a rejected binding or expose either token', async () => {
   let completionRequests = 0;
   const fetchImpl = async (input: string | URL | Request) => {
     if (
-      String(input).startsWith('https://token.actions.githubusercontent.com')
+      new URL(String(input)).origin ===
+      'https://token.actions.githubusercontent.com'
     ) {
       return new Response(JSON.stringify({ value: 'signed-worker-token' }), {
         status: 200,
