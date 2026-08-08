@@ -276,6 +276,62 @@ test('authority defers worker launch while the compatibility projection is unava
   );
 });
 
+test('authority restores accepted state when the scheduling projection PATCH fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-scheduling-projection-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-scheduling-projection-failure',
+    transportRunId: 739,
+    occurredAt: '2026-08-08T07:15:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'scheduling-projection-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:scheduling-projection-failure',
+    seed,
+  );
+  let dispatches = 0;
+  const client = {
+    request: async () => {
+      dispatches += 1;
+      throw new Error('worker dispatch must not happen');
+    },
+    requestOk: async () => {
+      throw new Error('GitHub projection unavailable');
+    },
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(dispatches, 0);
+  assert.equal(loaded.projectionAvailable, false);
+  assert.equal(loaded.ledger.generations[0].state, 'accepted');
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'accepted',
+  );
+  assert.equal(
+    await port.readLaunchOperation('g1:intent-scheduling-projection-failure'),
+    undefined,
+  );
+});
+
 test('authority records projection convergence only after the compatibility comment succeeds', async () => {
   const port = new InMemoryStoragePort();
   const ledger = createLedger(task);

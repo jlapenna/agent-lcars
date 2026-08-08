@@ -810,7 +810,7 @@ test('ledger loading rejects duplicates and unexpected authors', async () => {
   }
 });
 
-test('authority projection repairs duplicate corrupt markers and selects the workflow-owned comment without parsing it', async () => {
+test('authority projection repairs every extra corrupt marker and selects the workflow-owned comment without parsing it', async () => {
   const authoritative = createLedger(task);
   authoritative.control.closed = true;
   const requests = [];
@@ -846,9 +846,15 @@ test('authority projection repairs duplicate corrupt markers and selects the wor
   assert.equal(projected.ledger.control.closed, true);
   assert.equal(
     requests.filter(({ options }) => options.method === 'DELETE').length,
-    1,
+    2,
   );
-  assert.match(requests.at(-1).url, /issues\/comments\/4$/u);
+  assert.deepEqual(
+    requests
+      .filter(({ options }) => options.method === 'DELETE')
+      .map(({ url }) => Number(url.split('/').at(-1)))
+      .sort((left, right) => left - right),
+    [1, 4],
+  );
 });
 
 test('authority projection fails closed when duplicate repair is rejected', async () => {
@@ -875,7 +881,42 @@ test('authority projection fails closed when duplicate repair is rejected', asyn
 
   await assert.rejects(
     () => loadLedgerProjection(api, task, authoritative),
-    /Failed to remove duplicate workflow-owned ledger comment 4: HTTP 403/u,
+    /Failed to remove extra dispatch-ledger marker comment 4: HTTP 403/u,
+  );
+});
+
+test('authority creates its canonical projection and removes an App-bot marker', async () => {
+  const authoritative = createLedger(task);
+  const requests = [];
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (options.method === 'POST') {
+        return response(201, {
+          id: 9,
+          body: JSON.parse(options.body).body,
+          user: { login: 'github-actions[bot]', type: 'Bot' },
+        });
+      }
+      if (options.method === 'DELETE') return response(204);
+      return response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+        },
+      ]);
+    },
+  });
+
+  const projected = await loadLedgerProjection(api, task, authoritative);
+
+  assert.equal(projected.comment.id, 9);
+  assert.equal(projected.created, true);
+  assert.deepEqual(
+    requests.map(({ options }) => options.method ?? 'GET'),
+    ['GET', 'POST', 'DELETE'],
   );
 });
 
@@ -909,6 +950,22 @@ test('authority does not treat an unowned marker as an existing projection', asy
   });
 
   assert.equal(await hasLedgerProjection(api, task), false);
+});
+
+test('authority treats an App-bot marker as existing compatibility state', async () => {
+  const api = createGitHubApi({
+    token: 'token',
+    fetchImpl: async () =>
+      response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+        },
+      ]),
+  });
+
+  assert.equal(await hasLedgerProjection(api, task), true);
 });
 
 test('missing ledger is created once and pinned only with an unoccupied issue pin', async () => {

@@ -68,7 +68,7 @@ class LedgerProjectionRepairError extends Error {
     public readonly status: number,
   ) {
     super(
-      `Failed to remove duplicate workflow-owned ledger comment ${commentId}: HTTP ${status}`,
+      `Failed to remove extra dispatch-ledger marker comment ${commentId}: HTTP ${status}`,
     );
     this.name = 'LedgerProjectionRepairError';
   }
@@ -946,7 +946,10 @@ async function loadLedgerProjection(
     api,
     `${root}/issues/${task.issue}/comments`,
   );
-  const ownedCandidates = comments
+  const markerCandidates = comments.filter((comment) =>
+    comment.body?.includes(LEDGER_MARKER),
+  );
+  const ownedCandidates = markerCandidates
     .filter(
       (comment) =>
         comment.body?.includes(LEDGER_MARKER) &&
@@ -954,48 +957,54 @@ async function loadLedgerProjection(
         comment.user?.type === 'Bot',
     )
     .sort((left, right) => left.id - right.id);
-  if (ownedCandidates[0]) {
-    // Worker preflight remains a strict compatibility reader until that
-    // capability moves into the hosted controller. Repair the projection
-    // set while this authority holder owns the task lease, so a prior
-    // controlled worker cannot leave a second workflow-authored marker that
-    // permanently denies every later worker at preflight.
-    for (const duplicate of ownedCandidates.slice(1)) {
-      const response = await api.request(
-        `${root}/issues/comments/${duplicate.id}`,
-        { method: 'DELETE' },
-      );
-      if (
-        response.status !== 404 &&
-        (response.status < 200 || response.status >= 300)
-      ) {
-        throw new LedgerProjectionRepairError(duplicate.id, response.status);
-      }
-      console.log(
-        `::notice::Removed duplicate workflow-owned dispatch-ledger projection comment ${duplicate.id}.`,
-      );
+  let comment = ownedCandidates[0];
+  let created = false;
+  if (!comment) {
+    comment = await api.requestOk<GitHubIssueComment>(
+      `${root}/issues/${task.issue}/comments`,
+      {
+        method: 'POST',
+        body: { body: renderLedgerComment(ledger) },
+      },
+    );
+    if (!Number.isSafeInteger(comment?.id)) {
+      throw new Error('GitHub did not return the created ledger comment ID');
     }
-    return {
-      comment: ownedCandidates[0],
-      ledger,
-      created: false,
-    };
+    created = true;
   }
-  const comment = await api.requestOk<GitHubIssueComment>(
-    `${root}/issues/${task.issue}/comments`,
-    {
-      method: 'POST',
-      body: { body: renderLedgerComment(ledger) },
-    },
-  );
-  if (!Number.isSafeInteger(comment?.id)) {
-    throw new Error('GitHub did not return the created ledger comment ID');
+
+  // Worker preflight remains a strict compatibility reader until that
+  // capability moves into the hosted controller. Repair every extra marker
+  // while this authority holder owns the task lease, regardless of author:
+  // controlled workers comment through the App bot rather than the workflow
+  // bot, and strict preflight rejects duplicate markers before author checks.
+  for (const duplicate of markerCandidates.filter(
+    (candidate) => candidate.id !== comment.id,
+  )) {
+    const response = await api.request(
+      `${root}/issues/comments/${duplicate.id}`,
+      { method: 'DELETE' },
+    );
+    if (
+      response.status !== 404 &&
+      (response.status < 200 || response.status >= 300)
+    ) {
+      throw new LedgerProjectionRepairError(duplicate.id, response.status);
+    }
+    console.log(
+      `::notice::Removed extra dispatch-ledger marker comment ${duplicate.id}.`,
+    );
   }
-  return { comment, ledger, created: true, existingComments: comments };
+  return {
+    comment,
+    ledger,
+    created,
+    ...(created && { existingComments: comments }),
+  };
 }
 
 /**
- * Detect whether a task already has a workflow-owned compatibility ledger
+ * Detect whether a task already has a bot-owned compatibility ledger
  * without parsing that projection as controller state. Authority cutover
  * uses this only when Firestore has no task document: an existing marker
  * means shadow backfill was incomplete and an empty aggregate must not be
@@ -1013,8 +1022,9 @@ async function hasLedgerProjection(
   return comments.some(
     (comment) =>
       comment.body?.includes(LEDGER_MARKER) &&
-      comment.user?.login === workflowIdentity &&
-      comment.user?.type === 'Bot',
+      comment.user?.type === 'Bot' &&
+      (comment.user.login === workflowIdentity ||
+        comment.user.login?.endsWith('[bot]')),
   );
 }
 

@@ -262,6 +262,7 @@ async function saveLedger(
   try {
     await saveLedgerComment(client, loaded);
   } catch (error) {
+    loaded.projectionAvailable = false;
     recordProjectionStatus(loaded.ledger, false);
     await persistAuthority(loaded.authority, loaded.ledger);
     const message = error instanceof Error ? error.message : String(error);
@@ -1346,13 +1347,19 @@ async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
 ): Promise<void> {
-  if (loaded.authority && loaded.projectionAvailable === false) {
+  const deferForProjection = (): boolean => {
+    if (!loaded.authority || loaded.projectionAvailable !== false) {
+      return false;
+    }
     console.log(
       `::warning::Deferring worker dispatch for ` +
         `${loaded.ledger.task.repository}#${loaded.ledger.task.issue}: ` +
         `the compatibility ledger projection is unavailable, so the ` +
         `still-comment-backed worker preflight could not verify a binding.`,
     );
+    return true;
+  };
+  if (deferForProjection()) {
     return;
   }
   while (!loaded.ledger.control.closed) {
@@ -1360,23 +1367,39 @@ async function dispatchAccepted(
       (candidate) => candidate.state === 'accepted',
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
-    await runPhase({ client, loaded }, 'scheduling', async () => {
-      beginDispatch(
-        loaded.ledger,
-        generation.generation,
-        crypto.randomBytes(24).toString('base64url'),
-      );
-      if (loaded.authority) {
-        const attemptId =
-          generation.attempt?.attemptId ?? formatAttemptId(generation);
-        await loaded.authority.port.recordLaunchIntent({
-          operationId: attemptId,
-          task: loaded.ledger.task,
-          attemptId,
-        });
-      }
-      await saveLedger(client, loaded);
-    });
+    const beforeScheduling = structuredClone(loaded.ledger);
+    const scheduled = await runPhase(
+      { client, loaded },
+      'scheduling',
+      async () => {
+        beginDispatch(
+          loaded.ledger,
+          generation.generation,
+          crypto.randomBytes(24).toString('base64url'),
+        );
+        await saveLedger(client, loaded);
+        if (loaded.authority && loaded.projectionAvailable === false) {
+          // No worker dispatch has happened yet. Restore the accepted
+          // generation so a later reconcile can retry once its preflight
+          // projection is writable; do not strand it in dispatching state.
+          loaded.ledger = beforeScheduling;
+          recordProjectionStatus(loaded.ledger, false);
+          await persistAuthority(loaded.authority, loaded.ledger);
+          return false;
+        }
+        if (loaded.authority) {
+          const attemptId =
+            generation.attempt?.attemptId ?? formatAttemptId(generation);
+          await loaded.authority.port.recordLaunchIntent({
+            operationId: attemptId,
+            task: loaded.ledger.task,
+            attemptId,
+          });
+        }
+        return true;
+      },
+    );
+    if (!scheduled || deferForProjection()) return;
     let binding: {
       runId: number;
       runUrl: string;

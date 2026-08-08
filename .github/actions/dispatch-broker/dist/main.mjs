@@ -940,7 +940,7 @@ var GitHubApiError = class extends Error {
 var LedgerProjectionRepairError = class extends Error {
   constructor(commentId, status) {
     super(
-      `Failed to remove duplicate workflow-owned ledger comment ${commentId}: HTTP ${status}`
+      `Failed to remove extra dispatch-ledger marker comment ${commentId}: HTTP ${status}`
     );
     this.commentId = commentId;
     this.status = status;
@@ -1215,39 +1215,47 @@ async function loadLedgerProjection(api2, task, ledger, workflowIdentity = "gith
     api2,
     `${root}/issues/${task.issue}/comments`
   );
-  const ownedCandidates = comments.filter(
+  const markerCandidates = comments.filter(
+    (comment2) => comment2.body?.includes(LEDGER_MARKER)
+  );
+  const ownedCandidates = markerCandidates.filter(
     (comment2) => comment2.body?.includes(LEDGER_MARKER) && comment2.user?.login === workflowIdentity && comment2.user?.type === "Bot"
   ).sort((left, right) => left.id - right.id);
-  if (ownedCandidates[0]) {
-    for (const duplicate of ownedCandidates.slice(1)) {
-      const response = await api2.request(
-        `${root}/issues/comments/${duplicate.id}`,
-        { method: "DELETE" }
-      );
-      if (response.status !== 404 && (response.status < 200 || response.status >= 300)) {
-        throw new LedgerProjectionRepairError(duplicate.id, response.status);
+  let comment = ownedCandidates[0];
+  let created = false;
+  if (!comment) {
+    comment = await api2.requestOk(
+      `${root}/issues/${task.issue}/comments`,
+      {
+        method: "POST",
+        body: { body: renderLedgerComment2(ledger) }
       }
-      console.log(
-        `::notice::Removed duplicate workflow-owned dispatch-ledger projection comment ${duplicate.id}.`
-      );
+    );
+    if (!Number.isSafeInteger(comment?.id)) {
+      throw new Error("GitHub did not return the created ledger comment ID");
     }
-    return {
-      comment: ownedCandidates[0],
-      ledger,
-      created: false
-    };
+    created = true;
   }
-  const comment = await api2.requestOk(
-    `${root}/issues/${task.issue}/comments`,
-    {
-      method: "POST",
-      body: { body: renderLedgerComment2(ledger) }
+  for (const duplicate of markerCandidates.filter(
+    (candidate) => candidate.id !== comment.id
+  )) {
+    const response = await api2.request(
+      `${root}/issues/comments/${duplicate.id}`,
+      { method: "DELETE" }
+    );
+    if (response.status !== 404 && (response.status < 200 || response.status >= 300)) {
+      throw new LedgerProjectionRepairError(duplicate.id, response.status);
     }
-  );
-  if (!Number.isSafeInteger(comment?.id)) {
-    throw new Error("GitHub did not return the created ledger comment ID");
+    console.log(
+      `::notice::Removed extra dispatch-ledger marker comment ${duplicate.id}.`
+    );
   }
-  return { comment, ledger, created: true, existingComments: comments };
+  return {
+    comment,
+    ledger,
+    created,
+    ...created && { existingComments: comments }
+  };
 }
 async function hasLedgerProjection(api2, task, workflowIdentity = "github-actions[bot]") {
   const comments = await listAll(
@@ -1255,7 +1263,7 @@ async function hasLedgerProjection(api2, task, workflowIdentity = "github-action
     `${repositoryPath(task)}/issues/${task.issue}/comments`
   );
   return comments.some(
-    (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.login === workflowIdentity && comment.user?.type === "Bot"
+    (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.type === "Bot" && (comment.user.login === workflowIdentity || comment.user.login?.endsWith("[bot]"))
   );
 }
 async function saveLedger(api2, loaded) {
@@ -2612,6 +2620,7 @@ async function saveLedger2(client, loaded) {
   try {
     await saveLedger(client, loaded);
   } catch (error) {
+    loaded.projectionAvailable = false;
     recordProjectionStatus(loaded.ledger, false);
     await persistAuthority(loaded.authority, loaded.ledger);
     const message = error instanceof Error ? error.message : String(error);
@@ -3174,10 +3183,16 @@ function isDefiniteDispatchRejection(error) {
   return error instanceof GitHubApiError && Number.isInteger(error.status) && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status);
 }
 async function dispatchAccepted(client, loaded) {
-  if (loaded.authority && loaded.projectionAvailable === false) {
+  const deferForProjection = () => {
+    if (!loaded.authority || loaded.projectionAvailable !== false) {
+      return false;
+    }
     console.log(
       `::warning::Deferring worker dispatch for ${loaded.ledger.task.repository}#${loaded.ledger.task.issue}: the compatibility ledger projection is unavailable, so the still-comment-backed worker preflight could not verify a binding.`
     );
+    return true;
+  };
+  if (deferForProjection()) {
     return;
   }
   while (!loaded.ledger.control.closed) {
@@ -3185,22 +3200,35 @@ async function dispatchAccepted(client, loaded) {
       (candidate) => candidate.state === "accepted"
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
-    await runPhase({ client, loaded }, "scheduling", async () => {
-      beginDispatch(
-        loaded.ledger,
-        generation.generation,
-        crypto3.randomBytes(24).toString("base64url")
-      );
-      if (loaded.authority) {
-        const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
-        await loaded.authority.port.recordLaunchIntent({
-          operationId: attemptId,
-          task: loaded.ledger.task,
-          attemptId
-        });
+    const beforeScheduling = structuredClone(loaded.ledger);
+    const scheduled = await runPhase(
+      { client, loaded },
+      "scheduling",
+      async () => {
+        beginDispatch(
+          loaded.ledger,
+          generation.generation,
+          crypto3.randomBytes(24).toString("base64url")
+        );
+        await saveLedger2(client, loaded);
+        if (loaded.authority && loaded.projectionAvailable === false) {
+          loaded.ledger = beforeScheduling;
+          recordProjectionStatus(loaded.ledger, false);
+          await persistAuthority(loaded.authority, loaded.ledger);
+          return false;
+        }
+        if (loaded.authority) {
+          const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+          await loaded.authority.port.recordLaunchIntent({
+            operationId: attemptId,
+            task: loaded.ledger.task,
+            attemptId
+          });
+        }
+        return true;
       }
-      await saveLedger2(client, loaded);
-    });
+    );
+    if (!scheduled || deferForProjection()) return;
     let binding;
     try {
       binding = await dispatchWorker(client, generation, loaded.ledger.task);
