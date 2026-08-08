@@ -1,4 +1,4 @@
-import { Anchor, Card, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import { mostRecentSessionForItem } from '../../lib/claimed-idle';
@@ -6,6 +6,7 @@ import type { CliSession } from '../../lib/cli-sessions';
 import { agentFleetLogin } from '../../lib/deployment';
 import { repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
+import { ItemOverflowMenu } from '../item-overflow-menu';
 import { lcarsPanelStyle } from '../lcars';
 import { RelativeTime } from '../relative-time';
 import { TakeoverCommand } from '../takeover-command';
@@ -66,16 +67,19 @@ export function ClaimedIdleSection({
                       </>
                     }
                     action={
-                      session && (
-                        <Anchor
-                          href={`/sessions/${session.sessionId}`}
-                          size="xs"
-                          c="dimmed"
-                          data-testid="claimed-idle-session-link"
-                        >
-                          session
-                        </Anchor>
-                      )
+                      <Group gap={4} wrap="nowrap">
+                        {session && (
+                          <Anchor
+                            href={`/sessions/${session.sessionId}`}
+                            size="xs"
+                            c="dimmed"
+                            data-testid="claimed-idle-session-link"
+                          >
+                            session
+                          </Anchor>
+                        )}
+                        <ItemOverflowMenu item={item} />
+                      </Group>
                     }
                   />
                   {item.takeoverCommand && (

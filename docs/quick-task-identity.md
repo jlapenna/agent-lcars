@@ -50,6 +50,15 @@ continue safely. A different App Hosting instance rechecks the issue marker and
 otherwise fails closed; it never performs another create. Successful claims
 remain as the durable idempotency ledger.
 
+The LCARS issue editor hides the machine marker from the body field. When an
+admin deliberately changes a Quick Task title or description, the server first
+verifies the existing marker against the current content and original pipeline,
+then rewrites that issue marker with a digest of the edited content. The claim
+tag remains the immutable record of the original create attempt. A later retry
+of the original browser request therefore conflicts instead of silently
+overwriting or duplicating the now-edited task; broker normalization continues
+to validate and dispatch the edited task normally.
+
 A definitive GitHub 4xx other than `408 Request Timeout` proves no issue was
 created, so its claim is released. A 408 is ambiguous just like a transport
 timeout: the upstream write may have committed before the response was lost.

@@ -66,6 +66,7 @@ function issueResponse(overrides: Record<string, unknown> = {}) {
     data: {
       number: 42,
       title: 'Fix the thing',
+      body: `Original task body\n\n<!-- agent-lcars:quick-task-request:v1 id=11111111-1111-4111-8111-111111111111 digest=${'a'.repeat(64)} -->`,
       html_url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
       state: 'open',
       labels: [],
@@ -157,6 +158,7 @@ describe('getTaskDetail', () => {
     if (result.status !== 'ok') return;
     expect(result.anchorState).toBe('open');
     expect(result.work.title).toBe('Fix the thing');
+    expect(result.item.body).toBe('Original task body');
     expect(result.work.provenance).toEqual({ kind: 'legacy' });
     expect(result.work.attempts).toEqual([]);
   });

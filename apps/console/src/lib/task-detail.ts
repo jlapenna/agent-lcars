@@ -1,5 +1,7 @@
+import { parseTerminalQuickTaskBody } from '@agent-lcars/dispatch-contracts';
 import { cacheLife, cacheTag } from 'next/cache';
 
+import type { ActionItem } from './action-items';
 import { isNotFound } from './backend-actions';
 import { GITHUB_DATA_TAG } from './cache-tags';
 import {
@@ -23,6 +25,7 @@ export type TaskDetailResult =
   | {
       status: 'ok';
       work: LogicalWork;
+      item: ActionItem;
       repo: WatchedRepo;
       anchorState: 'open' | 'closed';
       /** The oldest `fetchedAt` of every cached source this result was
@@ -38,8 +41,12 @@ export type TaskDetailResult =
 interface GithubIssueLike {
   number: number;
   title: string;
+  body?: string | null;
   html_url: string;
   state: string;
+  updated_at?: string;
+  user?: { login?: string } | null;
+  assignees?: ({ login?: string } | null)[] | null;
   pull_request?: unknown;
   labels: (string | { name?: string })[];
 }
@@ -186,6 +193,22 @@ export async function getTaskDetail(
   return {
     status: 'ok',
     work: task,
+    item: {
+      kind: issue.pull_request ? 'pr' : 'issue',
+      repo,
+      number: issue.number,
+      title: issue.title,
+      body:
+        parseTerminalQuickTaskBody(issue.body)?.description ?? issue.body ?? '',
+      url: issue.html_url,
+      author: issue.user?.login ?? undefined,
+      updatedAt: issue.updated_at ?? sourceFetchedAt,
+      actionTypes: [],
+      labels: labels.filter((label) => label.length > 0),
+      assigneeLogins: (issue.assignees ?? [])
+        .map((assignee) => assignee?.login ?? '')
+        .filter((login) => login.length > 0),
+    },
     repo,
     anchorState: issue.state === 'closed' ? 'closed' : 'open',
     // Both cached sources this result was built from - the older of the

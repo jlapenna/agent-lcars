@@ -107,6 +107,7 @@ export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,
   parseQuickTaskMarker,
+  parseTerminalQuickTaskBody,
   QUICK_TASK_MARKER_RE,
   quickTaskDigest,
   quickTaskMarkerMatcher,

@@ -262,6 +262,55 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
       .toBe(2);
   });
 
+  test('edits a filed Quick Task without exposing or invalidating its identity marker', async ({
+    page,
+  }) => {
+    const originalDescription = 'Original Quick Task description';
+    await page.goto('/');
+    await openQuickTask(page);
+    await fillAndSubmit(page, originalDescription);
+
+    const receipt = taskRefNotification(page);
+    await expect(receipt).toBeVisible();
+    const href = await receipt.getAttribute('href');
+    const issueNumber = Number(href?.match(/\/issues\/(\d+)$/u)?.[1]);
+    expect(issueNumber).toBeGreaterThan(0);
+
+    await page.goto(`/task/supersprinklesracing/sprinkles/${issueNumber}`);
+    const overflow = page.getByRole('button', {
+      name: `More actions for #${issueNumber}`,
+    });
+    await overflow.click();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+
+    const editor = page.getByRole('dialog', {
+      name: `Edit #${issueNumber}`,
+    });
+    await expect(editor.getByLabel('Title')).toHaveValue(originalDescription);
+    await expect(editor.getByLabel('Body')).toHaveValue(originalDescription);
+    await expect(editor.getByLabel('Body')).not.toHaveValue(
+      /agent-lcars:quick-task-request/u,
+    );
+
+    await editor.getByLabel('Title').fill('Edited Quick Task title');
+    await editor.getByLabel('Body').fill('Edited Quick Task description');
+    await editor.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByText(`#${issueNumber} updated`)).toBeVisible();
+    await expect(overflow).toBeEnabled();
+
+    await overflow.click();
+    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+    const reopened = page.getByRole('dialog', {
+      name: `Edit #${issueNumber}`,
+    });
+    await expect(reopened.getByLabel('Title')).toHaveValue(
+      'Edited Quick Task title',
+    );
+    await expect(reopened.getByLabel('Body')).toHaveValue(
+      'Edited Quick Task description',
+    );
+  });
+
   test('a definitive 4xx from GitHub fails closed with no phantom issue', async ({
     page,
   }) => {

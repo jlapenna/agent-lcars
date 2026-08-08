@@ -1,3 +1,10 @@
+import { createHash } from 'node:crypto';
+
+import {
+  formatQuickTaskMarker,
+  parseTerminalQuickTaskBody,
+  quickTaskDigest as contractQuickTaskDigest,
+} from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
@@ -12,6 +19,7 @@ import {
   postComment,
   reassignPipeline,
   retriggerIssue,
+  updateIssueContent,
   updatePrBranch,
 } from './backend-actions';
 import { getGithubClient } from './github-client';
@@ -124,6 +132,108 @@ describe('closeIssue', () => {
     await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
     expect(update).toHaveBeenCalled();
     expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('updateIssueContent', () => {
+  it('updates the trimmed title and verbatim body without notifying reconciliation', async () => {
+    const get = vi.fn().mockResolvedValue({
+      data: { title: 'Old title', body: 'Old body' },
+    });
+    const update = vi.fn().mockResolvedValue({});
+    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { get, update }, actions: { createWorkflowDispatch } },
+    });
+
+    await updateIssueContent(DEFAULT_REPO, 2709, {
+      title: '  Sharper title  ',
+      body: 'Body with intentional trailing space ',
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      owner: 'supersprinklesracing',
+      repo: 'sprinkles',
+      issue_number: 2709,
+      title: 'Sharper title',
+      body: 'Body with intentional trailing space ',
+    });
+    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+  });
+
+  it('hides and rehashes a Quick Task marker when editing its content', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const hash = (input: string) =>
+      createHash('sha256').update(input).digest('hex');
+    const original = {
+      repository: 'supersprinklesracing/sprinkles',
+      pipeline: 'claude',
+      title: 'Original quick task',
+      description: 'Original description',
+    };
+    const originalDigest = contractQuickTaskDigest(original, hash);
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        title: original.title,
+        body: `${original.description}\n\n${formatQuickTaskMarker({ requestId, digest: originalDigest })}`,
+      },
+    });
+    const update = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { get, update } },
+    });
+
+    await updateIssueContent(DEFAULT_REPO, 2709, {
+      title: 'Edited quick task',
+      body: 'Edited description',
+    });
+
+    const persisted = update.mock.calls[0][0].body as string;
+    expect(parseTerminalQuickTaskBody(persisted)).toEqual({
+      requestId,
+      digest: contractQuickTaskDigest(
+        {
+          ...original,
+          title: 'Edited quick task',
+          description: 'Edited description',
+        },
+        hash,
+      ),
+      description: 'Edited description',
+    });
+  });
+
+  it('refuses to add a Quick Task marker to an ordinary issue', async () => {
+    const get = vi.fn().mockResolvedValue({
+      data: { title: 'Ordinary issue', body: 'Ordinary body' },
+    });
+    const update = vi.fn();
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { get, update } },
+    });
+
+    await expect(
+      updateIssueContent(DEFAULT_REPO, 2709, {
+        title: 'Ordinary issue',
+        body: formatQuickTaskMarker({
+          requestId: '11111111-1111-4111-8111-111111111111',
+          digest: 'a'.repeat(64),
+        }),
+      }),
+    ).rejects.toThrow('cannot be added');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty title before calling GitHub', async () => {
+    const update = vi.fn();
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { update } },
+    });
+
+    await expect(
+      updateIssueContent(DEFAULT_REPO, 2709, { title: '  ', body: '' }),
+    ).rejects.toThrow('Issue title is required');
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

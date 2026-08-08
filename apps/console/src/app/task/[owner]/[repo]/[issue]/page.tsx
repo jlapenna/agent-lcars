@@ -10,6 +10,7 @@ import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleFooter } from '../../../../console-footer';
 import { ConsoleNavRail } from '../../../../console-header';
 import { formatRelativeTime } from '../../../../format';
+import { ItemOverflowMenu } from '../../../../item-overflow-menu';
 import { PageLoading } from '../../../../page-loading';
 import { QuickTaskButton } from '../../../../quick-task-button';
 import { RefreshButton } from '../../../../refresh-button';
@@ -55,11 +56,16 @@ async function TaskDetailPageContent({ params }: PageProps) {
     <Container size="xl" py="xl">
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
         <ConsoleNavRail current="deck" />
-        <RefreshButton
-          generatedAt={generatedAt}
-          initialLabel={formatRelativeTime(generatedAt)}
-          bustsGithubCache
-        />
+        <Group gap="xs" wrap="nowrap">
+          <RefreshButton
+            generatedAt={generatedAt}
+            initialLabel={formatRelativeTime(generatedAt)}
+            bustsGithubCache
+          />
+          {detail.status === 'ok' && detail.item.kind === 'issue' && (
+            <ItemOverflowMenu item={detail.item} />
+          )}
+        </Group>
       </Group>
 
       {detail.status === 'error' && (

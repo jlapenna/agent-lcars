@@ -13,6 +13,7 @@ import {
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
 import { GITHUB_DATA_TAG } from '../lib/cache-tags';
@@ -27,6 +28,7 @@ import {
   rebasePr,
   replyToItem,
   retriggerIssue,
+  updateIssueContent,
 } from './actions';
 
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
@@ -64,6 +66,7 @@ vi.mock('../lib/backend-actions', () => {
     dispatchUnstickPrs: vi.fn(),
     postComment: vi.fn(),
     retriggerIssue: vi.fn(),
+    updateIssueContent: vi.fn(),
     updatePrBranch: vi.fn(),
   };
 });
@@ -240,6 +243,22 @@ describe('agent-lcars Server Actions', () => {
       });
     });
 
+    it('updateIssueContent returns { ok: false, message } instead of throwing', async () => {
+      (updateIssueContentLib as Mock).mockRejectedValue(
+        new ActionError('Validation Failed', 422),
+      );
+
+      await expect(
+        updateIssueContent(DEFAULT_REPO, 2709, {
+          title: 'Updated title',
+          body: 'Updated body',
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        message: 'Validation Failed',
+      });
+    });
+
     it('clearHumanNeeded returns { ok: false, message } instead of throwing', async () => {
       (clearHumanNeededLabel as Mock).mockRejectedValue(
         new ActionError('Unexpected error', 500),
@@ -363,6 +382,22 @@ describe('agent-lcars Server Actions', () => {
       expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
     });
 
+    it('updateIssueContent returns { ok: true } and revalidates', async () => {
+      (updateIssueContentLib as Mock).mockResolvedValue(undefined);
+      const content = { title: 'Updated title', body: 'Updated body' };
+
+      await expect(
+        updateIssueContent(DEFAULT_REPO, 2709, content),
+      ).resolves.toEqual({ ok: true });
+      expect(updateIssueContentLib).toHaveBeenCalledWith(
+        DEFAULT_REPO,
+        2709,
+        content,
+      );
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+    });
+
     it('clearHumanNeeded returns { ok: true } and revalidates', async () => {
       (clearHumanNeededLabel as Mock).mockResolvedValue(undefined);
 
@@ -458,6 +493,15 @@ describe('agent-lcars Server Actions', () => {
       const result = await closeIssue(UNWATCHED_REPO, 2709);
       expect(result.ok).toBe(false);
       expect(closeIssueLib).not.toHaveBeenCalled();
+    });
+
+    it('updateIssueContent rejects without calling the lib', async () => {
+      const result = await updateIssueContent(UNWATCHED_REPO, 2709, {
+        title: 'Updated title',
+        body: 'Updated body',
+      });
+      expect(result.ok).toBe(false);
+      expect(updateIssueContentLib).not.toHaveBeenCalled();
     });
 
     it('clearHumanNeeded rejects without calling clearHumanNeededLabel', async () => {

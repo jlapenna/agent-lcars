@@ -1,4 +1,7 @@
-import { AGENT_BOT_LOGINS } from '@agent-lcars/dispatch-contracts';
+import {
+  AGENT_BOT_LOGINS,
+  parseTerminalQuickTaskBody,
+} from '@agent-lcars/dispatch-contracts';
 
 import { agentFleetLogin, maintainerLogin } from './deployment';
 import { type DispatchLedger } from './dispatch-ledger';
@@ -78,6 +81,9 @@ export interface ActionItem {
   repo: WatchedRepo;
   number: number;
   title: string;
+  /** Issue/PR description from the repository listing. Issue overflow menus
+   * use this to seed their edit form without an extra GitHub round trip. */
+  body?: string;
   url: string;
   author?: string;
   updatedAt: string;
@@ -381,6 +387,8 @@ function classifyIssue(
     repo,
     number: issue.number,
     title: issue.title,
+    body:
+      parseTerminalQuickTaskBody(issue.body)?.description ?? issue.body ?? '',
     url: issue.html_url,
     author: issue.user?.login ?? undefined,
     updatedAt: issue.updated_at,

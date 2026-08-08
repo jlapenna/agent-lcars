@@ -126,3 +126,22 @@ export function parseQuickTaskMarker(
   const match = body?.match(QUICK_TASK_MARKER_RE);
   return match ? { requestId: match[1], digest: match[2] } : undefined;
 }
+
+/** Parses the complete Quick Task body shape, not merely a marker embedded
+ * anywhere in arbitrary text. The marker is valid only when it is unique and
+ * the final non-whitespace body element; callers can then safely present the
+ * visible description without exposing the machine identity comment. */
+export function parseTerminalQuickTaskBody(
+  body: string | undefined | null,
+): { requestId: string; digest: string; description: string } | undefined {
+  if (!body) return undefined;
+  const matches = [...body.matchAll(quickTaskMarkerMatcher())];
+  if (matches.length !== 1 || matches[0].index === undefined) return undefined;
+  const [marker, requestId, digest] = matches[0];
+  if (body.slice(matches[0].index + marker.length).trim()) return undefined;
+  return {
+    requestId,
+    digest,
+    description: body.slice(0, matches[0].index).trim(),
+  };
+}

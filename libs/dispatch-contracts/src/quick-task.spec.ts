@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatQuickTaskMarker,
   parseQuickTaskMarker,
+  parseTerminalQuickTaskBody,
   QUICK_TASK_MARKER_RE,
   quickTaskDigest,
   quickTaskMarkerMatcher,
@@ -114,5 +115,24 @@ describe('the Quick Task marker', () => {
 
   it('keeps the non-global matcher free of lastIndex state', () => {
     expect(QUICK_TASK_MARKER_RE.global).toBe(false);
+  });
+
+  it('separates a terminal identity marker from the editable description', () => {
+    const body = `Some description.\n\n${formatQuickTaskMarker({ requestId, digest })}`;
+    expect(parseTerminalQuickTaskBody(body)).toEqual({
+      requestId,
+      digest,
+      description: 'Some description.',
+    });
+  });
+
+  it('does not treat duplicate or non-terminal markers as an editable Quick Task body', () => {
+    const marker = formatQuickTaskMarker({ requestId, digest });
+    expect(
+      parseTerminalQuickTaskBody(`${marker}\n\n${marker}`),
+    ).toBeUndefined();
+    expect(
+      parseTerminalQuickTaskBody(`${marker}\n\nVisible text after it`),
+    ).toBeUndefined();
   });
 });
