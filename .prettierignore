@@ -20,6 +20,10 @@
 # Same generated-bundle exemption as the sibling operational actions above,
 # produced by apps/dispatch-broker's `build-deliverable-watchdog` target.
 .github/actions/deliverable-watchdog/dist
+
+# Same generated-bundle exemption as the sibling operational actions above,
+# produced by apps/dispatch-broker's `build-webhook-ingress-canary` target.
+.github/actions/run-webhook-ingress-canary/dist
 /.nx/cache
 /.nx/workspace-data
 

@@ -158,6 +158,7 @@ jobs:
       # code, so it has the same source-to-committed-bundle drift check.
       - name: Check committed operational action bundles match their source
         run: |
+          git ls-files --error-unmatch .github/actions/run-webhook-ingress-canary/dist/run.mjs >/dev/null
           pnpm nx build @agent-lcars/dispatch-broker
           pnpm nx build-canary @agent-lcars/dispatch-broker
           pnpm nx build-rerun-infra-killed-runs @agent-lcars/dispatch-broker
