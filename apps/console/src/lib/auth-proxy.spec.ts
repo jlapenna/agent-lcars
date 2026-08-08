@@ -7,6 +7,10 @@ function makeRequest(headers: Record<string, string> = {}): NextRequest {
   return new NextRequest('http://localhost/dashboard', { headers });
 }
 
+function makePathRequest(pathname: string): NextRequest {
+  return new NextRequest(`http://localhost${pathname}`);
+}
+
 describe('createAuthProxy', () => {
   const originalEnv = { ...process.env };
 
@@ -50,5 +54,15 @@ describe('createAuthProxy', () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toContain('/login');
+  });
+
+  it('lets a route with its own request authentication reach its handler', () => {
+    const proxy = createAuthProxy({
+      publicRoutes: ['/api/control-plane/reconcile'],
+    });
+
+    const response = proxy(makePathRequest('/api/control-plane/reconcile'));
+
+    expect(response.status).toBe(200);
   });
 });

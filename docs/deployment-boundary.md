@@ -26,12 +26,13 @@ file is the map.
 The **only** module in console source that names this instance. Everything
 else asks it:
 
-| Value                   | Env var                               | This deployment                  |
-| ----------------------- | ------------------------------------- | -------------------------------- |
-| maintainer login        | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`      | `jlapenna`                       |
-| agent fleet login       | `AGENT_LCARS_FLEET_GITHUB_LOGIN`      | `jclaw-bot`                      |
-| artifact share base URL | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL` | `https://share.lan.jlapenna.net` |
-| watched repos           | `AGENT_LCARS_WATCHED_REPOS`           | see `github-client.ts`           |
+| Value                    | Env var                                | This deployment                  |
+| ------------------------ | -------------------------------------- | -------------------------------- |
+| maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`       | `jlapenna`                       |
+| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`       | `jclaw-bot`                      |
+| artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`  | `https://share.lan.jlapenna.net` |
+| control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `jlapenna/agent-lcars`           |
+| watched repos            | `AGENT_LCARS_WATCHED_REPOS`            | see `github-client.ts`           |
 
 Each falls back to this deployment's value, so nothing breaks when a var is
 unset. `apphosting.yaml` sets them explicitly anyway, so what production
@@ -75,7 +76,7 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | Variable                  | This deployment                            | Used by                                                                                                                      |
 | ------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `AGENT_RUNNER_LABEL`      | `claude-agent-lcars`                       | claude / codex / opencode                                                                                                    |
-| `DEFAULT_RUNNER_LABEL`    | `lcars-default`                            | agent-router, agent-automerge, dispatch-reconcile, label-contract-audit, deploy-console — small, fast glue jobs only (#451)  |
+| `DEFAULT_RUNNER_LABEL`    | `lcars-default`                            | agent-router, agent-automerge, label-contract-audit, deploy-console — small, fast glue jobs only (#451)                      |
 | `CI_RUNNER_LABEL`         | `lcars-ci`                                 | ci (verify, e2e) — split off DEFAULT_RUNNER_LABEL (#451) so a 20-30 min CI run can't queue dispatch-broker routing behind it |
 | `BUILD_RUNNER_LABEL`      | `lcars-build-client`                       | publish-images                                                                                                               |
 | `GCP_PROJECT_ID`          | `agent-lcars`                              | codex (secret access)                                                                                                        |

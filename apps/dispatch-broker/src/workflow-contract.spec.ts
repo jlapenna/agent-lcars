@@ -9,6 +9,10 @@ import {
   formatRouterGroupMarker,
   PIPELINE_CONTRACTS,
 } from '@agent-lcars/dispatch-contracts';
+import {
+  RECONCILE_OIDC_AUDIENCE,
+  RECONCILE_WORKFLOW_PATH,
+} from '@agent-lcars/dispatch-reconcile';
 import { test } from 'vitest';
 
 import { agentWorkerPipelines, workerWorkflow } from './github-api.js';
@@ -736,19 +740,30 @@ test('router control-plane jobs use the protected self-hosted control pool', asy
   );
 });
 
-test('dispatch reconciler uses the protected self-hosted control pool', async () => {
+test('scheduled reconciliation runs through the OIDC-authenticated hosted service, with a manual Action fallback (#736)', async () => {
   const source = await fs.readFile(
-    path.join(workflowsDirectory, 'dispatch-reconcile.yml'),
+    path.join(workflowsDirectory, path.basename(RECONCILE_WORKFLOW_PATH)),
     'utf8',
+  );
+  assert.ok(source.includes(`RECONCILE_AUDIENCE: ${RECONCILE_OIDC_AUDIENCE}`));
+  assert.match(source, /^ {2}hosted-scan:\s*$/mu);
+  assert.match(source, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
+  assert.match(source, /^ {6}id-token:\s+write\s*$/mu);
+  assert.match(source, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/u);
+  assert.match(source, /ACTIONS_ID_TOKEN_REQUEST_URL/u);
+  assert.match(source, /\/api\/control-plane\/reconcile/u);
+  assert.doesNotMatch(source, /secrets\./u);
+
+  assert.match(source, /^ {2}action-fallback:\s*$/mu);
+  assert.match(
+    source,
+    /^ {4}if:\s+github\.event_name == 'workflow_dispatch' && inputs\.transport == 'action-fallback'\s*$/mu,
   );
   assert.match(
     source,
-    /^\s+runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/mu,
+    /^ {4}runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/mu,
   );
-  assert.doesNotMatch(
-    source,
-    /ubuntu-latest|DEFAULT_RUNNER_LABEL|CI_RUNNER_LABEL/u,
-  );
+  assert.match(source, /^\s+operation:\s+reconcile\s*$/mu);
 });
 
 test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {

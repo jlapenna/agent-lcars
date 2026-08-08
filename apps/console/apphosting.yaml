@@ -77,6 +77,13 @@ env:
     availability:
       - RUNTIME
 
+  # The repository allowed to invoke the hosted control-plane endpoints via
+  # GitHub Actions OIDC, and the repository the reconciler scans.
+  - variable: AGENT_LCARS_CONTROL_PLANE_REPOSITORY
+    value: 'jlapenna/agent-lcars'
+    availability:
+      - RUNTIME
+
   - variable: AGENT_LCARS_ARTIFACT_SHARE_BASE_URL
     value: 'https://share.lan.jlapenna.net'
     availability:

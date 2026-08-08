@@ -33,6 +33,9 @@
   ],
   "references": [
     {
+      "path": "../../libs/dispatch-reconcile/tsconfig.lib.json"
+    },
+    {
       "path": "../../libs/app-providers/tsconfig.lib.json"
     },
     {
@@ -42,10 +45,10 @@
       "path": "../../libs/util-server/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/telemetry/tsconfig.lib.json"
+      "path": "../../libs/dispatch-contracts/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/dispatch-contracts/tsconfig.lib.json"
+      "path": "../../libs/telemetry/tsconfig.lib.json"
     }
   ]
 }

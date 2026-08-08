@@ -16,6 +16,14 @@ import {
   formatAttemptId,
   formatFailure,
 } from '@agent-lcars/dispatch-contracts';
+import type { ReconcileIssue } from '@agent-lcars/dispatch-reconcile';
+import {
+  discoverRecentlyClosedReconcileCandidates as discoverRecentlyClosedReconcileCandidatesShared,
+  discoverReconcileCandidates as discoverReconcileCandidatesShared,
+  dispatchReconcileScan as dispatchReconcileScanShared,
+  RECONCILE_DISPATCH_CONCURRENCY,
+  runReconcileScan,
+} from '@agent-lcars/dispatch-reconcile';
 
 import type { AnchorControl } from './broker.js';
 import {
@@ -35,6 +43,7 @@ import {
 } from './broker.js';
 import {
   createGitHubApi,
+  createReconcileTransport,
   dispatchRouterEvent,
   dispatchWorker,
   failClosed,
@@ -43,12 +52,7 @@ import {
   getWorkflowRun,
   GitHubApiError,
   listAll,
-  listOpenAgentLabeledIssues,
-  listOpenIssuesAssignedTo,
-  listRecentlyClosedAgentLabeledIssues,
-  listRecentlyClosedIssuesAssignedTo,
   loadLedger,
-  mapWithConcurrency,
   pinLedgerWhenUnoccupied,
   repositoryPath,
   saveLedger,
@@ -1241,11 +1245,6 @@ async function reconcileLedger(
 // per-candidate failures, silently skipping otherwise-healthy candidates
 // for this pass. A small worker pool (mapWithConcurrency) still attempts
 // every candidate and keeps per-candidate failure isolation, just bounded.
-const RECONCILE_DISPATCH_CONCURRENCY = 5;
-
-type ConcurrencyOutcome<T> =
-  { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
-
 interface ReconcileScanResults {
   dispatched: number;
   failed: { issue: number; message: string }[];
@@ -1256,31 +1255,11 @@ async function dispatchReconcileScan(
   repository: string,
   issueNumbers: number[],
 ): Promise<ReconcileScanResults> {
-  const task = { repository };
-  const outcomes: ConcurrencyOutcome<unknown>[] = await mapWithConcurrency(
+  return dispatchReconcileScanShared(
+    createReconcileTransport(client),
+    repository,
     issueNumbers,
-    RECONCILE_DISPATCH_CONCURRENCY,
-    (issueNumber: number) =>
-      dispatchRouterEvent(client, task, {
-        kind: 'reconcile',
-        issue: String(issueNumber),
-      }),
   );
-  const results: ReconcileScanResults = { dispatched: 0, failed: [] };
-  outcomes.forEach((outcome, index) => {
-    if (outcome.status === 'fulfilled') {
-      results.dispatched += 1;
-    } else {
-      results.failed.push({
-        issue: issueNumbers[index],
-        // Assumed Error-shaped, exactly as the untyped original assumed --
-        // mapWithConcurrency's `reason` is whatever the worker callback
-        // threw, unchanged.
-        message: (outcome.reason as Error).message,
-      });
-    }
-  });
-  return results;
 }
 
 function isDefiniteDispatchRejection(error: unknown): error is GitHubApiError {
@@ -1956,19 +1935,11 @@ async function discoverReconcileCandidates(
   client: GitHubApiClient,
   repository: string,
   fleetLogin: string,
-): Promise<GitHubIssueDetail[]> {
-  const task = { repository };
-  const [labeled, assigned]: [GitHubIssueDetail[], GitHubIssueDetail[]] =
-    await Promise.all([
-      listOpenAgentLabeledIssues(client, task),
-      listOpenIssuesAssignedTo(client, task, fleetLogin),
-    ]);
-  const byNumber = new Map<number, GitHubIssueDetail>();
-  for (const issue of [...labeled, ...assigned]) {
-    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number,
+): Promise<ReconcileIssue[]> {
+  return discoverReconcileCandidatesShared(
+    createReconcileTransport(client),
+    repository,
+    fleetLogin,
   );
 }
 
@@ -1989,19 +1960,12 @@ async function discoverRecentlyClosedReconcileCandidates(
   repository: string,
   fleetLogin: string,
   now: Date | string = new Date(),
-): Promise<GitHubIssueDetail[]> {
-  const task = { repository };
-  const [labeled, assigned]: [GitHubIssueDetail[], GitHubIssueDetail[]] =
-    await Promise.all([
-      listRecentlyClosedAgentLabeledIssues(client, task, now),
-      listRecentlyClosedIssuesAssignedTo(client, task, fleetLogin, now),
-    ]);
-  const byNumber = new Map<number, GitHubIssueDetail>();
-  for (const issue of [...labeled, ...assigned]) {
-    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number,
+): Promise<ReconcileIssue[]> {
+  return discoverRecentlyClosedReconcileCandidatesShared(
+    createReconcileTransport(client),
+    repository,
+    fleetLogin,
+    now,
   );
 }
 
@@ -2027,20 +1991,15 @@ async function scanReconcile(): Promise<void> {
   const client = api();
   const repository = env('GITHUB_REPOSITORY');
   const fleetLogin = env('AGENT_FLEET_LOGIN', false);
-  const [openCandidates, closedCandidates] = await Promise.all([
-    discoverReconcileCandidates(client, repository, fleetLogin),
-    discoverRecentlyClosedReconcileCandidates(client, repository, fleetLogin),
-  ]);
-  const byNumber = new Map<number, GitHubIssueDetail>();
-  for (const issue of [...openCandidates, ...closedCandidates]) {
-    if (Number.isSafeInteger(issue?.number)) byNumber.set(issue.number, issue);
-  }
-  const issueNumbers = [...byNumber.keys()].sort((left, right) => left - right);
-  const results = await dispatchReconcileScan(client, repository, issueNumbers);
+  const results = await runReconcileScan(
+    createReconcileTransport(client),
+    repository,
+    fleetLogin,
+  );
   console.log(
     `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/` +
-      `${issueNumbers.length} candidate(s) (${openCandidates.length} open ` +
-      `agent-labeled/fleet-assigned, ${closedCandidates.length} recently-closed ` +
+      `${results.candidates} candidate(s) (${results.openCandidates} open ` +
+      `agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed ` +
       `agent-labeled/fleet-assigned).`,
   );
   for (const failure of results.failed) {
@@ -2049,12 +2008,12 @@ async function scanReconcile(): Promise<void> {
         `#${failure.issue}: ${failure.message}`,
     );
   }
-  await output('candidates', String(issueNumbers.length));
+  await output('candidates', String(results.candidates));
   await output('dispatched', String(results.dispatched));
   if (results.failed.length > 0) {
     throw new Error(
       `Reconcile scan failed to dispatch ${results.failed.length}/` +
-        `${issueNumbers.length} candidate(s): ` +
+        `${results.candidates} candidate(s): ` +
         results.failed.map((failure) => `#${failure.issue}`).join(', '),
     );
   }

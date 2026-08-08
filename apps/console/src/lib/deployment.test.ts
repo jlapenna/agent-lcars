@@ -6,6 +6,7 @@ import {
   artifactShareBaseUrl,
   consoleDescription,
   consoleRepositoryUrl,
+  controlPlaneRepository,
   maintainerLogin,
   shareArtifactUrl,
 } from './deployment';
@@ -14,6 +15,7 @@ const VARS = [
   'AGENT_LCARS_ADMIN_GITHUB_LOGIN',
   'AGENT_LCARS_FLEET_GITHUB_LOGIN',
   'AGENT_LCARS_ARTIFACT_SHARE_BASE_URL',
+  'AGENT_LCARS_CONTROL_PLANE_REPOSITORY',
 ] as const;
 
 afterEach(() => {
@@ -43,6 +45,11 @@ describe('deployment config', () => {
     );
   });
 
+  it('reads the control-plane repository from the environment', () => {
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/controller';
+    expect(controlPlaneRepository()).toBe('owner/controller');
+  });
+
   it('falls back to this deployment when nothing is configured', () => {
     expect(maintainerLogin()).toBe('jlapenna');
     expect(agentFleetLogin()).toBe('jclaw-bot');
@@ -52,6 +59,7 @@ describe('deployment config', () => {
     expect(consoleRepositoryUrl()).toBe(
       'https://github.com/jlapenna/agent-lcars',
     );
+    expect(controlPlaneRepository()).toBe('jlapenna/agent-lcars');
     expect(agentSessionResumeScript()).toBe('tools/claude-agent-session.sh');
     expect(shareArtifactUrl('pike', 'abc', 'out.txt')).toBe(
       'https://share.lan.jlapenna.net/pike/abc/out.txt',

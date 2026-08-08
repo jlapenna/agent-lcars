@@ -3,10 +3,12 @@ name: Dispatch Ledger Reconciler
 # Scheduled AND manually runnable maintenance pass over every open,
 # agent-labeled OR agent-fleet-assigned issue/PR (#305, child of the
 # dispatch-broker reliability epic #301; the fleet-assigned lane closes a
-# #363 review gap -- see discoverReconcileCandidates in main.mjs). This
-# workflow's own job is read-only discovery plus firing one workflow_dispatch
-# `kind: reconcile` call at agent-router.yml per already-discovered
-# candidate -- it never touches a ledger comment itself.
+# #363 review gap -- see discoverReconcileCandidates in the shared scan
+# library). The scheduled scan runs in the existing App Hosting backend,
+# invoked from a GitHub-hosted runner with a narrowly validated GitHub
+# Actions OIDC token.
+# That puts the repair path outside the self-hosted control-plane runner pool
+# it repairs (#736). A manual Action fallback remains available during soak.
 #
 # Every actual repair happens inside the SAME per-issue serialized broker
 # job agent-router.yml already runs for every other trigger (issue events,
@@ -40,11 +42,15 @@ on:
     # convention at daily granularity).
     - cron: '7,37 * * * *'
   workflow_dispatch:
+    inputs:
+      transport:
+        description: Reconciliation scan transport
+        required: true
+        default: hosted
+        type: choice
+        options: [hosted, action-fallback]
 
-permissions:
-  actions: write
-  contents: read
-  issues: read
+permissions: {}
 
 concurrency:
   # A single, repo-wide, reconciler-only group -- deliberately NOT the
@@ -61,11 +67,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scan:
-    # Reconciliation is control-plane work: use the protected, always-warm
-    # self-hosted control-plane pool.
+  hosted-scan:
+    if: github.event_name == 'schedule' || inputs.transport == 'hosted'
+    # The scheduler itself must remain alive when the protected self-hosted
+    # control-plane pool is unavailable. App Hosting performs discovery and
+    # dispatch after validating this job's OIDC claims.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Invoke hosted reconciler with GitHub Actions OIDC
+        env:
+          RECONCILE_URL: https://agent-console.supersprinkles.racing/api/control-plane/reconcile
+          RECONCILE_AUDIENCE: agent-lcars-dispatch-reconcile
+        run: |
+          set -euo pipefail
+          token_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$RECONCILE_AUDIENCE")"
+          oidc_token="$(jq -er '.value | select(type == "string" and length > 0)' \
+            <<<"$token_response")"
+          curl --fail-with-body --silent --show-error --max-time 240 \
+            -X POST \
+            -H "Authorization: Bearer $oidc_token" \
+            "$RECONCILE_URL"
+
+  action-fallback:
+    if: github.event_name == 'workflow_dispatch' && inputs.transport == 'action-fallback'
+    # Explicit manual rollback while the hosted path soaks. This preserves
+    # the prior implementation without leaving the scheduled repair path in
+    # the same failure domain as the broker it repairs.
     runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
     timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      issues: read
     steps:
       - name: Checkout trusted broker revision
         uses: actions/checkout@v7

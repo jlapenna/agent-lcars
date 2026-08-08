@@ -255,7 +255,6 @@ async function mapWithConcurrency(items, limit, worker) {
   await Promise.all(workers);
   return results;
 }
-var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
 async function loadLedger(api, task, workflowIdentity = "github-actions[bot]", { createIfMissing = true } = {}) {
   const root = repositoryPath(task);
   const comments = await listAll(
