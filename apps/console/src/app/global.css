@@ -1225,13 +1225,53 @@
 
 @media (min-width: 48em) and (max-width: 63.99em) {
   .console-header:is(
+    [data-current='deck'],
+    [data-current='inbox'],
+    [data-current='agents'],
+    [data-current='sessions'],
+    [data-current='costs']
+  ) {
+    grid-template-columns: minmax(11rem, 13rem) minmax(0, 1fr);
+  }
+
+  .console-header:is(
       [data-current='deck'],
       [data-current='inbox'],
       [data-current='agents'],
       [data-current='sessions'],
       [data-current='costs']
     )
-    .lcars-nav-pill:not([data-active]) {
+    .lcars-nav {
+    gap: 4px;
+  }
+
+  .console-header:is(
+      [data-current='deck'],
+      [data-current='inbox'],
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
+    .lcars-nav-pill {
+    padding: 7px 14px;
+  }
+
+  .console-header:is(
+      [data-current='deck'],
+      [data-current='inbox'],
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
+    .lcars-nav-pill[data-accent='teal']:not([data-active]),
+  .console-header:is(
+      [data-current='deck'],
+      [data-current='inbox'],
+      [data-current='agents'],
+      [data-current='sessions'],
+      [data-current='costs']
+    )
+    .lcars-nav-pill[data-accent='gold']:not([data-active]) {
     display: none;
   }
 
