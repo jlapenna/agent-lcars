@@ -1,3 +1,4 @@
+import { TaskLeaseBusyError } from '@agent-lcars/dispatch-controller/storage/authority';
 import type { Octokit } from '@octokit/rest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -105,5 +106,44 @@ describe('hosted reconciler GitHub transport', () => {
     await expect(
       transport.dispatchReconcile('not-a-repository', 1),
     ).rejects.toThrow('Invalid GitHub repository');
+  });
+
+  it('defers a candidate with a live authority lease without failing the scan', async () => {
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        id: 20,
+        number: 20,
+        title: 'Already reconciling',
+        body: '',
+        labels: ['agent:codex'],
+        created_at: '2026-08-07T00:00:00.000Z',
+        updated_at: '2026-08-08T00:00:00.000Z',
+        state: 'open',
+      },
+    });
+    const octokit = {
+      rest: {
+        issues: { listForRepo: vi.fn(), get },
+      },
+    } as unknown as Octokit;
+    processHostedControllerEvent.mockRejectedValueOnce(
+      new TaskLeaseBusyError(
+        {
+          repository: 'jlapenna/agent-lcars',
+          repositoryId: 1_307_149_765,
+          issue: 20,
+        },
+        {
+          owner: 'webhook:delivery-1',
+          acquiredAt: '2026-08-08T12:00:00.000Z',
+          expiresAt: '2026-08-08T12:02:00.000Z',
+        },
+      ),
+    );
+    const transport = createOctokitReconcileTransport(octokit, identity);
+
+    await expect(
+      transport.dispatchReconcile('jlapenna/agent-lcars', 20),
+    ).resolves.toBeUndefined();
   });
 });

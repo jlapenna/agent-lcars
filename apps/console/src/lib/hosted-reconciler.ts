@@ -6,6 +6,7 @@ import {
   type IssueOrPullRequest,
   normalizeEvent,
 } from '@agent-lcars/dispatch-controller/normalize';
+import { TaskLeaseBusyError } from '@agent-lcars/dispatch-controller/storage/authority';
 import type {
   ReconcileIssueQuery,
   ReconcileScanResult,
@@ -79,16 +80,27 @@ export function createOctokitReconcileTransport(
         },
         maintainer: maintainerLogin(),
       });
-      await processHostedControllerEvent({
-        normalized,
-        isPullRequest: Boolean(liveIssue.pull_request),
-        transportRunId: identity.runId,
-        authorityOwner: `reconcile:${identity.runId}:${issue}:${invocationId}`,
-        // A scheduled scan can discover an unbounded number of candidates.
-        // Defer contended issues to the next pass instead of accumulating a
-        // 130-second lease wait for every five-candidate wave.
-        authorityBusyWaitMs: 0,
-      });
+      try {
+        await processHostedControllerEvent({
+          normalized,
+          isPullRequest: Boolean(liveIssue.pull_request),
+          transportRunId: identity.runId,
+          authorityOwner: `reconcile:${identity.runId}:${issue}:${invocationId}`,
+          // A scheduled scan can discover an unbounded number of candidates.
+          // Defer contended issues to the next pass instead of accumulating a
+          // 130-second lease wait for every five-candidate wave.
+          authorityBusyWaitMs: 0,
+        });
+      } catch (error) {
+        if (error instanceof TaskLeaseBusyError) {
+          console.info(
+            `agent-lcars: deferred hosted reconciliation for ` +
+              `${repository}#${issue} because its authority lease is busy`,
+          );
+          return;
+        }
+        throw error;
+      }
     },
   };
 }
