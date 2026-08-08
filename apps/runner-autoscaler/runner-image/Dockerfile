@@ -135,6 +135,15 @@ FROM ${RUNNER_BASE}
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# Keep Corepack's selected pnpm version tied to this repo's one
+# packageManager declaration instead of introducing a Dockerfile pin that can
+# drift. The build stage already checked out the exact publishing revision,
+# so use its manifest for both the root smoke below and the runner-user cache
+# warm-up near the end of the image.
+COPY --from=telemetry-watcher-build /repo/package.json \
+    /usr/local/share/agent-lcars-corepack/package.json
+WORKDIR /usr/local/share/agent-lcars-corepack
+
 # Forward-looking hook (homelab#97): lets a future registration-specific
 # build add extra tooling without forking this Dockerfile. Empty by
 # default; publish-images.yml is what actually sets a real value today --
@@ -224,5 +233,15 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 RUN chmod +x /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
 USER runner
+
+# Corepack's downloaded package-manager cache is per-user. The root-side
+# `pnpm --version` smoke above proves installation but warms only /root;
+# jobs execute as `runner`, so without this build-time invocation their first
+# pnpm command still depends on registry.npmjs.org (#467). Running from the
+# copied manifest resolves the exact repo-pinned version, and deliberately
+# leaves the cache under /home/runner for offline job startup.
+RUN pnpm --version
+
+WORKDIR /home/runner
 
 ENTRYPOINT ["/entrypoint.sh"]
