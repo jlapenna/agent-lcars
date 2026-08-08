@@ -112,8 +112,10 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          gh api "repos/$REPO/issues/$PR/assignees" \
-            -f "assignees[]=${{ vars.AGENT_FLEET_LOGIN }}" --silent \
+          jq -cn --arg login "${{ vars.AGENT_FLEET_LOGIN }}" \
+            '{assignees: [$login]}' |
+            gh api "repos/$REPO/issues/$PR/assignees" \
+              --method POST --input - >/dev/null \
             || echo "::warning::Could not assign jclaw-bot to #$PR"
 
       - name: Mark ready and enable squash auto-merge

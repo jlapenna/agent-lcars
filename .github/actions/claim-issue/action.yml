@@ -56,21 +56,4 @@ runs:
         POST_PICKUP_COMMENT: ${{ inputs.post-pickup-comment }}
         AGENT: ${{ inputs.agent }}
         RUN_URL: ${{ inputs.run-url }}
-      run: |
-        pickup_comment_id=""
-        if gh api "repos/$REPO/issues/$NUM/assignees" \
-             -f "assignees[]=$CLAIM_LOGIN" --silent; then
-          echo "claimed=true" >> "$GITHUB_OUTPUT"
-          if [ "$POST_PICKUP_COMMENT" = "true" ]; then
-            pickup_comment_id=$(gh api "repos/$REPO/issues/$NUM/comments" \
-              -f "body=🤖 $AGENT agent run started — working on this issue: $RUN_URL" \
-              --jq '.id' 2>/dev/null || true)
-            if [ -z "$pickup_comment_id" ]; then
-              echo "::warning::Could not post $AGENT pickup comment on #$NUM"
-            fi
-          fi
-        else
-          echo "claimed=false" >> "$GITHUB_OUTPUT"
-          echo "::warning::Could not assign $CLAIM_LOGIN to #$NUM"
-        fi
-        echo "pickup-comment-id=$pickup_comment_id" >> "$GITHUB_OUTPUT"
+      run: bash "$GITHUB_ACTION_PATH/claim.sh"
