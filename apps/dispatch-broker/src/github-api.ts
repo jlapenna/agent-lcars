@@ -209,6 +209,7 @@ interface GitHubReadinessIssue {
   title?: string;
   body?: string | null;
   html_url?: string;
+  state?: string;
   pull_request?: unknown;
 }
 
@@ -754,11 +755,11 @@ async function readLaneReadiness(
 }
 
 /**
- * Open one durable incident per lane after a trusted completion callback
- * identifies a shared startup prerequisite. The issue is intentionally
- * human-closed: Claude/Codex credentials have no honest lightweight network
- * probe, so remediation itself is the health transition an operator must
- * confirm. OpenCode's independent provider canary remains auto-closing.
+ * Open one durable incident per lane after a trusted completion callback or
+ * isolated probe identifies a shared startup prerequisite. Codex incidents remain
+ * human-closed because that subscription credential has no honest network
+ * probe. Claude incidents may be closed only by the distinct trusted harness
+ * probe; OpenCode's independent provider canary remains auto-closing.
  */
 async function ensureLaneReadinessAlert(
   api: GitHubApi,
@@ -767,6 +768,7 @@ async function ensureLaneReadinessAlert(
   failure: 'credential' | 'provider' | 'bootstrap',
   runUrl: string,
   maintainer: string,
+  evidenceSource: 'worker-completion' | 'probe' = 'worker-completion',
 ): Promise<GitHubReadinessIssue> {
   if (pipeline === 'canary') {
     throw new Error('The no-op canary cannot create an agent lane incident');
@@ -786,15 +788,79 @@ async function ensureLaneReadinessAlert(
   if (open.length > 0) return open[0];
 
   const display = pipeline[0].toUpperCase() + pipeline.slice(1);
+  const resumeTrigger =
+    pipeline === 'claude'
+      ? 'repair or rotate the credential. The isolated trusted Claude probe will close this incident only after a verified successful harness turn; scheduled reconcile will then resume held work automatically.'
+      : 'repair or rotate the affected prerequisite, verify the lane is healthy, then close this issue. Scheduled reconcile will resume held accepted work automatically.';
+  const observation =
+    evidenceSource === 'probe'
+      ? 'An isolated trusted harness probe reported'
+      : 'A trusted worker completion reported';
   return api.requestOk<GitHubReadinessIssue>(`${root}/issues`, {
     method: 'POST',
     body: {
       title: `${display} agent lane is unavailable`,
-      body: `${marker}\n\nA trusted worker completion reported a shared **${failure}** readiness failure for the \`${pipeline}\` lane.\n\n- First observed run: ${runUrl}\n- Effect: the broker will not allocate another ${display} worker while this issue is open.\n- Resume trigger: repair or rotate the affected prerequisite, verify the lane is healthy, then close this issue. Scheduled reconcile will resume held accepted work automatically.`,
+      body: `${marker}\n\n${observation} a shared **${failure}** readiness failure for the \`${pipeline}\` lane.\n\n- First observed run: ${runUrl}\n- Effect: the broker will not allocate another ${display} worker while this issue is open.\n- Resume trigger: ${resumeTrigger}`,
       labels: ['status:needs-human'],
       ...(maintainer ? { assignees: [maintainer] } : {}),
     },
   });
+}
+
+/**
+ * Resolve every open incident for one lane after a distinct trusted probe has
+ * positively verified recovery. Closing all matches is deliberate: the read
+ * side treats any matching open marker as a blocker, so leaving a duplicate
+ * behind would keep accepted work parked even though the credential is known
+ * healthy. The exact probe run is appended in the same issue PATCH that
+ * closes the incident, making recovery evidence durable and idempotent.
+ */
+async function resolveLaneReadinessAlerts(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  pipeline: DispatchPipeline,
+  probeRunUrl: string,
+): Promise<GitHubReadinessIssue[]> {
+  if (pipeline === 'canary') {
+    throw new Error('The no-op canary cannot resolve an agent lane incident');
+  }
+  const marker = laneReadinessMarker(pipeline);
+  const root = repositoryPath(task);
+  const open = (
+    await listAll<GitHubReadinessIssue>(api, `${root}/issues?state=open`)
+  )
+    .filter(
+      (issue) =>
+        !issue.pull_request &&
+        typeof issue.body === 'string' &&
+        issue.body.includes(marker),
+    )
+    .sort((left, right) => left.number - right.number);
+
+  for (const issue of open) {
+    const recoveryEvidence = `- Verified recovery probe: ${probeRunUrl}`;
+    const body = issue.body?.includes(recoveryEvidence)
+      ? issue.body
+      : `${issue.body?.trim() ?? marker}\n\n${recoveryEvidence}`;
+    await mutateOrVerify(
+      () =>
+        api.requestOk(`${root}/issues/${issue.number}`, {
+          method: 'PATCH',
+          body: { body, state: 'closed', state_reason: 'completed' },
+        }),
+      async () => {
+        const current = await api.requestOk<GitHubReadinessIssue>(
+          `${root}/issues/${issue.number}`,
+        );
+        return (
+          current.state === 'closed' &&
+          typeof current.body === 'string' &&
+          current.body.includes(recoveryEvidence)
+        );
+      },
+    );
+  }
+  return open;
 }
 
 // Shared by main.mjs's dispatchReconcileScan and run-dispatch-canary/
@@ -1610,6 +1676,7 @@ export {
   readLaneReadiness,
   removeIssueLabel,
   repositoryPath,
+  resolveLaneReadinessAlerts,
   saveLedger,
   splitRepository,
   validateDispatchResponse,

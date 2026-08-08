@@ -62,6 +62,11 @@ per-run v1 artifacts are still swept during the migration. This proves the
 manual rollback dispatch path and the hosted controller's completion write
 path through its runtime credential (`AGENT_LCARS_GITHUB_TOKEN`).
 
+The rollback surface is temporary and governed by the measurable soak in
+[`hosted-control-plane-soak.md`](hosted-control-plane-soak.md). Its final
+allowed shape is the no-op `canary` input only; it must not remain an
+operator-selectable production intent, completion, or reconcile transport.
+
 `webhook-ingress-canary.yml` separately proves ordinary production admission.
 Once per hour (or on manual invocation), a GitHub-hosted job alternates a
 dedicated non-dispatch sentinel between open and closed. It identifies the

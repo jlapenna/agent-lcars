@@ -383,7 +383,7 @@ var CANARY_TITLE_PREFIX = "[dispatch-canary]";
 var CANARY_TITLE = "[dispatch-canary] Production dispatch broker canary";
 var LIVE_URL_PROBE_MAX_ATTEMPTS = 5;
 var LIVE_URL_PROBE_RETRY_DELAY_MS = 15e3;
-var LEDGER_POLL_TIMEOUT_MS = 30 * 60 * 1e3;
+var LEDGER_POLL_TIMEOUT_MS = 10 * 60 * 1e3;
 var LEDGER_POLL_BACKOFF_START_MS = 2e3;
 var LEDGER_POLL_BACKOFF_MAX_MS = 15e3;
 var TERMINAL_REJECTED_STATES = /* @__PURE__ */ new Set([
@@ -391,7 +391,7 @@ var TERMINAL_REJECTED_STATES = /* @__PURE__ */ new Set([
   "superseded",
   "superseded-by-close"
 ]);
-var STALE_CANARY_AGE_MS = 40 * 60 * 1e3;
+var STALE_CANARY_AGE_MS = 15 * 60 * 1e3;
 function env(name, required = true) {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);

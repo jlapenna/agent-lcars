@@ -29,6 +29,12 @@ manual rollback path. Shadow/off preflight retains the comment reader for
 rollback compatibility. `off` is the rollback position before authority
 cutover.
 
+The measurable exit criteria, bounded rollback drill, and final constrained
+topology are tracked in
+[`hosted-control-plane-soak.md`](hosted-control-plane-soak.md). That runbook is
+authoritative for deciding when the remaining Action fallbacks may be retired;
+workflow success alone is not a soak exit.
+
 Authority initialization fails closed across the migration boundary.
 `DISPATCH_AUTHORITY_EPOCH` records the trusted cutover instant. If a task
 created before that instant has no Firestore aggregate, it must have missed

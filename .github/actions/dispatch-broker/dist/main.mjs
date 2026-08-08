@@ -1,6 +1,7 @@
 // apps/dispatch-broker/src/main.ts
 import crypto3 from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // libs/dispatch-contracts/src/failure.ts
@@ -1024,6 +1025,30 @@ function addAnomaly(ledger, kind, detail, now = (/* @__PURE__ */ new Date()).toI
   });
 }
 
+// apps/dispatch-broker/src/claude-readiness.ts
+function terminalResult(execution) {
+  if (!Array.isArray(execution) || execution.length === 0) return void 0;
+  const results = execution.filter(
+    (message) => !!message && typeof message === "object" && !Array.isArray(message) && message.type === "result"
+  );
+  const last = execution.at(-1);
+  if (results.length !== 1 || !last || typeof last !== "object" || Array.isArray(last) || last.type !== "result") {
+    return void 0;
+  }
+  return last;
+}
+function classifyClaudeReadiness(actionConclusion, execution) {
+  const result = terminalResult(execution);
+  if (!result) return "unknown";
+  if (actionConclusion === "failure" && result.subtype === "success" && result.is_error === true && result.api_error_status === 401 && result.total_cost_usd === 0) {
+    return "credential-failure";
+  }
+  if (actionConclusion === "success" && result.subtype === "success" && result.is_error === false && (result.api_error_status === void 0 || result.api_error_status === null) && typeof result.total_cost_usd === "number" && Number.isFinite(result.total_cost_usd) && result.total_cost_usd >= 0) {
+    return "healthy";
+  }
+  return "unknown";
+}
+
 // apps/dispatch-broker/src/github-api.ts
 var API_VERSION = "2026-03-10";
 var CONCURRENCY_VERIFY_MAX_ATTEMPTS = 5;
@@ -1066,10 +1091,10 @@ function createGitHubApi({
   fetchImpl = fetch,
   baseUrl = "https://api.github.com"
 }) {
-  async function request(path, { method = "GET", body, timeoutMs = 3e4 } = {}) {
+  async function request(path2, { method = "GET", body, timeoutMs = 3e4 } = {}) {
     let response;
     try {
-      response = await fetchImpl(`${baseUrl}${path}`, {
+      response = await fetchImpl(`${baseUrl}${path2}`, {
         method,
         headers: {
           Accept: "application/vnd.github+json",
@@ -1100,8 +1125,8 @@ function createGitHubApi({
     }
     return { status: response.status, data, headers: response.headers };
   }
-  async function requestOk(path, options) {
-    const response = await request(path, options);
+  async function requestOk(path2, options) {
+    const response = await request(path2, options);
     if (response.status < 200 || response.status >= 300) {
       throw new GitHubApiError(
         `GitHub request failed with HTTP ${response.status}`,
@@ -1236,12 +1261,12 @@ async function findSupersedingRouterRun(api2, task, runId) {
   );
   return inspections.find(Boolean);
 }
-async function listAll(api2, path) {
+async function listAll(api2, path2) {
   const all = [];
   for (let page = 1; page <= 100; page += 1) {
-    const separator = path.includes("?") ? "&" : "?";
+    const separator = path2.includes("?") ? "&" : "?";
     const data = await api2.requestOk(
-      `${path}${separator}per_page=100&page=${page}`
+      `${path2}${separator}per_page=100&page=${page}`
     );
     if (!Array.isArray(data))
       throw new Error("GitHub pagination response is not an array");
@@ -1285,7 +1310,7 @@ async function readLaneReadiness(api2, task, pipeline) {
   }
   return blockers.sort((left, right) => left.issue - right.issue);
 }
-async function ensureLaneReadinessAlert(api2, task, pipeline, failure, runUrl, maintainer) {
+async function ensureLaneReadinessAlert(api2, task, pipeline, failure, runUrl, maintainer, evidenceSource = "worker-completion") {
   if (pipeline === "canary") {
     throw new Error("The no-op canary cannot create an agent lane incident");
   }
@@ -1296,21 +1321,52 @@ async function ensureLaneReadinessAlert(api2, task, pipeline, failure, runUrl, m
   ).sort((left, right) => left.number - right.number);
   if (open.length > 0) return open[0];
   const display = pipeline[0].toUpperCase() + pipeline.slice(1);
+  const resumeTrigger = pipeline === "claude" ? "repair or rotate the credential. The isolated trusted Claude probe will close this incident only after a verified successful harness turn; scheduled reconcile will then resume held work automatically." : "repair or rotate the affected prerequisite, verify the lane is healthy, then close this issue. Scheduled reconcile will resume held accepted work automatically.";
+  const observation = evidenceSource === "probe" ? "An isolated trusted harness probe reported" : "A trusted worker completion reported";
   return api2.requestOk(`${root}/issues`, {
     method: "POST",
     body: {
       title: `${display} agent lane is unavailable`,
       body: `${marker}
 
-A trusted worker completion reported a shared **${failure}** readiness failure for the \`${pipeline}\` lane.
+${observation} a shared **${failure}** readiness failure for the \`${pipeline}\` lane.
 
 - First observed run: ${runUrl}
 - Effect: the broker will not allocate another ${display} worker while this issue is open.
-- Resume trigger: repair or rotate the affected prerequisite, verify the lane is healthy, then close this issue. Scheduled reconcile will resume held accepted work automatically.`,
+- Resume trigger: ${resumeTrigger}`,
       labels: ["status:needs-human"],
       ...maintainer ? { assignees: [maintainer] } : {}
     }
   });
+}
+async function resolveLaneReadinessAlerts(api2, task, pipeline, probeRunUrl) {
+  if (pipeline === "canary") {
+    throw new Error("The no-op canary cannot resolve an agent lane incident");
+  }
+  const marker = laneReadinessMarker(pipeline);
+  const root = repositoryPath(task);
+  const open = (await listAll(api2, `${root}/issues?state=open`)).filter(
+    (issue) => !issue.pull_request && typeof issue.body === "string" && issue.body.includes(marker)
+  ).sort((left, right) => left.number - right.number);
+  for (const issue of open) {
+    const recoveryEvidence = `- Verified recovery probe: ${probeRunUrl}`;
+    const body = issue.body?.includes(recoveryEvidence) ? issue.body : `${issue.body?.trim() ?? marker}
+
+${recoveryEvidence}`;
+    await mutateOrVerify(
+      () => api2.requestOk(`${root}/issues/${issue.number}`, {
+        method: "PATCH",
+        body: { body, state: "closed", state_reason: "completed" }
+      }),
+      async () => {
+        const current = await api2.requestOk(
+          `${root}/issues/${issue.number}`
+        );
+        return current.state === "closed" && typeof current.body === "string" && current.body.includes(recoveryEvidence);
+      }
+    );
+  }
+  return open;
 }
 function createReconcileTransport(api2) {
   return {
@@ -2973,8 +3029,8 @@ function env(name, required = true) {
   return value ?? "";
 }
 function output(name, value) {
-  const path = env("GITHUB_OUTPUT");
-  return fs.appendFile(path, `${name}=${value}
+  const path2 = env("GITHUB_OUTPUT");
+  return fs.appendFile(path2, `${name}=${value}
 `, "utf8");
 }
 function encode(value) {
@@ -4517,6 +4573,98 @@ async function completionCallback() {
     }
   });
 }
+function trustedActionsRunUrl(value) {
+  const serverUrl = env("GITHUB_SERVER_URL").replace(/\/$/u, "");
+  const repository = env("GITHUB_REPOSITORY");
+  const prefix = `${serverUrl}/${repository}/actions/runs/`;
+  const runId = value.startsWith(prefix) ? value.slice(prefix.length) : "";
+  if (!/^\d+$/u.test(runId)) {
+    throw new Error(
+      "BROKER_EVIDENCE_URL must be an exact run URL in this repository"
+    );
+  }
+  return value;
+}
+async function projectClaudeReadiness(client, task, state, evidenceUrl, maintainer) {
+  if (state === "credential-failure") {
+    await ensureLaneReadinessAlert(
+      client,
+      task,
+      "claude",
+      "credential",
+      evidenceUrl,
+      maintainer,
+      "probe"
+    );
+    return 1;
+  }
+  const resolved = await resolveLaneReadinessAlerts(
+    client,
+    task,
+    "claude",
+    evidenceUrl
+  );
+  return resolved.length;
+}
+async function claudeReadiness() {
+  const state = env(
+    "BROKER_READINESS_STATE"
+  );
+  if (state !== "credential-failure" && state !== "healthy") {
+    throw new Error(
+      "BROKER_READINESS_STATE must be credential-failure or healthy"
+    );
+  }
+  const evidenceUrl = trustedActionsRunUrl(env("BROKER_EVIDENCE_URL"));
+  const task = {
+    repositoryId: Number(env("GITHUB_REPOSITORY_ID")),
+    repository: env("GITHUB_REPOSITORY"),
+    // Lane incidents are repository-level health projections. The helper
+    // accepts a canonical TaskRef because all other readiness callers have
+    // one, but neither open nor resolve reads this sentinel issue number.
+    issue: 0
+  };
+  const count = await projectClaudeReadiness(
+    api(),
+    task,
+    state,
+    evidenceUrl,
+    env("MAINTAINER_LOGIN", false)
+  );
+  await output("readiness-incidents", String(count));
+}
+function trustedClaudeExecutionFile(value, runnerTemp) {
+  if (!value || !runnerTemp) return void 0;
+  const expected = path.join(runnerTemp, "claude-execution-output.json");
+  return value === expected ? expected : void 0;
+}
+async function classifyClaudeReadinessProbe() {
+  const executionFile = trustedClaudeExecutionFile(
+    env("BROKER_EXECUTION_FILE", false),
+    env("RUNNER_TEMP", false)
+  );
+  const conclusion = env("BROKER_PROBE_CONCLUSION", false);
+  let execution;
+  if (executionFile) {
+    try {
+      const stat = await fs.lstat(executionFile);
+      if (stat.isFile() && !stat.isSymbolicLink()) {
+        execution = JSON.parse(
+          await fs.readFile(
+            /* turbopackIgnore: true */
+            executionFile,
+            "utf8"
+          )
+        );
+      }
+    } catch {
+    }
+  }
+  await output(
+    "readiness-state",
+    classifyClaudeReadiness(conclusion, execution)
+  );
+}
 async function discoverReconcileCandidates2(client, repository, fleetLogin) {
   return discoverReconcileCandidates(
     createReconcileTransport(client),
@@ -4564,6 +4712,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else if (operation === "preflight") await preflight();
   else if (operation === "completion-callback") await completionCallback();
   else if (operation === "reconcile") await scanReconcile();
+  else if (operation === "classify-claude-readiness")
+    await classifyClaudeReadinessProbe();
+  else if (operation === "claude-readiness") await claudeReadiness();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
 }
 export {
@@ -4596,6 +4747,7 @@ export {
   loadBrokerLedger,
   loadPreflightLedger,
   processNormalizedEvent,
+  projectClaudeReadiness,
   reconcileActive,
   reconcileControlState,
   reconcileLedger,
@@ -4603,5 +4755,7 @@ export {
   resolveTask,
   runPhase,
   saveProjectionCheckpoint,
+  trustedActionsRunUrl,
+  trustedClaudeExecutionFile,
   wasSupersededEviction
 };

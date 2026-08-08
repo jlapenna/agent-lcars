@@ -215,10 +215,9 @@ test('critical scheduled workflows report one isolated durable alert and recover
     {
       workflow: 'dispatch-reconcile.yml',
       job: 'alert',
-      needs: '[hosted-scan, action-fallback]',
+      needs: 'hosted-scan',
       guard: 'always()',
-      status:
-        "${{ needs.hosted-scan.result != 'skipped' && needs.hosted-scan.result || needs.action-fallback.result }}",
+      status: '${{ needs.hosted-scan.result }}',
     },
     {
       workflow: 'label-contract-audit.yml',
@@ -772,6 +771,15 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
       source,
       /^ {6}fleet-login:\s+\$\{\{ vars\.AGENT_FLEET_LOGIN \}\}\s*$/mu,
     );
+    assert.doesNotMatch(source, /^ {4}secrets:\s+inherit\s*$/mu);
+    if (pipeline === 'claude') {
+      assert.match(
+        source,
+        /^ {6}CLAUDE_CODE_OAUTH_TOKEN:\s+\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}\s*$/mu,
+      );
+    } else {
+      assert.doesNotMatch(source, /CLAUDE_CODE_OAUTH_TOKEN/u);
+    }
     assert.doesNotMatch(
       source,
       new RegExp(`needs\\.${pipeline}\\.outputs`, 'u'),
@@ -786,10 +794,19 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(fallbackSource, /^ {2}workflow_call:\s*$/mu);
   assert.match(fallbackSource, /^ {6}fleet-login:\s*$/mu);
   assert.match(fallbackSource, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
-  assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
+  assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL/u);
   assert.match(fallbackSource, /^ {6}actions:\s+read\s*$/mu);
   assert.match(fallbackSource, /^ {6}id-token:\s+write\s*$/mu);
   assert.match(fallbackSource, /^ {6}pull-requests:\s+read\s*$/mu);
+  const finalizeJob = jobBlock(
+    fallbackSource,
+    'agent-fallback-finalize.yml',
+    'finalize',
+  );
+  assert.match(
+    finalizeJob,
+    /^ {4}if:\s+github\.event_name == 'workflow_call'\s*$/mu,
+  );
   const steps = stepBlocks(fallbackSource);
   assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [
     'Report and park bootstrap-independent failure',
@@ -866,7 +883,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     /post-agent-gates-complete|inputs\.outcome-kind|inputs\.outcome-reference|inputs\.readiness-failure/u,
   );
   assert.doesNotMatch(
-    fallbackSource,
+    finalizeJob,
     /actions\/checkout|uses:\s+\.\/\.github\/actions/u,
   );
   assert.match(
@@ -897,6 +914,64 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.doesNotMatch(
     preserveCallback.source,
     /labels\[\]|assignees\[\]|--silent/u,
+  );
+});
+
+test('Claude readiness uses one isolated paid probe and a separate secretless projection (#797)', async () => {
+  const workflow = 'agent-fallback-finalize.yml';
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, workflow),
+    'utf8',
+  );
+  assert.match(source, /^ {2}schedule:\s*$/mu);
+  assert.match(source, /^ {2}workflow_dispatch:\s*$/mu);
+  assert.match(source, /^ {4}secrets:\s*$/mu);
+  assert.match(source, /^ {6}CLAUDE_CODE_OAUTH_TOKEN:\s*$/mu);
+  assert.equal(
+    source.match(/secrets\.CLAUDE_CODE_OAUTH_TOKEN/gu)?.length,
+    1,
+    'the OAuth token must be referenced only by the isolated probe job',
+  );
+  assert.doesNotMatch(source, /secrets:\s+inherit/u);
+
+  const admission = jobBlock(source, workflow, 'claude-probe-admission');
+  assert.match(admission, /^ {6}issues:\s+read\s*$/mu);
+  assert.doesNotMatch(admission, /issues:\s+write|secrets\./u);
+  assert.match(admission, /inputs\.worker-result != 'success'/u);
+  assert.match(admission, /lane-readiness:v1:claude/u);
+  assert.match(admission, /should-probe=false/u);
+
+  const probe = jobBlock(source, workflow, 'claude-probe');
+  assert.match(probe, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
+  assert.match(probe, /^ {4}concurrency:\s*$/mu);
+  assert.match(probe, /^ {6}cancel-in-progress:\s+false\s*$/mu);
+  assert.match(probe, /^ {6}contents:\s+read\s*$/mu);
+  assert.doesNotMatch(probe, /issues:\s+write|id-token:\s+write/u);
+  assert.match(
+    probe,
+    /uses:\s+anthropics\/claude-code-action\/base-action@c038e4dcdedfbbca18dfb17df35a17e40ded4ddc\s+#/u,
+  );
+  assert.match(probe, /continue-on-error:\s+true/u);
+  assert.match(
+    probe,
+    /CLAUDE_WORKING_DIR:\s+\$\{\{ runner\.temp \}\}\/claude-readiness-probe/u,
+  );
+  assert.match(probe, /--max-turns 1/u);
+  assert.match(probe, /--setting-sources user/u);
+  assert.match(probe, /--tools ""/u);
+  assert.match(probe, /operation:\s+classify-claude-readiness/u);
+  assert.match(probe, /probe-conclusion:\s+\$\{\{ steps\.probe\.outcome \}\}/u);
+  assert.match(probe, /readiness-state == 'unknown'/u);
+
+  const projection = jobBlock(source, workflow, 'claude-probe-project');
+  assert.match(projection, /^ {6}issues:\s+write\s*$/mu);
+  assert.doesNotMatch(projection, /secrets\./u);
+  assert.match(projection, /credential-failure/u);
+  assert.match(projection, /healthy/u);
+  assert.match(projection, /operation:\s+claude-readiness/u);
+  assert.match(
+    projection,
+    /evidence-url:\s+\$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}\/actions\/runs\/\$\{\{ github\.run_id \}\}/u,
   );
 });
 
@@ -983,7 +1058,7 @@ test('worker agent steps never receive github.token under any name (#645 Phase 3
   }
 });
 
-test('router retains only the serialized workflow_dispatch rollback path', async () => {
+test('router retains only a serialized canary workflow_dispatch path (#798)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
@@ -999,6 +1074,22 @@ test('router retains only the serialized workflow_dispatch rollback path', async
   assert.doesNotMatch(source, /^ {2}pull_request_target:\s*$/mu);
   assert.doesNotMatch(source, /^ {2}pull_request:\s*$/mu);
   assert.match(source, /^\s+pull-requests:\s+write\s*$/mu);
+  assert.match(source, /^\s+options:\s+\[canary\]\s*$/mu);
+  assert.match(source, /^ {4}if:\s+inputs\.kind == 'canary'\s*$/mu);
+  for (const retiredInput of [
+    'pipeline',
+    'mode',
+    'reply',
+    'runbook',
+    'context',
+    'completion_payload',
+  ]) {
+    assert.doesNotMatch(
+      source,
+      new RegExp(`^ {6}${retiredInput}:\\s*$`, 'mu'),
+      `agent-router.yml must not restore retired ${retiredInput} input`,
+    );
+  }
 });
 
 test('agent-router.yml scopes id-token: write to the broker job alone, restating every other permission it uses (#645 Phase 6)', async () => {
@@ -1130,7 +1221,7 @@ test('agent-router carries workflow-dispatch PR identity into the broker (#736)'
   );
 });
 
-test('router run-name embeds the router-group marker for every trigger type (#545)', async () => {
+test('canary router run-name embeds the router-group marker (#545/#798)', async () => {
   // findConflictingRouterRun (github-api.mjs) identifies a conflicting
   // in-progress agent-router.yml run by matching this marker on the
   // reliable run listing instead of fetching each candidate's unreliable
@@ -1144,38 +1235,31 @@ test('router run-name embeds the router-group marker for every trigger type (#54
   );
   const marker = formatRouterGroupMarker({
     repositoryId: '${{ github.repository_id }}',
-    issue:
-      '${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}',
+    issue: '${{ inputs.issue }}',
   });
   assert.ok(
     source.includes(marker),
     'agent-router.yml run-name must embed the router-group marker via ' +
-      'formatRouterGroupMarker, derived from the same issue-number fallback ' +
-      'chain (event issue -> event PR -> manual input) the run-name prefix ' +
-      'already uses, so it is set unconditionally for every trigger type.',
+      'formatRouterGroupMarker and the same canonical canary issue input.',
   );
 });
 
-test('router control-plane jobs use the protected self-hosted control pool', async () => {
+test('the canary-only router is independent of the retired self-hosted control pool (#798)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
   );
   assert.equal(
-    (
-      source.match(
-        /^\s+runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/gmu,
-      ) ?? []
-    ).length,
+    (source.match(/^\s+runs-on:\s+ubuntu-latest\s*$/gmu) ?? []).length,
     2,
   );
   assert.doesNotMatch(
     source,
-    /ubuntu-latest|DEFAULT_RUNNER_LABEL|CI_RUNNER_LABEL/u,
+    /CONTROL_PLANE_RUNNER_LABEL|DEFAULT_RUNNER_LABEL|CI_RUNNER_LABEL/u,
   );
 });
 
-test('scheduled reconciliation runs through the OIDC-authenticated hosted service, with a manual Action fallback (#736)', async () => {
+test('all reconciliation runs through the OIDC-authenticated hosted service with no Action fallback (#736/#798)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, path.basename(RECONCILE_WORKFLOW_PATH)),
     'utf8',
@@ -1189,16 +1273,9 @@ test('scheduled reconciliation runs through the OIDC-authenticated hosted servic
   assert.match(source, /\/api\/control-plane\/reconcile/u);
   assert.doesNotMatch(source, /secrets\./u);
 
-  assert.match(source, /^ {2}action-fallback:\s*$/mu);
-  assert.match(
-    source,
-    /^ {4}if:\s+github\.event_name == 'workflow_dispatch' && inputs\.transport == 'action-fallback'\s*$/mu,
-  );
-  assert.match(
-    source,
-    /^ {4}runs-on:\s+\$\{\{ vars\.CONTROL_PLANE_RUNNER_LABEL \}\}\s*$/mu,
-  );
-  assert.match(source, /^\s+operation:\s+reconcile\s*$/mu);
+  assert.doesNotMatch(source, /action-fallback|CONTROL_PLANE_RUNNER_LABEL/u);
+  assert.doesNotMatch(source, /^\s+operation:\s+reconcile\s*$/mu);
+  assert.doesNotMatch(source, /^\s+transport:\s*$/mu);
 });
 
 test('the canary worker (#307) is structurally incapable of running a paid or privileged agent', async () => {
@@ -1257,8 +1334,8 @@ test('the canary orchestrators (#307) never reference a self-hosted runner or a 
     assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
     assert.match(
       source,
-      /^\s+timeout-minutes:\s+40\s*$/mu,
-      `${workflow} must retain ten minutes beyond the 30-minute ledger poll for failure parking and teardown (#772)`,
+      /^\s+timeout-minutes:\s+15\s*$/mu,
+      `${workflow} must retain five minutes beyond the hosted 10-minute ledger poll for failure parking and teardown (#798)`,
     );
   }
 });

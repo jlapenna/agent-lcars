@@ -35,6 +35,7 @@ import {
   pinLedgerWhenUnoccupied,
   readLaneReadiness,
   removeIssueLabel,
+  resolveLaneReadinessAlerts,
   validateDispatchResponse,
   verifyBrokerConcurrency,
   workerWorkflow,
@@ -211,6 +212,136 @@ test('a proven shared startup failure creates one actionable lane incident and r
     creates[0].options.body.body,
     /agent-lcars:lane-readiness:v1:codex/u,
   );
+});
+
+test('a trusted recovery probe closes every matching lane incident once and records its exact run', async () => {
+  const probeRun = 'https://github.com/jlapenna/agent-lcars/actions/runs/99';
+  const openIssues = [
+    {
+      number: 850,
+      title: 'Claude agent lane is unavailable',
+      body: '<!-- agent-lcars:lane-readiness:v1:claude -->\n\nFirst failure',
+      state: 'open',
+    },
+    {
+      number: 851,
+      title: 'Duplicate Claude lane incident',
+      body: '<!-- agent-lcars:lane-readiness:v1:claude -->\n\nDuplicate',
+      state: 'open',
+    },
+    {
+      number: 852,
+      title: 'Codex agent lane is unavailable',
+      body: '<!-- agent-lcars:lane-readiness:v1:codex -->',
+      state: 'open',
+    },
+  ];
+  const calls = [];
+  const api = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, options });
+      if (path.includes('/issues?state=open')) {
+        return openIssues.filter((issue) => issue.state === 'open');
+      }
+      const match = path.match(/\/issues\/(\d+)$/u);
+      if (!match) throw new Error(`Unexpected request: ${path}`);
+      const issue = openIssues.find(
+        (candidate) => candidate.number === Number(match[1]),
+      );
+      if (!issue) throw new Error(`Unknown readiness issue: ${path}`);
+      if (options.method === 'PATCH') {
+        Object.assign(issue, options.body);
+      }
+      return issue;
+    },
+  };
+
+  const resolved = await resolveLaneReadinessAlerts(
+    api,
+    task,
+    'claude',
+    probeRun,
+  );
+  const redelivery = await resolveLaneReadinessAlerts(
+    api,
+    task,
+    'claude',
+    probeRun,
+  );
+
+  assert.deepEqual(
+    resolved.map((issue) => issue.number),
+    [850, 851],
+  );
+  assert.deepEqual(redelivery, []);
+  const patches = calls.filter((call) => call.options.method === 'PATCH');
+  assert.equal(patches.length, 2);
+  for (const patch of patches) {
+    assert.equal(patch.options.body.state, 'closed');
+    assert.equal(patch.options.body.state_reason, 'completed');
+    assert.match(patch.options.body.body, /Verified recovery probe/u);
+    assert.match(patch.options.body.body, /actions\/runs\/99/u);
+  }
+  assert.equal(openIssues[2].state, 'open');
+});
+
+test('a recovery mutation error is accepted only when both closure and exact evidence landed', async () => {
+  const issue = {
+    number: 850,
+    body: '<!-- agent-lcars:lane-readiness:v1:claude -->',
+    state: 'open',
+  };
+  const api = {
+    requestOk: async (path, options = {}) => {
+      if (path.includes('/issues?state=open')) return [issue];
+      if (options.method === 'PATCH') {
+        issue.state = 'closed';
+        throw new Error('connection reset after partial mutation');
+      }
+      return issue;
+    },
+  };
+
+  await assert.rejects(
+    resolveLaneReadinessAlerts(
+      api,
+      task,
+      'claude',
+      'https://github.com/jlapenna/agent-lcars/actions/runs/99',
+    ),
+    /connection reset after partial mutation/u,
+  );
+});
+
+test('a recovery mutation transport error is idempotent when closure and evidence both landed', async () => {
+  const issue = {
+    number: 850,
+    body: '<!-- agent-lcars:lane-readiness:v1:claude -->',
+    state: 'open',
+  };
+  const api = {
+    requestOk: async (path, options = {}) => {
+      if (path.includes('/issues?state=open')) return [issue];
+      if (options.method === 'PATCH') {
+        Object.assign(issue, options.body);
+        throw new Error('connection reset after complete mutation');
+      }
+      return issue;
+    },
+  };
+
+  const resolved = await resolveLaneReadinessAlerts(
+    api,
+    task,
+    'claude',
+    'https://github.com/jlapenna/agent-lcars/actions/runs/99',
+  );
+  assert.deepEqual(
+    resolved.map((candidate) => candidate.number),
+    [850],
+  );
+  assert.equal(issue.state, 'closed');
+  assert.match(issue.body, /Verified recovery probe/u);
 });
 
 test('broker concurrency group is derived from the TaskRef repository id and issue number', () => {

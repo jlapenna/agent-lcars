@@ -8,15 +8,14 @@ name: Dispatch Ledger Reconciler
 # existing App Hosting backend,
 # invoked from a GitHub-hosted runner with a narrowly validated GitHub
 # Actions OIDC token.
-# That puts the repair path outside the self-hosted control-plane runner pool
-# it repairs (#736). A manual Action fallback remains available during soak.
+# That puts the repair path outside the retired self-hosted control-plane
+# runner pool it replaces (#736).
 #
 # Every hosted repair runs directly inside App Hosting after the scheduler's
 # OIDC run/repository identity is verified. The same normalized reconcile
 # transition and Firestore authority lease used by webhook admission provide
 # lossless per-issue serialization without dispatching agent-router.yml or
-# consuming a self-hosted control-plane runner. The explicit manual fallback
-# below retains the prior Action implementation during soak.
+# consuming a self-hosted control-plane runner.
 #
 # What it repairs (`apps/dispatch-broker/src/main.ts`'s
 # reconcileLedger/trackMissingRun): a dispatch
@@ -44,13 +43,6 @@ on:
     # convention at daily granularity).
     - cron: '7,37 * * * *'
   workflow_dispatch:
-    inputs:
-      transport:
-        description: Reconciliation scan transport
-        required: true
-        default: hosted
-        type: choice
-        options: [hosted, action-fallback]
 
 permissions: {}
 
@@ -68,7 +60,6 @@ concurrency:
 
 jobs:
   hosted-scan:
-    if: github.event_name == 'schedule' || inputs.transport == 'hosted'
     # The scheduler itself must remain alive when the protected self-hosted
     # control-plane pool is unavailable. App Hosting performs discovery and
     # direct processing after validating this job's OIDC claims.
@@ -96,37 +87,8 @@ jobs:
             -H "Authorization: Bearer $oidc_token" \
             "$RECONCILE_URL"
 
-  action-fallback:
-    if: github.event_name == 'workflow_dispatch' && inputs.transport == 'action-fallback'
-    # Explicit manual rollback while the hosted path soaks. This preserves
-    # the prior implementation without leaving the scheduled repair path in
-    # the same failure domain as the broker it repairs.
-    runs-on: ${{ vars.CONTROL_PLANE_RUNNER_LABEL }}
-    timeout-minutes: 5
-    permissions:
-      actions: write
-      contents: read
-      issues: read
-    steps:
-      - name: Checkout trusted broker revision
-        uses: actions/checkout@v7
-
-      - name: Assert required repo variables are set
-        uses: ./.github/actions/assert-repo-vars
-        with:
-          vars: |
-            AGENT_FLEET_LOGIN=${{ vars.AGENT_FLEET_LOGIN }}
-
-      - name: Scan open agent-labeled/fleet-assigned issues and dispatch reconciliation
-        uses: ./.github/actions/dispatch-broker
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-        with:
-          operation: reconcile
-
   alert:
-    needs: [hosted-scan, action-fallback]
+    needs: hosted-scan
     if: always()
     continue-on-error: true
     runs-on: ubuntu-latest
@@ -143,6 +105,6 @@ jobs:
         uses: ./.github/actions/canary-alert
         with:
           token: ${{ github.token }}
-          workflow-status: ${{ needs.hosted-scan.result != 'skipped' && needs.hosted-scan.result || needs.action-fallback.result }}
+          workflow-status: ${{ needs.hosted-scan.result }}
           workflow-file: dispatch-reconcile.yml
           maintainer: ${{ vars.MAINTAINER_LOGIN }}

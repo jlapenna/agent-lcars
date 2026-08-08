@@ -1,7 +1,7 @@
 name: OpenCode Issue Agent
 
 # Third issue-agent pipeline, alongside claude.yml and codex.yml. The
-# centralized router dispatches this workflow when an issue carries the
+# hosted controller dispatches this workflow when an issue carries the
 # `agent:opencode` label. It runs anomalyco/opencode against the homelab
 # LiteLLM provider/model configured in opencode.json. Reply with `/opencode`
 # or `/oc` to continue a conversation on an issue that already carries the
@@ -21,7 +21,7 @@ on:
         description: 'Issue number to run against (manual testing)'
         required: true
       mode:
-        description: 'Dispatch mode for router-triggered issue work'
+        description: 'Dispatch mode for hosted-controller issue work'
         required: false
         default: 'implement'
       reply:
@@ -58,9 +58,8 @@ permissions:
   actions: write
 
 # No per-issue concurrency group here (deliberately - see #321). Dispatch
-# dedup/serialization is the broker's job now: agent-router.yml's own
-# job-level concurrency group (agent-lcars-dispatch-v1-<repoId>-<issue>)
-# already serializes every ledger write for one issue, and within that,
+# dedup/serialization is the hosted controller's job now: its per-task
+# authority lease serializes every ledger write for one issue, and within it,
 # apps/dispatch-broker/src/broker.ts enforces at most one ACTIVE generation per
 # issue at a time - beginDispatch() throws "Another generation is active"
 # (broker.ts) and acceptIntent()'s duplicate/pending handling means a
@@ -72,7 +71,7 @@ permissions:
 
 jobs:
   opencode:
-    # The centralized router authorizes the request and enforces exactly one
+    # The hosted controller authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
     # claude-agent-lcars is registered in jlapenna/homelab's
