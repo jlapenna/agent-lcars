@@ -28,6 +28,30 @@ const inboxPill = (page: Page) =>
 const agentsPill = (page: Page) =>
   nav(page).getByRole('link', { name: 'Agents' });
 
+function longestCssTimeInSeconds(value: string): number | undefined {
+  const durations = value.split(',').map((part) => {
+    // Chromium serializes very small computed durations as `1e-05s`; CSS
+    // also permits ordinary decimal seconds/milliseconds. Empty values from
+    // a detached streamed placeholder remain invalid so expect.poll retries.
+    const match =
+      /^([+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:e[+-]?[0-9]+)?)(ms|s)$/iu.exec(
+        part.trim(),
+      );
+    if (!match) return undefined;
+    const amount = Number(match[1]);
+    return match[2] === 'ms' ? amount / 1000 : amount;
+  });
+  if (durations.some((duration) => duration === undefined)) return undefined;
+  return Math.max(...(durations as number[]));
+}
+
+const navTransitionSeconds = async (page: Page) => {
+  const duration = await agentsPill(page).evaluate(
+    (el) => getComputedStyle(el).transitionDuration,
+  );
+  return longestCssTimeInSeconds(duration);
+};
+
 const backgroundOf = (page: Page, name: string) =>
   nav(page)
     .getByRole('link', { name })
@@ -139,11 +163,8 @@ test.describe('pill nav transitions honor prefers-reduced-motion', () => {
 
     test('keeps its real transition duration', async ({ page }) => {
       await page.goto('/');
-      const duration = await agentsPill(page).evaluate(
-        (el) => getComputedStyle(el).transitionDuration,
-      );
-      expect(duration).not.toBe('0s');
-      expect(parseFloat(duration)).toBeGreaterThan(0.05);
+      await expect(agentsPill(page)).toBeVisible();
+      await expect.poll(() => navTransitionSeconds(page)).toBeGreaterThan(0.05);
     });
   });
 
@@ -152,12 +173,10 @@ test.describe('pill nav transitions honor prefers-reduced-motion', () => {
 
     test('collapses the transition to effectively zero', async ({ page }) => {
       await page.goto('/');
-      const duration = await agentsPill(page).evaluate(
-        (el) => getComputedStyle(el).transitionDuration,
-      );
       // global.css clamps to 0.01ms rather than 0 (keeping transitionend
       // firing), so this is a threshold, not an equality.
-      expect(parseFloat(duration)).toBeLessThan(0.001);
+      await expect(agentsPill(page)).toBeVisible();
+      await expect.poll(() => navTransitionSeconds(page)).toBeLessThan(0.001);
     });
   });
 });

@@ -25,5 +25,11 @@ describe('NavPageLoading', () => {
     expect(
       screen.getByRole('link', { name: 'Agents' }).getAttribute('aria-current'),
     ).toBe('page');
+    expect(
+      screen
+        .getByRole('link', { name: 'Agents' })
+        .closest('.console-header')
+        ?.hasAttribute('data-streaming-fallback'),
+    ).toBe(true);
   });
 });

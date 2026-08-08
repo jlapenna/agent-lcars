@@ -29,6 +29,9 @@ export interface ConsoleHeaderProps {
   current: NavKey;
   title: string;
   subtitle: ReactNode;
+  /** Marks the outer Suspense placeholder so CSS can suppress only that
+   * copy during React's brief streamed handoff to the resolved header. */
+  streamingFallback?: boolean;
   archiveQuery?: SessionArchiveQuery;
   /** Active repository scope on Deck/Inbox; preserved between those routes. */
   repoFilter?: string;
@@ -96,12 +99,19 @@ export function ConsoleHeader({
   current,
   title,
   subtitle,
+  streamingFallback = false,
   archiveQuery,
   repoFilter,
   utilities,
 }: ConsoleHeaderProps) {
   return (
-    <Stack gap="md" mb="xl" className="console-header" data-current={current}>
+    <Stack
+      gap="md"
+      mb="xl"
+      className="console-header"
+      data-current={current}
+      data-streaming-fallback={streamingFallback ? '' : undefined}
+    >
       <div className="lcars-header">
         <Group justify="space-between" align="flex-start" gap="sm">
           <div>

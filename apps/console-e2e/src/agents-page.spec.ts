@@ -20,7 +20,8 @@ test.describe('/agents page @smoke', () => {
     page,
   }) => {
     await page.goto('/');
-    const header = page.locator('.console-header');
+    const header = page.locator('.console-header:visible');
+    await expect(header).toHaveCount(1);
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await header.getByRole('link', { name: 'Agents' }).click();
     await page.waitForURL('/agents');
@@ -85,8 +86,11 @@ test.describe('/agents page @smoke', () => {
   }, testInfo) => {
     await page.goto('/agents');
 
-    const header = page.locator('.console-header[data-current="agents"]');
+    const header = page.locator(
+      '.console-header[data-current="agents"]:visible',
+    );
     const workspace = page.getByRole('region', { name: 'Agent operations' });
+    await expect(header).toHaveCount(1);
     await expect(header).toBeVisible();
     await expect(workspace).toBeVisible();
     await expect(
@@ -116,7 +120,10 @@ test.describe('/agents page @smoke', () => {
   }) => {
     await page.goto('/agents?repo=supersprinklesracing%2Fsprinkles');
 
-    const header = page.locator('.console-header[data-current="agents"]');
+    const header = page.locator(
+      '.console-header[data-current="agents"]:visible',
+    );
+    await expect(header).toHaveCount(1);
     await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
       'href',
       '/?repo=supersprinklesracing%2Fsprinkles',
@@ -145,8 +152,11 @@ test.describe('/agents page @smoke', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/agents');
 
-    const header = page.locator('.console-header[data-current="agents"]');
+    const header = page.locator(
+      '.console-header[data-current="agents"]:visible',
+    );
     const workspace = page.getByRole('region', { name: 'Agent operations' });
+    await expect(header).toHaveCount(1);
     await expect(header).toBeVisible();
     await expect(workspace).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();

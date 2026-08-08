@@ -21,6 +21,26 @@
   }
 }
 
+/* React's streamed Suspense handoff can leave the outer placeholder and the
+   resolved page shell in the DOM for the same paint. Keep the placeholder
+   visible during the actual wait, then suppress only that copy once a header
+   for the same destination exists. Without this handoff rule mobile briefly
+   renders two 64px command strips and strict browser locators see both. */
+body:has(.console-header[data-current='deck']:not([data-streaming-fallback]))
+  .console-header[data-current='deck'][data-streaming-fallback],
+body:has(.console-header[data-current='inbox']:not([data-streaming-fallback]))
+  .console-header[data-current='inbox'][data-streaming-fallback],
+body:has(.console-header[data-current='agents']:not([data-streaming-fallback]))
+  .console-header[data-current='agents'][data-streaming-fallback],
+body:has(
+    .console-header[data-current='sessions']:not([data-streaming-fallback])
+  )
+  .console-header[data-current='sessions'][data-streaming-fallback],
+body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
+  .console-header[data-current='costs'][data-streaming-fallback] {
+  display: none;
+}
+
 /* ---- Eyebrow label (condensed display face, used for section micro-headers
    and field labels) ---- */
 

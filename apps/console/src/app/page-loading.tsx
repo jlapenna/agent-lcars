@@ -84,7 +84,12 @@ export function NavPageLoading({
 }) {
   return (
     <Container size="xl" py="xl" className={className}>
-      <ConsoleHeader current={current} title={title} subtitle="…" />
+      <ConsoleHeader
+        current={current}
+        title={title}
+        subtitle="…"
+        streamingFallback
+      />
       <PageLoading rows={rows} header={false} />
     </Container>
   );
