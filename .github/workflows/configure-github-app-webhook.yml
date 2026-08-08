@@ -31,7 +31,11 @@ jobs:
           WEBHOOK_URL: https://agent-console.supersprinkles.racing/api/control-plane/webhook
         run: |
           set -euo pipefail
-          WEBHOOK_SECRET="$(gcloud secrets versions access latest \
+          umask 077
+          webhook_secret_file="$RUNNER_TEMP/agent-lcars-webhook-secret"
+          gcloud secrets versions access latest \
             --secret=AGENT_LCARS_WEBHOOK_SECRET \
-            --project="${{ vars.GCP_PROJECT_ID }}")" \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
+            --out-file="$webhook_secret_file"
+          WEBHOOK_SECRET_FILE="$webhook_secret_file" \
             node tools/configure-github-app-webhook.mjs

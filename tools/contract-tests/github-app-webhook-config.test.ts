@@ -1,11 +1,14 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   configureAppWebhook,
   createAppJwt,
+  readWebhookSecret,
 } from '../configure-github-app-webhook.mjs';
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
@@ -110,7 +113,24 @@ describe('GitHub App webhook configuration', () => {
 
     expect(workflow).toContain('google-github-actions/auth@v3');
     expect(workflow).toContain('gcloud secrets versions access latest');
+    expect(workflow).toContain('--out-file="$webhook_secret_file"');
+    expect(workflow).not.toMatch(/WEBHOOK_SECRET="\$\(/u);
     expect(workflow).not.toContain('secrets.AGENT_LCARS_WEBHOOK_SECRET');
+  });
+
+  it('preserves every webhook-secret byte read from Secret Manager', async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'agent-lcars-webhook-secret-'),
+    );
+    const secretFile = path.join(directory, 'secret');
+    try {
+      await fs.writeFile(secretFile, 'leading-and-trailing\n');
+      await expect(readWebhookSecret(secretFile)).resolves.toBe(
+        'leading-and-trailing\n',
+      );
+    } finally {
+      await fs.rm(directory, { recursive: true });
+    }
   });
 
   it('fails loudly when GitHub still has the webhook disabled', async () => {

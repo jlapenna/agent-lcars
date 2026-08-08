@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 const API_VERSION = '2022-11-28';
@@ -15,6 +16,12 @@ function required(name) {
 
 function base64url(value) {
   return Buffer.from(value).toString('base64url');
+}
+
+export async function readWebhookSecret(filePath) {
+  const value = await fs.readFile(filePath, 'utf8');
+  if (value.length === 0) throw new Error('WEBHOOK_SECRET_FILE is empty');
+  return value;
 }
 
 export function createAppJwt(clientId, privateKey, now = Date.now()) {
@@ -111,7 +118,10 @@ async function main() {
   const result = await configureAppWebhook({
     clientId: required('APP_CLIENT_ID'),
     privateKey: required('APP_PRIVATE_KEY'),
-    webhookSecret: required('WEBHOOK_SECRET'),
+    // Read the Secret Manager payload as a file and do not trim it. GitHub
+    // must receive the same bytes App Hosting uses for HMAC verification,
+    // including any intentional trailing newline.
+    webhookSecret: await readWebhookSecret(required('WEBHOOK_SECRET_FILE')),
     webhookUrl: required('WEBHOOK_URL'),
   });
   console.log(JSON.stringify(result, null, 2));
