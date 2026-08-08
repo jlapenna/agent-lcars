@@ -852,7 +852,11 @@ async function resolveLaneReadinessAlerts(
         const current = await api.requestOk<GitHubReadinessIssue>(
           `${root}/issues/${issue.number}`,
         );
-        return current.state === 'closed';
+        return (
+          current.state === 'closed' &&
+          typeof current.body === 'string' &&
+          current.body.includes(recoveryEvidence)
+        );
       },
     );
   }

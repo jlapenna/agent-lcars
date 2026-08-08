@@ -285,6 +285,65 @@ test('a trusted recovery probe closes every matching lane incident once and reco
   assert.equal(openIssues[2].state, 'open');
 });
 
+test('a recovery mutation error is accepted only when both closure and exact evidence landed', async () => {
+  const issue = {
+    number: 850,
+    body: '<!-- agent-lcars:lane-readiness:v1:claude -->',
+    state: 'open',
+  };
+  const api = {
+    requestOk: async (path, options = {}) => {
+      if (path.includes('/issues?state=open')) return [issue];
+      if (options.method === 'PATCH') {
+        issue.state = 'closed';
+        throw new Error('connection reset after partial mutation');
+      }
+      return issue;
+    },
+  };
+
+  await assert.rejects(
+    resolveLaneReadinessAlerts(
+      api,
+      task,
+      'claude',
+      'https://github.com/jlapenna/agent-lcars/actions/runs/99',
+    ),
+    /connection reset after partial mutation/u,
+  );
+});
+
+test('a recovery mutation transport error is idempotent when closure and evidence both landed', async () => {
+  const issue = {
+    number: 850,
+    body: '<!-- agent-lcars:lane-readiness:v1:claude -->',
+    state: 'open',
+  };
+  const api = {
+    requestOk: async (path, options = {}) => {
+      if (path.includes('/issues?state=open')) return [issue];
+      if (options.method === 'PATCH') {
+        Object.assign(issue, options.body);
+        throw new Error('connection reset after complete mutation');
+      }
+      return issue;
+    },
+  };
+
+  const resolved = await resolveLaneReadinessAlerts(
+    api,
+    task,
+    'claude',
+    'https://github.com/jlapenna/agent-lcars/actions/runs/99',
+  );
+  assert.deepEqual(
+    resolved.map((candidate) => candidate.number),
+    [850],
+  );
+  assert.equal(issue.state, 'closed');
+  assert.match(issue.body, /Verified recovery probe/u);
+});
+
 test('broker concurrency group is derived from the TaskRef repository id and issue number', () => {
   assert.equal(brokerConcurrencyGroup(task), 'agent-lcars-dispatch-v1-123-304');
 });

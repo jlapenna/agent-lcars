@@ -1025,15 +1025,24 @@ function addAnomaly(ledger, kind, detail, now = (/* @__PURE__ */ new Date()).toI
 }
 
 // apps/dispatch-broker/src/claude-readiness.ts
-function classifyClaudeReadiness(actionConclusion, execution) {
-  if (!execution || typeof execution !== "object" || Array.isArray(execution)) {
-    return "unknown";
+function terminalResult(execution) {
+  if (!Array.isArray(execution) || execution.length === 0) return void 0;
+  const results = execution.filter(
+    (message) => !!message && typeof message === "object" && !Array.isArray(message) && message.type === "result"
+  );
+  const last = execution.at(-1);
+  if (results.length !== 1 || !last || typeof last !== "object" || Array.isArray(last) || last.type !== "result") {
+    return void 0;
   }
-  const result = execution;
-  if (result.api_error_status === 401 && result.total_cost_usd === 0) {
+  return last;
+}
+function classifyClaudeReadiness(actionConclusion, execution) {
+  const result = terminalResult(execution);
+  if (!result) return "unknown";
+  if (actionConclusion === "failure" && result.subtype === "success" && result.is_error === true && result.api_error_status === 401 && result.total_cost_usd === 0) {
     return "credential-failure";
   }
-  if (actionConclusion === "success" && result.is_error === false) {
+  if (actionConclusion === "success" && result.subtype === "success" && result.is_error === false && (result.api_error_status === void 0 || result.api_error_status === null) && typeof result.total_cost_usd === "number" && Number.isFinite(result.total_cost_usd) && result.total_cost_usd >= 0) {
     return "healthy";
   }
   return "unknown";
@@ -1352,7 +1361,7 @@ ${recoveryEvidence}`;
         const current = await api2.requestOk(
           `${root}/issues/${issue.number}`
         );
-        return current.state === "closed";
+        return current.state === "closed" && typeof current.body === "string" && current.body.includes(recoveryEvidence);
       }
     );
   }
