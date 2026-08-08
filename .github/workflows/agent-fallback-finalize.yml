@@ -5,13 +5,11 @@ name: Agent Bootstrap-Independent Finalizer
 # callback to this isolated reusable workflow after its untrusted job settles;
 # the server verifies this workflow's signed `job_workflow_ref`. If checkout,
 # snapshotting, runner loss, or the reporter itself prevents the primary
-# post-agent gates from proving completion, this workflow also parks the task.
-#
-# The report/park step deliberately runs before checkout and uses only
-# github.token plus inline GitHub CLI calls. That makes a failed checkout
-# visible instead of depending on the same repository bootstrap it reports.
-# Checkout remains necessary only for the frozen hosted-completion client;
-# scheduled controller reconciliation is its lost-callback backstop.
+# post-agent gates from completing, this workflow also parks the task. Worker
+# outputs are intentionally absent from this interface: the isolated job
+# derives lifecycle evidence from GitHub's job metadata and exact attempt
+# markers, then calls the hosted server without checking out worker-controlled
+# repository state.
 
 on:
   workflow_call:
@@ -34,22 +32,6 @@ on:
       worker-result:
         required: true
         type: string
-      post-agent-gates-complete:
-        required: false
-        default: ''
-        type: string
-      outcome-kind:
-        required: false
-        default: ''
-        type: string
-      outcome-reference:
-        required: false
-        default: ''
-        type: string
-      readiness-failure:
-        required: false
-        default: ''
-        type: string
       agent:
         required: true
         type: string
@@ -65,12 +47,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
       id-token: write
       issues: write
     steps:
       - name: Report and park bootstrap-independent failure
-        if: inputs.post-agent-gates-complete != 'true'
+        if: inputs.worker-result != 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -91,15 +74,15 @@ jobs:
             --jq "[.[][] | select(.body | contains(\"$MARKER\"))] | first | .id // empty")"
           if [ -z "$existing" ]; then
             if [ "$WORKER_RESULT" = "cancelled" ]; then
-              outcome="was cancelled before its primary finalizer completed"
+              outcome="was cancelled"
             else
-              outcome="failed before its primary finalizer completed"
+              outcome="ended with GitHub job result '$WORKER_RESULT'"
             fi
             gh issue comment "$ISSUE" --repo "$REPO" --body "$MARKER
 
           $AGENT agent run $outcome: $RUN_URL
 
-          The independent GitHub-hosted fallback finalizer reported this because the self-hosted post-agent gate did not prove that reporting completed. This includes checkout, trusted-snapshot, runner-loss, and reporter failures."
+          The independent GitHub-hosted finalizer safely repeats failure parking for every non-success worker result. The primary self-hosted reporter may already have completed; the marker keeps this fallback idempotent."
           else
             echo "::notice::Fallback report already exists as comment $existing"
           fi
@@ -115,20 +98,262 @@ jobs:
             echo "::warning::MAINTAINER_LOGIN is unset; failure was commented and parked but could not be assigned."
           fi
 
-      - name: Checkout trusted revision for controller callback
+      - name: Derive trusted completion evidence
+        id: evidence
         if: always()
-        uses: actions/checkout@v7
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue }}
+          GENERATION: ${{ inputs.generation }}
+          INTENT_ID: ${{ inputs.intent-id }}
+          WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
+          WORKER_RESULT: ${{ inputs.worker-result }}
+        run: |
+          set -euo pipefail
+          case "$ISSUE:$GENERATION" in
+            *[!0-9:]*|:*|*:|*:*:*)
+              echo "::error::Invalid completion issue or generation"
+              exit 1
+              ;;
+          esac
+          case "$WORKER_WORKFLOW" in
+            claude.yml) agent_step='Run Claude Code' ;;
+            codex.yml) agent_step='Run Codex' ;;
+            opencode.yml) agent_step='Run OpenCode' ;;
+            agent-dispatch-canary.yml)
+              agent_step='Verify the exact canary artifact through the outcome finalizer'
+              ;;
+            *)
+              echo "::error::Unsupported worker workflow"
+              exit 1
+              ;;
+          esac
+
+          jobs_file="$(mktemp)"
+          trap 'rm -f "$jobs_file"' EXIT
+          if ! gh api --paginate --slurp \
+            "repos/$REPO/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
+            > "$jobs_file"; then
+            echo "::warning::Could not read trusted worker job metadata"
+            printf '%s\n' 'outcome-kind=startup-failure' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          worker_job="$(jq -c --arg step "$agent_step" \
+            '[.[]?.jobs[]? | select(any(.steps[]?; .name == $step))] | last // empty' \
+            "$jobs_file")"
+
+          readiness_failure=''
+          if [ "$WORKER_WORKFLOW" = 'codex.yml' ] && [ -n "$worker_job" ]; then
+            credential_failure="$(jq -r '
+              [ .steps[]?
+                | select(.name == "Authenticate to GCP for the subscription credential"
+                    or .name == "Restore subscription authentication")
+                | select(.conclusion != "success" and .conclusion != "skipped")
+              ] | length' <<<"$worker_job")"
+            if [ "$credential_failure" -gt 0 ]; then
+              readiness_failure='credential'
+            fi
+          fi
+
+          if [ "$WORKER_RESULT" != 'success' ]; then
+            agent_conclusion="$(jq -r --arg step "$agent_step" \
+              '[.steps[]? | select(.name == $step)] | last | .conclusion // ""' \
+              <<<"${worker_job:-{}}")"
+            case "$agent_conclusion" in
+              ''|skipped) outcome_kind='startup-failure' ;;
+              success)
+                post_gate_conclusion="$(jq -r \
+                  '[.steps[]? | select(.name == "Run post-agent gates")] | last | .conclusion // ""' \
+                  <<<"${worker_job:-{}}")"
+                if [ "$post_gate_conclusion" = 'failure' ]; then
+                  outcome_kind='outcome-gate-failure'
+                else
+                  outcome_kind='trajectory-failure'
+                fi
+                ;;
+              failure)
+                if [ "$WORKER_WORKFLOW" = 'agent-dispatch-canary.yml' ]; then
+                  outcome_kind='outcome-gate-failure'
+                else
+                  outcome_kind='trajectory-failure'
+                fi
+                ;;
+              *) outcome_kind='trajectory-failure' ;;
+            esac
+            printf 'outcome-kind=%s\n' "$outcome_kind" >> "$GITHUB_OUTPUT"
+            if [ -n "$readiness_failure" ]; then
+              printf 'readiness-failure=%s\n' "$readiness_failure" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          attempt_id="g${GENERATION}:${INTENT_ID}"
+          claim_marker="<!-- attempt-claim:${attempt_id} -->"
+          outcome_kind=''
+          outcome_reference=''
+
+          if pr_json="$(gh api --paginate --slurp \
+            "repos/$REPO/pulls?state=all&per_page=100")"; then
+            pr_hits="$(jq -r --arg marker "$claim_marker" \
+              '.[][] | select((((.title // "") + "\n" + (.body // "")) | contains($marker))) | .number' \
+              <<<"$pr_json")"
+            if [ -n "$pr_hits" ]; then
+              outcome_kind='pull-request'
+              if [[ "$pr_hits" != *$'\n'* ]]; then
+                outcome_reference="$pr_hits"
+              fi
+            fi
+          else
+            echo "::warning::Could not verify exact pull-request outcome"
+          fi
+
+          if [ -z "$outcome_kind" ]; then
+            if comments_json="$(gh api --paginate --slurp \
+              "repos/$REPO/issues/$ISSUE/comments?per_page=100")"; then
+              comment_hits="$(jq -r --arg marker "$claim_marker" \
+                '.[][] | select((.body // "") | contains($marker)) | .id' \
+                <<<"$comments_json")"
+              if [ -n "$comment_hits" ]; then
+                outcome_kind='comment'
+                no_op_hits="$(jq -r --arg marker "$claim_marker" \
+                  '.[][] | select(((.body // "") | contains($marker)) and ((.body // "") | contains("<!-- agent-result:v1:no-op -->"))) | .id' \
+                  <<<"$comments_json")"
+                if [ -n "$no_op_hits" ]; then
+                  outcome_kind='no-op'
+                fi
+              fi
+            else
+              echo "::warning::Could not verify exact comment outcome"
+            fi
+          fi
+
+          if [ -z "$outcome_kind" ]; then
+            if issue_json="$(gh api "repos/$REPO/issues/$ISSUE")" && \
+              jq -e '.pull_request != null' >/dev/null <<<"$issue_json"; then
+              if reviews_json="$(gh api --paginate --slurp \
+                "repos/$REPO/pulls/$ISSUE/reviews?per_page=100")"; then
+                review_hits="$(jq -r --arg marker "$claim_marker" \
+                  '.[][] | select((.body // "") | contains($marker)) | .id' \
+                  <<<"$reviews_json")"
+                if [ -n "$review_hits" ]; then
+                  outcome_kind='review'
+                fi
+              else
+                echo "::warning::Could not verify exact review outcome"
+              fi
+            fi
+          fi
+
+          if [ "$WORKER_WORKFLOW" = 'agent-dispatch-canary.yml' ] && \
+            [ "$outcome_kind" != 'comment' ]; then
+            echo "::error::Successful dispatch canary lacks its exact comment outcome"
+            printf '%s\n' 'outcome-kind=outcome-gate-failure' >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          printf 'outcome-kind=%s\n' "${outcome_kind:-unknown-success}" >> "$GITHUB_OUTPUT"
+          if [ -n "$outcome_reference" ]; then
+            printf 'outcome-reference=%s\n' "$outcome_reference" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Return completion observation to the broker
         if: always()
-        uses: ./.github/actions/dispatch-broker
-        with:
-          operation: completion-callback
-          issue: ${{ inputs.issue }}
-          generation: ${{ inputs.generation }}
-          intent-id: ${{ inputs.intent-id }}
-          dispatch-token: ${{ inputs.dispatch-token }}
-          worker-workflow: ${{ inputs.worker-workflow }}
-          outcome-kind: ${{ inputs.post-agent-gates-complete == 'true' && inputs.outcome-kind || 'startup-failure' }}
-          outcome-reference: ${{ inputs.post-agent-gates-complete == 'true' && inputs.outcome-reference || '' }}
-          readiness-failure: ${{ inputs.readiness-failure }}
+        env:
+          ISSUE: ${{ inputs.issue }}
+          GENERATION: ${{ inputs.generation }}
+          INTENT_ID: ${{ inputs.intent-id }}
+          DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
+          WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
+          OUTCOME_KIND: ${{ steps.evidence.outputs.outcome-kind }}
+          OUTCOME_REFERENCE: ${{ steps.evidence.outputs.outcome-reference }}
+          READINESS_FAILURE: ${{ steps.evidence.outputs.readiness-failure }}
+          COMPLETION_URL: https://agent-console.supersprinkles.racing/api/control-plane/completion
+          OIDC_AUDIENCE: agent-lcars-dispatch-completion
+        run: |
+          set -euo pipefail
+          set +x
+          payload_file="$(mktemp)"
+          oidc_response_file="$(mktemp)"
+          completion_response_file="$(mktemp)"
+          trap 'rm -f "$payload_file" "$oidc_response_file" "$completion_response_file"' EXIT
+
+          jq -cn '
+            {
+              issue: (env.ISSUE | tonumber),
+              generation: (env.GENERATION | tonumber),
+              intentId: env.INTENT_ID,
+              token: env.DISPATCH_TOKEN,
+              workflow: env.WORKER_WORKFLOW
+            }
+            + (if env.OUTCOME_KIND != "" then {outcome: env.OUTCOME_KIND} else {} end)
+            + (if env.OUTCOME_REFERENCE != "" then {
+                outcomeReference: {
+                  kind: "pull-request",
+                  number: (env.OUTCOME_REFERENCE | tonumber)
+                }
+              } else {} end)
+            + (if env.READINESS_FAILURE != "" then {
+                readinessFailure: env.READINESS_FAILURE
+              } else {} end)
+          ' > "$payload_file"
+
+          oidc_url="$(node -e '
+            const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);
+            url.searchParams.set("audience", process.env.OIDC_AUDIENCE);
+            process.stdout.write(url.toString());
+          ')"
+          oidc_status='000'
+          for attempt in 1 2 3; do
+            if oidc_status="$(curl --silent --show-error \
+              --output "$oidc_response_file" --write-out '%{http_code}' \
+              --config - <<EOF
+          url = "$oidc_url"
+          request = "GET"
+          connect-timeout = 5
+          max-time = 15
+          header = "Accept: application/json"
+          header = "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          EOF
+            )" && [[ "$oidc_status" == 2?? ]]; then
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$attempt"; fi
+          done
+          if [[ "$oidc_status" != 2?? ]]; then
+            echo "::error::GitHub OIDC token request failed with HTTP $oidc_status"
+            exit 1
+          fi
+          id_token="$(jq -er '.value | select(type == "string" and length > 0)' \
+            "$oidc_response_file")"
+
+          completion_status='000'
+          for attempt in 1 2 3; do
+            if completion_status="$(curl --silent --show-error \
+              --output "$completion_response_file" --write-out '%{http_code}' \
+              --config - <<EOF
+          url = "$COMPLETION_URL"
+          request = "POST"
+          connect-timeout = 5
+          max-time = 15
+          header = "Accept: application/json"
+          header = "Authorization: Bearer $id_token"
+          header = "Content-Type: application/json"
+          data-binary = "@$payload_file"
+          EOF
+            )" && [[ "$completion_status" == 2?? ]]; then
+              break
+            fi
+            case "$completion_status" in
+              408|429|5??|000) ;;
+              *)
+                echo "::error::Hosted completion rejected with HTTP $completion_status"
+                exit 1
+                ;;
+            esac
+            if [ "$attempt" -lt 3 ]; then sleep "$attempt"; fi
+          done
+          unset id_token
+          if [[ "$completion_status" != 2?? ]]; then
+            echo "::error::Hosted completion failed with HTTP $completion_status"
+            exit 1
+          fi

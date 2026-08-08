@@ -72,11 +72,6 @@ permissions:
 
 jobs:
   opencode:
-    outputs:
-      post_agent_gates_complete: ${{ steps.post_agent_gates.outputs.complete }}
-      outcome_kind: ${{ steps.post_agent_gates.outputs.outcome-kind }}
-      outcome_reference: ${{ steps.post_agent_gates.outputs.outcome-reference }}
-      readiness_failure: ${{ steps.post_agent_gates.outputs.readiness-failure }}
     # The centralized router authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
     if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
@@ -440,6 +435,7 @@ jobs:
     needs: opencode
     if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
     permissions:
+      actions: read
       contents: read
       id-token: write
       issues: write
@@ -451,9 +447,5 @@ jobs:
       dispatch-token: ${{ inputs.broker_dispatch_token }}
       worker-workflow: opencode.yml
       worker-result: ${{ needs.opencode.result }}
-      post-agent-gates-complete: ${{ needs.opencode.outputs.post_agent_gates_complete }}
-      outcome-kind: ${{ needs.opencode.outputs.outcome_kind }}
-      outcome-reference: ${{ needs.opencode.outputs.outcome_reference }}
-      readiness-failure: ${{ needs.opencode.outputs.readiness_failure }}
       agent: OpenCode
       maintainer: ${{ vars.MAINTAINER_LOGIN }}

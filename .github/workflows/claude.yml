@@ -72,11 +72,6 @@ permissions:
 
 jobs:
   claude:
-    outputs:
-      post_agent_gates_complete: ${{ steps.post_agent_gates.outputs.complete }}
-      outcome_kind: ${{ steps.post_agent_gates.outputs.outcome-kind }}
-      outcome_reference: ${{ steps.post_agent_gates.outputs.outcome-reference }}
-      readiness_failure: ${{ steps.post_agent_gates.outputs.readiness-failure }}
     # The centralized router (agent-router.yml) authorizes the request -
     # maintainer-only label add, or an OWNER's non-bot `@claude` reply on an
     # issue or PR - before dispatching this worker via workflow_dispatch.
@@ -478,6 +473,7 @@ jobs:
     needs: claude
     if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
     permissions:
+      actions: read
       contents: read
       id-token: write
       issues: write
@@ -489,9 +485,5 @@ jobs:
       dispatch-token: ${{ inputs.broker_dispatch_token }}
       worker-workflow: claude.yml
       worker-result: ${{ needs.claude.result }}
-      post-agent-gates-complete: ${{ needs.claude.outputs.post_agent_gates_complete }}
-      outcome-kind: ${{ needs.claude.outputs.outcome_kind }}
-      outcome-reference: ${{ needs.claude.outputs.outcome_reference }}
-      readiness-failure: ${{ needs.claude.outputs.readiness_failure }}
       agent: Claude
       maintainer: ${{ vars.MAINTAINER_LOGIN }}

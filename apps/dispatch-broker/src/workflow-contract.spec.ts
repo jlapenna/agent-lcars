@@ -674,10 +674,10 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
       (candidate) => candidate.name === workflow,
     )?.source;
     assert.ok(source, `${workflow} is missing`);
-    assert.match(
+    assert.doesNotMatch(
       source,
-      /^ {4}outputs:\s*\n {6}post_agent_gates_complete:\s*\$\{\{ steps\.post_agent_gates\.outputs\.complete \}\}\s*$/mu,
-      `${workflow} must publish proof from its trusted post-agent gates`,
+      /^ {4}outputs:\s*$/mu,
+      `${workflow} must not expose worker-controlled outputs to the isolated finalizer`,
     );
     assert.match(source, /^ {2}fallback-finalize:\s*$/mu);
     assert.match(source, new RegExp(`^ {4}needs:\\s+${pipeline}\\s*$`, 'mu'));
@@ -691,6 +691,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
       /^ {4}uses:\s+\.\/\.github\/workflows\/agent-fallback-finalize\.yml\s*$/mu,
     );
     assert.match(source, /^ {6}contents:\s+read\s*$/mu);
+    assert.match(source, /^ {6}actions:\s+read\s*$/mu);
     assert.match(source, /^ {6}id-token:\s+write\s*$/mu);
     assert.match(source, /^ {6}issues:\s+write\s*$/mu);
     assert.match(
@@ -700,20 +701,11 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
         'mu',
       ),
     );
-    for (const [input, output] of [
-      ['post-agent-gates-complete', 'post_agent_gates_complete'],
-      ['outcome-kind', 'outcome_kind'],
-      ['outcome-reference', 'outcome_reference'],
-      ['readiness-failure', 'readiness_failure'],
-    ]) {
-      assert.match(
-        source,
-        new RegExp(
-          `^ {6}${input}:\\s+\\$\\{\\{ needs\\.${pipeline}\\.outputs\\.${output} \\}\\}\\s*$`,
-          'mu',
-        ),
-      );
-    }
+    assert.doesNotMatch(
+      source,
+      new RegExp(`needs\\.${pipeline}\\.outputs`, 'u'),
+      `${workflow} must pass no worker-controlled output across the finalizer boundary`,
+    );
   }
 
   const fallbackSource = await fs.readFile(
@@ -723,11 +715,12 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(fallbackSource, /^ {2}workflow_call:\s*$/mu);
   assert.match(fallbackSource, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
   assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
+  assert.match(fallbackSource, /^ {6}actions:\s+read\s*$/mu);
   assert.match(fallbackSource, /^ {6}id-token:\s+write\s*$/mu);
   const steps = stepBlocks(fallbackSource);
   assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [
     'Report and park bootstrap-independent failure',
-    'Checkout trusted revision for controller callback',
+    'Derive trusted completion evidence',
     'Return completion observation to the broker',
   ]);
   const report = namedStep(
@@ -737,7 +730,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   );
   assert.match(
     report.source,
-    stepField('if', "inputs.post-agent-gates-complete != 'true'"),
+    stepField('if', "inputs.worker-result != 'success'"),
   );
   assert.match(report.source, stepField('GH_TOKEN', '${{ github.token }}', 10));
   assert.match(report.source, /agent-lcars:bootstrap-fallback:v1/u);
@@ -745,38 +738,40 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(report.source, /\{labels: \["status:needs-human"\]\}/u);
   assert.match(report.source, /\{assignees: \[\$login\]\}/u);
   assert.doesNotMatch(report.source, /labels\[\]|assignees\[\]|--silent/u);
-  const checkout = namedStep(
+  const evidence = namedStep(
     steps,
     'agent-fallback-finalize.yml',
-    'Checkout trusted revision for controller callback',
+    'Derive trusted completion evidence',
   );
   const callback = namedStep(
     steps,
     'agent-fallback-finalize.yml',
     'Return completion observation to the broker',
   );
+  assert.match(evidence.source, stepField('if', 'always()'));
+  assert.match(evidence.source, /actions\/runs\/\$GITHUB_RUN_ID\/jobs/u);
+  assert.match(evidence.source, /<!-- attempt-claim:\$\{attempt_id\} -->/u);
   assert.match(
-    checkout.source,
-    stepField('if', 'always()'),
-    'a reporting failure must not skip the trusted callback checkout',
+    evidence.source,
+    /Successful dispatch canary lacks its exact comment outcome/u,
+  );
+  assert.doesNotMatch(
+    fallbackSource,
+    /post-agent-gates-complete|inputs\.outcome-kind|inputs\.outcome-reference|inputs\.readiness-failure/u,
+  );
+  assert.doesNotMatch(
+    fallbackSource,
+    /actions\/checkout|uses:\s+\.\/\.github\/actions/u,
   );
   assert.match(
     callback.source,
     stepField('if', 'always()'),
     'a reporting failure must not skip the hosted completion callback',
   );
-  assert.match(
-    callback.source,
-    stepField('uses', './.github/actions/dispatch-broker'),
-  );
-  assert.match(
-    callback.source,
-    stepField('operation', 'completion-callback', 10),
-  );
-  assert.match(callback.source, /inputs\.post-agent-gates-complete/u);
-  assert.match(callback.source, /inputs\.outcome-kind/u);
-  assert.match(callback.source, /inputs\.outcome-reference/u);
-  assert.match(callback.source, /inputs\.readiness-failure/u);
+  assert.match(callback.source, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/u);
+  assert.match(callback.source, /data-binary = "@\$payload_file"/u);
+  assert.match(callback.source, /steps\.evidence\.outputs\.outcome-kind/u);
+  assert.doesNotMatch(callback.source, /dispatch-token[^\n]*argv|set -x/u);
   assert.doesNotMatch(callback.source, /GITHUB_TOKEN|github\.token/u);
 });
 
@@ -1106,15 +1101,10 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
     'the canary must exercise exact deliverable validation from the trusted snapshot',
   );
   assert.match(source, /<!-- attempt-claim:\$ATTEMPT_ID -->/u);
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /outcome_kind:\s*\$\{\{ steps\.verify\.outputs\.outcome-kind \}\}/u,
-    "the canary job must publish the finalizer's typed outcome",
-  );
-  assert.match(
-    source,
-    /outcome-kind:\s*\$\{\{ needs\.canary\.outputs\.outcome_kind \}\}/u,
-    "the canary completion must persist the finalizer's typed outcome",
+    /needs\.canary\.outputs|outcome_kind:\s*\$\{\{/u,
+    'the canary must not pass its output file across the isolated boundary',
   );
   // Completion is delegated to the same isolated reusable finalizer as the
   // real workers, so the canary job itself cannot mint an accepted callback.
