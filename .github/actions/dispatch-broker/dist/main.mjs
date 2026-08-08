@@ -2221,6 +2221,20 @@ function projectLedgerToStoredTask(ledger) {
     intents: ledger.generations.map(mapIntent)
   };
 }
+function storageComparable(value) {
+  if (Array.isArray(value)) {
+    return value.filter((element) => element !== void 0).map(storageComparable);
+  }
+  if (value && typeof value === "object") {
+    const comparable = {};
+    for (const [key, fieldValue] of Object.entries(value)) {
+      if (fieldValue === void 0) continue;
+      comparable[key] = storageComparable(fieldValue);
+    }
+    return comparable;
+  }
+  return value;
+}
 function checkRoundTrip(written, after) {
   if (!after) {
     return [
@@ -2236,7 +2250,7 @@ function checkRoundTrip(written, after) {
   for (const field of fields) {
     const expected = written[field];
     const actual = after[field];
-    if (!isDeepStrictEqual2(expected, actual)) {
+    if (!isDeepStrictEqual2(storageComparable(expected), storageComparable(actual))) {
       divergences.push({ field, expected, actual });
     }
   }

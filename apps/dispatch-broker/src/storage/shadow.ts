@@ -364,6 +364,36 @@ export interface FieldDivergence {
 }
 
 /**
+ * Firestore stores the port's optional properties with "absent, not null"
+ * semantics. Both concrete adapters deliberately drop `undefined` object
+ * properties (and defensively drop undefined array elements), while the
+ * object returned from `writeTask` can still contain those values because
+ * it is the caller's structured clone from immediately before persistence.
+ *
+ * Normalize both sides to the value Firestore can actually represent before
+ * judging a round trip. Object key order needs no special treatment:
+ * `isDeepStrictEqual` already compares plain objects by their keys rather
+ * than insertion order. This helper exists for the hidden absent-vs-
+ * undefined distinction that JSON-formatted warning output cannot show.
+ */
+function storageComparable(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value
+      .filter((element) => element !== undefined)
+      .map(storageComparable);
+  }
+  if (value && typeof value === 'object') {
+    const comparable: Record<string, unknown> = {};
+    for (const [key, fieldValue] of Object.entries(value)) {
+      if (fieldValue === undefined) continue;
+      comparable[key] = storageComparable(fieldValue);
+    }
+    return comparable;
+  }
+  return value;
+}
+
+/**
  * Round-trip integrity for this pass's own write: `written` is what
  * `writeTask` reported it stored (the values this process asked storage to
  * hold, stamped with the revision storage assigned). `after` is a FRESH
@@ -403,7 +433,9 @@ export function checkRoundTrip(
   for (const field of fields) {
     const expected = written[field];
     const actual = after[field];
-    if (!isDeepStrictEqual(expected, actual)) {
+    if (
+      !isDeepStrictEqual(storageComparable(expected), storageComparable(actual))
+    ) {
       divergences.push({ field, expected, actual });
     }
   }
