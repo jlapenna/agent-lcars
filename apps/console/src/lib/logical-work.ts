@@ -287,7 +287,8 @@ function duplicateAttemptAnomalies(
  * Turns one raw `ledger.anomalies` entry into readable text without
  * assuming its `detail` shape - `detail` is broker-kind-specific and
  * untyped (see `LedgerAnomaly`'s own doc comment). `duplicate-attempt` (the
- * one kind that exists today - `main.mjs`'s `reconcileActive`, recorded
+ * one kind that exists today - `apps/dispatch-broker/src/main.ts`'s
+ * `reconcileActive`, recorded
  * when the reconciler finds more than one worker run bound to a single
  * generation) gets a tailored message; anything else - including anomaly
  * kinds a future broker change adds (e.g. #305's reconciler introduces

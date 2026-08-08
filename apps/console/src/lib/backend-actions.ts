@@ -314,7 +314,8 @@ const DISPATCH_CALLER_ID_PATTERN =
 // dispatch with a 422 naming exactly the inputs it doesn't recognize
 // (`Unexpected inputs provided: ["caller_id"]`) rather than ignoring them.
 // Since every optional input this call sends has a documented fallback on
-// the receiving end (see normalize.mjs's resolveCallerSourceId), retrying
+// the receiving end (see apps/dispatch-broker/src/normalize.ts's
+// resolveCallerSourceId), retrying
 // once without the rejected keys degrades gracefully instead of leaving
 // retrigger permanently broken for a lagging repo.
 const UNEXPECTED_INPUTS_PATTERN = /Unexpected inputs provided: (\[.*\])/u;

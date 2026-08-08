@@ -47,7 +47,8 @@ jlapenna`), and use as the assignee in the parking recipe
   instead of picking a winner, and a comment matching more than one
   recognized command is rejected outright — not dispatched at all — rather
   than resolved in favor of one pipeline (`parseExactCommand` in
-  `normalize.mjs`). One narrow self-heal exception: a `labeled` event whose
+  `apps/dispatch-broker/src/normalize.ts`). One narrow self-heal exception:
+  a `labeled` event whose
   own label disambiguates against exactly one other stale `agent:*` label
   (the transient window a manual GitHub UI relabel opens) makes the newest
   label win, removing the stale one via the API with ledger evidence before
@@ -57,7 +58,8 @@ jlapenna`), and use as the assignee in the parking recipe
   `@agent` (#573), but only when the command is the sole first token of its
   own line (trailing text after it is fine, e.g. `@claude please retry`); a
   command embedded mid-prose, inside a fenced code block, or on a quoted
-  (`>`) line does not count (`parseExactCommand` in `normalize.mjs`). The
+  (`>`) line does not count (`parseExactCommand` in
+  `apps/dispatch-broker/src/normalize.ts`). The
   pipeline-specific commands' pipeline must match the issue's single
   selected `agent:*` label — except `@claude` on a pull request, which
   dispatches regardless of label. `@agent` names no pipeline at all; it
@@ -95,7 +97,8 @@ by #567 once the maintainer picked `review:*` as the dedicated review
 trigger rather than overloading `agent:*` for both meanings). The two
 label families are independent: a PR may carry `agent:*`, `review:*`,
 both, or neither, and each drives its own dispatch mode when applied
-(`normalize.mjs`'s `AGENT_LABELS`/`REVIEW_LABELS`). `review:*` is not a
+(`libs/dispatch-contracts/src/pipelines.ts`'s
+`AGENT_LABELS`/`REVIEW_LABELS`). `review:*` is not a
 recognized label at all on a plain issue — there is no diff to review.
 
 If you are dispatched with `mode: review` in the JSON brief at
@@ -127,7 +130,8 @@ on a pure review).
 `.github/workflows/agent-router.yml` subscribes to pull-request
 `labeled`/`unlabeled` actions in addition to `closed`/`reopened`, so both
 label families reach the same normalized, serialized broker path (#565).
-`normalize.mjs`, `main.mjs`'s timeline fetch, and
+`apps/dispatch-broker/src/normalize.ts`,
+`apps/dispatch-broker/src/main.ts`'s timeline fetch, and
 `verify-deliverable.sh` keep the transport, authorization, and deliverable
 contracts aligned for both modes.
 
@@ -140,8 +144,9 @@ an `agent:*` or `review:*` label, unioned with every open issue/PR assigned to
 `vars.AGENT_FLEET_LOGIN` (`jclaw-bot`) — the durable, label-independent
 signal `claim-issue` already sets at the start of every worker dispatch and
 never clears, which is what still finds a ledger whose last `agent:*` label
-was removed while its generation was active (`main.mjs`'s
-`discoverReconcileCandidates`) — then fires one `workflow_dispatch`
+was removed while its generation was active
+(`libs/dispatch-reconcile/src/scan.ts`'s `discoverReconcileCandidates`) —
+then fires one `workflow_dispatch`
 `kind: reconcile` call at `agent-router.yml` per candidate (`scanReconcile` /
 `dispatchReconcileScan`). It never touches a ledger comment itself — every
 actual repair happens inside the exact same per-issue serialized broker job
