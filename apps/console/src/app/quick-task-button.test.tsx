@@ -1,7 +1,15 @@
 import { MantineProvider } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
 import { createQuickTask } from './actions';
 import { QuickTaskButton } from './quick-task-button';
@@ -48,6 +56,10 @@ function submit() {
 }
 
 describe('QuickTaskButton', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
@@ -208,6 +220,40 @@ describe('QuickTaskButton', () => {
         }),
       ),
     );
+  });
+
+  it('remembers the last repository and agent selection across instances', async () => {
+    const repoA = { owner: 'org-a', name: 'repo-a' };
+    const repoB = { owner: 'org-b', name: 'repo-b', alias: 'Repo B' };
+    const first = render(
+      <MantineProvider>
+        <QuickTaskButton watchedRepos={[repoA, repoB]} />
+      </MantineProvider>,
+    );
+    await openDialog();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Repo' }));
+    fireEvent.click(await screen.findByText('Repo B'));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
+    fireEvent.click(await screen.findByText('opencode'));
+    first.unmount();
+
+    render(
+      <MantineProvider>
+        <QuickTaskButton watchedRepos={[repoA, repoB]} />
+      </MantineProvider>,
+    );
+    await openDialog();
+
+    await waitFor(() => {
+      expect(
+        (screen.getByRole('combobox', { name: 'Repo' }) as HTMLInputElement)
+          .value,
+      ).toBe('Repo B');
+      expect(
+        (screen.getByRole('combobox', { name: 'Agent' }) as HTMLInputElement)
+          .value,
+      ).toBe('opencode');
+    });
   });
 
   it('keeps the dialog open and reuses the request ID after failure', async () => {

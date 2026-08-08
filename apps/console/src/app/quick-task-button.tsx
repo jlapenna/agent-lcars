@@ -10,7 +10,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 
 import {
   type AgentPipeline,
@@ -21,6 +21,10 @@ import {
   type WatchedRepo,
 } from '../lib/watched-repo';
 import { createQuickTask } from './actions';
+import {
+  readQuickTaskPreferences,
+  writeQuickTaskPreferences,
+} from './quick-task-preferences';
 import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
@@ -71,6 +75,32 @@ export function QuickTaskButton({
   const [isPending, startTransition] = useTransition();
   const requestIdRef = useRef<string | undefined>(undefined);
   const submitInFlightRef = useRef(false);
+
+  // The modal is closed during hydration, so applying browser-local defaults
+  // in an effect is SSR-safe without flashing a different visible selection.
+  // Stable owner/name identity is persisted instead of the array index so a
+  // watched-repository reorder cannot silently select the wrong repository.
+  useEffect(() => {
+    const remembered = readQuickTaskPreferences();
+    const initialIndex = watchedRepos.findIndex(
+      (repo) => repoKey(repo) === initialRepoKey,
+    );
+    const rememberedIndex = watchedRepos.findIndex(
+      (repo) => repoKey(repo) === remembered.repoKey,
+    );
+    const nextIndex = rememberedIndex >= 0 ? rememberedIndex : initialIndex;
+    const resolvedIndex = nextIndex >= 0 ? nextIndex : 0;
+    const nextRepo = watchedRepos[resolvedIndex];
+    const nextPipelines = nextRepo ? supportedAgentPipelines(nextRepo) : [];
+
+    setRepoIndex(String(resolvedIndex));
+    setPipeline(
+      remembered.pipeline && nextPipelines.includes(remembered.pipeline)
+        ? remembered.pipeline
+        : (nextPipelines[0] ?? 'claude'),
+    );
+  }, [initialRepoKey, watchedRepos]);
+
   const selectedRepo = watchedRepos[Number(repoIndex)];
   const supportedPipelines = selectedRepo
     ? supportedAgentPipelines(selectedRepo)
@@ -190,7 +220,22 @@ export function QuickTaskButton({
               value={repoIndex}
               onChange={(value) => {
                 changeIntent();
-                setRepoIndex(value ?? '0');
+                const nextIndex = value ?? '0';
+                const nextRepo = watchedRepos[Number(nextIndex)];
+                const nextPipelines = nextRepo
+                  ? supportedAgentPipelines(nextRepo)
+                  : [];
+                const nextPipeline = nextPipelines.includes(pipeline)
+                  ? pipeline
+                  : nextPipelines[0];
+                setRepoIndex(nextIndex);
+                if (nextPipeline) {
+                  setPipeline(nextPipeline);
+                  writeQuickTaskPreferences({
+                    repoKey: repoKey(nextRepo),
+                    pipeline: nextPipeline,
+                  });
+                }
               }}
               allowDeselect={false}
               disabled={isPending}
@@ -203,7 +248,14 @@ export function QuickTaskButton({
             value={effectivePipeline ?? null}
             onChange={(value) => {
               changeIntent();
-              setPipeline((value as AgentPipeline) ?? 'claude');
+              const nextPipeline = (value as AgentPipeline) ?? 'claude';
+              setPipeline(nextPipeline);
+              if (selectedRepo) {
+                writeQuickTaskPreferences({
+                  repoKey: repoKey(selectedRepo),
+                  pipeline: nextPipeline,
+                });
+              }
             }}
             allowDeselect={false}
             disabled={isPending || pipelineOptions.length === 0}
