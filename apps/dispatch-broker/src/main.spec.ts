@@ -206,6 +206,7 @@ test('a launched worker stays active when launch-outbox resolution fails', async
     'delivery:outbox-failure',
     seed,
   );
+  const resolveLaunchOutcome = port.resolveLaunchOutcome.bind(port);
   port.resolveLaunchOutcome = async () => {
     throw new Error('transient Firestore failure');
   };
@@ -237,6 +238,36 @@ test('a launched worker stays active when launch-outbox resolution fails', async
     (await port.readTask(task))?.controllerState?.generations[0].state,
     'active',
   );
+  const attemptId = loaded.ledger.generations[0].attempt?.attemptId;
+  assert.ok(attemptId);
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'pending');
+
+  port.resolveLaunchOutcome = resolveLaunchOutcome;
+  const run = {
+    id: runId,
+    repository: { id: task.repositoryId },
+    event: 'workflow_dispatch',
+    path: '.github/workflows/codex.yml',
+    display_title: '#304: Codex [dispatch:g1:intent-outbox-failure]',
+    status: 'in_progress',
+    conclusion: null,
+    updated_at: new Date().toISOString(),
+    url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
+    html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
+  };
+  const reconcileClient = {
+    requestOk: async (path) => {
+      if (path.includes('/workflows/codex.yml/runs?')) {
+        return { workflow_runs: [run] };
+      }
+      if (path.endsWith(`/actions/runs/${runId}`)) return run;
+      throw new Error(`Unexpected reconciliation request: ${path}`);
+    },
+  };
+
+  await reconcileActive(reconcileClient, loaded);
+
+  assert.equal((await port.readLaunchOperation(attemptId))?.status, 'launched');
 });
 
 test('authority defers worker launch while the compatibility projection is unavailable', async () => {
@@ -882,7 +913,13 @@ test('authority ignores an ordinary pre-cutover pull request close with no compa
       calls.push({ path, method: options.method ?? 'GET' });
       return path.endsWith('/issues/304')
         ? { created_at: '2026-08-07T00:00:00.000Z' }
-        : [];
+        : [
+            {
+              id: 9,
+              body: renderLedgerComment(createLedger(task)),
+              user: { login: 'agent-lcars[bot]', type: 'Bot' },
+            },
+          ];
     },
   };
 

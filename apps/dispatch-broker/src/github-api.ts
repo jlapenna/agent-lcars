@@ -1026,12 +1026,14 @@ async function classifyAuthorityTaskInitialization(
     api,
     `${repositoryPath(task)}/issues/${task.issue}/comments`,
   );
+  // Projection presence is tracking evidence only when the canonical
+  // controller identity authored it. Other App/bot credentials are
+  // available to controlled worker jobs and cannot prove authority history.
   const hasProjection = comments.some(
     (comment) =>
       comment.body?.includes(LEDGER_MARKER) &&
       comment.user?.type === 'Bot' &&
-      (comment.user.login === workflowIdentity ||
-        comment.user.login?.endsWith('[bot]')),
+      comment.user.login === workflowIdentity,
   );
   if (hasProjection) return 'compatibility-projection';
 

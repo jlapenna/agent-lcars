@@ -1276,7 +1276,7 @@ async function classifyAuthorityTaskInitialization(api2, task, authorityEpoch, w
     `${repositoryPath(task)}/issues/${task.issue}/comments`
   );
   const hasProjection = comments.some(
-    (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.type === "Bot" && (comment.user.login === workflowIdentity || comment.user.login?.endsWith("[bot]"))
+    (comment) => comment.body?.includes(LEDGER_MARKER) && comment.user?.type === "Bot" && comment.user.login === workflowIdentity
   );
   if (hasProjection) return "compatibility-projection";
   const epoch = Date.parse(authorityEpoch);
@@ -2851,6 +2851,11 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
     active.attempt.runId
   );
   assertWorkerRun(run, loaded.ledger.task, active, expectedWorkflow);
+  await resolvePendingLaunchAsLaunchedBestEffort(loaded, active, {
+    runId: run.id,
+    runUrl: run.url,
+    htmlUrl: run.html_url
+  });
   if (run.status === "completed") {
     completeRun(loaded.ledger, active.generation, {
       runId: run.id,
@@ -3251,6 +3256,23 @@ async function resolveLaunchOutcomeBestEffort(loaded, generation, resolution) {
     const message = error instanceof Error ? error.message : String(error);
     console.log(
       `::warning::Primary dispatch state was persisted, but launch-outbox resolution for ${attemptId} will need reconciliation: ${message}`
+    );
+  }
+}
+async function resolvePendingLaunchAsLaunchedBestEffort(loaded, generation, binding) {
+  if (!loaded.authority) return;
+  const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+  try {
+    const operation = await loaded.authority.port.readLaunchOperation(attemptId);
+    if (operation?.status !== "pending") return;
+    await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+      status: "launched",
+      binding
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Reconciliation confirmed workflow run ${binding.runId}, but launch-outbox resolution for ${attemptId} will need another pass: ${message}`
     );
   }
 }

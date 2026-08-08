@@ -970,17 +970,19 @@ test('authority ignores an unowned marker but requires immutable post-cutover cr
   );
 });
 
-test('authority treats an App-bot marker as existing compatibility state', async () => {
+test('authority does not trust an App-bot marker as controller projection evidence', async () => {
   const api = createGitHubApi({
     token: 'token',
-    fetchImpl: async () =>
-      response(200, [
-        {
-          id: 2,
-          body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
-          user: { login: 'agent-lcars[bot]', type: 'Bot' },
-        },
-      ]),
+    fetchImpl: async (url) =>
+      url.endsWith('/issues/304')
+        ? response(200, { created_at: '2026-08-07T00:00:00.000Z' })
+        : response(200, [
+            {
+              id: 2,
+              body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
+              user: { login: 'agent-lcars[bot]', type: 'Bot' },
+            },
+          ]),
   });
 
   assert.equal(
@@ -989,7 +991,7 @@ test('authority treats an App-bot marker as existing compatibility state', async
       task,
       '2026-08-08T00:00:00.000Z',
     ),
-    'compatibility-projection',
+    'pre-cutover',
   );
 });
 
