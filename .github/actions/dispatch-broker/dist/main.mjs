@@ -4629,7 +4629,13 @@ async function classifyClaudeReadinessProbe() {
   let execution;
   if (executionFile) {
     try {
-      execution = JSON.parse(await fs.readFile(executionFile, "utf8"));
+      execution = JSON.parse(
+        await fs.readFile(
+          /* turbopackIgnore: true */
+          executionFile,
+          "utf8"
+        )
+      );
     } catch {
     }
   }

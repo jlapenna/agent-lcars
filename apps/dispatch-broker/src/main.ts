@@ -2941,7 +2941,9 @@ async function classifyClaudeReadinessProbe(): Promise<void> {
   let execution: unknown;
   if (executionFile) {
     try {
-      execution = JSON.parse(await fs.readFile(executionFile, 'utf8'));
+      execution = JSON.parse(
+        await fs.readFile(/* turbopackIgnore: true */ executionFile, 'utf8'),
+      );
     } catch {
       // Missing/unparseable evidence is intentionally unknown. Never echo the
       // file or parsing error: a provider response may contain private text.
