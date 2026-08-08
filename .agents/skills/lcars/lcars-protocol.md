@@ -178,9 +178,14 @@ possible:
   re-observed sooner than the minimum interval, is a silent no-op — this is
   what makes overlapping/duplicate scans idempotent.
 - **Stale pending intents**: queued behind either repair above, they are
-  promoted and (re-)dispatched automatically the moment their blocking
-  generation resolves (`completeRun`'s existing promotion, followed by
-  `dispatchAccepted()`) — there is no separate "stale pending" mechanism.
+  promoted when their blocking generation resolves (`completeRun`'s
+  existing promotion), but promotion is not unconditional launch:
+  `dispatchAccepted()` reads the anchor's live `status:needs-human` label and
+  holds ordinary work while parked. Removing the label emits serialized
+  control evidence and resumes the preserved intent through the same broker;
+  scheduled reconciliation is the lost-webhook backstop. The no-op canary is
+  exempt so a parked failed canary can probe and prove recovery. There is no
+  separate "stale pending" mechanism and no dropped authorization.
 - **Concurrent duplicate attempts**: `reconcileActive()` already records a
   `duplicate-attempt` anomaly naming every matching run and fails closed
   (parked, never silently resolved or auto-canceled) the moment more than

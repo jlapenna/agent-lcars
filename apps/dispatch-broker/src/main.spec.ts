@@ -21,6 +21,7 @@ import {
   verifyBrokerConcurrency,
 } from './github-api.js';
 import {
+  anchorNeedsHuman,
   applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,
@@ -160,6 +161,7 @@ test('storage-authoritative dispatch records the outbox and resolves it after pe
       };
     },
     requestOk: async (path, options = {}) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
       assert.match(path, /issues\/comments\/9$/u);
       assert.equal(options.method, 'PATCH');
       return { id: 9 };
@@ -305,7 +307,8 @@ test('authority launches from Firestore while the compatibility projection is un
       },
       headers: new Headers(),
     }),
-    requestOk: async () => {
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
       throw new Error('projection must remain untouched');
     },
   };
@@ -369,7 +372,8 @@ test('authority launches when the scheduling projection PATCH fails', async () =
         headers: new Headers(),
       };
     },
-    requestOk: async () => {
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
       throw new Error('GitHub projection unavailable');
     },
   };
@@ -512,7 +516,8 @@ test('authority restores accepted state when pre-launch outbox recording fails',
       dispatches += 1;
       throw new Error('worker dispatch must not happen');
     },
-    requestOk: async () => {
+    requestOk: async (path) => {
+      if (path.endsWith('/issues/304')) return { labels: [] };
       projectionWrites += 1;
       return { id: 9 };
     },
@@ -678,6 +683,25 @@ test('authority persists a non-converged projection checkpoint when the comment 
   assert.equal(projection?.observedRevision, 0);
 });
 
+function acceptedLedger(pipeline = 'codex') {
+  const ledger = createLedger(task);
+  acceptIntent(ledger, {
+    task,
+    intentId: 'intent-1',
+    sourceKind: 'manual',
+    sourceId: 'source-1',
+    transportRunId: 9001,
+    occurredAt: '2026-08-01T00:00:00.000Z',
+    pipeline,
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'abc',
+    authorization: { authorized: true },
+  });
+  return ledger;
+}
+
 function workerRun(status = 'in_progress') {
   return {
     id: 42,
@@ -696,6 +720,183 @@ function workerRun(status = 'in_progress') {
 test('normalized payload encoding round-trips without shell quoting', () => {
   const value = { body: "apostrophe ' newline\n and unicode ✅" };
   assert.deepEqual(decode(encode(value)), value);
+});
+
+test('status:needs-human label edges become serialized control evidence so unpark wakes a held generation (#720)', () => {
+  const context = {
+    repository: task.repository,
+    repositoryId: task.repositoryId,
+    issue: task.issue,
+    runId: 9100,
+    now: '2026-08-08T00:00:00.000Z',
+  };
+  for (const action of ['labeled', 'unlabeled']) {
+    const normalized = normalizeEvent({
+      eventName: 'issues',
+      event: {
+        action,
+        issue: {
+          id: 3040,
+          number: task.issue,
+          title: 'Parked task',
+          body: '',
+          labels:
+            action === 'labeled'
+              ? [{ name: 'agent:codex' }, { name: 'status:needs-human' }]
+              : [{ name: 'agent:codex' }],
+          created_at: '2026-08-01T00:00:00.000Z',
+          updated_at: '2026-08-08T00:00:00.000Z',
+        },
+        label: { name: 'status:needs-human' },
+        sender: { login: 'github-actions[bot]', type: 'Bot' },
+      },
+      context,
+      timeline: [
+        {
+          id: action === 'labeled' ? 81 : 82,
+          event: action,
+          created_at: context.now,
+          actor: { login: 'github-actions[bot]' },
+          label: { name: 'status:needs-human' },
+        },
+      ],
+      maintainer: 'jlapenna',
+    });
+    assert.equal(normalized.kind, 'control-evidence');
+    assert.equal(normalized.evidence.sourceKind, action);
+    assert.equal(normalized.evidence.label, 'status:needs-human');
+    assert.equal(normalized.evidence.authorization.observed, true);
+  }
+});
+
+test('dispatch admission holds ordinary accepted work while needs-human is live, then dispatches it exactly once after unpark (#720)', async () => {
+  const ledger = acceptedLedger();
+  const loaded = { ledger, comment: { id: 9 } };
+  const parkedCalls = [];
+  const parkedClient = {
+    requestOk: async (path, options = {}) => {
+      parkedCalls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/issues/304')) {
+        return { labels: [{ name: 'status:needs-human' }] };
+      }
+      throw new Error(`Parked generation must not mutate GitHub: ${path}`);
+    },
+    request: async (path) => {
+      throw new Error(`Parked generation must not dispatch: ${path}`);
+    },
+  };
+
+  await dispatchAccepted(parkedClient, loaded);
+
+  assert.equal(ledger.generations[0].state, 'accepted');
+  assert.deepEqual(parkedCalls, [
+    {
+      path: '/repos/jlapenna/agent-lcars/issues/304',
+      method: 'GET',
+    },
+  ]);
+
+  const resumedCalls = [];
+  const resumedClient = {
+    requestOk: async (path, options = {}) => {
+      resumedCalls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/issues/304')) return { labels: [] };
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected resumed request: ${path}`);
+    },
+    request: async (path, options = {}) => {
+      resumedCalls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/actions/workflows/codex.yml/dispatches')) {
+        return {
+          status: 200,
+          data: {
+            workflow_run_id: 42,
+            run_url:
+              'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/42',
+            html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+          },
+        };
+      }
+      throw new Error(`Unexpected resumed dispatch: ${path}`);
+    },
+  };
+
+  await dispatchAccepted(resumedClient, loaded);
+
+  assert.equal(ledger.generations[0].state, 'active');
+  assert.equal(
+    resumedCalls.filter((call) => call.path.endsWith('/dispatches')).length,
+    1,
+  );
+});
+
+test('the no-op canary bypasses needs-human admission so its next probe can prove recovery (#720/#677)', async () => {
+  const ledger = acceptedLedger('canary');
+  const calls = [];
+  const client = {
+    requestOk: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/issues/304')) {
+        throw new Error('Canary dispatch must not read the park label');
+      }
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      throw new Error(`Unexpected canary request: ${path}`);
+    },
+    request: async (path, options = {}) => {
+      calls.push({ path, method: options.method ?? 'GET' });
+      return {
+        status: 200,
+        data: {
+          workflow_run_id: 43,
+          run_url:
+            'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/43',
+          html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/43',
+        },
+      };
+    },
+  };
+
+  await dispatchAccepted(client, { ledger, comment: { id: 9 } });
+
+  assert.equal(ledger.generations[0].state, 'active');
+  assert.ok(
+    calls.some((call) =>
+      call.path.endsWith(
+        '/actions/workflows/agent-dispatch-canary.yml/dispatches',
+      ),
+    ),
+  );
+  assert.equal(
+    calls.some((call) => call.path.endsWith('/issues/304')),
+    false,
+  );
+});
+
+test('anchorNeedsHuman accepts both REST label shapes and fails closed on lookup errors (#720)', async () => {
+  for (const labels of [
+    ['status:needs-human'],
+    [{ name: 'agent:codex' }, { name: 'status:needs-human' }],
+  ]) {
+    assert.equal(
+      await anchorNeedsHuman({ requestOk: async () => ({ labels }) }, task),
+      true,
+    );
+  }
+  assert.equal(
+    await anchorNeedsHuman(
+      { requestOk: async () => ({ labels: [{ name: 'agent:codex' }] }) },
+      task,
+    ),
+    false,
+  );
+  await assert.rejects(
+    () =>
+      anchorNeedsHuman(
+        { requestOk: async () => Promise.reject(new Error('API down')) },
+        task,
+      ),
+    /API down/u,
+  );
 });
 
 test('resolveTask recovers a canonical TaskRef from real normalize() output for every payload kind (#337)', () => {

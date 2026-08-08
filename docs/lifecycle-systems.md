@@ -135,6 +135,17 @@ and the dispatch ledger itself.
   canary (structurally incapable of touching self-hosted infra or a paid
   model; runs on `ubuntu-latest`).
 
+**Park admission policy (#720):** `status:needs-human` is a real stop signal
+for ordinary agent spend. A generation may still become `accepted` in the
+ledger when the generation ahead of it resolves — accepted means ordered and
+ready, not unconditionally admitted — but `dispatchAccepted()` re-reads the
+anchor's live labels immediately before launch and holds it while the park is
+present. Removing the label emits serialized control evidence and wakes that
+same broker path; the 30-minute reconciler is a backstop if the webhook is
+lost. Intent is preserved, never dropped, and no second authorization is
+invented. The no-op canary pipeline alone is exempt because a failed canary
+parks its canonical issue and its next probe must still run to prove recovery.
+
 **What breaking looks like (worked incident — PR
 [#703](https://github.com/jlapenna/agent-lcars/pull/703)):** the `normalize`
 job in `agent-router.yml` held a repository-wide concurrency group
@@ -192,7 +203,9 @@ agent-labeled or agent-fleet-assigned issue/PR every 30 minutes and
 re-drives a generation stuck `dispatching`/`dispatch-unknown` through the
 same per-issue serialized `agent-router.yml` path every other trigger uses.
 Past a bounded retry count it parks `status:needs-human` instead of retrying
-forever. It **cannot** recover an intent whose labels changed after the
+forever. A queued/accepted ordinary generation remains held while that park
+label is present and resumes after a maintainer removes it. The reconciler
+**cannot** recover an intent whose labels changed after the
 event that would have carried the real signal was lost — that class needs a
 human to re-apply the correct label or use the console's retrigger action.
 The scheduled scan runs through App Hosting from `ubuntu-latest`, so a

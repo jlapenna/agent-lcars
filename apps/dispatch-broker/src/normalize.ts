@@ -718,6 +718,27 @@ function normalizeEvent({
     const isReviewLabel =
       semanticEventName === 'pull_request' &&
       Boolean(labelName?.startsWith('review:'));
+    // #720: status:needs-human is now a real dispatch-admission gate, so
+    // both edges must reach the serialized broker even though neither is a
+    // new intent. `labeled` makes a park observable in the ledger; more
+    // importantly, `unlabeled` wakes dispatchAccepted immediately so a held
+    // accepted generation resumes without waiting for the next scheduled
+    // reconciliation pass. Authorization is observational here, matching
+    // close/reopen control: the broker re-reads the live label at dispatch
+    // time and never trusts this event payload as the gate itself.
+    if (labelName === 'status:needs-human') {
+      return {
+        kind: 'control-evidence',
+        task,
+        evidence: {
+          sourceKind: event.action,
+          ...source,
+          transportRunId: context.runId,
+          label: labelName,
+          authorization: { observed: true, actor: event.sender?.login },
+        },
+      };
+    }
     if (!labelName?.startsWith('agent:') && !isReviewLabel) {
       return { kind: 'ignored', reason: 'non-agent label event' };
     }

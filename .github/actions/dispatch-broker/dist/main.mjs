@@ -1955,6 +1955,19 @@ function normalizeEvent({
     }
     const labelName = event.label?.name;
     const isReviewLabel = semanticEventName === "pull_request" && Boolean(labelName?.startsWith("review:"));
+    if (labelName === "status:needs-human") {
+      return {
+        kind: "control-evidence",
+        task,
+        evidence: {
+          sourceKind: event.action,
+          ...source,
+          transportRunId: context.runId,
+          label: labelName,
+          authorization: { observed: true, actor: event.sender?.login }
+        }
+      };
+    }
     if (!labelName?.startsWith("agent:") && !isReviewLabel) {
       return { kind: "ignored", reason: "non-agent label event" };
     }
@@ -3385,12 +3398,29 @@ async function resolvePendingLaunchAsLaunchedBestEffort(loaded, generation, bind
     );
   }
 }
+function issueHasNeedsHumanLabel(issue) {
+  return (issue.labels ?? []).some(
+    (label) => typeof label === "string" ? label === "status:needs-human" : label.name === "status:needs-human"
+  );
+}
+async function anchorNeedsHuman(client, task) {
+  const issue = await client.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`
+  );
+  return issueHasNeedsHumanLabel(issue);
+}
 async function dispatchAccepted(client, loaded) {
   while (!loaded.ledger.control.closed) {
     const generation = loaded.ledger.generations.find(
       (candidate) => candidate.state === "accepted"
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
+    if (generation.pipeline !== "canary" && await anchorNeedsHuman(client, loaded.ledger.task)) {
+      console.log(
+        `::notice::Holding accepted generation ${generation.generation} for issue #${loaded.ledger.task.issue}: status:needs-human is present. Remove the label to resume through the ordinary serialized broker path.`
+      );
+      return;
+    }
     const beforeScheduling = structuredClone(loaded.ledger);
     const scheduled = await runPhase(
       { client, loaded },
@@ -4027,6 +4057,7 @@ export {
   RECONCILE_STUCK_RUN_GRACE_MS,
   RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
   RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
+  anchorNeedsHuman,
   applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,

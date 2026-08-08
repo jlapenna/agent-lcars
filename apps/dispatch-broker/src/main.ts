@@ -1555,6 +1555,24 @@ async function resolvePendingLaunchAsLaunchedBestEffort(
   }
 }
 
+function issueHasNeedsHumanLabel(issue: GitHubIssueDetail): boolean {
+  return (issue.labels ?? []).some((label) =>
+    typeof label === 'string'
+      ? label === 'status:needs-human'
+      : label.name === 'status:needs-human',
+  );
+}
+
+async function anchorNeedsHuman(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+): Promise<boolean> {
+  const issue = await client.requestOk<GitHubIssueDetail>(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  return issueHasNeedsHumanLabel(issue);
+}
+
 async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1564,6 +1582,24 @@ async function dispatchAccepted(
       (candidate) => candidate.state === 'accepted',
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
+    // #720: accepted is ledger readiness, not unconditional permission to
+    // spend another agent run. status:needs-human is the human-facing stop
+    // signal; read it live at the last responsible moment so a generation
+    // promoted while its predecessor completed remains held until the label
+    // is removed. The structurally no-op canary is exempt: its own failure
+    // parks the canonical canary issue, and a later probe must still run to
+    // prove recovery and clear that incident (#677).
+    if (
+      generation.pipeline !== 'canary' &&
+      (await anchorNeedsHuman(client, loaded.ledger.task))
+    ) {
+      console.log(
+        `::notice::Holding accepted generation ${generation.generation} for ` +
+          `issue #${loaded.ledger.task.issue}: status:needs-human is present. ` +
+          'Remove the label to resume through the ordinary serialized broker path.',
+      );
+      return;
+    }
     const beforeScheduling = structuredClone(loaded.ledger);
     const scheduled = await runPhase(
       { client, loaded },
@@ -2581,6 +2617,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 }
 
 export {
+  anchorNeedsHuman,
   applyAnchorControlTransition,
   assertWorkerRun,
   completionMatches,
