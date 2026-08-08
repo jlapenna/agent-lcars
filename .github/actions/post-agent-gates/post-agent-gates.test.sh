@@ -120,6 +120,7 @@ base_env() {
   export WRITER_CREDENTIALS_FILE=
   export NO_DELIVERABLE_REASON="LANE_NO_DELIVERABLE_MARKER"
   export FAILURE_LOG_SCAN_SCRIPT=
+  export CLAUDE_EXECUTION_FILE=
   export AGENT_STEP_OUTCOME=success
   export READINESS_FAILURE=
 }
@@ -341,7 +342,8 @@ SCAN
 )
 
 # --- Case 10: the real claude-log-scan.sh (not a fake stand-in) detects a
-# turn-budget exhaustion from this run's own log and substitutes THIS
+# turn-budget exhaustion from Claude's structured execution file and
+# substitutes THIS
 # lane's ambient AGENT_LABEL/REDISPATCH_COMMAND (both ordinary job-level
 # env vars in claude.yml, inherited by every step including this one). ---
 (
@@ -352,31 +354,54 @@ SCAN
   export FAILURE_LOG_SCAN_SCRIPT="$action_dir/claude-log-scan.sh"
   case_dir="$test_root/claude-log-scan-turn-budget"
   mkdir -p "$case_dir"
-  cat > "$case_dir/run-log.txt" <<'LOG'
-2024-01-01T00:00:00.0000000Z Reached maximum number of turns (200)
-LOG
+  export CLAUDE_EXECUTION_FILE="$case_dir/claude-execution-output.json"
+  printf '%s\n' '[{"type":"result","subtype":"error_max_turns","is_error":true}]' > "$CLAUDE_EXECUTION_FILE"
   run_case claude-log-scan-turn-budget
   test "$status" = 0 || fail "log-scan turn-budget case with a landed report must still exit 0"
   grep -q 'error_max_turns' "$FAKE_GH_DIR/calls" || fail "expected the turn-budget REASON text"
   grep -q 'agent:claude' "$FAKE_GH_DIR/calls" || fail "expected AGENT_LABEL substituted into the turn-budget REASON text"
   grep -q '@claude' "$FAKE_GH_DIR/calls" || fail "expected REDISPATCH_COMMAND substituted into the turn-budget REASON text"
+  if grep -q '^run view ' "$FAKE_GH_DIR/calls"; then
+    fail "the structured execution file must avoid the unavailable in-progress run-log API"
+  fi
 )
 
 # --- Case 11: the real claude-log-scan.sh detects an expired/invalid OAuth
-# token from this run's own log. ---
+# token from Claude's structured execution file. ---
 (
   base_env
   export JOB_STATUS=failure
   export FAILURE_LOG_SCAN_SCRIPT="$action_dir/claude-log-scan.sh"
   case_dir="$test_root/claude-log-scan-oauth"
   mkdir -p "$case_dir"
-  cat > "$case_dir/run-log.txt" <<'LOG'
-{"is_error": true, "total_cost_usd": 0}
-LOG
+  export CLAUDE_EXECUTION_FILE="$case_dir/claude-execution-output.json"
+  printf '%s\n' '[{"type":"result","subtype":"success","is_error": true,"api_error_status": 401,"total_cost_usd": 0}]' > "$CLAUDE_EXECUTION_FILE"
   run_case claude-log-scan-oauth
   test "$status" = 0 || fail "log-scan oauth case with a landed report must still exit 0"
   grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' "$FAKE_GH_DIR/calls" || fail "expected the OAuth-token REASON text"
   grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the OAuth signature to publish a credential readiness failure"
+  if grep -q '^run view ' "$FAKE_GH_DIR/calls"; then
+    fail "the structured execution file must avoid the unavailable in-progress run-log API"
+  fi
+)
+
+# --- Case 11b: a zero-cost initialization failure without a positive OAuth
+# 401 signal is provider readiness, not a guessed credential rotation. ---
+(
+  base_env
+  export JOB_STATUS=failure
+  export FAILURE_LOG_SCAN_SCRIPT="$action_dir/claude-log-scan.sh"
+  case_dir="$test_root/claude-log-scan-provider"
+  mkdir -p "$case_dir"
+  export CLAUDE_EXECUTION_FILE="$case_dir/claude-execution-output.json"
+  printf '%s\n' '[{"type":"result","subtype":"success","is_error": true,"total_cost_usd": 0}]' > "$CLAUDE_EXECUTION_FILE"
+  run_case claude-log-scan-provider
+  test "$status" = 0 || fail "provider-init case with a landed report must still exit 0"
+  grep -q 'failed during provider initialization' "$FAKE_GH_DIR/calls" || fail "expected the provider-init REASON text"
+  grep -qx 'readiness-failure=provider' "$GITHUB_OUTPUT" || fail "expected a provider readiness failure without a 401"
+  if grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' "$FAKE_GH_DIR/calls"; then
+    fail "a generic zero-cost failure must not guess that the OAuth token expired"
+  fi
 )
 
 # --- Case 12: a lane adapter can publish a validated readiness signal even

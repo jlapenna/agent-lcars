@@ -1566,11 +1566,12 @@ test("each lane's own no-deliverable wording survives the merge into post-agent-
   }
 });
 
-test("claude's extra failure-reason log-scan survives as an adapter-style input, absent from codex/opencode", async () => {
+test("claude's structured failure scan survives as an adapter-style input, absent from codex/opencode", async () => {
   // claude.yml's original "Determine failure reason" step was materially
   // larger than codex.yml's/opencode.yml's: beyond the shared
-  // NO_DELIVERABLE check, it grepped this run's own log for a turn-budget
-  // exhaustion or an expired/invalid OAuth token. That is lane-specific
+  // NO_DELIVERABLE check, it inspects Claude Code Action's structured
+  // execution file for a turn-budget exhaustion or an expired/invalid OAuth
+  // token. That is lane-specific
   // behavior, not duplication -- #645 Phase 3 keeps it as an optional,
   // lane-provided input to the shared orchestrator (FAILURE_LOG_SCAN_SCRIPT)
   // instead of forcing codex/opencode onto it or dropping it.
@@ -1584,6 +1585,11 @@ test("claude's extra failure-reason log-scan survives as an adapter-style input,
     /FAILURE_LOG_SCAN_SCRIPT:\s*\$\{\{ runner\.temp \}\}\/trusted-actions\/post-agent-gates\/claude-log-scan\.sh/u,
     'claude.yml must point the shared orchestrator at its own log-scan script',
   );
+  assert.match(
+    claudeSource,
+    /CLAUDE_EXECUTION_FILE:\s*\$\{\{ steps\.agent\.outputs\.execution_file \}\}/u,
+    "claude.yml must pass the action's completed structured result to trusted failure classification",
+  );
   // "Verify Claude run status" (an existing, separate, claude-only gate
   // unrelated to the four steps this refactor consolidates) must still run
   // between the agent step and the merged orchestrator, gated on
@@ -1596,6 +1602,15 @@ test("claude's extra failure-reason log-scan survives as an adapter-style input,
     'Verify Claude run status',
   );
   assert.match(runStatus.source, stepField('if', 'success()'));
+  assert.match(
+    runStatus.source,
+    stepField(
+      'CLAUDE_EXECUTION_FILE',
+      '${{ steps.agent.outputs.execution_file }}',
+      10,
+    ),
+  );
+  assert.doesNotMatch(runStatus.source, /gh run view/u);
   const claudeAgentStep = agentAdapterStep(claudeSteps, 'claude.yml');
   const agentIndex = claudeSteps.indexOf(claudeAgentStep);
   const runStatusIndex = claudeSteps.indexOf(runStatus);

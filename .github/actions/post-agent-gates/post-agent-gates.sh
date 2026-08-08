@@ -52,9 +52,9 @@
 #     via `${{ env.* }}` substitution in the workflow YAML -- an
 #     adapter-style input, not computed here); FAILURE_LOG_SCAN_SCRIPT
 #     (path to an optional lane-provided script that inspects this run's
-#     own log for supplementary failure signals -- claude.yml only, see
-#     claude-log-scan.sh; codex.yml/opencode.yml leave this unset and get
-#     none of claude's extra signals, exactly as before).
+#     structured runtime result for supplementary failure signals --
+#     claude.yml only, see claude-log-scan.sh; codex.yml/opencode.yml leave
+#     this unset and get none of claude's extra signals, exactly as before).
 set -uo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
