@@ -24,17 +24,12 @@
  * it did. See the issue-#645 comment "The comment ledger is forgeable by the
  * agents it controls" for the full finding.
  *
- * So the property this port exists to provide, eventually, is state the
- * controlled code cannot write. This module does not ship that property yet:
- * no backing store, no credential boundary, and -- per this task's hard
- * constraint -- no wiring into the live dispatch path. `broker.ts`/
- * `main.ts` are unchanged; every existing broker test still exercises only
- * the comment ledger. What ships here is the shape: an interface a future
- * authority-bearing store implements, an in-memory reference implementation
- * for tests (./in-memory-port.ts), and a contract suite
- * (./port.contract.ts) that proves any implementation -- including that
- * future one -- behaves the same way. The contract suite, not this file, is
- * the deliverable that makes the eventual storage choice safe.
+ * In `DISPATCH_STORAGE_MODE=authority`, this port provides state the
+ * controlled code cannot write. Firestore stores the exact controller
+ * aggregate alongside its query-friendly signal/intent projections and a
+ * CAS lease shared by hosted admission and the Action fallback. The
+ * in-memory implementation and contract suite remain the executable
+ * reference for every backend operation.
  *
  * ## What "transactional" means here
  *
@@ -127,6 +122,8 @@
  * policy itself -- only the primitive a recovery process needs:
  * `listPendingLaunchOperations`.
  */
+
+import type { DispatchLedger } from '@agent-lcars/dispatch-contracts';
 
 // ---------------------------------------------------------------------------
 // Task aggregate: signals, authorization decisions, intents, attempts, and
@@ -242,6 +239,18 @@ export interface IntentRecord {
 }
 
 /**
+ * A short, renewable serialization lease held by one controller delivery.
+ * Firestore's compare-and-swap revision makes acquisition atomic; the
+ * expiry makes a crashed hosted request recoverable without an operator
+ * deleting state by hand.
+ */
+export interface TaskLease {
+  owner: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+/**
  * The transactional unit: everything the dispatch controller knows about one
  * task, at one revision. `revision`/`updatedAt` are owned by the port
  * (`writeTask` sets them) -- a caller never sets them directly, the same way
@@ -258,6 +267,12 @@ export interface StoredTask {
   desiredIntentId?: string;
   signals: SignalRecord[];
   intents: IntentRecord[];
+  /** The exact controller aggregate. During migration the narrower fields
+   * above remain query-friendly projections, while this value is the state
+   * authority used by both hosted admission and the Action fallback. */
+  controllerState?: DispatchLedger;
+  /** Present only while one controller delivery owns this task. */
+  lease?: TaskLease;
 }
 
 /** The part of `StoredTask` a caller supplies to `writeTask` -- everything

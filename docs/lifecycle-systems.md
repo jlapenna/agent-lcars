@@ -8,24 +8,17 @@ label. This document is that issue's Phase 6 checkbox, "Document operational
 ownership and runbooks for all five systems." It answers one question per
 system: when this breaks, whose problem is it, and what do you check first.
 
-**Read this before trusting any of it as an architecture diagram.** #645's
-own exit criterion — "one authority exists for every lifecycle fact, and no
-recovery path can mutate another system's truth" — is **not true today**.
-Phase 6 (the cutover this document is part of) has not started. Phase 5
-(durable controller storage) shipped only a storage-port _interface_ and an
-in-memory reference implementation with contract tests
-(`apps/dispatch-broker/src/storage/`); it is deliberately not wired into the
-live dispatch path. `broker.ts`/`main.ts` are unchanged, and every existing
-test still exercises only the comment ledger. The **actual** authority for
-dispatch state today is the issue-comment ledger — a single pinned comment
-per issue/PR carrying the `<!-- agent-lcars:dispatch-ledger:v1 -->` marker,
-written and read by `apps/dispatch-broker/src/github-api.ts`'s
-`loadLedger`/`saveLedger`. Everything below describes the code as it exists
-on `main`, not the target state.
+The dispatch controller has an explicit migration switch:
+`DISPATCH_STORAGE_MODE=shadow` projects the issue-comment ledger into
+Firestore for comparison, while `authority` makes the Firestore task
+aggregate authoritative under a compare-and-swap lease. In authority mode
+the pinned `<!-- agent-lcars:dispatch-ledger:v1 -->` comment remains a
+human-readable compatibility projection, but a forged comment cannot change
+controller truth. `off` is the rollback position before authority cutover.
 
 Two seams are load-bearing enough to read before anything else:
 
-- **The comment ledger is forgeable by the agents it controls.**
+- **The compatibility comment is forgeable by the agents it controls.**
   `loadLedger` authenticates the ledger by comment _author_ — it must be
   posted by the workflow identity and be of type `Bot`
   (`github-api.ts:815-822`). `saveLedger` updates it with a `PATCH`
@@ -34,8 +27,8 @@ Two seams are load-bearing enough to read before anything else:
   job includes commenting on an issue necessarily holds — can rewrite the
   ledger while the author check keeps passing, because nothing about
   authorship changed. This is why `apps/dispatch-broker/src/storage/port.ts`
-  exists (see its own header for the full finding): the property it
-  eventually provides is state the controlled code cannot write, and no
+  exists (see its own header for the full finding): in authority mode it
+  provides state the controlled code cannot write, and no
   credential-scoping fix closes the gap, because the capability that lets an
   agent do its job is the same capability that lets it rewrite the ledger.
 - **A GitHub concurrency group is a lossy queue, not a throughput limiter.**

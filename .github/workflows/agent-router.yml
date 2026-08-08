@@ -145,8 +145,7 @@ jobs:
       contents: read # actions/checkout below.
       issues: write # ledger comments/labels/pin/assignee-park (github-api.ts).
       actions: write # workflow_dispatch + run listings (github-api.ts).
-      # #645 Phase 6 (shadow mode): WIF token minting for the
-      # "Authenticate to GCP for dispatch storage shadow observation" step
+      # Dispatch-storage WIF token minting for the conditional auth step
       # below. A grant this job always carries, even when
       # DISPATCH_STORAGE_MODE is 'off' -- job permissions are static, not
       # conditional -- but that step's own `if:` means an 'off' run never
@@ -161,8 +160,8 @@ jobs:
       - name: Checkout trusted broker revision
         uses: actions/checkout@v7
 
-      # #645 Phase 6 (shadow mode): conditional on the mode being enabled so
-      # an 'off' (or unset) DISPATCH_STORAGE_MODE mints no token at all --
+      # Conditional on a storage-writing mode so an 'off' (or unset)
+      # DISPATCH_STORAGE_MODE mints no token at all --
       # the genuine rollback position dispatch-broker/src/storage/shadow.ts
       # documents. Same google-github-actions/auth usage as
       # deploy-console.yml's own gcp-auth step (token_format: access_token,
@@ -172,9 +171,9 @@ jobs:
       # (dispatch-broker@agent-lcars.iam.gserviceaccount.com,
       # roles/datastore.user) is this job's own narrowly-scoped service
       # account, distinct from GCP_DEPLOYER_SA/GCP_CODEX_AGENT_SA.
-      - name: Authenticate to GCP for dispatch storage shadow observation
+      - name: Authenticate to GCP for dispatch storage
         id: gcp-auth
-        if: vars.DISPATCH_STORAGE_MODE == 'shadow'
+        if: vars.DISPATCH_STORAGE_MODE == 'shadow' || vars.DISPATCH_STORAGE_MODE == 'authority'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
@@ -187,8 +186,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
           ANCHOR_IS_PR: ${{ github.event.issue.pull_request != null || github.event.pull_request != null }}
-          # #645 Phase 6 (shadow mode): the mode switch itself, plus what
-          # main.ts's createShadowStoragePort needs when it is 'shadow'.
+          # The mode switch itself, plus what main.ts's storage adapter needs
+          # in shadow or authority mode.
           # DISPATCH_STORAGE_TOKEN/GCP_PROJECT_ID are simply unused strings
           # when the mode is 'off' -- dispatch-broker/src/storage/shadow.ts's
           # gate means neither is ever read.

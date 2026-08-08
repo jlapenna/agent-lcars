@@ -167,6 +167,10 @@ test('parseDispatchStorageMode accepts shadow', () => {
   assert.equal(parseDispatchStorageMode('shadow'), 'shadow');
 });
 
+test('parseDispatchStorageMode accepts authority', () => {
+  assert.equal(parseDispatchStorageMode('authority'), 'authority');
+});
+
 test('parseDispatchStorageMode rejects an unrecognised value loudly rather than silently treating it as off', () => {
   assert.throws(
     () => parseDispatchStorageMode('authoritative'),

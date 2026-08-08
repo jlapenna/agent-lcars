@@ -1900,9 +1900,6 @@ function normalizeEvent({
   return { kind: "ignored", reason: "unsupported issue action" };
 }
 
-// apps/dispatch-broker/src/storage/firestore-rest-port.ts
-import { isDeepStrictEqual } from "node:util";
-
 // apps/dispatch-broker/src/storage/port.ts
 function taskKey(task) {
   return `${task.repositoryId}:${task.issue}`;
@@ -1922,14 +1919,263 @@ var TaskWriteConflictError = class extends Error {
   actualRevision;
 };
 
+// apps/dispatch-broker/src/storage/shadow.ts
+import { isDeepStrictEqual } from "node:util";
+function parseDispatchStorageMode(raw) {
+  const value = (raw ?? "").trim();
+  if (value === "" || value === "off") return "off";
+  if (value === "shadow") return "shadow";
+  if (value === "authority") return "authority";
+  throw new Error(
+    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset), 'shadow', or 'authority'.`
+  );
+}
+function mapGenerationState(state) {
+  switch (state) {
+    case "accepted":
+      return "accepted";
+    case "pending":
+      return "pending";
+    case "dispatching":
+    case "dispatch-unknown":
+      return "dispatching";
+    case "active":
+    case "completion-observed":
+    case "completion-awaiting-terminal":
+      return "active";
+    case "completed":
+      return "completed";
+    case "dispatch-rejected":
+    case "superseded":
+    case "superseded-by-close":
+      return "superseded";
+    default: {
+      const exhaustive = state;
+      throw new Error(
+        `Unhandled ledger generation state: ${String(exhaustive)}`
+      );
+    }
+  }
+}
+function mapAuthorization(authorization2) {
+  if (!authorization2) return { observed: true };
+  if ("authorized" in authorization2) {
+    return {
+      authorized: authorization2.authorized,
+      actor: authorization2.actor,
+      rule: authorization2.rule
+    };
+  }
+  return {
+    observed: true,
+    actor: authorization2.actor,
+    workflow: authorization2.workflow
+  };
+}
+function mapSignal(source) {
+  return {
+    sourceKind: source.sourceKind,
+    sourceId: source.sourceId,
+    occurredAt: source.occurredAt,
+    authorization: mapAuthorization(source.authorization)
+  };
+}
+function mapAttempt(generation) {
+  const attempt = generation.attempt;
+  if (!attempt) return void 0;
+  return {
+    attemptId: attempt.attemptId ?? formatAttemptId({
+      generation: generation.generation,
+      intentId: generation.intentId
+    }),
+    token: attempt.token ?? "",
+    dispatchStartedAt: attempt.dispatchStartedAt ?? generation.occurredAt,
+    runId: attempt.runId,
+    runUrl: attempt.runUrl,
+    htmlUrl: attempt.htmlUrl,
+    boundAt: attempt.boundAt,
+    completedAt: attempt.completedAt,
+    conclusion: attempt.conclusion
+  };
+}
+function mapIntent(generation) {
+  return {
+    intentId: generation.intentId,
+    sourceId: generation.sourceId,
+    occurredAt: generation.occurredAt,
+    state: mapGenerationState(generation.state),
+    attempt: mapAttempt(generation)
+  };
+}
+function projectLedgerToStoredTask(ledger) {
+  const activeGeneration2 = ledger.generations.find(
+    (generation) => LEDGER_ACTIVE_GENERATION_STATES.has(generation.state)
+  );
+  const pendingGeneration = ledger.generations.find(
+    (generation) => generation.state === "pending"
+  );
+  const acceptedGeneration = ledger.generations.find(
+    (generation) => generation.state === "accepted"
+  );
+  const desiredIntentId = activeGeneration2?.intentId ?? pendingGeneration?.intentId ?? acceptedGeneration?.intentId;
+  return {
+    desiredIntentId,
+    signals: ledger.sources.map(mapSignal),
+    intents: ledger.generations.map(mapIntent),
+    controllerState: structuredClone(ledger)
+  };
+}
+function storageComparable(value) {
+  if (Array.isArray(value)) {
+    return value.filter((element) => element !== void 0).map(storageComparable);
+  }
+  if (value && typeof value === "object") {
+    const comparable = {};
+    for (const [key, fieldValue] of Object.entries(value)) {
+      if (fieldValue === void 0) continue;
+      comparable[key] = storageComparable(fieldValue);
+    }
+    return comparable;
+  }
+  return value;
+}
+function checkRoundTrip(written, after) {
+  if (!after) {
+    return [
+      { field: "revision", expected: written.revision, actual: void 0 }
+    ];
+  }
+  const fields = ["desiredIntentId", "signals", "intents", "controllerState"];
+  const divergences = [];
+  for (const field of fields) {
+    const expected = written[field];
+    const actual = after[field];
+    if (!isDeepStrictEqual(storageComparable(expected), storageComparable(actual))) {
+      divergences.push({ field, expected, actual });
+    }
+  }
+  if (after.revision !== written.revision) {
+    divergences.push({
+      field: "revision",
+      expected: written.revision,
+      actual: after.revision
+    });
+  }
+  return divergences;
+}
+function logRoundTripMismatches(task, divergences) {
+  for (const divergence of divergences) {
+    console.log(
+      `::warning::dispatch-storage shadow round-trip mismatch for ${task.repository}#${task.issue}, field '${divergence.field}': expected=${JSON.stringify(divergence.expected)} actual=${JSON.stringify(divergence.actual)}`
+    );
+  }
+}
+async function observeDispatchStorage(port, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const task = ledger.task;
+  const before = await port.readTask(task);
+  const desired = projectLedgerToStoredTask(ledger);
+  const written = await port.writeTask(task, before?.revision, desired, now);
+  const after = await port.readTask(task);
+  logRoundTripMismatches(task, checkRoundTrip(written, after));
+}
+async function maybeObserveDispatchStorage(mode, createPort, ledger, now) {
+  if (mode !== "shadow") return;
+  try {
+    await observeDispatchStorage(createPort(), ledger, now);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::dispatch-storage shadow observation failed for ${ledger.task.repository}#${ledger.task.issue}: ${message}`
+    );
+  }
+}
+
+// apps/dispatch-broker/src/storage/authority.ts
+var DEFAULT_TASK_LEASE_MS = 5 * 60 * 1e3;
+var DEFAULT_CAS_ATTEMPTS = 8;
+var TaskLeaseBusyError = class extends Error {
+  constructor(task, lease) {
+    super(
+      `Task ${task.repository}#${task.issue} is already leased by ${lease.owner} until ${lease.expiresAt}`
+    );
+    this.task = task;
+    this.lease = lease;
+    this.name = "TaskLeaseBusyError";
+  }
+  task;
+  lease;
+};
+function leaseIsLive(lease, now) {
+  return Boolean(lease && Date.parse(lease.expiresAt) > Date.parse(now));
+}
+async function acquireAuthority(port, task, owner, seed, options = {}) {
+  const now = options.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
+  const leaseMs = options.leaseMs ?? DEFAULT_TASK_LEASE_MS;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_CAS_ATTEMPTS;
+  let lastConflict;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const observedAt = now();
+    const current = await port.readTask(task);
+    if (current?.lease && current.lease.owner !== owner && leaseIsLive(current.lease, observedAt)) {
+      throw new TaskLeaseBusyError(task, current.lease);
+    }
+    const ledger = structuredClone(current?.controllerState ?? seed);
+    const lease = {
+      owner,
+      acquiredAt: current?.lease?.owner === owner ? current.lease.acquiredAt : observedAt,
+      expiresAt: new Date(Date.parse(observedAt) + leaseMs).toISOString()
+    };
+    try {
+      const stored = await port.writeTask(
+        task,
+        current?.revision,
+        { ...projectLedgerToStoredTask(ledger), lease },
+        observedAt
+      );
+      return {
+        ledger,
+        session: { port, owner, revision: stored.revision, lease }
+      };
+    } catch (error) {
+      if (!(error instanceof TaskWriteConflictError)) throw error;
+      lastConflict = error;
+    }
+  }
+  throw lastConflict;
+}
+async function persistAuthority(session, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  session.lease = {
+    ...session.lease,
+    expiresAt: new Date(Date.parse(now) + DEFAULT_TASK_LEASE_MS).toISOString()
+  };
+  const written = await session.port.writeTask(
+    ledger.task,
+    session.revision,
+    { ...projectLedgerToStoredTask(ledger), lease: session.lease },
+    now
+  );
+  session.revision = written.revision;
+  return written;
+}
+async function releaseAuthority(session, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const written = await session.port.writeTask(
+    ledger.task,
+    session.revision,
+    projectLedgerToStoredTask(ledger),
+    now
+  );
+  session.revision = written.revision;
+}
+
 // apps/dispatch-broker/src/storage/firestore-rest-port.ts
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 var TASKS_COLLECTION = "dispatchTasks";
 var LAUNCH_OUTBOX_COLLECTION = "dispatchLaunchOutbox";
 function defaultNow() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
 function sameResolution(a, b) {
-  return isDeepStrictEqual(a, b);
+  return isDeepStrictEqual2(a, b);
 }
 function toFirestoreValue(value) {
   if (value === null) return { nullValue: null };
@@ -2225,179 +2471,6 @@ var FirestoreRestStoragePort = class {
   }
 };
 
-// apps/dispatch-broker/src/storage/shadow.ts
-import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
-function parseDispatchStorageMode(raw) {
-  const value = (raw ?? "").trim();
-  if (value === "" || value === "off") return "off";
-  if (value === "shadow") return "shadow";
-  throw new Error(
-    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset) or 'shadow'.`
-  );
-}
-function mapGenerationState(state) {
-  switch (state) {
-    case "accepted":
-      return "accepted";
-    case "pending":
-      return "pending";
-    case "dispatching":
-    case "dispatch-unknown":
-      return "dispatching";
-    case "active":
-    case "completion-observed":
-    case "completion-awaiting-terminal":
-      return "active";
-    case "completed":
-      return "completed";
-    case "dispatch-rejected":
-    case "superseded":
-    case "superseded-by-close":
-      return "superseded";
-    default: {
-      const exhaustive = state;
-      throw new Error(
-        `Unhandled ledger generation state: ${String(exhaustive)}`
-      );
-    }
-  }
-}
-function mapAuthorization(authorization2) {
-  if (!authorization2) return { observed: true };
-  if ("authorized" in authorization2) {
-    return {
-      authorized: authorization2.authorized,
-      actor: authorization2.actor,
-      rule: authorization2.rule
-    };
-  }
-  return {
-    observed: true,
-    actor: authorization2.actor,
-    workflow: authorization2.workflow
-  };
-}
-function mapSignal(source) {
-  return {
-    sourceKind: source.sourceKind,
-    sourceId: source.sourceId,
-    occurredAt: source.occurredAt,
-    authorization: mapAuthorization(source.authorization)
-  };
-}
-function mapAttempt(generation) {
-  const attempt = generation.attempt;
-  if (!attempt) return void 0;
-  return {
-    attemptId: attempt.attemptId ?? formatAttemptId({
-      generation: generation.generation,
-      intentId: generation.intentId
-    }),
-    token: attempt.token ?? "",
-    dispatchStartedAt: attempt.dispatchStartedAt ?? generation.occurredAt,
-    runId: attempt.runId,
-    runUrl: attempt.runUrl,
-    htmlUrl: attempt.htmlUrl,
-    boundAt: attempt.boundAt,
-    completedAt: attempt.completedAt,
-    conclusion: attempt.conclusion
-  };
-}
-function mapIntent(generation) {
-  return {
-    intentId: generation.intentId,
-    sourceId: generation.sourceId,
-    occurredAt: generation.occurredAt,
-    state: mapGenerationState(generation.state),
-    attempt: mapAttempt(generation)
-  };
-}
-function projectLedgerToStoredTask(ledger) {
-  const activeGeneration2 = ledger.generations.find(
-    (generation) => LEDGER_ACTIVE_GENERATION_STATES.has(generation.state)
-  );
-  const pendingGeneration = ledger.generations.find(
-    (generation) => generation.state === "pending"
-  );
-  const acceptedGeneration = ledger.generations.find(
-    (generation) => generation.state === "accepted"
-  );
-  const desiredIntentId = activeGeneration2?.intentId ?? pendingGeneration?.intentId ?? acceptedGeneration?.intentId;
-  return {
-    desiredIntentId,
-    signals: ledger.sources.map(mapSignal),
-    intents: ledger.generations.map(mapIntent)
-  };
-}
-function storageComparable(value) {
-  if (Array.isArray(value)) {
-    return value.filter((element) => element !== void 0).map(storageComparable);
-  }
-  if (value && typeof value === "object") {
-    const comparable = {};
-    for (const [key, fieldValue] of Object.entries(value)) {
-      if (fieldValue === void 0) continue;
-      comparable[key] = storageComparable(fieldValue);
-    }
-    return comparable;
-  }
-  return value;
-}
-function checkRoundTrip(written, after) {
-  if (!after) {
-    return [
-      { field: "revision", expected: written.revision, actual: void 0 }
-    ];
-  }
-  const fields = [
-    "desiredIntentId",
-    "signals",
-    "intents"
-  ];
-  const divergences = [];
-  for (const field of fields) {
-    const expected = written[field];
-    const actual = after[field];
-    if (!isDeepStrictEqual2(storageComparable(expected), storageComparable(actual))) {
-      divergences.push({ field, expected, actual });
-    }
-  }
-  if (after.revision !== written.revision) {
-    divergences.push({
-      field: "revision",
-      expected: written.revision,
-      actual: after.revision
-    });
-  }
-  return divergences;
-}
-function logRoundTripMismatches(task, divergences) {
-  for (const divergence of divergences) {
-    console.log(
-      `::warning::dispatch-storage shadow round-trip mismatch for ${task.repository}#${task.issue}, field '${divergence.field}': expected=${JSON.stringify(divergence.expected)} actual=${JSON.stringify(divergence.actual)}`
-    );
-  }
-}
-async function observeDispatchStorage(port, ledger, now = (/* @__PURE__ */ new Date()).toISOString()) {
-  const task = ledger.task;
-  const before = await port.readTask(task);
-  const desired = projectLedgerToStoredTask(ledger);
-  const written = await port.writeTask(task, before?.revision, desired, now);
-  const after = await port.readTask(task);
-  logRoundTripMismatches(task, checkRoundTrip(written, after));
-}
-async function maybeObserveDispatchStorage(mode, createPort, ledger, now) {
-  if (mode !== "shadow") return;
-  try {
-    await observeDispatchStorage(createPort(), ledger, now);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(
-      `::warning::dispatch-storage shadow observation failed for ${ledger.task.repository}#${ledger.task.issue}: ${message}`
-    );
-  }
-}
-
 // apps/dispatch-broker/src/main.ts
 function env(name, required = true) {
   const value = process.env[name];
@@ -2418,11 +2491,26 @@ function decode(value) {
 function api() {
   return createGitHubApi({ token: env("GITHUB_TOKEN") });
 }
-function createShadowStoragePort() {
+function createStoragePort() {
   return new FirestoreRestStoragePort({
     projectId: env("GCP_PROJECT_ID"),
     token: env("DISPATCH_STORAGE_TOKEN")
   });
+}
+async function saveLedger2(client, loaded) {
+  if (!loaded.authority) {
+    await saveLedger(client, loaded);
+    return;
+  }
+  await persistAuthority(loaded.authority, loaded.ledger);
+  try {
+    await saveLedger(client, loaded);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Dispatch state committed to Firestore, but its GitHub ledger projection failed: ${message}`
+    );
+  }
 }
 function contextFor(event, inputs) {
   return {
@@ -2456,7 +2544,7 @@ async function runPhase(ledgerContext, phase, step, owningSystem = "controller")
           void 0,
           failure
         );
-        await saveLedger(ledgerContext.client, ledgerContext.loaded);
+        await saveLedger2(ledgerContext.client, ledgerContext.loaded);
       } catch (recordingError) {
         const recordingMessage = recordingError instanceof Error ? recordingError.message : String(recordingError);
         console.log(
@@ -2568,7 +2656,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
         retryDisposition: "never"
       })
     );
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     throw new Error("Multiple worker runs match one dispatch generation");
   }
   if (["dispatching", "dispatch-unknown"].includes(active.state) && matchingRuns.length === 1) {
@@ -2580,7 +2668,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
       htmlUrl: run2.html_url,
       workflow: expectedWorkflow
     });
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     active = activeGeneration(loaded.ledger);
   }
   if (!active?.attempt?.runId) return;
@@ -2597,7 +2685,7 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
       conclusion: run.conclusion,
       completedAt: run.updated_at
     });
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     return;
   }
   await trackStuckRun(client, loaded, active, run, now);
@@ -2700,7 +2788,7 @@ async function trackMissingRun(client, loaded, generation, now) {
       parkFailure
     );
   }
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 var RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
 var RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
@@ -2802,7 +2890,7 @@ async function trackStuckRun(client, loaded, generation, run, now) {
       parkFailure
     );
   }
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 async function repairMissingIntentFromLabel(client, loaded, now, runId) {
   const ledger = loaded.ledger;
@@ -2863,7 +2951,7 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId) {
     }
   });
   acceptIntent(ledger, intent, now);
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 async function reconcileControlState(client, loaded, issueClosed, now, runId) {
   const ledger = loaded.ledger;
@@ -2889,7 +2977,7 @@ async function reconcileControlState(client, loaded, issueClosed, now, runId) {
       },
       now
     );
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
   }
   return issueClosed;
 }
@@ -2933,7 +3021,7 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
       now,
       parkFailure
     );
-    await saveLedger(client, loaded);
+    await saveLedger2(client, loaded);
     return;
   }
   if (!active || !["dispatching", "dispatch-unknown"].includes(active.state)) {
@@ -2964,12 +3052,27 @@ async function dispatchAccepted(client, loaded) {
         generation.generation,
         crypto3.randomBytes(24).toString("base64url")
       );
-      await saveLedger(client, loaded);
+      if (loaded.authority) {
+        const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+        await loaded.authority.port.recordLaunchIntent({
+          operationId: attemptId,
+          task: loaded.ledger.task,
+          attemptId
+        });
+      }
+      await saveLedger2(client, loaded);
     });
     try {
       const binding = await dispatchWorker(client, generation, loaded.ledger.task);
       bindRun(loaded.ledger, generation.generation, binding);
-      await saveLedger(client, loaded);
+      if (loaded.authority) {
+        const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+          status: "launched",
+          binding
+        });
+      }
+      await saveLedger2(client, loaded);
       return;
     } catch (error) {
       if (isDefiniteDispatchRejection(error)) {
@@ -2979,7 +3082,14 @@ async function dispatchAccepted(client, loaded) {
             generation.generation,
             `HTTP ${error.status}`
           );
-          await saveLedger(client, loaded);
+          if (loaded.authority) {
+            const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+            await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+              status: "rejected",
+              reason: `HTTP ${error.status}`
+            });
+          }
+          await saveLedger2(client, loaded);
           throw error;
         });
       }
@@ -2989,7 +3099,14 @@ async function dispatchAccepted(client, loaded) {
         // Assumed Error-shaped, exactly as the untyped original assumed.
         error.message.slice(0, 300)
       );
-      await saveLedger(client, loaded);
+      if (loaded.authority) {
+        const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
+        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+          status: "unknown",
+          reason: error.message.slice(0, 300)
+        });
+      }
+      await saveLedger2(client, loaded);
       return;
     }
   }
@@ -3030,13 +3147,13 @@ async function handleCompletion(client, loaded, normalized) {
     authorization: { observed: true, workflow: expectedWorkflow }
   });
   if (generation.state === "completed") {
-    if (evidence.outcome === "recorded") await saveLedger(client, loaded);
+    if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
     return;
   }
   if (generation.state === "active") {
     observeCompletion(loaded.ledger, generation.generation, run.id);
   }
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
   const deadline = Date.now() + 12e4;
   let delay = 2e3;
   while (run.status !== "completed" && Date.now() < deadline) {
@@ -3064,7 +3181,7 @@ async function handleCompletion(client, loaded, normalized) {
   if (run.status !== "completed") {
     if (generation.state === "completion-observed") {
       awaitTerminal(loaded.ledger, generation.generation);
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
     }
     return;
   }
@@ -3074,7 +3191,7 @@ async function handleCompletion(client, loaded, normalized) {
     conclusion: run.conclusion,
     completedAt: run.updated_at
   });
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 function resolveTask(normalized) {
   return normalized.kind === "intent" ? normalized.intent.task : (
@@ -3147,17 +3264,32 @@ async function healStaleAgentLabels(client, loaded, intent) {
     labels: removable,
     authorization: { observed: true, actor: "dispatch-broker" }
   });
-  if (evidence.outcome === "recorded") await saveLedger(client, loaded);
+  if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest) {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, storageMode = "off", leaseOwner = "") {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
-  return loadLedger(client, task, void 0, {
-    createIfMissing: !untrackedPullRequestControl
-  });
+  const loaded = await loadLedger(
+    client,
+    task,
+    void 0,
+    {
+      createIfMissing: !untrackedPullRequestControl
+    }
+  );
+  if (!loaded || storageMode !== "authority") return loaded;
+  const authority = await acquireAuthority(
+    createStoragePort(),
+    task,
+    leaseOwner,
+    loaded.ledger
+  );
+  loaded.ledger = authority.ledger;
+  loaded.authority = authority.session;
+  return loaded;
 }
 async function applyAnchorControlTransition(client, loaded, control) {
   applyAnchorControl(loaded.ledger, control);
-  await saveLedger(client, loaded);
+  await saveLedger2(client, loaded);
 }
 async function broker() {
   const normalized = decode(env("BROKER_PAYLOAD"));
@@ -3188,7 +3320,14 @@ async function broker() {
   }
   let loaded;
   try {
-    loaded = await loadBrokerLedger(client, task, normalized, isPullRequest);
+    loaded = await loadBrokerLedger(
+      client,
+      task,
+      normalized,
+      isPullRequest,
+      storageMode,
+      `action:${runId}`
+    );
   } catch (error) {
     await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
   }
@@ -3223,7 +3362,7 @@ async function broker() {
         "intent",
         () => acceptIntent(loaded.ledger, normalized.intent)
       );
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
       if (FRESH_INTENT_OUTCOMES.has(accepted.outcome)) {
         await healStaleAgentLabels(client, loaded, normalized.intent);
       }
@@ -3231,7 +3370,7 @@ async function broker() {
       await applyAnchorControlTransition(client, loaded, normalized.control);
     } else if (normalized.kind === "control-evidence") {
       recordControlEvidence(loaded.ledger, normalized.evidence);
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
     } else if (normalized.kind === "completion") {
       await handleCompletion(client, loaded, normalized);
     } else if (normalized.kind === "reconcile") {
@@ -3254,7 +3393,7 @@ async function broker() {
     await dispatchAccepted(client, loaded);
     try {
       recordProjectionStatus(loaded.ledger, true);
-      await saveLedger(client, loaded);
+      await saveLedger2(client, loaded);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.log(
@@ -3263,11 +3402,22 @@ async function broker() {
     }
     await maybeObserveDispatchStorage(
       storageMode,
-      createShadowStoragePort,
+      createStoragePort,
       loaded.ledger
     );
   } catch (error) {
     await failClosed(client, task, env("MAINTAINER_LOGIN", false), error);
+  } finally {
+    if (loaded?.authority) {
+      try {
+        await releaseAuthority(loaded.authority, loaded.ledger);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to release dispatch-storage authority lease; it will expire automatically: ${message}`
+        );
+      }
+    }
   }
 }
 async function preflight() {

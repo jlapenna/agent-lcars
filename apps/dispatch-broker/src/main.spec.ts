@@ -50,6 +50,8 @@ import {
   wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, normalizeEvent } from './normalize.js';
+import { acquireAuthority } from './storage/authority.js';
+import { InMemoryStoragePort } from './storage/in-memory-port.js';
 
 const task = {
   repositoryId: 123,
@@ -108,6 +110,67 @@ function boundLedger() {
   });
   return ledger;
 }
+
+test('storage-authoritative dispatch records and resolves the launch outbox before binding the run', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-authority',
+    sourceKind: 'manual',
+    sourceId: 'source-authority',
+    transportRunId: 736,
+    occurredAt: '2026-08-08T06:00:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'authority',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:authority',
+    seed,
+  );
+  const runId = 73601;
+  const runUrl = `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`;
+  const htmlUrl = `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`;
+  const client = {
+    request: async (path, options = {}) => {
+      assert.match(path, /actions\/workflows\/codex.yml\/dispatches$/u);
+      assert.equal(options.method, 'POST');
+      return {
+        status: 200,
+        data: { workflow_run_id: runId, run_url: runUrl, html_url: htmlUrl },
+        headers: new Headers(),
+      };
+    },
+    requestOk: async (path, options = {}) => {
+      assert.match(path, /issues\/comments\/9$/u);
+      assert.equal(options.method, 'PATCH');
+      return { id: 9 };
+    },
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  const attemptId = loaded.ledger.generations[0].attempt?.attemptId;
+  assert.ok(attemptId);
+  const operation = await port.readLaunchOperation(attemptId);
+  assert.equal(operation?.status, 'launched');
+  assert.equal(operation?.resolution?.status, 'launched');
+  const stored = await port.readTask(task);
+  assert.equal(stored?.controllerState?.generations[0].state, 'active');
+  assert.equal(stored?.controllerState?.generations[0].attempt?.runId, runId);
+});
 
 function workerRun(status = 'in_progress') {
   return {

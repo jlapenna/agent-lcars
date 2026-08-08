@@ -642,7 +642,7 @@ test('agent-router.yml scopes id-token: write to the broker job alone, restating
   );
 });
 
-test('agent-router.yml gates dispatch-storage GCP auth on shadow mode and wires the token/mode into the broker action (#645 Phase 6)', async () => {
+test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mode and wires the token/mode into the broker action (#736)', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
@@ -651,13 +651,16 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow mode and wires 
   const auth = namedStep(
     steps,
     'agent-router.yml',
-    'Authenticate to GCP for dispatch storage shadow observation',
+    'Authenticate to GCP for dispatch storage',
   );
   assert.match(auth.source, stepField('id', 'gcp-auth'));
   assert.match(
     auth.source,
-    stepField('if', "vars.DISPATCH_STORAGE_MODE == 'shadow'"),
-    'the auth step must be conditional on shadow mode, so an off run mints no token at all',
+    stepField(
+      'if',
+      "vars.DISPATCH_STORAGE_MODE == 'shadow' || vars.DISPATCH_STORAGE_MODE == 'authority'",
+    ),
+    'the auth step must be conditional on a storage-writing mode, so an off run mints no token at all',
   );
   assert.match(auth.source, stepField('uses', 'google-github-actions/auth@v3'));
   assert.match(

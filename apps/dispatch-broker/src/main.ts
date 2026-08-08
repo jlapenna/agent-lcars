@@ -55,7 +55,7 @@ import {
   loadLedger,
   pinLedgerWhenUnoccupied,
   repositoryPath,
-  saveLedger,
+  saveLedger as saveLedgerComment,
   verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api.js';
@@ -80,6 +80,12 @@ import {
   selectedPipeline,
   selectedPipelineFrom,
 } from './normalize.js';
+import {
+  acquireAuthority,
+  type AuthoritySession,
+  persistAuthority,
+  releaseAuthority,
+} from './storage/authority.js';
 import { FirestoreRestStoragePort } from './storage/firestore-rest-port.js';
 import type { StoragePort } from './storage/port.js';
 import {
@@ -185,6 +191,7 @@ interface LoadedLedger {
   comment: GitHubIssueComment;
   created: boolean;
   existingComments?: GitHubIssueComment[];
+  authority?: AuthoritySession;
 }
 
 interface LedgerContext {
@@ -215,21 +222,39 @@ function api(): GitHubApiClient {
   return createGitHubApi({ token: env('GITHUB_TOKEN') });
 }
 
-// #645 Phase 6 (shadow mode): the one place a `FirestoreRestStoragePort` is
-// ever constructed. Deliberately a lazy factory, never called eagerly --
-// `maybeObserveDispatchStorage` (storage/shadow.ts) only invokes this when
-// `DISPATCH_STORAGE_MODE` is `'shadow'`, so an `'off'` run never reads
-// GCP_PROJECT_ID/DISPATCH_STORAGE_TOKEN, never constructs this class, and
-// never makes a Firestore request -- see that module's own "Inertness of
-// 'off'" section. Credential resolution stays out of the adapter itself
+// The Action adapter's one `FirestoreRestStoragePort` factory. Shadow mode
+// invokes it lazily after a comment-ledger transition; authority mode uses
+// it before any transition to acquire the shared per-task lease. An `off`
+// run reaches neither path, so it reads no storage credential and performs
+// no Firestore request. Credential resolution stays out of the adapter itself
 // (firestore-rest-port.ts's own "Auth" section): agent-router.yml's
 // google-github-actions/auth step mints the access token and this file only
 // ever reads the resulting env var, never derives one itself.
-function createShadowStoragePort(): StoragePort {
+function createStoragePort(): StoragePort {
   return new FirestoreRestStoragePort({
     projectId: env('GCP_PROJECT_ID'),
     token: env('DISPATCH_STORAGE_TOKEN'),
   });
+}
+
+async function saveLedger(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+): Promise<void> {
+  if (!loaded.authority) {
+    await saveLedgerComment(client, loaded);
+    return;
+  }
+  await persistAuthority(loaded.authority, loaded.ledger);
+  try {
+    await saveLedgerComment(client, loaded);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Dispatch state committed to Firestore, but its GitHub ` +
+        `ledger projection failed: ${message}`,
+    );
+  }
 }
 
 function contextFor(
@@ -1287,6 +1312,15 @@ async function dispatchAccepted(
         generation.generation,
         crypto.randomBytes(24).toString('base64url'),
       );
+      if (loaded.authority) {
+        const attemptId =
+          generation.attempt?.attemptId ?? formatAttemptId(generation);
+        await loaded.authority.port.recordLaunchIntent({
+          operationId: attemptId,
+          task: loaded.ledger.task,
+          attemptId,
+        });
+      }
       await saveLedger(client, loaded);
     });
     try {
@@ -1297,6 +1331,14 @@ async function dispatchAccepted(
         workflow: string;
       } = await dispatchWorker(client, generation, loaded.ledger.task);
       bindRun(loaded.ledger, generation.generation, binding);
+      if (loaded.authority) {
+        const attemptId =
+          generation.attempt?.attemptId ?? formatAttemptId(generation);
+        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+          status: 'launched',
+          binding,
+        });
+      }
       await saveLedger(client, loaded);
       return;
     } catch (error) {
@@ -1311,6 +1353,14 @@ async function dispatchAccepted(
             generation.generation,
             `HTTP ${error.status}`,
           );
+          if (loaded.authority) {
+            const attemptId =
+              generation.attempt?.attemptId ?? formatAttemptId(generation);
+            await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+              status: 'rejected',
+              reason: `HTTP ${error.status}`,
+            });
+          }
           await saveLedger(client, loaded);
           throw error;
         });
@@ -1326,6 +1376,14 @@ async function dispatchAccepted(
         // Assumed Error-shaped, exactly as the untyped original assumed.
         (error as Error).message.slice(0, 300),
       );
+      if (loaded.authority) {
+        const attemptId =
+          generation.attempt?.attemptId ?? formatAttemptId(generation);
+        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
+          status: 'unknown',
+          reason: (error as Error).message.slice(0, 300),
+        });
+      }
       await saveLedger(client, loaded);
       return;
     }
@@ -1630,6 +1688,8 @@ async function loadBrokerLedger(
   task: LedgerTaskRef,
   normalized: NormalizedEvent,
   isPullRequest: boolean,
+  storageMode: ReturnType<typeof parseDispatchStorageMode> = 'off',
+  leaseOwner = '',
 ): Promise<LoadedLedger | undefined> {
   // GitHub fires this workflow for every PR close/reopen in the repository.
   // Ledger presence is the durable signal that a PR is actually a broker
@@ -1639,9 +1699,24 @@ async function loadBrokerLedger(
   // ledger normally.
   const untrackedPullRequestControl =
     isPullRequest && normalized.kind === 'anchor-control';
-  return loadLedger(client, task, undefined, {
-    createIfMissing: !untrackedPullRequestControl,
-  });
+  const loaded: LoadedLedger | undefined = await loadLedger(
+    client,
+    task,
+    undefined,
+    {
+      createIfMissing: !untrackedPullRequestControl,
+    },
+  );
+  if (!loaded || storageMode !== 'authority') return loaded;
+  const authority = await acquireAuthority(
+    createStoragePort(),
+    task,
+    leaseOwner,
+    loaded.ledger,
+  );
+  loaded.ledger = authority.ledger;
+  loaded.authority = authority.session;
+  return loaded;
 }
 
 async function applyAnchorControlTransition(
@@ -1703,7 +1778,14 @@ async function broker(): Promise<void> {
   }
   let loaded: LoadedLedger | undefined;
   try {
-    loaded = await loadBrokerLedger(client, task, normalized, isPullRequest);
+    loaded = await loadBrokerLedger(
+      client,
+      task,
+      normalized,
+      isPullRequest,
+      storageMode,
+      `action:${runId}`,
+    );
   } catch (error) {
     await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
   }
@@ -1819,20 +1901,28 @@ async function broker(): Promise<void> {
         `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
       );
     }
-    // #645 Phase 6 (shadow mode): observe this pass's resulting ledger
-    // state against durable storage. Runs last, after every ledger-
-    // authoritative write this pass made -- the ledger stays sole
-    // authority; this is purely an observer. maybeObserveDispatchStorage's
-    // own containment (storage/shadow.ts) means a storage failure here can
-    // never turn this otherwise-successful pass into a failed job, and
-    // 'off' never reaches this call's port factory at all.
+    // Shadow writes the resulting comment-ledger state for comparison.
+    // Authority mode already persisted every checkpoint and this helper is
+    // intentionally inert there; off mode never invokes the port factory.
     await maybeObserveDispatchStorage(
       storageMode,
-      createShadowStoragePort,
+      createStoragePort,
       loaded.ledger,
     );
   } catch (error) {
     await failClosed(client, task, env('MAINTAINER_LOGIN', false), error);
+  } finally {
+    if (loaded?.authority) {
+      try {
+        await releaseAuthority(loaded.authority, loaded.ledger);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          `::warning::Failed to release dispatch-storage authority lease; ` +
+            `it will expire automatically: ${message}`,
+        );
+      }
+    }
   }
 }
 
