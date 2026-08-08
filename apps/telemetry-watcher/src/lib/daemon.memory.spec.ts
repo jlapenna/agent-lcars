@@ -4,17 +4,25 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const STREAMING_RSS_RATIO_LIMIT = 0.75;
+const STREAMING_MEMORY_RATIO_LIMIT = 0.75;
 
-interface RssMeasurement {
+interface MemoryMeasurement {
   rssDeltaMb: number;
+  managedDeltaMb: number;
   materializedBytes: number;
 }
 
-function measureTickRss(
+function retainedMemoryMb(measurement: MemoryMeasurement): number {
+  // RSS is the production-impact signal, but allocators and kernels can
+  // report it well below the bytes a process still owns. Heap + external
+  // memory is the stable lower-level signal for retained strings/Buffers.
+  return Math.max(measurement.rssDeltaMb, measurement.managedDeltaMb);
+}
+
+function measureTickMemory(
   corpusDir: string,
   extraArgs: string[] = [],
-): RssMeasurement {
+): MemoryMeasurement {
   const output = execFileSync(
     process.execPath,
     [
@@ -27,7 +35,7 @@ function measureTickRss(
     { encoding: 'utf8' },
   );
 
-  return JSON.parse(output) as RssMeasurement;
+  return JSON.parse(output) as MemoryMeasurement;
 }
 
 // Regression coverage for #2606: `tick()` used to read every discovered
@@ -38,7 +46,7 @@ function measureTickRss(
 // and asserts RSS growth during a real `tick()` stays a small fraction of
 // the corpus size — proving the fix streams file contents instead of
 // materializing them all at once.
-describe('WatcherDaemon tick() memory usage', () => {
+describe('WatcherDaemon tick() retained memory', () => {
   const FILE_COUNT = 110;
   // Real pike deployment averaged ~2.45MB/file (417MB / 170 files).
   const LINES_PER_FILE = 6_000;
@@ -103,21 +111,22 @@ describe('WatcherDaemon tick() memory usage', () => {
     fs.rmSync(corpusDir, { recursive: true, force: true });
   });
 
-  it('keeps RSS growth well below the corpus size on a single tick', () => {
+  it('keeps retained memory growth well below the corpus size on a single tick', () => {
     const totalMb = totalBytes / 1e6;
     expect(totalMb).toBeGreaterThan(200); // sanity-check the fixture is actually large
 
-    const { rssDeltaMb } = measureTickRss(corpusDir);
+    const measurement = measureTickMemory(corpusDir);
 
-    // The naive (pre-fix) implementation's RSS growth roughly tracks the
-    // full corpus size (measured ~120% of corpus size in practice, since it
-    // holds every file's content plus the reduced state simultaneously).
-    // Ten real-workload runs measured the streaming ratio at 30.6-31.1%
-    // locally; the loaded-runner incident reached roughly 55%. A 75% bound
-    // leaves 20 percentage points above that outlier while remaining well
-    // below both the old ~120% behavior and the 131-139% materializing
-    // control below.
-    expect(rssDeltaMb / totalMb).toBeLessThan(STREAMING_RSS_RATIO_LIMIT);
+    // The naive (pre-fix) implementation retains roughly the full corpus
+    // plus reduced state simultaneously. Ten real-workload runs measured
+    // the streaming RSS ratio at 30.6-31.1% locally; a loaded-runner
+    // incident reached roughly 55%. A 75% bound leaves 20 percentage points
+    // above that outlier. retainedMemoryMb also covers V8-owned heap and
+    // external memory because a runner can report RSS far below bytes that
+    // remain strongly reachable (34.9% in CI for the full-corpus control).
+    expect(retainedMemoryMb(measurement) / totalMb).toBeLessThan(
+      STREAMING_MEMORY_RATIO_LIMIT,
+    );
     // Timeout raised 60s -> 120s (#3123 phase 1 CI investigation): CI failed
     // once at 70.488s against this 200MB+ synthetic corpus while the
     // multi-root/adapter refactor's own local runs stayed well under 20s -
@@ -135,15 +144,14 @@ describe('WatcherDaemon tick() memory usage', () => {
 
   it('rejects deliberate whole-corpus materialization', () => {
     const totalMb = totalBytes / 1e6;
-    const { rssDeltaMb, materializedBytes } = measureTickRss(corpusDir, [
-      '--materialize-corpus',
-    ]);
+    const measurement = measureTickMemory(corpusDir, ['--materialize-corpus']);
 
-    // The helper reads this total only after its final GC/RSS sample, so this
-    // equality proves every corpus Buffer was still retained when measured.
-    expect(materializedBytes).toBe(totalBytes);
-    expect(rssDeltaMb / totalMb).toBeGreaterThanOrEqual(
-      STREAMING_RSS_RATIO_LIMIT,
+    // The helper reads this total only after its final GC/memory sample, so
+    // this equality proves every corpus Buffer was still retained when
+    // measured.
+    expect(measurement.materializedBytes).toBe(totalBytes);
+    expect(retainedMemoryMb(measurement) / totalMb).toBeGreaterThanOrEqual(
+      STREAMING_MEMORY_RATIO_LIMIT,
     );
   }, 120_000);
 });
