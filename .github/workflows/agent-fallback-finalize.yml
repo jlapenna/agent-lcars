@@ -69,7 +69,12 @@ permissions: {}
 
 jobs:
   finalize:
-    if: github.event_name == 'workflow_call'
+    # A reusable workflow inherits the caller's event name: workers are
+    # dispatched by workflow_dispatch, so checking for workflow_call here
+    # skips the authoritative completion callback in production. Required
+    # call input `issue` is populated only for the reusable-worker path and
+    # remains empty for this workflow's schedule/manual probe entry points.
+    if: inputs.issue != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

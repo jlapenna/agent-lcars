@@ -87,7 +87,7 @@ section.
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | Issue carries the right `agent:*` label but nothing dispatches, with no hosted admission log for its delivery                                                                           | Dispatch controller (webhook admission)                                       | GitHub App delivery history, then `/api/control-plane/webhook` and Cloud Tasks logs                                                       |
 | Webhook ACKed but the queued `/api/control-plane/webhook/process` request repeatedly returns 4xx/5xx                                                                                    | Dispatch controller (hosted admission)                                        | App Hosting logs for HMAC, payload normalization, Firestore lease, or GitHub API failure                                                  |
-| A manually dispatched `agent-router.yml` fallback sits **queued**, never starting                                                                                                       | Runner platform                                                               | `gh api repos/<owner>/<repo>/actions/runners` for a runner carrying `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}`                              |
+| The dedicated `Dispatch Canary Router` stays **queued**, never starting                                                                                                                 | GitHub Actions availability                                                   | The GitHub-hosted workflow run queue; this path no longer depends on a self-hosted runner                                                 |
 | `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                                                 | Dispatch controller (hosted reconciliation)                                   | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                 |
 | A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                                                  | Runner platform                                                               | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                      |
 | A published action (`run-dispatch-canary`, `rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                           | The failing step's raw log, before assuming an authorization/ordering bug                                                                 |
@@ -127,8 +127,8 @@ and the dispatch ledger itself.
   closed).
 - `apps/dispatch-broker/src/normalize.ts` — event-to-signal normalization.
 - `libs/dispatch-reconcile/src/` — host-independent discovery, pagination,
-  deduplication, bounded dispatch, and scan-result contract shared by the
-  Action fallback and hosted backend.
+  deduplication, bounded dispatch, and scan-result contract used by the
+  hosted backend and its deterministic tests.
 - `apps/console/src/app/api/control-plane/reconcile/route.ts` — hosted scan
   endpoint; accepts only GitHub Actions OIDC from this repository's
   `dispatch-reconcile.yml` on `main`.
@@ -139,7 +139,7 @@ and the dispatch ledger itself.
   on this repository's `main`.
 - `apps/console/src/lib/hosted-controller.ts`, `hosted-admission.ts`,
   `hosted-completion.ts`, `hosted-reconciler.ts` — the hosted transport
-  adapters around the same controller transition path used by the fallback.
+  adapters around the shared controller transition path.
 - `libs/dispatch-contracts/src/` — the shared schema every consumer now
   imports instead of hand-mirroring: `ledger.ts` (ledger shape/marker),
   `marker.ts` (the `[dispatch:g<n>:<id>]` run-title marker and the
@@ -150,13 +150,13 @@ and the dispatch ledger itself.
   bundle at `dist/main.mjs` (source: `apps/dispatch-broker/src/main.ts`). It
   retains preflight/manual broker operations and supplies the trusted thin
   OIDC completion client; it is no longer the production event queue.
-- `.github/workflows/agent-router.yml` — a `workflow_dispatch`-only manual
-  rollback transport. Its `normalize` and `broker` jobs still run on
-  `${{ vars.CONTROL_PLANE_RUNNER_LABEL }}` when explicitly invoked.
+- `.github/workflows/agent-router.yml` — a GitHub-hosted,
+  `workflow_dispatch`-only canary transport. Its public input surface accepts
+  only the canonical canary request; the legacy production/manual transport
+  is retired.
 - `.github/workflows/dispatch-reconcile.yml` — a GitHub-hosted scheduler
-  invokes the App Hosting endpoint every 30 minutes. Its manual
-  `action-fallback` transport retains the prior self-hosted composite-action
-  scan during soak.
+  invokes the App Hosting endpoint every 30 minutes. Hosted reconciliation is
+  the only transport; the self-hosted Action fallback is retired.
 - `.github/workflows/dispatch-canary.yml` +
   `.github/workflows/agent-dispatch-canary.yml` +
   `.github/actions/run-dispatch-canary` — the controller's own end-to-end
@@ -236,7 +236,7 @@ broker's own logic executes.
 2. Check the GitHub App delivery and correlate its delivery UUID through the
    public webhook ACK, Cloud Tasks request, and hosted processing log. There
    is intentionally no event-triggered `agent-router.yml` run in production;
-   that workflow now appears only when an operator invokes the fallback.
+   that workflow now appears only for the dedicated dispatch canary.
 3. If a published action is involved, read its own step log first —
    `ERR_MODULE_NOT_FOUND` or any other load-time error means the code never
    ran at all, which rules out an authorization/ordering explanation before
@@ -257,10 +257,8 @@ create a second generation. A digest-valid, maintainer-authored Quick Task is
 the narrow creation-time fallback because GitHub emits no separate timeline
 event for labels included in the issue-creation request (#634). The
 GitHub-hosted scheduler and App Hosting processor remain outside the
-self-hosted control-plane runner failure domain. A maintainer can select
-`action-fallback` on a manual
-`dispatch-reconcile.yml` run to execute the previous composite-action
-scanner.
+self-hosted control-plane runner failure domain. Manual reconcile runs use
+that same hosted endpoint; there is no self-hosted rollback transport.
 
 ## 2. Runner platform
 
@@ -293,8 +291,8 @@ definitions that decide which label(s) get a listener at all — is owned by
 repo's Ansible playbook. `docs/onboarding-autoscaler.md` documents the
 split in detail. agent-lcars only _publishes the images_ homelab pulls and
 _names the labels_ its own workflows expect (`AGENT_RUNNER_LABEL`,
-`CONTROL_PLANE_RUNNER_LABEL`, `DEFAULT_RUNNER_LABEL`, `CI_RUNNER_LABEL`,
-`BUILD_RUNNER_LABEL` — see `docs/deployment-boundary.md` §3). Whether
+`DEFAULT_RUNNER_LABEL`, `CI_RUNNER_LABEL`, `BUILD_RUNNER_LABEL` — see
+`docs/deployment-boundary.md` §3). Whether
 anything is actually listening for a given label is entirely homelab's
 question to answer.
 
@@ -688,18 +686,18 @@ workflows:
 
 ### Scheduled/self-healing alert coverage
 
-| Workflow                      | Watched job/path                                             | Scope note                                                                                                         |
-| ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `dispatch-canary.yml`         | `canary`                                                     | Full scheduled/manual dispatch lifecycle                                                                           |
-| `webhook-ingress-canary.yml`  | `probe`                                                      | Real subscribed GitHub App event through public ingress, queue processing, and exact durable authority observation |
-| `deliverable-watchdog.yml`    | `scan`                                                       | Watches the observer that surfaces agent PRs abandoned after a successful dispatch                                 |
-| `dispatch-reconcile.yml`      | whichever of `hosted-scan` or `action-fallback` was selected | Never treats the intentionally skipped transport as a failure                                                      |
-| `rerun-infra-killed-runs.yml` | `scan`                                                       | Watches the CI self-healing sweep                                                                                  |
-| `post-deploy-smoke.yml`       | `smoke`                                                      | Evaluates only after an upstream deployment actually succeeded; a skipped smoke cannot falsely resolve an incident |
-| `bootstrap-canary.yml`        | `bootstrap`                                                  | Watches the real three-lane runner bootstrap sequence                                                              |
-| `opencode-model-canary.yml`   | `probe`                                                      | Watches the scheduled provider/model probe                                                                         |
-| `label-contract-audit.yml`    | matrix `audit`                                               | Watches the repository label-contract audit                                                                        |
-| `agent-automerge.yml`         | scheduled `close-orphaned-anchors`                           | Filters history to `schedule`, so unrelated PR-event runs cannot reset its failure streak                          |
+| Workflow                      | Watched job/path                   | Scope note                                                                                                         |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `dispatch-canary.yml`         | `canary`                           | Full scheduled/manual dispatch lifecycle                                                                           |
+| `webhook-ingress-canary.yml`  | `probe`                            | Real subscribed GitHub App event through public ingress, queue processing, and exact durable authority observation |
+| `deliverable-watchdog.yml`    | `scan`                             | Watches the observer that surfaces agent PRs abandoned after a successful dispatch                                 |
+| `dispatch-reconcile.yml`      | `hosted-scan`                      | OIDC-authenticated hosted reconciliation; no self-hosted fallback transport                                        |
+| `rerun-infra-killed-runs.yml` | `scan`                             | Watches the CI self-healing sweep                                                                                  |
+| `post-deploy-smoke.yml`       | `smoke`                            | Evaluates only after an upstream deployment actually succeeded; a skipped smoke cannot falsely resolve an incident |
+| `bootstrap-canary.yml`        | `bootstrap`                        | Watches the real three-lane runner bootstrap sequence                                                              |
+| `opencode-model-canary.yml`   | `probe`                            | Watches the scheduled provider/model probe                                                                         |
+| `label-contract-audit.yml`    | matrix `audit`                     | Watches the repository label-contract audit                                                                        |
+| `agent-automerge.yml`         | scheduled `close-orphaned-anchors` | Filters history to `schedule`, so unrelated PR-event runs cannot reset its failure streak                          |
 
 Required-check CI failures and CodeQL findings already surface through
 GitHub's native check/security notification paths; they are not scheduled

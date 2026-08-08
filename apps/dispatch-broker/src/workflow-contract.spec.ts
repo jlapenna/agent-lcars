@@ -805,7 +805,13 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   );
   assert.match(
     finalizeJob,
-    /^ {4}if:\s+github\.event_name == 'workflow_call'\s*$/mu,
+    /^ {4}if:\s+inputs\.issue != ''\s*$/mu,
+    'the reusable finalizer must admit called workers by their required input; github.event_name remains the caller event inside a reusable workflow',
+  );
+  assert.doesNotMatch(
+    finalizeJob,
+    /github\.event_name == 'workflow_call'/u,
+    'a reusable workflow must not expect github.event_name to become workflow_call',
   );
   const steps = stepBlocks(fallbackSource);
   assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [

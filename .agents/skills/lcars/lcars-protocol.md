@@ -154,9 +154,10 @@ It does not create one `agent-router.yml` run per candidate; that removes the
 repair path's dependency on the self-hosted control-plane pool. Every hosted
 invocation uses a request-unique lease owner so overlapping scheduled/manual
 calls serialize through Firestore instead of bypassing the live lease as the
-same owner. The manual `action-fallback` transport retains the prior
-self-hosted scanner for rollback. See `apps/dispatch-broker/src/main.ts`'s
-`reconcileLedger` and `trackMissingRun` for the pure repair logic and
+same owner. Manual and scheduled reconciliation both use the hosted endpoint;
+the self-hosted `action-fallback` transport is retired. See
+`apps/dispatch-broker/src/main.ts`'s `reconcileLedger` and `trackMissingRun`
+for the pure repair logic and
 `apps/dispatch-broker/src/main.spec.ts` for its interruption/
 idempotency test coverage.
 
