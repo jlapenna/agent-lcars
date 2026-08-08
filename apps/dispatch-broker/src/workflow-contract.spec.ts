@@ -771,6 +771,15 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
       source,
       /^ {6}fleet-login:\s+\$\{\{ vars\.AGENT_FLEET_LOGIN \}\}\s*$/mu,
     );
+    assert.doesNotMatch(source, /^ {4}secrets:\s+inherit\s*$/mu);
+    if (pipeline === 'claude') {
+      assert.match(
+        source,
+        /^ {6}CLAUDE_CODE_OAUTH_TOKEN:\s+\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}\s*$/mu,
+      );
+    } else {
+      assert.doesNotMatch(source, /CLAUDE_CODE_OAUTH_TOKEN/u);
+    }
     assert.doesNotMatch(
       source,
       new RegExp(`needs\\.${pipeline}\\.outputs`, 'u'),
@@ -785,10 +794,19 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.match(fallbackSource, /^ {2}workflow_call:\s*$/mu);
   assert.match(fallbackSource, /^ {6}fleet-login:\s*$/mu);
   assert.match(fallbackSource, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
-  assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL|secrets\./u);
+  assert.doesNotMatch(fallbackSource, /AGENT_RUNNER_LABEL/u);
   assert.match(fallbackSource, /^ {6}actions:\s+read\s*$/mu);
   assert.match(fallbackSource, /^ {6}id-token:\s+write\s*$/mu);
   assert.match(fallbackSource, /^ {6}pull-requests:\s+read\s*$/mu);
+  const finalizeJob = jobBlock(
+    fallbackSource,
+    'agent-fallback-finalize.yml',
+    'finalize',
+  );
+  assert.match(
+    finalizeJob,
+    /^ {4}if:\s+github\.event_name == 'workflow_call'\s*$/mu,
+  );
   const steps = stepBlocks(fallbackSource);
   assertOrderedSteps(steps, 'agent-fallback-finalize.yml', [
     'Report and park bootstrap-independent failure',
@@ -865,7 +883,7 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
     /post-agent-gates-complete|inputs\.outcome-kind|inputs\.outcome-reference|inputs\.readiness-failure/u,
   );
   assert.doesNotMatch(
-    fallbackSource,
+    finalizeJob,
     /actions\/checkout|uses:\s+\.\/\.github\/actions/u,
   );
   assert.match(
@@ -896,6 +914,64 @@ test('every agent lane delegates completion to the shared isolated GitHub-hosted
   assert.doesNotMatch(
     preserveCallback.source,
     /labels\[\]|assignees\[\]|--silent/u,
+  );
+});
+
+test('Claude readiness uses one isolated paid probe and a separate secretless projection (#797)', async () => {
+  const workflow = 'agent-fallback-finalize.yml';
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, workflow),
+    'utf8',
+  );
+  assert.match(source, /^ {2}schedule:\s*$/mu);
+  assert.match(source, /^ {2}workflow_dispatch:\s*$/mu);
+  assert.match(source, /^ {4}secrets:\s*$/mu);
+  assert.match(source, /^ {6}CLAUDE_CODE_OAUTH_TOKEN:\s*$/mu);
+  assert.equal(
+    source.match(/secrets\.CLAUDE_CODE_OAUTH_TOKEN/gu)?.length,
+    1,
+    'the OAuth token must be referenced only by the isolated probe job',
+  );
+  assert.doesNotMatch(source, /secrets:\s+inherit/u);
+
+  const admission = jobBlock(source, workflow, 'claude-probe-admission');
+  assert.match(admission, /^ {6}issues:\s+read\s*$/mu);
+  assert.doesNotMatch(admission, /issues:\s+write|secrets\./u);
+  assert.match(admission, /inputs\.worker-result != 'success'/u);
+  assert.match(admission, /lane-readiness:v1:claude/u);
+  assert.match(admission, /should-probe=false/u);
+
+  const probe = jobBlock(source, workflow, 'claude-probe');
+  assert.match(probe, /^ {4}runs-on:\s+ubuntu-latest\s*$/mu);
+  assert.match(probe, /^ {4}concurrency:\s*$/mu);
+  assert.match(probe, /^ {6}cancel-in-progress:\s+false\s*$/mu);
+  assert.match(probe, /^ {6}contents:\s+read\s*$/mu);
+  assert.doesNotMatch(probe, /issues:\s+write|id-token:\s+write/u);
+  assert.match(
+    probe,
+    /uses:\s+anthropics\/claude-code-action\/base-action@c038e4dcdedfbbca18dfb17df35a17e40ded4ddc\s+#/u,
+  );
+  assert.match(probe, /continue-on-error:\s+true/u);
+  assert.match(
+    probe,
+    /CLAUDE_WORKING_DIR:\s+\$\{\{ runner\.temp \}\}\/claude-readiness-probe/u,
+  );
+  assert.match(probe, /--max-turns 1/u);
+  assert.match(probe, /--setting-sources user/u);
+  assert.match(probe, /--tools ""/u);
+  assert.match(probe, /operation:\s+classify-claude-readiness/u);
+  assert.match(probe, /probe-conclusion:\s+\$\{\{ steps\.probe\.outcome \}\}/u);
+  assert.match(probe, /readiness-state == 'unknown'/u);
+
+  const projection = jobBlock(source, workflow, 'claude-probe-project');
+  assert.match(projection, /^ {6}issues:\s+write\s*$/mu);
+  assert.doesNotMatch(projection, /secrets\./u);
+  assert.match(projection, /credential-failure/u);
+  assert.match(projection, /healthy/u);
+  assert.match(projection, /operation:\s+claude-readiness/u);
+  assert.match(
+    projection,
+    /evidence-url:\s+\$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}\/actions\/runs\/\$\{\{ github\.run_id \}\}/u,
   );
 });
 

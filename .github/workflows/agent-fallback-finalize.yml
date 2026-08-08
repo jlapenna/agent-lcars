@@ -10,8 +10,19 @@ name: Agent Bootstrap-Independent Finalizer
 # derives lifecycle evidence from GitHub's job metadata and exact attempt
 # markers, then calls the hosted server without checking out worker-controlled
 # repository state.
+#
+# The filename is retained because it is part of the hosted completion OIDC
+# trust contract. The workflow is the authoritative completion finalizer, not
+# the retired Action router/reconcile fallback. Its additional Claude probe
+# keeps the model credential in a distinct read-only job and projects only a
+# classified result from a separate secretless job.
 
 on:
+  schedule:
+    # Recovery probes are admitted only while a Claude lane incident is open,
+    # so this cadence does not spend a model turn during healthy operation.
+    - cron: '29 * * * *'
+  workflow_dispatch:
   workflow_call:
     inputs:
       issue:
@@ -50,11 +61,15 @@ on:
         required: false
         default: ''
         type: string
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
 
 permissions: {}
 
 jobs:
   finalize:
+    if: github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -530,3 +545,118 @@ jobs:
           done
           echo "::error::Could not preserve callback failure for scheduled reconciliation"
           exit 1
+
+  claude-probe-admission:
+    if: >-
+      github.event_name != 'workflow_call' ||
+      (inputs.worker-workflow == 'claude.yml' && inputs.worker-result != 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: read
+    outputs:
+      should-probe: ${{ steps.admit.outputs.should-probe }}
+    steps:
+      - name: Admit only a failed Claude worker or an open lane incident
+        id: admit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
+          WORKER_RESULT: ${{ inputs.worker-result }}
+          MARKER: '<!-- agent-lcars:lane-readiness:v1:claude -->'
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'workflow_call' ] && \
+            [ "$WORKER_WORKFLOW" = 'claude.yml' ] && \
+            [ "$WORKER_RESULT" != 'success' ]; then
+            echo 'should-probe=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          open_incidents="$(gh api --paginate --slurp \
+            "repos/$REPO/issues?state=open&per_page=100" | \
+            jq --arg marker "$MARKER" \
+              '[.[][] | select(.pull_request == null) | select((.body // "") | contains($marker))] | length')"
+          if [ "$open_incidents" -gt 0 ]; then
+            echo 'should-probe=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'should-probe=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Claude readiness probe skipped: no open lane incident'
+          fi
+
+  claude-probe:
+    needs: claude-probe-admission
+    if: needs.claude-probe-admission.outputs.should-probe == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: claude-readiness-probe-${{ github.repository_id }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    outputs:
+      readiness-state: ${{ steps.classify.outputs.readiness-state }}
+    steps:
+      - name: Prepare isolated probe workspace
+        run: mkdir -p "$RUNNER_TEMP/claude-readiness-probe"
+
+      - name: Run one isolated Claude harness turn
+        id: probe
+        continue-on-error: true
+        uses: anthropics/claude-code-action/base-action@c038e4dcdedfbbca18dfb17df35a17e40ded4ddc # v1.0.186
+        env:
+          CLAUDE_WORKING_DIR: ${{ runner.temp }}/claude-readiness-probe
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: 'Reply with exactly READY. Do not inspect files or use tools.'
+          claude_args: >-
+            --max-turns 1
+            --setting-sources user
+            --tools ""
+            --disable-slash-commands
+
+      - name: Checkout trusted classifier revision
+        if: always()
+        uses: actions/checkout@v7
+
+      - name: Classify isolated Claude readiness
+        id: classify
+        if: always()
+        uses: ./.github/actions/dispatch-broker
+        with:
+          operation: classify-claude-readiness
+          execution-file: ${{ steps.probe.outputs.execution_file }}
+          probe-conclusion: ${{ steps.probe.outcome }}
+
+      - name: Fail closed on unknown probe evidence
+        if: always() && steps.classify.outputs.readiness-state == 'unknown'
+        run: |
+          echo '::error::Claude readiness evidence was missing, malformed, or contradictory'
+          exit 1
+
+  claude-probe-project:
+    needs: claude-probe
+    if: >-
+      always() &&
+      (needs.claude-probe.outputs.readiness-state == 'credential-failure' ||
+       needs.claude-probe.outputs.readiness-state == 'healthy')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted projection revision
+        uses: actions/checkout@v7
+
+      - name: Project trusted Claude readiness
+        uses: ./.github/actions/dispatch-broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
+        with:
+          operation: claude-readiness
+          readiness-state: ${{ needs.claude-probe.outputs.readiness-state }}
+          evidence-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
