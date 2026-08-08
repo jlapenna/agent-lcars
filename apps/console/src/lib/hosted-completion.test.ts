@@ -62,6 +62,7 @@ describe('hosted worker completion', () => {
         },
         octokit: octokitForIssue(),
         now: '2026-08-08T12:00:00.000Z',
+        invocationId: 'request-1',
       }),
     ).resolves.toEqual({
       issue: 736,
@@ -77,7 +78,7 @@ describe('hosted worker completion', () => {
       }),
       isPullRequest: false,
       transportRunId: 93_099_054_125,
-      authorityOwner: 'completion:93099054125',
+      authorityOwner: 'completion:93099054125:request-1',
       pollCompletionUntilTerminal: false,
     });
   });

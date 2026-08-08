@@ -47,6 +47,7 @@ describe('hosted reconciler GitHub transport', () => {
       octokit,
       identity,
       '2026-08-08T12:00:00.000Z',
+      'request-1',
     );
 
     await expect(
@@ -89,7 +90,7 @@ describe('hosted reconciler GitHub transport', () => {
       },
       isPullRequest: true,
       transportRunId: 93_099_054_125,
-      authorityOwner: 'reconcile:93099054125:20',
+      authorityOwner: 'reconcile:93099054125:20:request-1',
     });
   });
 

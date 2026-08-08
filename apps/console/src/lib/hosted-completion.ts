@@ -1,5 +1,7 @@
 import 'server-only';
 
+import crypto from 'node:crypto';
+
 import {
   type IssueOrPullRequest,
   normalizeEvent,
@@ -57,11 +59,13 @@ export async function completeHostedWorker({
   body,
   octokit = getGithubClient(),
   now = new Date(),
+  invocationId = crypto.randomUUID(),
 }: {
   identity: CompletionOidcIdentity;
   body: unknown;
   octokit?: Octokit;
   now?: Date | string;
+  invocationId?: string;
 }): Promise<{ issue: number; workerRunId: number; workflow: string }> {
   const completion = parseBody(body);
   const expectedRepository = controlPlaneRepository();
@@ -121,7 +125,7 @@ export async function completeHostedWorker({
     normalized,
     isPullRequest: Boolean(issue.pull_request),
     transportRunId: identity.runId,
-    authorityOwner: `completion:${identity.runId}`,
+    authorityOwner: `completion:${identity.runId}:${invocationId}`,
     pollCompletionUntilTerminal: false,
   });
   return {

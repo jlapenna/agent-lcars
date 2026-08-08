@@ -1,5 +1,7 @@
 import 'server-only';
 
+import crypto from 'node:crypto';
+
 import {
   type IssueOrPullRequest,
   normalizeEvent,
@@ -33,6 +35,7 @@ export function createOctokitReconcileTransport(
   octokit: Octokit,
   identity: ReconcileOidcIdentity,
   now: Date | string = new Date(),
+  invocationId: string = crypto.randomUUID(),
 ): ReconcileTransport {
   return {
     listIssues: async (query: ReconcileIssueQuery) => {
@@ -80,7 +83,7 @@ export function createOctokitReconcileTransport(
         normalized,
         isPullRequest: Boolean(liveIssue.pull_request),
         transportRunId: identity.runId,
-        authorityOwner: `reconcile:${identity.runId}:${issue}`,
+        authorityOwner: `reconcile:${identity.runId}:${issue}:${invocationId}`,
       });
     },
   };
