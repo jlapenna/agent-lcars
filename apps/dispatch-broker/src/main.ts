@@ -1343,6 +1343,25 @@ function isDefiniteDispatchRejection(error: unknown): error is GitHubApiError {
   );
 }
 
+async function resolveLaunchOutcomeBestEffort(
+  loaded: LoadedLedger,
+  generation: LedgerGeneration,
+  resolution: Parameters<StoragePort['resolveLaunchOutcome']>[1],
+): Promise<void> {
+  if (!loaded.authority) return;
+  const attemptId =
+    generation.attempt?.attemptId ?? formatAttemptId(generation);
+  try {
+    await loaded.authority.port.resolveLaunchOutcome(attemptId, resolution);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      `::warning::Primary dispatch state was persisted, but launch-outbox ` +
+        `resolution for ${attemptId} will need reconciliation: ${message}`,
+    );
+  }
+}
+
 async function dispatchAccepted(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1390,11 +1409,26 @@ async function dispatchAccepted(
         if (loaded.authority) {
           const attemptId =
             generation.attempt?.attemptId ?? formatAttemptId(generation);
-          await loaded.authority.port.recordLaunchIntent({
-            operationId: attemptId,
-            task: loaded.ledger.task,
-            attemptId,
-          });
+          try {
+            await loaded.authority.port.recordLaunchIntent({
+              operationId: attemptId,
+              task: loaded.ledger.task,
+              attemptId,
+            });
+          } catch (error) {
+            // The workflow dispatch has not happened. Restore accepted state
+            // and its projection so a later delivery can retry safely; a
+            // response-lost outbox create is idempotent on the same attemptId.
+            loaded.ledger = beforeScheduling;
+            await saveLedger(client, loaded);
+            const message =
+              error instanceof Error ? error.message : String(error);
+            console.log(
+              `::warning::Deferring worker dispatch after launch-outbox ` +
+                `recording failed: ${message}`,
+            );
+            return false;
+          }
         }
         return true;
       },
@@ -1420,15 +1454,11 @@ async function dispatchAccepted(
             generation.generation,
             `HTTP ${error.status}`,
           );
-          if (loaded.authority) {
-            const attemptId =
-              generation.attempt?.attemptId ?? formatAttemptId(generation);
-            await loaded.authority.port.resolveLaunchOutcome(attemptId, {
-              status: 'rejected',
-              reason: `HTTP ${error.status}`,
-            });
-          }
           await saveLedger(client, loaded);
+          await resolveLaunchOutcomeBestEffort(loaded, generation, {
+            status: 'rejected',
+            reason: `HTTP ${error.status}`,
+          });
           throw error;
         });
       }
@@ -1443,15 +1473,11 @@ async function dispatchAccepted(
         // Assumed Error-shaped, exactly as the untyped original assumed.
         (error as Error).message.slice(0, 300),
       );
-      if (loaded.authority) {
-        const attemptId =
-          generation.attempt?.attemptId ?? formatAttemptId(generation);
-        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
-          status: 'unknown',
-          reason: (error as Error).message.slice(0, 300),
-        });
-      }
       await saveLedger(client, loaded);
+      await resolveLaunchOutcomeBestEffort(loaded, generation, {
+        status: 'unknown',
+        reason: (error as Error).message.slice(0, 300),
+      });
       return;
     }
 
@@ -1461,22 +1487,10 @@ async function dispatchAccepted(
     // workflow dispatch or park a successfully launched worker.
     bindRun(loaded.ledger, generation.generation, binding);
     await saveLedger(client, loaded);
-    if (loaded.authority) {
-      const attemptId =
-        generation.attempt?.attemptId ?? formatAttemptId(generation);
-      try {
-        await loaded.authority.port.resolveLaunchOutcome(attemptId, {
-          status: 'launched',
-          binding,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.log(
-          `::warning::Worker ${binding.runId} was launched and bound, but ` +
-            `its launch-outbox resolution will need reconciliation: ${message}`,
-        );
-      }
-    }
+    await resolveLaunchOutcomeBestEffort(loaded, generation, {
+      status: 'launched',
+      binding,
+    });
     return;
   }
 }
@@ -2110,6 +2124,11 @@ async function preflight(): Promise<void> {
     runId: Number(env('GITHUB_RUN_ID')),
   };
   const client = api();
+  const storageMode = parseDispatchStorageMode(
+    env('DISPATCH_STORAGE_MODE', false),
+  );
+  const authorityPort =
+    storageMode === 'authority' ? createStoragePort() : undefined;
   // This job (a worker run's own preflight step) never writes the ledger --
   // control-plane writes are only ever made from the serialized broker job
   // (see healStaleAgentLabels' comment for the same invariant) -- so
@@ -2118,14 +2137,14 @@ async function preflight(): Promise<void> {
   await runPhase(undefined, 'authorization', async () => {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
-      const loaded: LoadedLedger | undefined = await loadLedger(
+      const ledger = await loadPreflightLedger(
         client,
         task,
-        'github-actions[bot]',
-        { createIfMissing: false },
+        storageMode,
+        authorityPort,
       );
-      if (loaded && verifyPreflight(loaded.ledger, expected)) {
-        const generation = loaded.ledger.generations.find(
+      if (ledger && verifyPreflight(ledger, expected)) {
+        const generation = ledger.generations.find(
           (candidate) => candidate.generation === expected.generation,
         );
         const run: WorkflowRun = await getWorkflowRun(
@@ -2161,6 +2180,25 @@ async function preflight(): Promise<void> {
       'Worker preflight could not verify an exact broker binding',
     );
   });
+}
+
+async function loadPreflightLedger(
+  client: GitHubApiClient,
+  task: LedgerTaskRef,
+  storageMode: ReturnType<typeof parseDispatchStorageMode>,
+  authorityPort?: StoragePort,
+): Promise<DispatchLedger | undefined> {
+  if (storageMode === 'authority') {
+    if (!authorityPort) {
+      throw new Error('Authority preflight requires a dispatch storage port');
+    }
+    return (await authorityPort.readTask(task))?.controllerState;
+  }
+  return (
+    await loadLedger(client, task, 'github-actions[bot]', {
+      createIfMissing: false,
+    })
+  )?.ledger;
 }
 
 async function completionCallback(): Promise<void> {
@@ -2305,6 +2343,7 @@ export {
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
+  loadPreflightLedger,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,

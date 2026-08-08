@@ -34,6 +34,7 @@ import {
   healStaleAgentLabels,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
+  loadPreflightLedger,
   RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
@@ -330,6 +331,132 @@ test('authority restores accepted state when the scheduling projection PATCH fai
     await port.readLaunchOperation('g1:intent-scheduling-projection-failure'),
     undefined,
   );
+});
+
+test('authority restores accepted state when pre-launch outbox recording fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-outbox-record-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-outbox-record-failure',
+    transportRunId: 740,
+    occurredAt: '2026-08-08T07:20:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'outbox-record-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:outbox-record-failure',
+    seed,
+  );
+  port.recordLaunchIntent = async () => {
+    throw new Error('transient outbox write failure');
+  };
+  let dispatches = 0;
+  let projectionWrites = 0;
+  const client = {
+    request: async () => {
+      dispatches += 1;
+      throw new Error('worker dispatch must not happen');
+    },
+    requestOk: async () => {
+      projectionWrites += 1;
+      return { id: 9 };
+    },
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(dispatches, 0);
+  assert.equal(projectionWrites, 2);
+  assert.equal(loaded.ledger.generations[0].state, 'accepted');
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'accepted',
+  );
+});
+
+test('authority persists dispatch-unknown when auxiliary outbox resolution fails', async () => {
+  const port = new InMemoryStoragePort();
+  const seed = createLedger(task);
+  acceptIntent(seed, {
+    task,
+    intentId: 'intent-unknown-outbox-failure',
+    sourceKind: 'manual',
+    sourceId: 'source-unknown-outbox-failure',
+    transportRunId: 741,
+    occurredAt: '2026-08-08T07:21:00.000Z',
+    pipeline: 'codex',
+    mode: 'implement',
+    runbook: '',
+    context: '',
+    digest: 'unknown-outbox-failure',
+    authorization: { authorized: true },
+  });
+  const authority = await acquireAuthority(
+    port,
+    task,
+    'delivery:unknown-outbox-failure',
+    seed,
+  );
+  port.resolveLaunchOutcome = async () => {
+    throw new Error('transient outbox resolution failure');
+  };
+  const client = {
+    request: async () => {
+      throw new Error('dispatch response timeout');
+    },
+    requestOk: async () => ({ id: 9 }),
+  };
+  const loaded = {
+    ledger: authority.ledger,
+    comment: { id: 9 },
+    created: false,
+    authority: authority.session,
+    projectionAvailable: true,
+  };
+
+  await dispatchAccepted(client, loaded);
+
+  assert.equal(loaded.ledger.generations[0].state, 'dispatch-unknown');
+  assert.equal(
+    (await port.readTask(task))?.controllerState?.generations[0].state,
+    'dispatch-unknown',
+  );
+});
+
+test('authority preflight reads the exact Firestore binding without touching corrupt comments', async () => {
+  const port = new InMemoryStoragePort();
+  const ledger = boundLedger();
+  await acquireAuthority(port, task, 'delivery:preflight', ledger);
+  const explosiveClient = {
+    requestOk: async () => {
+      throw new Error('comment-backed preflight must not run in authority');
+    },
+  };
+
+  const loaded = await loadPreflightLedger(
+    explosiveClient,
+    task,
+    'authority',
+    port,
+  );
+
+  assert.equal(loaded?.generations[0].attempt?.runId, 42);
 });
 
 test('authority records projection convergence only after the compatibility comment succeeds', async () => {

@@ -14,7 +14,10 @@ Firestore for comparison, while `authority` makes the Firestore task
 aggregate authoritative under a compare-and-swap lease. In authority mode
 the pinned `<!-- agent-lcars:dispatch-ledger:v1 -->` comment remains a
 human-readable compatibility projection, but a forged comment cannot change
-controller truth. `off` is the rollback position before authority cutover.
+controller truth. Worker preflight also reads the exact Firestore aggregate
+in authority mode, using a short-lived WIF token minted before any untrusted
+agent code runs; shadow/off preflight retains the comment reader for rollback
+compatibility. `off` is the rollback position before authority cutover.
 
 Two seams are load-bearing enough to read before anything else:
 
@@ -286,9 +289,10 @@ invoking the requested agent/provider combination.
   "Split execute and finalize jobs" bullet is unstarted); bootstrap, the
   agent step, and the post-agent gates all run in the same job today. All
   three share the same sequence: checkout → snapshot enforcement scripts →
-  broker preflight → mint agent token → claim issue → agent setup → verify
-  agent identity → prepare dispatch context → start telemetry sidecar →
-  run the agent → run post-agent gates.
+  authority-storage auth (authority mode only) → broker preflight → mint
+  agent token → claim issue → agent setup → verify agent identity → prepare
+  dispatch context → start telemetry sidecar → run the agent → run
+  post-agent gates.
 - `.github/actions/agent-setup`, `mint-agent-token`, `verify-agent-identity`,
   `prepare-agent-dispatch`, `setup-opencode`, `telemetry-start` — the shared
   bootstrap pieces (Phase 3's "replace duplicated Claude/Codex/OpenCode

@@ -778,10 +778,11 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
   // claude.yml/codex.yml/opencode.yml use.
   assert.match(source, /^\s+runs-on:\s+ubuntu-latest\s*$/mu);
   assert.doesNotMatch(source, /\$\{\{\s*vars\.AGENT_RUNNER_LABEL\s*\}\}/u);
-  // No secret of any kind -- no model credential, no GCP workload identity,
-  // no App token mint. The only credential in scope is GitHub's own
-  // ambient per-job token.
+  // No secret of any kind -- no model credential and no App token mint.
+  // Authority preflight uses only repo-configured WIF to mint a short-lived
+  // Firestore reader token before any untrusted code runs.
   assert.doesNotMatch(source, /secrets\./u);
+  assert.match(source, /^\s+id-token:\s+write\s*$/mu);
   // Every worker calls the broker's completion-callback unconditionally so
   // a crashed run still clears its ledger generation (#305's reconciler is
   // only ever a backstop, never the primary path).
@@ -1045,13 +1046,48 @@ test('every worker captures the verified attempt ID via the broker preflight cal
     assert.ok(source, `${workflow} is missing`);
     const steps = stepBlocks(source);
 
-    const preflight = namedStep(
+    const preflight = namedStep(steps, workflow, 'Verify broker binding');
+    const storageAuth = namedStep(
       steps,
       workflow,
-      'Verify broker binding',
-    ).source;
+      'Authenticate to authoritative dispatch storage',
+    );
     assert.match(
-      preflight,
+      storageAuth.source,
+      stepField('if', "vars.DISPATCH_STORAGE_MODE == 'authority'"),
+      `${workflow} must mint a storage token only after authority cutover`,
+    );
+    assert.match(
+      storageAuth.source,
+      stepField('uses', 'google-github-actions/auth@v3'),
+    );
+    assert.match(
+      storageAuth.source,
+      stepField('service_account', '${{ vars.GCP_DISPATCH_BROKER_SA }}', 10),
+    );
+    assert.match(
+      preflight.source,
+      stepField(
+        'DISPATCH_STORAGE_MODE',
+        '${{ vars.DISPATCH_STORAGE_MODE }}',
+        10,
+      ),
+    );
+    assert.match(
+      preflight.source,
+      stepField(
+        'DISPATCH_STORAGE_TOKEN',
+        '${{ steps.worker-storage-auth.outputs.access_token }}',
+        10,
+      ),
+    );
+    assert.match(
+      preflight.source,
+      stepField('GCP_PROJECT_ID', '${{ vars.GCP_PROJECT_ID }}', 10),
+    );
+    assertOrderedSteps(steps, workflow, [storageAuth.name, preflight.name]);
+    assert.match(
+      preflight.source,
       /^\s+id:\s+broker-preflight\s*$/mu,
       `${workflow}'s preflight step needs an id for dispatch-broker/action.yml's own attempt-id output to resolve`,
     );
