@@ -1,10 +1,11 @@
 name: Agent Bootstrap-Independent Finalizer
 
-# Shared, GitHub-hosted fallback for claude.yml/codex.yml/opencode.yml
-# (#639 / #645 Phase 3). The primary post-agent gates run from a trusted
-# pre-agent snapshot on the self-hosted worker. If checkout, snapshotting,
-# runner loss, or the reporter itself prevents that path from proving it
-# completed, the caller invokes this workflow after the worker job settles.
+# Shared, GitHub-hosted finalizer for claude.yml/codex.yml/opencode.yml
+# (#639 / #645 Phase 3). Every worker delegates the authoritative hosted
+# callback to this isolated reusable workflow after its untrusted job settles;
+# the server verifies this workflow's signed `job_workflow_ref`. If checkout,
+# snapshotting, runner loss, or the reporter itself prevents the primary
+# post-agent gates from proving completion, this workflow also parks the task.
 #
 # The report/park step deliberately runs before checkout and uses only
 # github.token plus inline GitHub CLI calls. That makes a failed checkout
@@ -33,6 +34,22 @@ on:
       worker-result:
         required: true
         type: string
+      post-agent-gates-complete:
+        required: false
+        default: ''
+        type: string
+      outcome-kind:
+        required: false
+        default: ''
+        type: string
+      outcome-reference:
+        required: false
+        default: ''
+        type: string
+      readiness-failure:
+        required: false
+        default: ''
+        type: string
       agent:
         required: true
         type: string
@@ -53,6 +70,7 @@ jobs:
       issues: write
     steps:
       - name: Report and park bootstrap-independent failure
+        if: inputs.post-agent-gates-complete != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -109,4 +127,6 @@ jobs:
           intent-id: ${{ inputs.intent-id }}
           dispatch-token: ${{ inputs.dispatch-token }}
           worker-workflow: ${{ inputs.worker-workflow }}
-          outcome-kind: startup-failure
+          outcome-kind: ${{ inputs.post-agent-gates-complete == 'true' && inputs.outcome-kind || 'startup-failure' }}
+          outcome-reference: ${{ inputs.post-agent-gates-complete == 'true' && inputs.outcome-reference || '' }}
+          readiness-failure: ${{ inputs.readiness-failure }}

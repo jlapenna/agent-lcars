@@ -247,6 +247,7 @@ test('snapshot-enforcement-scripts default gate list is guarded', async () => {
     'report-failure',
     'telemetry-finalize',
     'post-agent-gates',
+    'dispatch-broker',
   ]);
 });
 

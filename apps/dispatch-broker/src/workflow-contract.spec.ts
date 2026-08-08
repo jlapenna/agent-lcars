@@ -532,7 +532,6 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       'Prepare current dispatch brief and runtime deadline',
       adapter.name,
       'Run post-agent gates',
-      'Return completion observation to the broker',
     ]);
 
     const snapshot = actionStep(
@@ -560,11 +559,6 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       './.github/actions/telemetry-start',
     );
     const postAgentGates = namedStep(steps, workflow, 'Run post-agent gates');
-    const completion = namedStep(
-      steps,
-      workflow,
-      'Return completion observation to the broker',
-    );
 
     assert.match(checkout.source, stepField('uses', 'actions/checkout@v7'));
     assert.match(
@@ -655,60 +649,10 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
       /`\$\{\{ env\.REDISPATCH_COMMAND \}\}`/u,
     );
 
-    assert.match(completion.source, stepField('if', 'always()'));
-    assert.match(completion.source, stepField('continue-on-error', 'true'));
-    assert.match(
-      completion.source,
-      stepField(
-        'run',
-        'node "$RUNNER_TEMP/trusted-actions/dispatch-broker/dist/main.mjs" completion-callback',
-      ),
-    );
-    for (const [envField, envValue] of [
-      ['BROKER_ISSUE', '${{ inputs.issue }}'],
-      ['BROKER_GENERATION', '${{ inputs.broker_generation }}'],
-      ['BROKER_INTENT_ID', '${{ inputs.broker_intent_id }}'],
-      ['BROKER_DISPATCH_TOKEN', '${{ inputs.broker_dispatch_token }}'],
-      ['BROKER_WORKER_WORKFLOW', '${{ env.WORKER_WORKFLOW }}'],
-    ]) {
-      assert.match(
-        completion.source,
-        stepField(envField, envValue, 10),
-        `${workflow}'s hosted completion callback must pass ${envField}`,
-      );
-    }
-    assert.doesNotMatch(completion.source, /GITHUB_TOKEN|github\.token/u);
-    assert.doesNotMatch(completion.source, /^ {8}uses:/mu);
-    assert.match(
+    assert.doesNotMatch(
       source,
-      /^ {2}id-token:\s+write\s*$/mu,
-      `${workflow} must be able to mint the hosted completion OIDC token`,
-    );
-    assert.match(
-      completion.source,
-      stepField(
-        'BROKER_OUTCOME_KIND',
-        '${{ steps.post_agent_gates.outputs.outcome-kind }}',
-        10,
-      ),
-    );
-    assert.match(
-      completion.source,
-      stepField(
-        'BROKER_OUTCOME_REFERENCE',
-        '${{ steps.post_agent_gates.outputs.outcome-reference }}',
-        10,
-      ),
-      `${workflow}'s trusted verifier must return the exact PR reference to the broker`,
-    );
-    assert.match(
-      completion.source,
-      stepField(
-        'BROKER_READINESS_FAILURE',
-        '${{ steps.post_agent_gates.outputs.readiness-failure }}',
-        10,
-      ),
-      `${workflow}'s trusted post-agent classifier must return a lane-readiness failure to the broker`,
+      /^ {6}- name:\s+Return completion observation to the broker\s*$/mu,
+      `${workflow} must not mint completion authority inside the untrusted worker job`,
     );
   }
 
@@ -722,7 +666,7 @@ test('workers share one lifecycle skeleton around their adapter step', async () 
   assert.match(snapshotAction, /^ {6}dispatch-broker\s*$/mu);
 });
 
-test('every agent lane has one shared GitHub-hosted fallback finalizer outside the self-hosted bootstrap failure domain (#639)', async () => {
+test('every agent lane delegates completion to the shared isolated GitHub-hosted finalizer (#639/#736)', async () => {
   const sources = await workflowSources();
   for (const pipeline of agentWorkerPipelines) {
     const workflow = workerWorkflow(pipeline);
@@ -733,17 +677,14 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
     assert.match(
       source,
       /^ {4}outputs:\s*\n {6}post_agent_gates_complete:\s*\$\{\{ steps\.post_agent_gates\.outputs\.complete \}\}\s*$/mu,
-      `${workflow} must publish proof that its primary trusted finalizer completed`,
+      `${workflow} must publish proof from its trusted post-agent gates`,
     );
     assert.match(source, /^ {2}fallback-finalize:\s*$/mu);
     assert.match(source, new RegExp(`^ {4}needs:\\s+${pipeline}\\s*$`, 'mu'));
     assert.match(
       source,
-      new RegExp(
-        `needs\\.${pipeline}\\.outputs\\.post_agent_gates_complete != 'true'`,
-        'u',
-      ),
-      `${workflow}'s hosted fallback must run unless the primary reporter proved completion`,
+      /^ {4}if:\s+always\(\) && github\.event_name == 'workflow_dispatch' && inputs\.issue != ''\s*$/mu,
+      `${workflow}'s isolated finalizer must run after every worker result`,
     );
     assert.match(
       source,
@@ -759,6 +700,20 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
         'mu',
       ),
     );
+    for (const [input, output] of [
+      ['post-agent-gates-complete', 'post_agent_gates_complete'],
+      ['outcome-kind', 'outcome_kind'],
+      ['outcome-reference', 'outcome_reference'],
+      ['readiness-failure', 'readiness_failure'],
+    ]) {
+      assert.match(
+        source,
+        new RegExp(
+          `^ {6}${input}:\\s+\\$\\{\\{ needs\\.${pipeline}\\.outputs\\.${output} \\}\\}\\s*$`,
+          'mu',
+        ),
+      );
+    }
   }
 
   const fallbackSource = await fs.readFile(
@@ -780,6 +735,10 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
     'agent-fallback-finalize.yml',
     'Report and park bootstrap-independent failure',
   );
+  assert.match(
+    report.source,
+    stepField('if', "inputs.post-agent-gates-complete != 'true'"),
+  );
   assert.match(report.source, stepField('GH_TOKEN', '${{ github.token }}', 10));
   assert.match(report.source, /agent-lcars:bootstrap-fallback:v1/u);
   assert.match(report.source, /status:needs-human/u);
@@ -799,6 +758,10 @@ test('every agent lane has one shared GitHub-hosted fallback finalizer outside t
     callback.source,
     stepField('operation', 'completion-callback', 10),
   );
+  assert.match(callback.source, /inputs\.post-agent-gates-complete/u);
+  assert.match(callback.source, /inputs\.outcome-kind/u);
+  assert.match(callback.source, /inputs\.outcome-reference/u);
+  assert.match(callback.source, /inputs\.readiness-failure/u);
   assert.doesNotMatch(callback.source, /GITHUB_TOKEN|github\.token/u);
 });
 
@@ -1130,23 +1093,23 @@ test('the canary worker (#307) is structurally incapable of running a paid or pr
   assert.match(source, /<!-- attempt-claim:\$ATTEMPT_ID -->/u);
   assert.match(
     source,
-    /outcome-kind:\s*\$\{\{ steps\.verify\.outputs\.outcome-kind \}\}/u,
+    /outcome_kind:\s*\$\{\{ steps\.verify\.outputs\.outcome-kind \}\}/u,
+    "the canary job must publish the finalizer's typed outcome",
+  );
+  assert.match(
+    source,
+    /outcome-kind:\s*\$\{\{ needs\.canary\.outputs\.outcome_kind \}\}/u,
     "the canary completion must persist the finalizer's typed outcome",
   );
-  // The canary calls the hosted completion client unconditionally so a
-  // crashed run still records its completion observation; reconciliation
-  // finalizes the generation once GitHub reports the caller terminal.
-  assert.match(source, /operation:\s*completion-callback/u);
-  const completionStepIndex = source.indexOf('operation: completion-callback');
-  const precedingSource = source.slice(0, completionStepIndex);
-  const lastAlwaysIndex = precedingSource.lastIndexOf('if: always()');
-  assert.ok(
-    lastAlwaysIndex >= 0 &&
-      precedingSource
-        .slice(lastAlwaysIndex)
-        .includes('uses: ./.github/actions/dispatch-broker'),
-    'the completion-callback step must run under if: always()',
+  // Completion is delegated to the same isolated reusable finalizer as the
+  // real workers, so the canary job itself cannot mint an accepted callback.
+  assert.match(source, /^ {2}completion-finalize:\s*$/mu);
+  assert.match(source, /^ {4}if:\s+always\(\)/mu);
+  assert.match(
+    source,
+    /^ {4}uses:\s+\.\/\.github\/workflows\/agent-fallback-finalize\.yml\s*$/mu,
   );
+  assert.doesNotMatch(source, /operation:\s*completion-callback/u);
 });
 
 test('the canary orchestrators (#307) never reference a self-hosted runner or a secret', async () => {
@@ -1567,12 +1530,16 @@ test('no worker invokes a post-agent gate via `uses:` (#645 Phase 3 security inv
       `${workflow} must run the shared post-agent gate orchestrator from the pre-agent snapshot`,
     );
   }
-  // The canary has no post-agent gates at all (#307/#645) -- assert it
-  // stays that way rather than silently growing one.
+  // The canary has no post-agent gate step at all (#307/#645). It may pass
+  // the reusable finalizer's completion-proof input, but must not execute
+  // the agent-lane gate orchestrator itself.
   const canarySource = sources.find(
     (candidate) => candidate.name === canary,
   )?.source;
-  assert.doesNotMatch(canarySource, /post-agent-gates|Run post-agent gates/u);
+  assert.doesNotMatch(
+    canarySource,
+    /Run post-agent gates|trusted-actions\/post-agent-gates/u,
+  );
 });
 
 function foldedBlockScalar(source, field, indentation = 10) {

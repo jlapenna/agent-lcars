@@ -68,6 +68,8 @@ permissions:
 # serializes dispatch per issue before this worker is ever started.
 jobs:
   canary:
+    outputs:
+      outcome_kind: ${{ steps.verify.outputs.outcome-kind }}
     # agent-router.yml's broker job authorizes and dispatches this worker
     # (apps/dispatch-broker/src/normalize.ts's `kind: 'canary'` branch, which never
     # requires per-actor authorization the way a manual claude/codex/
@@ -172,15 +174,22 @@ jobs:
           EXCLUDE_COMMENT_ID: ''
         run: bash "$RUNNER_TEMP/trusted-actions/verify-deliverable/verify-deliverable.sh"
 
-      - name: Return completion observation to the broker
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/dispatch-broker
-        with:
-          operation: completion-callback
-          issue: ${{ inputs.issue }}
-          generation: ${{ inputs.broker_generation }}
-          intent-id: ${{ inputs.broker_intent_id }}
-          dispatch-token: ${{ inputs.broker_dispatch_token }}
-          worker-workflow: agent-dispatch-canary.yml
-          outcome-kind: ${{ steps.verify.outputs.outcome-kind }}
+  completion-finalize:
+    needs: canary
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    uses: ./.github/workflows/agent-fallback-finalize.yml
+    with:
+      issue: ${{ inputs.issue }}
+      generation: ${{ inputs.broker_generation }}
+      intent-id: ${{ inputs.broker_intent_id }}
+      dispatch-token: ${{ inputs.broker_dispatch_token }}
+      worker-workflow: agent-dispatch-canary.yml
+      worker-result: ${{ needs.canary.result }}
+      post-agent-gates-complete: ${{ needs.canary.result == 'success' && 'true' || '' }}
+      outcome-kind: ${{ needs.canary.outputs.outcome_kind }}
+      agent: Dispatch canary
+      maintainer: ${{ vars.MAINTAINER_LOGIN }}
