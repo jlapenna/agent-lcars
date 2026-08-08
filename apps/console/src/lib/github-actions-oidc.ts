@@ -1,6 +1,10 @@
 import 'server-only';
 
 import {
+  COMPLETION_OIDC_AUDIENCE,
+  WORKER_WORKFLOW_FILES,
+} from '@agent-lcars/dispatch-contracts';
+import {
   RECONCILE_OIDC_AUDIENCE,
   RECONCILE_WORKFLOW_PATH,
 } from '@agent-lcars/dispatch-reconcile';
@@ -11,10 +15,36 @@ const githubActionsJwks = createRemoteJWKSet(
   new URL(`${GITHUB_ACTIONS_ISSUER}/.well-known/jwks`),
 );
 
+export interface CompletionOidcIdentity {
+  repository: string;
+  repositoryId: number;
+  runId: number;
+  workflow: string;
+}
+
+export interface ReconcileOidcIdentity {
+  repository: string;
+  repositoryId: number;
+  runId: number;
+}
+
+function positiveIntegerClaim(value: unknown, name: string): number {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d+$/u.test(value)
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`OIDC ${name} claim is not a positive safe integer`);
+  }
+  return parsed;
+}
+
 export function assertReconcileOidcClaims(
   claims: JWTPayload,
   repository: string,
-): void {
+): ReconcileOidcIdentity {
   const expectedWorkflowRef = `${repository}/${RECONCILE_WORKFLOW_PATH}@refs/heads/main`;
   if (claims['repository'] !== repository) {
     throw new Error('OIDC repository claim does not match the control plane');
@@ -30,16 +60,66 @@ export function assertReconcileOidcClaims(
   ) {
     throw new Error('OIDC event_name claim is not an allowed reconciler event');
   }
+  return {
+    repository,
+    repositoryId: positiveIntegerClaim(
+      claims['repository_id'],
+      'repository_id',
+    ),
+    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
+  };
 }
 
 export async function verifyReconcileOidcToken(
   token: string,
   repository: string,
-): Promise<JWTPayload> {
+): Promise<ReconcileOidcIdentity> {
   const { payload } = await jwtVerify(token, githubActionsJwks, {
     issuer: GITHUB_ACTIONS_ISSUER,
     audience: RECONCILE_OIDC_AUDIENCE,
   });
-  assertReconcileOidcClaims(payload, repository);
-  return payload;
+  return assertReconcileOidcClaims(payload, repository);
+}
+
+export function assertCompletionOidcClaims(
+  claims: JWTPayload,
+  repository: string,
+): CompletionOidcIdentity {
+  if (claims['repository'] !== repository) {
+    throw new Error('OIDC repository claim does not match the control plane');
+  }
+  if (claims['ref'] !== 'refs/heads/main') {
+    throw new Error('OIDC ref claim is not main');
+  }
+  if (claims['event_name'] !== 'workflow_dispatch') {
+    throw new Error('OIDC event_name claim is not workflow_dispatch');
+  }
+  const workflow = [...WORKER_WORKFLOW_FILES].find(
+    (candidate) =>
+      claims['workflow_ref'] ===
+      `${repository}/.github/workflows/${candidate}@refs/heads/main`,
+  );
+  if (!workflow) {
+    throw new Error('OIDC workflow_ref claim is not an allowed worker on main');
+  }
+  return {
+    repository,
+    repositoryId: positiveIntegerClaim(
+      claims['repository_id'],
+      'repository_id',
+    ),
+    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
+    workflow,
+  };
+}
+
+export async function verifyCompletionOidcToken(
+  token: string,
+  repository: string,
+): Promise<CompletionOidcIdentity> {
+  const { payload } = await jwtVerify(token, githubActionsJwks, {
+    issuer: GITHUB_ACTIONS_ISSUER,
+    audience: COMPLETION_OIDC_AUDIENCE,
+  });
+  return assertCompletionOidcClaims(payload, repository);
 }

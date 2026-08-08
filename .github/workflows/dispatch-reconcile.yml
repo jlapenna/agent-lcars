@@ -11,17 +11,12 @@ name: Dispatch Ledger Reconciler
 # That puts the repair path outside the self-hosted control-plane runner pool
 # it repairs (#736). A manual Action fallback remains available during soak.
 #
-# Every actual repair happens inside the SAME per-issue serialized broker
-# job agent-router.yml already runs for every other trigger (issue events,
-# comments, completion callbacks): the follow-on `kind: reconcile` run goes
-# through agent-router.yml's own normalize -> broker jobs, the reserved
-# per-issue `agent-lcars-dispatch-v1-<repositoryId>-<issue>` concurrency
-# group, and #349's already-hardened indirect concurrency corroboration for
-# workflow_dispatch-triggered runs (GitHub never reports concurrency-group
-# membership for a workflow_dispatch/schedule-triggered run's own listing --
-# only #349's positive-corroboration check works here). There is still
-# exactly one writer and one ordering domain per issue; this workflow adds
-# no new one.
+# Every hosted repair runs directly inside App Hosting after the scheduler's
+# OIDC run/repository identity is verified. The same normalized reconcile
+# transition and Firestore authority lease used by webhook admission provide
+# lossless per-issue serialization without dispatching agent-router.yml or
+# consuming a self-hosted control-plane runner. The explicit manual fallback
+# below retains the prior Action implementation during soak.
 #
 # What it repairs (`apps/dispatch-broker/src/main.ts`'s
 # reconcileLedger/trackMissingRun): a dispatch
@@ -64,12 +59,10 @@ concurrency:
   # reserved `agent-lcars-dispatch-v1-*` per-issue namespace (workflow-
   # contract.test.mjs enforces that no workflow but agent-router.yml's
   # broker job ever declares that namespace). This only prevents two
-  # overlapping scheduled/manual scans from redundantly firing duplicate
-  # `kind: reconcile` dispatches; a redundant extra dispatch would be
-  # harmless (each downstream reconcile pass is independently idempotent),
-  # but there is no reason to pay for it. It has no bearing on per-issue
-  # ledger mutation safety, which is fully delegated to agent-router.yml's
-  # own concurrency group per candidate issue.
+  # overlapping scheduled/manual scans from redundantly processing the same
+  # candidates. A redundant pass would be harmless because every candidate
+  # still acquires its own Firestore authority lease, but there is no reason
+  # to pay for it.
   group: dispatch-reconcile-scan
   cancel-in-progress: false
 
@@ -78,7 +71,7 @@ jobs:
     if: github.event_name == 'schedule' || inputs.transport == 'hosted'
     # The scheduler itself must remain alive when the protected self-hosted
     # control-plane pool is unavailable. App Hosting performs discovery and
-    # dispatch after validating this job's OIDC claims.
+    # direct processing after validating this job's OIDC claims.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

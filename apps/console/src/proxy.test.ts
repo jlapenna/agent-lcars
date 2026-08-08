@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import proxy from './proxy';
 
 describe('console proxy public control-plane routes', () => {
-  it('lets GitHub reach the webhook handler without a browser session', () => {
+  it('lets non-browser control-plane callers reach their own authentication', () => {
     for (const path of [
+      '/api/control-plane/completion',
+      '/api/control-plane/reconcile',
       '/api/control-plane/webhook',
       '/api/control-plane/webhook/process',
     ]) {

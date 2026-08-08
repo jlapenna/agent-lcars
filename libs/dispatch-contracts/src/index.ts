@@ -77,6 +77,7 @@ export {
   isDispatchOutcomeKind,
   isDispatchOutcomeReference,
 } from './outcomes';
+export { COMPLETION_OIDC_AUDIENCE, HOSTED_COMPLETION_PATH } from './oidc';
 export type {
   AgentPipeline,
   AgentPipelineContract,

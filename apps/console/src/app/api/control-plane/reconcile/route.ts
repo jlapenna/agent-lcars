@@ -12,8 +12,9 @@ function bearerToken(header: string | null): string {
 
 export async function POST(request: Request): Promise<NextResponse> {
   const repository = controlPlaneRepository();
+  let identity;
   try {
-    await verifyReconcileOidcToken(
+    identity = await verifyReconcileOidcToken(
       bearerToken(request.headers.get('authorization')),
       repository,
     );
@@ -23,7 +24,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await runHostedReconcile();
+    const result = await runHostedReconcile(identity);
     console.info('agent-lcars: hosted reconcile scan completed', result);
     return NextResponse.json(result, {
       status: result.failed.length > 0 ? 502 : 200,
