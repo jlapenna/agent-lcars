@@ -2790,6 +2790,10 @@ async function normalize() {
   await output("issue", String(issue || ""));
   await output("repository-id", String(context.repositoryId));
   await output(
+    "is-pr",
+    String(Boolean(event.pull_request ?? event.issue?.pull_request))
+  );
+  await output(
     "group",
     issue ? `agent-lcars-dispatch-v1-${context.repositoryId}-${issue}`.toLowerCase() : ""
   );

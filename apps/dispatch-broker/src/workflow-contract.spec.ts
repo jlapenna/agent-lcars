@@ -629,13 +629,9 @@ test('agent-router.yml scopes id-token: write to the broker job alone, restating
   );
   assert.match(brokerPermissions, /^\s+contents:\s+read(?:\s+#.*)?$/mu);
   assert.match(brokerPermissions, /^\s+issues:\s+write(?:\s+#.*)?$/mu);
+  assert.match(brokerPermissions, /^\s+pull-requests:\s+write(?:\s+#.*)?$/mu);
   assert.match(brokerPermissions, /^\s+actions:\s+write(?:\s+#.*)?$/mu);
   assert.match(brokerPermissions, /^\s+id-token:\s+write(?:\s+#.*)?$/mu);
-  // Broker's own request()/requestOk() call sites (github-api.ts) never
-  // touch /pulls/*, only /issues/* and /actions/* -- pull-requests: write
-  // (present in the workflow-level block normalize inherits, asserted
-  // above) is deliberately not restated here.
-  assert.doesNotMatch(brokerPermissions, /pull-requests/u);
 
   // normalize must not gain id-token: write: the only id-token: write in
   // the whole file is the one just proven to sit inside broker's own
@@ -721,6 +717,21 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mo
   );
 
   assertOrderedSteps(steps, 'agent-router.yml', [auth.name, brokerStep.name]);
+});
+
+test('agent-router carries workflow-dispatch PR identity into the broker (#736)', async () => {
+  const source = await fs.readFile(
+    path.join(workflowsDirectory, 'agent-router.yml'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /^\s+is-pr:\s+\$\{\{ steps\.normalize\.outputs\.is-pr \}\}\s*$/mu,
+  );
+  assert.match(
+    source,
+    /^\s+ANCHOR_IS_PR:\s+\$\{\{ needs\.normalize\.outputs\.is-pr \}\}\s*$/mu,
+  );
 });
 
 test('router run-name embeds the router-group marker for every trigger type (#545)', async () => {
