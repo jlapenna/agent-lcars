@@ -2250,10 +2250,7 @@ function checkRoundTrip(written, after) {
   for (const field of fields) {
     const expected = written[field];
     const actual = after[field];
-    if (!isDeepStrictEqual2(
-      storageComparable(expected),
-      storageComparable(actual)
-    )) {
+    if (!isDeepStrictEqual2(storageComparable(expected), storageComparable(actual))) {
       divergences.push({ field, expected, actual });
     }
   }
