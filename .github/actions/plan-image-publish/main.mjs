@@ -57,11 +57,13 @@ async function run() {
     `::notice::plan-image-publish (${reason}, ` +
       `${changedFiles === null ? 'unknown' : changedFiles.length} changed ` +
       `file(s)): control-plane=${plan.controlPlane} ` +
-      `jit-runner=${plan.jitRunner} watcher=${plan.watcher}`,
+      `jit-runner=${plan.jitRunner} watcher=${plan.watcher} ` +
+      `exporter=${plan.exporter}`,
   );
   await output('control-plane', String(plan.controlPlane));
   await output('jit-runner', String(plan.jitRunner));
   await output('watcher', String(plan.watcher));
+  await output('exporter', String(plan.exporter));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

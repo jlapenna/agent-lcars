@@ -12,6 +12,7 @@ test('no changed files plans no image builds', () => {
     controlPlane: false,
     jitRunner: false,
     watcher: false,
+    exporter: false,
   });
 });
 
@@ -22,6 +23,7 @@ test('a shared telemetry lib change schedules both the JIT runner and watcher, n
     controlPlane: false,
     jitRunner: true,
     watcher: true,
+    exporter: false,
   });
 });
 
@@ -55,6 +57,11 @@ test('every bundle input schedules both the JIT runner and watcher, not the cont
     );
     assert.equal(plan.watcher, true, `${file} should schedule the watcher`);
     assert.equal(
+      plan.exporter,
+      false,
+      `${file} should not schedule the exporter`,
+    );
+    assert.equal(
       plan.controlPlane,
       false,
       `${file} should not schedule the control plane`,
@@ -72,7 +79,7 @@ test('a watcher deployment-config-only change schedules no image build (regressi
       'apps/telemetry-watcher/deploy/docker-compose.yml',
       'apps/telemetry-watcher/deploy/README.md',
     ]),
-    { controlPlane: false, jitRunner: false, watcher: false },
+    { controlPlane: false, jitRunner: false, watcher: false, exporter: false },
   );
 });
 
@@ -81,6 +88,7 @@ test('a watcher documentation-only change schedules no image build', () => {
     controlPlane: false,
     jitRunner: false,
     watcher: false,
+    exporter: false,
   });
 });
 
@@ -91,6 +99,7 @@ test('a control-plane-only change schedules only the control plane', () => {
     controlPlane: true,
     jitRunner: false,
     watcher: false,
+    exporter: false,
   });
 });
 
@@ -100,7 +109,7 @@ test('runner-image inputs schedule the JIT runner, not the control plane', () =>
       'apps/runner-autoscaler/runner-image/Dockerfile',
       'apps/runner-autoscaler/runner-image/entrypoint.sh',
     ]),
-    { controlPlane: false, jitRunner: true, watcher: false },
+    { controlPlane: false, jitRunner: true, watcher: false, exporter: false },
   );
 });
 
@@ -110,7 +119,25 @@ test('a mixed push schedules exactly the images its changes touch', () => {
       'apps/runner-autoscaler/scaler.go',
       'apps/telemetry-watcher/deploy/docker-compose.yml',
     ]),
-    { controlPlane: true, jitRunner: false, watcher: false },
+    { controlPlane: true, jitRunner: false, watcher: false, exporter: false },
+  );
+});
+
+test('an exporter source change schedules only the exporter', () => {
+  assert.deepEqual(
+    planImageBuilds(['apps/github-actions-exporter/exporter.py']),
+    { controlPlane: false, jitRunner: false, watcher: false, exporter: true },
+  );
+});
+
+test('exporter tests, Nx config, and documentation schedule no image build', () => {
+  assert.deepEqual(
+    planImageBuilds([
+      'apps/github-actions-exporter/tests/test_exporter.py',
+      'apps/github-actions-exporter/project.json',
+      'apps/github-actions-exporter/README.md',
+    ]),
+    { controlPlane: false, jitRunner: false, watcher: false, exporter: false },
   );
 });
 
@@ -125,7 +152,7 @@ test('a publish-images.yml or scan-image change schedules every image', () => {
   ]) {
     assert.deepEqual(
       planImageBuilds([file]),
-      { controlPlane: true, jitRunner: true, watcher: true },
+      { controlPlane: true, jitRunner: true, watcher: true, exporter: true },
       `${file} should schedule every image`,
     );
   }
@@ -134,7 +161,7 @@ test('a publish-images.yml or scan-image change schedules every image', () => {
 test('an unrelated change (e.g. the console app) schedules no image build', () => {
   assert.deepEqual(
     planImageBuilds(['apps/console/src/app/page.tsx', 'docs/incidents.md']),
-    { controlPlane: false, jitRunner: false, watcher: false },
+    { controlPlane: false, jitRunner: false, watcher: false, exporter: false },
   );
 });
 
@@ -146,6 +173,7 @@ test('the null sentinel (no diffable base) plans every image', () => {
     controlPlane: true,
     jitRunner: true,
     watcher: true,
+    exporter: true,
   });
 });
 

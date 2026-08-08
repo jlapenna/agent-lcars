@@ -1,7 +1,7 @@
 # Which image builds when: `publish-images.yml`'s path-based routing
 
-`publish-images.yml` publishes three different images from this one repo.
-Building all three serially on every push — including ones that only touch
+`publish-images.yml` publishes five images in four independently routed groups.
+Building every group serially on every push — including ones that only touch
 one of them, or touch none of them at all — is what made a
 deployment-config-only telemetry-watcher change (#440) spend ~20 minutes of
 builder capacity on a run that built nothing. This document is the map:
@@ -10,13 +10,15 @@ the routing tests that enforce it. See #441 for the original report and
 `.github/actions/plan-image-publish/plan.mjs` for the actual routing code —
 this document explains it, that file is the source of truth.
 
-## The three images
+## The images
 
-| Image                           | Build context                         | Dockerfile                                       | Consumer                                      |
-| ------------------------------- | ------------------------------------- | ------------------------------------------------ | --------------------------------------------- |
-| `agent-lcars/runner-autoscaler` | `apps/runner-autoscaler`              | `apps/runner-autoscaler/Dockerfile`              | homelab's autoscaler control-plane deployment |
-| `homelab-runner:jit-node24`     | `apps/runner-autoscaler/runner-image` | `apps/runner-autoscaler/runner-image/Dockerfile` | every self-hosted CI job in this fleet        |
-| `agent-lcars/telemetry-watcher` | repo root (`.`)                       | `apps/telemetry-watcher/Dockerfile`              | pike, the per-workstation telemetry daemon    |
+| Image                                 | Build context                                | Dockerfile                                              | Consumer                                              |
+| ------------------------------------- | -------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------- |
+| `agent-lcars/runner-autoscaler`       | `apps/runner-autoscaler`                     | `apps/runner-autoscaler/Dockerfile`                     | homelab's autoscaler control-plane deployment         |
+| `agent-lcars/control-plane-runner`    | `apps/runner-autoscaler/control-plane-image` | `apps/runner-autoscaler/control-plane-image/Dockerfile` | router/reconciler jobs; routed with the control plane |
+| `homelab-runner:jit-node24`           | `apps/runner-autoscaler/runner-image`        | `apps/runner-autoscaler/runner-image/Dockerfile`        | every self-hosted CI job in this fleet                |
+| `agent-lcars/telemetry-watcher`       | repo root (`.`)                              | `apps/telemetry-watcher/Dockerfile`                     | pike, the per-workstation telemetry daemon            |
+| `agent-lcars/github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | homelab Prometheus                                    |
 
 The JIT runner image and the telemetry-watcher image are **different
 artifacts built from the same source**: both bake in
@@ -30,7 +32,7 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
 
 1. **Workflow infrastructure** — `.github/workflows/publish-images.yml`,
    `.github/actions/scan-image/**`, `.github/actions/plan-image-publish/**`.
-   Schedules **all three** images. Changing how an image is built, scanned,
+   Schedules **all four groups**. Changing how an image is built, scanned,
    or routed is as much a reason to republish-and-exercise as changing what's
    in it (the same reasoning `scan-image` already applied, #224).
 2. **Bundle inputs** — `apps/telemetry-watcher/**` (except the two
@@ -45,7 +47,11 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
    Schedules only the JIT runner.
 4. **Control-plane inputs** — everything else under
    `apps/runner-autoscaler/**`. Schedules only the control plane.
-5. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
+5. **Exporter image inputs** — its `Dockerfile`, `exporter.py`, and
+   `requirements.lock`. Schedules only the exporter. Its README, tests, and
+   Nx project config remain CI inputs but cannot change the image and do not
+   consume the serialized builder lane.
+6. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
 
 A push can match more than one rule; each image is scheduled if **any**
 matching rule schedules it — there is no "first match wins" short-circuit

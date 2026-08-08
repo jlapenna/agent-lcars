@@ -5,8 +5,10 @@ name: Publish images
 #   2. the JIT worker image (apps/runner-autoscaler/runner-image/Dockerfile)
 #      every other CI job in this fleet actually executes inside;
 #   3. the standalone telemetry-watcher daemon
-#      (apps/telemetry-watcher/Dockerfile), the per-host image pike runs.
-# jlapenna/homelab pulls all three rather than building from source
+#      (apps/telemetry-watcher/Dockerfile), the per-host image pike runs;
+#   4. the GitHub Actions metrics exporter
+#      (apps/github-actions-exporter/Dockerfile), scraped by Prometheus.
+# jlapenna/homelab pulls the published service images rather than building from source
 # (agent-lcars#52) -- this workflow is the one place that source gets
 # compiled into a real, published artifact.
 #
@@ -25,7 +27,7 @@ name: Publish images
 #
 # Each image's build/scan/promote steps are individually gated on the plan
 # step's per-image output (agent-lcars#441), so a push that only touches one
-# image's inputs skips the other two entirely. Building all three
+# image group's inputs skips the other groups entirely. Building every group
 # unconditionally, serially, used to spend ~20 minutes of builder capacity
 # -- dominated by the emulated arm64 JIT build -- even for a push that
 # touched only one image's inputs, or none of them at all: a
@@ -94,6 +96,11 @@ on:
     branches: [main]
     paths:
       - apps/runner-autoscaler/**
+      # The exporter Dockerfile copies exactly these two inputs in addition
+      # to itself. README/tests/Nx config are CI inputs, not image inputs.
+      - apps/github-actions-exporter/Dockerfile
+      - apps/github-actions-exporter/exporter.py
+      - apps/github-actions-exporter/requirements.lock
       - .github/workflows/publish-images.yml
       # Changing how an image is scanned/attested/promoted, or how image
       # builds are ROUTED, is as much a reason to republish-and-exercise as
@@ -200,7 +207,7 @@ jobs:
           # plan-image-publish/main.mjs's fallback.
           fetch-depth: 0
 
-      # Decides which of the three images below actually need building for
+      # Decides which image groups below actually need building for
       # this push, from the set of changed paths -- see
       # .github/actions/plan-image-publish/plan.mjs for the routing rules.
       # Every later step's `if` reads this step's outputs directly (e.g.
@@ -230,6 +237,20 @@ jobs:
 
       - uses: ./.github/actions/setup-node-pnpm
 
+      # The exporter is a Python Nx project. The whole-workspace gate below
+      # invokes its targets even when another image triggered this run.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        if: |
+          steps.plan.outputs.control-plane == 'true' ||
+          steps.plan.outputs.jit-runner == 'true' ||
+          steps.plan.outputs.watcher == 'true' ||
+          steps.plan.outputs.exporter == 'true'
+        with:
+          version: 0.11.17
+          python-version: '3.14'
+          enable-cache: true
+          cache-dependency-glob: apps/github-actions-exporter/requirements.lock
+
       # Whole workspace, not a per-project list. AGENTS.md requires the
       # affected test/typecheck/build targets before publishing, and the
       # published artifacts pull in far more than the two app directories:
@@ -246,13 +267,14 @@ jobs:
       # is a loud failure, and loud beats silent here. The shared Nx cache
       # (NX_CACHE_URL) keeps the marginal cost small.
       #
-      # Skipped entirely when plan found nothing to build (all three
-      # outputs false) -- nothing here would gate.
+      # Skipped entirely when plan found nothing to build (all four outputs
+      # false) -- nothing here would gate.
       - name: Build and test before publishing
         if: |
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
-          steps.plan.outputs.watcher == 'true'
+          steps.plan.outputs.watcher == 'true' ||
+          steps.plan.outputs.exporter == 'true'
         run: ./tools/nx run-many -t build test typecheck --all
 
       # Only relevant to the two images that bake in this bundle. Skipped
@@ -326,7 +348,8 @@ jobs:
         if: |
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
-          steps.plan.outputs.watcher == 'true'
+          steps.plan.outputs.watcher == 'true' ||
+          steps.plan.outputs.exporter == 'true'
         with:
           driver: remote
           endpoint: tcp://oldbook.lan.jlapenna.net:1234
@@ -341,7 +364,8 @@ jobs:
         if: |
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
-          steps.plan.outputs.watcher == 'true'
+          steps.plan.outputs.watcher == 'true' ||
+          steps.plan.outputs.exporter == 'true'
         run: docker buildx inspect --bootstrap
 
       # Fail loudly rather than silently falling back to a local daemon if
@@ -351,7 +375,8 @@ jobs:
         if: |
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
-          steps.plan.outputs.watcher == 'true'
+          steps.plan.outputs.watcher == 'true' ||
+          steps.plan.outputs.exporter == 'true'
         run: |
           if [ -S /var/run/docker.sock ]; then
             echo "::error::/var/run/docker.sock is present; this job must run on a socketless pool"
@@ -366,7 +391,8 @@ jobs:
         if: |
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
-          steps.plan.outputs.watcher == 'true'
+          steps.plan.outputs.watcher == 'true' ||
+          steps.plan.outputs.exporter == 'true'
         run: |
           test -r /secrets/registry-password || {
             echo "::error::registry credential not mounted; check the lane's file_mounts"
@@ -595,6 +621,36 @@ jobs:
           docker buildx imagetools create \
             --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:latest \
             ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/telemetry-watcher:${{ github.sha }}
+
+      # The exporter runs on the amd64 observability host. Keep it
+      # single-platform, like the watcher, until an arm64 consumer exists.
+      - name: Build and push GitHub Actions exporter image (staging)
+        if: steps.plan.outputs.exporter == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: apps/github-actions-exporter
+          file: apps/github-actions-exporter/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:${{ github.sha }}
+          cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:buildcache
+          cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:buildcache,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Scan GitHub Actions exporter image
+        if: steps.plan.outputs.exporter == 'true'
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:${{ github.sha }}
+          category: github-actions-exporter
+
+      - name: Promote GitHub Actions exporter image to :latest
+        if: steps.plan.outputs.exporter == 'true'
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:latest \
+            ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:${{ github.sha }}
 
       - name: Log out of the registry
         if: always()
