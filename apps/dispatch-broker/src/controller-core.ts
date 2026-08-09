@@ -75,6 +75,15 @@ import {
 import { sendHostedCompletion } from './hosted-completion-client';
 import type { Intent } from './modules/intent';
 import {
+  MISSING_RUN_GRACE_MS as RECONCILE_MISSING_RUN_GRACE_MS,
+  MISSING_RUN_MAX_OBSERVATIONS as RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
+  MISSING_RUN_MIN_INTERVAL_MS as RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
+  reconcileExecution,
+  STUCK_RUN_GRACE_MS as RECONCILE_STUCK_RUN_GRACE_MS,
+  STUCK_RUN_MAX_OBSERVATIONS as RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
+  STUCK_RUN_MIN_INTERVAL_MS as RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
+} from './modules/outcome-finalizer';
+import {
   projectComment,
   projectNeedsHumanPark,
   recordProjectionStatus,
@@ -620,7 +629,25 @@ async function reconcileActive(
     runUrl: run.url,
     htmlUrl: run.html_url,
   });
-  if (run.status === 'completed') {
+  const execution = reconcileExecution({
+    attempt: {
+      dispatchStartedAt: active.attempt.dispatchStartedAt ?? active.occurredAt,
+      boundAt: active.attempt.boundAt,
+      runId: active.attempt.runId,
+    },
+    run: {
+      status: run.status,
+      conclusion: run.conclusion,
+      updatedAt: run.updated_at,
+    },
+    now,
+    priorObservations: reconcileAnomaliesFor(
+      loaded.ledger,
+      active.generation,
+      'reconcile-stuck-run',
+    ),
+  });
+  if (execution.action === 'finalize') {
     // Cancelled and timed-out runs land here too -- GitHub reports
     // `status: 'completed'` regardless of `conclusion`, so a cancellation or
     // a timeout terminalizes out-of-band the same as any other outcome, with
@@ -647,7 +674,6 @@ async function reconcileActive(
 // (ordinary eventual consistency, the same lag #340 documented for
 // concurrency-group listings), so the FIRST reconcile pass over a young
 // generation must stay a silent no-op.
-const RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1000;
 // Minimum gap between two COUNTED missing-run observations for the same
 // generation. This is what makes a reconcile pass idempotent against a
 // second, overlapping, or rapidly re-triggered pass (the acceptance
@@ -655,12 +681,10 @@ const RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1000;
 // nothing new and mutates nothing, rather than inflating the attempt
 // counter or re-writing the ledger. A genuinely new scheduled pass (30
 // minutes later, see dispatch-reconcile.yml) always clears it.
-const RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1000;
 // Bound on how many distinct, interval-separated "still missing" reconcile
 // observations a generation gets before it is parked needs-human. Mirrors
 // the repo's general bounded-retry posture (#343/#344) rather than
 // retrying forever.
-const RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
 const CLOSED_ANCHOR_LAUNCH_REJECTION =
   'anchor closed before launch was observed';
 
@@ -734,28 +758,23 @@ async function trackMissingRun(
   ) {
     return;
   }
-  const startedAt = Date.parse(
-    generation.attempt?.dispatchStartedAt ?? generation.occurredAt,
-  );
-  const ageMs = Date.parse(now) - startedAt;
-  if (!(ageMs >= RECONCILE_MISSING_RUN_GRACE_MS)) return;
-
   const priorObservations = reconcileAnomaliesFor(
     ledger,
     generation.generation,
     'reconcile-missing-run',
   );
-  const last = priorObservations.at(-1);
-  if (
-    last &&
-    Date.parse(now) - Date.parse(last.occurredAt) <
-      RECONCILE_MISSING_RUN_MIN_INTERVAL_MS
-  ) {
-    return;
-  }
-
-  const attempt = priorObservations.length + 1;
-  const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  const decision = reconcileExecution({
+    attempt: {
+      dispatchStartedAt:
+        generation.attempt?.dispatchStartedAt ?? generation.occurredAt,
+    },
+    now,
+    priorObservations,
+  });
+  if (decision.action === 'wait' || decision.action === 'finalize') return;
+  const { ageMs } = decision;
+  const attempt = decision.observation;
+  const reachedBound = decision.action === 'escalate';
   const attemptId =
     generation.attempt?.attemptId ?? formatAttemptId(generation);
   const launchRead =
@@ -856,7 +875,7 @@ async function trackMissingRun(
       owningSystem: 'controller',
       reason: 'launch_response_lost',
       retryDisposition: 'backoff',
-      retryBudget: Math.max(0, RECONCILE_MISSING_RUN_MAX_ATTEMPTS - attempt),
+      retryBudget: decision.retryBudget,
       evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`,
     }),
   );
@@ -936,7 +955,6 @@ async function trackMissingRun(
 // documented worst case is its hour-long DRAIN_TIMEOUT_SECONDS host-drain
 // window) and a margin for GitHub's own status-reporting lag once a run
 // genuinely ends. 135 + 60 + 45 rounds to a clean 4 hours.
-const RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1000;
 // Minimum gap between two COUNTED stuck-run observations for the same
 // generation -- identical idempotence purpose to
 // RECONCILE_MISSING_RUN_MIN_INTERVAL_MS above: re-observing "still not
@@ -944,12 +962,10 @@ const RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1000;
 // overlapping or rapidly re-triggered reconcile pass cannot inflate the
 // counter. Set to dispatch-reconcile.yml's own 30-minute scheduled cadence,
 // so a genuinely new scheduled pass always clears it.
-const RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1000;
 // Bound on how many distinct, interval-separated "still not terminal"
 // observations a bound run gets before its generation is parked
 // needs-human. Same bounded-retry posture as
 // RECONCILE_MISSING_RUN_MAX_ATTEMPTS (#343/#344).
-const RECONCILE_STUCK_RUN_MAX_ATTEMPTS = 3;
 
 // Repairs the other half of #645's out-of-band terminalization gap:
 // reconcileActive() above already terminalizes the instant GitHub reports
@@ -992,30 +1008,26 @@ async function trackStuckRun(
   ) {
     return;
   }
-  const boundAt = Date.parse(
-    generation.attempt?.boundAt ??
-      generation.attempt?.dispatchStartedAt ??
-      generation.occurredAt,
-  );
-  const ageMs = Date.parse(now) - boundAt;
-  if (!(ageMs >= RECONCILE_STUCK_RUN_GRACE_MS)) return;
-
   const priorObservations = reconcileAnomaliesFor(
     ledger,
     generation.generation,
     'reconcile-stuck-run',
   );
-  const last = priorObservations.at(-1);
-  if (
-    last &&
-    Date.parse(now) - Date.parse(last.occurredAt) <
-      RECONCILE_STUCK_RUN_MIN_INTERVAL_MS
-  ) {
-    return;
-  }
-
-  const attempt = priorObservations.length + 1;
-  const reachedBound = attempt >= RECONCILE_STUCK_RUN_MAX_ATTEMPTS;
+  const decision = reconcileExecution({
+    attempt: {
+      dispatchStartedAt:
+        generation.attempt?.dispatchStartedAt ?? generation.occurredAt,
+      boundAt: generation.attempt?.boundAt,
+      runId: generation.attempt?.runId,
+    },
+    run: { status: run.status, conclusion: run.conclusion },
+    now,
+    priorObservations,
+  });
+  if (decision.action === 'wait' || decision.action === 'finalize') return;
+  const { ageMs } = decision;
+  const attempt = decision.observation;
+  const reachedBound = decision.action === 'escalate';
   // Computed up front, once -- see trackMissingRun's own parkFailure for
   // why (shared between the park gate and the 'reconcile-stuck-run-parked'
   // anomaly below rather than two independently-written literals).
@@ -1076,7 +1088,7 @@ async function trackStuckRun(
       owningSystem: 'runner',
       reason: 'runner_lost',
       retryDisposition: 'backoff',
-      retryBudget: Math.max(0, RECONCILE_STUCK_RUN_MAX_ATTEMPTS - attempt),
+      retryBudget: decision.retryBudget,
       evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${RECONCILE_STUCK_RUN_MAX_ATTEMPTS})`,
     }),
   );

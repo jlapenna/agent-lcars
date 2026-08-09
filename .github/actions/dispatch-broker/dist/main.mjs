@@ -1875,6 +1875,49 @@ async function sendHostedCompletion({
   );
 }
 
+// apps/dispatch-broker/src/modules/outcome-finalizer.ts
+var MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
+var MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
+var MISSING_RUN_MAX_OBSERVATIONS = 3;
+var STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
+var STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
+var STUCK_RUN_MAX_OBSERVATIONS = 3;
+function terminalState(conclusion) {
+  if (conclusion === "timed_out") return "timed_out";
+  if (conclusion === "cancelled") return "cancelled";
+  return "exited";
+}
+function reconcileExecution(input) {
+  if (input.run?.status === "completed") {
+    return { state: terminalState(input.run.conclusion), action: "finalize" };
+  }
+  const bound = input.attempt.runId !== void 0;
+  const state = bound ? "running" : "not_started";
+  const baseline = bound ? input.attempt.boundAt ?? input.attempt.dispatchStartedAt : input.attempt.dispatchStartedAt;
+  const ageMs = Date.parse(input.now) - Date.parse(baseline);
+  const graceMs = bound ? STUCK_RUN_GRACE_MS : MISSING_RUN_GRACE_MS;
+  if (!(ageMs >= graceMs)) return { state, action: "wait", ageMs };
+  const minIntervalMs = bound ? STUCK_RUN_MIN_INTERVAL_MS : MISSING_RUN_MIN_INTERVAL_MS;
+  const last = input.priorObservations.at(-1);
+  if (last && Date.parse(input.now) - Date.parse(last.occurredAt) < minIntervalMs) {
+    return { state, action: "wait", ageMs };
+  }
+  const observation = input.priorObservations.length + 1;
+  const maxObservations = bound ? STUCK_RUN_MAX_OBSERVATIONS : MISSING_RUN_MAX_OBSERVATIONS;
+  const retryBudget = Math.max(0, maxObservations - observation);
+  if (observation >= maxObservations) {
+    return {
+      state: "lost",
+      action: "escalate",
+      ageMs,
+      observation,
+      retryBudget: 0,
+      cause: bound ? "run_stuck" : "run_missing"
+    };
+  }
+  return { state, action: "observe", ageMs, observation, retryBudget };
+}
+
 // apps/dispatch-broker/src/modules/projector.ts
 function projectionMarker(kind, key) {
   return `<!-- agent-lcars:projection:${kind}:${key} -->`;
@@ -3360,7 +3403,25 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
     runUrl: run.url,
     htmlUrl: run.html_url
   });
-  if (run.status === "completed") {
+  const execution = reconcileExecution({
+    attempt: {
+      dispatchStartedAt: active.attempt.dispatchStartedAt ?? active.occurredAt,
+      boundAt: active.attempt.boundAt,
+      runId: active.attempt.runId
+    },
+    run: {
+      status: run.status,
+      conclusion: run.conclusion,
+      updatedAt: run.updated_at
+    },
+    now,
+    priorObservations: reconcileAnomaliesFor(
+      loaded.ledger,
+      active.generation,
+      "reconcile-stuck-run"
+    )
+  });
+  if (execution.action === "finalize") {
     completeRun(loaded.ledger, active.generation, {
       runId: run.id,
       status: run.status,
@@ -3372,9 +3433,6 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
   }
   await trackStuckRun(client, loaded, active, run, now, maintainer);
 }
-var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
-var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
-var RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
 var CLOSED_ANCHOR_LAUNCH_REJECTION = "anchor closed before launch was observed";
 function reconcileAnomaliesFor(ledger, generationNumber, kind) {
   return ledger.anomalies.filter(
@@ -3404,22 +3462,22 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
   if (reconcileAnomaliesFor(ledger, generation.generation, "reconcile-parked").length > 0) {
     return;
   }
-  const startedAt = Date.parse(
-    generation.attempt?.dispatchStartedAt ?? generation.occurredAt
-  );
-  const ageMs = Date.parse(now) - startedAt;
-  if (!(ageMs >= RECONCILE_MISSING_RUN_GRACE_MS)) return;
   const priorObservations = reconcileAnomaliesFor(
     ledger,
     generation.generation,
     "reconcile-missing-run"
   );
-  const last = priorObservations.at(-1);
-  if (last && Date.parse(now) - Date.parse(last.occurredAt) < RECONCILE_MISSING_RUN_MIN_INTERVAL_MS) {
-    return;
-  }
-  const attempt = priorObservations.length + 1;
-  const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  const decision = reconcileExecution({
+    attempt: {
+      dispatchStartedAt: generation.attempt?.dispatchStartedAt ?? generation.occurredAt
+    },
+    now,
+    priorObservations
+  });
+  if (decision.action === "wait" || decision.action === "finalize") return;
+  const { ageMs } = decision;
+  const attempt = decision.observation;
+  const reachedBound = decision.action === "escalate";
   const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
   const launchRead = reachedBound && loaded.authority ? await readLaunchOperationForReconciliation(loaded, attemptId) : { ok: true, operation: void 0 };
   if (!launchRead.ok) return;
@@ -3435,7 +3493,7 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
     owningSystem: "controller",
     reason: "launch_response_lost",
     retryDisposition: "manual",
-    evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
+    evidence: `${MISSING_RUN_MAX_OBSERVATIONS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
   }) : void 0;
   if (abandonClosedLaunch && launchOperation?.status === "pending") {
     try {
@@ -3486,8 +3544,8 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
       owningSystem: "controller",
       reason: "launch_response_lost",
       retryDisposition: "backoff",
-      retryBudget: Math.max(0, RECONCILE_MISSING_RUN_MAX_ATTEMPTS - attempt),
-      evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`
+      retryBudget: decision.retryBudget,
+      evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${MISSING_RUN_MAX_OBSERVATIONS})`
     })
   );
   if (retryPendingLaunch) {
@@ -3507,7 +3565,7 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
         reason: "launch_response_lost",
         retryDisposition: "immediate",
         retryBudget: 1,
-        evidence: `the exact launch outbox operation ${attemptId} is still pending after ${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded searches found no matching workflow run`
+        evidence: `the exact launch outbox operation ${attemptId} is still pending after ${MISSING_RUN_MAX_OBSERVATIONS} bounded searches found no matching workflow run`
       })
     );
     restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
@@ -3552,9 +3610,6 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
   }
   await saveLedger2(client, loaded);
 }
-var RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
-var RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
-var RECONCILE_STUCK_RUN_MAX_ATTEMPTS = 3;
 async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
   const ledger = loaded.ledger;
   if (reconcileAnomaliesFor(
@@ -3564,28 +3619,31 @@ async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
   ).length > 0) {
     return;
   }
-  const boundAt = Date.parse(
-    generation.attempt?.boundAt ?? generation.attempt?.dispatchStartedAt ?? generation.occurredAt
-  );
-  const ageMs = Date.parse(now) - boundAt;
-  if (!(ageMs >= RECONCILE_STUCK_RUN_GRACE_MS)) return;
   const priorObservations = reconcileAnomaliesFor(
     ledger,
     generation.generation,
     "reconcile-stuck-run"
   );
-  const last = priorObservations.at(-1);
-  if (last && Date.parse(now) - Date.parse(last.occurredAt) < RECONCILE_STUCK_RUN_MIN_INTERVAL_MS) {
-    return;
-  }
-  const attempt = priorObservations.length + 1;
-  const reachedBound = attempt >= RECONCILE_STUCK_RUN_MAX_ATTEMPTS;
+  const decision = reconcileExecution({
+    attempt: {
+      dispatchStartedAt: generation.attempt?.dispatchStartedAt ?? generation.occurredAt,
+      boundAt: generation.attempt?.boundAt,
+      runId: generation.attempt?.runId
+    },
+    run: { status: run.status, conclusion: run.conclusion },
+    now,
+    priorObservations
+  });
+  if (decision.action === "wait" || decision.action === "finalize") return;
+  const { ageMs } = decision;
+  const attempt = decision.observation;
+  const reachedBound = decision.action === "escalate";
   const parkFailure = reachedBound ? classifyFailure({
     phase: "reconciliation",
     owningSystem: "runner",
     reason: "runner_lost",
     retryDisposition: "manual",
-    evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
+    evidence: `${STUCK_RUN_MAX_OBSERVATIONS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
   }) : void 0;
   if (parkFailure) {
     await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
@@ -3622,8 +3680,8 @@ async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
       owningSystem: "runner",
       reason: "runner_lost",
       retryDisposition: "backoff",
-      retryBudget: Math.max(0, RECONCILE_STUCK_RUN_MAX_ATTEMPTS - attempt),
-      evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${RECONCILE_STUCK_RUN_MAX_ATTEMPTS})`
+      retryBudget: decision.retryBudget,
+      evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${STUCK_RUN_MAX_OBSERVATIONS})`
     })
   );
   if (parkFailure) {
@@ -4774,12 +4832,12 @@ export {
   CompletionBindingError,
   FRESH_INTENT_OUTCOMES,
   RECONCILE_DISPATCH_CONCURRENCY,
-  RECONCILE_MISSING_RUN_GRACE_MS,
-  RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
-  RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
-  RECONCILE_STUCK_RUN_GRACE_MS,
-  RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
-  RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
+  MISSING_RUN_GRACE_MS as RECONCILE_MISSING_RUN_GRACE_MS,
+  MISSING_RUN_MAX_OBSERVATIONS as RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
+  MISSING_RUN_MIN_INTERVAL_MS as RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
+  STUCK_RUN_GRACE_MS as RECONCILE_STUCK_RUN_GRACE_MS,
+  STUCK_RUN_MAX_OBSERVATIONS as RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
+  STUCK_RUN_MIN_INTERVAL_MS as RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   anchorNeedsHuman,
   applyAnchorControlTransition,
   assertCompletionBindingBeforeInitialization,
