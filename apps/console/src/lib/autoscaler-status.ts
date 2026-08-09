@@ -29,20 +29,45 @@ export interface AutoscalerStatusResult {
   warnings: string[];
 }
 
-function isRunner(value: unknown): value is AutoscalerRunnerStatus {
-  if (!value || typeof value !== 'object') return false;
+function parseRunner(value: unknown): AutoscalerRunnerStatus | undefined {
+  if (!value || typeof value !== 'object') return undefined;
   const runner = value as Record<string, unknown>;
-  return (
+  if (
     typeof runner['name'] === 'string' &&
     typeof runner['host'] === 'string' &&
     (runner['state'] === 'idle' || runner['state'] === 'busy') &&
     (runner['jobId'] === undefined || typeof runner['jobId'] === 'string')
-  );
+  ) {
+    // This is the server-to-client transport boundary. Do not return the
+    // Firestore value (or a spread of it): Firestore can add Timestamp and
+    // other class instances which React Server Components cannot serialize.
+    return {
+      name: runner['name'],
+      host: runner['host'],
+      state: runner['state'],
+      ...(typeof runner['jobId'] === 'string'
+        ? { jobId: runner['jobId'] }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
+function parseRunners(value: unknown): AutoscalerRunnerStatus[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const runners: AutoscalerRunnerStatus[] = [];
+  for (const candidate of value) {
+    const runner = parseRunner(candidate);
+    if (!runner) return undefined;
+    runners.push(runner);
+  }
+  return runners;
 }
 
 function parseStatus(value: unknown): AutoscalerScaleSetStatus | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const status = value as Record<string, unknown>;
+  const runners = parseRunners(status['runners']);
   if (
     status['schemaVersion'] !== 1 ||
     typeof status['scaleSet'] !== 'string' ||
@@ -52,12 +77,25 @@ function parseStatus(value: unknown): AutoscalerScaleSetStatus | undefined {
     typeof status['maxRunners'] !== 'number' ||
     typeof status['draining'] !== 'boolean' ||
     typeof status['updatedAt'] !== 'string' ||
-    !Array.isArray(status['runners']) ||
-    !status['runners'].every(isRunner)
+    !runners
   ) {
     return undefined;
   }
-  return status as unknown as AutoscalerScaleSetStatus;
+  // Keep this server-to-client mapping explicit: only primitive,
+  // client-contract fields may leave the server. In
+  // particular, `expireAt` is a Firestore Timestamp used only for server-side
+  // staleness and must never enter a Client Component prop.
+  return {
+    schemaVersion: 1,
+    scaleSet: status['scaleSet'],
+    registration: status['registration'],
+    queuedJobs: status['queuedJobs'],
+    minRunners: status['minRunners'],
+    maxRunners: status['maxRunners'],
+    draining: status['draining'],
+    runners,
+    updatedAt: status['updatedAt'],
+  };
 }
 
 /**

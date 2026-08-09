@@ -1,4 +1,5 @@
 import { getAgentTelemetryReaderFirestore } from '@agent-lcars/telemetry/server';
+import { Timestamp } from 'firebase-admin/firestore';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getAutoscalerStatuses } from './autoscaler-status';
@@ -39,19 +40,52 @@ describe('getAutoscalerStatuses', () => {
   afterEach(() => vi.resetAllMocks());
 
   it('returns fresh, schema-valid scale set snapshots', async () => {
-    mockStore([status()]);
+    const firestoreOnlyFields = {
+      expireAt: Timestamp.now(),
+    };
+    mockStore([
+      status({
+        ...firestoreOnlyFields,
+        runners: [
+          {
+            name: 'runner-idle',
+            host: 'janeway',
+            state: 'idle',
+            firestoreMetadata: firestoreOnlyFields,
+          },
+          {
+            name: 'runner-busy',
+            host: 'spark',
+            state: 'busy',
+            jobId: 'job-42',
+          },
+        ],
+      }),
+    ]);
 
     const result = await getAutoscalerStatuses();
 
     expect(result.warnings).toEqual([]);
     expect(result.statuses).toEqual([
-      expect.objectContaining({
+      {
+        schemaVersion: 1,
         scaleSet: 'lcars-ci',
+        registration: 'primary',
         queuedJobs: 2,
-        runners: expect.arrayContaining([
-          expect.objectContaining({ name: 'runner-busy', jobId: 'job-42' }),
-        ]),
-      }),
+        minRunners: 0,
+        maxRunners: 4,
+        draining: false,
+        runners: [
+          { name: 'runner-idle', host: 'janeway', state: 'idle' },
+          {
+            name: 'runner-busy',
+            host: 'spark',
+            state: 'busy',
+            jobId: 'job-42',
+          },
+        ],
+        updatedAt: expect.any(String),
+      },
     ]);
   });
 
