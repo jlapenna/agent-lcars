@@ -287,6 +287,17 @@ interface ScanAndRerunOptions {
  *  (or `0`, see `ProcessRunOutcome.anchor`) from `processRun`. */
 interface RerunRecord {
   runId: number;
+  /** The attempt this rerun is EXPECTED to have produced -- `run.run_attempt
+   *  + 1`, not `run.run_attempt` itself. `run` was fetched (and its
+   *  `run_attempt` read) BEFORE `rerunFailedJobs` was called (see
+   *  `processRun`'s own log line: "attempt X -> X+1"), so `run.run_attempt`
+   *  is the PRE-rerun value. A consumer that reports this as the claimed
+   *  identity for a "did the rerun actually happen" check (recovery-
+   *  observation-verification.ts's `ci_retry` verifier, #878) needs the
+   *  POST-rerun value: checking GitHub's live `run_attempt >= claimed`
+   *  against the pre-rerun number would trivially pass even if the rerun
+   *  call never actually started a new attempt at all -- confirming the
+   *  unchanged state, not the rerun (Codex review on #878). */
   runAttempt: number;
   anchor: number;
   runUrl: string;
@@ -342,7 +353,10 @@ async function scanAndRerun({
     const run = eligible[index];
     rerunRuns.push({
       runId: run.id,
-      runAttempt: run.run_attempt,
+      // The rerun call requests attempt run_attempt + 1, not run_attempt
+      // itself -- see RerunRecord's own doc for why reporting the pre-rerun
+      // value would make a "did this rerun happen" check pass trivially.
+      runAttempt: run.run_attempt + 1,
       anchor: outcome.value.anchor,
       runUrl: run.html_url,
     });

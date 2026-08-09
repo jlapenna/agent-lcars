@@ -127,28 +127,31 @@ export async function recordHostedRecoveryObservation({
   const verify = verifierForDomain(observation.target.domain);
   if (!verify) return recorded;
 
-  return shadowVerifyAndResolve({
-    port,
-    recorded,
-    verify,
-    octokit: octokitFactory(),
-  });
+  return shadowVerifyAndResolve({ port, recorded, verify, octokitFactory });
 }
 
 async function shadowVerifyAndResolve({
   port,
   recorded,
   verify,
-  octokit,
+  octokitFactory,
 }: {
   port: RecoveryOperationPort;
   recorded: RecordedRecoveryOperation;
   verify: RecoveryObservationVerifier;
-  octokit: Octokit;
+  octokitFactory: () => Octokit;
 }): Promise<RecordedRecoveryOperation> {
   let outcome: VerificationOutcome;
   try {
-    outcome = await verify(recorded.observation, octokit);
+    // Constructing the client is part of the SAME best-effort attempt as
+    // calling the verifier itself (Codex review on #878): octokitFactory()
+    // can throw (e.g. getGithubClient() rejecting because
+    // AGENT_LCARS_GITHUB_TOKEN is unset), and that failure says exactly as
+    // little about whether the observation's claim is true as the verifier
+    // itself throwing does. Constructing it outside this try, in the
+    // caller, would let that exception propagate past `recorded` already
+    // having been durably saved and turn a successful recording into a 500.
+    outcome = await verify(recorded.observation, octokitFactory());
   } catch (error) {
     console.warn(
       `agent-lcars: shadow verification threw for ${recorded.operationKey}`,

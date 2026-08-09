@@ -117,6 +117,23 @@ describe('recordHostedRecoveryObservation', () => {
     expect(result.resolvedAt).toBeUndefined();
   });
 
+  it('leaves the operation pending, and does not throw, when octokitFactory itself fails to construct a client', async () => {
+    const port = new InMemoryRecoveryOperationPort();
+    const observation = observationFixture();
+    const result = await recordHostedRecoveryObservation({
+      identity,
+      body: observation,
+      portFactory: () => port,
+      octokitFactory: () => {
+        throw new Error('AGENT_LCARS_GITHUB_TOKEN not defined');
+      },
+    });
+    // The observation was already durably recorded before verification was
+    // ever attempted -- a failure to even construct the verifier's GitHub
+    // client must not turn that successful recording into a thrown error.
+    expect(result.status).toBe('pending');
+  });
+
   it('resolves mismatch (not left pending) when GitHub has no record of the claimed run', async () => {
     const port = new InMemoryRecoveryOperationPort();
     const observation = observationFixture();

@@ -267,7 +267,10 @@ async function scanAndRerun({
     const run2 = eligible[index];
     rerunRuns.push({
       runId: run2.id,
-      runAttempt: run2.run_attempt,
+      // The rerun call requests attempt run_attempt + 1, not run_attempt
+      // itself -- see RerunRecord's own doc for why reporting the pre-rerun
+      // value would make a "did this rerun happen" check pass trivially.
+      runAttempt: run2.run_attempt + 1,
       anchor: outcome.value.anchor,
       runUrl: run2.html_url
     });
