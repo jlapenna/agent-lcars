@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { getAutoscalerStatuses } from './autoscaler-status';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
+  forClient: vi.fn((value: unknown) => value),
   getAgentTelemetryReaderFirestore: vi.fn(),
 }));
 
