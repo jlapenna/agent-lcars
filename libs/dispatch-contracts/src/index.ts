@@ -132,6 +132,23 @@ export {
 } from './quick-task';
 export type { LaneReadinessFailure } from './readiness';
 export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';
+export type {
+  ParsedRecoveryOperationKey,
+  RecoveryDomain,
+  RecoveryObservation,
+  RecoveryOperationTarget,
+  RecoverySourceKind,
+} from './recovery-observation';
+export {
+  buildRecoveryObservation,
+  formatOperationKey,
+  isRecoveryDomain,
+  isRecoverySourceKind,
+  isWellFormedRecoveryObservation,
+  parseOperationKey,
+  RECOVERY_DOMAINS,
+  RECOVERY_SOURCE_KINDS,
+} from './recovery-observation';
 export type { AuthoritativeTaskState } from './task-state';
 export {
   AUTHORITATIVE_TASK_STATE_SCHEMA,
