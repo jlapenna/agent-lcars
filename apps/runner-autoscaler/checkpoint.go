@@ -52,6 +52,10 @@ type checkpointRunner struct {
 	ContainerID string    `json:"container_id"`
 	StartedAt   time.Time `json:"started_at"`
 	Busy        bool      `json:"busy"`
+	// JobID is only populated for a busy runner. It lets the console retain
+	// the active-job projection through a restart/reload, while the existing
+	// Busy bit continues to be the scheduling-safety authority.
+	JobID string `json:"job_id,omitempty"`
 }
 
 type checkpointFleet struct {

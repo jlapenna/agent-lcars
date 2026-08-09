@@ -33,6 +33,7 @@ import {
   MAX_TURNS_BUDGET,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
+import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
 import type { CliSession } from '../lib/cli-sessions';
 import { MAX_SESSIONS } from '../lib/cli-sessions';
 import { shareArtifactUrl } from '../lib/deployment';
@@ -50,6 +51,7 @@ import { lcarsPanelStyle } from './lcars';
 import { PersistedDetails } from './persisted-details';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
+import { RunnerAutoscalerStatus } from './runner-autoscaler-status';
 import { TakeoverCommand } from './takeover-command';
 
 // Labels/colors are keyed by the run-status classifier's own output
@@ -748,6 +750,7 @@ export function AgentActivityPanel({
   cliSessionsCapped,
   itemsByRunId = {},
   sessionsByRunId = {},
+  autoscalerStatus = { statuses: [], warnings: [] },
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
@@ -763,6 +766,9 @@ export function AgentActivityPanel({
    * `indexSessionsByNumericRunId` in run-classification.ts. Absent/empty
    * renders exactly as before this telemetry existed (PRD user story 16). */
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+  /** Fresh autoscaler projection; its client island refreshes this without
+   * re-running the surrounding GitHub-backed dashboard. */
+  autoscalerStatus?: AutoscalerStatusResult;
 }) {
   const { liveRuns, recentRuns, fleet } = activity;
 
@@ -793,6 +799,8 @@ export function AgentActivityPanel({
         </Group>
 
         <QueueHealthAlert liveRuns={liveRuns} />
+
+        <RunnerAutoscalerStatus initial={autoscalerStatus} />
 
         {liveRuns.length === 0 && activeSessions.length === 0 && (
           <Text size="sm" c="dimmed">
