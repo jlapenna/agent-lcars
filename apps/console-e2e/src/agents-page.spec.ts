@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 import { E2E_CLI_SESSION_IDS, useCliSessionFixtures } from './seed';
-import { expectDesktopCommandDeck } from './util/console-layout';
+import {
+  expectDesktopBridgeHeader,
+  expectMobileBridgeHeader,
+} from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
@@ -92,7 +95,7 @@ test.describe('/agents page @smoke', () => {
     );
     const workspace = page.getByRole('region', { name: 'Agent operations' });
     await expect(header).toHaveCount(1);
-    await expectDesktopCommandDeck(header);
+    await expectDesktopBridgeHeader(header);
     await expect(workspace).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
@@ -156,7 +159,7 @@ test.describe('/agents page @smoke', () => {
     );
     const workspace = page.getByRole('region', { name: 'Agent operations' });
     await expect(header).toHaveCount(1);
-    await expect(header).toBeVisible();
+    await expectMobileBridgeHeader(header);
     await expect(workspace).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
@@ -164,7 +167,6 @@ test.describe('/agents page @smoke', () => {
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
     await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
-    expect((await header.boundingBox())?.height).toBe(64);
 
     await expect(workspace.locator('.agents-workspace__operations')).toHaveCSS(
       'display',

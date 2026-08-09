@@ -1052,7 +1052,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
     grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr);
-    /* Fixed, border-box command-deck geometry keeps the shared shell stable
+    /* Fixed, border-box Bridge-header geometry keeps the shared shell stable
        across route copy, font metrics, and browser rendering differences. */
     height: 80px;
     box-sizing: border-box;
@@ -1073,7 +1073,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: flex;
     min-width: 0;
     align-items: center;
-    /* Keep the desktop command deck at its deliberate 80px rhythm. The
+    /* Keep the desktop Bridge header at its deliberate 80px rhythm. The
        extra left clearance belongs to the elbow; it should not add height. */
     padding: 12px 20px 10px 4.25rem;
     border-right: 1px solid var(--mantine-color-dark-4);
