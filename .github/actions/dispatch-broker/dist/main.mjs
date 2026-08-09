@@ -1,8 +1,10 @@
 // apps/dispatch-broker/src/main.ts
+import { pathToFileURL } from "node:url";
+
+// apps/dispatch-broker/src/controller-core.ts
 import crypto3 from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 // libs/dispatch-contracts/src/failure.ts
 var OWNING_SYSTEMS = Object.freeze([
@@ -3104,7 +3106,7 @@ var FirestoreRestStoragePort = class {
   }
 };
 
-// apps/dispatch-broker/src/main.ts
+// apps/dispatch-broker/src/controller-core.ts
 function env(name, required = true) {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);
@@ -4752,8 +4754,9 @@ async function scanReconcile() {
     }
   );
 }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const operation = process.argv[2];
+
+// apps/dispatch-broker/src/main.ts
+async function runOperation(operation) {
   if (operation === "normalize") await normalize();
   else if (operation === "broker") await broker();
   else if (operation === "preflight") await preflight();
@@ -4763,6 +4766,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     await classifyClaudeReadinessProbe();
   else if (operation === "claude-readiness") await claudeReadiness();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runOperation(process.argv[2]);
 }
 export {
   CompletionBindingError,
@@ -4779,6 +4785,10 @@ export {
   assertCompletionBindingBeforeInitialization,
   assertCompletionLedgerBinding,
   assertWorkerRun,
+  broker,
+  classifyClaudeReadinessProbe,
+  claudeReadiness,
+  completionCallback,
   completionMatches,
   contextFor,
   decode,
@@ -4793,6 +4803,8 @@ export {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
+  normalize,
+  preflight,
   processNormalizedEvent,
   projectClaudeReadiness,
   reconcileActive,
@@ -4800,8 +4812,10 @@ export {
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
+  runOperation,
   runPhase,
   saveProjectionCheckpoint,
+  scanReconcile,
   trustedActionsRunUrl,
   trustedClaudeExecutionFile,
   wasSupersededEviction
