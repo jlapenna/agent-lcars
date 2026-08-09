@@ -98,7 +98,7 @@ test('reruns an infra-killed attempt-1 run exactly once and posts the audit-trai
     rerunRuns: [
       {
         runId: 1,
-        runAttempt: 1,
+        runAttempt: 2,
         anchor: 469,
         runUrl: `https://github.com/${REPO}/actions/runs/1`,
       },
@@ -183,7 +183,7 @@ test('still counts the rerun when no pull request is associated with the run, bu
     rerunRuns: [
       {
         runId: 4,
-        runAttempt: 1,
+        runAttempt: 2,
         anchor: 0,
         runUrl: `https://github.com/${REPO}/actions/runs/4`,
       },
@@ -269,7 +269,7 @@ test('reports the correct anchor when the PR lookup succeeds but posting the aud
     rerunRuns: [
       {
         runId: 8,
-        runAttempt: 1,
+        runAttempt: 2,
         anchor: 501,
         runUrl: `https://github.com/${REPO}/actions/runs/8`,
       },
@@ -309,7 +309,7 @@ test('a per-candidate rerun failure is reported but never blocks scanning the re
     rerunRuns: [
       {
         runId: 6,
-        runAttempt: 1,
+        runAttempt: 2,
         anchor: 0,
         runUrl: `https://github.com/${REPO}/actions/runs/6`,
       },
@@ -348,7 +348,7 @@ test('scans the workflow named by workflowFile instead of the ci.yml default', a
     rerunRuns: [
       {
         runId: 9,
-        runAttempt: 1,
+        runAttempt: 2,
         anchor: 0,
         runUrl: `https://github.com/${REPO}/actions/runs/9`,
       },
