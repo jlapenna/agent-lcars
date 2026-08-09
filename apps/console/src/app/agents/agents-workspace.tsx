@@ -19,7 +19,10 @@ export function AgentsWorkspace({
   recentOutcomes: ReactNode;
 }) {
   return (
-    <section className="agents-workspace" aria-label="Agent operations">
+    <section
+      className="console-workspace agents-workspace"
+      aria-label="Agent operations"
+    >
       {warnings && <div className="agents-workspace__warnings">{warnings}</div>}
       {fleet}
       <div className="agents-workspace__operations">

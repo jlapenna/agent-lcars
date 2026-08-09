@@ -18,7 +18,7 @@ const NAV_ITEMS: Array<{
   label: string;
   accent: Accent;
 }> = [
-  { key: 'deck', href: '/', label: 'Deck', accent: 'amber' },
+  { key: 'deck', href: '/', label: 'Bridge', accent: 'amber' },
   { key: 'inbox', href: '/inbox', label: 'Inbox', accent: 'blue' },
   { key: 'agents', href: '/agents', label: 'Agents', accent: 'periwinkle' },
   { key: 'sessions', href: '/sessions', label: 'Sessions', accent: 'teal' },

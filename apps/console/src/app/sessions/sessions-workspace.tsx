@@ -16,7 +16,10 @@ export function SessionsWorkspace({
   children: ReactNode;
 }) {
   return (
-    <section className="sessions-workspace" aria-label="Session archive">
+    <section
+      className="console-workspace sessions-workspace"
+      aria-label="Session archive"
+    >
       {warnings ? (
         <div className="sessions-workspace__warnings">{warnings}</div>
       ) : null}

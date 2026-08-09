@@ -354,7 +354,7 @@ test.describe('responsive decision inbox', () => {
       page.getByRole('region', { name: 'Decision Inbox' }),
     ).toHaveCount(0);
     const header = page.locator('.console-header[data-current="deck"]');
-    await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+    await expect(header.getByRole('link', { name: 'Bridge' })).toHaveAttribute(
       'aria-current',
       'page',
     );
@@ -394,7 +394,7 @@ test.describe('responsive decision inbox', () => {
     await expect(inboxLink).toHaveAttribute('href', `/inbox?repo=${repoQuery}`);
     await inboxLink.click();
     await expect(page).toHaveURL(new RegExp(`/inbox\\?repo=${repoQuery}$`));
-    await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+    await expect(header.getByRole('link', { name: 'Bridge' })).toHaveAttribute(
       'href',
       `/?repo=${repoQuery}`,
     );
@@ -402,10 +402,9 @@ test.describe('responsive decision inbox', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
-    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toHaveAttribute(
-      'href',
-      `/?repo=${repoQuery}`,
-    );
+    await expect(
+      menu.getByRole('menuitem', { name: 'Bridge' }),
+    ).toHaveAttribute('href', `/?repo=${repoQuery}`);
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toHaveAttribute(
       'href',
       `/inbox?repo=${repoQuery}`,
@@ -422,7 +421,7 @@ test.describe('responsive decision inbox', () => {
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
     await expect(header).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
@@ -434,7 +433,7 @@ test.describe('responsive decision inbox', () => {
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
-    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Bridge' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await page.keyboard.press('Escape');
     await testInfo.attach('inbox-tablet.png', {
@@ -479,7 +478,10 @@ test.describe('responsive decision inbox', () => {
     await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
-    await expect(page.locator('.console-header')).toBeHidden();
+    const header = page.locator('.console-header[data-current="inbox"]');
+    await expect(header).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
+    expect((await header.boundingBox())?.height).toBe(64);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 
@@ -513,7 +515,7 @@ test.describe('responsive decision inbox', () => {
 
     const header = page.locator('.console-header[data-current="deck"]');
     await expect(header).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeHidden();
     expect((await header.boundingBox())?.height).toBe(64);
     await expect(
@@ -586,7 +588,7 @@ test.describe('populated page captures', () => {
     await expect(
       page
         .locator('.console-header[data-current="deck"]')
-        .getByRole('link', { name: 'Deck' }),
+        .getByRole('link', { name: 'Bridge' }),
     ).toBeVisible();
     const deckCapture = testInfo.outputPath('deck-mobile.png');
     await page.screenshot({ path: deckCapture });

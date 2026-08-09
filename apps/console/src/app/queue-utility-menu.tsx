@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 import { ThemeToggle } from './theme-toggle';
 
 const MOBILE_DESTINATIONS = [
-  { key: 'deck', href: '/', label: 'Deck' },
+  { key: 'deck', href: '/', label: 'Bridge' },
   { key: 'inbox', href: '/inbox', label: 'Inbox' },
   { key: 'agents', href: '/agents', label: 'Agents' },
   { key: 'sessions', href: '/sessions', label: 'Sessions' },

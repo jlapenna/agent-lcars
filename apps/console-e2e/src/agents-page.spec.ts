@@ -75,8 +75,8 @@ test.describe('/agents page @smoke', () => {
     await expect(page.getByText('Claimed but Idle (0)')).toBeVisible();
 
     // Cross-link back to the overview (the shared ConsoleHeader nav rail's
-    // "Deck" pill, see console-header.tsx).
-    await header.getByRole('link', { name: 'Deck' }).click();
+    // "Bridge" pill, see console-header.tsx).
+    await header.getByRole('link', { name: 'Bridge' }).click();
     await page.waitForURL('/');
     await expect(page.getByRole('heading', { name: 'Bridge' })).toBeVisible();
   });
@@ -124,7 +124,7 @@ test.describe('/agents page @smoke', () => {
       '.console-header[data-current="agents"]:visible',
     );
     await expect(header).toHaveCount(1);
-    await expect(header.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+    await expect(header.getByRole('link', { name: 'Bridge' })).toHaveAttribute(
       'href',
       '/?repo=supersprinklesracing%2Fsprinkles',
     );
@@ -136,10 +136,9 @@ test.describe('/agents page @smoke', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
-    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toHaveAttribute(
-      'href',
-      '/?repo=supersprinklesracing%2Fsprinkles',
-    );
+    await expect(
+      menu.getByRole('menuitem', { name: 'Bridge' }),
+    ).toHaveAttribute('href', '/?repo=supersprinklesracing%2Fsprinkles');
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toHaveAttribute(
       'href',
       '/inbox?repo=supersprinklesracing%2Fsprinkles',
@@ -160,7 +159,7 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toBeVisible();
     await expect(workspace).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
@@ -183,7 +182,7 @@ test.describe('/agents page @smoke', () => {
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
-    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Bridge' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await expect(
       menu.getByRole('menuitem', { name: 'Sessions' }),
