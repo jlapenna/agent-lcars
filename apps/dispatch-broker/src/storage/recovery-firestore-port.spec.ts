@@ -6,14 +6,18 @@ import { expect, test } from 'vitest';
 import { runFirestoreEmulatorRecoveryOperationPortContract } from './recovery-firestore-emulator-harness.js';
 import { FirestoreRecoveryOperationPort } from './recovery-firestore-port.js';
 
-// Distinct project/port namespace from firestore-port.spec.ts and
-// firestore-rest-port.spec.ts so all three emulator users can run
-// concurrently -- see recovery-firestore-emulator-harness.ts's header.
+// Distinct project/port namespace from firestore-port.spec.ts (4112/4412)
+// and firestore-rest-port.spec.ts (4113/4413) so all three emulator users
+// can run concurrently -- see recovery-firestore-emulator-harness.ts's
+// header. (4113/4413 was this suite's port pair until it was found, by
+// actually running the full test suite together rather than this file in
+// isolation, to collide with firestore-rest-port.spec.ts's own -- the two
+// emulators fighting over one port crashed whichever started second.)
 runFirestoreEmulatorRecoveryOperationPortContract({
   suiteName: 'FirestoreRecoveryOperationPort',
   projectId: 'demo-recovery-operation-port',
-  firestorePort: 4113,
-  hubPort: 4413,
+  firestorePort: 4114,
+  hubPort: 4414,
   createPort: ({ projectId, emulatorHost }) =>
     new FirestoreRecoveryOperationPort({
       projectId,

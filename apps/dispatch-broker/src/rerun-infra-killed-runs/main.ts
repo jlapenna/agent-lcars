@@ -182,6 +182,18 @@ async function commentOnPullRequest(
 
 interface ProcessRunOutcome {
   reran: boolean;
+  /** The PR this rerun is scoped to, when one was found -- `0` when none
+   *  was (see `findAssociatedPullRequest`), matching
+   *  `RecoveryOperationTarget.anchor`'s non-negative-integer contract in
+   *  `@agent-lcars/dispatch-contracts`. Present only when `reran` is true;
+   *  `scanAndRerun` uses it, together with the run's own `id`/`run_attempt`
+   *  it already has, to report one `ci_retry` recovery observation per
+   *  rerun. Reporting itself happens in `rerun-infra-killed-runs.yml`, not
+   *  this module -- see `rerunRuns` on `ScanAndRerunResult` for why that
+   *  split keeps this action's own blast radius limited to GitHub Actions
+   *  REST calls, matching this repo's existing OIDC-hosted-endpoint
+   *  convention in `dispatch-reconcile.yml`. */
+  anchor?: number;
 }
 
 // Each candidate is handled independently and defensively -- a single
@@ -219,6 +231,7 @@ async function processRun(
     `Reran infra-killed run ${run.id} (attempt ${run.run_attempt} -> ${run.run_attempt + 1}): ${run.html_url}`,
   );
 
+  let anchor = 0;
   try {
     const pr = await findAssociatedPullRequest(api, root, run.head_sha);
     if (!pr) {
@@ -226,6 +239,7 @@ async function processRun(
         `No pull request is associated with run ${run.id}'s commit ${run.head_sha}; skipping the audit-trail comment.`,
       );
     } else {
+      anchor = pr.number;
       const body = buildRerunCommentBody({
         runUrl: run.html_url,
         workflowName: run.name,
@@ -241,7 +255,7 @@ async function processRun(
     );
   }
 
-  return { reran: true };
+  return { reran: true, anchor };
 }
 
 interface ScanAndRerunOptions {
@@ -251,9 +265,26 @@ interface ScanAndRerunOptions {
   now?: Date;
 }
 
+/** One exact rerun, identified precisely enough for a caller to report a
+ *  `ci_retry` recovery observation without re-deriving anything this scan
+ *  already knows -- run ID/attempt from `WorkflowRun`, the associated PR
+ *  (or `0`, see `ProcessRunOutcome.anchor`) from `processRun`. */
+interface RerunRecord {
+  runId: number;
+  runAttempt: number;
+  anchor: number;
+  runUrl: string;
+}
+
 interface ScanAndRerunResult {
   scanned: number;
   rerun: number;
+  /** One entry per successful rerun this pass performed, in no particular
+   *  order. Exists so `run()`'s CLI entrypoint can emit exact identities as
+   *  a workflow output for `rerun-infra-killed-runs.yml`'s own reporting
+   *  step to report -- see `ProcessRunOutcome.anchor`'s doc for why that
+   *  reporting is not done from inside this module. */
+  rerunRuns: RerunRecord[];
 }
 
 async function scanAndRerun({
@@ -275,18 +306,26 @@ async function scanAndRerun({
     RERUN_CONCURRENCY,
     (run) => processRun(api, root, run),
   );
-  const rerunCount = outcomes.filter(
-    (outcome) => outcome.status === 'fulfilled' && outcome.value.reran,
-  ).length;
+  const rerunRuns: RerunRecord[] = [];
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status !== 'fulfilled' || !outcome.value.reran) return;
+    const run = eligible[index];
+    rerunRuns.push({
+      runId: run.id,
+      runAttempt: run.run_attempt,
+      anchor: outcome.value.anchor ?? 0,
+      runUrl: run.html_url,
+    });
+  });
 
-  return { scanned: runs.length, rerun: rerunCount };
+  return { scanned: runs.length, rerun: rerunRuns.length, rerunRuns };
 }
 
 async function run(): Promise<void> {
   const api = createGitHubApi({ token: env('GITHUB_TOKEN') });
   const repository = env('GITHUB_REPOSITORY');
   const workflowFile = env('WORKFLOW_FILE', false) || DEFAULT_WORKFLOW_FILE;
-  const { scanned, rerun } = await scanAndRerun({
+  const { scanned, rerun, rerunRuns } = await scanAndRerun({
     api,
     repository,
     workflowFile,
@@ -296,6 +335,10 @@ async function run(): Promise<void> {
   );
   await output('scanned', String(scanned));
   await output('rerun', String(rerun));
+  // Consumed by rerun-infra-killed-runs.yml's own reporting step -- see
+  // RerunRecord's doc for why exact identities are exposed as an output
+  // here rather than this module reporting them itself.
+  await output('rerun-run-ids', JSON.stringify(rerunRuns));
 }
 
 if (
