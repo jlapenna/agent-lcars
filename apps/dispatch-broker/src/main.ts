@@ -5,10 +5,8 @@ import { pathToFileURL } from 'node:url';
 
 import type {
   DispatchLedger,
-  DispatchOutcomeKind,
   DispatchPipeline,
   FailurePhase,
-  LaneReadinessFailure,
   LedgerGeneration,
   LedgerTaskRef,
   OwningSystem,
@@ -18,9 +16,6 @@ import {
   displayTitleMatchesAttempt,
   formatAttemptId,
   formatFailure,
-  HOSTED_COMPLETION_URL,
-  isDispatchOutcomeKind,
-  isLaneReadinessFailure,
 } from '@agent-lcars/dispatch-contracts';
 import type { ReconcileIssue } from '@agent-lcars/dispatch-reconcile';
 import {
@@ -101,6 +96,9 @@ import {
   selectedPipeline,
   selectedPipelineFrom,
 } from './normalize';
+import { processCompletionCallback } from './services/completion-processing';
+import { admitHostedDelivery } from './services/hosted-admission';
+import { orchestrateReconciliation } from './services/reconciliation-orchestration';
 import {
   acquireAuthority,
   type AuthoritySession,
@@ -2667,27 +2665,32 @@ async function broker(): Promise<void> {
   const normalized = decode(env('BROKER_PAYLOAD')) as NormalizedEvent;
   const runId = Number(env('GITHUB_RUN_ID'));
   const hostedControllerLogin = env('HOSTED_CONTROLLER_LOGIN', false);
-  await processNormalizedEvent({
-    normalized,
-    githubToken: env('GITHUB_TOKEN'),
-    storageMode: env('DISPATCH_STORAGE_MODE', false),
-    authorityEpoch: env('DISPATCH_AUTHORITY_EPOCH', false),
-    storagePortFactory: createStoragePort,
-    isPullRequest: env('ANCHOR_IS_PR', false) === 'true',
-    transportRunId: runId,
-    authorityOwner: `action:${runId}`,
-    maintainer: env('MAINTAINER_LOGIN', false),
-    actionConcurrency: {
-      group: env('BROKER_GROUP'),
-      eventName: env('GITHUB_EVENT_NAME', false),
+  await admitHostedDelivery(
+    {
+      normalized,
+      githubToken: env('GITHUB_TOKEN'),
+      storageMode: env('DISPATCH_STORAGE_MODE', false),
+      authorityEpoch: env('DISPATCH_AUTHORITY_EPOCH', false),
+      isPullRequest: env('ANCHOR_IS_PR', false) === 'true',
+      transportRunId: runId,
+      authorityOwner: `action:${runId}`,
+      maintainer: env('MAINTAINER_LOGIN', false),
+      actionConcurrency: {
+        group: env('BROKER_GROUP'),
+        eventName: env('GITHUB_EVENT_NAME', false),
+      },
+      projectionIdentities: [
+        { login: 'github-actions[bot]', type: 'Bot' },
+        ...(hostedControllerLogin
+          ? [{ login: hostedControllerLogin, type: 'User' as const }]
+          : []),
+      ],
     },
-    projectionIdentities: [
-      { login: 'github-actions[bot]', type: 'Bot' },
-      ...(hostedControllerLogin
-        ? [{ login: hostedControllerLogin, type: 'User' as const }]
-        : []),
-    ],
-  });
+    {
+      storagePortFactory: createStoragePort,
+      process: processNormalizedEvent,
+    },
+  );
 }
 
 async function preflight(): Promise<void> {
@@ -2810,59 +2813,23 @@ async function loadPreflightLedger(
 }
 
 async function completionCallback(): Promise<void> {
-  const outcomeInput = env('BROKER_OUTCOME_KIND', false);
-  const outcomeReference = env('BROKER_OUTCOME_REFERENCE', false);
-  const readinessFailureInput = env('BROKER_READINESS_FAILURE', false);
-  let outcome: DispatchOutcomeKind | undefined;
-  if (outcomeInput) {
-    if (!isDispatchOutcomeKind(outcomeInput)) {
-      throw new Error('BROKER_OUTCOME_KIND is not a recognized outcome');
-    }
-    outcome = outcomeInput;
-  }
-  let readinessFailure: LaneReadinessFailure | undefined;
-  if (readinessFailureInput) {
-    if (!isLaneReadinessFailure(readinessFailureInput)) {
-      throw new Error(
-        'BROKER_READINESS_FAILURE is not a recognized readiness failure',
-      );
-    }
-    readinessFailure = readinessFailureInput;
-  }
-  if (outcomeReference) {
-    const number = Number(outcomeReference);
-    if (
-      outcome !== 'pull-request' ||
-      !Number.isSafeInteger(number) ||
-      number <= 0
-    ) {
-      throw new Error(
-        'BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome',
-      );
-    }
-  }
-  await sendHostedCompletion({
-    completionUrl: HOSTED_COMPLETION_URL,
-    oidcRequestUrl: env('ACTIONS_ID_TOKEN_REQUEST_URL'),
-    oidcRequestToken: env('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
-    payload: {
-      issue: Number(env('BROKER_ISSUE')),
-      generation: Number(env('BROKER_GENERATION')),
+  await processCompletionCallback(
+    {
+      issue: env('BROKER_ISSUE'),
+      generation: env('BROKER_GENERATION'),
       intentId: env('BROKER_INTENT_ID'),
       token: env('BROKER_DISPATCH_TOKEN'),
       workflow: env('BROKER_WORKER_WORKFLOW'),
-      ...(outcome ? { outcome } : {}),
-      ...(outcomeReference
-        ? {
-            outcomeReference: {
-              kind: 'pull-request',
-              number: Number(outcomeReference),
-            },
-          }
-        : {}),
-      ...(readinessFailure ? { readinessFailure } : {}),
+      oidcRequestUrl: env('ACTIONS_ID_TOKEN_REQUEST_URL'),
+      oidcRequestToken: env('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
+      outcome: env('BROKER_OUTCOME_KIND', false),
+      outcomeReference: env('BROKER_OUTCOME_REFERENCE', false),
+      readinessFailure: env('BROKER_READINESS_FAILURE', false),
     },
-  });
+    {
+      send: sendHostedCompletion,
+    },
+  );
 }
 
 type ProjectableClaudeReadinessState = Exclude<ClaudeReadinessState, 'unknown'>;
@@ -3036,34 +3003,18 @@ async function discoverRecentlyClosedReconcileCandidates(
 // dispatch problem (e.g. a bad token) is visible.
 async function scanReconcile(): Promise<void> {
   const client = api();
-  const repository = env('GITHUB_REPOSITORY');
-  const fleetLogin = env('AGENT_FLEET_LOGIN', false);
-  const results = await runReconcileScan(
-    createReconcileTransport(client),
-    repository,
-    fleetLogin,
+  await orchestrateReconciliation(
+    {
+      repository: env('GITHUB_REPOSITORY'),
+      fleetLogin: env('AGENT_FLEET_LOGIN', false),
+    },
+    {
+      transport: createReconcileTransport(client),
+      run: runReconcileScan,
+      writeOutput: output,
+      log: console.log,
+    },
   );
-  console.log(
-    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/` +
-      `${results.candidates} candidate(s) (${results.openCandidates} open ` +
-      `agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed ` +
-      `agent-labeled/fleet-assigned).`,
-  );
-  for (const failure of results.failed) {
-    console.log(
-      `::error::dispatch-reconcile: failed to dispatch reconcile for ` +
-        `#${failure.issue}: ${failure.message}`,
-    );
-  }
-  await output('candidates', String(results.candidates));
-  await output('dispatched', String(results.dispatched));
-  if (results.failed.length > 0) {
-    throw new Error(
-      `Reconcile scan failed to dispatch ${results.failed.length}/` +
-        `${results.candidates} candidate(s): ` +
-        results.failed.map((failure) => `#${failure.issue}`).join(', '),
-    );
-  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
