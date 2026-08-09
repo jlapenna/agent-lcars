@@ -1,8 +1,10 @@
 // apps/dispatch-broker/src/main.ts
+import { pathToFileURL } from "node:url";
+
+// apps/dispatch-broker/src/controller-core.ts
 import crypto3 from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 // libs/dispatch-contracts/src/failure.ts
 var OWNING_SYSTEMS = Object.freeze([
@@ -2409,6 +2411,83 @@ function normalizeEvent({
   return { kind: "ignored", reason: "unsupported issue action" };
 }
 
+// apps/dispatch-broker/src/services/completion-processing.ts
+async function processCompletionCallback(input, dependencies) {
+  const outcome = input.outcome;
+  const readinessFailure = input.readinessFailure;
+  if (outcome && !isDispatchOutcomeKind(outcome)) {
+    throw new Error("BROKER_OUTCOME_KIND is not a recognized outcome");
+  }
+  if (readinessFailure && !isLaneReadinessFailure(readinessFailure)) {
+    throw new Error(
+      "BROKER_READINESS_FAILURE is not a recognized readiness failure"
+    );
+  }
+  if (input.outcomeReference) {
+    const number = Number(input.outcomeReference);
+    if (outcome !== "pull-request" || !Number.isSafeInteger(number) || number <= 0) {
+      throw new Error(
+        "BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome"
+      );
+    }
+  }
+  const payload = {
+    issue: Number(input.issue),
+    generation: Number(input.generation),
+    intentId: input.intentId,
+    token: input.token,
+    workflow: input.workflow,
+    ...outcome && isDispatchOutcomeKind(outcome) ? { outcome } : {},
+    ...input.outcomeReference ? {
+      outcomeReference: {
+        kind: "pull-request",
+        number: Number(input.outcomeReference)
+      }
+    } : {},
+    ...readinessFailure && isLaneReadinessFailure(readinessFailure) ? { readinessFailure } : {}
+  };
+  await dependencies.send({
+    completionUrl: HOSTED_COMPLETION_URL,
+    oidcRequestUrl: input.oidcRequestUrl,
+    oidcRequestToken: input.oidcRequestToken,
+    payload
+  });
+  return { payload };
+}
+
+// apps/dispatch-broker/src/services/hosted-admission.ts
+async function admitHostedDelivery(input, dependencies) {
+  await dependencies.process({
+    ...input,
+    storagePortFactory: dependencies.storagePortFactory
+  });
+}
+
+// apps/dispatch-broker/src/services/reconciliation-orchestration.ts
+async function orchestrateReconciliation(input, dependencies) {
+  const results = await dependencies.run(
+    dependencies.transport,
+    input.repository,
+    input.fleetLogin
+  );
+  dependencies.log(
+    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${results.candidates} candidate(s) (${results.openCandidates} open agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed agent-labeled/fleet-assigned).`
+  );
+  for (const failure of results.failed) {
+    dependencies.log(
+      `::error::dispatch-reconcile: failed to dispatch reconcile for #${failure.issue}: ${failure.message}`
+    );
+  }
+  await dependencies.writeOutput("candidates", String(results.candidates));
+  await dependencies.writeOutput("dispatched", String(results.dispatched));
+  if (results.failed.length > 0) {
+    throw new Error(
+      `Reconcile scan failed to dispatch ${results.failed.length}/${results.candidates} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
+    );
+  }
+  return results;
+}
+
 // apps/dispatch-broker/src/storage/port.ts
 function taskKey(task) {
   return `${task.repositoryId}:${task.issue}`;
@@ -3027,7 +3106,7 @@ var FirestoreRestStoragePort = class {
   }
 };
 
-// apps/dispatch-broker/src/main.ts
+// apps/dispatch-broker/src/controller-core.ts
 function env(name, required = true) {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);
@@ -4417,25 +4496,30 @@ async function broker() {
   const normalized = decode(env("BROKER_PAYLOAD"));
   const runId = Number(env("GITHUB_RUN_ID"));
   const hostedControllerLogin = env("HOSTED_CONTROLLER_LOGIN", false);
-  await processNormalizedEvent({
-    normalized,
-    githubToken: env("GITHUB_TOKEN"),
-    storageMode: env("DISPATCH_STORAGE_MODE", false),
-    authorityEpoch: env("DISPATCH_AUTHORITY_EPOCH", false),
-    storagePortFactory: createStoragePort,
-    isPullRequest: env("ANCHOR_IS_PR", false) === "true",
-    transportRunId: runId,
-    authorityOwner: `action:${runId}`,
-    maintainer: env("MAINTAINER_LOGIN", false),
-    actionConcurrency: {
-      group: env("BROKER_GROUP"),
-      eventName: env("GITHUB_EVENT_NAME", false)
+  await admitHostedDelivery(
+    {
+      normalized,
+      githubToken: env("GITHUB_TOKEN"),
+      storageMode: env("DISPATCH_STORAGE_MODE", false),
+      authorityEpoch: env("DISPATCH_AUTHORITY_EPOCH", false),
+      isPullRequest: env("ANCHOR_IS_PR", false) === "true",
+      transportRunId: runId,
+      authorityOwner: `action:${runId}`,
+      maintainer: env("MAINTAINER_LOGIN", false),
+      actionConcurrency: {
+        group: env("BROKER_GROUP"),
+        eventName: env("GITHUB_EVENT_NAME", false)
+      },
+      projectionIdentities: [
+        { login: "github-actions[bot]", type: "Bot" },
+        ...hostedControllerLogin ? [{ login: hostedControllerLogin, type: "User" }] : []
+      ]
     },
-    projectionIdentities: [
-      { login: "github-actions[bot]", type: "Bot" },
-      ...hostedControllerLogin ? [{ login: hostedControllerLogin, type: "User" }] : []
-    ]
-  });
+    {
+      storagePortFactory: createStoragePort,
+      process: processNormalizedEvent
+    }
+  );
 }
 async function preflight() {
   const task = {
@@ -4530,53 +4614,23 @@ async function loadPreflightLedger(client, task, storageMode, authorityPort) {
   }))?.ledger;
 }
 async function completionCallback() {
-  const outcomeInput = env("BROKER_OUTCOME_KIND", false);
-  const outcomeReference = env("BROKER_OUTCOME_REFERENCE", false);
-  const readinessFailureInput = env("BROKER_READINESS_FAILURE", false);
-  let outcome;
-  if (outcomeInput) {
-    if (!isDispatchOutcomeKind(outcomeInput)) {
-      throw new Error("BROKER_OUTCOME_KIND is not a recognized outcome");
-    }
-    outcome = outcomeInput;
-  }
-  let readinessFailure;
-  if (readinessFailureInput) {
-    if (!isLaneReadinessFailure(readinessFailureInput)) {
-      throw new Error(
-        "BROKER_READINESS_FAILURE is not a recognized readiness failure"
-      );
-    }
-    readinessFailure = readinessFailureInput;
-  }
-  if (outcomeReference) {
-    const number = Number(outcomeReference);
-    if (outcome !== "pull-request" || !Number.isSafeInteger(number) || number <= 0) {
-      throw new Error(
-        "BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome"
-      );
-    }
-  }
-  await sendHostedCompletion({
-    completionUrl: HOSTED_COMPLETION_URL,
-    oidcRequestUrl: env("ACTIONS_ID_TOKEN_REQUEST_URL"),
-    oidcRequestToken: env("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
-    payload: {
-      issue: Number(env("BROKER_ISSUE")),
-      generation: Number(env("BROKER_GENERATION")),
+  await processCompletionCallback(
+    {
+      issue: env("BROKER_ISSUE"),
+      generation: env("BROKER_GENERATION"),
       intentId: env("BROKER_INTENT_ID"),
       token: env("BROKER_DISPATCH_TOKEN"),
       workflow: env("BROKER_WORKER_WORKFLOW"),
-      ...outcome ? { outcome } : {},
-      ...outcomeReference ? {
-        outcomeReference: {
-          kind: "pull-request",
-          number: Number(outcomeReference)
-        }
-      } : {},
-      ...readinessFailure ? { readinessFailure } : {}
+      oidcRequestUrl: env("ACTIONS_ID_TOKEN_REQUEST_URL"),
+      oidcRequestToken: env("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+      outcome: env("BROKER_OUTCOME_KIND", false),
+      outcomeReference: env("BROKER_OUTCOME_REFERENCE", false),
+      readinessFailure: env("BROKER_READINESS_FAILURE", false)
+    },
+    {
+      send: sendHostedCompletion
     }
-  });
+  );
 }
 function trustedActionsRunUrl(value) {
   const serverUrl = env("GITHUB_SERVER_URL").replace(/\/$/u, "");
@@ -4687,31 +4741,22 @@ async function discoverRecentlyClosedReconcileCandidates2(client, repository, fl
 }
 async function scanReconcile() {
   const client = api();
-  const repository = env("GITHUB_REPOSITORY");
-  const fleetLogin = env("AGENT_FLEET_LOGIN", false);
-  const results = await runReconcileScan(
-    createReconcileTransport(client),
-    repository,
-    fleetLogin
+  await orchestrateReconciliation(
+    {
+      repository: env("GITHUB_REPOSITORY"),
+      fleetLogin: env("AGENT_FLEET_LOGIN", false)
+    },
+    {
+      transport: createReconcileTransport(client),
+      run: runReconcileScan,
+      writeOutput: output,
+      log: console.log
+    }
   );
-  console.log(
-    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${results.candidates} candidate(s) (${results.openCandidates} open agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed agent-labeled/fleet-assigned).`
-  );
-  for (const failure of results.failed) {
-    console.log(
-      `::error::dispatch-reconcile: failed to dispatch reconcile for #${failure.issue}: ${failure.message}`
-    );
-  }
-  await output("candidates", String(results.candidates));
-  await output("dispatched", String(results.dispatched));
-  if (results.failed.length > 0) {
-    throw new Error(
-      `Reconcile scan failed to dispatch ${results.failed.length}/${results.candidates} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
-    );
-  }
 }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const operation = process.argv[2];
+
+// apps/dispatch-broker/src/main.ts
+async function runOperation(operation) {
   if (operation === "normalize") await normalize();
   else if (operation === "broker") await broker();
   else if (operation === "preflight") await preflight();
@@ -4721,6 +4766,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     await classifyClaudeReadinessProbe();
   else if (operation === "claude-readiness") await claudeReadiness();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runOperation(process.argv[2]);
 }
 export {
   CompletionBindingError,
@@ -4737,6 +4785,10 @@ export {
   assertCompletionBindingBeforeInitialization,
   assertCompletionLedgerBinding,
   assertWorkerRun,
+  broker,
+  classifyClaudeReadinessProbe,
+  claudeReadiness,
+  completionCallback,
   completionMatches,
   contextFor,
   decode,
@@ -4751,6 +4803,8 @@ export {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
+  normalize,
+  preflight,
   processNormalizedEvent,
   projectClaudeReadiness,
   reconcileActive,
@@ -4758,8 +4812,10 @@ export {
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
+  runOperation,
   runPhase,
   saveProjectionCheckpoint,
+  scanReconcile,
   trustedActionsRunUrl,
   trustedClaudeExecutionFile,
   wasSupersededEviction
