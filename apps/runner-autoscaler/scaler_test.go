@@ -155,6 +155,7 @@ func TestParseSweepOutput(t *testing.T) {
 func TestWorkDirSweepScriptBoundsPnpmStore(t *testing.T) {
 	script := workDirSweepScript(30 * 1024 * 1024 * 1024)
 	for _, want := range []string{
+		`pnpm_store=/home/runner/_work/.pnpm-store`,
 		`pnpm --store-dir "$pnpm_store" store prune || true`,
 		`rm -rf "$pnpm_store"`,
 		`_tool|_actions|_PipelineMapping|.pnpm-store|cache|_temp`,

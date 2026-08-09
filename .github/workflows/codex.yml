@@ -95,7 +95,7 @@ jobs:
       EXCLUDE_PR_AUTHOR: claude[bot]
       AGENT_LABEL: agent:codex
       REDISPATCH_COMMAND: /codex
-      npm_config_store_dir: /tmp/runner/pnpm-store
+      npm_config_store_dir: /home/runner/_work/.pnpm-store
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
