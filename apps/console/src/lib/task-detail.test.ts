@@ -198,6 +198,27 @@ describe('getTaskDetail', () => {
     expect(result.work.attempts).toEqual([]);
   });
 
+  it('uses the board action classifier so task controls match the queue', async () => {
+    const issuesGet = vi
+      .fn()
+      .mockResolvedValue(
+        issueResponse({ labels: ['status:needs-human', 'agent:codex'] }),
+      );
+    setupOctokit({ issuesGet });
+    cachedActivity = EMPTY_ACTIVITY;
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.item.actionTypes).toEqual(['needs-human']);
+    expect(result.item.labels).toContain('agent:codex');
+  });
+
   it('reports generatedAt as the older of the two cached sources it was built from, not the render time (Codex review on #375)', async () => {
     const issuesGet = vi.fn().mockResolvedValue(issueResponse());
     setupOctokit({ issuesGet });

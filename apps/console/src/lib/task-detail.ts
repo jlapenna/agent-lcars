@@ -1,7 +1,6 @@
-import { parseTerminalQuickTaskBody } from '@agent-lcars/dispatch-contracts';
 import { cacheLife, cacheTag } from 'next/cache';
 
-import type { ActionItem } from './action-items';
+import { type ActionItem, classifyIssue } from './action-items';
 import { readAuthoritativeTaskStates } from './authoritative-task-state';
 import { isNotFound } from './backend-actions';
 import { GITHUB_DATA_TAG } from './cache-tags';
@@ -214,25 +213,20 @@ export async function getTaskDetail(
   // key - but keeps the return type honest instead of a non-null assertion.
   if (!task) return { status: 'not-found' };
 
+  // Reuse the board's one authoritative action classifier instead of
+  // recreating a detail-only partial `ActionItem`. This lets the canonical
+  // task page expose the same server-backed controls (unpark, retrigger,
+  // and pipeline handoff) as the queue without a second set of label rules.
+  const { item } = classifyIssue(
+    repo,
+    { ...issue, updated_at: issue.updated_at ?? sourceFetchedAt },
+    itemEnrichment,
+  );
+
   return {
     status: 'ok',
     work: task,
-    item: {
-      kind: issue.pull_request ? 'pr' : 'issue',
-      repo,
-      number: issue.number,
-      title: issue.title,
-      body:
-        parseTerminalQuickTaskBody(issue.body)?.description ?? issue.body ?? '',
-      url: issue.html_url,
-      author: issue.user?.login ?? undefined,
-      updatedAt: issue.updated_at ?? sourceFetchedAt,
-      actionTypes: [],
-      labels: labels.filter((label) => label.length > 0),
-      assigneeLogins: (issue.assignees ?? [])
-        .map((assignee) => assignee?.login ?? '')
-        .filter((login) => login.length > 0),
-    },
+    item,
     repo,
     anchorState: issue.state === 'closed' ? 'closed' : 'open',
     // Both cached sources this result was built from - the older of the

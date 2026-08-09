@@ -224,7 +224,7 @@ function extractParentNumber(
   return match ? Number(match[1]) : undefined;
 }
 
-interface ClassifyResult {
+export interface ClassifyResult {
   item: ActionItem;
   warnings: string[];
 }
@@ -234,7 +234,7 @@ interface ClassifyResult {
  * `item-enrichment.ts`). Undefined enrichment means that item's details
  * didn't come back - it still classifies from the listing alone rather than
  * dropping off the board. */
-function classifyIssue(
+export function classifyIssue(
   repo: WatchedRepo,
   issue: RepoIssue,
   enrichment: ItemEnrichment | undefined,
