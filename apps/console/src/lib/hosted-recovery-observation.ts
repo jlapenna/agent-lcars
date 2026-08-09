@@ -66,6 +66,19 @@ export async function recordHostedRecoveryObservation({
         '(see #870)',
     );
   }
+  // The signed OIDC repositoryId claim is the trusted identity;
+  // target.repositoryId is caller-supplied data embedded in operationKey.
+  // Checking only the repository slug string above would let a
+  // typo'd/forged numeric ID (the slug can still read "jlapenna/agent-lcars"
+  // while the ID does not) mint a second operationKey for what claims to be
+  // the same fact, defeating the idempotency this endpoint exists to
+  // provide, and would leave a stored record whose slug and ID disagree.
+  if (observation.target.repositoryId !== identity.repositoryId) {
+    throw new HostedRecoveryObservationInputError(
+      "Recovery observation target.repositoryId does not match the caller's " +
+        'signed OIDC repository_id claim',
+    );
+  }
 
   const port = portFactory();
   return port.recordObservation(observation);

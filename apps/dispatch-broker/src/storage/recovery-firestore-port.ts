@@ -23,10 +23,15 @@
  *
  * Document ID is NOT `operationKey` directly -- that key's fixed
  * `recovery/v1:` prefix contains a `/`, which Firestore treats as a path
- * separator and rejects in a document ID. `docId` base64url-encodes the key
- * instead; the real `operationKey` is also stored as a plain field so a
- * console operator reading the collection directly does not have to decode
- * anything to recognize a record.
+ * separator and rejects in a document ID. `docId` SHA-256-hashes the key
+ * instead of encoding it reversibly: `RecoveryOperationTarget.exactIdentity`
+ * has no declared upper bound, and a merely long (not malicious) one pushed
+ * through a reversible base64url encoding can exceed Firestore's 1,500-byte
+ * document ID limit, turning a well-formed observation into a hard failure
+ * on write. A fixed-length digest is collision-resistant regardless of input
+ * length and never needs decoding -- the real `operationKey` is stored as a
+ * plain field so a console operator reading the collection directly does
+ * not have to decode anything to recognize a record.
  *
  * ## Atomicity
  *
@@ -37,6 +42,7 @@
  * under concurrent callers, which applies unchanged here.
  */
 
+import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import type { RecoveryObservation } from '@agent-lcars/dispatch-contracts';
@@ -62,12 +68,20 @@ function sameDetail(a: string | undefined, b: string | undefined): boolean {
   return isDeepStrictEqual(a, b);
 }
 
-/** Firestore document IDs cannot contain `/` (path separator) and have
- *  other reserved-character restrictions; base64url avoids all of them
- *  while remaining a pure function of the key, so the same key always maps
- *  to the same document regardless of process. */
+/** Firestore document IDs cannot contain `/` (path separator), have other
+ *  reserved-character restrictions, and are capped at 1,500 bytes.
+ *  `exactIdentity` has no declared upper bound (see the module header), so a
+ *  reversible encoding of the whole key could exceed that cap for an
+ *  otherwise well-formed observation. A SHA-256 digest is a pure function of
+ *  the key (same key always maps to the same document), fixed at 43
+ *  base64url characters regardless of input length, and collision-resistant
+ *  enough that this port does not need to handle a collision as a real
+ *  case. */
 function docId(operationKey: string): string {
-  return Buffer.from(operationKey, 'utf8').toString('base64url');
+  return crypto
+    .createHash('sha256')
+    .update(operationKey, 'utf8')
+    .digest('base64url');
 }
 
 export interface FirestoreRecoveryOperationPortOptions {

@@ -105,4 +105,23 @@ describe('recordHostedRecoveryObservation', () => {
       }),
     ).rejects.toThrow(HostedRecoveryObservationInputError);
   });
+
+  it('rejects an observation whose target.repositoryId does not match the signed OIDC repository_id claim, even when the slug matches', async () => {
+    const port = new InMemoryRecoveryOperationPort();
+    await expect(
+      recordHostedRecoveryObservation({
+        identity,
+        body: observationFixture({
+          target: {
+            domain: 'ci_retry',
+            repositoryId: 999_999_999,
+            repository: 'jlapenna/agent-lcars',
+            anchor: 42,
+            exactIdentity: 'run:1:1',
+          },
+        }),
+        portFactory: () => port,
+      }),
+    ).rejects.toThrow(HostedRecoveryObservationInputError);
+  });
 });
