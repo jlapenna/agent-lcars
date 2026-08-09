@@ -204,9 +204,7 @@ describe('finalizeSidecar', () => {
     ]);
     expect(upserts[0]).toMatchObject({
       agent: 'codex',
-      // codexAdapter has no timeline parser (isRenderableTranscriptAgent),
-      // even though it reduces fine for stats - see transcript-timeline.ts.
-      renderable: false,
+      renderable: true,
       transcriptGcsUri:
         'gs://agent-lcars-session-transcripts/runs/42/codex/codex-runner-session.jsonl',
     });

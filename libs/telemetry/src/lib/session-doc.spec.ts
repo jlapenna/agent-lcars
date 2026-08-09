@@ -375,7 +375,7 @@ describe('buildSessionDoc', () => {
   // reduces it fine for stats - see isRenderableTranscriptAgent's doc
   // comment. This is the case Bug 3 (agent-lcars#645) got wrong: the
   // console used to gate on a registry that already disagreed with this.
-  it('sets renderable: false on an issue-agent doc archiving a codex transcript', () => {
+  it('sets renderable: true on an issue-agent doc archiving a codex transcript', () => {
     const doc = buildSessionDoc(
       baseSummary({ source: 'issue-agent', agent: 'codex' }),
       'ended',
@@ -384,7 +384,7 @@ describe('buildSessionDoc', () => {
         transcriptGcsUri: 'gs://bucket/runs/run-123/codex/session-1.jsonl',
       },
     );
-    expect(doc).toMatchObject({ renderable: false });
+    expect(doc).toMatchObject({ renderable: true });
   });
 
   it('defaults renderable to the claude-code assumption when the summary has no agent field (legacy reducer output)', () => {

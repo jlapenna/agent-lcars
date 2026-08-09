@@ -79,7 +79,7 @@ describe('ArchivedSessionTranscript', () => {
     expect(screen.getByTestId('transcript-timeline')).toBeInTheDocument();
   });
 
-  it('renders a muted archive note (not the transcript timeline) for a non-claude-code agent', () => {
+  it('renders a muted archive note for an unsupported agent', () => {
     renderWithProvider(
       <ArchivedSessionTranscript
         doc={agentDoc({
@@ -134,10 +134,9 @@ describe('ArchivedSessionTranscript', () => {
     expect(screen.queryByTestId('transcript-timeline')).toBeNull();
   });
 
-  it('renders the archive note for a non-claude-code agent even when a transcript happens to be present', () => {
-    // Defensive: session-detail.ts never fetches a transcript for a
-    // non-claude-code doc, but this component must not render it as a
-    // transcript even if a caller passed one anyway.
+  it('keeps a legacy Codex doc without a renderability claim archive-only', () => {
+    // Docs captured before Codex timeline support deliberately retain their
+    // original archive-only contract even if a caller passes transcript data.
     renderWithProvider(
       <ArchivedSessionTranscript
         doc={agentDoc({

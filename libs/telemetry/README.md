@@ -47,9 +47,9 @@ adapter either by content (`adapterFor`) or by name
 Having a `TranscriptAdapter` (i.e. being summarizable into stats) is a
 _different_ capability from being _renderable_ as a raw timeline on the
 console's session detail page — `parseTranscriptTimeline`
-(`transcript-timeline.ts`) understands only Claude Code's raw line shape
-today, even for agents (Codex) that already have a working adapter. Whether
-a given session's archived transcript can be rendered is captured once by
+(`transcript-timeline.ts`) has explicit Claude Code and Codex parsing paths;
+other agents may still have a summary adapter without a timeline parser.
+Whether a given session's archived transcript can be rendered is captured once by
 `buildSessionDoc` as `SessionDoc.renderable` (see `isRenderableTranscriptAgent`)
 and read — never re-derived — by the console via `isSessionRenderable`
 (`agent.ts`).

@@ -16,6 +16,39 @@ function readFixture(name: string): string {
 }
 
 describe('parseTranscriptTimeline', () => {
+  it('renders a representative Codex rollout as shared timeline events', () => {
+    const { events, hadUnparseableLines } = parseTranscriptTimeline(
+      readFixture('codex-session.jsonl'),
+      'codex',
+    );
+
+    expect(hadUnparseableLines).toBe(false);
+    // Codex writes user/assistant messages in both event_msg and
+    // response_item envelopes; each logical turn appears only once.
+    expect(events).toMatchObject([
+      { kind: 'text', role: 'user', text: 'Fix telemetry support' },
+      {
+        kind: 'text',
+        role: 'assistant',
+        text: 'I will inspect the telemetry code.',
+      },
+      { kind: 'tool_use', name: 'exec' },
+      { kind: 'tool_result', content: expect.stringContaining('pull/42') },
+      { kind: 'result', subtype: 'success', isError: false },
+    ]);
+  });
+
+  it('tolerates malformed and metadata-only Codex lines', () => {
+    const raw = `${readFixture('codex-session.jsonl')}\nnot json {{{\n${JSON.stringify({ type: 'future_record', payload: { type: 'new' } })}`;
+    const { events, hadUnparseableLines } = parseTranscriptTimeline(
+      raw,
+      'codex',
+    );
+
+    expect(hadUnparseableLines).toBe(true);
+    expect(events).toHaveLength(5);
+  });
+
   it('renders user/assistant text and tool_use/tool_result turns in order', () => {
     const { events, hadUnparseableLines } = parseTranscriptTimeline(
       readFixture('normal-session.jsonl'),
@@ -207,8 +240,9 @@ describe('elideTranscriptTimeline', () => {
 });
 
 describe('isRenderableTranscriptAgent', () => {
-  it('is true for claude-code, the only format this parser understands', () => {
+  it('is true for supported timeline formats', () => {
     expect(isRenderableTranscriptAgent('claude-code')).toBe(true);
+    expect(isRenderableTranscriptAgent('codex')).toBe(true);
   });
 
   // Codex has a working TranscriptAdapter for stats summarization
@@ -217,14 +251,13 @@ describe('isRenderableTranscriptAgent', () => {
   // walk expects (see codex-transcript-adapter.spec.ts's fixture) -
   // conflating "has an adapter" with "renderable" was Bug 3 in
   // agent-lcars#645.
-  it('is false for every agent without a real timeline parser, codex included', () => {
-    expect(isRenderableTranscriptAgent('codex')).toBe(false);
+  it('is false for every agent without a real timeline parser', () => {
     expect(isRenderableTranscriptAgent('opencode')).toBe(false);
     expect(isRenderableTranscriptAgent('gemini')).toBe(false);
     expect(isRenderableTranscriptAgent('antigravity')).toBe(false);
   });
 
-  it('RENDERABLE_TRANSCRIPT_AGENTS contains exactly claude-code today', () => {
-    expect(RENDERABLE_TRANSCRIPT_AGENTS).toEqual(['claude-code']);
+  it('lists exactly the formats with timeline parsers', () => {
+    expect(RENDERABLE_TRANSCRIPT_AGENTS).toEqual(['claude-code', 'codex']);
   });
 });

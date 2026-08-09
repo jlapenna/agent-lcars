@@ -7,15 +7,13 @@ const MAX_BLOCK_CHARS = 2000;
 
 /**
  * Agents whose raw transcript lines {@link parseTranscriptTimeline} actually
- * understands. Claude Code only, today: Codex's raw rollout JSONL uses an
- * entirely different line shape (`session_meta`/`turn_context`/`event_msg`
- * envelopes wrapping a `payload` — see `codex-transcript-adapter.ts`) than
- * this parser's `message.role`/`message.content` walk expects, even though
- * `codexAdapter` (`transcript-adapter.ts`) already reduces that same raw
- * format into a working `SessionSummary` for the stats gauges. Those are two
- * different consumers of the same raw file: `TRANSCRIPT_ADAPTERS` answers
- * "can we summarize this?" (yes, for Codex), this list answers "can we
- * render every line as a timeline?" (not yet) — conflating the two was
+ * understands. Codex's raw rollout JSONL uses a different line shape
+ * (`session_meta`/`turn_context`/`event_msg` envelopes wrapping a `payload`
+ * — see `codex-transcript-adapter.ts`) than Claude Code's
+ * `message.role`/`message.content` shape, so each has an explicit parsing
+ * branch below. `TRANSCRIPT_ADAPTERS` answers "can we summarize this?";
+ * this list separately answers "can we render it as a timeline?". Conflating
+ * those capabilities was
  * exactly Bug 3 in agent-lcars#645 (the console gated timeline rendering on
  * a literal `=== 'claude-code'` check that happened to match this list's
  * current contents by coincidence, not by reading it).
@@ -30,6 +28,7 @@ const MAX_BLOCK_CHARS = 2000;
  */
 export const RENDERABLE_TRANSCRIPT_AGENTS: readonly SessionAgent[] = [
   'claude-code',
+  'codex',
 ];
 
 /** Whether {@link parseTranscriptTimeline} can render this agent's raw
@@ -182,8 +181,92 @@ function eventsFromMessage(
   return events;
 }
 
+function codexTextEvent(
+  role: 'user' | 'assistant',
+  text: unknown,
+  timestamp: string | undefined,
+): TranscriptTextEvent[] {
+  const value = asString(text);
+  return value
+    ? [{ kind: 'text', role, text: truncate(value), timestamp }]
+    : [];
+}
+
+/** Converts a Codex rollout envelope into zero or more shared timeline events. */
+function eventsFromCodexLine(
+  raw: Record<string, unknown>,
+  timestamp: string | undefined,
+): TranscriptTimelineEvent[] {
+  const lineType = asString(raw['type']);
+  const payload = asRecord(raw['payload']);
+  if (!payload) return [];
+
+  const payloadType = asString(payload['type']);
+  if (lineType === 'event_msg') {
+    if (payloadType === 'user_message') {
+      return codexTextEvent('user', payload['message'], timestamp);
+    }
+    if (payloadType === 'agent_message') {
+      return codexTextEvent('assistant', payload['message'], timestamp);
+    }
+    if (payloadType === 'task_complete') {
+      return [
+        { kind: 'result', subtype: 'success', isError: false, timestamp },
+      ];
+    }
+    if (payloadType === 'turn_aborted') {
+      return [
+        { kind: 'result', subtype: 'turn_aborted', isError: true, timestamp },
+      ];
+    }
+    return [];
+  }
+
+  if (lineType !== 'response_item') return [];
+
+  if (payloadType === 'message') {
+    const role = asString(payload['role']);
+    if (role !== 'user' && role !== 'assistant') return [];
+    const events: TranscriptTimelineEvent[] = [];
+    for (const block of asArray(payload['content']) ?? []) {
+      const record = asRecord(block);
+      if (!record) continue;
+      const text = asString(record['text']);
+      if (text) events.push(...codexTextEvent(role, text, timestamp));
+    }
+    return events;
+  }
+
+  if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
+    const name = asString(payload['name']);
+    if (!name) return [];
+    const input = payload['arguments'] ?? payload['input'] ?? {};
+    const inputJson =
+      typeof input === 'string' ? input : JSON.stringify(input, null, 2);
+    return [
+      { kind: 'tool_use', name, inputJson: truncate(inputJson), timestamp },
+    ];
+  }
+
+  if (
+    payloadType === 'function_call_output' ||
+    payloadType === 'custom_tool_call_output'
+  ) {
+    const output = contentToText(payload['output']);
+    return [
+      {
+        kind: 'tool_result',
+        content: truncate(output ?? JSON.stringify(payload['output'] ?? '')),
+        timestamp,
+      },
+    ];
+  }
+
+  return [];
+}
+
 /**
- * Parses one or more raw Claude Code transcript file contents (JSONL) into a
+ * Parses raw transcript JSONL from a supported agent into a
  * flat, renderable timeline for a single session's detail page - a
  * different shape than `reduceTranscripts`' aggregated `SessionSummary`, but
  * deliberately reusing the same tolerant line-by-line approach and
@@ -197,6 +280,7 @@ function eventsFromMessage(
  */
 export function parseTranscriptTimeline(
   rawContent: string,
+  agent: SessionAgent = 'claude-code',
 ): ParsedTranscriptTimeline {
   const events: TranscriptTimelineEvent[] = [];
   let currentSidechain: TranscriptTimelineEvent[] | undefined;
@@ -230,6 +314,24 @@ export function parseTranscriptTimeline(
     }
 
     const timestamp = asString(raw['timestamp']);
+    if (agent === 'codex') {
+      for (const event of eventsFromCodexLine(raw, timestamp)) {
+        const previous = events.at(-1);
+        // Codex currently persists a message as both an event_msg and a
+        // response_item. They are adjacent once metadata-only envelopes are
+        // ignored; render the turn once while still accepting either shape.
+        if (
+          event.kind === 'text' &&
+          previous?.kind === 'text' &&
+          event.role === previous.role &&
+          event.text === previous.text
+        ) {
+          continue;
+        }
+        events.push(event);
+      }
+      continue;
+    }
     const isSidechain = asBoolean(raw['isSidechain']) ?? false;
     const target = isSidechain ? (currentSidechain ??= []) : events;
 
