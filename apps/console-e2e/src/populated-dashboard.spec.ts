@@ -479,7 +479,10 @@ test.describe('responsive decision inbox', () => {
     await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
-    await expect(page.locator('.console-header')).toBeHidden();
+    const header = page.locator('.console-header[data-current="inbox"]');
+    await expect(header).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
+    expect((await header.boundingBox())?.height).toBe(64);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 

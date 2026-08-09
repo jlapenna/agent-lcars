@@ -320,13 +320,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border-bottom-right-radius: 0.75rem;
 }
 
-/* ---- Agents operations workspace (#251) ---- */
+/* ---- Shared console frame ----
+   Every primary destination uses this same outer edge and dark data plane.
+   Route-specific workspace rules only decide how the information is arranged
+   inside it; they no longer get to drift in spacing, border, or contrast. */
 
-.agents-utilities--mobile {
-  display: none;
+.console-page-shell {
+  width: 100%;
+  max-width: none;
 }
 
-.agents-workspace {
+.console-workspace {
   --mantine-color-text: var(--mantine-color-gray-0);
   --mantine-color-dimmed: var(--mantine-color-dark-2);
   --mantine-color-default-border: var(--mantine-color-dark-4);
@@ -334,6 +338,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   color: var(--mantine-color-text);
   background: var(--mantine-color-dark-9);
   border: 1px solid var(--mantine-color-default-border);
+}
+
+/* ---- Agents operations workspace (#251) ---- */
+
+.agents-utilities--mobile {
+  display: none;
+}
+
+.agents-workspace {
 }
 
 .agents-workspace__warnings {
@@ -424,13 +437,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .sessions-workspace {
-  --mantine-color-text: var(--mantine-color-gray-0);
-  --mantine-color-dimmed: var(--mantine-color-dark-2);
-  --mantine-color-default-border: var(--mantine-color-dark-4);
-  overflow: hidden;
-  color: var(--mantine-color-text);
-  background: var(--mantine-color-dark-9);
-  border: 1px solid var(--mantine-color-default-border);
 }
 
 .sessions-workspace__warnings {
@@ -567,12 +573,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .costs-workspace {
-  --mantine-color-text: var(--mantine-color-gray-0);
-  --mantine-color-dimmed: var(--mantine-color-dark-2);
-  --mantine-color-default-border: var(--mantine-color-dark-4);
-  overflow: hidden;
-  color: var(--mantine-color-text);
-  background: var(--mantine-color-dark-9);
 }
 
 .costs-workspace__warnings {
@@ -1037,11 +1037,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (min-width: 48em) {
-  .deck-page-shell,
-  .inbox-page-shell,
-  .agents-page-shell,
-  .sessions-page-shell,
-  .costs-page-shell {
+  .console-page-shell {
     width: 100%;
     max-width: none;
     padding-top: 0 !important;
@@ -1313,17 +1309,59 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (max-width: 47.99em) {
-  .deck-page-shell,
-  .inbox-page-shell,
-  .agents-page-shell,
-  .sessions-page-shell,
-  .costs-page-shell {
+  .console-page-shell {
     width: 100%;
     max-width: none;
     padding: 0 !important;
   }
 
+  /* Inbox used to drop the command rail entirely on phones. Keeping the
+     active destination visible makes every top-level screen navigable from
+     the same compact LCARS control strip. */
   .console-header[data-current='inbox'] {
+    --mantine-color-text: var(--mantine-color-gray-0);
+    --mantine-color-dimmed: var(--mantine-color-dark-2);
+    display: block;
+    height: 64px;
+    min-height: 64px;
+    margin: 0 !important;
+    color: var(--mantine-color-text);
+    background: var(--mantine-color-dark-9);
+  }
+
+  .console-header[data-current='inbox'] .lcars-header {
+    display: none;
+  }
+
+  .console-header[data-current='inbox'] .lcars-command-row {
+    height: 64px;
+    gap: 4px;
+    padding-right: 8px;
+  }
+
+  .console-header[data-current='inbox'] .lcars-nav {
+    align-self: stretch;
+    flex: 0 0 auto;
+  }
+
+  .console-header[data-current='inbox'] .lcars-nav-pill {
+    display: none;
+  }
+
+  .console-header[data-current='inbox'] .lcars-nav-pill[data-active] {
+    display: inline-flex;
+    min-width: 8rem;
+    height: 64px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 0 0 24px;
+    color: var(--mantine-color-white);
+    background: var(--mantine-color-blue-5);
+  }
+
+  .console-header[data-current='inbox'] .lcars-command-utilities {
+    /* QueueWorkspace owns the contextual mobile menu. Avoid rendering its
+       duplicate in the global strip while preserving the shared route rail. */
     display: none;
   }
 

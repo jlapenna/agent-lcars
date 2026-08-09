@@ -1,4 +1,4 @@
-import { Anchor, Container, Group } from '@mantine/core';
+import { Anchor, Group } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
@@ -20,6 +20,7 @@ import {
 } from '../../lib/session-archive';
 import { groupSessionsByIssue } from '../../lib/session-issue-groups';
 import { ConsoleHeader, DataWarnings } from '../console-header';
+import { ConsolePageShell } from '../console-page-shell';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
@@ -212,7 +213,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   }
 
   return (
-    <Container size="xl" py="xl" className="sessions-page-shell">
+    <ConsolePageShell className="sessions-page-shell">
       <ConsoleHeader
         current="sessions"
         archiveQuery={query}
@@ -260,7 +261,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <SessionsBody query={query} view={view} />
       </Suspense>
-    </Container>
+    </ConsolePageShell>
   );
 }
 
