@@ -46,6 +46,31 @@ The deployment-owned alert can page on unavailable runners persisting for ten
 minutes without mistaking the brief registration window during startup for a
 dead broker connection.
 
+## LCARS live runner status
+
+The autoscaler can publish its current queue depth and each scale set's
+idle/busy runners to the LCARS console. It writes one bounded document per
+scale set to the existing `agent-telemetry` Firestore database; the console
+already has read-only access there. This keeps the console out of the runner
+placement path and does not grant it a new writer role.
+
+Publishing is deliberately opt-in and fail-soft. Set these only in the
+homelab autoscaler deployment, with the existing telemetry-writer credential
+mounted as `GOOGLE_APPLICATION_CREDENTIALS`:
+
+```sh
+AGENT_LCARS_AUTOSCALER_STATUS_ENABLED=true
+AGENT_TELEMETRY_PROJECT_ID=agent-lcars
+AGENT_TELEMETRY_DATABASE_ID=(default)
+GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
+```
+
+The credential stays in the encrypted homelab secret store. A missing or
+temporarily unavailable credential logs a warning and never blocks a GitHub
+listener, runner placement, or cleanup. Snapshots publish immediately on
+startup and then every 10 seconds; the console stops presenting a snapshot as
+live after 30 seconds without an update.
+
 ## Host readiness gate
 
 Reachability is not always enough to decide a host should run CI. A machine

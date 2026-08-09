@@ -277,7 +277,7 @@ func TestSnapshotRunnersRecordsIdleBusySplit(t *testing.T) {
 	}
 	scaler.runners.addIdle("idle-runner", "pike", "c1", time.Unix(1785702000, 0))
 	scaler.runners.addIdle("busy-runner", "janeway", "c2", time.Unix(1785702100, 0))
-	if !scaler.runners.markBusy("busy-runner") {
+	if !scaler.runners.markBusy("busy-runner", "job-42") {
 		t.Fatal("expected markBusy to succeed")
 	}
 
@@ -296,6 +296,9 @@ func TestSnapshotRunnersRecordsIdleBusySplit(t *testing.T) {
 	}
 	if got.Runners["busy-runner"].Host != "janeway" {
 		t.Errorf("busy runner host = %q, want janeway", got.Runners["busy-runner"].Host)
+	}
+	if got.Runners["busy-runner"].JobID != "job-42" {
+		t.Errorf("busy runner job ID = %q, want job-42", got.Runners["busy-runner"].JobID)
 	}
 }
 
@@ -325,7 +328,7 @@ func TestBootAdoptionPrefersCheckpointOverProcessProbe(t *testing.T) {
 		scalesetClient: newStubScalesetClient(t),
 		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		bootCheckpoint: map[string]checkpointRunner{
-			"runner-assigned": {Host: "host-a", ContainerID: "assigned", Busy: true},
+			"runner-assigned": {Host: "host-a", ContainerID: "assigned", Busy: true, JobID: "job-42"},
 		},
 	}
 
@@ -333,6 +336,9 @@ func TestBootAdoptionPrefersCheckpointOverProcessProbe(t *testing.T) {
 
 	if _, ok := scaler.runners.busy["runner-assigned"]; !ok {
 		t.Errorf("checkpointed busy runner was not adopted as busy: idle=%#v busy=%#v", scaler.runners.idle, scaler.runners.busy)
+	}
+	if got := scaler.runners.busy["runner-assigned"].jobID; got != "job-42" {
+		t.Errorf("checkpointed busy runner job ID = %q, want job-42", got)
 	}
 	// Not in the checkpoint, and the probe says no worker: still idle.
 	if _, ok := scaler.runners.idle["runner-genuinely-idle"]; !ok {
