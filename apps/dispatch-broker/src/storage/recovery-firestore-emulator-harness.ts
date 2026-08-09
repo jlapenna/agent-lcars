@@ -38,6 +38,20 @@ interface RecoveryFirestoreEmulatorHarnessOptions {
     projectId: string;
     emulatorHost: string;
   }) => RecoveryOperationPort | Promise<RecoveryOperationPort>;
+  /**
+   * Extra `test()`s beyond the shared contract suite, registered ONLY when
+   * the Java-21 gate above passes. A caller that instead adds its own
+   * top-level `test()` in the `.spec.ts` file (outside this function) gets
+   * no such gate -- it runs unconditionally and fails hard in any
+   * environment without Java (CI's `Verify` job does not install it; only
+   * `e2e` does, per this file's own header). Routing extra coverage through
+   * this parameter is what keeps that gate in the one place it is defined,
+   * instead of every caller needing to remember to duplicate it.
+   */
+  additionalTests?: (context: {
+    projectId: string;
+    emulatorHost: string;
+  }) => void;
 }
 
 function parseJavaMajorVersion(versionOutput: string): number | undefined {
@@ -197,4 +211,6 @@ export function runFirestoreEmulatorRecoveryOperationPortContract(
     await clearFirestoreData();
     return options.createPort(context);
   });
+
+  options.additionalTests?.(context);
 }
