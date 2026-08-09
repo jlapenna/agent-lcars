@@ -53,6 +53,25 @@ function isVectorValue(value: Record<string, unknown>): boolean {
   return typeof value['toArray'] === 'function';
 }
 
+type NonFiniteNumberTag = 'NaN' | 'Infinity' | '-Infinity';
+
+/**
+ * `NaN`/`Infinity`/`-Infinity` are legal Firestore double values but not
+ * legal JSON: `JSON.stringify` silently coerces them to `null`. Tag them so
+ * they survive the boundary instead of corrupting into `null`.
+ */
+function encodeNonFiniteNumber(value: number): {
+  __type: 'NonFiniteNumber';
+  value: NonFiniteNumberTag;
+} {
+  const tag: NonFiniteNumberTag = Number.isNaN(value)
+    ? 'NaN'
+    : value > 0
+      ? 'Infinity'
+      : '-Infinity';
+  return { __type: 'NonFiniteNumber', value: tag };
+}
+
 /**
  * Converts Firestore values to a safe RSC transport value.
  *
@@ -71,13 +90,26 @@ export function forClient(
     if (
       candidate === null ||
       typeof candidate === 'string' ||
-      typeof candidate === 'number' ||
       typeof candidate === 'boolean'
     ) {
       return candidate;
     }
+    if (typeof candidate === 'number') {
+      return Number.isFinite(candidate)
+        ? candidate
+        : encodeNonFiniteNumber(candidate);
+    }
     if (typeof candidate !== 'object') return undefined;
     if (candidate instanceof Date) return candidate.toISOString();
+    if (candidate instanceof Uint8Array) {
+      // Firestore bytes fields surface as a Buffer (a Uint8Array subclass)
+      // from the Node SDK. Neither a plain array nor a plain object, so it
+      // must be tagged explicitly or it is silently dropped below.
+      return {
+        __type: 'Bytes',
+        base64: Buffer.from(candidate).toString('base64'),
+      };
+    }
 
     const record = candidate as Record<string, unknown>;
     if (isTimestamp(record)) {

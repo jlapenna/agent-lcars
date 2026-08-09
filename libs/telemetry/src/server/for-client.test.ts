@@ -33,4 +33,41 @@ describe('forClient', () => {
 
     expect(result).toEqual({ valid: 'yes' });
   });
+
+  it('tags non-finite numbers instead of letting them corrupt into null', () => {
+    const result = forClient({
+      nan: NaN,
+      positiveInfinity: Infinity,
+      negativeInfinity: -Infinity,
+      finite: 42,
+    });
+
+    expect(result).toEqual({
+      nan: { __type: 'NonFiniteNumber', value: 'NaN' },
+      positiveInfinity: { __type: 'NonFiniteNumber', value: 'Infinity' },
+      negativeInfinity: { __type: 'NonFiniteNumber', value: '-Infinity' },
+      finite: 42,
+    });
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+
+  it('preserves Firestore byte fields as tagged base64, including inside arrays', () => {
+    const bytes = Buffer.from('hello', 'utf8');
+    const typedArray = new Uint8Array([1, 2, 3]);
+
+    const result = forClient({
+      bytes,
+      list: [bytes, 'keep', typedArray],
+    });
+
+    expect(result).toEqual({
+      bytes: { __type: 'Bytes', base64: bytes.toString('base64') },
+      list: [
+        { __type: 'Bytes', base64: bytes.toString('base64') },
+        'keep',
+        { __type: 'Bytes', base64: Buffer.from(typedArray).toString('base64') },
+      ],
+    });
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
 });
