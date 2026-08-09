@@ -152,6 +152,22 @@ func TestParseSweepOutput(t *testing.T) {
 	}
 }
 
+func TestWorkDirSweepScriptBoundsPnpmStore(t *testing.T) {
+	script := workDirSweepScript(30 * 1024 * 1024 * 1024)
+	for _, want := range []string{
+		`pnpm --store-dir "$pnpm_store" store prune || true`,
+		`rm -rf "$pnpm_store"`,
+		`_tool|_actions|_PipelineMapping|.pnpm-store|cache|_temp`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("workDirSweepScript() missing %q", want)
+		}
+	}
+	if !strings.Contains(script, `if [ "$current" -gt "$cap" ]; then`) {
+		t.Fatal("workDirSweepScript() does not evict the pnpm store when it keeps the workdir over cap")
+	}
+}
+
 func TestParseExternalsHealthOutput(t *testing.T) {
 	cases := []struct {
 		name        string
