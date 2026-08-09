@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import {
+  assignPipeline,
   clearHumanNeeded,
   closeIssue,
   reassignPipeline,
@@ -17,6 +18,7 @@ import { ItemOverflowMenu } from './item-overflow-menu';
 // 'use server' actions - out of scope here, matching the pattern in
 // action-items-board.test.tsx.
 vi.mock('./actions', () => ({
+  assignPipeline: vi.fn(),
   closeIssue: vi.fn(),
   clearHumanNeeded: vi.fn(),
   reassignPipeline: vi.fn(),
@@ -308,11 +310,22 @@ describe('ItemOverflowMenu', () => {
     expect(screen.queryByText('Reassign to codex')).toBeNull();
   });
 
-  it('does not offer reassign for an issue with no pipeline label', async () => {
+  it('offers first assignment for an issue with no pipeline label', async () => {
     renderMenu(makeItem());
     await openMenu();
 
-    expect(screen.queryByText(/Reassign to/)).toBeNull();
+    expect(screen.getByText('Assign to claude')).toBeTruthy();
+    expect(screen.getByText('Assign to codex')).toBeTruthy();
+  });
+
+  it('assigns an unclaimed issue to the selected pipeline', async () => {
+    (assignPipeline as Mock).mockResolvedValue({ ok: true });
+    renderMenu(makeItem());
+    await openMenu();
+    fireEvent.click(screen.getByText('Assign to codex'));
+    await waitFor(() =>
+      expect(assignPipeline).toHaveBeenCalledWith(DEFAULT_REPO, 42, 'codex'),
+    );
   });
 
   it('does not offer reassign for a PR, even a pipeline-labeled one', async () => {

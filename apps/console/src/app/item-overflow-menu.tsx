@@ -23,6 +23,7 @@ import {
   supportedAgentPipelines,
 } from '../lib/watched-repo';
 import {
+  assignPipeline,
   clearHumanNeeded,
   closeIssue,
   reassignPipeline,
@@ -73,12 +74,16 @@ export function ItemOverflowMenu({
       ? pipelines.filter((p) => p !== currentPipeline)
       : [];
   const canReassign = reassignTargets.length > 0;
+  const assignTargets =
+    item.kind === 'issue' && !currentPipeline ? pipelines : [];
+  const canAssign = assignTargets.length > 0;
   if (
     !canEdit &&
     !canClose &&
     !canClearHumanNeeded &&
     !canMute &&
     !canRebase &&
+    !canAssign &&
     !canReassign
   )
     return null;
@@ -167,6 +172,17 @@ export function ItemOverflowMenu({
     });
   };
 
+  const handleAssign = (target: Pipeline) => {
+    startTransition(async () => {
+      const result = await assignPipeline(item.repo, item.number, target);
+      if (!result.ok) return showErrorToast(result.message);
+      notifications.show({
+        message: `#${item.number} assigned to ${target}`,
+        color: 'green',
+      });
+    });
+  };
+
   const handleRebase = () => {
     startTransition(async () => {
       const result = await rebasePr(item.repo, item.number);
@@ -209,6 +225,11 @@ export function ItemOverflowMenu({
           {reassignTargets.map((target) => (
             <Menu.Item key={target} onClick={() => handleReassign(target)}>
               Reassign to {target}
+            </Menu.Item>
+          ))}
+          {assignTargets.map((target) => (
+            <Menu.Item key={target} onClick={() => handleAssign(target)}>
+              Assign to {target}
             </Menu.Item>
           ))}
           {canClearHumanNeeded && (

@@ -721,6 +721,39 @@ export async function reassignPipeline(
   });
 }
 
+/** Assigns an unclaimed open issue to an agent pipeline. */
+export async function assignPipeline(
+  repo: WatchedRepo,
+  issueNumber: number,
+  targetPipeline: Pipeline,
+): Promise<void> {
+  const octokit = getGithubClient();
+  const targetIntegration = requireAgentIntegration(repo, targetPipeline);
+  const { data: issue } = await octokit.rest.issues.get({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+  });
+  if (issue.state !== 'open' || issue.pull_request) {
+    throw new ActionError('Only open issues can be assigned to an agent', 400);
+  }
+  const labels = issue.labels.map((label) =>
+    typeof label === 'string' ? label : (label.name ?? ''),
+  );
+  const agentLabels = supportedAgentPipelines(repo)
+    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
+    .filter((label): label is string => Boolean(label));
+  if (labels.some((label) => agentLabels.includes(label))) {
+    throw new ActionError('Issue already has an agent assignment', 400);
+  }
+  await octokit.rest.issues.setLabels({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+    labels: labels.concat(targetIntegration.label),
+  });
+}
+
 const QUICK_TASK_LABEL = 'intake:quick-task';
 const QUICK_TASK_REQUEST_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
