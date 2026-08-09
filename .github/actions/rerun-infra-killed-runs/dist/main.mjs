@@ -214,8 +214,10 @@ async function processRun(api, root, run2) {
   console.log(
     `Reran infra-killed run ${run2.id} (attempt ${run2.run_attempt} -> ${run2.run_attempt + 1}): ${run2.html_url}`
   );
+  let anchor;
   try {
     const pr = await findAssociatedPullRequest(api, root, run2.head_sha);
+    anchor = pr?.number ?? 0;
     if (!pr) {
       console.log(
         `No pull request is associated with run ${run2.id}'s commit ${run2.head_sha}; skipping the audit-trail comment.`
@@ -226,14 +228,20 @@ async function processRun(api, root, run2) {
         workflowName: run2.name,
         jobNames: jobs.filter((job) => job.conclusion === "failure").map((job) => job.name ?? "")
       });
-      await commentOnPullRequest(api, root, pr.number, body);
+      try {
+        await commentOnPullRequest(api, root, pr.number, body);
+      } catch (error) {
+        console.log(
+          `::warning::rerun-infra-killed-runs: reran run ${run2.id} but could not post the audit-trail comment: ${error.message}`
+        );
+      }
     }
   } catch (error) {
     console.log(
-      `::warning::rerun-infra-killed-runs: reran run ${run2.id} but could not post the audit-trail comment: ${error.message}`
+      `::warning::rerun-infra-killed-runs: reran run ${run2.id} but could not determine its associated PR (anchor unknown, recovery observation will not be reported): ${error.message}`
     );
   }
-  return { reran: true };
+  return { reran: true, anchor };
 }
 async function scanAndRerun({
   api,
@@ -250,16 +258,27 @@ async function scanAndRerun({
     RERUN_CONCURRENCY,
     (run2) => processRun(api, root, run2)
   );
-  const rerunCount = outcomes.filter(
-    (outcome) => outcome.status === "fulfilled" && outcome.value.reran
-  ).length;
-  return { scanned: runs.length, rerun: rerunCount };
+  let rerunCount = 0;
+  const rerunRuns = [];
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status !== "fulfilled" || !outcome.value.reran) return;
+    rerunCount += 1;
+    if (outcome.value.anchor === void 0) return;
+    const run2 = eligible[index];
+    rerunRuns.push({
+      runId: run2.id,
+      runAttempt: run2.run_attempt,
+      anchor: outcome.value.anchor,
+      runUrl: run2.html_url
+    });
+  });
+  return { scanned: runs.length, rerun: rerunCount, rerunRuns };
 }
 async function run() {
   const api = createGitHubApi({ token: env("GITHUB_TOKEN") });
   const repository = env("GITHUB_REPOSITORY");
   const workflowFile = env("WORKFLOW_FILE", false) || DEFAULT_WORKFLOW_FILE;
-  const { scanned, rerun } = await scanAndRerun({
+  const { scanned, rerun, rerunRuns } = await scanAndRerun({
     api,
     repository,
     workflowFile
@@ -269,6 +288,7 @@ async function run() {
   );
   await output("scanned", String(scanned));
   await output("rerun", String(rerun));
+  await output("rerun-run-ids", JSON.stringify(rerunRuns));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await run();

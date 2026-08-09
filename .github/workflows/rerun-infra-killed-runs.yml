@@ -33,6 +33,16 @@ name: Rerun Infra-Killed CI Runs
 # red, never masked) and main.mjs for why GitHub's own `run_attempt`
 # counter is sufficient, on its own, to guarantee each run is only ever
 # automatically reran once.
+#
+# The report-recovery-observations job (agent-lcars#864/#869/#875) reports
+# one ci_retry recovery observation per rerun to the hosted ingestion
+# endpoint -- the first real caller of that endpoint, deliberately scoped to
+# this repo's own OIDC identity (no consumer-repo trust exists yet; see
+# #870). It is a separate job, not a step inside `scan`, for the same
+# blast-radius reason the module comment above gives for keeping this a
+# second small action: reporting needs `id-token: write` and a network call
+# to a different system, and a failure to report must never affect the
+# actual self-healing rerun `scan` already completed.
 
 on:
   schedule:
@@ -66,15 +76,86 @@ jobs:
   scan:
     runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
     timeout-minutes: 5
+    outputs:
+      rerun-run-ids: ${{ steps.run.outputs.rerun-run-ids }}
     steps:
       # Needed to resolve the local composite action below.
       - name: Checkout trusted revision
         uses: actions/checkout@v7
 
       - name: Scan ci.yml for infra-killed runs and rerun them once
+        id: run
         uses: ./.github/actions/rerun-infra-killed-runs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+  report-recovery-observations:
+    needs: scan
+    if: needs.scan.outputs.rerun-run-ids != '' && needs.scan.outputs.rerun-run-ids != '[]'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Report one ci_retry recovery observation per rerun
+        env:
+          RERUN_RUN_IDS: ${{ needs.scan.outputs.rerun-run-ids }}
+          RECOVERY_URL: https://agent-console.supersprinkles.racing/api/control-plane/recovery-observation
+          RECOVERY_AUDIENCE: agent-lcars-recovery-observation
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          SOURCE_KIND: ${{ github.event_name == 'workflow_dispatch' && 'operator' || 'schedule' }}
+        run: |
+          set -uo pipefail
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "$RERUN_RUN_IDS" | jq -c '.[]' | while read -r entry; do
+            run_id=$(jq -r '.runId' <<<"$entry")
+            run_attempt=$(jq -r '.runAttempt' <<<"$entry")
+            anchor=$(jq -r '.anchor' <<<"$entry")
+            run_url=$(jq -r '.runUrl' <<<"$entry")
+            exact_identity="run:${run_id}:${run_attempt}"
+            operation_key="recovery/v1:ci_retry:${REPOSITORY_ID}:${anchor}:${exact_identity}"
+
+            body=$(jq -n \
+              --arg operationKey "$operation_key" \
+              --argjson repositoryId "$REPOSITORY_ID" \
+              --arg repository "$REPOSITORY" \
+              --argjson anchor "$anchor" \
+              --arg exactIdentity "$exact_identity" \
+              --arg sourceKind "$SOURCE_KIND" \
+              --arg observedAt "$now" \
+              --arg evidence "$run_url" \
+              '{
+                operationKey: $operationKey,
+                target: {
+                  domain: "ci_retry",
+                  repositoryId: $repositoryId,
+                  repository: $repository,
+                  anchor: $anchor,
+                  exactIdentity: $exactIdentity
+                },
+                sourceKind: $sourceKind,
+                observedAt: $observedAt,
+                evidence: $evidence
+              }')
+
+            token_response=$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$RECOVERY_AUDIENCE") \
+              || { echo "::warning::rerun-infra-killed-runs: could not mint an OIDC token to report run $run_id"; continue; }
+            oidc_token=$(jq -er '.value | select(type == "string" and length > 0)' \
+              <<<"$token_response") \
+              || { echo "::warning::rerun-infra-killed-runs: OIDC token response for run $run_id had no usable value"; continue; }
+
+            curl --fail-with-body --silent --show-error --max-time 30 \
+              -X POST \
+              -H "Authorization: Bearer $oidc_token" \
+              -H "Content-Type: application/json" \
+              -d "$body" \
+              "$RECOVERY_URL" \
+              || echo "::warning::rerun-infra-killed-runs: failed to report the recovery observation for run $run_id"
+          done
 
   alert:
     needs: scan

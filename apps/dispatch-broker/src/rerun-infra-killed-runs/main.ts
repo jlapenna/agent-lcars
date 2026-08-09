@@ -182,6 +182,18 @@ async function commentOnPullRequest(
 
 interface ProcessRunOutcome {
   reran: boolean;
+  /** The PR this rerun is scoped to, when one was found -- `0` when none
+   *  was (see `findAssociatedPullRequest`), matching
+   *  `RecoveryOperationTarget.anchor`'s non-negative-integer contract in
+   *  `@agent-lcars/dispatch-contracts`. Present only when `reran` is true;
+   *  `scanAndRerun` uses it, together with the run's own `id`/`run_attempt`
+   *  it already has, to report one `ci_retry` recovery observation per
+   *  rerun. Reporting itself happens in `rerun-infra-killed-runs.yml`, not
+   *  this module -- see `rerunRuns` on `ScanAndRerunResult` for why that
+   *  split keeps this action's own blast radius limited to GitHub Actions
+   *  REST calls, matching this repo's existing OIDC-hosted-endpoint
+   *  convention in `dispatch-reconcile.yml`. */
+  anchor?: number;
 }
 
 // Each candidate is handled independently and defensively -- a single
@@ -219,8 +231,20 @@ async function processRun(
     `Reran infra-killed run ${run.id} (attempt ${run.run_attempt} -> ${run.run_attempt + 1}): ${run.html_url}`,
   );
 
+  // Split from the comment-posting call below (Codex review on #877):
+  // a lookup FAILURE (the request itself threw) is not the same fact as a
+  // lookup that SUCCEEDED and found no PR -- the former means the anchor
+  // is genuinely unknown, not confirmed zero. Conflating them would record
+  // a recovery observation permanently mis-scoped to anchor 0: this run
+  // has already advanced to attempt run_attempt+1, so isEligibleForRerun
+  // (main.ts) will never select it again, and nothing would ever correct
+  // a wrongly-zeroed anchor. `anchor` stays `undefined` on a lookup
+  // failure so the caller (scanAndRerun) can skip reporting rather than
+  // report a fact it does not actually know.
+  let anchor: number | undefined;
   try {
     const pr = await findAssociatedPullRequest(api, root, run.head_sha);
+    anchor = pr?.number ?? 0;
     if (!pr) {
       console.log(
         `No pull request is associated with run ${run.id}'s commit ${run.head_sha}; skipping the audit-trail comment.`,
@@ -233,15 +257,21 @@ async function processRun(
           .filter((job) => job.conclusion === 'failure')
           .map((job) => job.name ?? ''),
       });
-      await commentOnPullRequest(api, root, pr.number, body);
+      try {
+        await commentOnPullRequest(api, root, pr.number, body);
+      } catch (error) {
+        console.log(
+          `::warning::rerun-infra-killed-runs: reran run ${run.id} but could not post the audit-trail comment: ${(error as Error).message}`,
+        );
+      }
     }
   } catch (error) {
     console.log(
-      `::warning::rerun-infra-killed-runs: reran run ${run.id} but could not post the audit-trail comment: ${(error as Error).message}`,
+      `::warning::rerun-infra-killed-runs: reran run ${run.id} but could not determine its associated PR (anchor unknown, recovery observation will not be reported): ${(error as Error).message}`,
     );
   }
 
-  return { reran: true };
+  return { reran: true, anchor };
 }
 
 interface ScanAndRerunOptions {
@@ -251,9 +281,26 @@ interface ScanAndRerunOptions {
   now?: Date;
 }
 
+/** One exact rerun, identified precisely enough for a caller to report a
+ *  `ci_retry` recovery observation without re-deriving anything this scan
+ *  already knows -- run ID/attempt from `WorkflowRun`, the associated PR
+ *  (or `0`, see `ProcessRunOutcome.anchor`) from `processRun`. */
+interface RerunRecord {
+  runId: number;
+  runAttempt: number;
+  anchor: number;
+  runUrl: string;
+}
+
 interface ScanAndRerunResult {
   scanned: number;
   rerun: number;
+  /** One entry per successful rerun this pass performed, in no particular
+   *  order. Exists so `run()`'s CLI entrypoint can emit exact identities as
+   *  a workflow output for `rerun-infra-killed-runs.yml`'s own reporting
+   *  step to report -- see `ProcessRunOutcome.anchor`'s doc for why that
+   *  reporting is not done from inside this module. */
+  rerunRuns: RerunRecord[];
 }
 
 async function scanAndRerun({
@@ -275,18 +322,40 @@ async function scanAndRerun({
     RERUN_CONCURRENCY,
     (run) => processRun(api, root, run),
   );
-  const rerunCount = outcomes.filter(
-    (outcome) => outcome.status === 'fulfilled' && outcome.value.reran,
-  ).length;
+  // rerunCount reflects every actual rerun (the self-healing outcome that
+  // matters); rerunRuns is the NARROWER set this pass can also confidently
+  // report a recovery observation for. The two are deliberately allowed to
+  // diverge -- rerunCount must never shrink just because an anchor lookup
+  // failed for one of them, or this action's own scanned/rerun metrics
+  // would misreport how much self-healing actually happened.
+  let rerunCount = 0;
+  const rerunRuns: RerunRecord[] = [];
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status !== 'fulfilled' || !outcome.value.reran) return;
+    rerunCount += 1;
+    // outcome.value.anchor is undefined exactly when processRun's PR
+    // lookup failed (anchor genuinely unknown, not confirmed absent) --
+    // skip reporting rather than default to 0 and permanently mis-scope
+    // the recovery observation. See processRun's own comment for why this
+    // run can never be corrected on a later pass.
+    if (outcome.value.anchor === undefined) return;
+    const run = eligible[index];
+    rerunRuns.push({
+      runId: run.id,
+      runAttempt: run.run_attempt,
+      anchor: outcome.value.anchor,
+      runUrl: run.html_url,
+    });
+  });
 
-  return { scanned: runs.length, rerun: rerunCount };
+  return { scanned: runs.length, rerun: rerunCount, rerunRuns };
 }
 
 async function run(): Promise<void> {
   const api = createGitHubApi({ token: env('GITHUB_TOKEN') });
   const repository = env('GITHUB_REPOSITORY');
   const workflowFile = env('WORKFLOW_FILE', false) || DEFAULT_WORKFLOW_FILE;
-  const { scanned, rerun } = await scanAndRerun({
+  const { scanned, rerun, rerunRuns } = await scanAndRerun({
     api,
     repository,
     workflowFile,
@@ -296,6 +365,10 @@ async function run(): Promise<void> {
   );
   await output('scanned', String(scanned));
   await output('rerun', String(rerun));
+  // Consumed by rerun-infra-killed-runs.yml's own reporting step -- see
+  // RerunRecord's doc for why exact identities are exposed as an output
+  // here rather than this module reporting them itself.
+  await output('rerun-run-ids', JSON.stringify(rerunRuns));
 }
 
 if (

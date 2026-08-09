@@ -92,7 +92,18 @@ test('reruns an infra-killed attempt-1 run exactly once and posts the audit-trai
 
   const result = await scanAndRerun({ api, repository: REPO });
 
-  assert.deepEqual(result, { scanned: 1, rerun: 1 });
+  assert.deepEqual(result, {
+    scanned: 1,
+    rerun: 1,
+    rerunRuns: [
+      {
+        runId: 1,
+        runAttempt: 1,
+        anchor: 469,
+        runUrl: `https://github.com/${REPO}/actions/runs/1`,
+      },
+    ],
+  });
   const rerunCall = api.calls.find(
     (call) => call.basePath === `${ROOT}/actions/runs/1/rerun-failed-jobs`,
   );
@@ -117,7 +128,7 @@ test('never re-examines a run already at attempt 2 or higher -- the loop guard h
 
   const result = await scanAndRerun({ api, repository: REPO });
 
-  assert.deepEqual(result, { scanned: 1, rerun: 0 });
+  assert.deepEqual(result, { scanned: 1, rerun: 0, rerunRuns: [] });
   assert.deepEqual(
     api.calls.map((call) => call.basePath),
     [`${ROOT}/actions/workflows/ci.yml/runs`],
@@ -140,7 +151,7 @@ test('never reruns a run whose failed job has a real failed step', async () => {
 
   const result = await scanAndRerun({ api, repository: REPO });
 
-  assert.deepEqual(result, { scanned: 1, rerun: 0 });
+  assert.deepEqual(result, { scanned: 1, rerun: 0, rerunRuns: [] });
   assert.equal(
     api.calls.some((call) => call.basePath.endsWith('rerun-failed-jobs')),
     false,
@@ -166,7 +177,18 @@ test('still counts the rerun when no pull request is associated with the run, bu
 
   const result = await scanAndRerun({ api, repository: REPO });
 
-  assert.deepEqual(result, { scanned: 1, rerun: 1 });
+  assert.deepEqual(result, {
+    scanned: 1,
+    rerun: 1,
+    rerunRuns: [
+      {
+        runId: 4,
+        runAttempt: 1,
+        anchor: 0,
+        runUrl: `https://github.com/${REPO}/actions/runs/4`,
+      },
+    ],
+  });
   assert.equal(
     api.calls.some(
       (call) => call.basePath.includes('/issues/') && call.method === 'POST',
@@ -174,6 +196,85 @@ test('still counts the rerun when no pull request is associated with the run, bu
     false,
     'no PR to comment on means no comment call at all',
   );
+});
+
+test('still counts the rerun when the PR lookup itself fails, but does not report a recovery observation with a fabricated anchor', async () => {
+  const run = workflowRun({ id: 7 });
+  const api = fakeApi([
+    {
+      path: `${ROOT}/actions/workflows/ci.yml/runs`,
+      data: { workflow_runs: [run] },
+    },
+    { path: `${ROOT}/actions/runs/7/jobs`, data: { jobs: [infraKilledJob()] } },
+    {
+      path: `${ROOT}/actions/runs/7/rerun-failed-jobs`,
+      method: 'POST',
+      data: {},
+    },
+    {
+      path: `${ROOT}/commits/sha-7/pulls`,
+      error: new Error('secondary rate limit'),
+    },
+  ]);
+
+  const result = await scanAndRerun({ api, repository: REPO });
+
+  // The rerun itself succeeded and must still count -- only the anchor is
+  // unknown, not the rerun outcome. rerunRuns is empty: a lookup FAILURE
+  // must never be reported as anchor 0, which would permanently mis-scope
+  // the recovery observation for a run that can never be re-examined
+  // (isEligibleForRerun rejects it once run_attempt has advanced).
+  assert.deepEqual(result, { scanned: 1, rerun: 1, rerunRuns: [] });
+  assert.equal(
+    api.calls.some(
+      (call) => call.basePath.includes('/issues/') && call.method === 'POST',
+    ),
+    false,
+    'a failed PR lookup must never be followed by a comment call',
+  );
+});
+
+test('reports the correct anchor when the PR lookup succeeds but posting the audit-trail comment fails', async () => {
+  const run = workflowRun({ id: 8 });
+  const api = fakeApi([
+    {
+      path: `${ROOT}/actions/workflows/ci.yml/runs`,
+      data: { workflow_runs: [run] },
+    },
+    { path: `${ROOT}/actions/runs/8/jobs`, data: { jobs: [infraKilledJob()] } },
+    {
+      path: `${ROOT}/actions/runs/8/rerun-failed-jobs`,
+      method: 'POST',
+      data: {},
+    },
+    {
+      path: `${ROOT}/commits/sha-8/pulls`,
+      data: [{ number: 501, state: 'open' }],
+    },
+    {
+      path: `${ROOT}/issues/501/comments`,
+      method: 'POST',
+      error: new Error('comment API unavailable'),
+    },
+  ]);
+
+  const result = await scanAndRerun({ api, repository: REPO });
+
+  // A comment-posting failure is unrelated to whether the anchor is known
+  // -- the lookup itself succeeded, so the observation must still be
+  // reported with the real PR number, not skipped or zeroed.
+  assert.deepEqual(result, {
+    scanned: 1,
+    rerun: 1,
+    rerunRuns: [
+      {
+        runId: 8,
+        runAttempt: 1,
+        anchor: 501,
+        runUrl: `https://github.com/${REPO}/actions/runs/8`,
+      },
+    ],
+  });
 });
 
 test('a per-candidate rerun failure is reported but never blocks scanning the rest of the batch', async () => {
@@ -202,7 +303,18 @@ test('a per-candidate rerun failure is reported but never blocks scanning the re
   const result = await scanAndRerun({ api, repository: REPO });
 
   // Run 5's rerun call fails; run 6 must still be reran independently.
-  assert.deepEqual(result, { scanned: 2, rerun: 1 });
+  assert.deepEqual(result, {
+    scanned: 2,
+    rerun: 1,
+    rerunRuns: [
+      {
+        runId: 6,
+        runAttempt: 1,
+        anchor: 0,
+        runUrl: `https://github.com/${REPO}/actions/runs/6`,
+      },
+    ],
+  });
 });
 
 test('scans the workflow named by workflowFile instead of the ci.yml default', async () => {
@@ -230,7 +342,18 @@ test('scans the workflow named by workflowFile instead of the ci.yml default', a
     workflowFile: 'validate.yml',
   });
 
-  assert.deepEqual(result, { scanned: 1, rerun: 1 });
+  assert.deepEqual(result, {
+    scanned: 1,
+    rerun: 1,
+    rerunRuns: [
+      {
+        runId: 9,
+        runAttempt: 1,
+        anchor: 0,
+        runUrl: `https://github.com/${REPO}/actions/runs/9`,
+      },
+    ],
+  });
   assert.ok(
     api.calls.every(
       (call) => !call.basePath.includes('/actions/workflows/ci.yml/'),
@@ -265,7 +388,7 @@ test('paginates a jobs list past 100 entries so a later-page real failure blocks
   // The only failed job (page 2) has a real failed step, so nothing may be
   // reran -- a single-page fetch would have seen 100 green jobs and never
   // even found the failure.
-  assert.deepEqual(result, { scanned: 1, rerun: 0 });
+  assert.deepEqual(result, { scanned: 1, rerun: 0, rerunRuns: [] });
   assert.ok(
     api.calls.some(
       (call) =>
