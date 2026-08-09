@@ -321,9 +321,6 @@ export function QueueWorkspace({
       <div className="queue-workspace__list">
         <div className="queue-workspace__list-header">
           <div>
-            <Title order={2} size="h3">
-              Decision Inbox
-            </Title>
             <Text size="xs" c="dimmed">
               {visibleCards.length}{' '}
               {visibleCards.length === 1 ? 'item' : 'items'} · needs your
