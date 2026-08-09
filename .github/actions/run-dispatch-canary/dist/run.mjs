@@ -3,6 +3,294 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
+// libs/dispatch-contracts/src/failure.ts
+var OWNING_SYSTEMS = Object.freeze([
+  "controller",
+  "runner",
+  "worker",
+  "finalizer",
+  "projector"
+]);
+var FAILURE_PHASES = [
+  "signal",
+  "authorization",
+  "intent",
+  "scheduling",
+  "launch",
+  "runner_allocation",
+  "bootstrap",
+  "provider_admission",
+  "provider_execution",
+  "agent_execution",
+  "validation",
+  "reporting",
+  "telemetry",
+  "reconciliation"
+];
+var PHASE_OWNERS = Object.freeze({
+  signal: "controller",
+  authorization: "controller",
+  intent: "controller",
+  scheduling: "controller",
+  launch: "controller",
+  runner_allocation: "runner",
+  bootstrap: "worker",
+  provider_admission: "worker",
+  provider_execution: "worker",
+  agent_execution: "worker",
+  validation: "finalizer",
+  reporting: "projector",
+  telemetry: "projector",
+  // Every system reconciles the state it owns, so this phase alone cannot
+  // name its owner from the phase. `classifyFailure` requires an explicit
+  // owningSystem when the phase is `reconciliation`; this default is the
+  // most common case, not an assumption the classifier is allowed to make
+  // silently.
+  reconciliation: "controller"
+});
+var RETRY_DISPOSITIONS = [
+  "never",
+  "immediate",
+  "backoff",
+  "after_health_change",
+  "after_configuration_change",
+  "manual"
+];
+var FAILURE_REASONS = [
+  // controller / signal + reconciliation
+  "signal_lost",
+  "signal_evicted",
+  "signal_unverifiable",
+  "quick_task_digest_mismatch",
+  "concurrency_group_unverifiable",
+  // controller / authorization + intent + scheduling + launch
+  "unauthorized_actor",
+  "ambiguous_pipeline_selection",
+  "intent_superseded",
+  "launch_response_lost",
+  "launch_rejected",
+  // runner
+  "runner_allocation_timeout",
+  "runner_lost",
+  // worker / bootstrap
+  "work_token_mint_failed",
+  "checkout_failed",
+  "tool_setup_failed",
+  // worker / provider + agent
+  "provider_admission_denied",
+  "provider_graph_allocation_failed",
+  "provider_unavailable",
+  "agent_turn_budget_exhausted",
+  "agent_exited_nonzero",
+  // finalizer
+  "deliverable_absent",
+  "deliverable_lookup_failed",
+  "deliverable_unattributable",
+  // projector
+  "github_write_failed",
+  "telemetry_upload_failed",
+  "telemetry_absent",
+  // any system
+  "internal_error"
+];
+var PHASES = new Set(FAILURE_PHASES);
+var REASONS = new Set(FAILURE_REASONS);
+var DISPOSITIONS = new Set(RETRY_DISPOSITIONS);
+var SYSTEMS = new Set(OWNING_SYSTEMS);
+function isWellFormedFailureClassification(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value;
+  if (typeof candidate.owningSystem !== "string" || !SYSTEMS.has(candidate.owningSystem)) {
+    return false;
+  }
+  if (typeof candidate.phase !== "string" || !PHASES.has(candidate.phase)) {
+    return false;
+  }
+  if (typeof candidate.reason !== "string" || !REASONS.has(candidate.reason)) {
+    return false;
+  }
+  if (typeof candidate.retryDisposition !== "string" || !DISPOSITIONS.has(candidate.retryDisposition)) {
+    return false;
+  }
+  if (candidate.retryBudget !== void 0 && (!Number.isSafeInteger(candidate.retryBudget) || Number(candidate.retryBudget) < 0)) {
+    return false;
+  }
+  if (candidate.evidence !== void 0 && typeof candidate.evidence !== "string") {
+    return false;
+  }
+  if (candidate.detail !== void 0 && typeof candidate.detail !== "string") {
+    return false;
+  }
+  return true;
+}
+
+// libs/dispatch-contracts/src/outcomes.ts
+var DISPATCH_OUTCOME_KINDS = [
+  "startup-failure",
+  "trajectory-failure",
+  "outcome-gate-failure",
+  "park",
+  "no-op",
+  "pull-request",
+  "merged-deliverable",
+  "review",
+  "comment",
+  "closed",
+  "unknown-success"
+];
+function isDispatchOutcomeKind(value) {
+  return DISPATCH_OUTCOME_KINDS.includes(value);
+}
+function isDispatchOutcomeReference(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value;
+  return candidate.kind === "pull-request" && Number.isSafeInteger(candidate.number) && Number(candidate.number) > 0;
+}
+
+// libs/dispatch-contracts/src/pipelines.ts
+var PIPELINE_CONTRACTS = Object.freeze({
+  claude: Object.freeze({
+    pipeline: "claude",
+    contract: "agent",
+    workflowFile: "claude.yml",
+    displayName: "Claude",
+    runNameLabel: "Claude issue agent",
+    label: "agent:claude",
+    reviewLabel: "review:claude",
+    replyTrigger: "@claude",
+    replyTriggerAliases: Object.freeze([]),
+    redispatchCommand: "@claude",
+    botLogin: "claude[bot]"
+  }),
+  codex: Object.freeze({
+    pipeline: "codex",
+    contract: "agent",
+    workflowFile: "codex.yml",
+    displayName: "Codex",
+    runNameLabel: "Codex issue agent",
+    label: "agent:codex",
+    reviewLabel: "review:codex",
+    replyTrigger: "/codex",
+    replyTriggerAliases: Object.freeze([]),
+    redispatchCommand: "/codex",
+    botLogin: "agent-lcars[bot]"
+  }),
+  opencode: Object.freeze({
+    pipeline: "opencode",
+    contract: "agent",
+    workflowFile: "opencode.yml",
+    displayName: "OpenCode",
+    runNameLabel: "OpenCode issue agent",
+    label: "agent:opencode",
+    reviewLabel: "review:opencode",
+    replyTrigger: "/oc",
+    replyTriggerAliases: Object.freeze(["/opencode"]),
+    redispatchCommand: "/opencode",
+    botLogin: "agent-lcars[bot]"
+  }),
+  canary: Object.freeze({
+    // #307's no-op production canary. It carries no label, no reply command,
+    // and no bot login because nothing may ever select it from an issue: the
+    // only way to produce a `canary` intent is normalize.mjs's dedicated
+    // workflow_dispatch `kind: 'canary'` branch, fired exclusively by this
+    // repo's own trusted dispatch-canary.yml/post-deploy-smoke.yml.
+    pipeline: "canary",
+    contract: "canary",
+    workflowFile: "agent-dispatch-canary.yml",
+    displayName: "Dispatch canary",
+    runNameLabel: "Dispatch canary worker",
+    replyTriggerAliases: Object.freeze([])
+  })
+});
+var DISPATCH_PIPELINES = Object.freeze(
+  Object.keys(PIPELINE_CONTRACTS)
+);
+var AGENT_PIPELINES = Object.freeze(
+  DISPATCH_PIPELINES.filter(
+    (pipeline) => PIPELINE_CONTRACTS[pipeline].contract === "agent"
+  )
+);
+var WORKER_WORKFLOW_FILES = Object.freeze(
+  new Set(
+    DISPATCH_PIPELINES.map(
+      (pipeline) => PIPELINE_CONTRACTS[pipeline].workflowFile
+    )
+  )
+);
+var AGENT_LABELS = new Map(
+  AGENT_PIPELINES.map((pipeline) => [
+    PIPELINE_CONTRACTS[pipeline].label,
+    pipeline
+  ])
+);
+var REVIEW_LABELS = new Map(
+  AGENT_PIPELINES.map((pipeline) => [
+    PIPELINE_CONTRACTS[pipeline].reviewLabel,
+    pipeline
+  ])
+);
+var DISPATCH_LABELS = Object.freeze([
+  ...AGENT_LABELS.keys(),
+  ...REVIEW_LABELS.keys()
+]);
+var REPLY_COMMANDS = new Map(
+  AGENT_PIPELINES.flatMap((pipeline) => {
+    const contract = PIPELINE_CONTRACTS[pipeline];
+    return [
+      contract.replyTrigger,
+      ...contract.replyTriggerAliases
+    ].map((command) => [command, pipeline]);
+  })
+);
+var AGENT_BOT_LOGINS = Object.freeze([
+  ...new Set(
+    AGENT_PIPELINES.map(
+      (pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin
+    )
+  )
+]);
+function isDispatchPipeline(pipeline) {
+  return Object.hasOwn(PIPELINE_CONTRACTS, pipeline);
+}
+
+// libs/dispatch-contracts/src/projection.ts
+var PROJECTION_CONVERGENCE_STATES = [
+  /** No convergence attempt has been recorded yet. */
+  "pending",
+  /** `observedRevision === desiredRevision`: the last attempt's GitHub
+   *  writes all succeeded. */
+  "converged",
+  /** The last convergence attempt failed; `observedRevision` still reflects
+   *  the most recent revision that DID succeed (0 if there has never been
+   *  one), not the failed attempt's target. */
+  "diverged"
+];
+var CONVERGENCE_STATES = new Set(
+  PROJECTION_CONVERGENCE_STATES
+);
+function isNonNegativeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+function isWellFormedProjectionStatus(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value;
+  if (!isNonNegativeInteger(candidate.desiredRevision)) return false;
+  if (!isNonNegativeInteger(candidate.observedRevision)) return false;
+  if (typeof candidate.state !== "string" || !CONVERGENCE_STATES.has(candidate.state)) {
+    return false;
+  }
+  if (typeof candidate.observedAt !== "string" || candidate.observedAt.length === 0) {
+    return false;
+  }
+  return true;
+}
+
 // libs/dispatch-contracts/src/ledger.ts
 var LEDGER_MARKER = "<!-- agent-lcars:dispatch-ledger:v1 -->";
 var LEDGER_SCHEMA = "agent-lcars.dispatch-ledger/v1";
@@ -53,13 +341,116 @@ function extractLedgerComment(body) {
     return { ok: false, reason: "invalid-json" };
   }
 }
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0;
+}
+function isPositiveInteger(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
 var GENERATION_STATES = new Set(
   LEDGER_GENERATION_STATES
 );
+function isWellFormedGeneration(value) {
+  if (!isPlainObject(value)) return false;
+  if (!isPositiveInteger(value.generation)) return false;
+  if (!isNonEmptyString(value.intentId)) return false;
+  if (!isNonEmptyString(value.sourceId)) return false;
+  if (!isNonEmptyString(value.occurredAt)) return false;
+  if (typeof value.pipeline !== "string" || !isDispatchPipeline(value.pipeline)) {
+    return false;
+  }
+  if (typeof value.state !== "string" || !GENERATION_STATES.has(value.state)) {
+    return false;
+  }
+  if (value.attempt !== void 0 && !isPlainObject(value.attempt)) {
+    return false;
+  }
+  if (isPlainObject(value.attempt)) {
+    if (value.attempt.outcome !== void 0 && !isDispatchOutcomeKind(value.attempt.outcome)) {
+      return false;
+    }
+    if (value.attempt.outcomeReference !== void 0 && !isDispatchOutcomeReference(value.attempt.outcomeReference)) {
+      return false;
+    }
+    if (value.attempt.outcomeReference !== void 0 && value.attempt.outcome !== "pull-request") {
+      return false;
+    }
+  }
+  return true;
+}
+function isWellFormedSource(value) {
+  if (!isPlainObject(value)) return false;
+  return isNonEmptyString(value.sourceKind) && isNonEmptyString(value.sourceId);
+}
+function isWellFormedAnomaly(value) {
+  if (!isPlainObject(value)) return false;
+  if (!isNonEmptyString(value.kind) || !isNonEmptyString(value.occurredAt)) {
+    return false;
+  }
+  if (value.failure !== void 0 && !isWellFormedFailureClassification(value.failure)) {
+    return false;
+  }
+  return true;
+}
+function isWellFormedLedger(value) {
+  if (!isPlainObject(value)) return false;
+  if (value.schema !== LEDGER_SCHEMA) return false;
+  if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 0) {
+    return false;
+  }
+  if (!isPlainObject(value.task)) return false;
+  if (!isNonEmptyString(value.task.repository)) return false;
+  if (!isPositiveInteger(value.task.issue)) return false;
+  if (!isPositiveInteger(value.task.repositoryId)) return false;
+  if (!Array.isArray(value.sources) || !Array.isArray(value.generations)) {
+    return false;
+  }
+  if (!Array.isArray(value.anomalies)) return false;
+  if (!isPlainObject(value.control)) return false;
+  if (!value.generations.every(isWellFormedGeneration)) return false;
+  if (!value.sources.every(isWellFormedSource)) return false;
+  if (!value.anomalies.every(isWellFormedAnomaly)) return false;
+  if (value.projection !== void 0 && !isWellFormedProjectionStatus(value.projection)) {
+    return false;
+  }
+  return true;
+}
 
 // libs/dispatch-contracts/src/marker.ts
 function formatAttemptId({ generation, intentId }) {
   return `g${generation}:${intentId}`;
+}
+
+// libs/dispatch-contracts/src/oidc.ts
+var HOSTED_COMPLETION_PATH = "/api/control-plane/completion";
+var HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
+var HOSTED_TASK_STATE_PATH = "/api/control-plane/task-state";
+var HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED_TASK_STATE_PATH}`;
+var WEBHOOK_INGRESS_PROBE_PATH = "/api/control-plane/webhook/probe";
+var WEBHOOK_INGRESS_PROBE_URL = `https://agent-console.supersprinkles.racing${WEBHOOK_INGRESS_PROBE_PATH}`;
+
+// libs/dispatch-contracts/src/task-state.ts
+var AUTHORITATIVE_TASK_STATE_SCHEMA = "agent-lcars.authoritative-task-state/v1";
+function isAuthoritativeTaskState(value) {
+  if (!isPlainObject(value)) return false;
+  const task = value.task;
+  const controllerState = value.controllerState;
+  if (!isPlainObject(task) || !isPlainObject(controllerState)) return false;
+  const generations = controllerState.generations;
+  if (!Array.isArray(generations)) return false;
+  const validationLedger = {
+    ...controllerState,
+    generations: generations.map(
+      (generation) => isPlainObject(generation) && isPlainObject(generation.attempt) ? {
+        ...generation,
+        attempt: { ...generation.attempt, token: "redacted-for-read" }
+      } : generation
+    )
+  };
+  return value.schema === AUTHORITATIVE_TASK_STATE_SCHEMA && Number.isSafeInteger(value.storageRevision) && value.storageRevision >= 0 && typeof value.updatedAt === "string" && isWellFormedLedger(validationLedger) && task.repositoryId === validationLedger.task.repositoryId && task.repository === validationLedger.task.repository && task.issue === validationLedger.task.issue;
 }
 
 // apps/dispatch-broker/src/modules/ledger-core.ts
@@ -529,15 +920,42 @@ function isCanaryContractObservationPending({
   if (!projection || projection.state === "pending") return true;
   return (projection.state === "converged" || projection.state === "diverged") && projection.desiredRevision !== ledger.revision - 1;
 }
-async function findCanaryGeneration(api, task, sourceId) {
-  const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
-    createIfMissing: false
+async function findCanaryGeneration(task, sourceId, fetchImpl = fetch, baseUrl = HOSTED_TASK_STATE_URL) {
+  const [owner, repo] = task.repository.split("/");
+  if (!owner || !repo) throw new Error(`Invalid repository ${task.repository}`);
+  const url = new URL(
+    `${baseUrl}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${task.issue}`
+  );
+  url.searchParams.set("repositoryId", String(task.repositoryId));
+  const response = await fetchImpl(url, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(15e3)
   });
-  if (!loaded) return void 0;
-  const generation = loaded.ledger.generations.filter(
+  if (response.status === 404) return void 0;
+  if (!response.ok) {
+    throw new Error(
+      `Authoritative task-state read failed with HTTP ${response.status}`
+    );
+  }
+  const state = await response.json();
+  if (!isAuthoritativeTaskState(state)) {
+    throw new Error("Authoritative task-state response was malformed");
+  }
+  if (state.task.repositoryId !== task.repositoryId || state.task.repository !== task.repository || state.task.issue !== task.issue) {
+    throw new Error(
+      "Authoritative task-state response did not match the requested task"
+    );
+  }
+  const generation = state.controllerState.generations.filter(
     (candidate) => candidate.pipeline === "canary" && (sourceId === void 0 || candidate.sourceId === sourceId)
   ).sort((left, right) => right.generation - left.generation)[0];
-  return generation ? { ledger: loaded.ledger, generation } : void 0;
+  return generation ? {
+    ledger: state.controllerState,
+    generation,
+    storageRevision: state.storageRevision,
+    authoritativeUpdatedAt: state.updatedAt
+  } : void 0;
 }
 function describeCanaryObservation(found) {
   if (!found) return "awaiting a ledger generation for this caller";
@@ -551,7 +969,8 @@ function describeCanaryObservation(found) {
     `status=${attempt?.status ?? "unknown"}`,
     `conclusion=${attempt?.conclusion ?? "unknown"}`,
     `outcome=${attempt?.outcome ?? "missing"}`,
-    projection ? `projection=${projection.state}:${projection.observedRevision}/${projection.desiredRevision}@r${ledger.revision}` : "projection=missing"
+    projection ? `projection=${projection.state}:${projection.observedRevision}/${projection.desiredRevision}@r${ledger.revision}` : "projection=missing",
+    `storage=r${found.storageRevision ?? "unknown"}@${found.authoritativeUpdatedAt ?? "unknown"}`
   ].join(" ");
 }
 function elapsedSeconds(startedAt, observedAt) {
@@ -562,14 +981,21 @@ async function pollCanaryLedger(api, task, {
   sleepImpl = sleep,
   now = () => Date.now(),
   sourceId,
-  log = console.log
+  log = console.log,
+  fetchImpl,
+  taskStateUrl
 } = {}) {
   const startedAt = now();
   const deadline = startedAt + timeoutMs;
   let delay = LEDGER_POLL_BACKOFF_START_MS;
   let lastObservation;
   while (now() < deadline) {
-    const found = await findCanaryGeneration(api, task, sourceId);
+    const found = await findCanaryGeneration(
+      task,
+      sourceId,
+      fetchImpl ?? api.taskStateFetch,
+      taskStateUrl
+    );
     const observation = describeCanaryObservation(found);
     if (observation !== lastObservation) {
       log(
@@ -580,7 +1006,14 @@ async function pollCanaryLedger(api, task, {
     if (found?.generation.state === "completed") {
       if (found.generation.attempt?.conclusion !== "success") return found;
       if (!isCanaryContractObservationPending(found)) {
-        assertCanaryContracts(found);
+        try {
+          assertCanaryContracts(found);
+        } catch (error) {
+          throw new Error(
+            `${error.message} Authoritative observation: ${describeCanaryObservation(found)} source=${found.generation.sourceId}.`,
+            { cause: error }
+          );
+        }
         return found;
       }
     }
@@ -638,13 +1071,28 @@ This issue is left open with evidence instead of being auto-closed. A maintainer
   }
   await ensureNeedsHumanParked(api, task, maintainer);
 }
+async function ledgerCommentDiagnostic(api, task) {
+  try {
+    const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
+      createIfMissing: false
+    });
+    if (!loaded) return "GitHub ledger diagnostic: comment absent.";
+    return `GitHub ledger diagnostic only: comment ${loaded.comment.id}, revision ${loaded.ledger.revision}.`;
+  } catch (error) {
+    return `GitHub ledger diagnostic unavailable: ${error.message}`;
+  }
+}
 function hasNeedsHumanLabel(issue) {
   return (issue.labels ?? []).some(
     (label) => (typeof label === "string" ? label : label.name) === "status:needs-human"
   );
 }
 async function sweepOneStaleCanary(api, task, maintainer, alreadyParked) {
-  const found = await findCanaryGeneration(api, task);
+  const found = await findCanaryGeneration(
+    task,
+    void 0,
+    api.taskStateFetch
+  );
   const conclusion = found?.generation?.attempt?.conclusion;
   if (found?.generation.state === "completed" && conclusion === "success") {
     assertCanaryContracts(found);
@@ -767,7 +1215,13 @@ async function runDispatchCanary({
     });
     return { issue: issue.number };
   } catch (error) {
-    await parkCanaryFailure(api, task, maintainer, error.message);
+    const diagnostic = await ledgerCommentDiagnostic(api, task);
+    await parkCanaryFailure(
+      api,
+      task,
+      maintainer,
+      `${error.message} ${diagnostic}`
+    );
     throw error;
   }
 }
