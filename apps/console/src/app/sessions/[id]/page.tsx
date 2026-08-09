@@ -25,15 +25,13 @@ interface PageProps {
 
 /**
  * The bottom half of an issue-agent session's detail view: either the real
- * turn-by-turn transcript timeline (`isSessionRenderable(doc)`, true today
- * only for Claude Code - the only agent with a working timeline parser, see
+ * turn-by-turn transcript timeline (`isSessionRenderable(doc)`, see
  * `transcript-timeline.ts`'s `RENDERABLE_TRANSCRIPT_AGENTS`), or - for every
- * other agent - a short note that the archive exists without attempting to
+ * unsupported agent - a short note that the archive exists without attempting to
  * render it as a transcript. Rendering the latter as a transcript would
  * fail-soft into a scary warning on every one of those session pages for no
- * benefit, since `getSessionTranscript` only knows how to parse a single
- * Claude Code `.jsonl` object, not any other agent's raw shape (which for
- * an archive-first agent may not even be one file - see `types.ts`'s
+ * benefit, since an archive-first agent's raw shape may not even be one file
+ * (see `types.ts`'s
  * `transcriptGcsUri` doc comment). This reads the same `renderable` field
  * `session-detail.ts`'s fetch gate does rather than re-deriving its own
  * opinion from `sessionAgent(doc)` - agent-lcars#645's Bug 3 was exactly two
@@ -91,7 +89,7 @@ export function ArchivedSessionTranscript({
  * A single session's detail view: full header (identity, cost/token totals,
  * source-specific fields, deliverables, artifacts) plus - for an
  * issue-agent session whose transcript was archived to GCS - the turn-by-
- * turn transcript timeline (or, for a non-Claude-Code agent's archive-first
+ * turn transcript timeline (or, for an unsupported agent's archive-first
  * stub, a note that it exists). A missing doc is a real 404; every other
  * failure mode (store read failure, GCS fetch/parse failure) fails soft to
  * a warning rather than a 500 - see session-detail.ts/session-transcript.ts

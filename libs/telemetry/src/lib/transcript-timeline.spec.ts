@@ -23,6 +23,8 @@ describe('parseTranscriptTimeline', () => {
     );
 
     expect(hadUnparseableLines).toBe(false);
+    // Codex writes user/assistant messages in both event_msg and
+    // response_item envelopes; each logical turn appears only once.
     expect(events).toMatchObject([
       { kind: 'text', role: 'user', text: 'Fix telemetry support' },
       {

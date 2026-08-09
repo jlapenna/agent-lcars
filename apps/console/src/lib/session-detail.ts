@@ -31,12 +31,10 @@ export type SessionDetailResult =
  *
  * Only fetched when `isSessionRenderable(doc)` is true (#3123 phase 2,
  * updated to read the `renderable` field in #645): `getSessionTranscript`
- * parses `transcriptGcsUri` as a single Claude Code `.jsonl` object via
- * `parseTranscriptTimeline`, which today understands only Claude Code's raw
- * line shape (see `RENDERABLE_TRANSCRIPT_AGENTS` in
- * `transcript-timeline.ts`) - not, for example, Codex's, despite Codex
- * having a working `TranscriptAdapter` for stats summarization. Non-Claude
- * agents may also archive-first rather than ship a parseable transcript at
+ * parses `transcriptGcsUri` as a single `.jsonl` object via the agent-specific
+ * branch in `parseTranscriptTimeline` (see `RENDERABLE_TRANSCRIPT_AGENTS` in
+ * `transcript-timeline.ts`). Unsupported agents may archive-first rather
+ * than ship a parseable transcript at
  * all (e.g. OpenCode's raw local session storage, which is a single SQLite
  * database rather than a per-session file - see `types.ts`'s
  * `transcriptGcsUri` doc comment) - fetching either shape as a transcript

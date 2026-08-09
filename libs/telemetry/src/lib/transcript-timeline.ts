@@ -7,15 +7,13 @@ const MAX_BLOCK_CHARS = 2000;
 
 /**
  * Agents whose raw transcript lines {@link parseTranscriptTimeline} actually
- * understands. Codex's raw rollout JSONL uses an
- * entirely different line shape (`session_meta`/`turn_context`/`event_msg`
- * envelopes wrapping a `payload` — see `codex-transcript-adapter.ts`) than
- * this parser's `message.role`/`message.content` walk expects, even though
- * `codexAdapter` (`transcript-adapter.ts`) already reduces that same raw
- * format into a working `SessionSummary` for the stats gauges. Those are two
- * different consumers of the same raw file: `TRANSCRIPT_ADAPTERS` answers
- * "can we summarize this?" (yes, for Codex), this list answers "can we
- * render every line as a timeline?" (not yet) — conflating the two was
+ * understands. Codex's raw rollout JSONL uses a different line shape
+ * (`session_meta`/`turn_context`/`event_msg` envelopes wrapping a `payload`
+ * — see `codex-transcript-adapter.ts`) than Claude Code's
+ * `message.role`/`message.content` shape, so each has an explicit parsing
+ * branch below. `TRANSCRIPT_ADAPTERS` answers "can we summarize this?";
+ * this list separately answers "can we render it as a timeline?". Conflating
+ * those capabilities was
  * exactly Bug 3 in agent-lcars#645 (the console gated timeline rendering on
  * a literal `=== 'claude-code'` check that happened to match this list's
  * current contents by coincidence, not by reading it).
@@ -268,7 +266,7 @@ function eventsFromCodexLine(
 }
 
 /**
- * Parses one or more raw Claude Code transcript file contents (JSONL) into a
+ * Parses raw transcript JSONL from a supported agent into a
  * flat, renderable timeline for a single session's detail page - a
  * different shape than `reduceTranscripts`' aggregated `SessionSummary`, but
  * deliberately reusing the same tolerant line-by-line approach and
@@ -317,7 +315,21 @@ export function parseTranscriptTimeline(
 
     const timestamp = asString(raw['timestamp']);
     if (agent === 'codex') {
-      events.push(...eventsFromCodexLine(raw, timestamp));
+      for (const event of eventsFromCodexLine(raw, timestamp)) {
+        const previous = events.at(-1);
+        // Codex currently persists a message as both an event_msg and a
+        // response_item. They are adjacent once metadata-only envelopes are
+        // ignored; render the turn once while still accepting either shape.
+        if (
+          event.kind === 'text' &&
+          previous?.kind === 'text' &&
+          event.role === previous.role &&
+          event.text === previous.text
+        ) {
+          continue;
+        }
+        events.push(event);
+      }
       continue;
     }
     const isSidechain = asBoolean(raw['isSidechain']) ?? false;
