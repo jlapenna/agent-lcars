@@ -19,6 +19,7 @@ import { type FormEvent, useState, useTransition } from 'react';
 import type { ActionItem } from '../lib/action-items';
 import { type Pipeline } from '../lib/primary-action';
 import {
+  matchingAgentPipelines,
   selectedAgentPipeline,
   supportedAgentPipelines,
 } from '../lib/watched-repo';
@@ -74,8 +75,17 @@ export function ItemOverflowMenu({
       ? pipelines.filter((p) => p !== currentPipeline)
       : [];
   const canReassign = reassignTargets.length > 0;
+  // Zero agent labels means "never assigned" - offer every pipeline. Two or
+  // more is contradictory state (selectedAgentPipeline also reports
+  // `undefined` here, but for the opposite reason): every "Assign to …"
+  // option would fail backend-actions.ts's assignPipeline, which rejects an
+  // issue that already carries an agent label, so the menu withholds
+  // assignment rather than offering actions that can never succeed.
   const assignTargets =
-    item.kind === 'issue' && !currentPipeline ? pipelines : [];
+    item.kind === 'issue' &&
+    matchingAgentPipelines(item.repo, item.labels).length === 0
+      ? pipelines
+      : [];
   const canAssign = assignTargets.length > 0;
   if (
     !canEdit &&

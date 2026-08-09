@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  matchingAgentPipelines,
   selectedAgentPipeline,
   supportedAgentLabels,
   supportedAgentPipelines,
@@ -51,6 +52,19 @@ describe('watched repository agent capabilities', () => {
     expect(
       selectedAgentPipeline(standardRepo, ['agent:claude', 'agent:opencode']),
     ).toBeUndefined();
+  });
+
+  it('lets callers tell zero matches apart from contradictory multi-agent state', () => {
+    // Both collapse to `undefined` in selectedAgentPipeline, but a caller
+    // deciding whether a first-assignment action applies needs to know
+    // which case it is (#859 review).
+    expect(matchingAgentPipelines(standardRepo, ['type:bug'])).toEqual([]);
+    expect(
+      matchingAgentPipelines(standardRepo, ['agent:claude', 'agent:opencode']),
+    ).toEqual(['claude', 'opencode']);
+    expect(matchingAgentPipelines(standardRepo, ['agent:codex'])).toEqual([
+      'codex',
+    ]);
   });
 });
 

@@ -746,11 +746,18 @@ export async function assignPipeline(
   if (labels.some((label) => agentLabels.includes(label))) {
     throw new ActionError('Issue already has an agent assignment', 400);
   }
+  // The primary production scenario for this action is a
+  // `status:ready-for-agent` Inbox item: clear that handoff status in the
+  // same write, or action-items.ts keeps classifying the now-dispatched
+  // issue as ready-for-agent and it lingers in the maintainer queue with a
+  // misleading reason even though an agent label is now present.
   await octokit.rest.issues.setLabels({
     owner: repo.owner,
     repo: repo.name,
     issue_number: issueNumber,
-    labels: labels.concat(targetIntegration.label),
+    labels: labels
+      .filter((label) => label !== 'status:ready-for-agent')
+      .concat(targetIntegration.label),
   });
 }
 

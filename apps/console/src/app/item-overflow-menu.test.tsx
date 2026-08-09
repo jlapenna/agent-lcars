@@ -328,6 +328,19 @@ describe('ItemOverflowMenu', () => {
     );
   });
 
+  // selectedAgentPipeline() reports `undefined` both for "no agent label"
+  // and for this contradictory "two agent labels" case. Offering every
+  // "Assign to ..." option here would be a trap: assignPipeline's backend
+  // check rejects any issue that already carries an agent label, so every
+  // one of those actions would fail (#859 review).
+  it('offers neither assign nor reassign for an issue with two agent labels', async () => {
+    renderMenu(makeItem({ labels: ['agent:claude', 'agent:opencode'] }));
+    await openMenu();
+
+    expect(screen.queryByText(/Assign to/)).toBeNull();
+    expect(screen.queryByText(/Reassign to/)).toBeNull();
+  });
+
   it('does not offer reassign for a PR, even a pipeline-labeled one', async () => {
     renderMenu(
       makeItem({

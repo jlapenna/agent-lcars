@@ -104,14 +104,27 @@ export function supportedAgentLabels(repo: WatchedRepo): string[] {
   });
 }
 
+/** Every supported pipeline whose durable label is present on `labels`, in
+ * `supportedAgentPipelines` order. Callers that need to tell "no agent
+ * assigned yet" (zero matches) apart from "contradictory multi-agent state"
+ * (more than one match) - e.g. deciding whether a first-assignment action
+ * applies - should use this instead of `selectedAgentPipeline`, which
+ * collapses both cases to `undefined`. */
+export function matchingAgentPipelines(
+  repo: WatchedRepo,
+  labels: string[],
+): AgentPipeline[] {
+  return supportedAgentPipelines(repo).filter((pipeline) => {
+    const integration = agentIntegration(repo, pipeline);
+    return integration ? labels.includes(integration.label) : false;
+  });
+}
+
 export function selectedAgentPipeline(
   repo: WatchedRepo,
   labels: string[],
 ): AgentPipeline | undefined {
-  const matches = supportedAgentPipelines(repo).filter((pipeline) => {
-    const integration = agentIntegration(repo, pipeline);
-    return integration ? labels.includes(integration.label) : false;
-  });
+  const matches = matchingAgentPipelines(repo, labels);
   // Contradictory multi-agent state has no implicit precedence. The routers
   // repair direct label changes; the console withholds an action until then.
   return matches.length === 1 ? matches[0] : undefined;
