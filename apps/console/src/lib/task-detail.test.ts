@@ -1,4 +1,4 @@
-import { describe, expect, it, type Mock, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { LEDGER_MARKER } from './dispatch-ledger';
 import { getGithubClient, getWatchedRepos } from './github-client';
@@ -32,6 +32,14 @@ const EMPTY_ACTIVITY = {
 };
 
 let cachedActivity = EMPTY_ACTIVITY;
+let authoritativeResult = {
+  states: new Map(),
+  unavailableTaskKeys: new Set<string>(),
+  warnings: [] as string[],
+};
+vi.mock('./authoritative-task-state', () => ({
+  readAuthoritativeTaskStates: vi.fn(async () => authoritativeResult),
+}));
 vi.mock('./dashboard-data', () => ({
   DASHBOARD_CACHE_LIFE: { stale: 30, revalidate: 30, expire: 60 },
   getCachedAgentActivity: vi.fn(async () => ({
@@ -47,6 +55,14 @@ vi.mock('./dashboard-data', () => ({
 
 // Imported after the mocks above so it picks up the mocked modules.
 const { getTaskDetail } = await import('./task-detail');
+
+beforeEach(() => {
+  authoritativeResult = {
+    states: new Map(),
+    unavailableTaskKeys: new Set<string>(),
+    warnings: [],
+  };
+});
 
 function setupOctokit({
   issuesGet,
@@ -107,6 +123,25 @@ function ledgerJson(overrides: Record<string, unknown> = {}) {
     ],
     anomalies: [],
     ...overrides,
+  };
+}
+
+function useAuthoritativeState(controllerState: ReturnType<typeof ledgerJson>) {
+  authoritativeResult = {
+    states: new Map([
+      [
+        'supersprinklesracing/sprinkles#42',
+        {
+          schema: 'agent-lcars.authoritative-task-state/v1' as const,
+          task: controllerState.task,
+          storageRevision: 7,
+          updatedAt: '2026-07-07T00:00:00Z',
+          controllerState,
+        },
+      ],
+    ]),
+    unavailableTaskKeys: new Set<string>(),
+    warnings: [],
   };
 }
 
@@ -207,7 +242,8 @@ describe('getTaskDetail', () => {
     expect(result.anchorState).toBe('closed');
   });
 
-  it('joins the pinned ledger comment and cached agent-activity attempts into one LogicalWork', async () => {
+  it('uses authoritative state when the compatibility comment diverges', async () => {
+    useAuthoritativeState(ledgerJson());
     const issuesGet = vi
       .fn()
       .mockResolvedValue(issueResponse({ labels: ['agent:claude'] }));
@@ -218,7 +254,9 @@ describe('getTaskDetail', () => {
           comments: {
             nodes: [
               {
-                body: `${LEDGER_MARKER}\n\`\`\`json\n${JSON.stringify(ledgerJson())}\n\`\`\``,
+                body: `${LEDGER_MARKER}\n\`\`\`json\n${JSON.stringify(
+                  ledgerJson({ generations: [] }),
+                )}\n\`\`\``,
                 url: 'https://x/1',
                 author: { login: 'agent-lcars[bot]' },
               },
@@ -254,7 +292,10 @@ describe('getTaskDetail', () => {
     );
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
-    expect(result.work.provenance).toEqual({ kind: 'ledger-v1', revision: 1 });
+    expect(result.work.provenance).toEqual({
+      kind: 'authoritative-v1',
+      revision: 7,
+    });
     expect(result.work.attempts).toHaveLength(1);
     expect(result.work.attempts[0].attribution).toBe('ledger');
     expect(result.work.intents).toHaveLength(1);
@@ -280,6 +321,7 @@ describe('getTaskDetail', () => {
         },
       ],
     });
+    useAuthoritativeState(completedLedger);
     const issuesGet = vi
       .fn()
       .mockResolvedValue(issueResponse({ state: 'closed' }));

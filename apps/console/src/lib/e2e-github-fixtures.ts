@@ -46,7 +46,7 @@ export const E2E_FIXTURE_REPO = {
  * carries (`LedgerTaskRef.repositoryId`) but nothing in this fixture suite
  * otherwise needs to look up. Numbered well clear of anything real, same as
  * `E2E_ITEM_NUMBERS`. */
-const E2E_FIXTURE_REPOSITORY_ID = 900000000;
+export const E2E_FIXTURE_REPOSITORY_ID = 900000000;
 
 /** Numbered well clear of anything real so a fixture leaking into a live
  * console would be obvious rather than plausible. */
@@ -115,7 +115,7 @@ export const E2E_LEDGER_INTENT_ID = 'e2e-fixture-intent-9008';
  * generation's recorded binding, mirroring a genuinely anomalous second
  * dispatch rather than a normal retry.
  */
-function ledgerFixture(): DispatchLedger {
+export function authoritativeLedgerFixture(): DispatchLedger {
   const sourceId = 'e2e-fixture-source-9008';
   return {
     schema: 'agent-lcars.dispatch-ledger/v1',
@@ -350,7 +350,17 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [],
     author: MAINTAINER,
     updatedAt: minutesAgo(1),
-    comments: [{ author: FLEET, body: ledgerCommentBody(ledgerFixture()) }],
+    comments: [
+      {
+        author: FLEET,
+        // Deliberately stale: the authoritative fixture remains active and
+        // proves this compatibility projection cannot change console state.
+        body: ledgerCommentBody(authoritativeLedgerFixture()).replace(
+          '"state":"active"',
+          '"state":"completed"',
+        ),
+      },
+    ],
   },
 ];
 
@@ -539,6 +549,7 @@ interface QuickTaskFixtureIssue {
   labels: string[];
   createdAt: string;
   comments: { author: string; body: string }[];
+  controllerState: DispatchLedger;
 }
 
 interface QuickTaskFixtureState {
@@ -723,6 +734,7 @@ export function recordQuickTaskIssue(params: {
     labels: params.labels,
     createdAt: now,
     comments: [{ author: FLEET, body: ledgerCommentBody(ledger) }],
+    controllerState: ledger,
   });
 
   return {
@@ -732,6 +744,13 @@ export function recordQuickTaskIssue(params: {
     body: params.body,
     labels: params.labels.map((name) => ({ name })),
   };
+}
+
+export function quickTaskControllerState(
+  number: number,
+): DispatchLedger | undefined {
+  return quickTaskState().issues.find((item) => item.number === number)
+    ?.controllerState;
 }
 
 function quickTaskIssueRestShape(item: QuickTaskFixtureIssue) {

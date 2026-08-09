@@ -2,6 +2,7 @@ import { parseTerminalQuickTaskBody } from '@agent-lcars/dispatch-contracts';
 import { cacheLife, cacheTag } from 'next/cache';
 
 import type { ActionItem } from './action-items';
+import { readAuthoritativeTaskStates } from './authoritative-task-state';
 import { isNotFound } from './backend-actions';
 import { GITHUB_DATA_TAG } from './cache-tags';
 import {
@@ -171,11 +172,19 @@ export async function getTaskDetail(
   const allAttempts = [...activity.liveRuns, ...activity.recentRuns];
 
   const key = repoItemKey(repo, issueNumber);
+  const authoritative = await readAuthoritativeTaskStates([
+    { repository: repo, issueNumber },
+  ]);
+  const authoritativeState = authoritative.states.get(key);
   const { work } = deriveLogicalWork({
     attempts: allAttempts,
-    ledgers: itemEnrichment?.ledger
-      ? new Map([[key, itemEnrichment.ledger]])
+    ledgers: authoritativeState
+      ? new Map([[key, authoritativeState.controllerState]])
       : new Map(),
+    authoritativeRevisions: authoritativeState
+      ? new Map([[key, authoritativeState.storageRevision]])
+      : new Map(),
+    unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta: new Map([
       [
         key,

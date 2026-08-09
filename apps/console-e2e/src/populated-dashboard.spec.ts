@@ -296,6 +296,7 @@ test.describe('populated dashboard', () => {
     const card = page.getByTestId('logical-work-card');
     await expect(card).toBeVisible();
     await expect(card.getByTestId('logical-work-state')).toHaveText('anomaly');
+    await expect(card).toContainText('authoritative state rev');
 
     // Both attempts remain visible on the canonical task page too - the
     // ledger explains WHY they exist (one generation, one intent), the

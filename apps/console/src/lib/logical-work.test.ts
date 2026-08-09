@@ -83,6 +83,33 @@ function makeTaskMeta(overrides: Partial<TaskMeta> = {}): TaskMeta {
 const KEY = 'supersprinklesracing/sprinkles#42';
 
 describe('deriveLogicalWork - one task, one attempt', () => {
+  it('marks a failed authority read unavailable instead of using attempt state', () => {
+    const { work } = deriveLogicalWork({
+      attempts: [makeRun()],
+      ledgers: new Map(),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+      unavailableTaskKeys: new Set([KEY]),
+    });
+
+    expect(work[0].state).toBe('unavailable');
+    expect(work[0].provenance).toEqual({ kind: 'unavailable' });
+  });
+
+  it('identifies controller-backed lifecycle state by storage revision', () => {
+    const { work } = deriveLogicalWork({
+      attempts: [makeRun()],
+      ledgers: new Map([[KEY, makeLedger()]]),
+      authoritativeRevisions: new Map([[KEY, 9]]),
+      taskMeta: new Map([[KEY, makeTaskMeta()]]),
+    });
+
+    expect(work[0].state).toBe('active');
+    expect(work[0].provenance).toEqual({
+      kind: 'authoritative-v1',
+      revision: 9,
+    });
+  });
+
   it('joins a single ledger-backed attempt into one active LogicalWork', () => {
     const { work, unattributedAttempts } = deriveLogicalWork({
       attempts: [makeRun()],

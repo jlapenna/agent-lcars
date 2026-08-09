@@ -242,14 +242,14 @@ describe('LogicalWorkCard', () => {
     expect(screen.queryByTestId('logical-work-anomalies')).toBeNull();
   });
 
-  it('shows a legacy-provenance note when no ledger backs the task', () => {
+  it('shows a legacy-provenance note when no authoritative state backs the task', () => {
     renderCard(
       makeWork({
         provenance: { kind: 'legacy' },
         intents: [],
       }),
     );
-    expect(screen.getByText(/no dispatch ledger/)).toBeTruthy();
+    expect(screen.getByText(/no authoritative lifecycle state/)).toBeTruthy();
   });
 
   it('renders a friendly empty state when a task has zero attempts', () => {
