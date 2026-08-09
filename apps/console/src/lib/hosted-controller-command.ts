@@ -6,6 +6,7 @@ import {
   type IssueOrPullRequest,
   normalizeEvent,
 } from '@agent-lcars/dispatch-controller/normalize';
+import { optional } from '@agent-lcars/util-server';
 
 import { maintainerLogin } from './deployment';
 import { getGithubClient } from './github-client';
@@ -32,6 +33,23 @@ export type HostedControllerCommandResult = {
   requestId: string;
 };
 
+async function executeE2eControllerCommand(
+  baseUrl: string,
+  command: HostedControllerCommand,
+): Promise<HostedControllerCommandResult> {
+  const response = await fetch(`${baseUrl}/controller-commands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(command),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `E2E hosted controller command failed: HTTP ${response.status}`,
+    );
+  }
+  return { ok: true, requestId: command.requestId };
+}
+
 /**
  * Execute a typed command inside the authenticated console backend. The
  * request UUID is both the controller source identity and the stable
@@ -41,6 +59,14 @@ export type HostedControllerCommandResult = {
 export async function executeHostedControllerCommand(
   command: HostedControllerCommand,
 ): Promise<HostedControllerCommandResult> {
+  // The hermetic browser suite points every GitHub interaction at its local
+  // fixture and deliberately owns no production controller authority epoch.
+  // Exercise the typed command boundary there without opening a second,
+  // fixture-only controller implementation.
+  const e2eGithubBaseUrl = optional('AGENT_CONSOLE_GITHUB_API_BASE_URL');
+  if (e2eGithubBaseUrl) {
+    return executeE2eControllerCommand(e2eGithubBaseUrl, command);
+  }
   const octokit = getGithubClient();
   const repository = repoKey(command.repository);
   const [{ data: liveIssue }, { data: liveRepository }] = await Promise.all([
