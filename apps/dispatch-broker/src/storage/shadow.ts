@@ -9,10 +9,10 @@
  *
  * ## The switch
  *
- * `DISPATCH_STORAGE_MODE` (a repo variable, read via `env()` by main.ts's
- * `broker()`) is `'off'` (default -- also what an unset/empty variable
- * means), `'shadow'`, or `'authority'`. Authority behavior lives in
- * `authority.ts`; this module's observer remains shadow-only.
+ * `DISPATCH_STORAGE_MODE` is retained temporarily as a migration guard:
+ * only `'authority'` is valid after the Firestore authority cutover.
+ * Authority behavior lives in `authority.ts`; this module's observer is
+ * legacy projection code and is no longer selectable by configuration.
  * `parseDispatchStorageMode` is the one place that
  * turns the raw string into a `DispatchStorageMode`, and it throws loudly
  * for anything else -- a typo in the repo variable (e.g. "authoritative",
@@ -153,26 +153,20 @@ import {
 // The switch.
 // ---------------------------------------------------------------------------
 
-export const DISPATCH_STORAGE_MODES = ['off', 'shadow', 'authority'] as const;
-export type DispatchStorageMode = (typeof DISPATCH_STORAGE_MODES)[number];
+export type DispatchStorageMode = 'authority';
 
 /**
- * Parse the raw `DISPATCH_STORAGE_MODE` repo variable. Unset or empty (what
- * an undeclared GitHub Actions repo variable reads as) is `'off'`, matching
- * this switch's documented default and rollback position. Anything other
- * than `'off'`/`'shadow'` throws -- a typo must fail loudly, never be
- * treated as a deliberate rollback. `authority` selects Firestore as the
- * controller state authority and the comment as a compatibility projection.
+ * Parse the retired `DISPATCH_STORAGE_MODE` migration variable. The variable
+ * remains required while workflow configuration is migrated so stale
+ * off/shadow wiring fails loudly instead of silently reviving legacy paths.
  */
 export function parseDispatchStorageMode(
   raw: string | undefined,
 ): DispatchStorageMode {
-  const value = (raw ?? '').trim();
-  if (value === '' || value === 'off') return 'off';
-  if (value === 'shadow') return 'shadow';
-  if (value === 'authority') return 'authority';
+  const value = raw?.trim();
+  if (value === 'authority') return value;
   throw new Error(
-    `Unrecognized DISPATCH_STORAGE_MODE '${raw}': expected 'off' (or unset), 'shadow', or 'authority'.`,
+    `DISPATCH_STORAGE_MODE must be 'authority'; off, shadow, and unset configuration were retired after the Firestore authority cutover (received '${raw ?? ''}')`,
   );
 }
 
@@ -506,7 +500,7 @@ export async function observeDispatchStorage(
  * header "Shadow-mode failure containment".
  */
 export async function maybeObserveDispatchStorage(
-  mode: DispatchStorageMode,
+  mode: 'shadow',
   createPort: () => StoragePort,
   ledger: DispatchLedger,
   now?: string,

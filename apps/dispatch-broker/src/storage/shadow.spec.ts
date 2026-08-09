@@ -151,33 +151,27 @@ function racingWriterPort(): StoragePort {
 // parseDispatchStorageMode
 // ---------------------------------------------------------------------------
 
-test('parseDispatchStorageMode treats unset as off', () => {
-  assert.equal(parseDispatchStorageMode(undefined), 'off');
-});
-
-test('parseDispatchStorageMode treats an empty repo variable as off', () => {
-  assert.equal(parseDispatchStorageMode(''), 'off');
-});
-
-test('parseDispatchStorageMode accepts off explicitly', () => {
-  assert.equal(parseDispatchStorageMode('off'), 'off');
-});
-
-test('parseDispatchStorageMode accepts shadow', () => {
-  assert.equal(parseDispatchStorageMode('shadow'), 'shadow');
-});
-
 test('parseDispatchStorageMode accepts authority', () => {
   assert.equal(parseDispatchStorageMode('authority'), 'authority');
 });
 
-test('parseDispatchStorageMode rejects an unrecognised value loudly rather than silently treating it as off', () => {
+test('parseDispatchStorageMode rejects retired and absent migration values', () => {
+  assert.throws(
+    () => parseDispatchStorageMode(undefined),
+    /unset configuration were retired/u,
+  );
+  assert.throws(
+    () => parseDispatchStorageMode(''),
+    /unset configuration were retired/u,
+  );
+  assert.throws(() => parseDispatchStorageMode('off'), /were retired/u);
+  assert.throws(() => parseDispatchStorageMode('shadow'), /were retired/u);
   assert.throws(
     () => parseDispatchStorageMode('authoritative'),
-    /Unrecognized DISPATCH_STORAGE_MODE/u,
+    /DISPATCH_STORAGE_MODE must be 'authority'/u,
   );
-  assert.throws(() => parseDispatchStorageMode('On'), /Unrecognized/u);
-  assert.throws(() => parseDispatchStorageMode('true'), /Unrecognized/u);
+  assert.throws(() => parseDispatchStorageMode('On'), /must be 'authority'/u);
+  assert.throws(() => parseDispatchStorageMode('true'), /must be 'authority'/u);
 });
 
 // ---------------------------------------------------------------------------
