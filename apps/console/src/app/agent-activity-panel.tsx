@@ -337,7 +337,20 @@ export function LiveRunRow({
   const budgetFraction = run.elapsedSeconds / (RUN_TIMEOUT_MINUTES * 60);
   return (
     <Stack gap={4}>
-      <Group gap="xs" wrap="nowrap">
+      <Anchor
+        href={item?.url ?? issueUrlForRun(run) ?? run.url}
+        target="_blank"
+        rel="noreferrer"
+        size="sm"
+        fw={600}
+        c="inherit"
+        truncate
+        style={{ minWidth: 0 }}
+        data-testid="live-run-issue-link"
+      >
+        {item ? `#${item.number} ${item.title}` : displayRunTitle(run)}
+      </Anchor>
+      <Group gap="xs" wrap="wrap">
         <Badge
           variant="filled"
           color={run.status === 'running' ? 'blue' : 'gray'}
@@ -348,19 +361,6 @@ export function LiveRunRow({
         </Badge>
         <PipelineBadge pipeline={run.pipeline} />
         <RepoBadge repo={run.repo} />
-        <Anchor
-          href={item?.url ?? issueUrlForRun(run) ?? run.url}
-          target="_blank"
-          rel="noreferrer"
-          size="sm"
-          fw={500}
-          c="inherit"
-          truncate
-          style={{ minWidth: 0 }}
-          data-testid="live-run-issue-link"
-        >
-          {item ? `#${item.number} ${item.title}` : displayRunTitle(run)}
-        </Anchor>
       </Group>
       <Group gap={6} wrap="nowrap">
         <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
@@ -559,7 +559,20 @@ export function FinishedRunRow({
   const issueUrl = issueUrlForRun(run);
   return (
     <Stack gap={2} data-testid="finished-run-row">
-      <Group gap="xs" wrap="nowrap">
+      <Anchor
+        href={issueUrl ?? run.url}
+        target="_blank"
+        rel="noreferrer"
+        size="sm"
+        fw={600}
+        c="inherit"
+        truncate
+        style={{ minWidth: 0 }}
+        data-testid="recent-run-issue-link"
+      >
+        {displayRunTitle(run)}
+      </Anchor>
+      <Group gap="xs" wrap="wrap">
         <Badge
           variant="light"
           color={STATUS_COLORS[classification.status]}
@@ -572,17 +585,6 @@ export function FinishedRunRow({
         <PipelineBadge pipeline={run.pipeline} />
         {outcome && <DispatchOutcomeBadge outcome={outcome} />}
         <RepoBadge repo={run.repo} />
-        <Anchor
-          href={issueUrl ?? run.url}
-          target="_blank"
-          rel="noreferrer"
-          size="xs"
-          truncate
-          style={{ minWidth: 0 }}
-          data-testid="recent-run-issue-link"
-        >
-          {displayRunTitle(run)}
-        </Anchor>
       </Group>
       <Group gap="xs" wrap="nowrap">
         <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
@@ -658,6 +660,9 @@ export function CliSessionRow({
   const { host, artifacts } = session;
   return (
     <Stack gap={2} data-testid={`cli-session-${session.sessionId}`}>
+      <Text size="sm" fw={600} style={{ minWidth: 0 }} truncate>
+        {session.title ?? session.branch ?? session.sessionId}
+      </Text>
       <Group gap="xs" wrap="nowrap">
         <Badge
           variant="filled"
@@ -668,9 +673,6 @@ export function CliSessionRow({
         >
           {LIVENESS_LABELS[session.liveness]}
         </Badge>
-        <Text size="sm" fw={500} style={{ minWidth: 0 }} truncate>
-          {session.title ?? session.branch ?? session.sessionId}
-        </Text>
         <AgentBadge agent={session.agent} />
         {session.repo && <RepoBadge repo={session.repo} />}
         <Anchor

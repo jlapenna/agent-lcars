@@ -111,6 +111,16 @@ export function LogicalWorkCard({
       <Stack gap="sm">
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <Stack gap={4}>
+            <Title order={2} size="h4">
+              <Anchor
+                href={work.url}
+                target="_blank"
+                rel="noreferrer"
+                c="inherit"
+              >
+                #{work.task.issueNumber} {work.title}
+              </Anchor>
+            </Title>
             <Group gap="xs" wrap="wrap">
               <Badge
                 variant="filled"
@@ -128,16 +138,6 @@ export function LogicalWorkCard({
               )}
               <RepoBadge repo={work.task.repository} />
             </Group>
-            <Title order={2} size="h4">
-              <Anchor
-                href={work.url}
-                target="_blank"
-                rel="noreferrer"
-                c="inherit"
-              >
-                #{work.task.issueNumber} {work.title}
-              </Anchor>
-            </Title>
           </Stack>
           <Text size="xs" c="dimmed">
             {work.provenance.kind === 'ledger-v1'

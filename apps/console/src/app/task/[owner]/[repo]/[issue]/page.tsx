@@ -52,7 +52,6 @@ async function TaskDetailPageContent({ params }: PageProps) {
   // render time.
   const generatedAt =
     detail.status === 'ok' ? detail.generatedAt : new Date().toISOString();
-
   return (
     <ConsolePageShell>
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
