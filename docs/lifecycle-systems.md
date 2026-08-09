@@ -517,14 +517,14 @@ it's already one system:
   completion callback persists both outcome and PR reference on that exact
   ledger attempt. GitHub's coarse workflow conclusion remains separate.
 - **Execution-state classification** (`not_started`/`running`/`exited`/
-  `timed_out`/`cancelled`/`lost`) — this is decided by the **controller's**
-  own reconciliation code: `reconcileActive`, `trackMissingRun`,
-  `trackStuckRun`, and `reconcileLedger`, all in
-  `apps/dispatch-broker/src/main.ts`. A run cancelled or lost before
-  finalize is terminalized by the same reconciler that repairs stuck
-  intents, not by a dedicated finalizer reconciler. This is precisely the
-  entanglement Phase 6's "give each of the five systems its own narrow
-  reconciler" is supposed to end; it has not yet.
+  `timed_out`/`cancelled`/`lost`) — the **finalizer reconciler** owns this
+  decision in `apps/dispatch-broker/src/modules/outcome-finalizer.ts`. Its
+  explicit inputs are the bound attempt, GitHub run observation, prior
+  bounded observations, and current time. It returns a typed wait, observe,
+  finalize, or lost/escalate decision and has no admission, generation, or
+  workflow-launch capability. The controller orchestrator applies that pure
+  decision to GitHub and the ledger, preserving mutation ordering and retry
+  behavior without owning execution-state classification itself.
 - **Post-dispatch deliverable landing observation** —
   `.github/workflows/deliverable-watchdog.yml` scans open agent-authored PRs
   independently of the dispatch ledger. If neither the head commit nor the
@@ -587,11 +587,12 @@ paths plus one read path, not one system:**
 - **`apps/dispatch-broker/src/modules/projector.ts`** — the controller's own
   in-process projector module: `projectComment`, `projectNeedsHumanPark`,
   and `recordProjectionStatus` (which writes exactly one ledger field,
-  `ledger.projection`). Its own header is explicit about the structural
-  guarantee it does and doesn't have: it imports nothing from `broker.ts`
-  that can mutate `generations`/`sources`/`control`, so no code path through
-  it today reaches those fields — but that's a property a reviewer can
-  verify by reading the import list, not an enforced impossibility.
+  `ledger.projection`). It cannot import or call generic ledger mutation:
+  its only ledger capability accepts exactly a `ProjectionStatus` payload
+  and assigns that payload to `ledger.projection`. A production typecheck
+  contract rejects widening that payload, so writes to `generations`,
+  `sources`, or `control` require crossing an explicit module boundary
+  rather than fitting through the projector API.
 - **`.github/actions/report-failure/report-failure.sh`** — invoked from
   inside the worker job itself (via `post-agent-gates.sh`), on the
   self-hosted runner, using the job's own token. Posts the failure comment,

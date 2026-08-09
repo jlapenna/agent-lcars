@@ -1,4 +1,5 @@
 import { parseQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
+import { FirestoreStoragePort } from '@agent-lcars/dispatch-controller/storage/firestore-port';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -7,6 +8,8 @@ import {
   createQuickTaskClaimRef,
   createQuickTaskClaimTag,
   deleteQuickTaskClaimRef,
+  E2E_FIXTURE_REPO,
+  E2E_FIXTURE_REPOSITORY_ID,
   E2E_QUICK_TASK_DELAY_DESCRIPTION,
   E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION,
   enrichmentGraphql,
@@ -17,6 +20,7 @@ import {
   openIssues,
   openPulls,
   pullRequest,
+  quickTaskControllerState,
   quickTaskListingIssues,
   recordQuickTaskIssue,
   selfHostedRunners,
@@ -70,7 +74,10 @@ export async function GET(
     // Quick Task's GitHub-native idempotency ledger resolves the repository's
     // default branch only to give its annotated claim tag a valid target.
     if (rest.length === 0) {
-      return NextResponse.json({ default_branch: 'main' });
+      return NextResponse.json({
+        id: E2E_FIXTURE_REPOSITORY_ID,
+        default_branch: 'main',
+      });
     }
 
     // GET /repos/{o}/{r}/git/ref/{ref...}
@@ -292,6 +299,25 @@ export async function POST(
       labels: body.labels,
       pipeline,
     });
+    const controllerState = quickTaskControllerState(created.number);
+    if (controllerState) {
+      const port = new FirestoreStoragePort({
+        projectId: process.env['PROJECT_ID'] ?? 'demo-no-project',
+        databaseId:
+          process.env['DISPATCH_FIRESTORE_DATABASE_ID'] ?? '(default)',
+      });
+      const task = {
+        repositoryId: E2E_FIXTURE_REPOSITORY_ID,
+        repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
+        issue: created.number,
+      };
+      const current = await port.readTask(task);
+      await port.writeTask(task, current?.revision, {
+        signals: [],
+        intents: [],
+        controllerState,
+      });
+    }
     return NextResponse.json(created);
   }
   if (

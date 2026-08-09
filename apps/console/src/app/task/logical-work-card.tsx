@@ -30,6 +30,7 @@ import { PersistedDetails } from '../persisted-details';
 import { RelativeTime } from '../relative-time';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
+  unavailable: 'Unavailable',
   pending: 'pending',
   dispatching: 'dispatching',
   active: 'active',
@@ -40,6 +41,7 @@ const STATE_LABELS: Record<LogicalWorkState, string> = {
 };
 
 const STATE_COLORS: Record<LogicalWorkState, string> = {
+  unavailable: 'gray',
   pending: 'gray',
   dispatching: 'blue',
   active: 'blue',
@@ -140,9 +142,13 @@ export function LogicalWorkCard({
             </Group>
           </Stack>
           <Text size="xs" c="dimmed">
-            {work.provenance.kind === 'ledger-v1'
-              ? `dispatch ledger rev ${work.provenance.revision}`
-              : 'no dispatch ledger (legacy attribution only)'}
+            {work.provenance.kind === 'authoritative-v1'
+              ? `authoritative state rev ${work.provenance.revision}`
+              : work.provenance.kind === 'unavailable'
+                ? 'authoritative lifecycle state unavailable'
+                : work.provenance.kind === 'ledger-v1'
+                  ? `dispatch ledger rev ${work.provenance.revision}`
+                  : 'no authoritative lifecycle state'}
           </Text>
         </Group>
 

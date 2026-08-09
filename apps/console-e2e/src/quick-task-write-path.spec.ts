@@ -133,6 +133,7 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     const card = page.getByTestId('logical-work-card');
     await expect(card).toBeVisible();
     await expect(card.getByTestId('logical-work-state')).toHaveText('active');
+    await expect(card).toContainText('authoritative state rev');
     await expect(card).toContainText(`#${issueNumber}`);
 
     // Broker decision: one accepted+dispatched generation, attributed to

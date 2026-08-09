@@ -1,8 +1,10 @@
 // apps/dispatch-broker/src/main.ts
+import { pathToFileURL } from "node:url";
+
+// apps/dispatch-broker/src/controller-core.ts
 import crypto3 from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 // libs/dispatch-contracts/src/failure.ts
 var OWNING_SYSTEMS = Object.freeze([
@@ -359,6 +361,8 @@ function parseRouterGroupMarker(displayTitle) {
 var COMPLETION_OIDC_AUDIENCE = "agent-lcars-dispatch-completion";
 var HOSTED_COMPLETION_PATH = "/api/control-plane/completion";
 var HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
+var HOSTED_TASK_STATE_PATH = "/api/control-plane/task-state";
+var HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED_TASK_STATE_PATH}`;
 var WEBHOOK_INGRESS_PROBE_PATH = "/api/control-plane/webhook/probe";
 var WEBHOOK_INGRESS_PROBE_URL = `https://agent-console.supersprinkles.racing${WEBHOOK_INGRESS_PROBE_PATH}`;
 
@@ -618,6 +622,11 @@ function mutate(ledger, now, callback) {
   ledger.updatedAt = now;
   validateLedger(ledger, ledger.task);
   return ledger;
+}
+function updateProjection(ledger, now, projection) {
+  return mutate(ledger, now, () => {
+    ledger.projection = projection;
+  });
 }
 
 // apps/dispatch-broker/src/modules/intent.ts
@@ -1866,6 +1875,49 @@ async function sendHostedCompletion({
   );
 }
 
+// apps/dispatch-broker/src/modules/outcome-finalizer.ts
+var MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
+var MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
+var MISSING_RUN_MAX_OBSERVATIONS = 3;
+var STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
+var STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
+var STUCK_RUN_MAX_OBSERVATIONS = 3;
+function terminalState(conclusion) {
+  if (conclusion === "timed_out") return "timed_out";
+  if (conclusion === "cancelled") return "cancelled";
+  return "exited";
+}
+function reconcileExecution(input) {
+  if (input.run?.status === "completed") {
+    return { state: terminalState(input.run.conclusion), action: "finalize" };
+  }
+  const bound = input.attempt.runId !== void 0;
+  const state = bound ? "running" : "not_started";
+  const baseline = bound ? input.attempt.boundAt ?? input.attempt.dispatchStartedAt : input.attempt.dispatchStartedAt;
+  const ageMs = Date.parse(input.now) - Date.parse(baseline);
+  const graceMs = bound ? STUCK_RUN_GRACE_MS : MISSING_RUN_GRACE_MS;
+  if (!(ageMs >= graceMs)) return { state, action: "wait", ageMs };
+  const minIntervalMs = bound ? STUCK_RUN_MIN_INTERVAL_MS : MISSING_RUN_MIN_INTERVAL_MS;
+  const last = input.priorObservations.at(-1);
+  if (last && Date.parse(input.now) - Date.parse(last.occurredAt) < minIntervalMs) {
+    return { state, action: "wait", ageMs };
+  }
+  const observation = input.priorObservations.length + 1;
+  const maxObservations = bound ? STUCK_RUN_MAX_OBSERVATIONS : MISSING_RUN_MAX_OBSERVATIONS;
+  const retryBudget = Math.max(0, maxObservations - observation);
+  if (observation >= maxObservations) {
+    return {
+      state: "lost",
+      action: "escalate",
+      ageMs,
+      observation,
+      retryBudget: 0,
+      cause: bound ? "run_stuck" : "run_missing"
+    };
+  }
+  return { state, action: "observe", ageMs, observation, retryBudget };
+}
+
 // apps/dispatch-broker/src/modules/projector.ts
 function projectionMarker(kind, key) {
   return `<!-- agent-lcars:projection:${kind}:${key} -->`;
@@ -1905,13 +1957,11 @@ async function projectNeedsHumanPark(api2, task, maintainer, failure) {
 function recordProjectionStatus(ledger, converged, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const desiredRevision = ledger.revision;
   const observedRevision = converged ? desiredRevision : ledger.projection?.observedRevision ?? 0;
-  return mutate(ledger, now, () => {
-    ledger.projection = {
-      desiredRevision,
-      observedRevision,
-      state: converged ? "converged" : observedRevision > 0 ? "diverged" : "pending",
-      observedAt: now
-    };
+  return updateProjection(ledger, now, {
+    desiredRevision,
+    observedRevision,
+    state: converged ? "converged" : observedRevision > 0 ? "diverged" : "pending",
+    observedAt: now
   });
 }
 
@@ -2402,6 +2452,83 @@ function normalizeEvent({
     };
   }
   return { kind: "ignored", reason: "unsupported issue action" };
+}
+
+// apps/dispatch-broker/src/services/completion-processing.ts
+async function processCompletionCallback(input, dependencies) {
+  const outcome = input.outcome;
+  const readinessFailure = input.readinessFailure;
+  if (outcome && !isDispatchOutcomeKind(outcome)) {
+    throw new Error("BROKER_OUTCOME_KIND is not a recognized outcome");
+  }
+  if (readinessFailure && !isLaneReadinessFailure(readinessFailure)) {
+    throw new Error(
+      "BROKER_READINESS_FAILURE is not a recognized readiness failure"
+    );
+  }
+  if (input.outcomeReference) {
+    const number = Number(input.outcomeReference);
+    if (outcome !== "pull-request" || !Number.isSafeInteger(number) || number <= 0) {
+      throw new Error(
+        "BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome"
+      );
+    }
+  }
+  const payload = {
+    issue: Number(input.issue),
+    generation: Number(input.generation),
+    intentId: input.intentId,
+    token: input.token,
+    workflow: input.workflow,
+    ...outcome && isDispatchOutcomeKind(outcome) ? { outcome } : {},
+    ...input.outcomeReference ? {
+      outcomeReference: {
+        kind: "pull-request",
+        number: Number(input.outcomeReference)
+      }
+    } : {},
+    ...readinessFailure && isLaneReadinessFailure(readinessFailure) ? { readinessFailure } : {}
+  };
+  await dependencies.send({
+    completionUrl: HOSTED_COMPLETION_URL,
+    oidcRequestUrl: input.oidcRequestUrl,
+    oidcRequestToken: input.oidcRequestToken,
+    payload
+  });
+  return { payload };
+}
+
+// apps/dispatch-broker/src/services/hosted-admission.ts
+async function admitHostedDelivery(input, dependencies) {
+  await dependencies.process({
+    ...input,
+    storagePortFactory: dependencies.storagePortFactory
+  });
+}
+
+// apps/dispatch-broker/src/services/reconciliation-orchestration.ts
+async function orchestrateReconciliation(input, dependencies) {
+  const results = await dependencies.run(
+    dependencies.transport,
+    input.repository,
+    input.fleetLogin
+  );
+  dependencies.log(
+    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${results.candidates} candidate(s) (${results.openCandidates} open agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed agent-labeled/fleet-assigned).`
+  );
+  for (const failure of results.failed) {
+    dependencies.log(
+      `::error::dispatch-reconcile: failed to dispatch reconcile for #${failure.issue}: ${failure.message}`
+    );
+  }
+  await dependencies.writeOutput("candidates", String(results.candidates));
+  await dependencies.writeOutput("dispatched", String(results.dispatched));
+  if (results.failed.length > 0) {
+    throw new Error(
+      `Reconcile scan failed to dispatch ${results.failed.length}/${results.candidates} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
+    );
+  }
+  return results;
 }
 
 // apps/dispatch-broker/src/storage/port.ts
@@ -3022,7 +3149,7 @@ var FirestoreRestStoragePort = class {
   }
 };
 
-// apps/dispatch-broker/src/main.ts
+// apps/dispatch-broker/src/controller-core.ts
 function env(name, required = true) {
   const value = process.env[name];
   if (required && !value) throw new Error(`${name} is required`);
@@ -3276,7 +3403,25 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
     runUrl: run.url,
     htmlUrl: run.html_url
   });
-  if (run.status === "completed") {
+  const execution = reconcileExecution({
+    attempt: {
+      dispatchStartedAt: active.attempt.dispatchStartedAt ?? active.occurredAt,
+      boundAt: active.attempt.boundAt,
+      runId: active.attempt.runId
+    },
+    run: {
+      status: run.status,
+      conclusion: run.conclusion,
+      updatedAt: run.updated_at
+    },
+    now,
+    priorObservations: reconcileAnomaliesFor(
+      loaded.ledger,
+      active.generation,
+      "reconcile-stuck-run"
+    )
+  });
+  if (execution.action === "finalize") {
     completeRun(loaded.ledger, active.generation, {
       runId: run.id,
       status: run.status,
@@ -3288,9 +3433,6 @@ async function reconcileActive(client, loaded, now = (/* @__PURE__ */ new Date()
   }
   await trackStuckRun(client, loaded, active, run, now, maintainer);
 }
-var RECONCILE_MISSING_RUN_GRACE_MS = 5 * 60 * 1e3;
-var RECONCILE_MISSING_RUN_MIN_INTERVAL_MS = 5 * 60 * 1e3;
-var RECONCILE_MISSING_RUN_MAX_ATTEMPTS = 3;
 var CLOSED_ANCHOR_LAUNCH_REJECTION = "anchor closed before launch was observed";
 function reconcileAnomaliesFor(ledger, generationNumber, kind) {
   return ledger.anomalies.filter(
@@ -3320,22 +3462,22 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
   if (reconcileAnomaliesFor(ledger, generation.generation, "reconcile-parked").length > 0) {
     return;
   }
-  const startedAt = Date.parse(
-    generation.attempt?.dispatchStartedAt ?? generation.occurredAt
-  );
-  const ageMs = Date.parse(now) - startedAt;
-  if (!(ageMs >= RECONCILE_MISSING_RUN_GRACE_MS)) return;
   const priorObservations = reconcileAnomaliesFor(
     ledger,
     generation.generation,
     "reconcile-missing-run"
   );
-  const last = priorObservations.at(-1);
-  if (last && Date.parse(now) - Date.parse(last.occurredAt) < RECONCILE_MISSING_RUN_MIN_INTERVAL_MS) {
-    return;
-  }
-  const attempt = priorObservations.length + 1;
-  const reachedBound = attempt >= RECONCILE_MISSING_RUN_MAX_ATTEMPTS;
+  const decision = reconcileExecution({
+    attempt: {
+      dispatchStartedAt: generation.attempt?.dispatchStartedAt ?? generation.occurredAt
+    },
+    now,
+    priorObservations
+  });
+  if (decision.action === "wait" || decision.action === "finalize") return;
+  const { ageMs } = decision;
+  const attempt = decision.observation;
+  const reachedBound = decision.action === "escalate";
   const attemptId = generation.attempt?.attemptId ?? formatAttemptId(generation);
   const launchRead = reachedBound && loaded.authority ? await readLaunchOperationForReconciliation(loaded, attemptId) : { ok: true, operation: void 0 };
   if (!launchRead.ok) return;
@@ -3351,7 +3493,7 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
     owningSystem: "controller",
     reason: "launch_response_lost",
     retryDisposition: "manual",
-    evidence: `${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
+    evidence: `${MISSING_RUN_MAX_OBSERVATIONS} bounded reconcile-missing-run observations exhausted for generation ${generation.generation}`
   }) : void 0;
   if (abandonClosedLaunch && launchOperation?.status === "pending") {
     try {
@@ -3402,8 +3544,8 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
       owningSystem: "controller",
       reason: "launch_response_lost",
       retryDisposition: "backoff",
-      retryBudget: Math.max(0, RECONCILE_MISSING_RUN_MAX_ATTEMPTS - attempt),
-      evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${RECONCILE_MISSING_RUN_MAX_ATTEMPTS})`
+      retryBudget: decision.retryBudget,
+      evidence: `no worker run bound to generation ${generation.generation} ${ageMs}ms after dispatch (observation ${attempt}/${MISSING_RUN_MAX_OBSERVATIONS})`
     })
   );
   if (retryPendingLaunch) {
@@ -3423,7 +3565,7 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
         reason: "launch_response_lost",
         retryDisposition: "immediate",
         retryBudget: 1,
-        evidence: `the exact launch outbox operation ${attemptId} is still pending after ${RECONCILE_MISSING_RUN_MAX_ATTEMPTS} bounded searches found no matching workflow run`
+        evidence: `the exact launch outbox operation ${attemptId} is still pending after ${MISSING_RUN_MAX_OBSERVATIONS} bounded searches found no matching workflow run`
       })
     );
     restoreAcceptedForLaunchRetry(ledger, generation.generation, now);
@@ -3468,9 +3610,6 @@ async function trackMissingRun(client, loaded, generation, now, maintainer) {
   }
   await saveLedger2(client, loaded);
 }
-var RECONCILE_STUCK_RUN_GRACE_MS = 4 * 60 * 60 * 1e3;
-var RECONCILE_STUCK_RUN_MIN_INTERVAL_MS = 30 * 60 * 1e3;
-var RECONCILE_STUCK_RUN_MAX_ATTEMPTS = 3;
 async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
   const ledger = loaded.ledger;
   if (reconcileAnomaliesFor(
@@ -3480,28 +3619,31 @@ async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
   ).length > 0) {
     return;
   }
-  const boundAt = Date.parse(
-    generation.attempt?.boundAt ?? generation.attempt?.dispatchStartedAt ?? generation.occurredAt
-  );
-  const ageMs = Date.parse(now) - boundAt;
-  if (!(ageMs >= RECONCILE_STUCK_RUN_GRACE_MS)) return;
   const priorObservations = reconcileAnomaliesFor(
     ledger,
     generation.generation,
     "reconcile-stuck-run"
   );
-  const last = priorObservations.at(-1);
-  if (last && Date.parse(now) - Date.parse(last.occurredAt) < RECONCILE_STUCK_RUN_MIN_INTERVAL_MS) {
-    return;
-  }
-  const attempt = priorObservations.length + 1;
-  const reachedBound = attempt >= RECONCILE_STUCK_RUN_MAX_ATTEMPTS;
+  const decision = reconcileExecution({
+    attempt: {
+      dispatchStartedAt: generation.attempt?.dispatchStartedAt ?? generation.occurredAt,
+      boundAt: generation.attempt?.boundAt,
+      runId: generation.attempt?.runId
+    },
+    run: { status: run.status, conclusion: run.conclusion },
+    now,
+    priorObservations
+  });
+  if (decision.action === "wait" || decision.action === "finalize") return;
+  const { ageMs } = decision;
+  const attempt = decision.observation;
+  const reachedBound = decision.action === "escalate";
   const parkFailure = reachedBound ? classifyFailure({
     phase: "reconciliation",
     owningSystem: "runner",
     reason: "runner_lost",
     retryDisposition: "manual",
-    evidence: `${RECONCILE_STUCK_RUN_MAX_ATTEMPTS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
+    evidence: `${STUCK_RUN_MAX_OBSERVATIONS} bounded reconcile-stuck-run observations exhausted for generation ${generation.generation}; worker run ${run.id} still reports status "${run.status}"`
   }) : void 0;
   if (parkFailure) {
     await projectNeedsHumanPark(client, ledger.task, maintainer, parkFailure);
@@ -3538,8 +3680,8 @@ async function trackStuckRun(client, loaded, generation, run, now, maintainer) {
       owningSystem: "runner",
       reason: "runner_lost",
       retryDisposition: "backoff",
-      retryBudget: Math.max(0, RECONCILE_STUCK_RUN_MAX_ATTEMPTS - attempt),
-      evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${RECONCILE_STUCK_RUN_MAX_ATTEMPTS})`
+      retryBudget: decision.retryBudget,
+      evidence: `worker run ${run.id} still reports status "${run.status}" ${ageMs}ms after binding, past the longest legitimate run's own grace period (observation ${attempt}/${STUCK_RUN_MAX_OBSERVATIONS})`
     })
   );
   if (parkFailure) {
@@ -4412,25 +4554,30 @@ async function broker() {
   const normalized = decode(env("BROKER_PAYLOAD"));
   const runId = Number(env("GITHUB_RUN_ID"));
   const hostedControllerLogin = env("HOSTED_CONTROLLER_LOGIN", false);
-  await processNormalizedEvent({
-    normalized,
-    githubToken: env("GITHUB_TOKEN"),
-    storageMode: env("DISPATCH_STORAGE_MODE", false),
-    authorityEpoch: env("DISPATCH_AUTHORITY_EPOCH", false),
-    storagePortFactory: createStoragePort,
-    isPullRequest: env("ANCHOR_IS_PR", false) === "true",
-    transportRunId: runId,
-    authorityOwner: `action:${runId}`,
-    maintainer: env("MAINTAINER_LOGIN", false),
-    actionConcurrency: {
-      group: env("BROKER_GROUP"),
-      eventName: env("GITHUB_EVENT_NAME", false)
+  await admitHostedDelivery(
+    {
+      normalized,
+      githubToken: env("GITHUB_TOKEN"),
+      storageMode: env("DISPATCH_STORAGE_MODE", false),
+      authorityEpoch: env("DISPATCH_AUTHORITY_EPOCH", false),
+      isPullRequest: env("ANCHOR_IS_PR", false) === "true",
+      transportRunId: runId,
+      authorityOwner: `action:${runId}`,
+      maintainer: env("MAINTAINER_LOGIN", false),
+      actionConcurrency: {
+        group: env("BROKER_GROUP"),
+        eventName: env("GITHUB_EVENT_NAME", false)
+      },
+      projectionIdentities: [
+        { login: "github-actions[bot]", type: "Bot" },
+        ...hostedControllerLogin ? [{ login: hostedControllerLogin, type: "User" }] : []
+      ]
     },
-    projectionIdentities: [
-      { login: "github-actions[bot]", type: "Bot" },
-      ...hostedControllerLogin ? [{ login: hostedControllerLogin, type: "User" }] : []
-    ]
-  });
+    {
+      storagePortFactory: createStoragePort,
+      process: processNormalizedEvent
+    }
+  );
 }
 async function preflight() {
   const task = {
@@ -4525,53 +4672,23 @@ async function loadPreflightLedger(client, task, storageMode, authorityPort) {
   }))?.ledger;
 }
 async function completionCallback() {
-  const outcomeInput = env("BROKER_OUTCOME_KIND", false);
-  const outcomeReference = env("BROKER_OUTCOME_REFERENCE", false);
-  const readinessFailureInput = env("BROKER_READINESS_FAILURE", false);
-  let outcome;
-  if (outcomeInput) {
-    if (!isDispatchOutcomeKind(outcomeInput)) {
-      throw new Error("BROKER_OUTCOME_KIND is not a recognized outcome");
-    }
-    outcome = outcomeInput;
-  }
-  let readinessFailure;
-  if (readinessFailureInput) {
-    if (!isLaneReadinessFailure(readinessFailureInput)) {
-      throw new Error(
-        "BROKER_READINESS_FAILURE is not a recognized readiness failure"
-      );
-    }
-    readinessFailure = readinessFailureInput;
-  }
-  if (outcomeReference) {
-    const number = Number(outcomeReference);
-    if (outcome !== "pull-request" || !Number.isSafeInteger(number) || number <= 0) {
-      throw new Error(
-        "BROKER_OUTCOME_REFERENCE requires a positive PR number and pull-request outcome"
-      );
-    }
-  }
-  await sendHostedCompletion({
-    completionUrl: HOSTED_COMPLETION_URL,
-    oidcRequestUrl: env("ACTIONS_ID_TOKEN_REQUEST_URL"),
-    oidcRequestToken: env("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
-    payload: {
-      issue: Number(env("BROKER_ISSUE")),
-      generation: Number(env("BROKER_GENERATION")),
+  await processCompletionCallback(
+    {
+      issue: env("BROKER_ISSUE"),
+      generation: env("BROKER_GENERATION"),
       intentId: env("BROKER_INTENT_ID"),
       token: env("BROKER_DISPATCH_TOKEN"),
       workflow: env("BROKER_WORKER_WORKFLOW"),
-      ...outcome ? { outcome } : {},
-      ...outcomeReference ? {
-        outcomeReference: {
-          kind: "pull-request",
-          number: Number(outcomeReference)
-        }
-      } : {},
-      ...readinessFailure ? { readinessFailure } : {}
+      oidcRequestUrl: env("ACTIONS_ID_TOKEN_REQUEST_URL"),
+      oidcRequestToken: env("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+      outcome: env("BROKER_OUTCOME_KIND", false),
+      outcomeReference: env("BROKER_OUTCOME_REFERENCE", false),
+      readinessFailure: env("BROKER_READINESS_FAILURE", false)
+    },
+    {
+      send: sendHostedCompletion
     }
-  });
+  );
 }
 function trustedActionsRunUrl(value) {
   const serverUrl = env("GITHUB_SERVER_URL").replace(/\/$/u, "");
@@ -4682,31 +4799,22 @@ async function discoverRecentlyClosedReconcileCandidates2(client, repository, fl
 }
 async function scanReconcile() {
   const client = api();
-  const repository = env("GITHUB_REPOSITORY");
-  const fleetLogin = env("AGENT_FLEET_LOGIN", false);
-  const results = await runReconcileScan(
-    createReconcileTransport(client),
-    repository,
-    fleetLogin
+  await orchestrateReconciliation(
+    {
+      repository: env("GITHUB_REPOSITORY"),
+      fleetLogin: env("AGENT_FLEET_LOGIN", false)
+    },
+    {
+      transport: createReconcileTransport(client),
+      run: runReconcileScan,
+      writeOutput: output,
+      log: console.log
+    }
   );
-  console.log(
-    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${results.candidates} candidate(s) (${results.openCandidates} open agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed agent-labeled/fleet-assigned).`
-  );
-  for (const failure of results.failed) {
-    console.log(
-      `::error::dispatch-reconcile: failed to dispatch reconcile for #${failure.issue}: ${failure.message}`
-    );
-  }
-  await output("candidates", String(results.candidates));
-  await output("dispatched", String(results.dispatched));
-  if (results.failed.length > 0) {
-    throw new Error(
-      `Reconcile scan failed to dispatch ${results.failed.length}/${results.candidates} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
-    );
-  }
 }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const operation = process.argv[2];
+
+// apps/dispatch-broker/src/main.ts
+async function runOperation(operation) {
   if (operation === "normalize") await normalize();
   else if (operation === "broker") await broker();
   else if (operation === "preflight") await preflight();
@@ -4717,21 +4825,28 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else if (operation === "claude-readiness") await claudeReadiness();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
 }
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runOperation(process.argv[2]);
+}
 export {
   CompletionBindingError,
   FRESH_INTENT_OUTCOMES,
   RECONCILE_DISPATCH_CONCURRENCY,
-  RECONCILE_MISSING_RUN_GRACE_MS,
-  RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
-  RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
-  RECONCILE_STUCK_RUN_GRACE_MS,
-  RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
-  RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
+  MISSING_RUN_GRACE_MS as RECONCILE_MISSING_RUN_GRACE_MS,
+  MISSING_RUN_MAX_OBSERVATIONS as RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
+  MISSING_RUN_MIN_INTERVAL_MS as RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
+  STUCK_RUN_GRACE_MS as RECONCILE_STUCK_RUN_GRACE_MS,
+  STUCK_RUN_MAX_OBSERVATIONS as RECONCILE_STUCK_RUN_MAX_ATTEMPTS,
+  STUCK_RUN_MIN_INTERVAL_MS as RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   anchorNeedsHuman,
   applyAnchorControlTransition,
   assertCompletionBindingBeforeInitialization,
   assertCompletionLedgerBinding,
   assertWorkerRun,
+  broker,
+  classifyClaudeReadinessProbe,
+  claudeReadiness,
+  completionCallback,
   completionMatches,
   contextFor,
   decode,
@@ -4746,6 +4861,8 @@ export {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
+  normalize,
+  preflight,
   processNormalizedEvent,
   projectClaudeReadiness,
   reconcileActive,
@@ -4753,8 +4870,10 @@ export {
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
+  runOperation,
   runPhase,
   saveProjectionCheckpoint,
+  scanReconcile,
   trustedActionsRunUrl,
   trustedClaudeExecutionFile,
   wasSupersededEviction

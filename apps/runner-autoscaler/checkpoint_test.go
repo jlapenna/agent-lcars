@@ -277,7 +277,7 @@ func TestSnapshotRunnersRecordsIdleBusySplit(t *testing.T) {
 	}
 	scaler.runners.addIdle("idle-runner", "pike", "c1", time.Unix(1785702000, 0))
 	scaler.runners.addIdle("busy-runner", "janeway", "c2", time.Unix(1785702100, 0))
-	if !scaler.runners.markBusy("busy-runner") {
+	if !scaler.runners.markBusy("busy-runner", "job-42") {
 		t.Fatal("expected markBusy to succeed")
 	}
 
@@ -296,6 +296,9 @@ func TestSnapshotRunnersRecordsIdleBusySplit(t *testing.T) {
 	}
 	if got.Runners["busy-runner"].Host != "janeway" {
 		t.Errorf("busy runner host = %q, want janeway", got.Runners["busy-runner"].Host)
+	}
+	if got.Runners["busy-runner"].JobID != "job-42" {
+		t.Errorf("busy runner job ID = %q, want job-42", got.Runners["busy-runner"].JobID)
 	}
 }
 
@@ -325,7 +328,7 @@ func TestBootAdoptionPrefersCheckpointOverProcessProbe(t *testing.T) {
 		scalesetClient: newStubScalesetClient(t),
 		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		bootCheckpoint: map[string]checkpointRunner{
-			"runner-assigned": {Host: "host-a", ContainerID: "assigned", Busy: true},
+			"runner-assigned": {Host: "host-a", ContainerID: "assigned", Busy: true, JobID: "job-42"},
 		},
 	}
 
@@ -333,6 +336,9 @@ func TestBootAdoptionPrefersCheckpointOverProcessProbe(t *testing.T) {
 
 	if _, ok := scaler.runners.busy["runner-assigned"]; !ok {
 		t.Errorf("checkpointed busy runner was not adopted as busy: idle=%#v busy=%#v", scaler.runners.idle, scaler.runners.busy)
+	}
+	if got := scaler.runners.busy["runner-assigned"].jobID; got != "job-42" {
+		t.Errorf("checkpointed busy runner job ID = %q, want job-42", got)
 	}
 	// Not in the checkpoint, and the probe says no worker: still idle.
 	if _, ok := scaler.runners.idle["runner-genuinely-idle"]; !ok {
@@ -412,16 +418,13 @@ func TestQuiesceCheckpointsEvenIfGenerationHangs(t *testing.T) {
 	runtimes := []*scaleSetRuntime{{config: Config{ScaleSetName: "myset"}, scaler: scaler}}
 	store.setSnapshot(orchestratorSnapshot(runtimes, newFleetCoordinator(0, nil, nil, nil, nil, nil)))
 
-	start := time.Now()
 	timeoutsBefore := testutil.ToFloat64(quiesceGenerationTimeouts)
 	// A done channel that never closes, standing in for a listener wedged on
-	// a black-holed connection.
-	quiesce(context.Background(), runtimeGeneration{cancel: func() {}, done: make(chan struct{})}, runtimes, store, logger)
-	elapsed := time.Since(start)
-
-	if elapsed > quiesceTimeout+2*time.Second {
-		t.Errorf("quiesce took %v, expected to give up near %v", elapsed, quiesceTimeout)
-	}
+	// a black-holed connection. A pre-fired timeout exercises the same
+	// production branch without making this test depend on CI scheduling.
+	timedOut := make(chan time.Time, 1)
+	timedOut <- time.Now()
+	quiesceWithGenerationTimeout(context.Background(), runtimeGeneration{cancel: func() {}, done: make(chan struct{})}, runtimes, store, logger, timedOut)
 	if _, err := loadCheckpoint(path); err != nil {
 		t.Fatalf("expected a checkpoint despite the hung generation: %v", err)
 	}

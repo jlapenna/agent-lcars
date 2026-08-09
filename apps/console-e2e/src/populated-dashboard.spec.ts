@@ -296,6 +296,7 @@ test.describe('populated dashboard', () => {
     const card = page.getByTestId('logical-work-card');
     await expect(card).toBeVisible();
     await expect(card.getByTestId('logical-work-state')).toHaveText('anomaly');
+    await expect(card).toContainText('authoritative state rev');
 
     // Both attempts remain visible on the canonical task page too - the
     // ledger explains WHY they exist (one generation, one intent), the
@@ -366,9 +367,13 @@ test.describe('responsive decision inbox', () => {
     await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
+    const header = page.locator(
+      '.console-header[data-current="inbox"]:not([data-streaming-fallback])',
+    );
     await expect(
-      workspace.getByRole('heading', { name: 'Decision Inbox' }),
+      header.getByRole('heading', { level: 1, name: 'Decision Inbox' }),
     ).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
 
     await workspace
@@ -558,10 +563,26 @@ test.describe('populated page captures', () => {
       // ConsoleHeader's doc comment) — each page gets its own readiness
       // marker rather than one shared nav assertion.
       for (const [name, path, ready] of [
-        ['deck', '/', 'nav.lcars-nav'],
-        ['inbox', '/inbox', 'nav.lcars-nav'],
-        ['agents', '/agents', 'nav.lcars-nav'],
-        ['sessions', '/sessions', 'nav.lcars-nav'],
+        [
+          'deck',
+          '/',
+          '.console-header[data-current="deck"]:not([data-streaming-fallback])',
+        ],
+        [
+          'inbox',
+          '/inbox',
+          '.console-header[data-current="inbox"]:not([data-streaming-fallback])',
+        ],
+        [
+          'agents',
+          '/agents',
+          '.console-header[data-current="agents"]:not([data-streaming-fallback])',
+        ],
+        [
+          'sessions',
+          '/sessions',
+          '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+        ],
         [
           'session-detail',
           `/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`,

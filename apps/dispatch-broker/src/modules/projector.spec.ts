@@ -373,6 +373,32 @@ test('recordProjectionStatus bumps ledger.revision and updatedAt like any other 
   assert.equal(ledger.updatedAt, '2026-08-06T00:10:00.000Z');
 });
 
+test('recordProjectionStatus cannot alter controller-owned ledger state', () => {
+  const ledger = ledgerWithBoundGeneration();
+  const controllerStateBefore = structuredClone({
+    task: ledger.task,
+    sources: ledger.sources,
+    generations: ledger.generations,
+    control: ledger.control,
+    anomalies: ledger.anomalies,
+    createdAt: ledger.createdAt,
+  });
+
+  recordProjectionStatus(ledger, true, '2026-08-06T00:10:00.000Z');
+
+  assert.deepEqual(
+    {
+      task: ledger.task,
+      sources: ledger.sources,
+      generations: ledger.generations,
+      control: ledger.control,
+      anomalies: ledger.anomalies,
+      createdAt: ledger.createdAt,
+    },
+    controllerStateBefore,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Failure containment: a projection failure is recorded as a projector-
 // phase failure and leaves generation state and outcome untouched. This is

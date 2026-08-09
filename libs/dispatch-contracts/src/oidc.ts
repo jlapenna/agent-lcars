@@ -11,6 +11,10 @@ export const HOSTED_COMPLETION_PATH = '/api/control-plane/completion';
 /** Canonical production endpoint used by the trusted worker callback. */
 export const HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
 
+/** Public, read-only lifecycle aggregate backed by authoritative storage. */
+export const HOSTED_TASK_STATE_PATH = '/api/control-plane/task-state';
+export const HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED_TASK_STATE_PATH}`;
+
 /** Audience requested only by the scheduled/manual real-ingress canary. */
 export const WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE =
   'agent-lcars-webhook-ingress-canary';

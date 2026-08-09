@@ -113,6 +113,17 @@ describe('queueSelectionHref', () => {
 });
 
 describe('QueueWorkspace', () => {
+  it('leaves the page title to the shared ConsoleHeader', () => {
+    renderWorkspace([makeCard()]);
+
+    expect(
+      screen.queryByRole('heading', { name: 'Decision Inbox' }),
+    ).toBeNull();
+    expect(
+      screen.getByText(/1 item · needs your decision or response/),
+    ).toBeTruthy();
+  });
+
   it('selects the first visible item locally and emits URL-backed row links', () => {
     renderWorkspace([
       makeCard(),

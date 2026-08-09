@@ -47,6 +47,7 @@ import {
  */
 
 export type LogicalWorkState =
+  | 'unavailable'
   | 'pending'
   | 'dispatching'
   | 'active'
@@ -117,7 +118,10 @@ export interface LogicalWorkAnomaly {
  * so this lets a `kind === 'ledger-v1'` consumer read `revision` without a
  * defensive fallback for a case that could never actually happen. */
 export type LogicalWorkProvenance =
-  { kind: 'ledger-v1'; revision: number } | { kind: 'legacy' };
+  | { kind: 'authoritative-v1'; revision: number }
+  | { kind: 'ledger-v1'; revision: number }
+  | { kind: 'legacy' }
+  | { kind: 'unavailable' };
 
 export interface LogicalWork {
   task: TaskRef;
@@ -151,6 +155,7 @@ export interface TaskMeta {
 }
 
 const LOGICAL_STATE_PRIORITY: Record<LogicalWorkState, number> = {
+  unavailable: 0,
   anomaly: 0,
   'human-needed': 1,
   active: 2,
@@ -442,6 +447,12 @@ export interface DeriveLogicalWorkInput {
    * scan hasn't found one) - `deriveLogicalWork` degrades that task to
    * `legacy` provenance rather than failing. */
   ledgers: Map<string, DispatchLedger>;
+  /** Storage revisions prove the matching ledgers came from the controller
+   * authority rather than GitHub's mutable compatibility comment. */
+  authoritativeRevisions?: Map<string, number>;
+  /** Reads that failed. These tasks render an explicit unavailable state
+   * and never fall back to attempts or comment-derived lifecycle truth. */
+  unavailableTaskKeys?: ReadonlySet<string>;
   /** Title/url metadata keyed the same way - normally every open board item,
    * so a task with attempts but no open-item metadata still renders (title
    * falls back to the run's own display title). */
@@ -545,8 +556,10 @@ export function deriveLogicalWork(
     // until the underlying issue itself closes - deliberately: an operator
     // who hasn't looked at a flagged duplicate yet should keep seeing it
     // flagged, not have it quietly stop being called out.
-    const state: LogicalWorkState =
-      anomalies.length > 0
+    const unavailable = input.unavailableTaskKeys?.has(key) ?? false;
+    const state: LogicalWorkState = unavailable
+      ? 'unavailable'
+      : anomalies.length > 0
         ? 'anomaly'
         : (meta?.humanNeeded ?? false)
           ? 'human-needed'
@@ -563,9 +576,16 @@ export function deriveLogicalWork(
       intents: ledger ? intentsFromLedger(ledger, mergedDeliverables) : [],
       attempts,
       anomalies,
-      provenance: ledger
-        ? { kind: 'ledger-v1', revision: ledger.revision }
-        : { kind: 'legacy' },
+      provenance: unavailable
+        ? { kind: 'unavailable' }
+        : input.authoritativeRevisions?.has(key)
+          ? {
+              kind: 'authoritative-v1',
+              revision: input.authoritativeRevisions.get(key) as number,
+            }
+          : ledger
+            ? { kind: 'ledger-v1', revision: ledger.revision }
+            : { kind: 'legacy' },
     });
   }
 

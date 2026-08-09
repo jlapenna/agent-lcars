@@ -76,6 +76,8 @@ export {
   COMPLETION_OIDC_AUDIENCE,
   HOSTED_COMPLETION_PATH,
   HOSTED_COMPLETION_URL,
+  HOSTED_TASK_STATE_PATH,
+  HOSTED_TASK_STATE_URL,
   WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
   WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH,
   WEBHOOK_INGRESS_PROBE_PATH,
@@ -130,6 +132,12 @@ export {
 } from './quick-task';
 export type { LaneReadinessFailure } from './readiness';
 export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';
+export type { AuthoritativeTaskState } from './task-state';
+export {
+  AUTHORITATIVE_TASK_STATE_SCHEMA,
+  isAuthoritativeTaskState,
+  redactAuthoritativeTaskState,
+} from './task-state';
 export type { WebhookIngressCanaryAction } from './webhook-ingress';
 export {
   isWebhookIngressCanaryAction,

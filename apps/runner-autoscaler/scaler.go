@@ -58,6 +58,9 @@ type Scaler struct {
 	scalesetClient *scaleset.Client
 	minRunners     int
 	maxRunners     int
+	// queuedJobs is GitHub's latest desired-count signal: jobs waiting for
+	// this scale set, before minRunners' warm capacity is added.
+	queuedJobs atomic.Int64
 	// mountDockerSocket: see Config.MountDockerSocket. Applied at ContainerCreate
 	// against whichever host's daemon actually places the runner — the bind
 	// source path is resolved by THAT daemon, so this is correct for every
@@ -157,13 +160,17 @@ func (a *Scaler) isTearingDown(name string) bool {
 
 // adoptRunner records a runner recovered from a previous control-plane
 // instance with a known idle/busy state, rather than inferring one.
-func (a *Scaler) adoptRunner(name, host, containerID string, startedAt time.Time, busy bool) {
+func (a *Scaler) adoptRunner(name, host, containerID string, startedAt time.Time, busy bool, jobID ...string) {
 	if !busy {
 		a.runners.addIdle(name, host, containerID, startedAt)
 		return
 	}
 	a.runners.mu.Lock()
-	a.runners.busy[name] = runnerRef{host: host, containerID: containerID, startedAt: startedAt}
+	ref := runnerRef{host: host, containerID: containerID, startedAt: startedAt}
+	if len(jobID) > 0 {
+		ref.jobID = jobID[0]
+	}
+	a.runners.busy[name] = ref
 	a.runners.mu.Unlock()
 }
 
@@ -191,7 +198,7 @@ func (a *Scaler) snapshotRunners() checkpointScaleSet {
 		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: false}
 	}
 	for name, ref := range a.runners.busy {
-		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: true}
+		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: true, JobID: ref.jobID}
 	}
 	return checkpointScaleSet{Draining: a.draining.Load(), Runners: runners}
 }
@@ -592,6 +599,7 @@ func (a *Scaler) runnersChanged() {
 }
 
 func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
+	a.queuedJobs.Store(int64(count))
 	// Correct currentCount against reality BEFORE comparing it to demand --
 	// see pruneDeadIdleRunners for why a stale idle entry can otherwise
 	// pin desired == current forever and starve every future scale-up.
@@ -752,7 +760,7 @@ func (a *Scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStar
 		slog.Int64("runnerRequestId", jobInfo.RunnerRequestID),
 		slog.String("jobId", jobInfo.JobID),
 	)
-	if !a.runners.markBusy(jobInfo.RunnerName) {
+	if !a.runners.markBusy(jobInfo.RunnerName, jobInfo.JobID) {
 		if a.runners.isBusy(jobInfo.RunnerName) {
 			// Tracked and already busy -- e.g. a duplicate/replayed
 			// JobStarted message. Not the same problem as a runner GitHub
@@ -1726,7 +1734,7 @@ func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bo
 func (a *Scaler) adoptRunningContainer(ctx context.Context, h DockerHost, c container.Summary, cleanName string, recorded map[string]checkpointRunner) {
 	startedAt := time.Unix(c.Created, 0)
 	if entry, ok := recorded[cleanName]; ok {
-		a.adoptRunner(cleanName, h.Name, c.ID, startedAt, entry.Busy)
+		a.adoptRunner(cleanName, h.Name, c.ID, startedAt, entry.Busy, entry.JobID)
 		a.logger.Info("Adopted runner from checkpoint",
 			slog.String("host", h.Name), slog.String("name", cleanName),
 			slog.String("containerID", c.ID), slog.Bool("busy", entry.Busy))
@@ -2380,13 +2388,13 @@ const sweepStaleMinutes = 60
 // class of thing a non-shared runner container's writable layer would have
 // discarded on its own when removed. See jlapenna/homelab's docs/incidents.md
 // 2026-07-18: this shared dir has no per-container lifecycle, so without this
-// nothing else ever reclaims it.
-func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
-	capBytes := a.workDirSizeCapBytes
-	if override, ok := a.workDirSizeCaps[host]; ok {
-		capBytes = override
-	}
-	script := fmt.Sprintf(`set -e
+// nothing else ever reclaims it. The pnpm content-addressable store is
+// different: after an idle-safe pnpm prune, it is evicted as a last resort
+// when it is what keeps the workdir above the configured cap. A future install
+// can restore it, whereas allowing it to consume the host filesystem can
+// prevent every unrelated runner from starting.
+func workDirSweepScript(capBytes int64) string {
+	return fmt.Sprintf(`set -e
 rm -rf /home/runner/_work/_temp/* 2>/dev/null || true
 before=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); before=${before:-0}
 cap=%d
@@ -2413,6 +2421,23 @@ if [ "$before" -gt "$cap" ]; then
         ;;
     esac
   done
+
+  # The shared pnpm content-addressable store is not tied to a runner
+  # container. First let pnpm remove packages no project references. If the
+  # idle host is still over its workdir cap, evict the store entirely: all of
+  # its contents are reproducible and the next install will repopulate it.
+  # sweepHostIfIdle holds the same host lock used by runner placement, so this
+  # cannot race an install or a newly starting shared-workdir runner.
+  pnpm_store=/home/runner/_work/.pnpm-store
+  if [ -d "$pnpm_store" ]; then
+    if command -v pnpm >/dev/null 2>&1; then
+      pnpm --store-dir "$pnpm_store" store prune || true
+    fi
+    current=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); current=${current:-0}
+    if [ "$current" -gt "$cap" ]; then
+      rm -rf "$pnpm_store"
+    fi
+  fi
 fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
@@ -2443,6 +2468,14 @@ else
   echo "EXTERNALS_HEALTHY_SKIPPED"
 fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
+}
+
+func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
+	capBytes := a.workDirSizeCapBytes
+	if override, ok := a.workDirSizeCaps[host]; ok {
+		capBytes = override
+	}
+	script := workDirSweepScript(capBytes)
 
 	resp, err := a.createContainerWithImageRecovery(
 		ctx,
@@ -2695,6 +2728,10 @@ var _ listener.Scaler = (*Scaler)(nil)
 type runnerRef struct {
 	host        string
 	containerID string
+	// jobID is populated only while the runner is busy. It is opaque GitHub
+	// listener data, useful for matching the console's live runner work but
+	// never used to make scheduling or cleanup decisions.
+	jobID string
 	// startedAt is the container creation time, not the control-plane
 	// adoption time. A restart must not grant an hours-old runner a fresh
 	// startup grace period and hide an existing GitHub disconnect.
@@ -2781,7 +2818,7 @@ func (r *runnerState) isBusy(name string) bool {
 	return ok
 }
 
-func (r *runnerState) markBusy(name string) bool {
+func (r *runnerState) markBusy(name string, jobID ...string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ref, ok := r.idle[name]
@@ -2789,6 +2826,9 @@ func (r *runnerState) markBusy(name string) bool {
 		return false
 	}
 	delete(r.idle, name)
+	if len(jobID) > 0 {
+		ref.jobID = jobID[0]
+	}
 	r.busy[name] = ref
 	return true
 }

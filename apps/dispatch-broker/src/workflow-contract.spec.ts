@@ -456,6 +456,21 @@ test('workers are dispatch-only and cannot subscribe directly to issue events', 
   }
 });
 
+test('agent workflows put the pnpm store on the autoscaler-managed workdir', async () => {
+  const sources = await workflowSources();
+  for (const workflow of ['claude.yml', 'codex.yml', 'opencode.yml']) {
+    const source = sources.find(
+      (candidate) => candidate.name === workflow,
+    )?.source;
+    assert.ok(source, `${workflow} is missing`);
+    assert.equal(
+      laneValue(source, workflow, 'npm_config_store_dir'),
+      '/home/runner/_work/.pnpm-store',
+      `${workflow} must use the pnpm store pruned by the idle-host sweep`,
+    );
+  }
+});
+
 test('opencode uses the published action with a bounded trajectory contract', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'opencode.yml'),
