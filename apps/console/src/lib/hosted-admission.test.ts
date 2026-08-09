@@ -79,12 +79,15 @@ beforeEach(() => {
 });
 
 describe('hosted webhook admission primitives', () => {
-  it('accepts only the configured migration modes', () => {
-    expect(parseHostedAdmissionMode(undefined)).toBe('off');
-    expect(parseHostedAdmissionMode(' shadow ')).toBe('shadow');
+  it('requires authority mode after the storage cutover', () => {
     expect(parseHostedAdmissionMode('authority')).toBe('authority');
+    expect(() => parseHostedAdmissionMode(undefined)).toThrow(
+      'unset configuration were retired',
+    );
+    expect(() => parseHostedAdmissionMode('off')).toThrow('were retired');
+    expect(() => parseHostedAdmissionMode(' shadow ')).toThrow('were retired');
     expect(() => parseHostedAdmissionMode('enabled')).toThrow(
-      'must be one of off, shadow, authority',
+      "must be 'authority'",
     );
   });
 
