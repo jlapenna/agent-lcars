@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type {
+  SessionAgent,
   TranscriptElisionDivider,
   TranscriptTimelineEvent,
 } from '@agent-lcars/telemetry';
@@ -31,6 +32,7 @@ export interface SessionTranscriptResult {
  */
 export async function getSessionTranscript(
   transcriptGcsUri: string,
+  agent: SessionAgent = 'claude-code',
 ): Promise<SessionTranscriptResult> {
   let raw: string;
   try {
@@ -46,7 +48,7 @@ export async function getSessionTranscript(
     };
   }
 
-  const { events, hadUnparseableLines } = parseTranscriptTimeline(raw);
+  const { events, hadUnparseableLines } = parseTranscriptTimeline(raw, agent);
   return {
     events: elideTranscriptTimeline(events),
     ...(hadUnparseableLines && {

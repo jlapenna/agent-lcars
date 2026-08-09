@@ -45,6 +45,25 @@ describe('getSessionTranscript', () => {
     expect(result.warning).toContain('storage');
   });
 
+  it('parses a fetched Codex transcript with the selected agent parser', async () => {
+    (fetchSessionTranscript as Mock).mockResolvedValue(
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-07-01T00:00:00.000Z',
+        payload: { type: 'user_message', message: 'hello from codex' },
+      }),
+    );
+
+    const result = await getSessionTranscript(
+      'gs://bucket/runs/1/codex.jsonl',
+      'codex',
+    );
+
+    expect(result.events).toMatchObject([
+      { kind: 'text', role: 'user', text: 'hello from codex' },
+    ]);
+  });
+
   it('surfaces a warning (but still returns the parsed events) when some lines are unparseable', async () => {
     (fetchSessionTranscript as Mock).mockResolvedValue(
       [

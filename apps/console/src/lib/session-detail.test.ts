@@ -114,6 +114,7 @@ describe('getSessionDetail', () => {
 
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/a.jsonl',
+      'claude-code',
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });
@@ -129,6 +130,7 @@ describe('getSessionDetail', () => {
 
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/a.jsonl',
+      'claude-code',
     );
     expect(result.status).toBe('ok');
   });
@@ -154,6 +156,7 @@ describe('getSessionDetail', () => {
 
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/codex/a.jsonl',
+      'codex',
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });

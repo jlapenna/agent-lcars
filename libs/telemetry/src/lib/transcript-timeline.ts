@@ -7,7 +7,7 @@ const MAX_BLOCK_CHARS = 2000;
 
 /**
  * Agents whose raw transcript lines {@link parseTranscriptTimeline} actually
- * understands. Claude Code only, today: Codex's raw rollout JSONL uses an
+ * understands. Codex's raw rollout JSONL uses an
  * entirely different line shape (`session_meta`/`turn_context`/`event_msg`
  * envelopes wrapping a `payload` — see `codex-transcript-adapter.ts`) than
  * this parser's `message.role`/`message.content` walk expects, even though
@@ -30,6 +30,7 @@ const MAX_BLOCK_CHARS = 2000;
  */
 export const RENDERABLE_TRANSCRIPT_AGENTS: readonly SessionAgent[] = [
   'claude-code',
+  'codex',
 ];
 
 /** Whether {@link parseTranscriptTimeline} can render this agent's raw
@@ -182,6 +183,90 @@ function eventsFromMessage(
   return events;
 }
 
+function codexTextEvent(
+  role: 'user' | 'assistant',
+  text: unknown,
+  timestamp: string | undefined,
+): TranscriptTextEvent[] {
+  const value = asString(text);
+  return value
+    ? [{ kind: 'text', role, text: truncate(value), timestamp }]
+    : [];
+}
+
+/** Converts a Codex rollout envelope into zero or more shared timeline events. */
+function eventsFromCodexLine(
+  raw: Record<string, unknown>,
+  timestamp: string | undefined,
+): TranscriptTimelineEvent[] {
+  const lineType = asString(raw['type']);
+  const payload = asRecord(raw['payload']);
+  if (!payload) return [];
+
+  const payloadType = asString(payload['type']);
+  if (lineType === 'event_msg') {
+    if (payloadType === 'user_message') {
+      return codexTextEvent('user', payload['message'], timestamp);
+    }
+    if (payloadType === 'agent_message') {
+      return codexTextEvent('assistant', payload['message'], timestamp);
+    }
+    if (payloadType === 'task_complete') {
+      return [
+        { kind: 'result', subtype: 'success', isError: false, timestamp },
+      ];
+    }
+    if (payloadType === 'turn_aborted') {
+      return [
+        { kind: 'result', subtype: 'turn_aborted', isError: true, timestamp },
+      ];
+    }
+    return [];
+  }
+
+  if (lineType !== 'response_item') return [];
+
+  if (payloadType === 'message') {
+    const role = asString(payload['role']);
+    if (role !== 'user' && role !== 'assistant') return [];
+    const events: TranscriptTimelineEvent[] = [];
+    for (const block of asArray(payload['content']) ?? []) {
+      const record = asRecord(block);
+      if (!record) continue;
+      const text = asString(record['text']);
+      if (text) events.push(...codexTextEvent(role, text, timestamp));
+    }
+    return events;
+  }
+
+  if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
+    const name = asString(payload['name']);
+    if (!name) return [];
+    const input = payload['arguments'] ?? payload['input'] ?? {};
+    const inputJson =
+      typeof input === 'string' ? input : JSON.stringify(input, null, 2);
+    return [
+      { kind: 'tool_use', name, inputJson: truncate(inputJson), timestamp },
+    ];
+  }
+
+  if (
+    payloadType === 'function_call_output' ||
+    payloadType === 'custom_tool_call_output'
+  ) {
+    const output = contentToText(payload['output']);
+    return [
+      {
+        kind: 'tool_result',
+        content: truncate(output ?? JSON.stringify(payload['output'] ?? '')),
+        timestamp,
+      },
+    ];
+  }
+
+  return [];
+}
+
 /**
  * Parses one or more raw Claude Code transcript file contents (JSONL) into a
  * flat, renderable timeline for a single session's detail page - a
@@ -197,6 +282,7 @@ function eventsFromMessage(
  */
 export function parseTranscriptTimeline(
   rawContent: string,
+  agent: SessionAgent = 'claude-code',
 ): ParsedTranscriptTimeline {
   const events: TranscriptTimelineEvent[] = [];
   let currentSidechain: TranscriptTimelineEvent[] | undefined;
@@ -230,6 +316,10 @@ export function parseTranscriptTimeline(
     }
 
     const timestamp = asString(raw['timestamp']);
+    if (agent === 'codex') {
+      events.push(...eventsFromCodexLine(raw, timestamp));
+      continue;
+    }
     const isSidechain = asBoolean(raw['isSidechain']) ?? false;
     const target = isSidechain ? (currentSidechain ??= []) : events;
 

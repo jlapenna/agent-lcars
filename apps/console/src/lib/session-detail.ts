@@ -1,7 +1,7 @@
 import 'server-only';
 
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { isSessionRenderable } from '@agent-lcars/telemetry';
+import { isSessionRenderable, sessionAgent } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
@@ -71,7 +71,7 @@ export async function getSessionDetail(
     doc.source === 'issue-agent' &&
     doc.transcriptGcsUri &&
     isSessionRenderable(doc)
-      ? await getSessionTranscript(doc.transcriptGcsUri)
+      ? await getSessionTranscript(doc.transcriptGcsUri, sessionAgent(doc))
       : undefined;
 
   return { status: 'ok', doc, ...(transcript && { transcript }) };
