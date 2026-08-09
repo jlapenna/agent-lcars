@@ -299,7 +299,7 @@ export function QueueWorkspace({
           <>
             <div
               className="queue-mobile-identity"
-              aria-label="Queue item count"
+              aria-label={`Queue item count: ${visibleCards.length}`}
             >
               <Text component="span" ff="monospace" size="xs">
                 {visibleCards.length.toString().padStart(2, '0')}
