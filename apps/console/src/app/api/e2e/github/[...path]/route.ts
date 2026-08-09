@@ -192,6 +192,28 @@ export async function POST(
   if (path[0] === 'graphql') {
     return NextResponse.json({ data: enrichmentGraphql() });
   }
+  if (path[0] === 'controller-commands' && path.length === 1) {
+    const body = (await req.json()) as Record<string, unknown>;
+    const repository = body['repository'] as Record<string, unknown>;
+    const validBase =
+      repository?.['owner'] === E2E_FIXTURE_REPO.owner &&
+      repository?.['name'] === E2E_FIXTURE_REPO.name &&
+      Number.isSafeInteger(body['issueNumber']) &&
+      typeof body['requestId'] === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+        body['requestId'],
+      );
+    const validCommand =
+      body['kind'] === 'reconcile' ||
+      (body['kind'] === 'retrigger' &&
+        ['claude', 'codex', 'opencode'].includes(String(body['pipeline'])));
+    return validBase && validCommand
+      ? NextResponse.json({ ok: true, requestId: body['requestId'] })
+      : NextResponse.json(
+          { message: 'Invalid hosted controller command fixture request' },
+          { status: 422 },
+        );
+  }
   if (path[0] === 'repos' && path.length === 4 && path[3] === 'issues') {
     const body = (await req.json()) as {
       body?: string;
