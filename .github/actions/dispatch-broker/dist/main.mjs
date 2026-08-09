@@ -621,6 +621,11 @@ function mutate(ledger, now, callback) {
   validateLedger(ledger, ledger.task);
   return ledger;
 }
+function updateProjection(ledger, now, projection) {
+  return mutate(ledger, now, () => {
+    ledger.projection = projection;
+  });
+}
 
 // apps/dispatch-broker/src/modules/intent.ts
 function compareIntentOrder(left, right) {
@@ -1907,13 +1912,11 @@ async function projectNeedsHumanPark(api2, task, maintainer, failure) {
 function recordProjectionStatus(ledger, converged, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const desiredRevision = ledger.revision;
   const observedRevision = converged ? desiredRevision : ledger.projection?.observedRevision ?? 0;
-  return mutate(ledger, now, () => {
-    ledger.projection = {
-      desiredRevision,
-      observedRevision,
-      state: converged ? "converged" : observedRevision > 0 ? "diverged" : "pending",
-      observedAt: now
-    };
+  return updateProjection(ledger, now, {
+    desiredRevision,
+    observedRevision,
+    state: converged ? "converged" : observedRevision > 0 ? "diverged" : "pending",
+    observedAt: now
   });
 }
 
