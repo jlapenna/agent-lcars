@@ -327,7 +327,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
         self.assertIn(
-            'github_actions_jobs_current{job="repository validation",repository="jlapenna/homelab",runner_group="Default",status="queued",workflow="validate"} 1.0',
+            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",status="queued",workflow="validate"} 1.0',
             metrics,
         )
         self.assertIn("github_actions_job_oldest_queued_seconds", metrics)

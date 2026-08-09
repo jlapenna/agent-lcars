@@ -336,6 +336,27 @@ class GitHubAPI:
             params={"filter": "all"},
         )
 
+    def list_concurrency_groups(
+        self, repository: str, run_id: int
+    ) -> list[dict[str, Any]]:
+        """Return the concurrency groups GitHub associates with a run.
+
+        GitHub returns at most 100 groups for a run. That is safely above a
+        workflow's practical group count and avoids a second, cursor-based
+        pagination implementation on the normal polling path.
+        """
+        payload = self.get(
+            f"/repos/{repository}/actions/runs/{run_id}/concurrency_groups",
+            endpoint="concurrency_groups",
+            params={"per_page": 100},
+        )
+        groups = payload.get("concurrency_groups", [])
+        if not isinstance(groups, list) or not all(
+            isinstance(group, dict) for group in groups
+        ):
+            raise TypeError("GitHub concurrency-groups response was invalid")
+        return groups
+
     def _list_paginated(
         self,
         path: str,
@@ -456,6 +477,7 @@ class Database:
                     started_at REAL,
                     completed_at REAL,
                     runner_group TEXT NOT NULL,
+                    concurrency_group TEXT NOT NULL DEFAULT 'none',
                     PRIMARY KEY (repository, id)
                 );
 
@@ -473,6 +495,14 @@ class Database:
                     ON jobs (repository, run_id);
                 """
             )
+            columns = {
+                row["name"]
+                for row in self.connection.execute("PRAGMA table_info(jobs)")
+            }
+            if "concurrency_group" not in columns:
+                self.connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN concurrency_group TEXT NOT NULL DEFAULT 'none'"
+                )
             rows = self.connection.execute(
                 """
                 SELECT DISTINCT repository, workflow, name FROM jobs
@@ -667,9 +697,26 @@ class Database:
         repository: str,
         run: dict[str, Any],
         jobs: Sequence[dict[str, Any]],
+        concurrency_groups: Sequence[dict[str, Any]] = (),
     ) -> None:
         run_id = int(run["id"])
         workflow = workflow_label(run)
+        groups_by_job: dict[int, str] = {}
+        run_groups: list[str] = []
+        for group in concurrency_groups:
+            name = metric_label(group.get("group_name"), "none")
+            members = group.get("group_members", [])
+            if not isinstance(members, list):
+                continue
+            has_job_member = False
+            for member in members:
+                if not isinstance(member, dict) or member.get("job_id") is None:
+                    continue
+                groups_by_job[int(member["job_id"])] = name
+                has_job_member = True
+            if not has_job_member:
+                run_groups.append(name)
+        run_group = ",".join(sorted(set(run_groups))) or "none"
         with self.lock, self.connection:
             for job in jobs:
                 name = self.bounded_job_name(
@@ -680,8 +727,8 @@ class Database:
                     INSERT INTO jobs (
                         repository, id, run_id, workflow, name, status,
                         conclusion, created_at, started_at, completed_at,
-                        runner_group
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        runner_group, concurrency_group
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(repository, id) DO UPDATE SET
                         run_id = excluded.run_id,
                         workflow = excluded.workflow,
@@ -691,7 +738,8 @@ class Database:
                         created_at = excluded.created_at,
                         started_at = excluded.started_at,
                         completed_at = excluded.completed_at,
-                        runner_group = excluded.runner_group
+                        runner_group = excluded.runner_group,
+                        concurrency_group = excluded.concurrency_group
                     """,
                     (
                         repository,
@@ -705,6 +753,7 @@ class Database:
                         parse_timestamp(job.get("started_at")),
                         parse_timestamp(job.get("completed_at")),
                         metric_label(job.get("runner_group_name"), "unassigned"),
+                        groups_by_job.get(int(job["id"]), run_group),
                     ),
                 )
             self.connection.execute(
@@ -852,15 +901,22 @@ class DatabaseMetrics:
         current_jobs = GaugeMetricFamily(
             "github_actions_jobs_current",
             "Current active GitHub Actions jobs.",
-            labels=("repository", "workflow", "job", "status", "runner_group"),
+            labels=(
+                "repository",
+                "workflow",
+                "job",
+                "status",
+                "runner_group",
+                "concurrency_group",
+            ),
         )
         for row in self.database.rows(
             f"""
-            SELECT repository, workflow, name, status, runner_group,
+            SELECT repository, workflow, name, status, runner_group, concurrency_group,
                    COUNT(*) AS total
             FROM jobs
             WHERE status IN ({placeholders})
-            GROUP BY repository, workflow, name, status, runner_group
+            GROUP BY repository, workflow, name, status, runner_group, concurrency_group
             """,
             ACTIVE_STATUSES,
         ):
@@ -871,6 +927,7 @@ class DatabaseMetrics:
                     row["name"],
                     row["status"],
                     row["runner_group"],
+                    row["concurrency_group"],
                 ],
                 float(row["total"]),
             )
@@ -1050,9 +1107,13 @@ class Poller:
         needs_jobs = self.database.jobs_need_refresh(repository, run)
         self.database.upsert_run(repository, run)
         if needs_jobs:
-            self.database.upsert_jobs(
-                repository, run, self.api.list_jobs(repository, int(run["id"]))
+            jobs = self.api.list_jobs(repository, int(run["id"]))
+            groups = (
+                self.api.list_concurrency_groups(repository, int(run["id"]))
+                if run.get("status") in ACTIVE_STATUSES
+                else ()
             )
+            self.database.upsert_jobs(repository, run, jobs, groups)
 
     def refresh_all(self) -> None:
         for repository in self.config.repositories:
