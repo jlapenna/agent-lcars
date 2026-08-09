@@ -1070,7 +1070,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: flex;
     min-width: 0;
     align-items: center;
-    padding: 14px 20px 12px 4.25rem;
+    /* Match the title inset to the elbow cap. The extra inset used here
+       allowed "Session archive" to wrap, growing the compact header past
+       its 80px desktop budget. */
+    padding: 14px 20px 12px 3.5rem;
     border-right: 1px solid var(--mantine-color-dark-4);
   }
 
