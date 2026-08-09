@@ -2380,13 +2380,13 @@ const sweepStaleMinutes = 60
 // class of thing a non-shared runner container's writable layer would have
 // discarded on its own when removed. See jlapenna/homelab's docs/incidents.md
 // 2026-07-18: this shared dir has no per-container lifecycle, so without this
-// nothing else ever reclaims it.
-func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
-	capBytes := a.workDirSizeCapBytes
-	if override, ok := a.workDirSizeCaps[host]; ok {
-		capBytes = override
-	}
-	script := fmt.Sprintf(`set -e
+// nothing else ever reclaims it. The pnpm content-addressable store is
+// different: after an idle-safe pnpm prune, it is evicted as a last resort
+// when it is what keeps the workdir above the configured cap. A future install
+// can restore it, whereas allowing it to consume the host filesystem can
+// prevent every unrelated runner from starting.
+func workDirSweepScript(capBytes int64) string {
+	return fmt.Sprintf(`set -e
 rm -rf /home/runner/_work/_temp/* 2>/dev/null || true
 before=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); before=${before:-0}
 cap=%d
@@ -2413,6 +2413,23 @@ if [ "$before" -gt "$cap" ]; then
         ;;
     esac
   done
+
+  # The shared pnpm content-addressable store is not tied to a runner
+  # container. First let pnpm remove packages no project references. If the
+  # idle host is still over its workdir cap, evict the store entirely: all of
+  # its contents are reproducible and the next install will repopulate it.
+  # sweepHostIfIdle holds the same host lock used by runner placement, so this
+  # cannot race an install or a newly starting shared-workdir runner.
+  pnpm_store=/home/runner/_work/.pnpm-store
+  if [ -d "$pnpm_store" ]; then
+    if command -v pnpm >/dev/null 2>&1; then
+      pnpm --store-dir "$pnpm_store" store prune || true
+    fi
+    current=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); current=${current:-0}
+    if [ "$current" -gt "$cap" ]; then
+      rm -rf "$pnpm_store"
+    fi
+  fi
 fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
@@ -2443,6 +2460,14 @@ else
   echo "EXTERNALS_HEALTHY_SKIPPED"
 fi
 `, capBytes, sweepStaleMinutes, sweepStaleMinutes)
+}
+
+func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
+	capBytes := a.workDirSizeCapBytes
+	if override, ok := a.workDirSizeCaps[host]; ok {
+		capBytes = override
+	}
+	script := workDirSweepScript(capBytes)
 
 	resp, err := a.createContainerWithImageRecovery(
 		ctx,

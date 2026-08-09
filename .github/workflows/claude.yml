@@ -94,9 +94,9 @@ jobs:
       EXCLUDE_PR_AUTHOR: agent-lcars[bot]
       AGENT_LABEL: agent:claude
       REDISPATCH_COMMAND: '@claude'
-      # Park the pnpm store on the disk-backed runner workdir mount so it
-      # survives container recreations.
-      npm_config_store_dir: /tmp/runner/pnpm-store
+      # Keep the pnpm store on the shared workdir mount. The autoscaler's
+      # idle-host sweep prunes and, above its disk cap, evicts this cache.
+      npm_config_store_dir: /home/runner/_work/.pnpm-store
       # Nx remote cache on the shared homelab host: the agent's own
       # lint/test/build runs replay task outputs CI already computed and
       # seed the cache for the CI runs on its PRs. Empty vars or an

@@ -249,6 +249,13 @@ const (
 // need an empty fleet -- removing a scale set, decommissioning a host -- and
 // is unchanged.
 func quiesce(ctx context.Context, generation runtimeGeneration, runtimes []*scaleSetRuntime, checkpoints *checkpointStore, logger *slog.Logger) {
+	quiesceWithGenerationTimeout(ctx, generation, runtimes, checkpoints, logger, time.After(quiesceTimeout))
+}
+
+// quiesceWithGenerationTimeout keeps quiesce's production timeout policy
+// explicit while allowing the hung-generation behavior to be exercised without
+// a wall-clock-sensitive test sleep.
+func quiesceWithGenerationTimeout(ctx context.Context, generation runtimeGeneration, runtimes []*scaleSetRuntime, checkpoints *checkpointStore, logger *slog.Logger, generationTimeout <-chan time.Time) {
 	started := time.Now()
 	logger.Info("Quiescing control plane; preserving all runners for adoption by the next instance")
 
@@ -261,7 +268,7 @@ func quiesce(ctx context.Context, generation runtimeGeneration, runtimes []*scal
 
 	select {
 	case <-generation.done:
-	case <-time.After(quiesceTimeout):
+	case <-generationTimeout:
 		quiesceGenerationTimeouts.Inc()
 		logger.Warn("Runtime generation did not stop within the quiesce timeout; checkpointing and exiting anyway",
 			slog.Duration("timeout", quiesceTimeout))

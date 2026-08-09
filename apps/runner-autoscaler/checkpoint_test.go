@@ -412,16 +412,13 @@ func TestQuiesceCheckpointsEvenIfGenerationHangs(t *testing.T) {
 	runtimes := []*scaleSetRuntime{{config: Config{ScaleSetName: "myset"}, scaler: scaler}}
 	store.setSnapshot(orchestratorSnapshot(runtimes, newFleetCoordinator(0, nil, nil, nil, nil, nil)))
 
-	start := time.Now()
 	timeoutsBefore := testutil.ToFloat64(quiesceGenerationTimeouts)
 	// A done channel that never closes, standing in for a listener wedged on
-	// a black-holed connection.
-	quiesce(context.Background(), runtimeGeneration{cancel: func() {}, done: make(chan struct{})}, runtimes, store, logger)
-	elapsed := time.Since(start)
-
-	if elapsed > quiesceTimeout+2*time.Second {
-		t.Errorf("quiesce took %v, expected to give up near %v", elapsed, quiesceTimeout)
-	}
+	// a black-holed connection. A pre-fired timeout exercises the same
+	// production branch without making this test depend on CI scheduling.
+	timedOut := make(chan time.Time, 1)
+	timedOut <- time.Now()
+	quiesceWithGenerationTimeout(context.Background(), runtimeGeneration{cancel: func() {}, done: make(chan struct{})}, runtimes, store, logger, timedOut)
 	if _, err := loadCheckpoint(path); err != nil {
 		t.Fatalf("expected a checkpoint despite the hung generation: %v", err)
 	}
