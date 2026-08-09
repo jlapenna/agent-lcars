@@ -61,7 +61,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .lcars-header {
   position: relative;
-  padding-left: 2.5rem;
+  /* A literal LCARS elbow: the cap runs horizontally from the screen edge,
+     then turns down into the title rail. Keep this structural rather than a
+     faint border so the interface reads as a console at first glance. */
+  padding-left: 3.5rem;
 }
 
 .lcars-header::before {
@@ -69,7 +72,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 10px;
+  width: 14px;
   background: var(--mantine-color-orange-6);
 }
 
@@ -78,10 +81,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   top: 0;
   left: 0;
-  width: 2.5rem;
-  height: 0.85rem;
+  width: 3.5rem;
+  height: 1.25rem;
   background: var(--mantine-color-orange-6);
-  border-bottom-right-radius: 1rem;
+  border-bottom-right-radius: 1.25rem;
 }
 
 .lcars-header-title {
@@ -93,7 +96,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: flex;
   gap: 4px;
   height: 6px;
-  margin: 0.75rem 0 0 -2.5rem;
+  margin: 0.75rem 0 0 -3.5rem;
 }
 
 .lcars-header-bar-segment {
@@ -305,7 +308,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 5px;
+  width: 8px;
   background: var(--lcars-accent);
 }
 
@@ -314,10 +317,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   top: 0;
   left: 0;
-  width: 2.5rem;
-  height: 0.75rem;
+  width: 3rem;
+  height: 1rem;
   background: var(--lcars-accent);
-  border-bottom-right-radius: 0.75rem;
+  border-bottom-right-radius: 1rem;
 }
 
 /* ---- Shared console frame ----
@@ -369,11 +372,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .agents-fleet-strip {
   border-bottom: 1px solid var(--mantine-color-default-border) !important;
-}
-
-.agents-fleet-strip::after,
-.agents-panel::after {
-  display: none;
 }
 
 .agents-workspace__operations {
@@ -1072,7 +1070,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: flex;
     min-width: 0;
     align-items: center;
-    padding: 14px 20px 12px 36px;
+    padding: 14px 20px 12px 4.25rem;
     border-right: 1px solid var(--mantine-color-dark-4);
   }
 
