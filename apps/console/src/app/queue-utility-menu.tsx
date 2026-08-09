@@ -5,15 +5,8 @@ import { IconDotsVertical } from '@tabler/icons-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
+import { CONSOLE_DESTINATIONS, type NavKey } from './console-navigation';
 import { ThemeToggle } from './theme-toggle';
-
-const MOBILE_DESTINATIONS = [
-  { key: 'deck', href: '/', label: 'Bridge' },
-  { key: 'inbox', href: '/inbox', label: 'Inbox' },
-  { key: 'agents', href: '/agents', label: 'Agents' },
-  { key: 'sessions', href: '/sessions', label: 'Sessions' },
-  { key: 'costs', href: '/costs', label: 'Costs' },
-] as const;
 
 export function QueueUtilityMenu({
   signOutControl,
@@ -24,9 +17,7 @@ export function QueueUtilityMenu({
   signOutControl: ReactNode;
   repositoryUrl: string;
   includeNavigation?: boolean;
-  navigationHrefs?: Partial<
-    Record<(typeof MOBILE_DESTINATIONS)[number]['key'], string>
-  >;
+  navigationHrefs?: Partial<Record<NavKey, string>>;
 }) {
   return (
     <Menu position="bottom-end" withinPortal>
@@ -44,7 +35,7 @@ export function QueueUtilityMenu({
         {includeNavigation && (
           <>
             <Menu.Label>Navigate</Menu.Label>
-            {MOBILE_DESTINATIONS.map((destination) => (
+            {CONSOLE_DESTINATIONS.map((destination) => (
               <Menu.Item
                 key={destination.key}
                 component={Link}

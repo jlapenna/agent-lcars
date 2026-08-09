@@ -1052,7 +1052,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
     grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr);
-    min-height: 80px;
+    /* Fixed, border-box Bridge-header geometry keeps the shared shell stable
+       across route copy, font metrics, and browser rendering differences. */
+    height: 80px;
+    box-sizing: border-box;
     margin-bottom: 0 !important;
     gap: 0;
     color: var(--mantine-color-text);
@@ -1070,10 +1073,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: flex;
     min-width: 0;
     align-items: center;
-    /* Match the title inset to the elbow cap. The extra inset used here
-       allowed "Session archive" to wrap, growing the compact header past
-       its 80px desktop budget. */
-    padding: 14px 20px 12px 3.5rem;
+    /* Keep the desktop Bridge header at its deliberate 80px rhythm. The
+       extra left clearance belongs to the elbow; it should not add height. */
+    padding: 12px 20px 10px 4.25rem;
     border-right: 1px solid var(--mantine-color-dark-4);
   }
 

@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 import { usePopulatedFixtures } from './seed';
+import {
+  expectDesktopBridgeHeader,
+  expectMobileBridgeHeader,
+} from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
@@ -14,7 +18,7 @@ test.describe('/costs workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="costs"]');
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
-    await expect(header).toBeVisible();
+    await expectDesktopBridgeHeader(header);
     await expect(workspace).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
@@ -28,7 +32,6 @@ test.describe('/costs workspace @smoke', () => {
       workspace.getByRole('region', { name: 'By week' }),
     ).toBeVisible();
 
-    expect((await header.boundingBox())?.height).toBeLessThanOrEqual(80);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -56,7 +59,7 @@ test.describe('/costs workspace @smoke', () => {
     await expect(workspace).toBeVisible();
     await expect(page.getByTestId('ledger-issue-row-compact')).toBeVisible();
     await expect(page.getByTestId('ledger-week-row-compact')).toBeVisible();
-    expect((await header.boundingBox())?.height).toBe(64);
+    await expectMobileBridgeHeader(header);
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
