@@ -8,22 +8,9 @@ import { DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
 import type { SessionArchiveQuery } from '@/lib/session-archive';
 
 import { repoScopedConsoleHrefs } from './console-hrefs';
+import { CONSOLE_DESTINATIONS, type NavKey } from './console-navigation';
 
-export type NavKey = 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs';
-type Accent = 'amber' | 'blue' | 'periwinkle' | 'teal' | 'gold';
-
-const NAV_ITEMS: Array<{
-  key: NavKey;
-  href: string;
-  label: string;
-  accent: Accent;
-}> = [
-  { key: 'deck', href: '/', label: 'Bridge', accent: 'amber' },
-  { key: 'inbox', href: '/inbox', label: 'Inbox', accent: 'blue' },
-  { key: 'agents', href: '/agents', label: 'Agents', accent: 'periwinkle' },
-  { key: 'sessions', href: '/sessions', label: 'Sessions', accent: 'teal' },
-  { key: 'costs', href: '/costs', label: 'Costs', accent: 'gold' },
-];
+export type { NavKey } from './console-navigation';
 
 export interface ConsoleHeaderProps {
   current: NavKey;
@@ -42,7 +29,7 @@ export interface ConsoleHeaderProps {
 }
 
 function navHref(
-  item: (typeof NAV_ITEMS)[number],
+  item: (typeof CONSOLE_DESTINATIONS)[number],
   archiveQuery: SessionArchiveQuery | undefined,
   repoFilter: string | undefined,
 ): string {
@@ -166,7 +153,7 @@ export function ConsoleNavRail({
 }) {
   return (
     <nav className="lcars-nav" aria-label="Console sections">
-      {NAV_ITEMS.map((item) => (
+      {CONSOLE_DESTINATIONS.map((item) => (
         <Anchor
           key={item.key}
           component={Link}

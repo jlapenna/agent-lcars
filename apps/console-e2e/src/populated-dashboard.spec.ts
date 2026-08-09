@@ -5,6 +5,7 @@ import {
   E2E_ITEM_NUMBERS,
   usePopulatedFixtures,
 } from './seed';
+import { expectMobileBridgeHeader } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 /**
@@ -481,7 +482,7 @@ test.describe('responsive decision inbox', () => {
     const header = page.locator('.console-header[data-current="inbox"]');
     await expect(header).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
-    expect((await header.boundingBox())?.height).toBe(64);
+    await expectMobileBridgeHeader(header);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 
@@ -517,7 +518,7 @@ test.describe('responsive decision inbox', () => {
     await expect(header).toBeVisible();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeHidden();
-    expect((await header.boundingBox())?.height).toBe(64);
+    await expectMobileBridgeHeader(header);
     await expect(
       page.getByRole('region', { name: 'Decision Inbox' }),
     ).toHaveCount(0);

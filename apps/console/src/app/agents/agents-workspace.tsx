@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { ConsoleWorkspace } from '../console-workspace';
+
 /**
  * Responsive composition for the agent-focused route. Data fetching and
  * classification stay in page.tsx; this component only establishes the
@@ -19,11 +21,11 @@ export function AgentsWorkspace({
   recentOutcomes: ReactNode;
 }) {
   return (
-    <section
-      className="console-workspace agents-workspace"
-      aria-label="Agent operations"
+    <ConsoleWorkspace
+      ariaLabel="Agent operations"
+      className="agents-workspace"
+      warnings={warnings}
     >
-      {warnings && <div className="agents-workspace__warnings">{warnings}</div>}
       {fleet}
       <div className="agents-workspace__operations">
         <div className="agents-workspace__primary">{active}</div>
@@ -32,6 +34,6 @@ export function AgentsWorkspace({
           {recentOutcomes}
         </div>
       </div>
-    </section>
+    </ConsoleWorkspace>
   );
 }
