@@ -1,6 +1,7 @@
-import { Container, Stack, Text, Title } from '@mantine/core';
+import { Stack, Text, Title } from '@mantine/core';
 
 import { ConsoleNavRail } from './console-header';
+import { ConsolePageShell } from './console-page-shell';
 
 /**
  * Styled 404 for the whole app - session detail and task pages call
@@ -10,7 +11,7 @@ import { ConsoleNavRail } from './console-header';
  */
 export default function NotFound() {
   return (
-    <Container size="xl" py="xl">
+    <ConsolePageShell>
       <Stack gap="xl">
         <ConsoleNavRail current="deck" />
         <Stack gap="xs" role="status">
@@ -22,6 +23,6 @@ export default function NotFound() {
           </Text>
         </Stack>
       </Stack>
-    </Container>
+    </ConsolePageShell>
   );
 }

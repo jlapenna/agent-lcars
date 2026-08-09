@@ -1,6 +1,6 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { isSessionRenderable, sessionAgent } from '@agent-lcars/telemetry';
-import { Code, Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Code, Group, Stack, Text, Title } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -12,6 +12,7 @@ import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleFooter } from '../../console-footer';
 import { ConsoleNavRail } from '../../console-header';
+import { ConsolePageShell } from '../../console-page-shell';
 import { formatRelativeTime } from '../../format';
 import { PageLoading } from '../../page-loading';
 import { QuickTaskButton } from '../../quick-task-button';
@@ -109,7 +110,7 @@ async function SessionDetailPageContent({ params }: PageProps) {
   const generatedAt = new Date().toISOString();
 
   return (
-    <Container size="xl" py="xl">
+    <ConsolePageShell>
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
         <ConsoleNavRail current="sessions" />
         <RefreshButton
@@ -179,7 +180,7 @@ async function SessionDetailPageContent({ params }: PageProps) {
           />
         }
       />
-    </Container>
+    </ConsolePageShell>
   );
 }
 
