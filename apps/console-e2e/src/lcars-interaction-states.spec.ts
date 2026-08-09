@@ -16,13 +16,14 @@ import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 // Scoped to the nav rail landmark (not just `page.getByRole('link', ...)`)
 // because Playwright's role-name matching is a case-insensitive substring
-// unless `exact: true` - an unscoped 'Deck'/'Inbox'/'Agents' link locator
+// unless `exact: true` - an unscoped 'Bridge'/'Inbox'/'Agents' link locator
 // strict-mode-breaks the moment any other UI's accessible name merely
 // contains one of those words (agent-lcars#539).
 const nav = (page: Page) =>
   page.getByRole('navigation', { name: 'Console sections' });
 
-const deckPill = (page: Page) => nav(page).getByRole('link', { name: 'Deck' });
+const deckPill = (page: Page) =>
+  nav(page).getByRole('link', { name: 'Bridge' });
 const inboxPill = (page: Page) =>
   nav(page).getByRole('link', { name: 'Inbox' });
 const agentsPill = (page: Page) =>
@@ -122,7 +123,7 @@ test.describe('LCARS pill nav interaction states', () => {
           };
         });
 
-    for (const name of ['Deck', 'Inbox', 'Agents', 'Sessions', 'Costs']) {
+    for (const name of ['Bridge', 'Inbox', 'Agents', 'Sessions', 'Costs']) {
       await nav(page).getByRole('link', { name }).focus();
       const ring = await ringOf(name);
       expect(ring.style).toBe('solid');

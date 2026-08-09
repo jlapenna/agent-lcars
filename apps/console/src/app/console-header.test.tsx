@@ -62,7 +62,7 @@ describe('ConsoleHeader nav rail', () => {
       screen.getByRole('navigation', { name: 'Console sections' }),
     ).toBeTruthy();
     for (const [name, href] of [
-      ['Deck', '/'],
+      ['Bridge', '/'],
       ['Inbox', '/inbox'],
       ['Agents', '/agents'],
       ['Sessions', '/sessions'],
@@ -105,7 +105,7 @@ describe('ConsoleHeader nav rail', () => {
       screen.getByRole('link', { name: 'Costs' }).getAttribute('href'),
     ).toBe('/costs?days=90&source=cli&issue=42');
     expect(
-      screen.getByRole('link', { name: 'Deck' }).getAttribute('href'),
+      screen.getByRole('link', { name: 'Bridge' }).getAttribute('href'),
     ).toBe('/');
   });
 
@@ -121,7 +121,7 @@ describe('ConsoleHeader nav rail', () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByRole('link', { name: 'Deck' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Bridge' })).toHaveAttribute(
       'href',
       '/?repo=example%2Fconsole',
     );
@@ -150,8 +150,8 @@ describe('ConsoleNavRail (standalone)', () => {
       'aria-current',
       'page',
     );
-    expect(within(nav).getByRole('link', { name: 'Deck' })).not.toHaveAttribute(
-      'aria-current',
-    );
+    expect(
+      within(nav).getByRole('link', { name: 'Bridge' }),
+    ).not.toHaveAttribute('aria-current');
   });
 });
