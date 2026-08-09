@@ -72,6 +72,15 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	if err != nil {
 		return err
 	}
+	statusPublisher, err := newConsoleStatusPublisher(ctx, logger)
+	if err != nil {
+		// Console observability is deliberately fail-soft: a bad/missing
+		// telemetry credential must never keep an otherwise healthy runner
+		// fleet from accepting GitHub work.
+		logger.Warn("Console status publication disabled; runner placement continues", slog.String("error", err.Error()))
+		statusPublisher = noopConsoleStatusPublisher{}
+	}
+	defer func() { _ = statusPublisher.Close() }()
 	checkpoints.setSnapshot(orchestratorSnapshot(runtimes, fleet))
 	pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
 
@@ -82,7 +91,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		return fmt.Errorf("starting metrics server: %w", err)
 	}
 
-	generation := startRuntimeGeneration(ctx, runtimes, logger)
+	generation := startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
 	drainSignals := make(chan os.Signal, 1)
 	reloadSignals := make(chan os.Signal, 1)
 	signal.Notify(drainSignals, syscall.SIGUSR1)
@@ -174,7 +183,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				logger.Error("Configuration reload could not build runtimes; restoring current configuration", slog.Any("error", buildErr))
 				closeDockerHostClients(nextPlacementHosts)
 				configureFleet(fleet, resolved)
-				generation = startRuntimeGeneration(ctx, runtimes, logger)
+				generation = startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
 				continue
 			}
 			closeUnusedDockerHostClients(managedHosts, nextManagedHosts)
@@ -194,7 +203,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
 				}
 			}
-			generation = startRuntimeGeneration(ctx, runtimes, logger)
+			generation = startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
 			logger.Info("Configuration reloaded without draining runners")
 		}
 	}
@@ -415,7 +424,7 @@ func validateReloadCompatibility(current, next resolvedOrchestratorConfig) error
 	return nil
 }
 
-func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime, logger *slog.Logger) runtimeGeneration {
+func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime, logger *slog.Logger, statusPublisher consoleStatusPublisher) runtimeGeneration {
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
 	orchestratorExpectedListeners.Store(int64(len(runtimes)))
@@ -423,6 +432,8 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	// sampler populates fleet load/cooldown state for every listener.
 	wg.Add(1)
 	go func() { defer wg.Done(); runtimes[0].scaler.RunHostSampler(ctx) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); runConsoleStatusPublisher(ctx, runtimes, statusPublisher) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); runFleetOrphanSweeper(ctx, runtimes) }()
 	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)

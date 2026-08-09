@@ -6,6 +6,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
 import { RECENT_RUN_LIMIT } from '../lib/agent-activity';
+import { getAutoscalerStatuses } from '../lib/autoscaler-status';
 import { getCliSessions, MAX_SESSIONS } from '../lib/cli-sessions';
 import {
   getCachedActionItems,
@@ -60,11 +61,13 @@ async function IndexBody({
     { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
+    autoscalerStatus,
   ] = await Promise.all([
     getCachedActionItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
+    getAutoscalerStatuses(),
   ]);
   // Deduped: parallel fetchers can degrade the same way (e.g. one rate-limit
   // hit per PR-join), and each unique problem only needs saying once.
@@ -161,6 +164,7 @@ async function IndexBody({
         sessionsByRunId={sessionsByRunId}
         recentRunsCapped={activity.recentRuns.length >= RECENT_RUN_LIMIT}
         cliSessionsCapped={cliSessions.length >= MAX_SESSIONS}
+        autoscalerStatus={autoscalerStatus}
       />
 
       <BridgeSections
