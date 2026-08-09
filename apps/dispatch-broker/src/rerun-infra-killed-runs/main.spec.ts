@@ -198,6 +198,85 @@ test('still counts the rerun when no pull request is associated with the run, bu
   );
 });
 
+test('still counts the rerun when the PR lookup itself fails, but does not report a recovery observation with a fabricated anchor', async () => {
+  const run = workflowRun({ id: 7 });
+  const api = fakeApi([
+    {
+      path: `${ROOT}/actions/workflows/ci.yml/runs`,
+      data: { workflow_runs: [run] },
+    },
+    { path: `${ROOT}/actions/runs/7/jobs`, data: { jobs: [infraKilledJob()] } },
+    {
+      path: `${ROOT}/actions/runs/7/rerun-failed-jobs`,
+      method: 'POST',
+      data: {},
+    },
+    {
+      path: `${ROOT}/commits/sha-7/pulls`,
+      error: new Error('secondary rate limit'),
+    },
+  ]);
+
+  const result = await scanAndRerun({ api, repository: REPO });
+
+  // The rerun itself succeeded and must still count -- only the anchor is
+  // unknown, not the rerun outcome. rerunRuns is empty: a lookup FAILURE
+  // must never be reported as anchor 0, which would permanently mis-scope
+  // the recovery observation for a run that can never be re-examined
+  // (isEligibleForRerun rejects it once run_attempt has advanced).
+  assert.deepEqual(result, { scanned: 1, rerun: 1, rerunRuns: [] });
+  assert.equal(
+    api.calls.some(
+      (call) => call.basePath.includes('/issues/') && call.method === 'POST',
+    ),
+    false,
+    'a failed PR lookup must never be followed by a comment call',
+  );
+});
+
+test('reports the correct anchor when the PR lookup succeeds but posting the audit-trail comment fails', async () => {
+  const run = workflowRun({ id: 8 });
+  const api = fakeApi([
+    {
+      path: `${ROOT}/actions/workflows/ci.yml/runs`,
+      data: { workflow_runs: [run] },
+    },
+    { path: `${ROOT}/actions/runs/8/jobs`, data: { jobs: [infraKilledJob()] } },
+    {
+      path: `${ROOT}/actions/runs/8/rerun-failed-jobs`,
+      method: 'POST',
+      data: {},
+    },
+    {
+      path: `${ROOT}/commits/sha-8/pulls`,
+      data: [{ number: 501, state: 'open' }],
+    },
+    {
+      path: `${ROOT}/issues/501/comments`,
+      method: 'POST',
+      error: new Error('comment API unavailable'),
+    },
+  ]);
+
+  const result = await scanAndRerun({ api, repository: REPO });
+
+  // A comment-posting failure is unrelated to whether the anchor is known
+  // -- the lookup itself succeeded, so the observation must still be
+  // reported with the real PR number, not skipped or zeroed.
+  assert.deepEqual(result, {
+    scanned: 1,
+    rerun: 1,
+    rerunRuns: [
+      {
+        runId: 8,
+        runAttempt: 1,
+        anchor: 501,
+        runUrl: `https://github.com/${REPO}/actions/runs/8`,
+      },
+    ],
+  });
+});
+
 test('a per-candidate rerun failure is reported but never blocks scanning the rest of the batch', async () => {
   const runA = workflowRun({ id: 5 });
   const runB = workflowRun({ id: 6 });

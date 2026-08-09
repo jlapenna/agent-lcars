@@ -231,15 +231,25 @@ async function processRun(
     `Reran infra-killed run ${run.id} (attempt ${run.run_attempt} -> ${run.run_attempt + 1}): ${run.html_url}`,
   );
 
-  let anchor = 0;
+  // Split from the comment-posting call below (Codex review on #877):
+  // a lookup FAILURE (the request itself threw) is not the same fact as a
+  // lookup that SUCCEEDED and found no PR -- the former means the anchor
+  // is genuinely unknown, not confirmed zero. Conflating them would record
+  // a recovery observation permanently mis-scoped to anchor 0: this run
+  // has already advanced to attempt run_attempt+1, so isEligibleForRerun
+  // (main.ts) will never select it again, and nothing would ever correct
+  // a wrongly-zeroed anchor. `anchor` stays `undefined` on a lookup
+  // failure so the caller (scanAndRerun) can skip reporting rather than
+  // report a fact it does not actually know.
+  let anchor: number | undefined;
   try {
     const pr = await findAssociatedPullRequest(api, root, run.head_sha);
+    anchor = pr?.number ?? 0;
     if (!pr) {
       console.log(
         `No pull request is associated with run ${run.id}'s commit ${run.head_sha}; skipping the audit-trail comment.`,
       );
     } else {
-      anchor = pr.number;
       const body = buildRerunCommentBody({
         runUrl: run.html_url,
         workflowName: run.name,
@@ -247,11 +257,17 @@ async function processRun(
           .filter((job) => job.conclusion === 'failure')
           .map((job) => job.name ?? ''),
       });
-      await commentOnPullRequest(api, root, pr.number, body);
+      try {
+        await commentOnPullRequest(api, root, pr.number, body);
+      } catch (error) {
+        console.log(
+          `::warning::rerun-infra-killed-runs: reran run ${run.id} but could not post the audit-trail comment: ${(error as Error).message}`,
+        );
+      }
     }
   } catch (error) {
     console.log(
-      `::warning::rerun-infra-killed-runs: reran run ${run.id} but could not post the audit-trail comment: ${(error as Error).message}`,
+      `::warning::rerun-infra-killed-runs: reran run ${run.id} but could not determine its associated PR (anchor unknown, recovery observation will not be reported): ${(error as Error).message}`,
     );
   }
 
@@ -306,19 +322,33 @@ async function scanAndRerun({
     RERUN_CONCURRENCY,
     (run) => processRun(api, root, run),
   );
+  // rerunCount reflects every actual rerun (the self-healing outcome that
+  // matters); rerunRuns is the NARROWER set this pass can also confidently
+  // report a recovery observation for. The two are deliberately allowed to
+  // diverge -- rerunCount must never shrink just because an anchor lookup
+  // failed for one of them, or this action's own scanned/rerun metrics
+  // would misreport how much self-healing actually happened.
+  let rerunCount = 0;
   const rerunRuns: RerunRecord[] = [];
   outcomes.forEach((outcome, index) => {
     if (outcome.status !== 'fulfilled' || !outcome.value.reran) return;
+    rerunCount += 1;
+    // outcome.value.anchor is undefined exactly when processRun's PR
+    // lookup failed (anchor genuinely unknown, not confirmed absent) --
+    // skip reporting rather than default to 0 and permanently mis-scope
+    // the recovery observation. See processRun's own comment for why this
+    // run can never be corrected on a later pass.
+    if (outcome.value.anchor === undefined) return;
     const run = eligible[index];
     rerunRuns.push({
       runId: run.id,
       runAttempt: run.run_attempt,
-      anchor: outcome.value.anchor ?? 0,
+      anchor: outcome.value.anchor,
       runUrl: run.html_url,
     });
   });
 
-  return { scanned: runs.length, rerun: rerunRuns.length, rerunRuns };
+  return { scanned: runs.length, rerun: rerunCount, rerunRuns };
 }
 
 async function run(): Promise<void> {
