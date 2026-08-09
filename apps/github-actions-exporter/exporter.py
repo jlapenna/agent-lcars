@@ -44,6 +44,8 @@ ACTIVE_STATUSES = ("queued", "in_progress", "waiting", "pending", "requested")
 QUEUED_STATUSES = ("queued", "waiting", "pending", "requested")
 MAX_JOB_LABELS_PER_WORKFLOW = 100
 OVERFLOW_JOB_LABEL = "__other__"
+MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW = 100
+OVERFLOW_CONCURRENCY_GROUP_LABEL = "__other__"
 PAGE_SIZE = 100
 RUN_SEARCH_LIMIT = 1000
 ONE_SECOND = timedelta(seconds=1)
@@ -432,17 +434,22 @@ class Database:
         self.connection.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         try:
-            rows = self._initialize_schema()
+            job_rows, concurrency_group_rows = self._initialize_schema()
         except BaseException:
             self.connection.close()
             raise
         self.job_labels: dict[tuple[str, str], set[str]] = {}
-        for row in rows:
+        for row in job_rows:
             self.job_labels.setdefault((row["repository"], row["workflow"]), set()).add(
                 row["name"]
             )
+        self.concurrency_group_labels: dict[tuple[str, str], set[str]] = {}
+        for row in concurrency_group_rows:
+            self.concurrency_group_labels.setdefault(
+                (row["repository"], row["workflow"]), set()
+            ).add(row["concurrency_group"])
 
-    def _initialize_schema(self) -> list[sqlite3.Row]:
+    def _initialize_schema(self) -> tuple[list[sqlite3.Row], list[sqlite3.Row]]:
         with self.lock, self.connection:
             self.connection.executescript(
                 """
@@ -503,14 +510,21 @@ class Database:
                 self.connection.execute(
                     "ALTER TABLE jobs ADD COLUMN concurrency_group TEXT NOT NULL DEFAULT 'none'"
                 )
-            rows = self.connection.execute(
+            job_rows = self.connection.execute(
                 """
                 SELECT DISTINCT repository, workflow, name FROM jobs
                 WHERE name != ?
                 """,
                 (OVERFLOW_JOB_LABEL,),
             ).fetchall()
-        return rows
+            concurrency_group_rows = self.connection.execute(
+                """
+                SELECT DISTINCT repository, workflow, concurrency_group FROM jobs
+                WHERE concurrency_group != ?
+                """,
+                (OVERFLOW_CONCURRENCY_GROUP_LABEL,),
+            ).fetchall()
+        return job_rows, concurrency_group_rows
 
     def close(self) -> None:
         with self.lock:
@@ -697,13 +711,13 @@ class Database:
         repository: str,
         run: dict[str, Any],
         jobs: Sequence[dict[str, Any]],
-        concurrency_groups: Sequence[dict[str, Any]] = (),
+        concurrency_groups: Sequence[dict[str, Any]] | None = None,
     ) -> None:
         run_id = int(run["id"])
         workflow = workflow_label(run)
         groups_by_job: dict[int, str] = {}
         run_groups: list[str] = []
-        for group in concurrency_groups:
+        for group in concurrency_groups or ():
             name = metric_label(group.get("group_name"), "none")
             members = group.get("group_members", [])
             if not isinstance(members, list):
@@ -716,11 +730,30 @@ class Database:
                 has_job_member = True
             if not has_job_member:
                 run_groups.append(name)
-        run_group = ",".join(sorted(set(run_groups))) or "none"
+        run_group = ",".join(sorted(set(run_groups)))
+        if not run_group:
+            # GitHub's own `.../actions/runs/{id}/concurrency_groups` listing
+            # is documented to intermittently -- and for some trigger types
+            # unconditionally -- report zero group membership for a run even
+            # when a job genuinely holds a concurrency group; see
+            # apps/dispatch-broker/src/github-api.ts:398-449 for sampled
+            # failure rates from 17% to 100% depending on trigger, never
+            # fully explained by ordinary listing lag. `concurrency_groups is
+            # None` means the caller never attempted the listing at all (a
+            # non-active run, whose jobs never surface in the "current"
+            # gauge anyway); an attempted-but-empty listing is
+            # indistinguishable from a failed one, so label it "unknown"
+            # rather than asserting an unconfirmed "none".
+            run_group = "none" if concurrency_groups is None else "unknown"
         with self.lock, self.connection:
             for job in jobs:
                 name = self.bounded_job_name(
                     repository, workflow, metric_label(job.get("name"))
+                )
+                concurrency_group = self.bounded_concurrency_group(
+                    repository,
+                    workflow,
+                    groups_by_job.get(int(job["id"]), run_group),
                 )
                 self.connection.execute(
                     """
@@ -753,7 +786,7 @@ class Database:
                         parse_timestamp(job.get("started_at")),
                         parse_timestamp(job.get("completed_at")),
                         metric_label(job.get("runner_group_name"), "unassigned"),
-                        groups_by_job.get(int(job["id"]), run_group),
+                        concurrency_group,
                     ),
                 )
             self.connection.execute(
@@ -777,6 +810,29 @@ class Database:
                 return name
             if len(labels) >= MAX_JOB_LABELS_PER_WORKFLOW:
                 return OVERFLOW_JOB_LABEL
+            labels.add(name)
+            return name
+
+    def bounded_concurrency_group(
+        self, repository: str, workflow: str, name: str
+    ) -> str:
+        """Cap dynamic concurrency-group label values while preserving familiar names.
+
+        Concurrency group names embed per-run data -- branch ref, PR number,
+        commit SHA (see .github/workflows/ci.yml:14-16 and
+        .github/workflows/agent-automerge.yml:82-83,139-140) -- so exporting
+        the raw name would create one retained time series per branch/PR/SHA.
+        Apply the same per-(repository, workflow) cardinality cap already
+        used above for dynamic job names.
+        """
+        with self.lock:
+            labels = self.concurrency_group_labels.setdefault(
+                (repository, workflow), set()
+            )
+            if name in labels:
+                return name
+            if len(labels) >= MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW:
+                return OVERFLOW_CONCURRENCY_GROUP_LABEL
             labels.add(name)
             return name
 
@@ -1108,10 +1164,14 @@ class Poller:
         self.database.upsert_run(repository, run)
         if needs_jobs:
             jobs = self.api.list_jobs(repository, int(run["id"]))
+            # None (vs. an attempted-but-possibly-empty list) tells
+            # upsert_jobs whether the concurrency-group listing was ever
+            # queried for this run -- see the "unknown" vs. "none" fallback
+            # comment there.
             groups = (
                 self.api.list_concurrency_groups(repository, int(run["id"]))
                 if run.get("status") in ACTIVE_STATUSES
-                else ()
+                else None
             )
             self.database.upsert_jobs(repository, run, jobs, groups)
 
