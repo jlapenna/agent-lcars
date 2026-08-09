@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { E2E_ISSUE_AGENT_SESSION_ID, usePopulatedFixtures } from './seed';
+import { expectDesktopCommandDeck } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
@@ -14,7 +15,7 @@ test.describe('/sessions workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="sessions"]');
     const workspace = page.getByRole('region', { name: 'Session archive' });
-    await expect(header).toBeVisible();
+    await expectDesktopCommandDeck(header);
     await expect(workspace).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
@@ -25,7 +26,6 @@ test.describe('/sessions workspace @smoke', () => {
     ).toBeVisible();
     await expect(workspace.getByRole('table')).toBeVisible();
 
-    expect((await header.boundingBox())?.height).toBeLessThanOrEqual(80);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

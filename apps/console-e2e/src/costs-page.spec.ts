@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { usePopulatedFixtures } from './seed';
+import { expectDesktopCommandDeck } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
@@ -14,7 +15,7 @@ test.describe('/costs workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="costs"]');
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
-    await expect(header).toBeVisible();
+    await expectDesktopCommandDeck(header);
     await expect(workspace).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
@@ -28,7 +29,6 @@ test.describe('/costs workspace @smoke', () => {
       workspace.getByRole('region', { name: 'By week' }),
     ).toBeVisible();
 
-    expect((await header.boundingBox())?.height).toBeLessThanOrEqual(80);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

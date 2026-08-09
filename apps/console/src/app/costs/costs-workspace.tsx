@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { ConsoleWorkspace } from '../console-workspace';
+
 /**
  * Route-level composition for the cost ledger. Data fetching, aggregation,
  * empty states, and estimate disclosure remain owned by the existing server
@@ -14,14 +16,12 @@ export function CostsWorkspace({
   children: ReactNode;
 }) {
   return (
-    <section
-      className="console-workspace costs-workspace"
-      aria-label="Cost ledger"
+    <ConsoleWorkspace
+      ariaLabel="Cost ledger"
+      className="costs-workspace"
+      warnings={warnings}
     >
-      {warnings ? (
-        <div className="costs-workspace__warnings">{warnings}</div>
-      ) : null}
       <div className="costs-workspace__content">{children}</div>
-    </section>
+    </ConsoleWorkspace>
   );
 }

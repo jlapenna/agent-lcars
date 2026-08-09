@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { ConsoleWorkspace } from '../console-workspace';
+
 /**
  * Responsive composition for the session archive. Query parsing, fetching,
  * grouping, and row rendering stay server-owned by page.tsx and its existing
@@ -16,15 +18,13 @@ export function SessionsWorkspace({
   children: ReactNode;
 }) {
   return (
-    <section
-      className="console-workspace sessions-workspace"
-      aria-label="Session archive"
+    <ConsoleWorkspace
+      ariaLabel="Session archive"
+      className="sessions-workspace"
+      warnings={warnings}
+      toolbar={toolbar}
     >
-      {warnings ? (
-        <div className="sessions-workspace__warnings">{warnings}</div>
-      ) : null}
-      <div className="sessions-workspace__toolbar">{toolbar}</div>
       <div className="sessions-workspace__content">{children}</div>
-    </section>
+    </ConsoleWorkspace>
   );
 }
