@@ -51,10 +51,14 @@ describe('formatOperationKey / parseOperationKey', () => {
     expect(parseOperationKey(key)).toEqual({
       domain: 'pr_healing',
       repositoryId: 42,
-      repository: '',
       anchor: 4321,
       exactIdentity: 'pr:4321:abc123',
     });
+  });
+
+  it('parses a target with no repository field at all, not a fabricated empty one', () => {
+    const parsed = parseOperationKey(formatOperationKey(targetFixture()));
+    expect(parsed).not.toHaveProperty('repository');
   });
 
   it('produces the identical key for two independent observations of the same fact', () => {
@@ -101,6 +105,37 @@ describe('formatOperationKey / parseOperationKey', () => {
     });
     const key = formatOperationKey(target);
     expect(parseOperationKey(key)?.exactIdentity).toBe('run:987654:2');
+  });
+
+  it('rejects a non-canonical leading-zero numeric component', () => {
+    expect(
+      parseOperationKey('recovery/v1:pr_healing:042:4321:pr:4321:abc123'),
+    ).toBeUndefined();
+    expect(
+      parseOperationKey('recovery/v1:pr_healing:42:04321:pr:4321:abc123'),
+    ).toBeUndefined();
+  });
+
+  it('rejects a numeric component outside Number.isSafeInteger range', () => {
+    // 2^53 + 2, a canonical decimal literal Number() silently rounds to
+    // 2^53 + 2 - 1 (9007199254740992), which would no longer name the same
+    // repository the stored key did.
+    expect(
+      parseOperationKey(
+        'recovery/v1:pr_healing:9007199254740993:4321:pr:4321:abc123',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('accepts zero as a canonical repositoryId or anchor', () => {
+    expect(
+      parseOperationKey('recovery/v1:pr_healing:0:0:pr:4321:abc123'),
+    ).toEqual({
+      domain: 'pr_healing',
+      repositoryId: 0,
+      anchor: 0,
+      exactIdentity: 'pr:4321:abc123',
+    });
   });
 
   it('returns undefined for a malformed or foreign key', () => {

@@ -133,6 +133,7 @@ export {
 export type { LaneReadinessFailure } from './readiness';
 export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';
 export type {
+  ParsedRecoveryOperationKey,
   RecoveryDomain,
   RecoveryObservation,
   RecoveryOperationTarget,

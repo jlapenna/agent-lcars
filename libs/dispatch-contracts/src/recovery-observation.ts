@@ -117,14 +117,16 @@ export function isRecoverySourceKind(
  *
  * This module does not enforce those per-domain shapes: the exact identity a
  * domain needs is that domain's own knowledge, not this shared package's.
- * What it enforces is that some non-empty, colon-free-at-the-boundary
- * identity is present at all, so `formatOperationKey`/`parseOperationKey`
- * round-trip losslessly.
+ * What it enforces is that some non-empty identity is present at all, in
+ * canonical form, so `formatOperationKey`/`parseOperationKey` round-trip
+ * losslessly for every field except `repository` — see
+ * `ParsedRecoveryOperationKey`.
  */
 export interface RecoveryOperationTarget {
   domain: RecoveryDomain;
   repositoryId: number;
-  /** `owner/name`. */
+  /** `owner/name`. Not itself part of the operation key string (only the
+   *  rename-proof `repositoryId` is) — see `ParsedRecoveryOperationKey`. */
   repository: string;
   /** The issue or PR number the recovery action is scoped to. */
   anchor: number;
@@ -164,29 +166,60 @@ export function formatOperationKey(target: RecoveryOperationTarget): string {
   ].join(':');
 }
 
-const OPERATION_KEY_RE = /^recovery\/v1:([a-z_]+):(\d+):(\d+):(.+)$/u;
+const OPERATION_KEY_RE =
+  /^recovery\/v1:([a-z_]+):(0|[1-9]\d*):(0|[1-9]\d*):(.+)$/u;
 
 /**
- * Recover the target an operation key names, re-validating the domain
- * against the closed vocabulary rather than trusting the string. A key read
- * back from durable storage did not necessarily come from
+ * Parse a canonical non-negative integer component of an operation key.
+ *
+ * The regex above already rejects a leading-zero string like `01`, but not
+ * one that is syntactically canonical yet outside `Number.isSafeInteger` —
+ * `9007199254740993` parses as a canonical decimal literal and `Number()`
+ * silently rounds it to `9007199254740992`, so the parsed value would no
+ * longer identify the same repository or anchor the stored key named. Both
+ * checks are required: canonical form catches leading zeros, safe-integer
+ * range catches silent rounding.
+ */
+function parseCanonicalNonNegativeInteger(digits: string): number | undefined {
+  const value = Number(digits);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+/**
+ * What `parseOperationKey` can recover from the key string alone: everything
+ * in `RecoveryOperationTarget` except `repository`. The key deliberately
+ * encodes only the rename-proof `repositoryId` (the same choice
+ * `LedgerTaskRef` makes) — the `owner/name` slug is never part of the string,
+ * so a parser has no source to recover it from. Returning `repository: ''`
+ * here would silently satisfy `RecoveryOperationTarget`'s type while handing
+ * every caller an empty slug that fails the moment it reaches a
+ * repository-scoped GitHub call; requiring callers to resolve or attach the
+ * slug themselves (e.g. from wherever the key was looked up) surfaces that
+ * as a compile error instead.
+ */
+export type ParsedRecoveryOperationKey = Omit<
+  RecoveryOperationTarget,
+  'repository'
+>;
+
+/**
+ * Recover the target an operation key names, re-validating the domain and
+ * both numeric components against canonical form rather than trusting the
+ * string. A key read back from durable storage did not necessarily come from
  * `formatOperationKey` — see `isWellFormedFailureClassification`'s header for
  * why parsed data is never trusted just because it parses.
  */
 export function parseOperationKey(
   value: string | undefined | null,
-): RecoveryOperationTarget | undefined {
+): ParsedRecoveryOperationKey | undefined {
   const match = value?.match(OPERATION_KEY_RE);
   if (!match) return undefined;
-  const [, domain, repositoryId, anchor, exactIdentity] = match;
+  const [, domain, repositoryIdText, anchorText, exactIdentity] = match;
   if (!isRecoveryDomain(domain)) return undefined;
-  return {
-    domain,
-    repositoryId: Number(repositoryId),
-    repository: '',
-    anchor: Number(anchor),
-    exactIdentity,
-  };
+  const repositoryId = parseCanonicalNonNegativeInteger(repositoryIdText);
+  const anchor = parseCanonicalNonNegativeInteger(anchorText);
+  if (repositoryId === undefined || anchor === undefined) return undefined;
+  return { domain, repositoryId, anchor, exactIdentity };
 }
 
 /**
