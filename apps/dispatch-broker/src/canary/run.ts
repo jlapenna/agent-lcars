@@ -1,9 +1,9 @@
 // Production dispatch-broker canary lifecycle (#307, final child of epic
-// #301). Reuses the SAME hardened GitHub API client and ledger parser the
-// broker itself uses (../github-api.ts) rather than a parallel
-// implementation: reuse one canonical, clearly-marked issue -> dispatch it
+// #301). Reuses the shared authoritative task-state read contract used by
+// the console rather than parsing the mutable GitHub compatibility comment:
+// reuse one canonical, clearly-marked issue -> dispatch it
 // through agent-router.yml's real `kind: 'canary'` broker path -> poll the
-// real ledger comment to a terminal state -> clean up (close on success,
+// Firestore-backed aggregate to a terminal state -> clean up (close on success,
 // park status:needs-human with evidence on failure, mirroring
 // github-api.ts's own failClosed/ensureNeedsHumanParked convention).
 //
@@ -19,6 +19,8 @@ import { pathToFileURL } from 'node:url';
 import {
   type DispatchLedger,
   formatAttemptId,
+  HOSTED_TASK_STATE_URL,
+  isAuthoritativeTaskState,
   type LedgerGeneration,
   type LedgerTaskRef,
 } from '@agent-lcars/dispatch-contracts';
@@ -38,6 +40,10 @@ import {
 // GitHubApiClient) because GitHubApi itself isn't exported from that
 // module; this stays exact without duplicating its shape.
 type GitHubApiClient = ReturnType<typeof createGitHubApi>;
+type CanaryGitHubApiClient = GitHubApiClient & {
+  /** Test seam only; production reads the hosted endpoint with global fetch. */
+  taskStateFetch?: typeof fetch;
+};
 
 // GitHub REST shapes this file reads. Minimal on purpose -- only the
 // fields actually used below (see github-api.ts's own GitHubIssueDetail
@@ -288,6 +294,8 @@ const LEDGER_WORKFLOW_IDENTITY = 'github-actions[bot]';
 interface FoundGeneration {
   ledger: DispatchLedger;
   generation: LedgerGeneration;
+  storageRevision?: number;
+  authoritativeUpdatedAt?: string;
 }
 
 /**
@@ -367,39 +375,61 @@ function isCanaryContractObservationPending({
   );
 }
 
-// Shared by the live poll below and sweepStaleCanaries' one-shot read: find
-// this issue's ledger comment (if any) and the 'canary'-pipeline generation
-// within it. Returns undefined when no ledger comment exists yet, or none
-// of its generations is the canary pipeline.
-//
-// Reuses ../github-api.ts's own loadLedger rather than re-deriving its
-// trust rule locally: exactly one marker-bearing comment is ever trusted
-// (more than one is treated as an anomaly and fails closed, never "pick
-// the first"), and that one comment must be authored by the same workflow
-// identity (REST-shaped `github-actions[bot]` login + `type: 'Bot'` -- see
-// docs/bot-identity-formats.md) every ledger write in this repo already
-// uses. loadLedger also paginates its comment listing (listAll), unlike a
-// raw, unpaginated `GET .../comments` call -- on a canary issue with more
-// than 30 comments (GitHub's default page size), an unpaginated read could
-// miss the real ledger comment entirely and silently defeat this trust
-// check. Do not weaken or duplicate that rule here.
+// Shared by the live poll below and sweepStaleCanaries' one-shot read. The
+// endpoint exposes the controller aggregate from Firestore with the private
+// attempt capability redacted. GitHub comments never participate in this
+// decision; loadLedger is retained only by ledgerCommentDiagnostic below.
 async function findCanaryGeneration(
-  api: GitHubApiClient,
   task: LedgerTaskRef,
   sourceId?: string,
+  fetchImpl: typeof fetch = fetch,
+  baseUrl = HOSTED_TASK_STATE_URL,
 ): Promise<FoundGeneration | undefined> {
-  const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
-    createIfMissing: false,
+  const [owner, repo] = task.repository.split('/');
+  if (!owner || !repo) throw new Error(`Invalid repository ${task.repository}`);
+  const url = new URL(
+    `${baseUrl}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${task.issue}`,
+  );
+  url.searchParams.set('repositoryId', String(task.repositoryId));
+  const response = await fetchImpl(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(15_000),
   });
-  if (!loaded) return undefined;
-  const generation = loaded.ledger.generations
+  if (response.status === 404) return undefined;
+  if (!response.ok) {
+    throw new Error(
+      `Authoritative task-state read failed with HTTP ${response.status}`,
+    );
+  }
+  const state: unknown = await response.json();
+  if (!isAuthoritativeTaskState(state)) {
+    throw new Error('Authoritative task-state response was malformed');
+  }
+  if (
+    state.task.repositoryId !== task.repositoryId ||
+    state.task.repository !== task.repository ||
+    state.task.issue !== task.issue
+  ) {
+    throw new Error(
+      'Authoritative task-state response did not match the requested task',
+    );
+  }
+  const generation = state.controllerState.generations
     .filter(
       (candidate) =>
         candidate.pipeline === 'canary' &&
         (sourceId === undefined || candidate.sourceId === sourceId),
     )
     .sort((left, right) => right.generation - left.generation)[0];
-  return generation ? { ledger: loaded.ledger, generation } : undefined;
+  return generation
+    ? {
+        ledger: state.controllerState,
+        generation,
+        storageRevision: state.storageRevision,
+        authoritativeUpdatedAt: state.updatedAt,
+      }
+    : undefined;
 }
 
 interface PollCanaryLedgerOptions {
@@ -408,6 +438,8 @@ interface PollCanaryLedgerOptions {
   now?: () => number;
   sourceId?: string;
   log?: (message: string) => void;
+  fetchImpl?: typeof fetch;
+  taskStateUrl?: string;
 }
 
 function describeCanaryObservation(found?: FoundGeneration): string {
@@ -425,6 +457,7 @@ function describeCanaryObservation(found?: FoundGeneration): string {
     projection
       ? `projection=${projection.state}:${projection.observedRevision}/${projection.desiredRevision}@r${ledger.revision}`
       : 'projection=missing',
+    `storage=r${found.storageRevision ?? 'unknown'}@${found.authoritativeUpdatedAt ?? 'unknown'}`,
   ].join(' ');
 }
 
@@ -433,7 +466,7 @@ function elapsedSeconds(startedAt: number, observedAt: number): number {
 }
 
 async function pollCanaryLedger(
-  api: GitHubApiClient,
+  api: CanaryGitHubApiClient,
   task: LedgerTaskRef,
   {
     timeoutMs = LEDGER_POLL_TIMEOUT_MS,
@@ -441,6 +474,8 @@ async function pollCanaryLedger(
     now = () => Date.now(),
     sourceId,
     log = console.log,
+    fetchImpl,
+    taskStateUrl,
   }: PollCanaryLedgerOptions = {},
 ): Promise<FoundGeneration & { rejected?: boolean }> {
   const startedAt = now();
@@ -448,7 +483,12 @@ async function pollCanaryLedger(
   let delay = LEDGER_POLL_BACKOFF_START_MS;
   let lastObservation: string | undefined;
   while (now() < deadline) {
-    const found = await findCanaryGeneration(api, task, sourceId);
+    const found = await findCanaryGeneration(
+      task,
+      sourceId,
+      fetchImpl ?? api.taskStateFetch,
+      taskStateUrl,
+    );
     const observation = describeCanaryObservation(found);
     if (observation !== lastObservation) {
       log(
@@ -464,7 +504,15 @@ async function pollCanaryLedger(
       // wrong rather than laundering it into a timeout.
       if (found.generation.attempt?.conclusion !== 'success') return found;
       if (!isCanaryContractObservationPending(found)) {
-        assertCanaryContracts(found);
+        try {
+          assertCanaryContracts(found);
+        } catch (error) {
+          throw new Error(
+            `${(error as Error).message} Authoritative observation: ` +
+              `${describeCanaryObservation(found)} source=${found.generation.sourceId}.`,
+            { cause: error },
+          );
+        }
         return found;
       }
     }
@@ -559,6 +607,24 @@ async function parkCanaryFailure(
   await ensureNeedsHumanParked(api, task, maintainer);
 }
 
+async function ledgerCommentDiagnostic(
+  api: GitHubApiClient,
+  task: LedgerTaskRef,
+): Promise<string> {
+  try {
+    const loaded = await loadLedger(api, task, LEDGER_WORKFLOW_IDENTITY, {
+      createIfMissing: false,
+    });
+    if (!loaded) return 'GitHub ledger diagnostic: comment absent.';
+    return (
+      `GitHub ledger diagnostic only: comment ${loaded.comment.id}, ` +
+      `revision ${loaded.ledger.revision}.`
+    );
+  } catch (error) {
+    return `GitHub ledger diagnostic unavailable: ${(error as Error).message}`;
+  }
+}
+
 function hasNeedsHumanLabel(issue: GitHubIssueSummary): boolean {
   return (issue.labels ?? []).some(
     (label) =>
@@ -610,7 +676,11 @@ async function sweepOneStaleCanary(
   maintainer: string,
   alreadyParked: boolean,
 ): Promise<SweepOutcome> {
-  const found = await findCanaryGeneration(api, task);
+  const found = await findCanaryGeneration(
+    task,
+    undefined,
+    (api as CanaryGitHubApiClient).taskStateFetch,
+  );
   const conclusion = found?.generation?.attempt?.conclusion;
   if (found?.generation.state === 'completed' && conclusion === 'success') {
     assertCanaryContracts(found);
@@ -794,7 +864,13 @@ async function runDispatchCanary({
     });
     return { issue: issue.number };
   } catch (error) {
-    await parkCanaryFailure(api, task, maintainer, (error as Error).message);
+    const diagnostic = await ledgerCommentDiagnostic(api, task);
+    await parkCanaryFailure(
+      api,
+      task,
+      maintainer,
+      `${(error as Error).message} ${diagnostic}`,
+    );
     throw error;
   }
 }

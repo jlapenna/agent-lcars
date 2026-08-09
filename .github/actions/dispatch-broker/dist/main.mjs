@@ -359,6 +359,8 @@ function parseRouterGroupMarker(displayTitle) {
 var COMPLETION_OIDC_AUDIENCE = "agent-lcars-dispatch-completion";
 var HOSTED_COMPLETION_PATH = "/api/control-plane/completion";
 var HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
+var HOSTED_TASK_STATE_PATH = "/api/control-plane/task-state";
+var HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED_TASK_STATE_PATH}`;
 var WEBHOOK_INGRESS_PROBE_PATH = "/api/control-plane/webhook/probe";
 var WEBHOOK_INGRESS_PROBE_URL = `https://agent-console.supersprinkles.racing${WEBHOOK_INGRESS_PROBE_PATH}`;
 
