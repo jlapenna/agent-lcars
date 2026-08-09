@@ -6,6 +6,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../auth';
 import { type ActionItem } from '../../lib/action-items';
 import { displayRunTitle, issueUrlForRun } from '../../lib/agent-activity';
+import { readAuthoritativeTaskStates } from '../../lib/authoritative-task-state';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
 import {
@@ -168,8 +169,23 @@ async function AgentsPageBody({
         : [{ repo: run.repo, issueNumber: run.issueNumber }],
     ),
   );
+  const authoritative = await readAuthoritativeTaskStates([
+    ...filteredItems.map((item) => ({
+      repository: item.repo,
+      issueNumber: item.number,
+    })),
+    ...filteredActivity.recentRuns.flatMap((run) =>
+      run.issueNumber === undefined
+        ? []
+        : [{ repository: run.repo, issueNumber: run.issueNumber }],
+    ),
+  ]);
   const warnings = Array.from(
-    new Set([...baseWarnings, ...recentTaskEnrichment.data.warnings]),
+    new Set([
+      ...baseWarnings,
+      ...recentTaskEnrichment.data.warnings,
+      ...authoritative.warnings,
+    ]),
   );
 
   // #306: logical-task/execution-attempt/runner-occupancy as three
@@ -184,11 +200,22 @@ async function AgentsPageBody({
     ...item,
     humanNeeded: item.actionTypes.includes('needs-human'),
   }));
-  const { ledgers, taskMeta } = ledgerAndTaskMetaFromItems(logicalWorkItems);
+  const { taskMeta } = ledgerAndTaskMetaFromItems(logicalWorkItems);
+  const ledgers = new Map(
+    [...authoritative.states].map(([key, state]) => [
+      key,
+      state.controllerState,
+    ]),
+  );
+  const authoritativeRevisions = new Map(
+    [...authoritative.states].map(([key, state]) => [
+      key,
+      state.storageRevision,
+    ]),
+  );
   const mergedDeliverables = new Map<string, ReadonlySet<number>>();
   for (const entry of recentTaskEnrichment.data.entries) {
     const key = repoItemKey(entry.repo, entry.issueNumber);
-    if (entry.ledger) ledgers.set(key, entry.ledger);
     mergedDeliverables.set(key, new Set(entry.mergedDeliverableNumbers));
   }
   // Closed anchors are absent from the open-item board. Seed their metadata
@@ -209,6 +236,8 @@ async function AgentsPageBody({
   const { work: logicalWork, unattributedAttempts } = deriveLogicalWork({
     attempts: [...filteredActivity.liveRuns, ...filteredActivity.recentRuns],
     ledgers,
+    authoritativeRevisions,
+    unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta,
     mergedDeliverables,
   });
