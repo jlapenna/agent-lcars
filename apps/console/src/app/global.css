@@ -1041,13 +1041,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding-top: 0 !important;
   }
 
-  .console-header:is(
-    [data-current='deck'],
-    [data-current='inbox'],
-    [data-current='agents'],
-    [data-current='sessions'],
-    [data-current='costs']
-  ) {
+  .console-header[data-current] {
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
@@ -1062,14 +1056,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     background: var(--mantine-color-dark-9);
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-header {
+  .console-header[data-current] .lcars-header {
     display: flex;
     min-width: 0;
     align-items: center;
@@ -1079,83 +1066,33 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border-right: 1px solid var(--mantine-color-dark-4);
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-header-title {
+  .console-header[data-current] .lcars-header-title {
     display: block !important;
     font-size: clamp(1.35rem, 2.2vw, 1.75rem);
     line-height: 1;
     color: var(--mantine-color-gray-0) !important;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-header
-    .mantine-Text-root,
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-header-bar {
+  .console-header[data-current] .lcars-header .mantine-Text-root,
+  .console-header[data-current] .lcars-header-bar {
     display: none;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-command-row {
+  .console-header[data-current] .lcars-command-row {
     min-width: 0;
     padding: 0 16px;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-nav {
+  .console-header[data-current] .lcars-nav {
     flex-wrap: nowrap;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-nav-pill {
+  .console-header[data-current] .lcars-nav-pill {
     padding: 7px 18px;
     font-size: 0.875rem;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-command-utilities {
+  .console-header[data-current] .lcars-command-utilities {
     border-color: var(--mantine-color-dark-4);
   }
 
@@ -1243,53 +1180,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (min-width: 48em) and (max-width: 63.99em) {
-  .console-header:is(
-    [data-current='deck'],
-    [data-current='inbox'],
-    [data-current='agents'],
-    [data-current='sessions'],
-    [data-current='costs']
-  ) {
+  .console-header[data-current] {
     grid-template-columns: minmax(11rem, 13rem) minmax(0, 1fr);
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-nav {
+  .console-header[data-current] .lcars-nav {
     gap: 4px;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-nav-pill {
+  .console-header[data-current] .lcars-nav-pill {
     padding: 7px 14px;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
+  .console-header[data-current]
     .lcars-nav-pill[data-accent='teal']:not([data-active]),
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='inbox'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
+  .console-header[data-current]
     .lcars-nav-pill[data-accent='gold']:not([data-active]) {
     display: none;
   }
@@ -1318,10 +1223,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding: 0 !important;
   }
 
-  /* Inbox used to drop the command rail entirely on phones. Keeping the
-     active destination visible makes every top-level screen navigable from
-     the same compact LCARS control strip. */
-  .console-header[data-current='inbox'] {
+  /* Every top-level screen keeps its active destination visible from the
+     same compact LCARS control strip. */
+  .console-header[data-current] {
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: block;
@@ -1332,26 +1236,26 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     background: var(--mantine-color-dark-9);
   }
 
-  .console-header[data-current='inbox'] .lcars-header {
+  .console-header[data-current] .lcars-header {
     display: none;
   }
 
-  .console-header[data-current='inbox'] .lcars-command-row {
+  .console-header[data-current] .lcars-command-row {
     height: 64px;
     gap: 4px;
     padding-right: 8px;
   }
 
-  .console-header[data-current='inbox'] .lcars-nav {
+  .console-header[data-current] .lcars-nav {
     align-self: stretch;
     flex: 0 0 auto;
   }
 
-  .console-header[data-current='inbox'] .lcars-nav-pill {
+  .console-header[data-current] .lcars-nav-pill {
     display: none;
   }
 
-  .console-header[data-current='inbox'] .lcars-nav-pill[data-active] {
+  .console-header[data-current] .lcars-nav-pill[data-active] {
     display: inline-flex;
     min-width: 8rem;
     height: 64px;
@@ -1359,6 +1263,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border: 0;
     border-radius: 0 0 24px;
     color: var(--mantine-color-white);
+  }
+
+  .console-header[data-current='inbox'] .lcars-nav-pill[data-active] {
     background: var(--mantine-color-blue-5);
   }
 
@@ -1366,81 +1273,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     /* QueueWorkspace owns the contextual mobile menu. Avoid rendering its
        duplicate in the global strip while preserving the shared route rail. */
     display: none;
-  }
-
-  .console-header:is(
-    [data-current='deck'],
-    [data-current='agents'],
-    [data-current='sessions'],
-    [data-current='costs']
-  ) {
-    --mantine-color-text: var(--mantine-color-gray-0);
-    --mantine-color-dimmed: var(--mantine-color-dark-2);
-    display: block;
-    height: 64px;
-    min-height: 64px;
-    margin: 0 !important;
-    color: var(--mantine-color-text);
-    background: var(--mantine-color-dark-9);
-  }
-
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-header {
-    display: none;
-  }
-
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-command-row {
-    height: 64px;
-    gap: 4px;
-    padding-right: 8px;
-  }
-
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-nav {
-    align-self: stretch;
-    flex: 0 0 auto;
-  }
-
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-nav-pill {
-    display: none;
-  }
-
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
-    .lcars-nav-pill[data-active] {
-    display: inline-flex;
-    min-width: 8rem;
-    height: 64px;
-    padding: 0 16px;
-    border: 0;
-    border-radius: 0 0 24px;
-    color: var(--mantine-color-white);
   }
 
   .console-header[data-current='agents'] .lcars-nav-pill[data-active] {
@@ -1462,43 +1294,23 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     background: var(--mantine-color-yellow-5);
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
+  .console-header[data-current]:not([data-current='inbox'])
     .lcars-command-utilities {
     margin-left: auto;
     padding-left: 0;
     border: 0;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
+  .console-header[data-current]:not([data-current='inbox'])
     .lcars-command-utilities
     .mantine-Button-root,
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
+  .console-header[data-current]:not([data-current='inbox'])
     .lcars-command-utilities
     .mantine-ActionIcon-root {
     min-height: 44px;
   }
 
-  .console-header:is(
-      [data-current='deck'],
-      [data-current='agents'],
-      [data-current='sessions'],
-      [data-current='costs']
-    )
+  .console-header[data-current]:not([data-current='inbox'])
     .lcars-command-utilities
     .mantine-Button-root {
     padding-inline: 10px;
@@ -1507,28 +1319,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .deck-utilities--desktop,
   .inbox-utilities--desktop,
-  .agents-utilities--desktop {
+  .agents-utilities--desktop,
+  .sessions-utilities--desktop,
+  .costs-utilities--desktop {
     display: none;
   }
 
   .deck-utilities--mobile,
   .inbox-utilities--mobile,
-  .agents-utilities--mobile {
-    display: block;
-  }
-
-  .sessions-utilities--desktop {
-    display: none;
-  }
-
-  .sessions-utilities--mobile {
-    display: block;
-  }
-
-  .costs-utilities--desktop {
-    display: none;
-  }
-
+  .agents-utilities--mobile,
+  .sessions-utilities--mobile,
   .costs-utilities--mobile {
     display: block;
   }
