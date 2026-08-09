@@ -160,13 +160,17 @@ func (a *Scaler) isTearingDown(name string) bool {
 
 // adoptRunner records a runner recovered from a previous control-plane
 // instance with a known idle/busy state, rather than inferring one.
-func (a *Scaler) adoptRunner(name, host, containerID string, startedAt time.Time, busy bool) {
+func (a *Scaler) adoptRunner(name, host, containerID string, startedAt time.Time, busy bool, jobID ...string) {
 	if !busy {
 		a.runners.addIdle(name, host, containerID, startedAt)
 		return
 	}
 	a.runners.mu.Lock()
-	a.runners.busy[name] = runnerRef{host: host, containerID: containerID, startedAt: startedAt}
+	ref := runnerRef{host: host, containerID: containerID, startedAt: startedAt}
+	if len(jobID) > 0 {
+		ref.jobID = jobID[0]
+	}
+	a.runners.busy[name] = ref
 	a.runners.mu.Unlock()
 }
 
@@ -194,7 +198,7 @@ func (a *Scaler) snapshotRunners() checkpointScaleSet {
 		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: false}
 	}
 	for name, ref := range a.runners.busy {
-		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: true}
+		runners[name] = checkpointRunner{Host: ref.host, ContainerID: ref.containerID, StartedAt: ref.startedAt, Busy: true, JobID: ref.jobID}
 	}
 	return checkpointScaleSet{Draining: a.draining.Load(), Runners: runners}
 }
@@ -1730,7 +1734,7 @@ func (a *Scaler) cleanupOrphansOnHost(ctx context.Context, h DockerHost, boot bo
 func (a *Scaler) adoptRunningContainer(ctx context.Context, h DockerHost, c container.Summary, cleanName string, recorded map[string]checkpointRunner) {
 	startedAt := time.Unix(c.Created, 0)
 	if entry, ok := recorded[cleanName]; ok {
-		a.adoptRunner(cleanName, h.Name, c.ID, startedAt, entry.Busy)
+		a.adoptRunner(cleanName, h.Name, c.ID, startedAt, entry.Busy, entry.JobID)
 		a.logger.Info("Adopted runner from checkpoint",
 			slog.String("host", h.Name), slog.String("name", cleanName),
 			slog.String("containerID", c.ID), slog.Bool("busy", entry.Busy))

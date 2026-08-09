@@ -10,6 +10,26 @@ import type {
 import { Eyebrow } from './eyebrow';
 
 const POLL_INTERVAL_MS = 10_000;
+const STALENESS_MS = 30_000;
+
+/** Removes a last-known snapshot once its producer's timestamp crosses the
+ * same staleness boundary used by the server. This matters when a browser
+ * loses auth/network access and polling can no longer obtain the server's
+ * own stale-document filtering. */
+export function expireAutoscalerStatuses(
+  result: AutoscalerStatusResult,
+  now = Date.now(),
+): AutoscalerStatusResult {
+  const statuses = result.statuses.filter((status) => {
+    const updatedAt = Date.parse(status.updatedAt);
+    return Number.isFinite(updatedAt) && now - updatedAt <= STALENESS_MS;
+  });
+  if (statuses.length === result.statuses.length) return result;
+  return {
+    statuses,
+    warnings: ['Runner autoscaler status is stale.'],
+  };
+}
 
 function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
   const busy = status.runners.filter((runner) => runner.state === 'busy');
@@ -56,6 +76,9 @@ export function RunnerAutoscalerStatus({
 
   useEffect(() => {
     let active = true;
+    const expire = () => {
+      if (active) setResult((previous) => expireAutoscalerStatuses(previous));
+    };
     const refresh = async () => {
       try {
         const response = await fetch('/api/runner-status', {
@@ -65,10 +88,14 @@ export function RunnerAutoscalerStatus({
         const next = (await response.json()) as AutoscalerStatusResult;
         if (active) setResult(next);
       } catch {
-        // Keep the last known snapshot; the next poll can recover.
+        // The interval still expires an old snapshot locally; polling can
+        // recover on its next successful response.
       }
     };
-    const timer = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => {
+      expire();
+      void refresh();
+    }, POLL_INTERVAL_MS);
     return () => {
       active = false;
       window.clearInterval(timer);
