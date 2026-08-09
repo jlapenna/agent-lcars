@@ -25,6 +25,7 @@
 import type {
   DispatchLedger,
   LedgerTaskRef,
+  ProjectionStatus,
 } from '@agent-lcars/dispatch-contracts';
 import {
   LEDGER_ACTIVE_GENERATION_STATES,
@@ -153,4 +154,20 @@ export function mutate(
   ledger.updatedAt = now;
   validateLedger(ledger, ledger.task);
   return ledger;
+}
+
+/**
+ * The projector's deliberately narrow ledger capability. Unlike `mutate`,
+ * this API accepts data for `ledger.projection` only: callers cannot supply a
+ * callback or name any controller-owned field. Revision stamping and ledger
+ * validation remain centralized in the generic primitive.
+ */
+export function updateProjection(
+  ledger: DispatchLedger,
+  now: string,
+  projection: ProjectionStatus,
+): DispatchLedger {
+  return mutate(ledger, now, () => {
+    ledger.projection = projection;
+  });
 }

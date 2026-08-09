@@ -10,29 +10,20 @@
  *   - must not use assignees or labels as control-plane authority;
  *   - must not map every infrastructure failure to needs-human.
  *
- * Structural protection, not convention (the exit criterion is "reporting
+ * Enforced projection-only capability (the exit criterion is "reporting
  * failure cannot alter outcome truth"): this file imports nothing from
  * `../broker.js` — none of `beginDispatch`/`bindRun`/`completeRun`/
  * `markDispatchRejected`/`markDispatchUnknown`/`observeCompletion`/
  * `acceptIntent`/`applyAnchorControl`, the only functions in this codebase
  * that can write `DispatchLedger.generations`, `.sources`, or `.control`,
  * are reachable from here at all. The one ledger-mutating export below,
- * `recordProjectionStatus`, imports only `mutate` from `./ledger-core.js`
- * (the same primitive scheduler.ts/intent.ts build on) and assigns to
- * exactly one field, `ledger.projection`. There is therefore no code path
- * through this module — success, failure, or partial completion — that
- * reaches `generations`/`sources`/`control` today.
- *
- * Be precise about how strong that is. The import list rules out every
- * *transition*, which is the part a reviewer can check at a glance. It
- * does not make the field write impossible: `mutate` is a generic
- * primitive, so someone could assign to `generations` inside the callback
- * above without adding an import. That would be a visible, deliberate edit
- * to this file rather than an accident of call depth, which is the
- * property worth having — but calling it "cannot" would overclaim. A
- * reviewer confirms the transitions from the import list, and this one
- * callback by reading it, without tracing
- * control flow.
+ * `recordProjectionStatus`, receives only `updateProjection` from
+ * `./ledger-core.js`. That capability accepts a `ProjectionStatus` value,
+ * not a mutation callback, and its implementation assigns only
+ * `ledger.projection`. Projector code therefore cannot express a write to
+ * `generations`, `sources`, or `control` without deliberately crossing the
+ * module boundary and importing a different capability. The compile-time
+ * contract in `projector-capability.contract.ts` pins that narrow parameter.
  *
  * Failure recording is deliberately NOT reimplemented here. main.ts's
  * `runPhase` already does exactly this job (classify via `classifyFailure`,
@@ -58,7 +49,7 @@ import {
   removeIssueLabel,
   repositoryPath,
 } from '../github-api';
-import { mutate } from './ledger-core';
+import { updateProjection } from './ledger-core';
 
 /** The projector's own GitHub client shape — derived from
  *  `createGitHubApi`'s real return type rather than a third hand-copied
@@ -189,7 +180,7 @@ export { removeIssueLabel };
 
 /**
  * Record a convergence checkpoint. `desiredRevision` is the ledger revision
- * this attempt targeted — read BEFORE `mutate` bumps it for this write
+ * this attempt targeted — read BEFORE `updateProjection` bumps it for this write
  * itself, so it names the state the projector was actually converging
  * toward, not the write this call is about to make. `observedRevision`
  * moves to match it on success (`converged: true`); on failure it holds at
@@ -210,16 +201,14 @@ export function recordProjectionStatus(
   const observedRevision = converged
     ? desiredRevision
     : (ledger.projection?.observedRevision ?? 0);
-  return mutate(ledger, now, () => {
-    ledger.projection = {
-      desiredRevision,
-      observedRevision,
-      state: converged
-        ? 'converged'
-        : observedRevision > 0
-          ? 'diverged'
-          : 'pending',
-      observedAt: now,
-    };
+  return updateProjection(ledger, now, {
+    desiredRevision,
+    observedRevision,
+    state: converged
+      ? 'converged'
+      : observedRevision > 0
+        ? 'diverged'
+        : 'pending',
+    observedAt: now,
   });
 }

@@ -587,11 +587,12 @@ paths plus one read path, not one system:**
 - **`apps/dispatch-broker/src/modules/projector.ts`** — the controller's own
   in-process projector module: `projectComment`, `projectNeedsHumanPark`,
   and `recordProjectionStatus` (which writes exactly one ledger field,
-  `ledger.projection`). Its own header is explicit about the structural
-  guarantee it does and doesn't have: it imports nothing from `broker.ts`
-  that can mutate `generations`/`sources`/`control`, so no code path through
-  it today reaches those fields — but that's a property a reviewer can
-  verify by reading the import list, not an enforced impossibility.
+  `ledger.projection`). It cannot import or call generic ledger mutation:
+  its only ledger capability accepts exactly a `ProjectionStatus` payload
+  and assigns that payload to `ledger.projection`. A production typecheck
+  contract rejects widening that payload, so writes to `generations`,
+  `sources`, or `control` require crossing an explicit module boundary
+  rather than fitting through the projector API.
 - **`.github/actions/report-failure/report-failure.sh`** — invoked from
   inside the worker job itself (via `post-agent-gates.sh`), on the
   self-hosted runner, using the job's own token. Posts the failure comment,
