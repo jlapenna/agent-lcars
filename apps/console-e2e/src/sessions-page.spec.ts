@@ -74,7 +74,7 @@ test.describe('/sessions workspace @smoke', () => {
     await expect(header).toHaveCount(1);
     await expect(header).toBeVisible();
     await expect(header.getByRole('link', { name: 'Sessions' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(page.getByTestId('session-cards')).toBeVisible();
     await expect(sessionRow).toBeVisible();
     expect((await header.boundingBox())?.height).toBe(64);
@@ -82,7 +82,7 @@ test.describe('/sessions workspace @smoke', () => {
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
-    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Bridge' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Agents' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Costs' })).toHaveAttribute(
@@ -134,7 +134,7 @@ test.describe('/sessions workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="sessions"]');
     await expect(header.getByRole('link', { name: 'Sessions' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(

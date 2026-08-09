@@ -1,4 +1,4 @@
-import { Anchor, Container, Group } from '@mantine/core';
+import { Anchor, Group } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -34,6 +34,7 @@ import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from '../console-header';
 import { repoScopedConsoleHrefs } from '../console-hrefs';
+import { ConsolePageShell } from '../console-page-shell';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
@@ -330,7 +331,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <Container size="xl" py="xl" className="agents-page-shell">
+    <ConsolePageShell className="agents-page-shell">
       <ConsoleHeader
         current="agents"
         title="Agent Status"
@@ -370,7 +371,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
       <Suspense fallback={<PageLoading rows={5} header={false} />}>
         <AgentsPageBody repoFilter={repoFilter} />
       </Suspense>
-    </Container>
+    </ConsolePageShell>
   );
 }
 

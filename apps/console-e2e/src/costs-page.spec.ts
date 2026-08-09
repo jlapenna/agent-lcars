@@ -52,7 +52,7 @@ test.describe('/costs workspace @smoke', () => {
     const header = page.locator('.console-header[data-current="costs"]');
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
     await expect(header.getByRole('link', { name: 'Costs' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeHidden();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(workspace).toBeVisible();
     await expect(page.getByTestId('ledger-issue-row-compact')).toBeVisible();
     await expect(page.getByTestId('ledger-week-row-compact')).toBeVisible();
@@ -60,7 +60,7 @@ test.describe('/costs workspace @smoke', () => {
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
-    await expect(menu.getByRole('menuitem', { name: 'Deck' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Bridge' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await expect(
       menu.getByRole('menuitem', { name: 'Sessions' }),
@@ -113,7 +113,7 @@ test.describe('/costs workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="costs"]');
     await expect(header.getByRole('link', { name: 'Costs' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Deck' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(

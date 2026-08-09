@@ -1,4 +1,4 @@
-import { Container, Group, Text } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -9,6 +9,7 @@ import { getWatchedRepos } from '../../../../../lib/github-client';
 import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleFooter } from '../../../../console-footer';
 import { ConsoleNavRail } from '../../../../console-header';
+import { ConsolePageShell } from '../../../../console-page-shell';
 import { formatRelativeTime } from '../../../../format';
 import { ItemOverflowMenu } from '../../../../item-overflow-menu';
 import { PageLoading } from '../../../../page-loading';
@@ -53,7 +54,7 @@ async function TaskDetailPageContent({ params }: PageProps) {
     detail.status === 'ok' ? detail.generatedAt : new Date().toISOString();
 
   return (
-    <Container size="xl" py="xl">
+    <ConsolePageShell>
       <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
         <ConsoleNavRail current="deck" />
         <Group gap="xs" wrap="nowrap">
@@ -101,7 +102,7 @@ async function TaskDetailPageContent({ params }: PageProps) {
           />
         }
       />
-    </Container>
+    </ConsolePageShell>
   );
 }
 

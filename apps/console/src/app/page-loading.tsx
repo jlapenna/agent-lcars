@@ -1,6 +1,7 @@
 import { Container, Skeleton, Stack } from '@mantine/core';
 
 import { ConsoleHeader, type NavKey } from './console-header';
+import { ConsolePageShell } from './console-page-shell';
 
 /**
  * Streaming fallback for the console's pages.
@@ -83,7 +84,7 @@ export function NavPageLoading({
   rows?: number;
 }) {
   return (
-    <Container size="xl" py="xl" className={className}>
+    <ConsolePageShell className={className}>
       <ConsoleHeader
         current={current}
         title={title}
@@ -91,6 +92,6 @@ export function NavPageLoading({
         streamingFallback
       />
       <PageLoading rows={rows} header={false} />
-    </Container>
+    </ConsolePageShell>
   );
 }

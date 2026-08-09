@@ -14,7 +14,10 @@ export function CostsWorkspace({
   children: ReactNode;
 }) {
   return (
-    <section className="costs-workspace" aria-label="Cost ledger">
+    <section
+      className="console-workspace costs-workspace"
+      aria-label="Cost ledger"
+    >
       {warnings ? (
         <div className="costs-workspace__warnings">{warnings}</div>
       ) : null}

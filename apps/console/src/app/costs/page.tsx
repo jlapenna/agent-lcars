@@ -1,4 +1,4 @@
-import { Container, Group, Text } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -14,6 +14,7 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { ConsoleHeader, DataWarnings } from '../console-header';
+import { ConsolePageShell } from '../console-page-shell';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueUtilityMenu } from '../queue-utility-menu';
 import { QuickTaskButton } from '../quick-task-button';
@@ -137,7 +138,7 @@ async function CostsPageShell({ searchParams }: PageProps) {
   };
 
   return (
-    <Container size="xl" py="xl" className="costs-page-shell">
+    <ConsolePageShell className="costs-page-shell">
       <ConsoleHeader
         current="costs"
         archiveQuery={query}
@@ -169,7 +170,7 @@ async function CostsPageShell({ searchParams }: PageProps) {
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <CostsBody query={query} />
       </Suspense>
-    </Container>
+    </ConsolePageShell>
   );
 }
 

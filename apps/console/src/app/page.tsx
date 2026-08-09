@@ -1,4 +1,4 @@
-import { Anchor, Box, Container } from '@mantine/core';
+import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -29,6 +29,7 @@ import { type BoardCard, BridgeSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { ConsoleHeader, DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
+import { ConsolePageShell } from './console-page-shell';
 import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
@@ -201,7 +202,7 @@ async function IndexShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <Container size="xl" py="xl" className="deck-page-shell">
+    <ConsolePageShell className="deck-page-shell">
       <ConsoleHeader
         current="deck"
         title="Bridge"
@@ -241,7 +242,7 @@ async function IndexShell({ searchParams }: PageProps) {
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <IndexBody repoFilter={repoFilter} />
       </Suspense>
-    </Container>
+    </ConsolePageShell>
   );
 }
 

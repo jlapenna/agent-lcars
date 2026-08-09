@@ -1,4 +1,4 @@
-import { Anchor, Box, Container } from '@mantine/core';
+import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -22,6 +22,7 @@ import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { ConsoleHeader, DataWarnings } from '../console-header';
+import { ConsolePageShell } from '../console-page-shell';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
@@ -104,7 +105,7 @@ async function InboxPageShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <Container size="xl" py="xl" className="inbox-page-shell">
+    <ConsolePageShell className="inbox-page-shell">
       <ConsoleHeader
         current="inbox"
         title="Decision Inbox"
@@ -147,7 +148,7 @@ async function InboxPageShell({ searchParams }: PageProps) {
           selectedItemKey={params.item || undefined}
         />
       </Suspense>
-    </Container>
+    </ConsolePageShell>
   );
 }
 
