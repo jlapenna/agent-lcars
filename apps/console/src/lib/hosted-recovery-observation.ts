@@ -5,11 +5,24 @@ import {
   type RecoveryObservation,
 } from '@agent-lcars/dispatch-contracts';
 import { FirestoreRecoveryOperationPort } from '@agent-lcars/dispatch-controller/storage/recovery-firestore-port';
-import type { RecordedRecoveryOperation } from '@agent-lcars/dispatch-controller/storage/recovery-port';
+import type {
+  RecordedRecoveryOperation,
+  RecoveryOperationPort,
+} from '@agent-lcars/dispatch-controller/storage/recovery-port';
+import { RecoveryOperationAlreadyResolvedError } from '@agent-lcars/dispatch-controller/storage/recovery-port';
 import { required } from '@agent-lcars/util-server';
+import type { Octokit } from '@octokit/rest';
 
 import { controlPlaneRepository } from './deployment';
 import type { RecoveryObservationOidcIdentity } from './github-actions-oidc';
+import { getGithubClient } from './github-client';
+import type { VerificationOutcome } from './recovery-observation-verification';
+import { verifierForDomain } from './recovery-observation-verification';
+
+type RecoveryObservationVerifier = (
+  observation: RecoveryObservation,
+  octokit: Octokit,
+) => Promise<VerificationOutcome>;
 
 export class HostedRecoveryObservationInputError extends Error {}
 
@@ -26,24 +39,47 @@ function defaultPortFactory(): FirestoreRecoveryOperationPort {
 }
 
 /**
- * Record one recovery observation under App Hosting. This is migration plan
- * step 2's ingestion half from
- * [#864](https://github.com/jlapenna/agent-lcars/issues/864)/
- * [#869](https://github.com/jlapenna/agent-lcars/issues/869): validate,
- * confirm the caller's OIDC identity matches the observation's own claimed
- * repository, and record it durably under its idempotency key. It does not
- * decide what "acted on" means for any recovery domain, does not call
- * GitHub, and does not itself run shadow-mode comparison -- see #869's own
- * scope note for what is deliberately not here yet.
+ * Record one recovery observation under App Hosting, then shadow-verify it
+ * when a verifier exists for its domain (#869's last acceptance criterion:
+ * "shadow-mode comparison records a mismatch without ever producing a live
+ * side effect of its own" -- see ./recovery-observation-verification.ts for
+ * what "verify" means and why only `ci_retry` has one today).
+ *
+ * Verification runs whenever the recorded operation is still `pending` --
+ * including on a REPLAYED observation for a key that was recorded earlier
+ * but never resolved (a prior verification attempt that hit a transient
+ * GitHub failure, say). That is not a special case this function adds: it
+ * falls out directly of `recordObservation`'s own idempotence, the same way
+ * #864 asks "webhook replay, scheduled reconciliation, API polling... may
+ * all observe the same fact" to naturally retry whatever remains
+ * unresolved, without this function needing its own retry policy.
+ *
+ * A verification failure (network error inside the verifier, a resolve
+ * conflict from a concurrent duplicate) never fails this function or the
+ * observation's own recording -- recording is the primary contract; a
+ * verification result is best-effort on top of it, matching #645's "a
+ * projection failure must never change outcome truth."
  */
 export async function recordHostedRecoveryObservation({
   identity,
   body,
   portFactory = defaultPortFactory,
+  // A factory, like portFactory, not a default-valued parameter: a default
+  // VALUE (`octokit = getGithubClient()`) is evaluated at call time as part
+  // of argument binding, before this function's own body -- including
+  // every validation check above -- ever runs. That made every validation
+  // failure in this function throw getGithubClient()'s
+  // "AGENT_LCARS_GITHUB_TOKEN not defined" instead of
+  // HostedRecoveryObservationInputError whenever a caller (a test, in
+  // particular) omitted octokit, even though nothing in the invalid-input
+  // path ever needed a GitHub client at all. A factory is only invoked once
+  // shadow verification is actually about to run.
+  octokitFactory = getGithubClient,
 }: {
   identity: RecoveryObservationOidcIdentity;
   body: unknown;
   portFactory?: () => FirestoreRecoveryOperationPort;
+  octokitFactory?: () => Octokit;
 }): Promise<RecordedRecoveryOperation> {
   if (!isWellFormedRecoveryObservation(body)) {
     throw new HostedRecoveryObservationInputError(
@@ -81,5 +117,73 @@ export async function recordHostedRecoveryObservation({
   }
 
   const port = portFactory();
-  return port.recordObservation(observation);
+  const recorded = await port.recordObservation(observation);
+  if (recorded.status !== 'pending') {
+    // Already resolved by an earlier request for this exact operationKey --
+    // nothing left to verify.
+    return recorded;
+  }
+
+  const verify = verifierForDomain(observation.target.domain);
+  if (!verify) return recorded;
+
+  return shadowVerifyAndResolve({
+    port,
+    recorded,
+    verify,
+    octokit: octokitFactory(),
+  });
+}
+
+async function shadowVerifyAndResolve({
+  port,
+  recorded,
+  verify,
+  octokit,
+}: {
+  port: RecoveryOperationPort;
+  recorded: RecordedRecoveryOperation;
+  verify: RecoveryObservationVerifier;
+  octokit: Octokit;
+}): Promise<RecordedRecoveryOperation> {
+  let outcome: VerificationOutcome;
+  try {
+    outcome = await verify(recorded.observation, octokit);
+  } catch (error) {
+    console.warn(
+      `agent-lcars: shadow verification threw for ${recorded.operationKey}`,
+      error,
+    );
+    return recorded;
+  }
+  if (outcome.state === 'unavailable') {
+    // Says nothing about whether the claim is true -- leave pending for a
+    // later replay/retry to pick up, per this function's own doc.
+    console.warn(
+      `agent-lcars: shadow verification unavailable for ${recorded.operationKey}: ${outcome.detail}`,
+    );
+    return recorded;
+  }
+
+  const status = outcome.state === 'confirmed' ? 'executed' : 'failed';
+  try {
+    return await port.resolveRecoveryOperation(
+      recorded.operationKey,
+      status,
+      outcome.detail,
+    );
+  } catch (error) {
+    // A concurrent duplicate request may have already resolved this
+    // operation (to the same or a different resolution) between our record
+    // and our resolve. Either way this request's own observation was
+    // already durably recorded before we got here; losing a resolve race
+    // is not a reason to fail it.
+    if (!(error instanceof RecoveryOperationAlreadyResolvedError)) {
+      console.warn(
+        `agent-lcars: could not resolve ${recorded.operationKey} after shadow verification`,
+        error,
+      );
+    }
+    return recorded;
+  }
 }
