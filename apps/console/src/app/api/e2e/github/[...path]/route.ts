@@ -192,45 +192,6 @@ export async function POST(
   if (path[0] === 'graphql') {
     return NextResponse.json({ data: enrichmentGraphql() });
   }
-  if (
-    path[0] === 'repos' &&
-    path.length === 7 &&
-    path[3] === 'actions' &&
-    path[4] === 'workflows' &&
-    path[5] === 'agent-router.yml' &&
-    path[6] === 'dispatches'
-  ) {
-    const body = (await req.json()) as {
-      inputs?: Record<string, string>;
-      ref?: string;
-    };
-    const issueNumber = body.inputs?.['issue'] ?? '';
-    const isReconcile =
-      body.ref === 'main' &&
-      body.inputs?.['kind'] === 'reconcile' &&
-      /^\d+$/u.test(issueNumber);
-    if (isReconcile) {
-      return NextResponse.json({ workflow_run_id: 99000 });
-    }
-    const callerId = body.inputs?.['caller_id'] ?? '';
-    if (
-      body.ref !== 'main' ||
-      body.inputs?.['mode'] !== 'implement' ||
-      !['claude', 'codex', 'opencode'].includes(
-        body.inputs?.['pipeline'] ?? '',
-      ) ||
-      !/^\d+$/u.test(issueNumber) ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
-        callerId,
-      )
-    ) {
-      return NextResponse.json(
-        { message: 'Invalid router dispatch fixture request' },
-        { status: 422 },
-      );
-    }
-    return NextResponse.json({ workflow_run_id: 99001 });
-  }
   if (path[0] === 'repos' && path.length === 4 && path[3] === 'issues') {
     const body = (await req.json()) as {
       body?: string;
