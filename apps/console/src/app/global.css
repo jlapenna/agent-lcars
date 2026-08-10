@@ -719,6 +719,10 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   display: none;
 }
 
+.inbox-data-freshness {
+  min-height: 20px;
+}
+
 .lcars-command-row {
   display: flex;
   align-items: center;
@@ -771,6 +775,10 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 }
 
 .queue-mobile-bar {
+  display: none;
+}
+
+.queue-mobile-meta {
   display: none;
 }
 
@@ -1340,6 +1348,16 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     display: none;
   }
 
+  /* Inbox has its own contextual command deck below. Keep the shared route
+     rail while the page is loading, then suppress it only once the command
+     deck exists. This avoids an unlabelled loading state without reintroducing
+     competing headers for the actual workspace. */
+  body:has(.queue-workspace) .console-header[data-current='inbox'] {
+    display: none;
+    height: 0;
+    min-height: 0;
+  }
+
   .console-header[data-current='agents'] .lcars-nav-pill[data-active] {
     background: var(--mantine-color-violet-5);
   }
@@ -1645,8 +1663,8 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .queue-mobile-identity {
     align-self: stretch;
-    min-width: 5.75rem;
-    padding: 0 14px;
+    min-width: 7.25rem;
+    padding: 0 14px 0 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1656,6 +1674,13 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     color: var(--mantine-color-white);
     font-family: var(--font-display), sans-serif;
     letter-spacing: 0.05em;
+  }
+
+  .queue-mobile-title {
+    font-family: var(--font-display), sans-serif;
+    font-size: 0.8125rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .queue-mobile-utilities .mantine-Button-root,
@@ -1679,9 +1704,51 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     text-transform: uppercase;
   }
 
-  .queue-workspace__list,
+  .queue-mobile-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 20px;
+    padding: 2px 12px 0;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--mantine-color-dark-5);
+    background: var(--mantine-color-dark-9);
+  }
+
+  .queue-mobile-scope {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--mantine-color-dark-2);
+    font-family: var(--font-display), sans-serif;
+    font-size: 0.625rem;
+    letter-spacing: 0.05em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .queue-mobile-freshness {
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .queue-mobile-freshness [data-testid='mobile-data-freshness'] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .inbox-data-freshness {
+    display: none;
+  }
+
+  .queue-workspace__list {
+    height: calc(100dvh - 72px);
+    border: 0;
+  }
+
   .queue-workspace__detail {
-    height: calc(100dvh - 52px);
+    height: calc(100dvh - 72px);
     border: 0;
   }
 
@@ -1728,15 +1795,6 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     min-height: 44px;
   }
 
-  .console-page-content > [data-testid='data-freshness'] {
-    min-height: 20px;
-    padding: 2px 12px 0;
-    box-sizing: border-box;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .queue-workspace__rows {
     flex: 1;
   }
@@ -1763,6 +1821,15 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .queue-reason-badge {
     max-width: 8rem;
+  }
+
+  .queue-workspace__list-header::after {
+    right: 12px;
+    bottom: 3px;
+    left: 12px;
+    height: 2px;
+    border-radius: 0;
+    background: var(--mantine-color-blue-5);
   }
 
   .queue-workspace__detail {

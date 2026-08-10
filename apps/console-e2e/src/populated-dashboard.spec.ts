@@ -490,11 +490,10 @@ test.describe('responsive decision inbox', () => {
     const mobileTitle = page.locator(
       '.console-page-mobile-title[data-current="inbox"]',
     );
-    await expect(header).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
-    await expectMobileBridgeHeader(header);
-    // The active Inbox pill is the sole visual header. Keep the H1 for
-    // assistive technology, but never allocate a second title band below it.
+    // Inbox owns a single contextual command deck on phones. The shared route
+    // rail remains available inside its overflow menu instead of competing
+    // visually with the queue identity.
+    await expect(header).toBeHidden();
     await expect(mobileTitle).toHaveText('Decision Inbox');
     await expect(
       page.getByRole('heading', { name: 'Decision Inbox' }),
@@ -513,8 +512,18 @@ test.describe('responsive decision inbox', () => {
     ).toBe(true);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
+    await expect(
+      workspace.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`),
+    ).toBeVisible();
 
-    const freshness = page.getByTestId('data-freshness');
+    const queueIdentity = workspace.locator('.queue-mobile-identity');
+    await expect(queueIdentity).toHaveText(/Inbox/);
+    await expect(queueIdentity).toHaveAttribute(
+      'aria-label',
+      /\d+ open queue items/,
+    );
+
+    const freshness = page.getByTestId('mobile-data-freshness');
     await expect(freshness).toBeVisible();
     expect(
       await freshness.evaluate(
@@ -559,14 +568,8 @@ test.describe('responsive decision inbox', () => {
 
     await expect(workspace.locator('.queue-workspace__list')).toBeHidden();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
-    // Not named "Inbox" (#890): the sticky header's own active nav pill
-    // already reads "Inbox" in the same viewport, directly above this
-    // button - giving this its own accessible name (while the header pill
-    // keeps its) avoids a second identically-named "Inbox" landmark
-    // stacked right underneath it.
-    await expect(
-      header.getByRole('link', { name: 'Inbox', exact: true }),
-    ).toBeVisible();
+    await expect(header).toBeHidden();
+    await expect(freshness).toBeVisible();
     const backLink = workspace.getByRole('link', {
       name: 'Back to Inbox list',
       exact: true,
