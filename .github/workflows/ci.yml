@@ -228,11 +228,14 @@ jobs:
         id: java-runtime
         shell: bash
         run: |
-          java_major="$(
-            java -version 2>&1 |
-              sed -nE 's/.*version "([0-9]+).*/\1/p' |
-              head -n 1
-          )"
+          java_major=''
+          if command -v java >/dev/null 2>&1; then
+            java_major="$(
+              java -version 2>&1 |
+                sed -nE 's/.*version "([0-9]+).*/\1/p' |
+                head -n 1
+            )" || java_major=''
+          fi
           if [[ "$java_major" =~ ^[0-9]+$ ]] && (( java_major >= 21 )); then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
