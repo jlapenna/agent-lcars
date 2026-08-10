@@ -747,7 +747,7 @@ function attemptOf(generation) {
   }
   return attempt;
 }
-function canDispatchOnAnchor(ledger, generation) {
+function canDispatchOnAnchor(ledger) {
   return !ledger.control.closed;
 }
 function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ new Date()).toISOString()) {
@@ -755,7 +755,7 @@ function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ n
   if (!generation || !["accepted", "pending"].includes(generation.state)) {
     throw new Error("Generation is not dispatchable");
   }
-  if (!canDispatchOnAnchor(ledger, generation)) {
+  if (!canDispatchOnAnchor(ledger)) {
     throw new Error("Closed anchor cannot dispatch");
   }
   if (ledger.generations.some((candidate) => ACTIVE_STATES.has(candidate.state))) {
@@ -796,7 +796,7 @@ function markDispatchRejected(ledger, generationNumber, reason, now = (/* @__PUR
     attempt.rejectedAt = now;
     attempt.rejectionReason = reason;
     promoted = ledger.generations.find(
-      (candidate) => candidate.state === "pending" && canDispatchOnAnchor(ledger, candidate)
+      (candidate) => candidate.state === "pending" && canDispatchOnAnchor(ledger)
     );
     if (promoted) promoted.state = "accepted";
   });
@@ -881,7 +881,7 @@ function completeRun(ledger, generationNumber, observation, now = (/* @__PURE__ 
     attempt.conclusion = conclusion;
     attempt.completedAt = observation.completedAt ?? now;
     promoted = ledger.generations.find(
-      (candidate) => candidate.state === "pending" && canDispatchOnAnchor(ledger, candidate)
+      (candidate) => candidate.state === "pending" && canDispatchOnAnchor(ledger)
     );
     if (promoted) promoted.state = "accepted";
   });
