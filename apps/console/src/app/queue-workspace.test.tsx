@@ -126,6 +126,23 @@ describe('QueueWorkspace', () => {
     expect(screen.getByLabelText('Queue item count: 1')).toBeTruthy();
   });
 
+  // #890: the sticky mobile nav strip's active pill already reads "Inbox"
+  // in the same viewport as this component's own mobile detail back button.
+  // The list-view case above already guarded the exact text "Inbox" never
+  // duplicating the shared ConsoleHeader's title; the detail-view branch
+  // (only rendered once an item is selected) was the untested state where
+  // the "Inbox"-labeled back button actually shipped, stacking a second
+  // "Inbox" directly under the nav pill on a real phone.
+  it('never repeats "Inbox" in the mobile detail-view back affordance either', () => {
+    renderWorkspace([makeCard()], 'agent/lcars#249');
+
+    expect(screen.getByTestId('selected-detail')).toBeTruthy();
+    expect(screen.queryByText('Inbox', { exact: true })).toBeNull();
+    expect(
+      screen.getByRole('link', { name: 'Back to Inbox list' }),
+    ).toBeTruthy();
+  });
+
   it('selects the first visible item locally and emits URL-backed row links', () => {
     renderWorkspace([
       makeCard(),

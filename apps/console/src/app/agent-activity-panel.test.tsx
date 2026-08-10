@@ -31,58 +31,71 @@ vi.mock('./cancel-run-button', () => ({
 // import from it is type-only. The pure helpers are reimplemented here
 // rather than imported for real - agent-activity.test.ts is the source of
 // truth for their actual behavior; keep these in sync with it.
-vi.mock('../lib/agent-activity', () => ({
-  RECENT_RUN_LIMIT: 8,
-  RUN_TIMEOUT_MINUTES: 90,
-  MAX_TURNS_BUDGET: 200,
-  QUEUE_STALL_THRESHOLD_SECONDS: 300,
-  displayRunTitle: (run: AgentRun) =>
-    run.pipeline === 'opencode'
-      ? run.displayTitle.replace(/^opencode\s+/, '')
-      : run.displayTitle,
-  findStalledQueuedRun: (liveRuns: AgentRun[]) =>
-    liveRuns
-      .filter((run) => run.status === 'queued' && run.elapsedSeconds > 300)
-      .sort((a, b) => b.elapsedSeconds - a.elapsedSeconds)[0],
-  issueUrlForRun: (run: AgentRun) =>
-    run.issueNumber === undefined
-      ? undefined
-      : `https://github.com/supersprinklesracing/sprinkles/issues/${run.issueNumber}`,
-  groupLiveRunsByIssue: (liveRuns: AgentRun[]) => {
-    const groups = new Map<
-      string,
-      { key: string; issueNumber?: number; runs: AgentRun[] }
-    >();
-    for (const run of liveRuns) {
-      const key =
-        run.issueNumber === undefined
-          ? `run-${run.id}`
-          : `${run.repo.owner}/${run.repo.name}#${run.issueNumber}`;
-      const existing = groups.get(key);
-      if (existing) {
-        existing.runs.push(run);
-      } else {
-        groups.set(key, { key, issueNumber: run.issueNumber, runs: [run] });
+// QUEUE_STALL_THRESHOLD_SECONDS itself is pulled from the real module
+// (importActual is safe here - it never touches the browser guard, see the
+// note above) so findStalledQueuedRun's reimplemented threshold can't
+// silently drift from production (#863).
+vi.mock('../lib/agent-activity', async () => {
+  const { QUEUE_STALL_THRESHOLD_SECONDS } = await vi.importActual<
+    typeof import('../lib/agent-activity')
+  >('../lib/agent-activity');
+  return {
+    RECENT_RUN_LIMIT: 8,
+    RUN_TIMEOUT_MINUTES: 90,
+    MAX_TURNS_BUDGET: 200,
+    QUEUE_STALL_THRESHOLD_SECONDS,
+    displayRunTitle: (run: AgentRun) =>
+      run.pipeline === 'opencode'
+        ? run.displayTitle.replace(/^opencode\s+/, '')
+        : run.displayTitle,
+    findStalledQueuedRun: (liveRuns: AgentRun[]) =>
+      liveRuns
+        .filter(
+          (run) =>
+            run.status === 'queued' &&
+            run.elapsedSeconds > QUEUE_STALL_THRESHOLD_SECONDS,
+        )
+        .sort((a, b) => b.elapsedSeconds - a.elapsedSeconds)[0],
+    issueUrlForRun: (run: AgentRun) =>
+      run.issueNumber === undefined
+        ? undefined
+        : `https://github.com/supersprinklesracing/sprinkles/issues/${run.issueNumber}`,
+    groupLiveRunsByIssue: (liveRuns: AgentRun[]) => {
+      const groups = new Map<
+        string,
+        { key: string; issueNumber?: number; runs: AgentRun[] }
+      >();
+      for (const run of liveRuns) {
+        const key =
+          run.issueNumber === undefined
+            ? `run-${run.id}`
+            : `${run.repo.owner}/${run.repo.name}#${run.issueNumber}`;
+        const existing = groups.get(key);
+        if (existing) {
+          existing.runs.push(run);
+        } else {
+          groups.set(key, { key, issueNumber: run.issueNumber, runs: [run] });
+        }
       }
-    }
-    return Array.from(groups.values());
-  },
-  duplicateLivePipelineGroups: (runs: AgentRun[]) => {
-    const live = runs.filter(
-      (run) => run.status === 'queued' || run.status === 'running',
-    );
-    const byPipeline = new Map<string, AgentRun[]>();
-    for (const run of live) {
-      const group = byPipeline.get(run.pipeline);
-      if (group) group.push(run);
-      else byPipeline.set(run.pipeline, [run]);
-    }
-    for (const [pipeline, group] of byPipeline) {
-      if (group.length <= 1) byPipeline.delete(pipeline);
-    }
-    return byPipeline;
-  },
-}));
+      return Array.from(groups.values());
+    },
+    duplicateLivePipelineGroups: (runs: AgentRun[]) => {
+      const live = runs.filter(
+        (run) => run.status === 'queued' || run.status === 'running',
+      );
+      const byPipeline = new Map<string, AgentRun[]>();
+      for (const run of live) {
+        const group = byPipeline.get(run.pipeline);
+        if (group) group.push(run);
+        else byPipeline.set(run.pipeline, [run]);
+      }
+      for (const [pipeline, group] of byPipeline) {
+        if (group.length <= 1) byPipeline.delete(pipeline);
+      }
+      return byPipeline;
+    },
+  };
+});
 
 // react-markdown/remark-gfm (pulled in via artifact-viewer.tsx) are ESM-only
 // (unified ecosystem) - see artifact-viewer.test.tsx for the same stub.

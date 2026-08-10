@@ -13,23 +13,32 @@ export const config = {
   ],
 };
 
+// These control-plane routes do not use browser sessions. Reconcile,
+// completion, and recovery-observation verify GitHub Actions OIDC claims,
+// while webhook and the queued completion reconciler verify raw-body
+// HMACs. Task state is an explicitly public, read-only projection with
+// the private attempt capability redacted.
+// Exported (rather than kept inline in the createAuthProxy call below) so
+// proxy.test.ts can iterate the real list instead of maintaining its own
+// copy that can silently drift out of coverage as routes are added (#863).
+// A missing entry here is exactly what left /api/control-plane/
+// recovery-observation rejecting 100% of its callers since it shipped,
+// until #885 fixed it - a hand-copied test list can't catch an entry that
+// was never added to either list.
+export const publicRoutes = [
+  '/login',
+  '/api/logs/error',
+  '/api/control-plane/completion',
+  '/api/control-plane/completion/reconcile',
+  '/api/control-plane/reconcile',
+  '/api/control-plane/recovery-observation',
+  '/api/control-plane/webhook',
+  '/api/control-plane/webhook/process',
+  '/api/control-plane/webhook/probe',
+];
+
 export default createAuthProxy({
-  // These control-plane routes do not use browser sessions. Reconcile,
-  // completion, and recovery-observation verify GitHub Actions OIDC claims,
-  // while webhook and the queued completion reconciler verify raw-body
-  // HMACs. Task state is an explicitly public, read-only projection with
-  // the private attempt capability redacted.
-  publicRoutes: [
-    '/login',
-    '/api/logs/error',
-    '/api/control-plane/completion',
-    '/api/control-plane/completion/reconcile',
-    '/api/control-plane/reconcile',
-    '/api/control-plane/recovery-observation',
-    '/api/control-plane/webhook',
-    '/api/control-plane/webhook/process',
-    '/api/control-plane/webhook/probe',
-  ],
+  publicRoutes,
   // Both routes are guarded by isE2eTesting() themselves (403 outside e2e);
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page

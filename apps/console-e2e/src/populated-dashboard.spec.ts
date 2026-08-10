@@ -504,11 +504,21 @@ test.describe('responsive decision inbox', () => {
 
     await expect(workspace.locator('.queue-workspace__list')).toBeHidden();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    // Not named "Inbox" (#890): the sticky header's own active nav pill
+    // already reads "Inbox" in the same viewport, directly above this
+    // button - giving this its own accessible name (while the header pill
+    // keeps its) avoids a second identically-named "Inbox" landmark
+    // stacked right underneath it.
     await expect(
-      workspace.getByRole('link', { name: 'Inbox', exact: true }),
+      header.getByRole('link', { name: 'Inbox', exact: true }),
     ).toBeVisible();
+    const backLink = workspace.getByRole('link', {
+      name: 'Back to Inbox list',
+      exact: true,
+    });
+    await expect(backLink).toBeVisible();
 
-    await workspace.getByRole('link', { name: 'Inbox', exact: true }).click();
+    await backLink.click();
     await expect(page).not.toHaveURL(/\bitem=/);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
   });
