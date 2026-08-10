@@ -46,7 +46,7 @@ jobs:
       VARIANT_PATH: tools/trajectory-evaluation/variants/issue-523-reliability-v1.json
     steps:
       - name: Checkout trusted evaluator
-        uses: actions/checkout@3d3c42e40a1c87334d5b998a7f3e390129e83e3f # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up repository Node version
         uses: ./.github/actions/setup-node-pnpm
