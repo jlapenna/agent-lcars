@@ -1,17 +1,16 @@
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 
-import proxy from './proxy';
+import proxy, { publicRoutes } from './proxy';
 
 describe('console proxy public control-plane routes', () => {
-  it('lets non-browser control-plane callers reach their own authentication', () => {
-    for (const path of [
-      '/api/control-plane/completion',
-      '/api/control-plane/reconcile',
-      '/api/control-plane/recovery-observation',
-      '/api/control-plane/webhook',
-      '/api/control-plane/webhook/process',
-    ]) {
+  it('lets every route on the real public allowlist through unauthenticated', () => {
+    // Iterates the actual exported publicRoutes array (not a hand-copied
+    // subset) so a route added to production without a matching entry
+    // here would need to be missing from THAT array too to escape this
+    // test - the failure mode that left recovery-observation 401ing 100%
+    // of its callers (#885) can't hide behind a stale copy.
+    for (const path of publicRoutes) {
       const request = new NextRequest(
         `https://agent-console.supersprinkles.racing${path}`,
         { method: 'POST' },
