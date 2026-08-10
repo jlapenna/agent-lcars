@@ -89,7 +89,7 @@ From the repository root:
   --role admin --storage secret
 ```
 
-The command opens `https://agent-console.supersprinkles.racing/login`, waits
+The command opens `https://lcars.jlapenna.net/login`, waits
 for the human to finish GitHub sign-in, validates `/api/auth/session`, checks
 the requested role, and only then saves the browser storage state. Override
 the deployment with `--origin <http(s)-origin>` for an explicitly intended

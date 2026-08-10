@@ -34,7 +34,7 @@ jobs:
           APP_CLIENT_ID: ${{ vars.AGENT_LCARS_CLIENT_ID }}
           APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
           WEBHOOK_SECRET_VERSION: ${{ inputs.webhook_secret_version }}
-          WEBHOOK_URL: https://agent-console.supersprinkles.racing/api/control-plane/webhook
+          WEBHOOK_URL: https://lcars.jlapenna.net/api/control-plane/webhook
         run: |
           set -euo pipefail
           umask 077
