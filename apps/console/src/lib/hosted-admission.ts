@@ -19,8 +19,7 @@ import { isRetiredLegacyCandidate } from './retired-legacy-candidate';
 
 const SUPPORTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
 
-export const HOSTED_ADMISSION_MODES = ['off', 'shadow', 'authority'] as const;
-export type HostedAdmissionMode = (typeof HOSTED_ADMISSION_MODES)[number];
+export type HostedAdmissionMode = 'authority';
 
 interface RepositoryPayload {
   id?: number;
@@ -50,13 +49,14 @@ function splitRepository(repository: string): { owner: string; repo: string } {
 export function parseHostedAdmissionMode(
   value: string | undefined,
 ): HostedAdmissionMode {
-  const mode = value?.trim() || 'off';
-  if (!HOSTED_ADMISSION_MODES.includes(mode as HostedAdmissionMode)) {
+  const mode = value?.trim();
+  if (mode !== 'authority') {
     throw new Error(
-      `AGENT_LCARS_HOSTED_ADMISSION_MODE must be one of ${HOSTED_ADMISSION_MODES.join(', ')}`,
+      `AGENT_LCARS_HOSTED_ADMISSION_MODE must be 'authority'; ` +
+        `off, shadow, and unset configuration were retired after the Firestore authority cutover`,
     );
   }
-  return mode as HostedAdmissionMode;
+  return mode;
 }
 
 /**
@@ -132,16 +132,6 @@ export async function admitGitHubWebhook({
   if (!Number.isSafeInteger(repositoryId) || Number(repositoryId) <= 0) {
     throw new Error('Webhook repository ID is invalid');
   }
-  if (mode === 'off') {
-    return {
-      deliveryId,
-      eventName,
-      mode,
-      outcome: 'ignored',
-      reason: 'hosted admission is off',
-    };
-  }
-
   const transportRunId = deliveryTransportId(deliveryId);
   const normalized = normalizeEvent({
     eventName,

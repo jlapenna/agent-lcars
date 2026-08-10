@@ -14,7 +14,6 @@ test('admission injects storage without reading CLI configuration', async () => 
     {
       normalized: { kind: 'ignored', reason: 'not-selected' },
       githubToken: 'token',
-      storageMode: 'off',
       isPullRequest: false,
       transportRunId: 42,
       authorityOwner: 'hosted:42',

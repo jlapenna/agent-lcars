@@ -1117,7 +1117,7 @@ async function loadLedger(
 
 /**
  * Locate or create the human-facing ledger comment without parsing it as
- * controller state. Authority mode calls this only after Firestore has been
+ * controller state. The controller calls this only after Firestore has been
  * read and leased, so a controlled worker can neither corrupt nor duplicate
  * comments to block the controller from reaching its real state.
  */
@@ -1203,7 +1203,7 @@ export type AuthorityInitializationEvidence =
  * Marker absence is not evidence: a controlled worker can edit or delete
  * comments. The trusted cutover epoch and GitHub's immutable issue/PR
  * `created_at` are the non-forgeable boundary. Tasks created before that
- * boundary must already have been shadow-backfilled, so missing state fails
+ * boundary must already have an aggregate, so missing state fails
  * closed even if every compatibility marker has been removed. Tasks created
  * at or after the boundary are genuinely post-authority and may be seeded.
  */

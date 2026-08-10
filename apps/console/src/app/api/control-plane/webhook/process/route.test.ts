@@ -72,7 +72,7 @@ beforeEach(() => {
   admitGitHubWebhook.mockResolvedValue({
     deliveryId: '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
     eventName: 'issues',
-    mode: 'shadow',
+    mode: 'authority',
     outcome: 'processed',
   });
 });
@@ -94,7 +94,7 @@ describe('POST /api/control-plane/webhook/process', () => {
     });
     await expect(response.json()).resolves.toMatchObject({
       outcome: 'processed',
-      mode: 'shadow',
+      mode: 'authority',
     });
   });
 

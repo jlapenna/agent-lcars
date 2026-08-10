@@ -55,7 +55,7 @@ on:
 # Least privilege: enough to comment on / claim the anchor issue, read its
 # own run during preflight, and mint the short-lived completion OIDC token.
 # Deliberately no contents:write, pull-requests:write, or secret at all.
-# Authority mode adds only a short-lived, read-before-agent Firestore token;
+# Firestore authority adds only a short-lived, read-before-agent token;
 # this workflow still has no model or App secret and never runs agent code.
 permissions:
   contents: read
@@ -108,7 +108,6 @@ jobs:
       # ledger -- identical to claude.yml/codex.yml/opencode.yml.
       - name: Authenticate to authoritative dispatch storage
         id: worker-storage-auth
-        if: vars.DISPATCH_STORAGE_MODE == 'authority'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
@@ -122,7 +121,6 @@ jobs:
         uses: ./.github/actions/dispatch-broker
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          DISPATCH_STORAGE_MODE: ${{ vars.DISPATCH_STORAGE_MODE }}
           DISPATCH_STORAGE_TOKEN: ${{ steps.worker-storage-auth.outputs.access_token }}
           DISPATCH_FIRESTORE_DATABASE_ID: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
