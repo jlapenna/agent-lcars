@@ -1293,6 +1293,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   /* Keep the document H1 available without rendering a second title band
      below the active command pill. */
   .console-page-mobile-title {
+    display: block;
     position: absolute;
     width: 1px;
     height: 1px;

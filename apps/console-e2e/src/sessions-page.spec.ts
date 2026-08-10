@@ -169,10 +169,16 @@ test.describe('/sessions workspace @smoke', () => {
     await expect(mobileTitle).toHaveText(
       'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
     );
+    await expect(
+      page.getByRole('heading', {
+        name: 'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
+      }),
+    ).toBeVisible();
     expect(
       await mobileTitle.evaluate((element) => {
         const style = getComputedStyle(element);
         return (
+          style.display === 'block' &&
           style.position === 'absolute' &&
           style.width === '1px' &&
           style.height === '1px' &&
