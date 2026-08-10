@@ -33,6 +33,14 @@
    practice, and a violation names the rule without saying which system
    raised it, so the failure reads like a broken flag rather than policy.
 
+   The ruleset itself is codified in
+   [`infra/terraform/github.tf`](../../../infra/terraform/github.tf)
+   (`github_repository_ruleset.protect_main`, issue #900) — change branch
+   protection there and go through a reviewed `plan`/`apply`, not by hand
+   through the GitHub UI or API. See
+   [`infra/terraform/README.md`](../../../infra/terraform/README.md#github-ruleset-protect-main)
+   for the credential story and the admin-bypass hazard.
+
    The ruleset enforces required `Verify`, a strict up-to-date-branch
    policy, `required_review_thread_resolution`, and no deletion or
    force-push. Admins (`RepositoryRole:5`) hold `bypass_mode: always` as a
