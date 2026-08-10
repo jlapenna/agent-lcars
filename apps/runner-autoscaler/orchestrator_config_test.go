@@ -403,6 +403,76 @@ func TestOrchestratorConfigRejectsInvalidShmSize(t *testing.T) {
 	}
 }
 
+// TestLoadOrchestratorConfigResolvesPnpmStoreBudget covers agent-lcars#852's
+// optional per-host override, mirroring workdir_size_cap's own resolution.
+func TestLoadOrchestratorConfigResolvesPnpmStoreBudget(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"      workdir_size_cap: 30g\n",
+		"      workdir_size_cap: 30g\n      pnpm_store_budget: 10g\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int64(10 * 1024 * 1024 * 1024)
+	if got := resolved.PnpmStoreBudgets["janeway"]; got != want {
+		t.Fatalf("pnpm store budget = %d, want %d", got, want)
+	}
+}
+
+// TestLoadOrchestratorConfigDefaultsPnpmStoreBudgetWhenUnset proves
+// pnpm_store_budget is optional -- unlike workdir_size_cap, retrofitting it
+// onto an existing deployment's orchestrator.yml must never fail
+// --check-config by itself.
+func TestLoadOrchestratorConfigDefaultsPnpmStoreBudgetWhenUnset(t *testing.T) {
+	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resolved.PnpmStoreBudgets["janeway"]; ok {
+		t.Fatalf("expected no explicit pnpm_store_budget entry for janeway, got %d", resolved.PnpmStoreBudgets["janeway"])
+	}
+}
+
+func TestOrchestratorConfigRejectsInvalidPnpmStoreBudget(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"      workdir_size_cap: 30g\n",
+		"      workdir_size_cap: 30g\n      pnpm_store_budget: not-a-size\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "invalid pnpm_store_budget") {
+		t.Fatalf("expected invalid pnpm_store_budget error, got %v", err)
+	}
+}
+
+// TestOrchestratorConfigRejectsPnpmStoreBudgetAtOrAboveWorkDirCap covers the
+// documented invariant between the two (agent-lcars#852's "document the
+// relationship" acceptance criterion, enforced rather than left as prose):
+// an explicit budget that does not sit strictly below its host's
+// workdir_size_cap fails --check-config instead of silently never letting a
+// shared-workdir runner place there.
+func TestOrchestratorConfigRejectsPnpmStoreBudgetAtOrAboveWorkDirCap(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"      workdir_size_cap: 30g\n",
+		"      workdir_size_cap: 30g\n      pnpm_store_budget: 30g\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "pnpm store budget") || !strings.Contains(err.Error(), "workdir_size_cap") {
+		t.Fatalf("expected a pnpm store budget vs workdir_size_cap error, got %v", err)
+	}
+}
+
+// TestOrchestratorConfigRejectsDefaultPnpmStoreBudgetAtOrAboveWorkDirCap is
+// the same invariant, but for a host that leaves pnpm_store_budget unset --
+// the DEFAULT must still be validated against a too-small workdir_size_cap,
+// not just an explicit override.
+func TestOrchestratorConfigRejectsDefaultPnpmStoreBudgetAtOrAboveWorkDirCap(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"      workdir_size_cap: 30g\n",
+		"      workdir_size_cap: 1g\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "pnpm store budget") || !strings.Contains(err.Error(), "workdir_size_cap") {
+		t.Fatalf("expected the default pnpm store budget to be validated against a too-small workdir_size_cap, got %v", err)
+	}
+}
+
 func TestLoadCredentials(t *testing.T) {
 	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
 	if err != nil {

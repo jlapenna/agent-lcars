@@ -39,6 +39,41 @@ const (
 	// never excludes the host, because telemetry trouble must fail open, not
 	// closed (see probeHostLoad).
 	placementReasonOverload = "overload"
+	// The shared pnpm content-addressable store's last-known size (from the
+	// most recent idle-host sweep) is at or above its configured budget
+	// (agent-lcars#852) on every host that would otherwise have shared-
+	// workdir placement capacity. Distinct from shared_workdir_exclusive:
+	// that reason means every host already has an active runner; this one
+	// means a host is free but its store needs to prune/evict before it is
+	// safe to grow further.
+	placementReasonPnpmStoreBudget = "pnpm_store_budget"
+)
+
+// The complete set of `result` label values pnpmStorePruneTotal and
+// pnpmStoreEvictionTotal are ever incremented with -- bounded the same way
+// as the placementReason* constants above.
+const (
+	pnpmMaintenanceResultSuccess = "success"
+	pnpmMaintenanceResultFailure = "failure"
+	// skipped: maintenance was not attempted this sweep (workdir was under
+	// cap, the store directory does not exist yet, or -- prune only -- the
+	// runner_image has no pnpm binary, e.g. a third-party share_workdir
+	// pool's own image). Distinct from failure: nothing was attempted, so
+	// nothing went wrong.
+	pnpmMaintenanceResultSkipped = "skipped"
+)
+
+// The complete set of `reason` label values workdirSweepFailuresTotal is
+// ever incremented with, mapped 1:1 from sweepHostWorkDir's own error
+// paths so a bash-produced free-form error string never reaches a metric
+// label.
+const (
+	sweepFailureReasonContainerCreate   = "container_create"
+	sweepFailureReasonContainerStart    = "container_start"
+	sweepFailureReasonContainerWait     = "container_wait"
+	sweepFailureReasonExitNonzero       = "exit_nonzero"
+	sweepFailureReasonLogsRead          = "logs_read"
+	sweepFailureReasonOutputUnparseable = "output_unparseable"
 )
 
 // The complete set of `reason` label values runnerDiedIdleTotal is ever
@@ -243,6 +278,60 @@ var (
 		},
 		[]string{"host"},
 	)
+	// pnpmStoreBytesGauge/pnpmStoreBudgetBytesGauge/pnpmStorePruneTotal/
+	// pnpmStoreEvictionTotal (agent-lcars#853) instrument the shared pnpm
+	// content-addressable store specifically, one tenant of the workdir
+	// gauges above. Measured by the same helper-container script as
+	// workdirBytesGauge (workDirSweepScript/sweepHostWorkDir), so these stay
+	// exactly as fresh: every periodic idle sweep, plus immediately after
+	// each job completes on that host.
+	pnpmStoreBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_pnpm_store_bytes",
+			Help: "Size in bytes of the shared pnpm content-addressable store after the last sweep, by host.",
+		},
+		[]string{"host"},
+	)
+	pnpmStoreBudgetBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_pnpm_store_budget_bytes",
+			Help: "Configured pnpm-store budget in bytes for a fleet host (fleet.hosts[].pnpm_store_budget, or the default when unset). pickHostLocked refuses a new shared-workdir placement on a host at or above this threshold -- see placement_blocked_total{reason=\"" + placementReasonPnpmStoreBudget + "\"}.",
+		},
+		[]string{"host"},
+	)
+	pnpmStorePruneTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_pnpm_store_prune_total",
+			Help: "Idle-host `pnpm store prune` attempts by the workdir sweep, by host and result: " +
+				pnpmMaintenanceResultSuccess + ", " + pnpmMaintenanceResultFailure + ", " + pnpmMaintenanceResultSkipped + ".",
+		},
+		[]string{"host", "result"},
+	)
+	pnpmStoreEvictionTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_pnpm_store_eviction_total",
+			Help: "Idle-host full pnpm-store evictions by the workdir sweep -- the last resort when prune alone does not clear the workdir cap -- by host and result: " +
+				pnpmMaintenanceResultSuccess + ", " + pnpmMaintenanceResultFailure + ", " + pnpmMaintenanceResultSkipped + ".",
+		},
+		[]string{"host", "result"},
+	)
+	workdirSweepSuccessTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_workdir_sweep_success_total",
+			Help: "Idle-host workdir maintenance sweeps that completed and reported a usable result, by host.",
+		},
+		[]string{"host"},
+	)
+	workdirSweepFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_workdir_sweep_failures_total",
+			Help: "Idle-host workdir maintenance sweeps that failed before producing a usable result, by host and reason: " +
+				sweepFailureReasonContainerCreate + ", " + sweepFailureReasonContainerStart + ", " +
+				sweepFailureReasonContainerWait + ", " + sweepFailureReasonExitNonzero + ", " +
+				sweepFailureReasonLogsRead + ", " + sweepFailureReasonOutputUnparseable + ".",
+		},
+		[]string{"host", "reason"},
+	)
 	reservationGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_scheduler_reservations",
 		Help: "In-flight runner start reservations by scale set and host.",
@@ -252,7 +341,7 @@ var (
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
 			placementReasonSharedWorkDirExclusive + ", " + placementReasonReadiness + ", " +
-			placementReasonOverload + ".",
+			placementReasonOverload + ", " + placementReasonPnpmStoreBudget + ".",
 	}, []string{"scale_set", "reason"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
@@ -337,6 +426,12 @@ func registerMetrics() {
 			placementDecisions,
 			workdirBytesGauge,
 			workdirSweptBytesTotal,
+			pnpmStoreBytesGauge,
+			pnpmStoreBudgetBytesGauge,
+			pnpmStorePruneTotal,
+			pnpmStoreEvictionTotal,
+			workdirSweepSuccessTotal,
+			workdirSweepFailuresTotal,
 			reservationGauge,
 			placementBlocked,
 			listenerUpGauge,

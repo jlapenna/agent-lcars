@@ -364,6 +364,7 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.maxRunners = resolved.Raw.Fleet.MaxRunners
 	fleet.hostRunnerLimits = resolved.RunnerLimits
 	fleet.workDirSizeCaps = resolved.WorkDirSizeCaps
+	fleet.pnpmStoreBudgets = resolved.PnpmStoreBudgets
 	fleet.dockerSocketGIDs = resolved.DockerSocketGID
 	fleet.mainsRequired = resolved.MainsRequired
 	fleet.metricsViaSSH = resolved.MetricsViaSSH
@@ -371,6 +372,23 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
 	fleet.mu.Unlock()
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
+	// Published once per host at config load/reload, independent of which
+	// (if any) scale set targets it -- an operator diffing store size
+	// against budget in Grafana/PromQL should never have to hardcode the
+	// number from orchestrator.yml (agent-lcars#853). Walks
+	// resolved.DockerHosts (via ParseDockerHosts), not resolved.Raw.Fleet
+	// .Hosts directly: the latter's Name is never trimmed back onto the Raw
+	// struct (only a local copy inside resolve()), so it would not
+	// necessarily match the trimmed keys resolved.PnpmStoreBudgets uses.
+	if _, hostOrder, err := ParseDockerHosts(resolved.DockerHosts); err == nil {
+		for _, name := range hostOrder {
+			budget := int64(defaultPnpmStoreBudgetBytes)
+			if override, ok := resolved.PnpmStoreBudgets[name]; ok {
+				budget = override
+			}
+			pnpmStoreBudgetBytesGauge.WithLabelValues(name).Set(float64(budget))
+		}
+	}
 }
 
 func pullConfiguredRunnerImages(ctx context.Context, dockerHosts []DockerHost, scaleSets []Config, logger *slog.Logger) {
@@ -487,8 +505,10 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		readinessMaxAge:     c.ReadinessMaxAge,
 		workDirSizeCapBytes: defaultWorkDirSizeCapBytes,
 		workDirSizeCaps:     fleet.workDirSizeCaps, hostRunnerLimits: fleet.hostRunnerLimits,
-		fleet:       fleet,
-		checkpoints: checkpoints, bootCheckpoint: boot,
+		pnpmStoreBudgetBytes: defaultPnpmStoreBudgetBytes,
+		pnpmStoreBudgets:     fleet.pnpmStoreBudgets,
+		fleet:                fleet,
+		checkpoints:          checkpoints, bootCheckpoint: boot,
 	}
 	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
 	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)
