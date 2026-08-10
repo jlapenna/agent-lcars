@@ -3,13 +3,23 @@ name: Agent Bootstrap-Independent Finalizer
 # Shared, GitHub-hosted finalizer for claude.yml/codex.yml/opencode.yml
 # (#639 / #645 Phase 3). Every worker delegates the authoritative hosted
 # callback to this isolated reusable workflow after its untrusted job settles;
-# the server verifies this workflow's signed `job_workflow_ref`. If checkout,
-# snapshotting, runner loss, or the reporter itself prevents the primary
-# post-agent gates from completing, this workflow also parks the task. Worker
-# outputs are intentionally absent from this interface: the isolated job
-# derives lifecycle evidence from GitHub's job metadata and exact attempt
-# markers, then calls the hosted server without checking out worker-controlled
-# repository state.
+# the server verifies this workflow's signed `job_workflow_ref`. This runs
+# regardless of checkout, snapshotting, or runner loss on the worker's own
+# job -- it is a separate job/workflow with no dependency on worker-side
+# state. Worker outputs are intentionally absent from this interface: the
+# isolated job derives lifecycle evidence from GitHub's job metadata and
+# exact attempt markers, then calls the hosted server without checking out
+# worker-controlled repository state.
+#
+# #813 centralized failure reporting: the dispatch controller's projector
+# (apps/dispatch-broker/src/modules/projector.ts's projectWorkerFailure) is
+# now the ONE idempotent writer of the failure comment and the
+# status:needs-human park, driven by this workflow's own completion
+# callback below ("Return completion observation to the broker"). This
+# workflow's own direct GitHub write ("Report and park bootstrap-independent
+# failure") is the minimum bootstrap-safe fallback: it fires ONLY when that
+# callback itself could not reach the hosted control plane, not on every
+# non-success worker result.
 #
 # The filename is retained because it is part of the hosted completion OIDC
 # trust contract. The workflow is the authoritative completion finalizer, not
@@ -84,52 +94,6 @@ jobs:
       issues: write
       pull-requests: read
     steps:
-      - name: Report and park bootstrap-independent failure
-        if: inputs.worker-result != 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          ISSUE: ${{ inputs.issue }}
-          AGENT: ${{ inputs.agent }}
-          WORKER_RESULT: ${{ inputs.worker-result }}
-          MAINTAINER: ${{ inputs.maintainer }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          MARKER: <!-- agent-lcars:bootstrap-fallback:v1 run=${{ github.run_id }} -->
-        run: |
-          set -euo pipefail
-          case "$ISSUE" in
-            ''|*[!0-9]*) echo "::error::Invalid fallback issue number"; exit 1 ;;
-          esac
-
-          existing="$(gh api --paginate --slurp \
-            "repos/$REPO/issues/$ISSUE/comments?per_page=100" \
-            --jq "[.[][] | select(.body | contains(\"$MARKER\"))] | first | .id // empty")"
-          if [ -z "$existing" ]; then
-            if [ "$WORKER_RESULT" = "cancelled" ]; then
-              outcome="was cancelled"
-            else
-              outcome="ended with GitHub job result '$WORKER_RESULT'"
-            fi
-            gh issue comment "$ISSUE" --repo "$REPO" --body "$MARKER
-
-          $AGENT agent run $outcome: $RUN_URL
-
-          The independent GitHub-hosted finalizer safely repeats failure parking for every non-success worker result. The primary self-hosted reporter may already have completed; the marker keeps this fallback idempotent."
-          else
-            echo "::notice::Fallback report already exists as comment $existing"
-          fi
-
-          jq -cn '{labels: ["status:needs-human"]}' |
-            gh api "repos/$REPO/issues/$ISSUE/labels" \
-              --method POST --input - >/dev/null
-          if [ -n "$MAINTAINER" ]; then
-            jq -cn --arg login "$MAINTAINER" '{assignees: [$login]}' |
-              gh api "repos/$REPO/issues/$ISSUE/assignees" \
-                --method POST --input - >/dev/null
-          else
-            echo "::warning::MAINTAINER_LOGIN is unset; failure was commented and parked but could not be assigned."
-          fi
-
       - name: Derive trusted completion evidence
         id: evidence
         if: always()
@@ -398,6 +362,69 @@ jobs:
             exit 1
           fi
           printf '%s\n' 'completion-sent=true' >> "$GITHUB_OUTPUT"
+
+      # #813: the ONLY remaining direct write in this workflow, narrowed to
+      # the minimum bootstrap-safe fallback the issue asks for -- fires
+      # ONLY when the authenticated completion callback above could not be
+      # delivered (steps.callback.outputs.completion-sent != 'true'), i.e.
+      # exactly when no evidence reached the hosted control plane at all.
+      # In the normal case (the callback succeeded), the dispatch
+      # controller's projector already converged the failure comment and
+      # the needs-human park through that same callback
+      # (apps/dispatch-broker/src/modules/projector.ts's
+      # projectWorkerFailure) -- writing it again here, unconditionally,
+      # would be exactly the second uncoordinated write path #813 retired.
+      # Moved after the callback attempt (was the very first step) so its
+      # own `if:` can read `steps.callback`'s outcome; unrelated to
+      # inputs.worker-result, which stays the outer gate (no direct write
+      # at all on a successful worker result).
+      - name: Report and park bootstrap-independent failure
+        if: >-
+          inputs.worker-result != 'success' &&
+          steps.callback.outputs.completion-sent != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue }}
+          AGENT: ${{ inputs.agent }}
+          WORKER_RESULT: ${{ inputs.worker-result }}
+          MAINTAINER: ${{ inputs.maintainer }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MARKER: <!-- agent-lcars:bootstrap-fallback:v1 run=${{ github.run_id }} -->
+        run: |
+          set -euo pipefail
+          case "$ISSUE" in
+            ''|*[!0-9]*) echo "::error::Invalid fallback issue number"; exit 1 ;;
+          esac
+
+          existing="$(gh api --paginate --slurp \
+            "repos/$REPO/issues/$ISSUE/comments?per_page=100" \
+            --jq "[.[][] | select(.body | contains(\"$MARKER\"))] | first | .id // empty")"
+          if [ -z "$existing" ]; then
+            if [ "$WORKER_RESULT" = "cancelled" ]; then
+              outcome="was cancelled"
+            else
+              outcome="ended with GitHub job result '$WORKER_RESULT'"
+            fi
+            gh issue comment "$ISSUE" --repo "$REPO" --body "$MARKER
+
+          $AGENT agent run $outcome: $RUN_URL
+
+          The independent GitHub-hosted finalizer's own completion callback could not reach the hosted control plane, so this is the last-resort direct report. The marker keeps this fallback idempotent across retries of this same run."
+          else
+            echo "::notice::Fallback report already exists as comment $existing"
+          fi
+
+          jq -cn '{labels: ["status:needs-human"]}' |
+            gh api "repos/$REPO/issues/$ISSUE/labels" \
+              --method POST --input - >/dev/null
+          if [ -n "$MAINTAINER" ]; then
+            jq -cn --arg login "$MAINTAINER" '{assignees: [$login]}' |
+              gh api "repos/$REPO/issues/$ISSUE/assignees" \
+                --method POST --input - >/dev/null
+          else
+            echo "::warning::MAINTAINER_LOGIN is unset; failure was commented and parked but could not be assigned."
+          fi
 
       - name: Preserve failed callback for scheduled reconciliation
         if: always() && steps.callback.outputs.completion-sent != 'true'

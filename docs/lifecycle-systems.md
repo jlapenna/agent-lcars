@@ -83,22 +83,22 @@ confirm the symptom but not the cause.
 The fast path. Match what you're looking at, then go to that system's
 section.
 
-| What you observe                                                                                                                                                 | Owning system                                                                 | Look here first                                                                                                                               |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue carries the right `agent:*` label but nothing dispatches, with no hosted admission log for its delivery                                                    | Dispatch controller (webhook admission)                                       | GitHub App delivery history, then `/api/control-plane/webhook` and Cloud Tasks logs                                                           |
-| Webhook ACKed but the queued `/api/control-plane/webhook/process` request repeatedly returns 4xx/5xx                                                             | Dispatch controller (hosted admission)                                        | App Hosting logs for HMAC, payload normalization, Firestore lease, or GitHub API failure                                                      |
-| The dedicated `Dispatch Canary Router` stays **queued**, never starting                                                                                          | GitHub Actions availability                                                   | The GitHub-hosted workflow run queue; this path no longer depends on a self-hosted runner                                                     |
-| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                          | Dispatch controller (hosted reconciliation)                                   | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                     |
-| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                           | Runner platform                                                               | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                          |
-| A published action (`rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                           | The failing step's raw log, before assuming an authorization/ordering bug                                                                     |
-| A scheduled workflow (self-healer or sweep) fails or times out repeatedly                                                                                        | Workflow failure alerts                                                       | Its workflow-specific `status:needs-human` issue (`<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`); see the coverage table below     |
-| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                            | Worker runtime (bootstrap phase)                                              | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                       |
-| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                    | Worker runtime (provider admission/execution)                                 | The agent step's own log                                                                                                                      |
-| Agent process exits 0, but no PR/comment/review carries the exact attempt-claim marker, or an unrelated artifact gets credited                                   | Outcome finalizer                                                             | `.github/actions/verify-deliverable`'s log line naming the exact artifact it matched (or the FAILED-lookup name, if the check itself errored) |
-| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                           | Outcome finalizer (post-dispatch landing observer)                            | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment            |
-| Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                    | Outcome finalizer / Projector (reporting) — see the seam note in that section | `.github/actions/report-failure`'s log                                                                                                        |
-| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                    | Projector/read model                                                          | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                                  |
-| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                           | Dispatch controller (reconciliation)                                          | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                         |
+| What you observe                                                                                                                                                 | Owning system                                      | Look here first                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Issue carries the right `agent:*` label but nothing dispatches, with no hosted admission log for its delivery                                                    | Dispatch controller (webhook admission)            | GitHub App delivery history, then `/api/control-plane/webhook` and Cloud Tasks logs                                                           |
+| Webhook ACKed but the queued `/api/control-plane/webhook/process` request repeatedly returns 4xx/5xx                                                             | Dispatch controller (hosted admission)             | App Hosting logs for HMAC, payload normalization, Firestore lease, or GitHub API failure                                                      |
+| The dedicated `Dispatch Canary Router` stays **queued**, never starting                                                                                          | GitHub Actions availability                        | The GitHub-hosted workflow run queue; this path no longer depends on a self-hosted runner                                                     |
+| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                          | Dispatch controller (hosted reconciliation)        | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                     |
+| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                           | Runner platform                                    | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                          |
+| A published action (`rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                | The failing step's raw log, before assuming an authorization/ordering bug                                                                     |
+| A scheduled workflow (self-healer or sweep) fails or times out repeatedly                                                                                        | Workflow failure alerts                            | Its workflow-specific `status:needs-human` issue (`<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`); see the coverage table below     |
+| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                            | Worker runtime (bootstrap phase)                   | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                       |
+| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                    | Worker runtime (provider admission/execution)      | The agent step's own log                                                                                                                      |
+| Agent process exits 0, but no PR/comment/review carries the exact attempt-claim marker, or an unrelated artifact gets credited                                   | Outcome finalizer                                  | `.github/actions/verify-deliverable`'s log line naming the exact artifact it matched (or the FAILED-lookup name, if the check itself errored) |
+| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                           | Outcome finalizer (post-dispatch landing observer) | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment            |
+| A worker run failed but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                            | Projector (reporting)                              | `agent-fallback-finalize.yml`'s "Return completion observation to the broker" step, then the hosted `/api/control-plane/completion` log       |
+| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                    | Projector/read model                               | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                                  |
+| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                           | Dispatch controller (reconciliation)               | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                         |
 
 ## 1. Dispatch controller
 
@@ -430,22 +430,33 @@ explicit acceptance scenario in #645), and a provider failure is bounded,
 worker-owned retry, never controller-level retry.
 
 **The start-of-bootstrap reporting gap is covered by an independent fallback
-(#639).** Each worker's primary post-agent step runs
+(#639), and #813 narrowed what that fallback writes directly.** Each
+worker's primary post-agent step runs
 `bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"`
 unconditionally (`if: always()`), but that script is written to
 `$RUNNER_TEMP` only by the earlier "Snapshot post-agent enforcement
 scripts" step (`.github/actions/snapshot-enforcement-scripts`), which in
 turn depends on checkout having already succeeded (it's a local composite
 action, resolvable only once the repo is on disk). If checkout or that
-snapshot step itself fails, that primary path cannot run. The worker therefore
-publishes `post_agent_gates_complete=true` only after either a clean outcome
-needs no report or its failure report actually landed. If that proof is
-missing, `agent-fallback-finalize.yml` runs on `ubuntu-latest`, posts one
-run-keyed report, parks `status:needs-human`, and assigns the maintainer using
-the workflow's native token **before its own checkout**. It then checks out the
-trusted revision solely to send the controller completion callback; scheduled
-controller reconciliation remains the backstop if even that checkout/callback
-fails. Runner loss, checkout failure, snapshot failure, and primary reporter
+snapshot step itself fails, that primary path cannot run at all —
+`report-failure.sh` no longer writes GitHub state even when it does run
+(see the Projector section below), so this fallback is `agent-fallback-
+finalize.yml`'s own job, not a redundant copy of the primary path's report.
+`agent-fallback-finalize.yml` always runs on `ubuntu-latest`, independent of
+whether checkout/snapshotting/the runner itself survived on the worker's own
+job, and its own "Derive trusted completion evidence" + "Return completion
+observation to the broker" steps re-derive the outcome from GitHub's job/step
+metadata and send it through the OIDC-authenticated completion callback —
+the dispatch controller's projector (`apps/dispatch-broker/src/modules/
+projector.ts`'s `projectWorkerFailure`) is what actually posts the comment
+and parks `status:needs-human` from that callback. Only when the callback
+itself cannot reach the hosted control plane does this workflow fall back to
+writing the comment/label/assignee directly with its own native token — the
+minimum bootstrap-safe fallback for "no authenticated evidence channel
+reached the controller at all." Scheduled controller reconciliation remains
+the backstop if even that direct write's own retries are exhausted (it
+preserves the failure for the fleet-assignee reconcile sweep instead).
+Runner loss, checkout failure, snapshot failure, and primary reporter
 failure therefore cannot remain a red job with no anchor-visible state.
 
 **First three things to check:**
@@ -543,9 +554,11 @@ it's already one system:
 
 **What breaking looks like:** an agent process exits zero, but
 `verify-deliverable` finds no PR, comment, or review carrying this run's
-exact attempt-claim marker. The job fails, and `report-failure` posts the
-visible failure (see the Projector section — that step is also, awkwardly,
-part of today's reporting path, not this system's). The inverse failure
+exact attempt-claim marker. The job fails, and the hosted finalizer's
+completion callback reports the visible failure through the projector (see
+the Projector section — #813 retired `report-failure`'s own direct write,
+so this system's own failure classification now flows to GitHub through
+exactly one path instead of a second copy of it). The inverse failure
 mode — an unrelated PR created by a shared bot identity, or a stale label
 from earlier work, satisfying validation for work no agent did — is what
 the exact marker exists to close (#815; see #650 generation 9 for the
@@ -572,9 +585,10 @@ string satisfies the gate.
 
 **Who/what repairs it:** nothing automatically retries a failed
 deliverable-validation gate or mutates an abandoned PR — a
-`status:needs-human` label plus a maintainer-facing comment from
-`report-failure` or the deliverable watchdog is the terminal state.
-Post-agent redrive is explicitly disallowed until side-effect
+`status:needs-human` label plus a maintainer-facing comment from the
+projector (driven by the hosted finalizer's completion callback) or the
+deliverable watchdog is the terminal state. Post-agent redrive is
+explicitly disallowed until side-effect
 reconciliation completes (#645's own "must not" list for this system);
 today that boundary is enforced by convention (nothing wired to auto-redrive
 exists), not by code that would stop one if it did.
@@ -585,27 +599,55 @@ exists), not by code that would stop one if it did.
 comments, labels, assignees, reactions, and the console/read-model view —
 from the controller's and finalizer's already-decided truth.
 
-**Like the Outcome finalizer, this is currently three uncoordinated write
-paths plus one read path, not one system:**
+**#813 centralized failure comments and needs-human parking behind one
+writer.** Before it, this was three uncoordinated write paths for the same
+class of state (a worker-run failure) plus one read path. Today:
 
-- **`apps/dispatch-broker/src/modules/projector.ts`** — the controller's own
-  in-process projector module: `projectComment`, `projectNeedsHumanPark`,
-  and `recordProjectionStatus` (which writes exactly one ledger field,
-  `ledger.projection`). It cannot import or call generic ledger mutation:
-  its only ledger capability accepts exactly a `ProjectionStatus` payload
-  and assigns that payload to `ledger.projection`. A production typecheck
-  contract rejects widening that payload, so writes to `generations`,
-  `sources`, or `control` require crossing an explicit module boundary
-  rather than fitting through the projector API.
+- **`apps/dispatch-broker/src/modules/projector.ts`** — the ONE idempotent
+  writer for a worker attempt's own reported failure, and for every other
+  controller-driven GitHub-facing write: `projectComment`,
+  `projectNeedsHumanPark`, `projectWorkerFailure` (agent-lcars#813, built on
+  the first two), and `recordProjectionStatus` (which writes exactly one
+  ledger field, `ledger.projection`). It cannot import or call generic
+  ledger mutation: its only ledger capability accepts exactly a
+  `ProjectionStatus` payload and assigns that payload to
+  `ledger.projection`. A production typecheck contract rejects widening
+  that payload, so writes to `generations`, `sources`, or `control` require
+  crossing an explicit module boundary rather than fitting through the
+  projector API. `projectWorkerFailure` is driven by
+  `controller-core.ts`'s `handleCompletion`, which classifies a completed
+  attempt's typed lifecycle outcome (`startup-failure`/`trajectory-failure`/
+  `outcome-gate-failure`, via `modules/worker-failure.ts`'s
+  `classifyWorkerFailureOutcome`) and converges exactly one failure comment
+  (idempotent upsert keyed on the attempt's stable `attemptId`) and one
+  parking transition — across every delivery that can observe the same
+  attempt's failure, not just retries of the exact same HTTP call.
 - **`.github/actions/report-failure/report-failure.sh`** — invoked from
   inside the worker job itself (via `post-agent-gates.sh`), on the
-  self-hosted runner, using the job's own token. Posts the failure comment,
-  adds `status:needs-human`, and assigns the maintainer. This is a third,
-  separate write path from the controller's own projector module above.
+  self-hosted runner. No longer writes GitHub state at all (agent-lcars#813
+  retired that): it only logs this run's own failure to the job's own
+  output, ahead of the authoritative report the hosted finalizer's
+  completion callback sends. The trust boundary this closes: the completion
+  endpoint's OIDC verification pins `job_workflow_ref` to
+  `agent-fallback-finalize.yml` specifically
+  (`apps/console/src/lib/github-actions-oidc.ts`'s
+  `assertCompletionOidcClaims`) — a worker job's own token could never have
+  authenticated a direct call to it, so centralizing there was the only way
+  to make this a single writer rather than inventing a second authenticated
+  channel.
+- **`.github/workflows/agent-fallback-finalize.yml`** — the "Report and park
+  bootstrap-independent failure" step is now the minimum bootstrap-safe
+  fallback: it fires only when its own "Return completion observation to
+  the broker" step could not deliver the authenticated evidence at all
+  (`steps.callback.outputs.completion-sent != 'true'`), not on every
+  non-success worker result. In the normal case, that same completion
+  callback is what drives the projector's `projectWorkerFailure` above —
+  this workflow does not write the comment/label/assignee itself once the
+  callback lands.
 - **`apps/console/src/lib/backend-actions.ts`** — the console's own direct
   `octokit` writes: `postComment`, `clearNeedsHumanLabel`,
-  `approveAndMergePr`, `retriggerIssue`, and Quick Task creation.
-  `retriggerIssue` and `reassignPipeline` both delegate to the hosted
+  `approveAndMergePr`, and Quick Task creation.
+  `retriggerIssue`/`reassignPipeline` both delegate to the hosted
   controller through a typed, idempotent console command
   (`executeHostedControllerCommand`) rather than writing labels directly.
   `reassignPipeline`'s own `reassign-pipeline` command
@@ -617,7 +659,9 @@ paths plus one read path, not one system:**
   `ControlEvidence` — the same "converge already-decided state, no new
   generation" shape `healStaleAgentLabels` already used — so a reassignment
   can never manufacture a worker run of its own; the controller retains sole
-  ownership of whether/when the newly-labeled pipeline is dispatched.
+  ownership of whether/when the newly-labeled pipeline is dispatched. This
+  remains a genuinely separate write path (a maintainer's own console
+  action, not a worker-failure report), not something #813 folds in.
 - **`apps/console/src/lib/dispatch-ledger.ts`** — the read side. Parses the
   same ledger comment `github-api.ts` writes, now importing
   `@agent-lcars/dispatch-contracts` directly instead of a hand-mirrored copy
@@ -638,30 +682,41 @@ paths plus one read path, not one system:**
 
 **What breaking looks like:** the deliverable and the outcome are correct,
 but nothing visible reflects it — no comment, no label change, no console
-update — because the specific write path involved failed independently of
-the outcome it's supposed to report. The console showing stale or wrong
-status while GitHub's own state is correct is the other shape: a read-model
-staleness bug in `dispatch-ledger.ts` or its consumers, not a
-write-path failure at all.
+update — because the completion callback never reached the controller (a
+network/OIDC failure between the hosted finalizer and the control plane) or
+the projector's own GitHub write failed. A projection failure is recorded
+as a `phase-failure` anomaly (`owningSystem: 'projector'`, `phase:
+'reporting'`) on the ledger rather than silently vanishing — see the ledger
+comment's `anomalies` array. The console showing stale or wrong status while
+GitHub's own state is correct is the other shape: a read-model staleness bug
+in `dispatch-ledger.ts` or its consumers, not a write-path failure at all.
 
 **First three things to check:**
 
-1. Which of the three write paths should have fired for what you're
-   missing — a worker-reported failure (`report-failure`), a
-   controller-driven park/comment (`modules/projector.ts`), or a
-   console-originated action (`backend-actions.ts`)? They fail
-   independently and leave no shared trail.
-2. If it's a console display issue, compare the raw ledger comment against
+1. For a worker-failure report specifically: did the hosted finalizer's
+   completion callback succeed (`agent-fallback-finalize.yml`'s "Return
+   completion observation to the broker" step)? If yes, the projector
+   should have converged the comment/park — check the ledger's `anomalies`
+   for a `phase-failure` with `owningSystem: 'projector'` if it didn't. If
+   the callback itself failed, `agent-fallback-finalize.yml`'s own
+   last-resort direct write (gated on `completion-sent != 'true'`) should
+   have fired instead.
+2. For a console-originated action, check `backend-actions.ts` and
+   `executeHostedControllerCommand` — a genuinely separate path from worker
+   failure reporting.
+3. If it's a console display issue, compare the raw ledger comment against
    what the console shows — a mismatch there is `dispatch-ledger.ts` or a
    downstream consumer, not a write-path failure at all.
 
-**Who/what repairs it:** nothing today. Per #645's "must not" list, a
-failed GitHub write must never change the underlying outcome, and none of
-the three write paths above currently retries itself or gets retried by
-another system. A stuck park or a missing comment needs a human to notice
-and re-run the specific action (a console retry, a manual label/comment, or
-re-running the worker's report step is not exposed as a standalone
-operation today).
+**Who/what repairs it:** nothing automatically retries a projector write
+failure today. Per #645's "must not" list, a failed GitHub write must never
+change the underlying outcome — a projection failure is recorded as an
+anomaly, and the attempt's own outcome (already persisted before the
+projection attempt) is untouched. A stuck park or a missing comment needs a
+human to notice; re-driving the projection is not exposed as a standalone
+operation today (a repeated completion callback for the same attempt, e.g.
+via scheduled reconciliation's own repair paths, converges idempotently if
+it does happen).
 
 ## The canary nobody heard, and what changed
 

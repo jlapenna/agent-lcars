@@ -122,15 +122,20 @@ const PUBLISHED = {
     },
     outputs: [],
   },
+  // #813: retired token/issue/maintainer - a breaking change for the
+  // Published surface, called out here and in the PR body per
+  // docs/published-actions.md's "removed input" convention. This action no
+  // longer writes the anchor issue/PR at all (no comment, no
+  // status:needs-human, no assignee): it only logs. The hosted finalizer's
+  // completion callback reports through the projector's one idempotent
+  // writer instead (apps/dispatch-broker/src/modules/projector.ts's
+  // projectWorkerFailure).
   'report-failure': {
     inputs: {
-      token: { required: true },
       agent: { required: true },
       'message-prefix': { required: false, default: '' },
-      issue: { required: true },
       reason: { required: false, default: '' },
       'job-status': { required: true },
-      maintainer: { required: true },
     },
     outputs: [],
   },
