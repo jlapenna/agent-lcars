@@ -1703,8 +1703,11 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     display: none;
   }
 
-  .queue-list-controls,
-  .queue-search-input {
+  .queue-list-controls {
+    width: 100%;
+  }
+
+  .queue-list-controls .queue-search-input {
     width: 100%;
     flex-basis: 100%;
     max-width: none;
