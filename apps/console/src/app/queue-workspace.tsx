@@ -286,8 +286,14 @@ export function QueueWorkspace({
               color="blue"
               leftSection={<IconChevronLeft aria-hidden="true" size={18} />}
               className="queue-mobile-back"
+              aria-label="Back to Inbox list"
             >
-              Inbox
+              {/* Not "Inbox": the sticky top strip's active nav pill
+                  already reads "Inbox" in the same viewport (#890) - repeating
+                  it here read as a duplicate header stacked directly beneath
+                  it. "Back" still identifies the affordance via the chevron
+                  + this row's own repo/item breadcrumb next to it. */}
+              Back
             </Button>
             <Text component="span" ff="monospace" size="xs" c="dimmed" truncate>
               {selectedCard
