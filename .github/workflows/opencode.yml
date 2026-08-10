@@ -127,7 +127,6 @@ jobs:
       # to this exact task/generation/intent/token in the serialized ledger.
       - name: Authenticate to authoritative dispatch storage
         id: worker-storage-auth
-        if: vars.DISPATCH_STORAGE_MODE == 'authority'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
@@ -141,7 +140,6 @@ jobs:
         uses: ./.github/actions/dispatch-broker
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          DISPATCH_STORAGE_MODE: ${{ vars.DISPATCH_STORAGE_MODE }}
           DISPATCH_STORAGE_TOKEN: ${{ steps.worker-storage-auth.outputs.access_token }}
           DISPATCH_FIRESTORE_DATABASE_ID: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}

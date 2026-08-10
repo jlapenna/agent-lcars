@@ -1151,7 +1151,7 @@ test('agent-router.yml scopes id-token: write to the broker job alone, restating
   );
 });
 
-test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mode and wires the token/mode into the broker action (#736)', async () => {
+test('agent-router.yml always authenticates the authoritative broker transition', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'agent-router.yml'),
     'utf8',
@@ -1163,14 +1163,6 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mo
     'Authenticate to GCP for dispatch storage',
   );
   assert.match(auth.source, stepField('id', 'gcp-auth'));
-  assert.match(
-    auth.source,
-    stepField(
-      'if',
-      "vars.DISPATCH_STORAGE_MODE == 'shadow' || vars.DISPATCH_STORAGE_MODE == 'authority'",
-    ),
-    'the auth step must be conditional on a storage-writing mode, so an off run mints no token at all',
-  );
   assert.match(auth.source, stepField('uses', 'google-github-actions/auth@v3'));
   assert.match(
     auth.source,
@@ -1190,10 +1182,6 @@ test('agent-router.yml gates dispatch-storage GCP auth on shadow or authority mo
     steps,
     'agent-router.yml',
     'Apply serialized broker transition',
-  );
-  assert.match(
-    brokerStep.source,
-    stepField('DISPATCH_STORAGE_MODE', '${{ vars.DISPATCH_STORAGE_MODE }}', 10),
   );
   assert.match(
     brokerStep.source,
@@ -1628,24 +1616,11 @@ test('every worker captures the verified attempt ID via the broker preflight cal
     );
     assert.match(
       storageAuth.source,
-      stepField('if', "vars.DISPATCH_STORAGE_MODE == 'authority'"),
-      `${workflow} must mint a storage token only after authority cutover`,
-    );
-    assert.match(
-      storageAuth.source,
       stepField('uses', 'google-github-actions/auth@v3'),
     );
     assert.match(
       storageAuth.source,
       stepField('service_account', '${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}', 10),
-    );
-    assert.match(
-      preflight.source,
-      stepField(
-        'DISPATCH_STORAGE_MODE',
-        '${{ vars.DISPATCH_STORAGE_MODE }}',
-        10,
-      ),
     );
     assert.match(
       preflight.source,

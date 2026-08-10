@@ -1,16 +1,102 @@
-import type { DispatchLedger } from '@agent-lcars/dispatch-contracts';
+import {
+  type DispatchLedger,
+  formatAttemptId,
+  LEDGER_ACTIVE_GENERATION_STATES,
+  type LedgerAuthorization,
+  type LedgerGeneration,
+  type LedgerGenerationState,
+  type LedgerSource,
+} from '@agent-lcars/dispatch-contracts';
 
 import {
+  type AttemptRecord,
+  type AuthorizationRecord,
+  type IntentRecord,
+  type IntentState,
+  type SignalRecord,
   type StoragePort,
   type StoredTask,
+  type StoredTaskInput,
   type TaskLease,
   type TaskRef,
   TaskWriteConflictError,
 } from './port';
-import { projectLedgerToStoredTask } from './shadow';
 
 export const DEFAULT_TASK_LEASE_MS = 2 * 60 * 1000;
 const DEFAULT_CAS_ATTEMPTS = 8;
+
+function mapState(state: LedgerGenerationState): IntentState {
+  if (state === 'completed') return 'completed';
+  if (
+    ['dispatch-rejected', 'superseded', 'superseded-by-close'].includes(state)
+  )
+    return 'superseded';
+  if (
+    ['active', 'completion-observed', 'completion-awaiting-terminal'].includes(
+      state,
+    )
+  )
+    return 'active';
+  if (['dispatching', 'dispatch-unknown'].includes(state)) return 'dispatching';
+  if (state === 'accepted' || state === 'pending') return state;
+  throw new Error(`Unhandled ledger generation state: ${state}`);
+}
+function mapAuthorization(
+  value: LedgerAuthorization | undefined,
+): AuthorizationRecord {
+  if (!value) return { observed: true };
+  return 'authorized' in value
+    ? { authorized: value.authorized, actor: value.actor, rule: value.rule }
+    : { observed: true, actor: value.actor, workflow: value.workflow };
+}
+function mapIntent(generation: LedgerGeneration): IntentRecord {
+  const attempt = generation.attempt;
+  const mapped: AttemptRecord | undefined = attempt
+    ? {
+        attemptId:
+          attempt.attemptId ??
+          formatAttemptId({
+            generation: generation.generation,
+            intentId: generation.intentId,
+          }),
+        token: attempt.token ?? '',
+        dispatchStartedAt: attempt.dispatchStartedAt ?? generation.occurredAt,
+        runId: attempt.runId,
+        runUrl: attempt.runUrl,
+        htmlUrl: attempt.htmlUrl,
+        boundAt: attempt.boundAt,
+        completedAt: attempt.completedAt,
+        conclusion: attempt.conclusion,
+        outcome: attempt.outcome,
+        outcomeReference: attempt.outcomeReference,
+      }
+    : undefined;
+  return {
+    intentId: generation.intentId,
+    sourceId: generation.sourceId,
+    occurredAt: generation.occurredAt,
+    state: mapState(generation.state),
+    attempt: mapped,
+  };
+}
+function projectLedgerToStoredTask(ledger: DispatchLedger): StoredTaskInput {
+  const desiredIntentId =
+    ledger.generations.find((g) => LEDGER_ACTIVE_GENERATION_STATES.has(g.state))
+      ?.intentId ??
+    ledger.generations.find((g) => g.state === 'pending')?.intentId ??
+    ledger.generations.find((g) => g.state === 'accepted')?.intentId;
+  return {
+    desiredIntentId,
+    signals: ledger.sources.map((source: LedgerSource): SignalRecord => ({
+      sourceKind: source.sourceKind,
+      sourceId: source.sourceId,
+      occurredAt: source.occurredAt,
+      authorization: mapAuthorization(source.authorization),
+    })),
+    intents: ledger.generations.map(mapIntent),
+    controllerState: structuredClone(ledger),
+  };
+}
 
 export class TaskLeaseBusyError extends Error {
   constructor(

@@ -112,7 +112,6 @@ jobs:
       actions: write # workflow_dispatch + run listings (github-api.ts).
       # Dispatch-storage WIF token minting for the conditional auth step
       # below. A grant this job always carries, even when
-      # DISPATCH_STORAGE_MODE is 'off' -- job permissions are static, not
       # conditional -- but that step's own `if:` means an 'off' run never
       # spends it: no OIDC token request is made, so nothing is minted.
       id-token: write
@@ -126,15 +125,12 @@ jobs:
         uses: actions/checkout@v7
 
       # Conditional on a storage-writing mode so an 'off' (or unset)
-      # DISPATCH_STORAGE_MODE mints no token at all --
-      # the genuine rollback position dispatch-broker/src/storage/shadow.ts
       # documents. Same google-github-actions/auth usage as
       # The dedicated provider accepts only this workflow from main; the
       # service account is additionally confined by IAM to the dedicated
       # dispatch-controller database.
       - name: Authenticate to GCP for dispatch storage
         id: gcp-auth
-        if: vars.DISPATCH_STORAGE_MODE == 'shadow' || vars.DISPATCH_STORAGE_MODE == 'authority'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_DISPATCH_BROKER_WIF_PROVIDER }}
@@ -151,9 +147,7 @@ jobs:
           # The mode switch itself, plus what main.ts's storage adapter needs
           # in shadow or authority mode.
           # DISPATCH_STORAGE_TOKEN/GCP_PROJECT_ID are simply unused strings
-          # when the mode is 'off' -- dispatch-broker/src/storage/shadow.ts's
           # gate means neither is ever read.
-          DISPATCH_STORAGE_MODE: ${{ vars.DISPATCH_STORAGE_MODE }}
           DISPATCH_STORAGE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
           DISPATCH_FIRESTORE_DATABASE_ID: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
           DISPATCH_AUTHORITY_EPOCH: ${{ vars.DISPATCH_AUTHORITY_EPOCH }}
