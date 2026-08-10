@@ -1,13 +1,10 @@
 import { pathToFileURL } from 'node:url';
 
 import {
-  broker,
   classifyClaudeReadinessProbe,
   claudeReadiness,
   completionCallback,
-  normalize,
   preflight,
-  scanReconcile,
 } from './controller-core';
 
 export * from './controller-core';
@@ -16,12 +13,17 @@ export * from './controller-core';
 export async function runOperation(
   operation: string | undefined,
 ): Promise<void> {
-  if (operation === 'normalize') await normalize();
-  else if (operation === 'broker') await broker();
-  else if (operation === 'preflight') await preflight();
+  if (operation === 'preflight') await preflight();
   else if (operation === 'completion-callback') await completionCallback();
-  else if (operation === 'reconcile') await scanReconcile();
-  else if (operation === 'classify-claude-readiness')
+  else if (
+    operation === 'normalize' ||
+    operation === 'broker' ||
+    operation === 'reconcile'
+  ) {
+    throw new Error(
+      `The Actions ${operation} operation was retired with agent-router.yml; use the hosted control-plane controller instead.`,
+    );
+  } else if (operation === 'classify-claude-readiness')
     await classifyClaudeReadinessProbe();
   else if (operation === 'claude-readiness') await claudeReadiness();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);

@@ -133,8 +133,8 @@ export function issueNumberFromDisplayTitle(
 /**
  * claude.yml/codex.yml/opencode.yml's `run-name` templates all append
  * `[dispatch:g<generation>:<intentId>]` after the `#<issue>:` join key -
- * the serialized dispatch broker's own reconciliation marker
- * (`apps/dispatch-broker/src/broker.ts` and `github-api.ts` render
+ * the hosted controller's own dispatch marker
+ * (`apps/dispatch-broker/src/controller-core.ts` renders
  * the identical `[dispatch:g${generation}:${intentId}]` string when binding
  * a run, both via `@agent-lcars/dispatch-contracts`' `formatDispatchMarker`).
  * Parsing it back out lets the console attribute a raw workflow run to the
@@ -329,7 +329,7 @@ function toAgentRun(
 }
 
 // Both claude.yml and opencode.yml still fire on every issue comment, while
-// agent-router.yml is the sole label listener. Most comment-triggered runs
+// the hosted control-plane controller handles label events. Most comment-triggered runs
 // skip at the job-level `if:` and complete in seconds with conclusion
 // `skipped`. During a busy comment stretch the
 // newest 50+ runs can ALL be skipped no-ops, so "recent real runs" cannot be

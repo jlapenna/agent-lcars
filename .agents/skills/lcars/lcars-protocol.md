@@ -38,9 +38,8 @@ jlapenna`), and use as the assignee in the parking recipe
   (agent-protocol.md §4). The console reads this exact login as
   `MAINTAINER_LOGIN`.
 
-- **Dispatch:** the serialized dispatch broker
-  (`apps/dispatch-broker/src/normalize.ts`, invoked from
-  `agent-router.yml`) normalizes every trigger into an intent for exactly one
+- **Dispatch:** the hosted dispatch controller normalizes every trigger into
+  an intent for exactly one
   of `claude.yml`, `codex.yml`, or `opencode.yml`. There is no precedence
   order and no pipeline "stands down": an issue carrying more than one
   `agent:*` label makes the broker throw a contradictory-agent-labels error
@@ -130,18 +129,14 @@ on a pure review).
 The GitHub App subscribes to issue, issue-comment, and pull-request events.
 Hosted admission normalizes pull-request `labeled`/`unlabeled` actions in
 addition to `closed`/`reopened`, so both label families reach the same shared
-controller path (#565). `.github/workflows/agent-router.yml` retains only
-manual `workflow_dispatch` as a rollback transport.
+controller path (#565).
 `apps/dispatch-broker/src/normalize.ts`, hosted timeline fetches, and
 `verify-deliverable.sh` keep transport, authorization, and deliverable
 contracts aligned for both modes.
 
 ## Dispatch ledger reconciliation
 
-`.github/workflows/dispatch-reconcile.yml` runs every 30 minutes (offset
-from :00/:30, cron `7,37 * * * *`) and on manual `workflow_dispatch`. Its own
-GitHub-hosted job authenticates to the App Hosting control plane with OIDC.
-The hosted endpoint lists every currently open issue/PR carrying
+The hosted reconciliation endpoint lists every currently open issue/PR carrying
 an `agent:*` or `review:*` label, unioned with every open issue/PR assigned to
 `vars.AGENT_FLEET_LOGIN` (`jclaw-bot`) — the durable, label-independent
 signal `claim-issue` already sets at the start of every worker dispatch and
@@ -150,7 +145,7 @@ was removed while its generation was active
 (`libs/dispatch-reconcile/src/scan.ts`'s `discoverReconcileCandidates`) —
 then normalizes and processes each candidate
 directly through the shared controller under the Firestore authority lease.
-It does not create one `agent-router.yml` run per candidate; that removes the
+It does not create one Actions workflow run per candidate; that removes the
 repair path's dependency on the self-hosted control-plane pool. Every hosted
 invocation uses a request-unique lease owner so overlapping scheduled/manual
 calls serialize through Firestore instead of bypassing the live lease as the

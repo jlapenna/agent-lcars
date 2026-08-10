@@ -143,8 +143,8 @@ same label for as long as the long job runs.
 This actually happened (agent-lcars#408/#451): `ci.yml`'s `verify`/`e2e`
 jobs (20-30 min) landed on `lcars-default`, a 2-runner pool
 `orchestrator.yml`'s own comment already documented as reserved for small
-glue jobs (`agent-automerge.yml`, `agent-router.yml`'s dispatch-broker
-routing) specifically so they'd never queue behind something slow. It
+glue jobs (`agent-automerge.yml`, hosted-control-plane support) specifically
+so they'd never queue behind something slow. It
 still happened, because nothing forced a reader adding a new `runs-on` to
 check what else already shared that label. `ci.yml`'s jobs got their own
 `homelab-autoscale-lcars-ci` pool instead once diagnosed.

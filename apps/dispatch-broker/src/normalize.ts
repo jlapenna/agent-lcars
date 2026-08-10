@@ -57,11 +57,8 @@ export interface IssueOrPullRequest {
   pull_request?: unknown;
   merged?: boolean;
   merged_at?: string | null;
-  /** GitHub's own `open`/`closed`. Only read by the `workflow_dispatch`
-   *  `reconcile` branch below -- main.mjs's normalize() already fetches the
-   *  live issue for every workflow_dispatch kind (see its own header
-   *  comment), so this is present whenever a reconcile ping is normalized,
-   *  with no extra request of its own. */
+  /** GitHub's own `open`/`closed`, supplied by the hosted reconciler for a
+   *  reconciliation command without a second controller fetch. */
   state?: string;
 }
 
@@ -86,8 +83,8 @@ export interface TimelineEvent {
   id?: number;
 }
 
-/** The router's own event context (agent-router.yml's job env), common to
- *  every `eventName` and to `workflow_dispatch`. */
+/** The normalized event context shared by webhook and hosted-command
+ *  transports. */
 export interface NormalizeContext {
   repository: string;
   repositoryId: number | string;
@@ -397,26 +394,14 @@ function normalizeWorkflowDispatch({
   inputs: WorkflowDispatchInputs;
   context: NormalizeContext;
   maintainer: string | undefined;
-  /** main.mjs's normalize() already fetches the live issue for every
-   *  workflow_dispatch kind before calling normalizeEvent() -- see its own
-   *  header comment -- so this is the same fetch, not a second one. Only
-   *  the `reconcile` branch below reads it. */
+  /** The hosted reconciler's already-fetched live issue. Only the
+   *  `reconcile` branch reads it. */
   issue?: IssueOrPullRequest;
 }): NormalizedEvent {
   const task = taskRef(context, undefined);
-  // Fired by dispatch-reconcile.yml's scan job (#305), one workflow_dispatch
-  // call per already-discovered open agent-labeled issue/PR -- see
-  // main.mjs's dispatchReconcileScan(). Carries no claims about ledger
-  // state (unlike `completion`, which binds a specific run/generation/token
-  // that must be validated to prevent a forged completion), so there is
-  // nothing here to authorize or validate beyond the issue identity itself:
-  // it is a maintenance ping meaning "re-observe this issue's ledger against
-  // live GitHub state", and every repair broker()'s `reconcile` branch can
-  // perform is already a safe, idempotent, evidence-preserving observation
-  // (never a blind trust of caller-supplied state). workflow_dispatch itself
-  // already requires repo write access to trigger manually, and the
-  // scheduled trigger only ever comes from this repo's own trusted
-  // dispatch-reconcile.yml job.
+  // A hosted reconciliation command carries no caller-owned ledger state:
+  // it means "re-observe this anchor against live GitHub state." The shared
+  // controller applies only idempotent, evidence-preserving repairs.
   if (inputs.kind === 'reconcile') {
     return {
       kind: 'reconcile',

@@ -57,18 +57,15 @@ export type {
   AgentResultClaim,
   AttemptMarker,
   ClaimArtifactType,
-  RouterGroupIdentity,
 } from './marker';
 export {
   displayTitleMatchesAttempt,
   formatAttemptId,
   formatClaimMarker,
   formatDispatchMarker,
-  formatRouterGroupMarker,
   parseAttemptId,
   parseClaimMarker,
   parseDispatchMarker,
-  parseRouterGroupMarker,
   textCarriesClaim,
 } from './marker';
 export {
@@ -85,25 +82,23 @@ export {
 export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
 export {
   DISPATCH_OUTCOME_KINDS,
+  dispatchOutcomeKindSchema,
+  dispatchOutcomeReferenceSchema,
   isDispatchOutcomeKind,
   isDispatchOutcomeReference,
 } from './outcomes';
 export type {
   AgentPipeline,
-  AgentPipelineContract,
   DispatchPipeline,
   PipelineContract,
 } from './pipelines';
 export {
   AGENT_BOT_LOGINS,
   AGENT_LABELS,
-  AGENT_PIPELINES,
-  agentPipelineContract,
   DISPATCH_LABELS,
   DISPATCH_PIPELINES,
   excludedPullRequestAuthors,
   GENERIC_REPLY_COMMAND,
-  isAgentPipeline,
   isDispatchPipeline,
   PIPELINE_CONTRACTS,
   pipelineContract,
@@ -119,6 +114,8 @@ export type {
 export {
   isWellFormedProjectionStatus,
   PROJECTION_CONVERGENCE_STATES,
+  projectionConvergenceStateSchema,
+  projectionStatusSchema,
 } from './projection';
 export type { QuickTaskIdentity } from './quick-task';
 export {
@@ -147,6 +144,10 @@ export {
   parseOperationKey,
   RECOVERY_DOMAINS,
   RECOVERY_SOURCE_KINDS,
+  recoveryDomainSchema,
+  recoveryObservationSchema,
+  recoveryOperationTargetSchema,
+  recoverySourceKindSchema,
 } from './recovery-observation';
 export type { AuthoritativeTaskState } from './task-state';
 export {

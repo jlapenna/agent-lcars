@@ -16,14 +16,6 @@ import {
   formatAttemptId,
   formatFailure,
 } from '@agent-lcars/dispatch-contracts';
-import type { ReconcileIssue } from '@agent-lcars/dispatch-reconcile';
-import {
-  discoverRecentlyClosedReconcileCandidates as discoverRecentlyClosedReconcileCandidatesShared,
-  discoverReconcileCandidates as discoverReconcileCandidatesShared,
-  dispatchReconcileScan as dispatchReconcileScanShared,
-  RECONCILE_DISPATCH_CONCURRENCY,
-  runReconcileScan,
-} from '@agent-lcars/dispatch-reconcile';
 
 import type { AnchorControl } from './broker';
 import {
@@ -52,12 +44,10 @@ import {
 import {
   classifyAuthorityTaskInitialization,
   createGitHubApi,
-  createReconcileTransport,
   dispatchWorker,
   ensureLaneReadinessAlert,
   failClosed,
   findRunsForGeneration,
-  findSupersedingRouterRun,
   getWorkflowRun,
   GitHubApiError,
   type LedgerProjectionIdentity,
@@ -68,7 +58,6 @@ import {
   repositoryPath,
   resolveLaneReadinessAlerts,
   saveLedger as saveLedgerComment,
-  verifyBrokerConcurrency,
   workerWorkflow,
 } from './github-api';
 import { sendHostedCompletion } from './hosted-completion-client';
@@ -92,20 +81,16 @@ import type { PreflightExpectation } from './modules/scheduler';
 import type {
   AnchorControlEvent,
   CompletionEvent,
-  NormalizeContext,
   NormalizedEvent,
 } from './normalize';
 import {
   makeIntent,
-  normalizeEvent,
   quickTaskRequest,
   REVIEW_LABELS,
   selectedPipeline,
   selectedPipelineFrom,
 } from './normalize';
 import { processCompletionCallback } from './services/completion-processing';
-import { admitHostedDelivery } from './services/hosted-admission';
-import { orchestrateReconciliation } from './services/reconciliation-orchestration';
 import {
   acquireAuthority,
   type AuthoritySession,
@@ -118,9 +103,7 @@ import {
 import { FirestoreRestStoragePort } from './storage/firestore-rest-port';
 import type { LaunchOutboxOperation, StoragePort } from './storage/port';
 
-// --- GitHub webhook/REST shapes main.mjs reads. One set covering every
-// endpoint this file calls: the raw event payload off disk (normalize()),
-// issue/comment/timeline REST responses, and workflow run details. ---
+// --- GitHub REST shapes the shared hosted controller reads. ---
 
 interface GitHubUserRef {
   login?: string;
@@ -161,20 +144,6 @@ interface GitHubTimelineEvent {
   actor?: GitHubUserRef;
   created_at: string;
   id?: number;
-}
-
-/** The raw `GITHUB_EVENT_PATH` payload -- one shape covering every
- *  `eventName` this action handles, exactly as the untyped original read
- *  it. `inputs` is only present for `workflow_dispatch`. */
-interface GitHubEventPayload {
-  repository?: { full_name: string; id: number };
-  inputs?: Record<string, string>;
-  action: string;
-  issue?: GitHubIssueDetail;
-  pull_request?: GitHubIssueDetail;
-  comment?: GitHubIssueComment;
-  sender?: GitHubUserRef;
-  label?: GitHubLabelRef;
 }
 
 interface WorkflowRun {
@@ -237,24 +206,12 @@ function output(name: string, value: unknown): Promise<void> {
   return fs.appendFile(path, `${name}=${value}\n`, 'utf8');
 }
 
-function encode(value: unknown): string {
-  return Buffer.from(JSON.stringify(value)).toString('base64url');
-}
-
-function decode(value: string): unknown {
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-}
-
 function api(): GitHubApiClient {
   return createGitHubApi({ token: env('GITHUB_TOKEN') });
 }
 
-// The Action adapter's one `FirestoreRestStoragePort` factory. Every broker
-// transition acquires the shared per-task authority lease before changing
-// controller state. Credential resolution stays out of the adapter itself
-// (firestore-rest-port.ts's own "Auth" section): agent-router.yml's
-// google-github-actions/auth step mints the access token and this file only
-// ever reads the resulting env var, never derives one itself.
+// The worker Action adapter's Firestore port factory. Credential resolution
+// remains outside this adapter; it only receives the short-lived token.
 function createStoragePort(): StoragePort {
   return new FirestoreRestStoragePort({
     projectId: env('GCP_PROJECT_ID'),
@@ -321,20 +278,6 @@ async function saveProjectionCheckpoint(
   await persistAuthority(loaded.authority, loaded.ledger);
 }
 
-function contextFor(
-  event: GitHubEventPayload,
-  inputs: Record<string, string>,
-): NormalizeContext {
-  return {
-    repository: event.repository?.full_name ?? env('GITHUB_REPOSITORY'),
-    repositoryId: event.repository?.id ?? Number(env('GITHUB_REPOSITORY_ID')),
-    issue: inputs.issue,
-    runId: Number(env('GITHUB_RUN_ID')),
-    actor: env('GITHUB_ACTOR'),
-    now: new Date().toISOString(),
-  };
-}
-
 // Module failure isolation (#645 Phase 2): wraps one fallible controller
 // step so its own exception is classified by phase, recorded, and only THEN
 // rethrown. Before this, a module's throw (the concrete regression: a Quick
@@ -350,12 +293,10 @@ function contextFor(
 // Recording has two independent layers:
 //  - a GitHub Actions `::error::` annotation carrying `formatFailure(...)`,
 //    always emitted. This is the one record that survives when no ledger
-//    could be loaded at all -- the failure may be *why* it couldn't load
-//    (normalize() runs before any ledger exists for this event at all; see
-//    its own call below), so this can never depend on ledger availability.
+//    could be loaded at all, so this can never depend on ledger availability.
 //  - a classified ledger anomaly, only when `ledgerContext` (a
-//    `{ client, loaded }` pair) is supplied, i.e. only from within broker(),
-//    the one serialized job allowed to write the ledger.
+//    `{ client, loaded }` pair) is supplied by the serialized controller
+//    transition that owns the ledger write.
 //
 // A failure in EITHER recording layer must never replace or swallow the
 // original error -- the failure that triggered recording may be exactly why
@@ -430,98 +371,6 @@ async function runPhase<T>(
     }
     throw error;
   }
-}
-
-async function normalize(): Promise<void> {
-  // This is an Action-only path; the hosted route imports
-  // processNormalizedEvent and never reads the runner event file.
-  const event: GitHubEventPayload = JSON.parse(
-    await fs.readFile(
-      /* turbopackIgnore: true */ env('GITHUB_EVENT_PATH'),
-      'utf8',
-    ),
-  );
-  const eventName = env('GITHUB_EVENT_NAME');
-  const inputs: Record<string, string> = event.inputs ?? {};
-  const context = contextFor(event, inputs);
-  const client = api();
-  if (eventName === 'workflow_dispatch') {
-    const issue = await client.requestOk<GitHubIssueDetail>(
-      `${repositoryPath({ repository: context.repository })}/issues/${inputs.issue}`,
-    );
-    event.issue = issue;
-  }
-  let timeline: GitHubTimelineEvent[] = [];
-  // The Issue Timeline API also covers pull requests (a PR number IS an
-  // issue number under the hood), so a pull_request_target labeled/unlabeled
-  // event
-  // -- the review-dispatch counterpart to an issue's labeled/unlabeled --
-  // needs the same timeline fetch normalizeEvent's timelineSource() relies
-  // on to disambiguate which delivery this webhook is. The target event is
-  // required here because it runs this privileged controller from trusted
-  // main rather than from a PR-controlled merge ref. Its own closed/reopened
-  // actions don't need the timeline: normalizeEvent resolves their sourceId
-  // directly from the payload.
-  const wantsTimeline =
-    (eventName === 'issues' &&
-      ['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)) ||
-    (['pull_request', 'pull_request_target'].includes(eventName) &&
-      ['labeled', 'unlabeled'].includes(event.action));
-  if (wantsTimeline) {
-    // wantsTimeline is only true for an issue or pull-request event, each of
-    // which always carries one of the two -- recomputed independently here
-    // exactly as the original did.
-    const numbered = event.issue ?? event.pull_request;
-    if (!numbered) {
-      throw new Error(
-        `Event ${eventName}/${event.action} claimed a timeline but carried neither issue nor pull_request`,
-      );
-    }
-    timeline = await client.requestOk<GitHubTimelineEvent[]>(
-      `${repositoryPath({ repository: context.repository })}/issues/${numbered.number}/timeline?per_page=100`,
-    );
-  }
-  // No ledger exists yet at this point in the workflow -- normalize() runs
-  // in its own job, before broker() ever loads (or creates) one -- so
-  // `ledgerContext` is always undefined here. A throw from normalizeEvent()
-  // (the concrete regression: a Quick Task digest mismatch, see
-  // quickTaskRequest in normalize.mjs) is still classified as a `signal`
-  // phase failure and surfaced via the `::error::` annotation before it
-  // fails this job closed, rather than propagating as a bare, unattributed
-  // crash.
-  const normalized = await runPhase(undefined, 'signal', () =>
-    normalizeEvent({
-      eventName,
-      event,
-      inputs,
-      context,
-      timeline,
-      maintainer: env('MAINTAINER_LOGIN'),
-    }),
-  );
-  // Only some NormalizedEvent kinds carry `task`/`reason` at all; the `in`
-  // checks are the typed equivalent of the original's bare optional-chained
-  // property reads on a dynamically-shaped object.
-  const normalizedTask = 'task' in normalized ? normalized.task : undefined;
-  const normalizedReason =
-    'reason' in normalized ? normalized.reason : undefined;
-  const issue =
-    normalizedTask?.issue ?? event.issue?.number ?? Number(inputs.issue);
-  await output('eligible', normalized.kind === 'ignored' ? 'false' : 'true');
-  await output('issue', String(issue || ''));
-  await output('repository-id', String(context.repositoryId));
-  await output(
-    'is-pr',
-    String(Boolean(event.pull_request ?? event.issue?.pull_request)),
-  );
-  await output(
-    'group',
-    issue
-      ? `agent-lcars-dispatch-v1-${context.repositoryId}-${issue}`.toLowerCase()
-      : '',
-  );
-  await output('payload', encode(normalized));
-  await output('reason', normalizedReason ?? '');
 }
 
 function activeGeneration(
@@ -672,8 +521,8 @@ async function reconcileActive(
 // second, overlapping, or rapidly re-triggered pass (the acceptance
 // criterion): re-observing "still missing" inside this window records
 // nothing new and mutates nothing, rather than inflating the attempt
-// counter or re-writing the ledger. A genuinely new scheduled pass (30
-// minutes later, see dispatch-reconcile.yml) always clears it.
+// counter or re-writing the ledger. A later hosted reconciliation pass
+// always clears it.
 // Bound on how many distinct, interval-separated "still missing" reconcile
 // observations a generation gets before it is parked needs-human. Mirrors
 // the repo's general bounded-retry posture (#343/#344) rather than
@@ -953,8 +802,8 @@ async function trackMissingRun(
 // RECONCILE_MISSING_RUN_MIN_INTERVAL_MS above: re-observing "still not
 // terminal" inside this window records nothing and mutates nothing, so an
 // overlapping or rapidly re-triggered reconcile pass cannot inflate the
-// counter. Set to dispatch-reconcile.yml's own 30-minute scheduled cadence,
-// so a genuinely new scheduled pass always clears it.
+// counter. It matches the hosted reconciliation cadence, so a later pass
+// always clears it.
 // Bound on how many distinct, interval-separated "still not terminal"
 // observations a bound run gets before its generation is parked
 // needs-human. Same bounded-retry posture as
@@ -1109,68 +958,10 @@ async function trackStuckRun(
   await saveLedger(client, loaded);
 }
 
-// Repairs an orphan class outside #305's original scope (#520/#639): a
-// `labeled` event's intent that was queue-evicted (#344/#345) before
-// verifyBrokerConcurrency ever let broker() reach acceptIntent. This is not
-// limited to an empty ledger: a relabel can be lost after earlier generations
-// already completed, and the current label remains desired state until its
-// real application event has a corresponding ledger source.
-// dispatchReconcileScan's candidate discovery already found this issue by
-// its current agent:* label, but a `reconcile` payload carries no claim
-// about which label or intent that was (#305's design is "re-observe live
-// state", not a replayed webhook) -- so re-derive it here from the issue's
-// OWN current label, the same signal a live `labeled` event would read.
-//
-// Deliberately keyed off a label only, not discoverReconcileCandidates's
-// other, fleet-assignee candidate lane (#363): that lane's dispatch
-// mechanism doesn't go through acceptIntent()/makeIntent() and is out of
-// scope for this repair.
-//
-// No grace period, unlike trackMissingRun: this only fires when the issue
-// currently shows one definite, unambiguous agent:* label and the current
-// label-application source is absent from the ledger. If a genuine live
-// `labeled` event for that very label is still in flight, it shares this
-// issue's own concurrency group (queue: max, cancel-in-progress: false)
-// and is strictly serialized against this run: it either already ran (so
-// generations is no longer empty and this never fires) or is still queued
-// behind this run and hasn't touched the ledger yet, so there is nothing
-// for this run to race against. A *new* labeled/unlabeled+labeled event
-// arriving afterward -- a genuinely new maintainer action, or the rare
-// case of a manual webhook redelivery -- carries the exact same
-// `timeline:<event-id>` source as this repair and is therefore a duplicate,
-// not a second generation. dispatchAccepted's
-// no-second-dispatch-while-one-is-active gate is what keeps that from
-// running two workers concurrently, exactly as it already does for any
-// other legitimate second intent arriving while the first is still active.
-//
-// Authorization (Codex review, P1): the live `labeled` path in
-// normalize.mjs rejects a non-maintainer's label before it ever produces
-// an intent (`if (!auth.authorized) throw new Error('Unauthorized label
-// dispatch')`). Re-deriving "current label present" from live issue state
-// alone -- as an earlier version of this function did -- has no sender to
-// check and would silently authorize a repair for a label ANY
-// collaborator with issue-write access applied, not just the maintainer.
-// Recover the same signal a live event would have used by asking the
-// issue's own timeline who most recently applied this exact label, and
-// require that actor to be the configured maintainer; an unresolvable or
-// non-maintainer authorship leaves the repair undone (fails closed, same
-// as the live path) rather than guessing.
-//
-// #634's one narrow exception is a digest-valid Quick Task whose agent:*
-// label was part of the issue-creation request. GitHub emits no separate
-// `labeled` timeline event for creation-time labels, so there is no label
-// actor to recover. Only when NO matching label event exists, require both
-// quickTaskRequest()'s existing marker/digest proof and the issue author's
-// login to match the configured maintainer. A real label event always wins:
-// its non-maintainer actor cannot fall back to the issue's original author.
-//
-// Must page through the ENTIRE timeline (listAll), not just its first
-// page (Codex review, P1 follow-up): an issue with over 100 timeline
-// events could have the label's true most-recent application sitting on
-// a later page than a single `per_page=100` GET ever sees, so a
-// single-page read can find and trust a stale entry instead -- wrong in
-// either direction (authorizing on a superseded maintainer application,
-// or rejecting on a superseded non-maintainer one).
+// Reconstruct a missing maintainer-authorized intent from the anchor's
+// current agent label only when no matching source is recorded. Hosted
+// reconciliation supplies the candidate; the normal ledger transition
+// remains the single authority for acceptance and dispatch.
 async function repairMissingIntentFromLabel(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1307,57 +1098,10 @@ async function repairMissingIntentFromLabel(
   await saveLedger(client, loaded);
 }
 
-// Converges a ledger's `control.closed` copy against the issue/PR's live
-// open/closed state -- the fix for the success-path bug where GitHub
-// closes an anchor (an automerge-linked auto-close via a PR's `Fixes #N`,
-// or this repo's own `gh issue close` sweep in agent-automerge.yml) using
-// GITHUB_TOKEN. GitHub's documented recursion guard drops any workflow
-// trigger an event caused by GITHUB_TOKEN would otherwise fire, so
-// agent-router.yml's own live `issues: [closed]`/`pull_request: [closed]`
-// triggers never run and applyAnchorControlTransition (broker()'s write for
-// a genuine live close event, below) never gets a chance to record it. This
-// is the read-and-catch-up half: dispatch-reconcile.yml's bounded closed-
-// issue sweep (discoverRecentlyClosedReconcileCandidates, below) puts a
-// closed, still agent-labeled OR fleet-assigned issue back in front of a
-// reconcile pass, and `issueClosed` -- threaded from main.mjs's own
-// normalize() step through ReconcileEvent (normalize.mjs) -- carries the
-// one fact only GitHub has: its real current state. Nothing here fetches
-// anything itself; a second GET here (on top of normalize()'s own,
-// already-unconditional fetch for every workflow_dispatch) would only
-// re-earn a fact this pass already has, and would turn every reconcile
-// pass -- including the ones a dispatching generation's own grace period
-// must stay silent through -- into one that always calls out to GitHub.
-//
-// broker() (below) calls this directly, ahead of reconcileActive(), for
-// every `reconcile` event -- not only indirectly through reconcileLedger's
-// own call further down (#715 review: reconcileActive() can throw on an
-// anomaly entirely unrelated to whether the anchor is closed, and used to
-// run first, so control-state convergence could never outrun it). The
-// second call this same pass makes, inside reconcileLedger, is therefore
-// always a no-op by the time it runs -- see that function's own header.
-//
-// `issueClosed === undefined` means the live state genuinely couldn't be
-// determined (main.mjs's normalize() didn't -- or couldn't -- fetch the
-// issue); falls back to the ledger's own last-recorded copy rather than
-// guessing, so a stale-but-unknown-either-way pass changes nothing.
-//
-// When the two disagree, this writes through applyAnchorControl -- the
-// exact function a genuine live `issues.closed`/`pull_request.closed`
-// webhook already uses (see applyAnchorControlTransition below) -- so
-// revisioning, sourceId dedup, and superseding any `pending`/`accepted`
-// generation on close all stay the single mechanism they already were.
-// Nothing here ever calls acceptIntent/beginDispatch or otherwise creates a
-// generation.
-//
-// Returns whether the issue IS closed (whether or not this call is what
-// converged it) so reconcileLedger can skip every generation-repair branch
-// that could create/retry work -- including repairMissingIntentFromLabel,
-// the one branch that CAN create a fresh generation. Its one closed-only
-// exception terminalizes a durable pre-launch outbox operation after bounded
-// run discovery; it can only abandon work, never create it. That boundary is
-// what makes "reconciling a closed issue never dispatches a new generation"
-// structural, reinforced by dispatchAccepted's own
-// `while (!ledger.control.closed)` gate in the same broker() pass.
+// Converges a ledger's `control.closed` copy against the hosted
+// reconciler's observed issue/PR state. It records the same
+// `applyAnchorControl` transition as a webhook delivery, so closing an
+// anchor supersedes pending work without creating a second authority.
 async function reconcileControlState(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1393,32 +1137,10 @@ async function reconcileControlState(
   return issueClosed;
 }
 
-// The `reconcile` normalized kind's own repair (#305), invoked from
-// broker() after reconcileActive() has already had its normal chance to
-// bind/complete the current active generation. Everything reconcileActive()
-// already covers (bind an unambiguous run, complete a terminal bound run,
-// anomaly+fail-closed a genuine duplicate-run collision) is intentionally
-// NOT duplicated here -- this only closes reconcileActive()'s one remaining
-// gap (a persistently runless dispatch) and one defensive invariant check.
-//
-// `issueClosed` (from ReconcileEvent, normalize.mjs) is checked first, via
-// reconcileControlState, before any of the generation-repair logic below --
-// see that function's own header for why a closed anchor can only enter the
-// narrow pending-launch abandonment path rather than falling through.
-// broker() (#715) already made
-// this exact reconcileControlState call itself, ahead of reconcileActive(),
-// before ever reaching this function -- so by the time reconcileLedger runs
-// at all, this call is normally a no-op re-observation of an
-// already-converged ledger; it stays here (rather than being removed) so
-// reconcileLedger keeps converging control state correctly on its own for
-// every other caller, direct test included. A reopened anchor (`issueClosed
-// === false` while the ledger still says closed) converges the same way but
-// does NOT return early: an issue reopened after a stale close is ordinary
-// open-issue territory, and the discovery lane that would have found it in
-// the first place is the existing open/fleet-assignee one
-// (discoverReconcileCandidates) -- a reopened anchor still carries
-// whichever agent:*/assignee signal got it discovered, so no dedicated
-// "reopened sweep" is needed alongside the closed one.
+// Reconciliation repairs a persistently runless dispatch after
+// `reconcileActive` has already bound or completed any observable worker
+// run. It first converges anchor state; a closed anchor can only abandon
+// pre-launch work, never create a replacement generation.
 async function reconcileLedger(
   client: GitHubApiClient,
   loaded: LoadedLedger,
@@ -1541,41 +1263,6 @@ async function reconcileLedger(
   }
   if (active.attempt?.runId) return;
   await trackMissingRun(client, loaded, active, now, maintainer);
-}
-
-// Fires one workflow_dispatch `kind: reconcile` call at agent-router.yml per
-// already-discovered candidate issue (#305's scan side). Each call reuses
-// agent-router.yml's own normalize -> broker jobs end to end: the same
-// per-issue `agent-lcars-dispatch-v1-<repositoryId>-<issue>` concurrency
-// group, and #349's already-hardened indirect concurrency corroboration for
-// workflow_dispatch-triggered runs. This function never touches a ledger
-// comment itself, so it needs no concurrency verification of its own --
-// only dispatch-reconcile.yml's single scan-wide concurrency group (to
-// avoid two overlapping scans firing duplicate dispatches) applies here.
-// Bounds how many workflow_dispatch POSTs dispatchReconcileScan fires at
-// once. Every candidate's dispatch is independent -- no ordering dependency
-// between them -- but the fleet-assignee discovery lane (#363 review) can
-// legitimately return a large historical backlog, and an unbounded burst of
-// simultaneous POSTs risks tripping GitHub's secondary rate limits (a PR
-// #374 review finding): the resulting rejections would just become
-// per-candidate failures, silently skipping otherwise-healthy candidates
-// for this pass. A small worker pool (mapWithConcurrency) still attempts
-// every candidate and keeps per-candidate failure isolation, just bounded.
-interface ReconcileScanResults {
-  dispatched: number;
-  failed: { issue: number; message: string }[];
-}
-
-async function dispatchReconcileScan(
-  client: GitHubApiClient,
-  repository: string,
-  issueNumbers: number[],
-): Promise<ReconcileScanResults> {
-  return dispatchReconcileScanShared(
-    createReconcileTransport(client),
-    repository,
-    issueNumbers,
-  );
 }
 
 function isDefiniteDispatchRejection(error: unknown): error is GitHubApiError {
@@ -2057,85 +1744,6 @@ function resolveTask(normalized: NormalizedEvent): LedgerTaskRef {
       (normalized as { task: LedgerTaskRef }).task;
 }
 
-// Only a `retryable: true` mismatch is eligible: every other failure mode
-// (config mismatch, malformed response, more than one match) is a real
-// anomaly that retrying or supersession-checking cannot explain away, so
-// it must keep failing red immediately (issue #344's "genuinely
-// unexplained mismatch" requirement). Even for the eligible case, absence
-// of a corroborating superseding run must NOT be treated as proof of
-// eviction -- it just means this run's mismatch is still unexplained, so
-// the caller keeps failing red.
-//
-// Corroborated eviction is only safe to drop for `control-evidence` and
-// `reconcile`: both are non-authoritative pings the superseding run's own,
-// separately-sourced evidence does not depend on -- losing either only
-// shrinks the audit trail (`control-evidence`) or simply waits for the next
-// scheduled pass (`reconcile`, #305: dispatch-reconcile.yml re-fires the
-// identical idempotent `kind: reconcile` ping for this issue on its next
-// 30-minute cadence regardless, so an evicted one is never "permanently
-// lost" the way an evicted intent would be). `intent`, `completion`, and
-// `anchor-control` are not interchangeable with whatever the superseding
-// run happens to carry: the superseding run corresponds to a *different*
-// triggering event (its own distinct sourceId), so it offers no guarantee
-// of carrying this run's payload forward. An evicted `intent` is an
-// authorized dispatch request that would be silently lost forever; an
-// evicted `completion` would leave its generation active forever; an
-// evicted `anchor-control` would leave the issue's open/closed state
-// unresolved. Those must still fail red even when eviction is
-// corroborated (#344 follow-up), with an error naming what was lost so a
-// maintainer knows to manually re-dispatch it.
-const EVICTION_TOLERANT_KINDS = new Set(['control-evidence', 'reconcile']);
-
-async function wasSupersededEviction(
-  client: GitHubApiClient,
-  task: LedgerTaskRef,
-  runId: number,
-  group: string,
-  kind: string,
-  error: unknown,
-): Promise<boolean> {
-  // Genuinely untrusted here: whatever verifyBrokerConcurrency's caller
-  // threw, of any shape. Every field is checked before use, same as the
-  // untyped original's own optional-chained reads.
-  const candidate = error as
-    { name?: string; retryable?: boolean } | null | undefined;
-  if (
-    candidate?.name !== 'BrokerConcurrencyMismatchError' ||
-    !candidate.retryable
-  ) {
-    return false;
-  }
-  const superseding: WorkflowRun | undefined = await findSupersedingRouterRun(
-    client,
-    task,
-    runId,
-  );
-  if (!superseding) return false;
-  if (!EVICTION_TOLERANT_KINDS.has(kind)) {
-    throw new Error(
-      `Broker run ${runId} (group ${group}, issue #${task.issue}) was ` +
-        `evicted from its concurrency queue by newer run ${superseding.id}, ` +
-        `but this event carries a '${kind}' payload. Only observational ` +
-        'control-evidence/reconcile pings may be dropped on a corroborated ' +
-        `eviction (#344, #305); a superseding run does not carry this ` +
-        `event's '${kind}' payload forward, since it corresponds to a ` +
-        "different triggering event. This event's payload is presumed " +
-        'permanently lost -- a maintainer must manually re-dispatch it to ' +
-        'recover.',
-      { cause: error },
-    );
-  }
-  console.log(
-    `::notice::Broker run ${runId} (group ${group}, issue #${task.issue}) ` +
-      `was evicted from its concurrency queue by newer run ${superseding.id}, ` +
-      'which now reports the expected group. Treating this run as ' +
-      `superseded rather than failing (#344/#305): this run's own '${kind}' ` +
-      'payload for its triggering event is not recorded in the ledger -- ' +
-      'the superseding run already carries the issue forward correctly.',
-  );
-  return true;
-}
-
 // Only these two acceptIntent() outcomes leave the resulting generation in
 // a non-superseded state ('accepted' for 'dispatch', 'pending' for
 // 'pending') -- every other outcome ('duplicate', 'semantic-duplicate',
@@ -2377,9 +1985,6 @@ export interface BrokerPassOptions {
   transportRunId: number;
   authorityOwner: string;
   maintainer?: string;
-  /** Action-only concurrency evidence. Hosted callers omit this because the
-   * Firestore authority lease is their serialization primitive. */
-  actionConcurrency?: { group: string; eventName?: string };
   /** Identities allowed to own the compatibility projection. Firestore,
    * never the comment, remains controller authority. */
   projectionIdentities?: readonly LedgerProjectionIdentity[];
@@ -2387,17 +1992,15 @@ export interface BrokerPassOptions {
   authorityBusyWaitMs?: number;
   /** Hosted worker callbacks must return after recording the observation:
    * the calling workflow cannot become terminal while its HTTP request is
-   * still waiting. Action callbacks retain the bounded terminal poll. */
+   * still waiting. */
   pollCompletionUntilTerminal?: boolean;
 }
 
 /**
  * Execute one already-normalized controller delivery.
  *
- * The GitHub Action and the hosted webhook endpoint deliberately share this
- * exact transition path. Transport-specific concerns stay in their wrappers:
- * the Action verifies its lossy concurrency-group serialization, while the
- * hosted endpoint relies on the durable Firestore lease acquired below.
+ * Hosted webhook, reconciliation, and completion transports share this exact
+ * transition path and serialize through the durable Firestore lease below.
  */
 export async function processNormalizedEvent({
   normalized,
@@ -2408,7 +2011,6 @@ export async function processNormalizedEvent({
   transportRunId: runId,
   authorityOwner,
   maintainer = '',
-  actionConcurrency,
   projectionIdentities,
   pollCompletionUntilTerminal = true,
   authorityBusyWaitMs = 130_000,
@@ -2417,36 +2019,6 @@ export async function processNormalizedEvent({
   const authorityEpoch = authorityEpochInput;
   const task = resolveTask(normalized);
   const client = createGitHubApi({ token: githubToken });
-  // GITHUB_EVENT_NAME is a standard runner-provided variable (already
-  // relied on by normalize()), not something this action sets itself.
-  // verifyBrokerConcurrency only uses it for its own diagnostic log line
-  // now: #348's third round (2026-08-04) retired the "some event types
-  // self-report reliably" allowlist after issues and issue_comment -- the
-  // last two events still on the direct, own-listing check -- both turned
-  // out to have real, nonzero failure rates too (see the comment above
-  // findConflictingRouterRun in github-api.mjs for the sampled numbers).
-  // The indirect check is now unconditional, so this stays optional without
-  // changing which verification path runs.
-  if (actionConcurrency) {
-    const { eventName, group } = actionConcurrency;
-    try {
-      await verifyBrokerConcurrency(client, task, runId, group, { eventName });
-    } catch (error) {
-      if (
-        await wasSupersededEviction(
-          client,
-          task,
-          runId,
-          group,
-          normalized.kind,
-          error,
-        )
-      ) {
-        return;
-      }
-      throw error;
-    }
-  }
   let loaded: LoadedLedger | undefined;
   try {
     loaded = await loadBrokerLedger(
@@ -2610,41 +2182,6 @@ export async function processNormalizedEvent({
       }
     }
   }
-}
-
-async function broker(): Promise<void> {
-  // encode()/decode() round-trip a NormalizedEvent through a GitHub Actions
-  // output within this same action's own two jobs (normalize -> broker); no
-  // external tamper surface beyond GitHub's own output-passing, and the
-  // original decode() applied no validation here either.
-  const normalized = decode(env('BROKER_PAYLOAD')) as NormalizedEvent;
-  const runId = Number(env('GITHUB_RUN_ID'));
-  const hostedControllerLogin = env('HOSTED_CONTROLLER_LOGIN', false);
-  await admitHostedDelivery(
-    {
-      normalized,
-      githubToken: env('GITHUB_TOKEN'),
-      authorityEpoch: env('DISPATCH_AUTHORITY_EPOCH', false),
-      isPullRequest: env('ANCHOR_IS_PR', false) === 'true',
-      transportRunId: runId,
-      authorityOwner: `action:${runId}`,
-      maintainer: env('MAINTAINER_LOGIN', false),
-      actionConcurrency: {
-        group: env('BROKER_GROUP'),
-        eventName: env('GITHUB_EVENT_NAME', false),
-      },
-      projectionIdentities: [
-        { login: 'github-actions[bot]', type: 'Bot' },
-        ...(hostedControllerLogin
-          ? [{ login: hostedControllerLogin, type: 'User' as const }]
-          : []),
-      ],
-    },
-    {
-      storagePortFactory: createStoragePort,
-      process: processNormalizedEvent,
-    },
-  );
 }
 
 async function preflight(): Promise<void> {
@@ -2871,101 +2408,15 @@ async function classifyClaudeReadinessProbe(): Promise<void> {
   );
 }
 
-// Merges both discovery lanes (#305, broadened by the #363 review):
-// currently agent-labeled issues/PRs (the fast path -- covers everything
-// still mid-dispatch or freshly completed) union'd with issues/PRs assigned
-// to the agent fleet login (the label-independent path -- covers a ledger
-// left active after its last agent:* label was removed). Deduplicated by
-// issue number the same way listOpenAgentLabeledIssues dedupes across its
-// own per-label queries.
-async function discoverReconcileCandidates(
-  client: GitHubApiClient,
-  repository: string,
-  fleetLogin: string,
-): Promise<ReconcileIssue[]> {
-  return discoverReconcileCandidatesShared(
-    createReconcileTransport(client),
-    repository,
-    fleetLogin,
-  );
-}
-
-// Closed counterpart to discoverReconcileCandidates (#715 review of
-// #645/#663): the bounded closed-issue sweep needs the identical two-lane
-// union its open counterpart already has, not just the labeled half. An
-// anchor whose last agent:*/review:* label was removed while its worker was
-// still active -- the exact case the fleet-assignee lane exists to cover on
-// the open side, see listOpenIssuesAssignedTo's own header -- stays
-// undiscoverable by listRecentlyClosedAgentLabeledIssues alone once
-// GITHUB_TOKEN closes it, so without this lane such an anchor's
-// control.closed would stay stale forever, permanently, exactly like the
-// labeled gap #645 fixed. Deduplicated by issue number the same way
-// discoverReconcileCandidates and each individual lane already dedupe their
-// own per-label queries.
-async function discoverRecentlyClosedReconcileCandidates(
-  client: GitHubApiClient,
-  repository: string,
-  fleetLogin: string,
-  now: Date | string = new Date(),
-): Promise<ReconcileIssue[]> {
-  return discoverRecentlyClosedReconcileCandidatesShared(
-    createReconcileTransport(client),
-    repository,
-    fleetLogin,
-    now,
-  );
-}
-
-// dispatch-reconcile.yml's scan job (#305): read-only discovery of every
-// open agent-labeled or fleet-assigned issue/PR (discoverReconcileCandidates)
-// UNION'd with its closed counterpart, the bounded closed-issue sweep
-// (discoverRecentlyClosedReconcileCandidates, above -- the closed-anchor
-// convergence fix, broadened by #715's review to the same label +
-// fleet-assignee two-lane shape the open side already had; see
-// reconcileControlState above for what a closed candidate's own reconcile
-// pass then does), deduplicated by issue number the same way each
-// individual lane already dedupes its own per-label queries. Every
-// resulting candidate, open or closed, gets exactly one `kind: reconcile`
-// workflow_dispatch call via dispatchReconcileScan() -- the closed lane
-// needs no separate dispatch kind of its own, since reconcileLedger's own
-// live-state check (threaded through from normalize.mjs's ReconcileEvent)
-// is what tells the two apart. A per-issue dispatch failure never blocks
-// the other candidates -- every candidate always gets an attempt -- but the
-// job itself still fails loud afterwards (unlike an individual reconcile's
-// own bounded-retry parking, which stays green by design) so a systemic
-// dispatch problem (e.g. a bad token) is visible.
-async function scanReconcile(): Promise<void> {
-  const client = api();
-  await orchestrateReconciliation(
-    {
-      repository: env('GITHUB_REPOSITORY'),
-      fleetLogin: env('AGENT_FLEET_LOGIN', false),
-    },
-    {
-      transport: createReconcileTransport(client),
-      run: runReconcileScan,
-      writeOutput: output,
-      log: console.log,
-    },
-  );
-}
-
 export {
   anchorNeedsHuman,
   applyAnchorControlTransition,
   assertWorkerRun,
-  broker,
   classifyClaudeReadinessProbe,
   claudeReadiness,
   completionCallback,
   completionMatches,
-  contextFor,
-  decode,
-  discoverRecentlyClosedReconcileCandidates,
-  discoverReconcileCandidates,
   dispatchAccepted,
-  dispatchReconcileScan,
-  encode,
   FRESH_INTENT_OUTCOMES,
   handleCompletion,
   healStaleAgentLabels,
@@ -2973,10 +2424,8 @@ export {
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
-  normalize,
   preflight,
   projectClaudeReadiness,
-  RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
@@ -2990,8 +2439,6 @@ export {
   resolveTask,
   runPhase,
   saveProjectionCheckpoint,
-  scanReconcile,
   trustedActionsRunUrl,
   trustedClaudeExecutionFile,
-  wasSupersededEviction,
 };

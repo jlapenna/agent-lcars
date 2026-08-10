@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 
-import type { ReconcileScanResult } from '@agent-lcars/dispatch-reconcile';
 import { test } from 'vitest';
 
 import { processCompletionCallback } from './completion-processing';
 import { admitHostedDelivery } from './hosted-admission';
-import { orchestrateReconciliation } from './reconciliation-orchestration';
 
 test('admission injects storage without reading CLI configuration', async () => {
   const port = { name: 'port' };
@@ -73,51 +71,5 @@ test('completion processing rejects an outcome reference without a PR outcome', 
       { send: async () => undefined },
     ),
     /requires a positive PR number/u,
-  );
-});
-
-test('reconciliation reports every dispatch result through injected ports', async () => {
-  const outputs: Record<string, string> = {};
-  const result: ReconcileScanResult = {
-    candidates: 3,
-    openCandidates: 2,
-    closedCandidates: 1,
-    dispatched: 3,
-    failed: [],
-  };
-  const returned = await orchestrateReconciliation(
-    { repository: 'jlapenna/agent-lcars', fleetLogin: 'jclaw-bot' },
-    {
-      transport: {} as never,
-      run: async () => result,
-      writeOutput: async (name, value) => {
-        outputs[name] = value;
-      },
-      log: () => undefined,
-    },
-  );
-  assert.equal(returned, result);
-  assert.deepEqual(outputs, { candidates: '3', dispatched: '3' });
-});
-
-test('reconciliation preserves per-candidate failures and fails the scan', async () => {
-  const result: ReconcileScanResult = {
-    candidates: 1,
-    openCandidates: 1,
-    closedCandidates: 0,
-    dispatched: 0,
-    failed: [{ issue: 822, message: 'dispatch refused' }],
-  };
-  await assert.rejects(
-    orchestrateReconciliation(
-      { repository: 'jlapenna/agent-lcars', fleetLogin: 'jclaw-bot' },
-      {
-        transport: {} as never,
-        run: async () => result,
-        writeOutput: async () => undefined,
-        log: () => undefined,
-      },
-    ),
-    /#822/u,
   );
 });

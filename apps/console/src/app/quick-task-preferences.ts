@@ -8,7 +8,7 @@ export interface QuickTaskPreferences {
   pipeline?: AgentPipeline;
 }
 
-function isAgentPipeline(value: unknown): value is AgentPipeline {
+function isConfiguredPipeline(value: unknown): value is AgentPipeline {
   return value === 'claude' || value === 'codex' || value === 'opencode';
 }
 
@@ -26,7 +26,7 @@ export function readQuickTaskPreferences(): QuickTaskPreferences {
         typeof candidate.repoKey === 'string' && candidate.repoKey.length > 0
           ? candidate.repoKey
           : undefined,
-      pipeline: isAgentPipeline(candidate.pipeline)
+      pipeline: isConfiguredPipeline(candidate.pipeline)
         ? candidate.pipeline
         : undefined,
     };

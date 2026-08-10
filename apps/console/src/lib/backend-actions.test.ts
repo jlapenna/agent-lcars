@@ -510,7 +510,7 @@ describe('approveAndRebasePr', () => {
     );
     // Approving, updating the branch, and merely *enabling* auto-merge
     // write no ledger-tracked fact themselves - the eventual merge is a
-    // normal GitHub-initiated event agent-router.yml still observes on its
+    // normal GitHub-initiated event the hosted controller observes on its
     // own, so no reconcile ping should follow any of these calls.
     expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });

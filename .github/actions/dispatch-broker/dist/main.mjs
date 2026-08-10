@@ -14933,11 +14933,6 @@ function formatDispatchMarker(attempt) {
 function displayTitleMatchesAttempt(displayTitle, attempt) {
   return Boolean(displayTitle?.includes(formatDispatchMarker(attempt)));
 }
-var ROUTER_GROUP_MARKER_RE = /\[router-group:(\d+):(\d+)\]/u;
-function parseRouterGroupMarker(displayTitle) {
-  const match = displayTitle?.match(ROUTER_GROUP_MARKER_RE);
-  return match ? { repositoryId: Number(match[1]), issue: Number(match[2]) } : void 0;
-}
 
 // libs/dispatch-contracts/src/oidc.ts
 var COMPLETION_OIDC_AUDIENCE = "agent-lcars-dispatch-completion";
@@ -14974,168 +14969,6 @@ var LANE_READINESS_FAILURES = [
 ];
 function isLaneReadinessFailure(value) {
   return typeof value === "string" && LANE_READINESS_FAILURES.includes(value);
-}
-
-// libs/dispatch-reconcile/src/scan.ts
-var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
-var RECONCILE_DISPATCH_CONCURRENCY = 5;
-async function listAllIssues(transport, query) {
-  const all = [];
-  for (let page = 1; page <= 100; page += 1) {
-    const items = await transport.listIssues({
-      ...query,
-      page,
-      perPage: 100
-    });
-    if (!Array.isArray(items)) {
-      throw new Error("GitHub issue listing response is not an array");
-    }
-    all.push(...items);
-    if (items.length < 100) return all;
-  }
-  throw new Error("GitHub issue pagination exceeded safety bound");
-}
-function dedupeIssues(lanes) {
-  const byNumber = /* @__PURE__ */ new Map();
-  for (const issue2 of lanes.flat()) {
-    if (Number.isSafeInteger(issue2?.number)) byNumber.set(issue2.number, issue2);
-  }
-  return [...byNumber.values()].sort(
-    (left, right) => left.number - right.number
-  );
-}
-async function listLabeledIssues(transport, repository, state, since) {
-  const lanes = await Promise.all(
-    DISPATCH_LABELS.map(
-      (label) => listAllIssues(transport, {
-        repository,
-        state,
-        label,
-        ...since && { since }
-      })
-    )
-  );
-  return dedupeIssues(lanes);
-}
-async function listAssignedIssues(transport, repository, state, assignee, since) {
-  if (!assignee) return [];
-  return listAllIssues(transport, {
-    repository,
-    state,
-    assignee,
-    ...since && { since }
-  });
-}
-function listOpenAgentLabeledIssues(transport, repository) {
-  return listLabeledIssues(transport, repository, "open");
-}
-function listOpenIssuesAssignedTo(transport, repository, fleetLogin) {
-  return listAssignedIssues(transport, repository, "open", fleetLogin);
-}
-function listRecentlyClosedAgentLabeledIssues(transport, repository, now = /* @__PURE__ */ new Date()) {
-  const since = new Date(
-    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
-  ).toISOString();
-  return listLabeledIssues(transport, repository, "closed", since);
-}
-function listRecentlyClosedIssuesAssignedTo(transport, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
-  const since = new Date(
-    new Date(now).getTime() - CLOSED_SWEEP_WINDOW_MS
-  ).toISOString();
-  return listAssignedIssues(transport, repository, "closed", fleetLogin, since);
-}
-async function discoverReconcileCandidates(transport, repository, fleetLogin) {
-  return dedupeIssues(
-    await Promise.all([
-      listOpenAgentLabeledIssues(transport, repository),
-      listOpenIssuesAssignedTo(transport, repository, fleetLogin)
-    ])
-  );
-}
-async function discoverRecentlyClosedReconcileCandidates(transport, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
-  return dedupeIssues(
-    await Promise.all([
-      listRecentlyClosedAgentLabeledIssues(transport, repository, now),
-      listRecentlyClosedIssuesAssignedTo(
-        transport,
-        repository,
-        fleetLogin,
-        now
-      )
-    ])
-  );
-}
-async function mapWithConcurrency(items, worker) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  async function runNext() {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      try {
-        await worker(items[index]);
-        results[index] = { status: "fulfilled" };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
-      }
-    }
-  }
-  await Promise.all(
-    Array.from(
-      { length: Math.min(RECONCILE_DISPATCH_CONCURRENCY, items.length) },
-      () => runNext()
-    )
-  );
-  return results;
-}
-function errorMessage(reason) {
-  return reason instanceof Error ? reason.message : String(reason);
-}
-async function dispatchReconcileScan(transport, repository, issueNumbers) {
-  const outcomes = await mapWithConcurrency(
-    issueNumbers,
-    (issue2) => transport.dispatchReconcile(repository, issue2)
-  );
-  const result = {
-    dispatched: 0,
-    failed: []
-  };
-  outcomes.forEach((outcome, index) => {
-    if (outcome.status === "fulfilled") {
-      result.dispatched += 1;
-    } else {
-      result.failed.push({
-        issue: issueNumbers[index],
-        message: errorMessage(outcome.reason)
-      });
-    }
-  });
-  return result;
-}
-async function runReconcileScan(transport, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
-  const [open, closed] = await Promise.all([
-    discoverReconcileCandidates(transport, repository, fleetLogin),
-    discoverRecentlyClosedReconcileCandidates(
-      transport,
-      repository,
-      fleetLogin,
-      now
-    )
-  ]);
-  const issueNumbers = dedupeIssues([open, closed]).map(
-    (issue2) => issue2.number
-  );
-  const dispatched = await dispatchReconcileScan(
-    transport,
-    repository,
-    issueNumbers
-  );
-  return {
-    candidates: issueNumbers.length,
-    ...dispatched,
-    openCandidates: open.length,
-    closedCandidates: closed.length
-  };
 }
 
 // apps/dispatch-broker/src/broker.ts
@@ -15625,11 +15458,6 @@ function classifyClaudeReadiness(actionConclusion, execution) {
 
 // apps/dispatch-broker/src/github-api.ts
 var API_VERSION = "2026-03-10";
-var CONCURRENCY_VERIFY_MAX_ATTEMPTS = 5;
-var CONCURRENCY_VERIFY_RETRY_DELAY_MS = 3e3;
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 var GitHubApiError = class extends Error {
   status;
   data;
@@ -15651,14 +15479,6 @@ var LedgerProjectionRepairError = class extends Error {
   }
   commentId;
   status;
-};
-var BrokerConcurrencyMismatchError = class extends Error {
-  retryable;
-  constructor(message, { retryable = false } = {}) {
-    super(message);
-    this.name = "BrokerConcurrencyMismatchError";
-    this.retryable = retryable;
-  }
 };
 function createGitHubApi({
   token,
@@ -15720,120 +15540,6 @@ function splitRepository(repository) {
 function repositoryPath(task) {
   const { owner, repo } = splitRepository(task.repository);
   return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-}
-function brokerConcurrencyGroup(task) {
-  if (!Number.isSafeInteger(task?.repositoryId) || task.repositoryId <= 0 || !Number.isSafeInteger(task?.issue) || task.issue <= 0) {
-    throw new Error("Cannot derive broker concurrency group from TaskRef");
-  }
-  return `agent-lcars-dispatch-v1-${task.repositoryId}-${task.issue}`;
-}
-function assertSuppliedGroupMatches(suppliedGroup, expected) {
-  if (suppliedGroup !== expected) {
-    throw new BrokerConcurrencyMismatchError(
-      "Broker concurrency output does not match its TaskRef"
-    );
-  }
-}
-function groupMembershipHolds(response, expected) {
-  return (response?.concurrency_groups ?? []).filter(
-    (group) => typeof group?.group_name === "string" && group.group_name.toLowerCase() === expected.toLowerCase()
-  );
-}
-function concurrencyGroupsPath(root, runId) {
-  return `${root}/actions/runs/${runId}/concurrency_groups?per_page=100`;
-}
-var ROUTER_BROKER_JOB_NAME = "broker";
-async function findConflictingRouterRun(api2, task, runId) {
-  const root = repositoryPath(task);
-  const data = await api2.requestOk(
-    `${root}/actions/workflows/agent-router.yml/runs?status=in_progress&per_page=100`
-  );
-  const candidates = (data.workflow_runs ?? []).filter((run) => {
-    if (!Number.isSafeInteger(run?.id) || run.id === runId) return false;
-    const marker = parseRouterGroupMarker(run.display_title);
-    return marker !== void 0 && marker.repositoryId === task.repositoryId && marker.issue === task.issue;
-  });
-  for (const candidate of candidates) {
-    const jobs = await api2.requestOk(
-      `${root}/actions/runs/${candidate.id}/jobs?per_page=100`
-    );
-    const holdsGroup = (jobs.jobs ?? []).some(
-      (job) => job?.name === ROUTER_BROKER_JOB_NAME && job.status === "in_progress"
-    );
-    if (holdsGroup) return candidate;
-  }
-  return void 0;
-}
-async function checkIndirectBrokerConcurrency(api2, task, runId, suppliedGroup) {
-  const expected = brokerConcurrencyGroup(task);
-  assertSuppliedGroupMatches(suppliedGroup, expected);
-  const conflicting = await findConflictingRouterRun(api2, task, runId);
-  if (conflicting) {
-    throw new BrokerConcurrencyMismatchError(
-      `Another in-progress agent-router.yml run (${conflicting.id}) carries this task's router-group marker for broker concurrency group ${expected}`,
-      { retryable: true }
-    );
-  }
-  return { group_name: expected, group_members: [] };
-}
-async function verifyBrokerConcurrency(api2, task, runId, suppliedGroup, {
-  maxAttempts = CONCURRENCY_VERIFY_MAX_ATTEMPTS,
-  retryDelayMs = CONCURRENCY_VERIFY_RETRY_DELAY_MS,
-  sleepImpl = sleep,
-  eventName
-} = {}) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      const result = await checkIndirectBrokerConcurrency(
-        api2,
-        task,
-        runId,
-        suppliedGroup
-      );
-      console.log(
-        `::notice::Broker run ${runId}${eventName ? ` (event: ${eventName})` : ""} verified concurrency group ${suppliedGroup} indirectly, via its router-group marker on the run listing (#545). No other in-progress agent-router.yml run currently carries it.`
-      );
-      return result;
-    } catch (error51) {
-      const candidate = error51;
-      const canRetry = candidate.retryable === true && attempt < maxAttempts;
-      if (!canRetry) {
-        if (attempt > 1) {
-          candidate.message = `${candidate.message} (after ${attempt} attempts)`;
-        }
-        throw error51;
-      }
-      await sleepImpl(retryDelayMs);
-    }
-  }
-  throw new BrokerConcurrencyMismatchError(
-    "Broker run does not report the expected concurrency group"
-  );
-}
-var SUPERSEDING_RUN_CANDIDATE_LIMIT = 5;
-async function findSupersedingRouterRun(api2, task, runId) {
-  const expected = brokerConcurrencyGroup(task);
-  const root = repositoryPath(task);
-  const data = await api2.requestOk(
-    `${root}/actions/workflows/agent-router.yml/runs?per_page=100`
-  );
-  const marker = `route #${task.issue}:`;
-  const candidates = (data.workflow_runs ?? []).filter(
-    (run) => Number.isSafeInteger(run?.id) && run.id > runId && typeof run.display_title === "string" && run.display_title.startsWith(marker)
-  ).sort((left, right) => right.id - left.id).slice(0, SUPERSEDING_RUN_CANDIDATE_LIMIT);
-  const inspections = await Promise.all(
-    candidates.map(async (candidate) => {
-      try {
-        const response = await api2.requestOk(
-          concurrencyGroupsPath(root, candidate.id)
-        );
-        return groupMembershipHolds(response, expected).length > 0 ? candidate : void 0;
-      } catch {
-        return void 0;
-      }
-    })
-  );
-  return inspections.find(Boolean);
 }
 async function listAll(api2, path2) {
   const all = [];
@@ -15926,32 +15632,6 @@ ${recoveryEvidence}`;
     );
   }
   return open;
-}
-function createReconcileTransport(api2) {
-  return {
-    listIssues: async (query) => {
-      const root = repositoryPath({ repository: query.repository });
-      const parameters = new URLSearchParams({
-        state: query.state,
-        per_page: String(query.perPage),
-        page: String(query.page)
-      });
-      if (query.label) parameters.set("labels", query.label);
-      if (query.assignee) parameters.set("assignee", query.assignee);
-      if (query.since) parameters.set("since", query.since);
-      return api2.requestOk(
-        `${root}/issues?${parameters.toString()}`
-      );
-    },
-    dispatchReconcile: (repository, issue2) => dispatchRouterEvent(
-      api2,
-      { repository },
-      {
-        kind: "reconcile",
-        issue: String(issue2)
-      }
-    )
-  };
 }
 async function loadLedgerProjection(api2, task, ledger, controllerIdentities = [
   { login: "github-actions[bot]", type: "Bot" }
@@ -16101,16 +15781,6 @@ function validateDispatchResponse(response, task) {
     );
   }
   return { runId, runUrl, htmlUrl };
-}
-async function dispatchRouterEvent(api2, task, inputs) {
-  const response = await api2.request(
-    `${repositoryPath(task)}/actions/workflows/agent-router.yml/dispatches`,
-    {
-      method: "POST",
-      body: { ref: "main", inputs }
-    }
-  );
-  return validateDispatchResponse(response, task);
 }
 function attemptOf2(generation) {
   const { attempt } = generation;
@@ -16284,7 +15954,7 @@ function retryableStatus(status) {
 }
 async function withRetry(operation, {
   maxAttempts,
-  sleep: sleep2
+  sleep
 }) {
   let delay = 1e3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -16293,7 +15963,7 @@ async function withRetry(operation, {
     } catch (error51) {
       const retryable = !(error51 instanceof HostedCompletionRequestError) || error51.retryable;
       if (!retryable || attempt === maxAttempts) throw error51;
-      await sleep2(delay);
+      await sleep(delay);
       delay *= 2;
     }
   }
@@ -16303,7 +15973,7 @@ async function requestOidcToken({
   oidcRequestUrl,
   oidcRequestToken,
   fetchImpl,
-  sleep: sleep2,
+  sleep,
   timeoutMs,
   maxAttempts
 }) {
@@ -16334,7 +16004,7 @@ async function requestOidcToken({
       }
       return body.value;
     },
-    { maxAttempts, sleep: sleep2 }
+    { maxAttempts, sleep }
   );
 }
 async function sendHostedCompletion({
@@ -16343,7 +16013,7 @@ async function sendHostedCompletion({
   oidcRequestToken,
   completionUrl = HOSTED_COMPLETION_URL,
   fetchImpl = fetch,
-  sleep: sleep2 = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   timeoutMs = 15e3,
   maxAttempts = 3
 }) {
@@ -16361,7 +16031,7 @@ async function sendHostedCompletion({
     oidcRequestUrl,
     oidcRequestToken,
     fetchImpl,
-    sleep: sleep2,
+    sleep,
     timeoutMs,
     maxAttempts
   });
@@ -16384,7 +16054,7 @@ async function sendHostedCompletion({
         );
       }
     },
-    { maxAttempts, sleep: sleep2 }
+    { maxAttempts, sleep }
   );
 }
 
@@ -16488,20 +16158,9 @@ var AUTHORIZATION_RULES = Object.freeze({
   MAINTAINER_ISSUE_EVENT: "maintainer-issue-event",
   RECONCILE_LABEL_REPAIR: "reconcile-label-repair"
 });
-function authorization(actor, maintainer, rule, extra = {}) {
-  return {
-    authorized: actor === maintainer,
-    actor,
-    configuredMaintainer: maintainer,
-    rule,
-    ...extra
-  };
-}
 
 // apps/dispatch-broker/src/normalize.ts
 var COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
-var WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
-var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 var sha256Hex = (input) => crypto2.createHash("sha256").update(input).digest("hex");
 function labelsOf(issue2) {
   return (issue2.labels ?? []).map(
@@ -16514,25 +16173,6 @@ function selectedPipelineFrom(labels, labelMap) {
 }
 function selectedPipeline(issue2) {
   return selectedPipelineFrom(labelsOf(issue2), AGENT_LABELS);
-}
-function parseExactCommand(body) {
-  let fenced = false;
-  const matches = [];
-  for (const rawLine of body.split(/\r?\n/gu)) {
-    const line = rawLine.trim();
-    if (line.startsWith("```")) {
-      fenced = !fenced;
-      continue;
-    }
-    if (fenced || line.startsWith(">")) continue;
-    for (const [command, pipeline] of COMMANDS) {
-      if (line === command || line.startsWith(`${command} `)) {
-        matches.push({ command, pipeline });
-      }
-    }
-  }
-  if (matches.length !== 1) return void 0;
-  return matches[0];
 }
 function quickTaskRequest(issue2, repository, pipeline) {
   const body = issue2.body ?? "";
@@ -16572,45 +16212,6 @@ function quickTaskRequest(issue2, repository, pipeline) {
 function digestQuickTask(identity) {
   return quickTaskDigest(identity, sha256Hex);
 }
-function timelineSource(timeline, eventName, event) {
-  const action = event.action;
-  const numbered = event.issue ?? event.pull_request;
-  if (!numbered) {
-    throw new Error(
-      `${eventName}:${action} timeline lookup missing issue/pull_request`
-    );
-  }
-  const targetTime = Date.parse(numbered.updated_at);
-  const candidates = timeline.filter((candidate) => {
-    if (candidate.event !== action) return false;
-    if (["labeled", "unlabeled"].includes(action)) {
-      if (candidate.label?.name !== event.label?.name) return false;
-      if (candidate.actor?.login !== event.sender?.login) return false;
-    }
-    const occurredAt = Date.parse(candidate.created_at);
-    return Number.isFinite(targetTime) && Number.isFinite(occurredAt) && Math.abs(occurredAt - targetTime) <= 1e4;
-  });
-  if (candidates.length !== 1 || !candidates[0].id) {
-    throw new Error(`Ambiguous ${eventName}:${action} timeline event`);
-  }
-  return {
-    sourceId: `timeline:${candidates[0].id}`,
-    occurredAt: candidates[0].created_at
-  };
-}
-function resolveCallerSourceId(inputs, context, label) {
-  const sourceId = inputs.caller_id || `actions-run:${context.runId}`;
-  if (inputs.caller_id && !UUID.test(inputs.caller_id)) {
-    throw new Error(`${label} caller ID must be a UUID`);
-  }
-  return sourceId;
-}
-function taskRef(context, issue2) {
-  const repository = context.repository;
-  const repositoryId = Number(context.repositoryId);
-  const issueNumber = Number(issue2?.number ?? context.issue);
-  return { repositoryId, repository, issue: issueNumber };
-}
 function makeIntent(base) {
   const normalizedPayload = {
     task: base.task,
@@ -16626,312 +16227,6 @@ function makeIntent(base) {
     digest: digest(normalizedPayload),
     intentId: base.intentId ?? `intent:${digest({ ...normalizedPayload, sourceId: base.sourceId })}`
   };
-}
-function normalizeWorkflowDispatch({
-  inputs,
-  context,
-  maintainer,
-  issue: issue2
-}) {
-  const task = taskRef(context, void 0);
-  if (inputs.kind === "reconcile") {
-    return {
-      kind: "reconcile",
-      task,
-      // Omit the key entirely rather than `issueClosed: undefined` when the
-      // live state can't be read -- a manual/forensic dispatch that somehow
-      // reaches here without a fetched issue must fall back to
-      // reconcileControlState's own "unknown" handling (main.mjs), not a
-      // stray explicit `undefined` that changes this object's own shape.
-      ...issue2?.state === "open" || issue2?.state === "closed" ? { issueClosed: issue2.state === "closed" } : {}
-    };
-  }
-  if (inputs.kind === "completion") {
-    let completion;
-    try {
-      completion = JSON.parse(
-        Buffer.from(inputs.completion_payload, "base64url").toString(
-          "utf8"
-        )
-      );
-    } catch {
-      throw new Error("Completion payload is malformed");
-    }
-    const candidate = completion;
-    if (!Number.isSafeInteger(candidate.workerRunId) || candidate.workerRunId <= 0 || !Number.isSafeInteger(candidate.generation) || candidate.generation <= 0 || !/^[A-Za-z0-9._:-]{1,200}$/u.test(candidate.intentId ?? "") || !/^[A-Za-z0-9_-]{16,200}$/u.test(candidate.token ?? "") || !WORKER_WORKFLOWS.has(candidate.workflow) || candidate.outcome !== void 0 && !isDispatchOutcomeKind(candidate.outcome) || candidate.outcomeReference !== void 0 && !isDispatchOutcomeReference(candidate.outcomeReference) || candidate.outcomeReference !== void 0 && candidate.outcome !== "pull-request" || candidate.readinessFailure !== void 0 && !isLaneReadinessFailure(candidate.readinessFailure)) {
-      throw new Error("Completion payload has invalid binding fields");
-    }
-    return {
-      kind: "completion",
-      task,
-      sourceKind: "completion",
-      sourceId: `worker-run:${candidate.workerRunId}`,
-      transportRunId: context.runId,
-      workerRunId: candidate.workerRunId,
-      generation: candidate.generation,
-      intentId: candidate.intentId,
-      token: candidate.token,
-      workflow: candidate.workflow,
-      ...candidate.outcome ? { outcome: candidate.outcome } : {},
-      ...candidate.outcomeReference ? { outcomeReference: candidate.outcomeReference } : {},
-      ...candidate.readinessFailure ? { readinessFailure: candidate.readinessFailure } : {}
-    };
-  }
-  const sourceId = resolveCallerSourceId(inputs, context, "Manual dispatch");
-  const auth = authorization(
-    context.actor,
-    maintainer,
-    AUTHORIZATION_RULES.MANUAL_MAINTAINER
-  );
-  if (!auth.authorized) throw new Error("Unauthorized manual dispatch");
-  if (!AGENT_LABELS.has(`agent:${inputs.pipeline}`)) {
-    throw new Error("Unsupported manual dispatch pipeline");
-  }
-  return {
-    kind: "intent",
-    intent: makeIntent({
-      task,
-      sourceKind: "manual",
-      sourceId,
-      transportRunId: context.runId,
-      occurredAt: context.now,
-      // Validated two lines up: AGENT_LABELS' keys are exactly
-      // `agent:claude`/`agent:codex`/`agent:opencode`, so the has() check
-      // above already proved inputs.pipeline is one of those three names.
-      pipeline: inputs.pipeline,
-      mode: inputs.mode || "implement",
-      reply: inputs.reply || "",
-      runbook: inputs.runbook || "",
-      context: inputs.context || "",
-      authorization: auth
-    })
-  };
-}
-function normalizeEvent({
-  eventName,
-  event,
-  inputs = {},
-  context,
-  timeline = [],
-  maintainer
-}) {
-  const semanticEventName = eventName === "pull_request_target" ? "pull_request" : eventName;
-  const issue2 = event.issue ?? event.pull_request;
-  if (semanticEventName === "workflow_dispatch") {
-    return normalizeWorkflowDispatch({
-      inputs,
-      context,
-      maintainer,
-      issue: event.issue
-    });
-  }
-  if (!issue2) return { kind: "ignored", reason: "event has no issue" };
-  const task = taskRef(context, issue2);
-  const pipeline = selectedPipeline(issue2);
-  if (semanticEventName === "issue_comment" && event.action === "created") {
-    const parsed = parseExactCommand(event.comment?.body ?? "");
-    if (!parsed) return { kind: "ignored", reason: "no exact agent command" };
-    const resolvedPipeline = parsed.pipeline ?? pipeline;
-    if (!resolvedPipeline) {
-      throw new Error(
-        "Generic @agent command has no unambiguous agent:* label to resolve against"
-      );
-    }
-    const isPullRequest = Boolean(issue2.pull_request);
-    if (pipeline !== resolvedPipeline && !(isPullRequest && resolvedPipeline === "claude")) {
-      throw new Error(
-        "Comment command does not match the selected integration"
-      );
-    }
-    const comment = event.comment;
-    if (!comment) {
-      throw new Error("issue_comment:created event missing comment");
-    }
-    const auth2 = authorization(
-      event.sender?.login,
-      maintainer,
-      AUTHORIZATION_RULES.OWNER_COMMENT,
-      {
-        association: comment.author_association,
-        userType: comment.user?.type
-      }
-    );
-    if (!auth2.authorized || auth2.association !== "OWNER" || auth2.userType === "Bot") {
-      throw new Error("Unauthorized comment dispatch");
-    }
-    return {
-      kind: "intent",
-      intent: makeIntent({
-        task,
-        sourceKind: "comment",
-        sourceId: `comment:${comment.id}`,
-        transportRunId: context.runId,
-        occurredAt: comment.created_at,
-        pipeline: resolvedPipeline,
-        mode: "reply",
-        reply: comment.body,
-        runbook: "",
-        context: "",
-        authorization: auth2
-      })
-    };
-  }
-  if (semanticEventName === "pull_request") {
-    if (["closed", "reopened"].includes(event.action)) {
-      if (!issue2.id || Number.isNaN(Date.parse(issue2.updated_at))) {
-        throw new Error("Malformed pull request anchor event");
-      }
-      return {
-        kind: "anchor-control",
-        task,
-        control: {
-          // Array.prototype.includes() doesn't narrow a string the way an
-          // === chain does; the check two lines up already restricts
-          // event.action to exactly these two values.
-          kind: event.action,
-          sourceId: `pull-request:${issue2.id}:${event.action}:${issue2.updated_at}`,
-          occurredAt: issue2.updated_at,
-          transportRunId: context.runId,
-          authorization: { observed: true, actor: event.sender?.login },
-          merged: event.action === "closed" && Boolean(issue2.merged)
-        }
-      };
-    }
-    if (!["labeled", "unlabeled"].includes(event.action)) {
-      return { kind: "ignored", reason: "unsupported pull request action" };
-    }
-  }
-  if (!["issues", "pull_request"].includes(semanticEventName))
-    return { kind: "ignored", reason: "unsupported event" };
-  const auth = authorization(
-    event.sender?.login,
-    maintainer,
-    AUTHORIZATION_RULES.MAINTAINER_ISSUE_EVENT
-  );
-  if (event.action === "opened") {
-    const quickTask = quickTaskRequest(issue2, context.repository, pipeline);
-    if (!quickTask) return { kind: "ignored", reason: "ordinary opened issue" };
-    if (!auth.authorized)
-      throw new Error("Unauthorized Quick Task opened event");
-    return {
-      kind: "intent",
-      intent: makeIntent({
-        task,
-        intentId: `quick:${quickTask.requestId}:${quickTask.digest}`,
-        sourceKind: "opened",
-        sourceId: `issue:${issue2.id}`,
-        transportRunId: context.runId,
-        occurredAt: issue2.created_at,
-        // quickTaskRequest() above only ever returns a result when its own
-        // `pipeline` argument (this same variable) was truthy -- otherwise
-        // it throws before returning -- so `pipeline` is proven defined by
-        // `quickTask` having a value at all.
-        pipeline,
-        mode: "implement",
-        reply: "",
-        runbook: "",
-        context: "",
-        authorization: auth
-      })
-    };
-  }
-  if (["labeled", "unlabeled", "closed", "reopened"].includes(event.action)) {
-    const source = timelineSource(timeline, semanticEventName, event);
-    if (event.action === "closed" || event.action === "reopened") {
-      return {
-        kind: "anchor-control",
-        task,
-        control: {
-          kind: event.action,
-          ...source,
-          transportRunId: context.runId,
-          authorization: { observed: true, actor: event.sender?.login },
-          merged: Boolean(issue2.pull_request && issue2.merged_at)
-        }
-      };
-    }
-    const labelName = event.label?.name;
-    const isReviewLabel = semanticEventName === "pull_request" && Boolean(labelName?.startsWith("review:"));
-    if (labelName === "status:needs-human") {
-      return {
-        kind: "control-evidence",
-        task,
-        evidence: {
-          sourceKind: event.action,
-          ...source,
-          transportRunId: context.runId,
-          label: labelName,
-          authorization: { observed: true, actor: event.sender?.login }
-        }
-      };
-    }
-    if (!labelName?.startsWith("agent:") && !isReviewLabel) {
-      return { kind: "ignored", reason: "non-agent label event" };
-    }
-    if (!labelName) {
-      throw new Error("Label event missing its own label name");
-    }
-    const labelMap = isReviewLabel ? REVIEW_LABELS : AGENT_LABELS;
-    const labelKind = isReviewLabel ? "review" : "agent";
-    if (event.action === "unlabeled") {
-      return {
-        kind: "control-evidence",
-        task,
-        evidence: {
-          sourceKind: "unlabeled",
-          ...source,
-          transportRunId: context.runId,
-          label: labelName,
-          authorization: { observed: true, actor: event.sender?.login }
-        }
-      };
-    }
-    if (!auth.authorized) throw new Error("Unauthorized label dispatch");
-    const eventPipeline = labelMap.get(labelName);
-    if (!eventPipeline)
-      return { kind: "ignored", reason: `unknown ${labelKind} label` };
-    const selectedLabelsInNamespace = labelsOf(issue2).filter(
-      (label) => labelMap.has(label)
-    );
-    let effectivePipeline = selectedPipelineFrom(labelsOf(issue2), labelMap);
-    let staleAgentLabels;
-    if (selectedLabelsInNamespace.length > 1) {
-      const otherLabelsInNamespace = selectedLabelsInNamespace.filter(
-        (label) => label !== labelName
-      );
-      if (!selectedLabelsInNamespace.includes(labelName) || otherLabelsInNamespace.length !== 1) {
-        throw new Error(`Issue has contradictory ${labelKind} labels`);
-      }
-      staleAgentLabels = otherLabelsInNamespace;
-      effectivePipeline = eventPipeline;
-    }
-    const quickTask = quickTaskRequest(
-      issue2,
-      context.repository,
-      effectivePipeline
-    );
-    return {
-      kind: "intent",
-      intent: makeIntent({
-        task,
-        ...quickTask && {
-          intentId: `quick:${quickTask.requestId}:${quickTask.digest}`
-        },
-        sourceKind: "labeled",
-        ...source,
-        transportRunId: context.runId,
-        pipeline: eventPipeline,
-        mode: isReviewLabel ? "review" : "implement",
-        reply: "",
-        runbook: "",
-        context: "",
-        dispatchable: effectivePipeline === eventPipeline,
-        ...staleAgentLabels && { staleAgentLabels },
-        authorization: auth
-      })
-    };
-  }
-  return { kind: "ignored", reason: "unsupported issue action" };
 }
 
 // apps/dispatch-broker/src/services/completion-processing.ts
@@ -16976,39 +16271,6 @@ async function processCompletionCallback(input, dependencies) {
     payload
   });
   return { payload };
-}
-
-// apps/dispatch-broker/src/services/hosted-admission.ts
-async function admitHostedDelivery(input, dependencies) {
-  await dependencies.process({
-    ...input,
-    storagePortFactory: dependencies.storagePortFactory
-  });
-}
-
-// apps/dispatch-broker/src/services/reconciliation-orchestration.ts
-async function orchestrateReconciliation(input, dependencies) {
-  const results = await dependencies.run(
-    dependencies.transport,
-    input.repository,
-    input.fleetLogin
-  );
-  dependencies.log(
-    `::notice::dispatch-reconcile: fired reconcile for ${results.dispatched}/${results.candidates} candidate(s) (${results.openCandidates} open agent-labeled/fleet-assigned, ${results.closedCandidates} recently-closed agent-labeled/fleet-assigned).`
-  );
-  for (const failure of results.failed) {
-    dependencies.log(
-      `::error::dispatch-reconcile: failed to dispatch reconcile for #${failure.issue}: ${failure.message}`
-    );
-  }
-  await dependencies.writeOutput("candidates", String(results.candidates));
-  await dependencies.writeOutput("dispatched", String(results.dispatched));
-  if (results.failed.length > 0) {
-    throw new Error(
-      `Reconcile scan failed to dispatch ${results.failed.length}/${results.candidates} candidate(s): ` + results.failed.map((failure) => `#${failure.issue}`).join(", ")
-    );
-  }
-  return results;
 }
 
 // apps/dispatch-broker/src/storage/port.ts
@@ -17132,7 +16394,7 @@ async function acquireAuthority(port, task, owner, seed, options = {}) {
   const maxAttempts = options.maxAttempts ?? DEFAULT_CAS_ATTEMPTS;
   const createIfMissing = options.createIfMissing ?? true;
   const busyWaitMs = options.busyWaitMs ?? 0;
-  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const busyDeadline = Date.now() + busyWaitMs;
   let lastConflict;
   let conflicts = 0;
@@ -17154,7 +16416,7 @@ async function acquireAuthority(port, task, owner, seed, options = {}) {
         throw new TaskLeaseBusyError(task, current.lease);
       }
       const remainingLease = Date.parse(current.lease.expiresAt) - Date.parse(observedAt);
-      await sleep2(
+      await sleep(
         Math.max(1, Math.min(1e3, remainingBudget, remainingLease))
       );
       continue;
@@ -17523,12 +16785,6 @@ function output(name, value) {
   return fs.appendFile(path2, `${name}=${value}
 `, "utf8");
 }
-function encode3(value) {
-  return Buffer.from(JSON.stringify(value)).toString("base64url");
-}
-function decode3(value) {
-  return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-}
 function api() {
   return createGitHubApi({ token: env("GITHUB_TOKEN") });
 }
@@ -17587,16 +16843,6 @@ async function saveProjectionCheckpoint(client, loaded) {
   }
   await persistAuthority(loaded.authority, loaded.ledger);
 }
-function contextFor(event, inputs) {
-  return {
-    repository: event.repository?.full_name ?? env("GITHUB_REPOSITORY"),
-    repositoryId: event.repository?.id ?? Number(env("GITHUB_REPOSITORY_ID")),
-    issue: inputs.issue,
-    runId: Number(env("GITHUB_RUN_ID")),
-    actor: env("GITHUB_ACTOR"),
-    now: (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
 async function runPhase(ledgerContext, phase, step, owningSystem = "controller") {
   try {
     return await step();
@@ -17629,66 +16875,6 @@ async function runPhase(ledgerContext, phase, step, owningSystem = "controller")
     }
     throw error51;
   }
-}
-async function normalize() {
-  const event = JSON.parse(
-    await fs.readFile(
-      /* turbopackIgnore: true */
-      env("GITHUB_EVENT_PATH"),
-      "utf8"
-    )
-  );
-  const eventName = env("GITHUB_EVENT_NAME");
-  const inputs = event.inputs ?? {};
-  const context = contextFor(event, inputs);
-  const client = api();
-  if (eventName === "workflow_dispatch") {
-    const issue3 = await client.requestOk(
-      `${repositoryPath({ repository: context.repository })}/issues/${inputs.issue}`
-    );
-    event.issue = issue3;
-  }
-  let timeline = [];
-  const wantsTimeline = eventName === "issues" && ["labeled", "unlabeled", "closed", "reopened"].includes(event.action) || ["pull_request", "pull_request_target"].includes(eventName) && ["labeled", "unlabeled"].includes(event.action);
-  if (wantsTimeline) {
-    const numbered = event.issue ?? event.pull_request;
-    if (!numbered) {
-      throw new Error(
-        `Event ${eventName}/${event.action} claimed a timeline but carried neither issue nor pull_request`
-      );
-    }
-    timeline = await client.requestOk(
-      `${repositoryPath({ repository: context.repository })}/issues/${numbered.number}/timeline?per_page=100`
-    );
-  }
-  const normalized = await runPhase(
-    void 0,
-    "signal",
-    () => normalizeEvent({
-      eventName,
-      event,
-      inputs,
-      context,
-      timeline,
-      maintainer: env("MAINTAINER_LOGIN")
-    })
-  );
-  const normalizedTask = "task" in normalized ? normalized.task : void 0;
-  const normalizedReason = "reason" in normalized ? normalized.reason : void 0;
-  const issue2 = normalizedTask?.issue ?? event.issue?.number ?? Number(inputs.issue);
-  await output("eligible", normalized.kind === "ignored" ? "false" : "true");
-  await output("issue", String(issue2 || ""));
-  await output("repository-id", String(context.repositoryId));
-  await output(
-    "is-pr",
-    String(Boolean(event.pull_request ?? event.issue?.pull_request))
-  );
-  await output(
-    "group",
-    issue2 ? `agent-lcars-dispatch-v1-${context.repositoryId}-${issue2}`.toLowerCase() : ""
-  );
-  await output("payload", encode3(normalized));
-  await output("reason", normalizedReason ?? "");
 }
 function activeGeneration(ledger) {
   return ledger.generations.find(
@@ -18261,13 +17447,6 @@ async function reconcileLedger(client, loaded, now = (/* @__PURE__ */ new Date()
   if (active.attempt?.runId) return;
   await trackMissingRun(client, loaded, active, now, maintainer);
 }
-async function dispatchReconcileScan2(client, repository, issueNumbers) {
-  return dispatchReconcileScan(
-    createReconcileTransport(client),
-    repository,
-    issueNumbers
-  );
-}
 function isDefiniteDispatchRejection(error51) {
   return error51 instanceof GitHubApiError && Number.isInteger(error51.status) && error51.status >= 400 && error51.status < 500 && ![408, 409, 429].includes(error51.status);
 }
@@ -18455,7 +17634,7 @@ function completionMatches(generation, normalized, run) {
 }
 async function handleCompletion(client, loaded, normalized, polling = {}) {
   const now = polling.now ?? Date.now;
-  const sleep2 = polling.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const sleep = polling.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const generation = loaded.ledger.generations.find(
     (candidate) => candidate.generation === normalized.generation
   );
@@ -18521,7 +17700,7 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
   const deadline = now() + 12e4;
   let delay = 2e3;
   while (run.status !== "completed" && now() < deadline) {
-    await sleep2(delay);
+    await sleep(delay);
     delay = Math.min(delay * 2, 15e3);
     if (loaded.authority) {
       await persistAuthority(
@@ -18571,29 +17750,6 @@ function resolveTask(normalized) {
     // unguarded `.task` read for every other kind.
     normalized.task
   );
-}
-var EVICTION_TOLERANT_KINDS = /* @__PURE__ */ new Set(["control-evidence", "reconcile"]);
-async function wasSupersededEviction(client, task, runId, group, kind, error51) {
-  const candidate = error51;
-  if (candidate?.name !== "BrokerConcurrencyMismatchError" || !candidate.retryable) {
-    return false;
-  }
-  const superseding = await findSupersedingRouterRun(
-    client,
-    task,
-    runId
-  );
-  if (!superseding) return false;
-  if (!EVICTION_TOLERANT_KINDS.has(kind)) {
-    throw new Error(
-      `Broker run ${runId} (group ${group}, issue #${task.issue}) was evicted from its concurrency queue by newer run ${superseding.id}, but this event carries a '${kind}' payload. Only observational control-evidence/reconcile pings may be dropped on a corroborated eviction (#344, #305); a superseding run does not carry this event's '${kind}' payload forward, since it corresponds to a different triggering event. This event's payload is presumed permanently lost -- a maintainer must manually re-dispatch it to recover.`,
-      { cause: error51 }
-    );
-  }
-  console.log(
-    `::notice::Broker run ${runId} (group ${group}, issue #${task.issue}) was evicted from its concurrency queue by newer run ${superseding.id}, which now reports the expected group. Treating this run as superseded rather than failing (#344/#305): this run's own '${kind}' payload for its triggering event is not recorded in the ledger -- the superseding run already carries the issue forward correctly.`
-  );
-  return true;
 }
 var FRESH_INTENT_OUTCOMES = /* @__PURE__ */ new Set(["dispatch", "pending"]);
 async function healStaleAgentLabels(client, loaded, intent) {
@@ -18738,7 +17894,6 @@ async function processNormalizedEvent({
   transportRunId: runId,
   authorityOwner,
   maintainer = "",
-  actionConcurrency,
   projectionIdentities,
   pollCompletionUntilTerminal = true,
   authorityBusyWaitMs = 13e4
@@ -18747,24 +17902,6 @@ async function processNormalizedEvent({
   const authorityEpoch = authorityEpochInput;
   const task = resolveTask(normalized);
   const client = createGitHubApi({ token: githubToken });
-  if (actionConcurrency) {
-    const { eventName, group } = actionConcurrency;
-    try {
-      await verifyBrokerConcurrency(client, task, runId, group, { eventName });
-    } catch (error51) {
-      if (await wasSupersededEviction(
-        client,
-        task,
-        runId,
-        group,
-        normalized.kind,
-        error51
-      )) {
-        return;
-      }
-      throw error51;
-    }
-  }
   let loaded;
   try {
     loaded = await loadBrokerLedger(
@@ -18884,34 +18021,6 @@ async function processNormalizedEvent({
       }
     }
   }
-}
-async function broker() {
-  const normalized = decode3(env("BROKER_PAYLOAD"));
-  const runId = Number(env("GITHUB_RUN_ID"));
-  const hostedControllerLogin = env("HOSTED_CONTROLLER_LOGIN", false);
-  await admitHostedDelivery(
-    {
-      normalized,
-      githubToken: env("GITHUB_TOKEN"),
-      authorityEpoch: env("DISPATCH_AUTHORITY_EPOCH", false),
-      isPullRequest: env("ANCHOR_IS_PR", false) === "true",
-      transportRunId: runId,
-      authorityOwner: `action:${runId}`,
-      maintainer: env("MAINTAINER_LOGIN", false),
-      actionConcurrency: {
-        group: env("BROKER_GROUP"),
-        eventName: env("GITHUB_EVENT_NAME", false)
-      },
-      projectionIdentities: [
-        { login: "github-actions[bot]", type: "Bot" },
-        ...hostedControllerLogin ? [{ login: hostedControllerLogin, type: "User" }] : []
-      ]
-    },
-    {
-      storagePortFactory: createStoragePort,
-      process: processNormalizedEvent
-    }
-  );
 }
 async function preflight() {
   const task = {
@@ -19100,45 +18209,16 @@ async function classifyClaudeReadinessProbe() {
     classifyClaudeReadiness(conclusion, execution)
   );
 }
-async function discoverReconcileCandidates2(client, repository, fleetLogin) {
-  return discoverReconcileCandidates(
-    createReconcileTransport(client),
-    repository,
-    fleetLogin
-  );
-}
-async function discoverRecentlyClosedReconcileCandidates2(client, repository, fleetLogin, now = /* @__PURE__ */ new Date()) {
-  return discoverRecentlyClosedReconcileCandidates(
-    createReconcileTransport(client),
-    repository,
-    fleetLogin,
-    now
-  );
-}
-async function scanReconcile() {
-  const client = api();
-  await orchestrateReconciliation(
-    {
-      repository: env("GITHUB_REPOSITORY"),
-      fleetLogin: env("AGENT_FLEET_LOGIN", false)
-    },
-    {
-      transport: createReconcileTransport(client),
-      run: runReconcileScan,
-      writeOutput: output,
-      log: console.log
-    }
-  );
-}
 
 // apps/dispatch-broker/src/main.ts
 async function runOperation(operation) {
-  if (operation === "normalize") await normalize();
-  else if (operation === "broker") await broker();
-  else if (operation === "preflight") await preflight();
+  if (operation === "preflight") await preflight();
   else if (operation === "completion-callback") await completionCallback();
-  else if (operation === "reconcile") await scanReconcile();
-  else if (operation === "classify-claude-readiness")
+  else if (operation === "normalize" || operation === "broker" || operation === "reconcile") {
+    throw new Error(
+      `The Actions ${operation} operation was retired with agent-router.yml; use the hosted control-plane controller instead.`
+    );
+  } else if (operation === "classify-claude-readiness")
     await classifyClaudeReadinessProbe();
   else if (operation === "claude-readiness") await claudeReadiness();
   else throw new Error(`Unsupported dispatch broker operation: ${operation}`);
@@ -19149,7 +18229,6 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 export {
   CompletionBindingError,
   FRESH_INTENT_OUTCOMES,
-  RECONCILE_DISPATCH_CONCURRENCY,
   MISSING_RUN_GRACE_MS as RECONCILE_MISSING_RUN_GRACE_MS,
   MISSING_RUN_MAX_OBSERVATIONS as RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   MISSING_RUN_MIN_INTERVAL_MS as RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
@@ -19161,25 +18240,17 @@ export {
   assertCompletionBindingBeforeInitialization,
   assertCompletionLedgerBinding,
   assertWorkerRun,
-  broker,
   classifyClaudeReadinessProbe,
   claudeReadiness,
   completionCallback,
   completionMatches,
-  contextFor,
-  decode3 as decode,
-  discoverRecentlyClosedReconcileCandidates2 as discoverRecentlyClosedReconcileCandidates,
-  discoverReconcileCandidates2 as discoverReconcileCandidates,
   dispatchAccepted,
-  dispatchReconcileScan2 as dispatchReconcileScan,
-  encode3 as encode,
   handleCompletion,
   healStaleAgentLabels,
   holdForLaneReadiness,
   isDefiniteDispatchRejection,
   loadBrokerLedger,
   loadPreflightLedger,
-  normalize,
   preflight,
   processNormalizedEvent,
   projectClaudeReadiness,
@@ -19191,8 +18262,6 @@ export {
   runOperation,
   runPhase,
   saveProjectionCheckpoint,
-  scanReconcile,
   trustedActionsRunUrl,
-  trustedClaudeExecutionFile,
-  wasSupersededEviction
+  trustedClaudeExecutionFile
 };

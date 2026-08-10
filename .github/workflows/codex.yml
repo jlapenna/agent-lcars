@@ -18,8 +18,8 @@ name: Codex Issue Agent
 # .agents/skills/lcars/lcars-protocol.md for the conventions this agent
 # follows.
 
-# This workflow is workflow_dispatch-only (agent-router.yml owns the event
-# triggers). Keep the console's leading issue-number join key and add the
+# This workflow is workflow_dispatch-only (the hosted controller owns event
+# admission). Keep the console's leading issue-number join key and add the
 # immutable broker marker used for interrupted-bind reconciliation.
 run-name: '#${{ inputs.issue }}: Codex issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
 
