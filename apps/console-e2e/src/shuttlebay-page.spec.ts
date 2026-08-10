@@ -63,4 +63,27 @@ test.describe('/shuttlebay workspace', () => {
       contentType: 'image/png',
     });
   });
+
+  test('keeps the overflow menu available on a tablet command rail', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 820, height: 1024 });
+    await page.goto('/shuttlebay');
+
+    const header = page.locator('.console-header[data-current="shuttlebay"]');
+    await expect(
+      header.getByRole('link', { name: 'Shuttlebay' }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'More console options' }).click();
+    const menu = page.getByRole('menu');
+    await expect(
+      menu.getByRole('menuitem', { name: 'Sessions' }),
+    ).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Costs' })).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
 });

@@ -43,7 +43,6 @@ async function ShuttlebayPageShell() {
         <div className="shuttlebay-utilities shuttlebay-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
-            bustsGithubCache
             includeNavigation
           />
         </div>
