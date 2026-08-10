@@ -11,6 +11,7 @@ terraform {
   required_providers {
     google      = { source = "hashicorp/google", version = "~> 7.0" }
     google-beta = { source = "hashicorp/google-beta", version = "~> 7.0" }
+    github      = { source = "integrations/github", version = "~> 6.0" }
   }
 }
 
@@ -32,4 +33,15 @@ provider "google-beta" {
   project               = var.project_id
   billing_project       = var.project_id
   user_project_override = true
+}
+
+# No CI runs Terraform today (#900), so this credential is always
+# operator-supplied, never a repo secret. The provider reads the token from
+# the GITHUB_TOKEN env var by default (no `token` argument here, so none can
+# ever be committed) -- an operator with admin on this repository exports it
+# themselves, e.g. `export GITHUB_TOKEN=$(gh auth token)`, before `plan` or
+# `apply`. Ruleset reads/writes require admin, which is why this can't be a
+# narrower classic PAT the way apps/dispatch-broker's tokens are scoped.
+provider "github" {
+  owner = var.github_owner
 }
