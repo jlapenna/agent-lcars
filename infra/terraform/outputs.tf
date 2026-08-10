@@ -7,3 +7,7 @@ output "telemetry_writer_service_account" { value = google_service_account.telem
 output "dispatch_preflight_service_account" { value = google_service_account.dispatch_preflight.email }
 output "dispatch_firestore_database_id" { value = google_firestore_database.dispatch_controller.name }
 output "transcript_bucket" { value = google_storage_bucket.transcripts.name }
+output "app_hosting_domain_dns_status" {
+  description = "Firebase App Hosting's current DNS requirements for lcars.jlapenna.net; apply these in the homelab Cloudflare Terraform."
+  value       = google_firebase_app_hosting_domain.production.custom_domain_status
+}
