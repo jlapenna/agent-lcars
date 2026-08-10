@@ -21,7 +21,7 @@ configuration conflicts with this dummy-only boundary. Any future live
 write-path verification must use a separately validated design with explicit
 authorization, never the direct `e2e-run` target.
 
-The wrapper starts the Nx process with an empty environment, a temporary
+`tools/e2e-local.sh` starts the Nx process with an empty environment, a temporary
 `HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit
 allowlist. That list contains the build-time Firebase/Auth dummy values,
 Playwright's browser location, the safe suite-selection controls (`E2E_GREP`,
@@ -39,8 +39,8 @@ platform default (`~/.cache/ms-playwright` on Linux,
 `PLAYWRIGHT_BROWSERS_PATH` remains the supported escape hatch for custom
 installations.
 
-The wrapper deliberately does not load a developer's `.env.e2e` or
-`.env.e2e.local`. The public Nx `e2e` target uses this wrapper too; only the
+The script deliberately does not load a developer's `.env.e2e` or
+`.env.e2e.local`. The public Nx `e2e` target uses this entrypoint too; only the
 internal `e2e-implementation` target retains the dotenv compatibility
 defaults, and it validates both files before loading them. Docker explicitly
 points that internal target at the checked-in fixture and an empty
@@ -49,7 +49,7 @@ local-override path.
 `tools/e2e/validate-env.mjs` rejects verbose `DEBUG` mode and any
 credential-shaped key unless both its name and dummy value are explicitly
 approved. The sole runtime exception is the exact paired Spark L2 cache
-server/token capability, which the hermetic wrapper admits only when both are
+server/token capability, which this script admits only when both are
 set; it can cache deterministic build artifacts but not the E2E task. It also
 rejects dotenv keys outside the checked-in fixture schema, including
 process-injection controls such as `NODE_OPTIONS`. The internal implementation
