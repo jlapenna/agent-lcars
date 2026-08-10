@@ -75,11 +75,13 @@ import {
 import {
   projectComment,
   projectNeedsHumanPark,
+  projectWorkerFailure,
   recordProjectionStatus,
   removeIssueLabel,
   replaceIssueLabels,
 } from './modules/projector';
 import type { PreflightExpectation } from './modules/scheduler';
+import { classifyWorkerFailureOutcome } from './modules/worker-failure';
 import type {
   AnchorControlEvent,
   CompletionEvent,
@@ -1640,6 +1642,33 @@ async function handleCompletion(
       normalized.outcome,
       normalized.outcomeReference,
     );
+    // The projector's ONE writer for a worker attempt's own failure
+    // (#813): classify the typed lifecycle outcome and, for the three
+    // kinds that mean the attempt itself failed, converge the failure
+    // comment and needs-human park. Deliberately unconditional on
+    // `evidence.outcome === 'recorded'` (unlike the readinessFailure
+    // block below) -- `projectComment`/`projectNeedsHumanPark` are each
+    // independently idempotent on the stable attemptId key, not on this
+    // source's own (sourceKind, sourceId) pair, so every redelivery of
+    // this same outcome (a retried callback, a reinvoked finalizer run)
+    // must still be allowed to converge, including one that arrives after
+    // `recordControlEvidence` above already classified this exact source
+    // as a duplicate.
+    const workerFailure = classifyWorkerFailureOutcome(normalized.outcome);
+    if (workerFailure) {
+      await projectWorkerFailure(
+        client,
+        loaded.ledger.task,
+        polling.maintainer ?? '',
+        {
+          attemptId:
+            generation.attempt?.attemptId ?? formatAttemptId(generation),
+          pipeline: generation.pipeline,
+          runUrl: run.html_url,
+        },
+        workerFailure,
+      );
+    }
   }
   // A lane-health incident is a projection of a trusted worker signal, not
   // attempt authority. Create it before persisting this callback's evidence:

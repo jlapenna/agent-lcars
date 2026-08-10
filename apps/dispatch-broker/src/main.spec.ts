@@ -2169,6 +2169,14 @@ test('a trusted credential failure opens the lane breaker before completion can 
     const ledger = boundLedger();
     const calls = [];
     let openIssues = [];
+    // Task issue #304's own comments/labels/assignees -- separate durable
+    // state from `openIssues` (the lane-incident issue, #902), so this test
+    // can assert on each independently. #813: a `startup-failure` outcome
+    // now also drives the projector's own worker-failure comment + park on
+    // #304 itself, alongside the pre-existing lane-incident projection.
+    let taskComments = [];
+    let taskLabels = [];
+    let taskAssignees = [];
     const client = {
       requestOk: async (path, options = {}) => {
         calls.push({
@@ -2192,6 +2200,48 @@ test('a trusted credential failure opens the lane breaker before completion can 
           return openIssues[0];
         }
         if (path.endsWith('/issues/comments/9')) return { id: 9 };
+        if (
+          path.includes('/issues/304/comments') &&
+          (options.method ?? 'GET') === 'GET'
+        ) {
+          return taskComments;
+        }
+        if (
+          path.endsWith('/issues/304/comments') &&
+          options.method === 'POST'
+        ) {
+          const created = {
+            id: taskComments.length + 1,
+            body: options.body.body,
+          };
+          taskComments = [...taskComments, created];
+          return created;
+        }
+        if (
+          path.match(/\/issues\/comments\/\d+$/u) &&
+          options.method === 'PATCH'
+        ) {
+          const id = Number(path.match(/\/issues\/comments\/(\d+)$/u)[1]);
+          const updated = { id, body: options.body.body };
+          taskComments = taskComments.map((c) => (c.id === id ? updated : c));
+          return updated;
+        }
+        if (path.endsWith('/issues/304/labels') && options.method === 'POST') {
+          taskLabels = [...new Set([...taskLabels, ...options.body.labels])];
+          return {};
+        }
+        if (
+          path.endsWith('/issues/304/assignees') &&
+          options.method === 'POST'
+        ) {
+          taskAssignees = [
+            ...new Set([...taskAssignees, ...options.body.assignees]),
+          ];
+          return {};
+        }
+        if (path.endsWith('/issues/304')) {
+          return { labels: taskLabels, assignees: taskAssignees };
+        }
         throw new Error(`Unexpected completion readiness path: ${path}`);
       },
     };
@@ -2223,6 +2273,17 @@ test('a trusted credential failure opens the lane breaker before completion can 
       1,
     );
 
+    // #813: the projector converged exactly one failure comment on the task
+    // issue itself and parked it needs-human, independent of the lane
+    // incident above.
+    assert.equal(taskComments.length, 1);
+    assert.match(
+      taskComments[0].body,
+      /agent-lcars:projection:worker-failure/u,
+    );
+    assert.ok(taskLabels.includes('status:needs-human'));
+    assert.ok(taskAssignees.includes('jlapenna'));
+
     // Model an operator closing the incident after repairing the credential.
     // The already-recorded completion source makes a stale callback a no-op,
     // so it must not recreate the breaker from old evidence.
@@ -2235,6 +2296,19 @@ test('a trusted credential failure opens the lane breaker before completion can 
         (call) => call.path.endsWith('/issues') && call.method === 'POST',
       ).length,
       1,
+    );
+
+    // #813 idempotence proof: a duplicate delivery of the exact same
+    // completion converges on the SAME worker-failure comment (an update,
+    // not a second create) and does not duplicate the park.
+    assert.equal(taskComments.length, 1);
+    assert.equal(
+      calls.filter(
+        (call) =>
+          call.path.endsWith('/issues/304/comments') && call.method === 'POST',
+      ).length,
+      1,
+      'a retried completion must never POST a second worker-failure comment',
     );
   } finally {
     delete process.env.MAINTAINER_LOGIN;

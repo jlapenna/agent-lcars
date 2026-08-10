@@ -15,6 +15,7 @@ import { runPhase } from '../main.js';
 import {
   projectComment,
   projectNeedsHumanPark,
+  projectWorkerFailure,
   recordProjectionStatus,
   removeIssueLabel,
 } from './projector.js';
@@ -309,6 +310,130 @@ test("projectNeedsHumanPark preserves ensureNeedsHumanParked's verify-then-decid
   await assert.doesNotReject(() =>
     projectNeedsHumanPark(api, task, 'jlapenna', failure),
   );
+});
+
+// ---------------------------------------------------------------------------
+// projectWorkerFailure (#813): the ONE writer for a worker attempt's own
+// reported failure -- one comment, one park, keyed on attemptId, converging
+// across duplicate/independent callers of this same function.
+// ---------------------------------------------------------------------------
+
+const workerFailureAttempt = {
+  attemptId: 'g1:intent-1',
+  pipeline: 'codex',
+  runUrl: 'https://github.com/jlapenna/agent-lcars/actions/runs/42',
+};
+
+test('projectWorkerFailure creates the failure comment and parks a manual (needs-human) classification', async () => {
+  const calls = [];
+  const api = stubbedApi(async (url, options = {}) => {
+    calls.push({ url, method: options.method ?? 'GET' });
+    if (
+      url.includes(`/issues/${task.issue}/comments`) &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, []);
+    }
+    if (options.method === 'POST') {
+      return response(200, { id: 601, body: JSON.parse(options.body).body });
+    }
+    return response(200, {});
+  });
+  const failure = classifyFailure({
+    phase: 'agent_execution',
+    reason: 'agent_exited_nonzero',
+    retryDisposition: 'manual',
+  });
+  const result = await projectWorkerFailure(
+    api,
+    task,
+    'jlapenna',
+    workerFailureAttempt,
+    failure,
+  );
+  assert.equal(result.comment.action, 'created');
+  assert.deepEqual(result.park, { parked: true });
+  assert.ok(
+    calls.some(
+      (call) => call.url.endsWith('/comments') && call.method === 'POST',
+    ),
+  );
+  assert.ok(calls.some((call) => call.url.endsWith('/labels')));
+  assert.ok(calls.some((call) => call.url.endsWith('/assignees')));
+});
+
+test('projectWorkerFailure converges duplicate delivery of the same attempt onto exactly one comment (update, not a second create) and one park', async () => {
+  let existingComment;
+  const calls = [];
+  const api = stubbedApi(async (url, options = {}) => {
+    calls.push({ url, method: options.method ?? 'GET' });
+    if (
+      url.includes(`/issues/${task.issue}/comments`) &&
+      (options.method ?? 'GET') === 'GET'
+    ) {
+      return response(200, existingComment ? [existingComment] : []);
+    }
+    if (url.endsWith('/comments') && options.method === 'POST') {
+      existingComment = { id: 701, body: JSON.parse(options.body).body };
+      return response(200, existingComment);
+    }
+    if (options.method === 'PATCH' && url.endsWith('/issues/comments/701')) {
+      existingComment = { id: 701, body: JSON.parse(options.body).body };
+      return response(200, existingComment);
+    }
+    return response(200, {});
+  });
+  const failure = classifyFailure({
+    phase: 'agent_execution',
+    reason: 'agent_exited_nonzero',
+    retryDisposition: 'manual',
+  });
+
+  const first = await projectWorkerFailure(
+    api,
+    task,
+    'jlapenna',
+    workerFailureAttempt,
+    failure,
+  );
+  const second = await projectWorkerFailure(
+    api,
+    task,
+    'jlapenna',
+    workerFailureAttempt,
+    failure,
+  );
+
+  assert.equal(first.comment.action, 'created');
+  assert.equal(second.comment.action, 'updated');
+  assert.equal(second.comment.id, first.comment.id);
+  assert.equal(
+    calls.filter(
+      (call) => call.url.endsWith('/comments') && call.method === 'POST',
+    ).length,
+    1,
+    'a duplicate delivery must never POST a second worker-failure comment',
+  );
+});
+
+test('projectWorkerFailure is a full no-op (no comment, no park) for a retryable classification', async () => {
+  const api = stubbedApi(async (url) => {
+    throw new Error(`must not call GitHub at all: ${url}`);
+  });
+  const failure = classifyFailure({
+    phase: 'provider_execution',
+    reason: 'provider_unavailable',
+    retryDisposition: 'backoff',
+  });
+  const result = await projectWorkerFailure(
+    api,
+    task,
+    'jlapenna',
+    workerFailureAttempt,
+    failure,
+  );
+  assert.equal(result.comment, undefined);
+  assert.deepEqual(result.park, { parked: false });
 });
 
 // ---------------------------------------------------------------------------

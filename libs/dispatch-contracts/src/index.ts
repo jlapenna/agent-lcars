@@ -86,6 +86,7 @@ export {
   dispatchOutcomeReferenceSchema,
   isDispatchOutcomeKind,
   isDispatchOutcomeReference,
+  isFailureOutcomeKind,
 } from './outcomes';
 export type {
   AgentPipeline,
