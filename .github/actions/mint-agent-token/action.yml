@@ -40,6 +40,23 @@ inputs:
     description: Actions permission level to request.
     required: false
     default: ''
+  permission-metadata:
+    description: Metadata permission level to request.
+    required: false
+    default: ''
+  permission-workflows:
+    description: >-
+      Workflows permission level to request (only 'write' is meaningful -
+      lets the token create or update .github/workflows/** files). Opt-in
+      and unset by default: every existing caller that does not set this
+      keeps its current scope unchanged, even after an installation
+      approves the App's own workflows permission grant (jlapenna/
+      agent-lcars#868). When set, this action verifies the installation
+      actually granted it (see verify-workflows-grant.sh) and fails before
+      returning a token, rather than silently handing back a token that
+      will only fail much later at push time.
+    required: false
+    default: ''
 
 outputs:
   token:
@@ -48,6 +65,9 @@ outputs:
   app-slug:
     description: App slug the token was minted for.
     value: ${{ steps.mint.outputs.app-slug }}
+  installation-id:
+    description: Installation ID the token was minted for.
+    value: ${{ steps.mint.outputs.installation-id }}
 
 runs:
   using: composite
@@ -64,3 +84,24 @@ runs:
         permission-contents: ${{ inputs.permission-contents }}
         permission-pull-requests: ${{ inputs.permission-pull-requests }}
         permission-actions: ${{ inputs.permission-actions }}
+        permission-metadata: ${{ inputs.permission-metadata }}
+        permission-workflows: ${{ inputs.permission-workflows }}
+
+    # The early trusted capability check (#868): runs BEFORE this action
+    # returns, so every caller - including every lane workflow's own
+    # "Mint agent token" step, which always runs before claim/checkout/the
+    # model-invocation step - fails here rather than deep into an agent's
+    # turn at push time. Gated strictly on inputs.permission-workflows,
+    # which only a reviewed workflow-YAML change can set: nothing an issue
+    # comment, PR body, or agent tool call can influence at runtime. The
+    # check only ever reads the installation's actual grant; it never
+    # widens what the token above was minted with.
+    - name: Verify workflows permission was actually granted
+      if: inputs.permission-workflows != ''
+      shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.client-id }}
+        PRIVATE_KEY: ${{ inputs.private-key }}
+        INSTALLATION_ID: ${{ steps.mint.outputs.installation-id }}
+        REQUESTED_LEVEL: ${{ inputs.permission-workflows }}
+      run: bash "$GITHUB_ACTION_PATH/verify-workflows-grant.sh"

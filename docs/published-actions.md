@@ -112,7 +112,10 @@ agent-authored code with the job's token. The invariant (see
 
 `mint-agent-token` note: always request the narrowest scope the caller
 needs via `owner`/`repositories`/`permission-*` — an unscoped token
-carries every installation permission.
+carries every installation permission. `permission-workflows` in
+particular is opt-in only and verified before the action returns a token
+(agent-lcars#868) — see
+[docs/agent-workflow-write-permission.md](agent-workflow-write-permission.md).
 
 ## Contract test
 
