@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // This file holds the SINGLE GitHub App installation-token implementation
