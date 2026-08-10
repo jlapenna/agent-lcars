@@ -202,11 +202,11 @@ describe('QueueWorkspace', () => {
       }),
     ]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Filter and sort' }));
     const menu = await screen.findByRole('menu');
     expect(
       within(menu).getAllByRole('menuitem', { hidden: true }),
-    ).toHaveLength(7);
+    ).toHaveLength(10);
     expect(
       within(menu).getByRole('menuitem', {
         name: 'All reasons',
@@ -230,7 +230,7 @@ describe('QueueWorkspace', () => {
     expect(screen.getByText('Review the next item')).toBeTruthy();
   });
 
-  it('initializes filter and sort from the URL and marks the active controls', () => {
+  it('initializes filter and sort from the URL and marks the active controls', async () => {
     mockSearch = 'reason=review-requested&sort=newest';
     renderWorkspace([
       makeCard(),
@@ -243,17 +243,27 @@ describe('QueueWorkspace', () => {
 
     expect(screen.queryByText('Responsive Inbox')).toBeNull();
     expect(screen.getByText('Review the next item')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Filter and sort' }));
+    const menu = await screen.findByRole('menu');
     expect(
-      screen.getByRole('button', { name: 'Review requested' }),
-    ).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Newest update' })).toBeTruthy();
+      within(menu).getByRole('menuitem', {
+        name: 'Review requested',
+        hidden: true,
+      }),
+    ).toHaveAttribute('aria-current', 'true');
+    expect(
+      within(menu).getByRole('menuitem', {
+        name: 'Newest update',
+        hidden: true,
+      }),
+    ).toHaveAttribute('aria-current', 'true');
   });
 
   it('writes filter changes to the URL and offers a reset from the empty state', async () => {
     const replaceState = vi.spyOn(window.history, 'replaceState');
     renderWorkspace([makeCard()]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Filter and sort' }));
     const menu = await screen.findByRole('menu');
     fireEvent.click(
       within(menu).getByRole('menuitem', { name: 'Run failed', hidden: true }),
