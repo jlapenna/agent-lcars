@@ -18,29 +18,21 @@
  * `supersprinklesracing/sprinkles` and `jlapenna/homelab` each carry their own
  * `ci-auto-rerun.yml`, `pr-heal.yml`, `post-deploy-verify.yml` and similar,
  * roughly 1,590 lines total, none sharing a definition of what makes an
- * operation idempotent. Two of them independently reinvented the same fix:
- * `pr-heal.yml` stores `attempts`/`last-head` in a hidden `pr-heal-ledger:v1`
- * comment keyed by PR head SHA; `post-deploy-verify.yml` stores a
- * `post-deploy-verify-dispatch:<sha>` marker keyed by the latest deployed
- * merge SHA. Both are already doing the right thing — keying on an exact
- * artifact identity, never an actor or a time window — just with two
- * independent, hand-rolled formats a third workflow could not reuse.
+ * operation idempotent.
  *
- * This module is that shared format, published once so a future hosted
- * ingestion path (and, in the meantime, the consumer workflows themselves)
- * can agree on it instead of each re-deriving their own. It does not itself
- * ingest, store, or act on anything — see #864's migration plan for the
- * shadow-mode and cutover phases that come after this contract exists.
+ * This module is that shared format, published once so the hosted ingestion
+ * path (and the consumer workflows themselves) can agree on it instead of
+ * each re-deriving their own. Validation is zod schemas (#884): each wire
+ * type is defined once as a schema and its TypeScript type inferred from it,
+ * so the validator and the type can never drift apart.
  */
+
+import { z } from 'zod';
 
 /**
  * The delivery-lifecycle recovery domains #864 found duplicated across
  * consumer repositories. Deliberately excludes claim/dispatch/reconciliation
- * of the agent-dispatch signal itself — homelab's `agent-router.yml` and
- * `dispatch-reconcile.yml` are a forked pre-hosted-cutover copy of exactly
- * what `apps/dispatch-broker` already does in this repo (`controller`'s
- * `signal`/`authorization`/`intent`/`scheduling`/`launch`/`reconciliation`
- * phases in `failure.ts`), not a new domain — and excludes parking/retry
+ * of the agent-dispatch signal itself, and excludes parking/retry
  * exhaustion, which are dispositions of a domain's outcome
  * (`RetryDisposition`/`needsMaintainer` in `failure.ts`), not domains of
  * their own.
@@ -64,12 +56,11 @@ export const RECOVERY_DOMAINS = [
   'post_deploy_verification',
 ] as const;
 
-export type RecoveryDomain = (typeof RECOVERY_DOMAINS)[number];
-
-const DOMAINS: ReadonlySet<string> = new Set(RECOVERY_DOMAINS);
+export const recoveryDomainSchema = z.enum(RECOVERY_DOMAINS);
+export type RecoveryDomain = z.infer<typeof recoveryDomainSchema>;
 
 export function isRecoveryDomain(value: unknown): value is RecoveryDomain {
-  return typeof value === 'string' && DOMAINS.has(value);
+  return recoveryDomainSchema.safeParse(value).success;
 }
 
 /**
@@ -86,15 +77,16 @@ export const RECOVERY_SOURCE_KINDS = [
   'operator',
 ] as const;
 
-export type RecoverySourceKind = (typeof RECOVERY_SOURCE_KINDS)[number];
-
-const SOURCE_KINDS: ReadonlySet<string> = new Set(RECOVERY_SOURCE_KINDS);
+export const recoverySourceKindSchema = z.enum(RECOVERY_SOURCE_KINDS);
+export type RecoverySourceKind = z.infer<typeof recoverySourceKindSchema>;
 
 export function isRecoverySourceKind(
   value: unknown,
 ): value is RecoverySourceKind {
-  return typeof value === 'string' && SOURCE_KINDS.has(value);
+  return recoverySourceKindSchema.safeParse(value).success;
 }
+
+const nonNegativeSafeInteger = z.number().int().nonnegative().safe();
 
 /**
  * What a recovery operation is scoped to and what makes it idempotent.
@@ -103,17 +95,12 @@ export function isRecoverySourceKind(
  * makes reprocessing safe, never an actor or a time window (#864's own
  * required behavior). Concretely, per domain:
  *
- * - `ci_retry`: the exact run ID and run attempt (`run:<id>:<attempt>`) —
- *   GitHub's own `run_attempt` counter is already the only-once guard
- *   `rerun-infra-killed-runs` relies on; this just gives it a shared key.
- * - `pr_healing`: the PR number and its exact head SHA (`pr:<n>:<sha>`) —
- *   what `pr-heal.yml`'s own ledger already keys attempts on.
+ * - `ci_retry`: the exact run ID and run attempt (`run:<id>:<attempt>`).
+ * - `pr_healing`: the PR number and its exact head SHA (`pr:<n>:<sha>`).
  * - `merge_follow_through` / `deployment_follow_through`: the exact merge or
- *   validated deploy-baseline SHA (`sha:<sha>`) — never `head_sha` alone,
- *   per the deployed-baseline marker note carried over from #2161.
+ *   validated deploy-baseline SHA (`sha:<sha>`).
  * - `post_deploy_verification`: the issue number and the latest deployed
- *   merge SHA that satisfies it (`issue:<n>:<sha>`) — what
- *   `post-deploy-verify.yml`'s own dispatch marker already keys on.
+ *   merge SHA that satisfies it (`issue:<n>:<sha>`).
  *
  * This module does not enforce those per-domain shapes: the exact identity a
  * domain needs is that domain's own knowledge, not this shared package's.
@@ -122,16 +109,19 @@ export function isRecoverySourceKind(
  * losslessly for every field except `repository` — see
  * `ParsedRecoveryOperationKey`.
  */
-export interface RecoveryOperationTarget {
-  domain: RecoveryDomain;
-  repositoryId: number;
+export const recoveryOperationTargetSchema = z.object({
+  domain: recoveryDomainSchema,
+  repositoryId: nonNegativeSafeInteger,
   /** `owner/name`. Not itself part of the operation key string (only the
    *  rename-proof `repositoryId` is) — see `ParsedRecoveryOperationKey`. */
-  repository: string;
+  repository: z.string(),
   /** The issue or PR number the recovery action is scoped to. */
-  anchor: number;
-  exactIdentity: string;
-}
+  anchor: nonNegativeSafeInteger,
+  exactIdentity: z.string().min(1),
+});
+export type RecoveryOperationTarget = z.infer<
+  typeof recoveryOperationTargetSchema
+>;
 
 const OPERATION_KEY_PREFIX = 'recovery/v1';
 
@@ -139,30 +129,18 @@ const OPERATION_KEY_PREFIX = 'recovery/v1';
  * Render a target's stable operation key.
  *
  * This is the idempotency key #864 requires be written "before producing the
- * side effect" — two observations of the same fact (a replayed webhook and a
- * scheduled sweep both seeing the same infra-killed run) render the identical
+ * side effect" — two observations of the same fact render the identical
  * key, so a caller can de-duplicate by string equality alone rather than by
  * re-deriving meaning from actor/time-window heuristics.
  */
 export function formatOperationKey(target: RecoveryOperationTarget): string {
-  if (!isRecoveryDomain(target.domain)) {
-    throw new Error(`Unknown recovery domain: ${String(target.domain)}`);
-  }
-  if (!Number.isSafeInteger(target.repositoryId) || target.repositoryId < 0) {
-    throw new Error(`Invalid repositoryId: ${String(target.repositoryId)}`);
-  }
-  if (!Number.isSafeInteger(target.anchor) || target.anchor < 0) {
-    throw new Error(`Invalid anchor: ${String(target.anchor)}`);
-  }
-  if (typeof target.exactIdentity !== 'string' || target.exactIdentity === '') {
-    throw new Error('exactIdentity must be a non-empty string');
-  }
+  const parsed = recoveryOperationTargetSchema.parse(target);
   return [
     OPERATION_KEY_PREFIX,
-    target.domain,
-    String(target.repositoryId),
-    String(target.anchor),
-    target.exactIdentity,
+    parsed.domain,
+    String(parsed.repositoryId),
+    String(parsed.anchor),
+    parsed.exactIdentity,
   ].join(':');
 }
 
@@ -182,7 +160,7 @@ const OPERATION_KEY_RE =
  */
 function parseCanonicalNonNegativeInteger(digits: string): number | undefined {
   const value = Number(digits);
-  return Number.isSafeInteger(value) ? value : undefined;
+  return nonNegativeSafeInteger.safeParse(value).success ? value : undefined;
 }
 
 /**
@@ -190,12 +168,9 @@ function parseCanonicalNonNegativeInteger(digits: string): number | undefined {
  * in `RecoveryOperationTarget` except `repository`. The key deliberately
  * encodes only the rename-proof `repositoryId` (the same choice
  * `LedgerTaskRef` makes) — the `owner/name` slug is never part of the string,
- * so a parser has no source to recover it from. Returning `repository: ''`
- * here would silently satisfy `RecoveryOperationTarget`'s type while handing
- * every caller an empty slug that fails the moment it reaches a
- * repository-scoped GitHub call; requiring callers to resolve or attach the
- * slug themselves (e.g. from wherever the key was looked up) surfaces that
- * as a compile error instead.
+ * so a parser has no source to recover it from; requiring callers to resolve
+ * or attach the slug themselves surfaces that as a compile error instead of
+ * an empty-slug runtime failure.
  */
 export type ParsedRecoveryOperationKey = Omit<
   RecoveryOperationTarget,
@@ -206,8 +181,7 @@ export type ParsedRecoveryOperationKey = Omit<
  * Recover the target an operation key names, re-validating the domain and
  * both numeric components against canonical form rather than trusting the
  * string. A key read back from durable storage did not necessarily come from
- * `formatOperationKey` — see `isWellFormedFailureClassification`'s header for
- * why parsed data is never trusted just because it parses.
+ * `formatOperationKey`.
  */
 export function parseOperationKey(
   value: string | undefined | null,
@@ -225,28 +199,37 @@ export function parseOperationKey(
 /**
  * A normalized recovery observation: one system's evidence that a recovery
  * fact is true, independent of how many times or by which transport it was
- * observed. Modeled on #645's `SignalEnvelope` (source ID, actor, action,
- * target, evidence, observed time), scoped to the delivery-lifecycle domains
- * this module covers.
+ * observed.
  *
  * `operationKey` is always `formatOperationKey(target)` — the two fields
- * cannot disagree, the same guarantee `formatAttemptId`/`AttemptMarker` give
- * the agent-dispatch lifecycle in `marker.ts`. Use `buildRecoveryObservation`
- * rather than constructing this object literally, so that guarantee holds by
- * construction instead of by caller discipline.
+ * cannot disagree; the schema's `check` re-derives the key from the target
+ * and rejects any value where they differ. Use `buildRecoveryObservation`
+ * rather than constructing this object literally.
  */
-export interface RecoveryObservation {
-  operationKey: string;
-  target: RecoveryOperationTarget;
-  sourceKind: RecoverySourceKind;
-  /** ISO-8601 timestamp of when this observation was made — not when the
-   *  underlying fact occurred, which `evidence` may separately carry. */
-  observedAt: string;
-  /** Human-checkable proof: a run URL, a delivery UUID, a comment URL. Never
-   *  parsed as a decision input — only the target's `exactIdentity` is. */
-  evidence: string;
-  detail?: string;
-}
+export const recoveryObservationSchema = z
+  .object({
+    operationKey: z.string(),
+    target: recoveryOperationTargetSchema,
+    sourceKind: recoverySourceKindSchema,
+    /** ISO-8601 timestamp of when this observation was made — not when the
+     *  underlying fact occurred, which `evidence` may separately carry. */
+    observedAt: z.string().min(1),
+    /** Human-checkable proof: a run URL, a delivery UUID, a comment URL.
+     *  Never parsed as a decision input — only `exactIdentity` is. */
+    evidence: z.string().min(1),
+    detail: z.string().optional(),
+  })
+  .check((ctx) => {
+    if (ctx.value.operationKey !== formatOperationKey(ctx.value.target)) {
+      ctx.issues.push({
+        code: 'custom',
+        message: 'operationKey does not match formatOperationKey(target)',
+        input: ctx.value.operationKey,
+        path: ['operationKey'],
+      });
+    }
+  });
+export type RecoveryObservation = z.infer<typeof recoveryObservationSchema>;
 
 /**
  * Build a well-formed observation, deriving `operationKey` from `target`
@@ -265,74 +248,24 @@ export function buildRecoveryObservation({
   evidence: string;
   detail?: string;
 }): RecoveryObservation {
-  if (!isRecoverySourceKind(sourceKind)) {
-    throw new Error(`Unknown recovery source kind: ${String(sourceKind)}`);
-  }
-  if (typeof observedAt !== 'string' || observedAt === '') {
-    throw new Error('observedAt must be a non-empty ISO-8601 string');
-  }
-  if (typeof evidence !== 'string' || evidence === '') {
-    throw new Error('evidence must be a non-empty string');
-  }
-  return {
+  return recoveryObservationSchema.parse({
     operationKey: formatOperationKey(target),
     target,
     sourceKind,
     observedAt,
     evidence,
     ...(detail === undefined ? {} : { detail }),
-  };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  });
 }
 
 /**
  * Whether an arbitrary parsed value is a `RecoveryObservation` worth
- * trusting — same posture as this package's other `isWellFormedX`
- * functions: re-validate every field against the closed vocabulary rather
- * than assuming a value that merely has the right shape came from
- * `buildRecoveryObservation`.
+ * trusting — re-validates every field against the closed vocabulary via the
+ * schema rather than assuming a value that merely has the right shape came
+ * from `buildRecoveryObservation`.
  */
 export function isWellFormedRecoveryObservation(
   value: unknown,
 ): value is RecoveryObservation {
-  if (!isPlainObject(value)) return false;
-  const target = value.target;
-  if (!isPlainObject(target)) return false;
-  if (!isRecoveryDomain(target.domain)) return false;
-  if (
-    !Number.isSafeInteger(target.repositoryId) ||
-    (target.repositoryId as number) < 0
-  ) {
-    return false;
-  }
-  if (typeof target.repository !== 'string') return false;
-  if (!Number.isSafeInteger(target.anchor) || (target.anchor as number) < 0) {
-    return false;
-  }
-  if (typeof target.exactIdentity !== 'string' || target.exactIdentity === '') {
-    return false;
-  }
-  let expectedKey: string;
-  try {
-    expectedKey = formatOperationKey(
-      target as unknown as RecoveryOperationTarget,
-    );
-  } catch {
-    return false;
-  }
-  if (value.operationKey !== expectedKey) return false;
-  if (!isRecoverySourceKind(value.sourceKind)) return false;
-  if (typeof value.observedAt !== 'string' || value.observedAt === '') {
-    return false;
-  }
-  if (typeof value.evidence !== 'string' || value.evidence === '') {
-    return false;
-  }
-  if (value.detail !== undefined && typeof value.detail !== 'string') {
-    return false;
-  }
-  return true;
+  return recoveryObservationSchema.safeParse(value).success;
 }
