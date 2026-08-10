@@ -8,7 +8,7 @@
 //
 // Reuses the SAME hardened GitHub API client ../github-api.ts already
 // provides (createGitHubApi, repositoryPath) rather than a parallel
-// implementation -- the same convention canary/run.ts follows for the
+// implementation -- the same convention the sibling bundled actions follow.
 // same reason.
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
@@ -29,7 +29,7 @@ import {
 // `createGitHubApi()`'s return shape -- see github-api.ts. Derived via
 // ReturnType rather than a hand-copied local interface because GitHubApi
 // itself isn't exported from that module; this stays exact without
-// duplicating its shape. Same convention canary/run.ts's own
+// duplicating its shape. Same convention the sibling bundled actions follow.
 // GitHubApiClient uses.
 type GitHubApiClient = ReturnType<typeof createGitHubApi>;
 

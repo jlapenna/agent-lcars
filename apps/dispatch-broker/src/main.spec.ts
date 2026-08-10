@@ -844,8 +844,7 @@ test('dispatch admission holds ordinary accepted work while needs-human is live,
 test('dispatch admission parks visibly before allocation while lane health is open and resumes the same accepted generation after recovery (#523)', async () => {
   const ledger = acceptedLedger('codex');
   const loaded = { ledger, comment: { id: 9 } };
-  const readinessMarker =
-    '<!-- agent-lcars:workflow-alert:v1:bootstrap-canary.yml -->';
+  const readinessMarker = '<!-- agent-lcars:lane-readiness:v1:codex -->';
   let healthy = false;
   let projectedComment;
   const calls = [];
@@ -859,7 +858,7 @@ test('dispatch admission parks visibly before allocation while lane health is op
           : [
               {
                 number: 901,
-                title: 'Bootstrap Canary is failing',
+                title: 'Codex agent lane is unavailable',
                 body: readinessMarker,
                 html_url: 'https://github.com/jlapenna/agent-lcars/issues/901',
               },
@@ -922,48 +921,6 @@ test('dispatch admission parks visibly before allocation while lane health is op
   assert.equal(
     calls.filter((call) => call.path.endsWith('/dispatches')).length,
     1,
-  );
-});
-
-test('the no-op canary bypasses needs-human admission so its next probe can prove recovery (#720/#677)', async () => {
-  const ledger = acceptedLedger('canary');
-  const calls = [];
-  const client = {
-    requestOk: async (path, options = {}) => {
-      calls.push({ path, method: options.method ?? 'GET' });
-      if (path.endsWith('/issues/304')) {
-        throw new Error('Canary dispatch must not read the park label');
-      }
-      if (path.endsWith('/issues/comments/9')) return { id: 9 };
-      throw new Error(`Unexpected canary request: ${path}`);
-    },
-    request: async (path, options = {}) => {
-      calls.push({ path, method: options.method ?? 'GET' });
-      return {
-        status: 200,
-        data: {
-          workflow_run_id: 43,
-          run_url:
-            'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/43',
-          html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/43',
-        },
-      };
-    },
-  };
-
-  await dispatchAccepted(client, { ledger, comment: { id: 9 } });
-
-  assert.equal(ledger.generations[0].state, 'active');
-  assert.ok(
-    calls.some((call) =>
-      call.path.endsWith(
-        '/actions/workflows/agent-dispatch-canary.yml/dispatches',
-      ),
-    ),
-  );
-  assert.equal(
-    calls.some((call) => call.path.endsWith('/issues/304')),
-    false,
   );
 });
 

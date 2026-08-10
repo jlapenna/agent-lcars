@@ -48,7 +48,6 @@ have their own setup actions; do not adopt.
   runner image (consumers on that image may still call them; the coupling
   is to the image, not the repo checkout — see
   [onboarding-console-and-telemetry.md](onboarding-console-and-telemetry.md)).
-- `run-dispatch-canary` — exercises this repo's broker end to end.
 - `plan-image-publish` — routes this repo's three specific images.
 
 ## Referencing from a consumer repo

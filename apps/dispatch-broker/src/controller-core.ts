@@ -1677,7 +1677,7 @@ The broker held generation ${generation.generation} **before worker allocation**
 
 ${blockers.map((blocker) => `- [#${blocker.issue}: ${blocker.title}](${blocker.url})`).join('\n')}
 
-This is an automatic infrastructure hold, not a human-owned task park. Repair the linked health incident and close it (or let its canary close it on recovery). Scheduled reconcile will retry the readiness check and resume this accepted generation; do not create another dispatch generation. This notice is live only while a linked health issue remains open.`,
+This is an automatic infrastructure hold, not a human-owned task park. Repair the linked health incident and close it. Scheduled reconcile will retry the readiness check and resume this accepted generation; do not create another dispatch generation. This notice is live only while a linked health issue remains open.`,
   );
   console.log(
     `::notice::Holding accepted ${generation.pipeline} generation ` +
@@ -1701,13 +1701,8 @@ async function dispatchAccepted(
     // spend another agent run. status:needs-human is the human-facing stop
     // signal; read it live at the last responsible moment so a generation
     // promoted while its predecessor completed remains held until the label
-    // is removed. The structurally no-op canary is exempt: its own failure
-    // parks the canonical canary issue, and a later probe must still run to
-    // prove recovery and clear that incident (#677).
-    if (
-      generation.pipeline !== 'canary' &&
-      (await anchorNeedsHuman(client, loaded.ledger.task))
-    ) {
+    // is removed.
+    if (await anchorNeedsHuman(client, loaded.ledger.task)) {
       console.log(
         `::notice::Holding accepted generation ${generation.generation} for ` +
           `issue #${loaded.ledger.task.issue}: status:needs-human is present. ` +

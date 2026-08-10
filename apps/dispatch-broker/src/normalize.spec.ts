@@ -1,9 +1,5 @@
 import assert from 'node:assert/strict';
 
-import {
-  WEBHOOK_INGRESS_CANARY_MARKER,
-  WEBHOOK_INGRESS_CANARY_TITLE,
-} from '@agent-lcars/dispatch-contracts';
 import { test } from 'vitest';
 
 import {
@@ -63,62 +59,6 @@ function prEvent(action, overrides = {}) {
     ...overrides,
   };
 }
-
-test('the webhook ingress sentinel can never become dispatch work (#796)', () => {
-  const sentinel = {
-    ...baseIssue,
-    title: WEBHOOK_INGRESS_CANARY_TITLE,
-    body: WEBHOOK_INGRESS_CANARY_MARKER,
-  };
-  for (const candidate of [
-    {
-      eventName: 'issues',
-      event: issueEvent('labeled', { issue: sentinel }),
-    },
-    {
-      eventName: 'issue_comment',
-      event: issueEvent('created', {
-        issue: sentinel,
-        comment: {
-          id: 1,
-          body: '/codex',
-          created_at: context.now,
-          author_association: 'OWNER',
-          user: { login: 'jlapenna', type: 'User' },
-        },
-      }),
-    },
-    {
-      eventName: 'workflow_dispatch',
-      event: { action: '', issue: sentinel },
-      inputs: {
-        issue: String(sentinel.number),
-        pipeline: 'codex',
-        mode: 'implement',
-        caller_id: '11111111-1111-4111-8111-111111111111',
-      },
-    },
-  ]) {
-    assert.deepEqual(
-      normalizeEvent({
-        ...candidate,
-        context,
-        maintainer: 'jlapenna',
-      }),
-      { kind: 'ignored', reason: 'webhook ingress canary sentinel' },
-    );
-  }
-
-  const closed = normalizeEvent({
-    eventName: 'issues',
-    event: issueEvent('closed', { issue: sentinel }),
-    context,
-    timeline: timeline('closed', { label: undefined }),
-    maintainer: 'jlapenna',
-  });
-  assert.equal(closed.kind, 'anchor-control');
-  assert.equal(closed.control.kind, 'closed');
-});
 
 test('exact command parsing accepts command lines and rejects prose, quotes, and code', () => {
   assert.deepEqual(parseExactCommand('/codex please continue'), {
@@ -260,63 +200,6 @@ test('Actions-tab dispatch falls back to stable workflow run identity', () => {
     maintainer: 'jlapenna',
   });
   assert.equal(normalized.intent.sourceId, 'actions-run:9001');
-});
-
-test('canary dispatch normalizes to a hardcoded canary-pipeline intent, requiring no actor authorization (#307)', () => {
-  const normalized = normalizeEvent({
-    eventName: 'workflow_dispatch',
-    event: {},
-    inputs: { kind: 'canary', issue: '304' },
-    context: { ...context, actor: 'github-actions[bot]' },
-    maintainer: 'jlapenna',
-  });
-  assert.equal(normalized.kind, 'intent');
-  assert.equal(normalized.intent.pipeline, 'canary');
-  assert.equal(normalized.intent.sourceKind, 'canary');
-  assert.equal(normalized.intent.authorization.authorized, true);
-  assert.equal(normalized.intent.sourceId, 'actions-run:9001');
-
-  // Unlike the default (intent) kind, a `canary` dispatch never requires the
-  // triggering actor to be the configured maintainer -- dispatch-canary.yml
-  // and post-deploy-smoke.yml fire it as github-actions[bot]. `pipeline` is
-  // hardcoded to 'canary' regardless of any caller input, so this path can
-  // never be used to smuggle an unauthorized claude/codex/opencode dispatch.
-  const fromCollaborator = normalizeEvent({
-    eventName: 'workflow_dispatch',
-    event: {},
-    inputs: { kind: 'canary', issue: '304', pipeline: 'claude' },
-    context: { ...context, actor: 'some-collaborator' },
-    maintainer: 'jlapenna',
-  });
-  assert.equal(fromCollaborator.intent.pipeline, 'canary');
-
-  const withCallerId = normalizeEvent({
-    eventName: 'workflow_dispatch',
-    event: {},
-    inputs: {
-      kind: 'canary',
-      issue: '304',
-      caller_id: '11111111-1111-4111-8111-111111111111',
-    },
-    context,
-    maintainer: 'jlapenna',
-  });
-  assert.equal(
-    withCallerId.intent.sourceId,
-    '11111111-1111-4111-8111-111111111111',
-  );
-
-  assert.throws(
-    () =>
-      normalizeEvent({
-        eventName: 'workflow_dispatch',
-        event: {},
-        inputs: { kind: 'canary', issue: '304', caller_id: 'not-a-uuid' },
-        context,
-        maintainer: 'jlapenna',
-      }),
-    /UUID/u,
-  );
 });
 
 test('comment dispatch requires one exact command, owner association, and matching integration', () => {
@@ -890,31 +773,6 @@ test('completion callback is normalized as evidence, never trusted as a conclusi
   assert.equal(normalized.kind, 'completion');
   assert.equal(normalized.workerRunId, 42);
   assert.equal('conclusion' in normalized, false);
-});
-
-test('completion callback accepts the canary worker workflow (#307)', () => {
-  const completionPayload = Buffer.from(
-    JSON.stringify({
-      workerRunId: 42,
-      generation: 7,
-      intentId: 'intent-7',
-      token: 'dispatch_token_777777',
-      workflow: 'agent-dispatch-canary.yml',
-    }),
-  ).toString('base64url');
-  const normalized = normalizeEvent({
-    eventName: 'workflow_dispatch',
-    event: {},
-    inputs: {
-      kind: 'completion',
-      issue: '304',
-      completion_payload: completionPayload,
-    },
-    context: { ...context, actor: 'github-actions[bot]' },
-    maintainer: 'jlapenna',
-  });
-  assert.equal(normalized.kind, 'completion');
-  assert.equal(normalized.workflow, 'agent-dispatch-canary.yml');
 });
 
 test('completion callback carries only a validated lane-readiness failure signal', () => {

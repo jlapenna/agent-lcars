@@ -26,16 +26,13 @@ export const AUTHORIZATION_RULES = Object.freeze({
   MANUAL_MAINTAINER: 'manual-maintainer',
   OWNER_COMMENT: 'owner-comment',
   MAINTAINER_ISSUE_EVENT: 'maintainer-issue-event',
-  CANARY_SCHEDULED_DISPATCH: 'canary-scheduled-dispatch',
   RECONCILE_LABEL_REPAIR: 'reconcile-label-repair',
 });
 
 /**
  * Build an AuthorizationDecision: authorized iff the acting login is exactly
  * the configured maintainer. Every dispatch-triggering event that is not
- * itself an unconditionally-trusted internal ping (canary, the reconcile
- * label-repair, both of which build their own decision inline because they
- * are never a bare actor-equals-maintainer comparison) runs through this one
+ * itself an unconditionally-trusted internal ping (the reconcile scan) runs through this one
  * function.
  *
  * @param actor

@@ -18,8 +18,6 @@ import {
   quickTaskMarkerMatcher,
   REPLY_COMMANDS,
   REVIEW_LABELS,
-  WEBHOOK_INGRESS_CANARY_MARKER,
-  WEBHOOK_INGRESS_CANARY_TITLE,
   WORKER_WORKFLOW_FILES,
 } from '@agent-lcars/dispatch-contracts';
 
@@ -78,16 +76,6 @@ export interface WebhookEvent {
   comment?: GitHubComment;
   sender?: GitHubUser;
   label?: { name: string };
-}
-
-function isWebhookIngressCanary(
-  issue: IssueOrPullRequest | undefined,
-): boolean {
-  return Boolean(
-    issue &&
-    issue.title === WEBHOOK_INGRESS_CANARY_TITLE &&
-    issue.body?.includes(WEBHOOK_INGRESS_CANARY_MARKER),
-  );
 }
 
 export interface TimelineEvent {
@@ -337,7 +325,7 @@ function timelineSource(
   };
 }
 
-// Shared by the `canary` and manual-dispatch workflow_dispatch branches
+// Shared by the manual-dispatch workflow_dispatch branch
 // below: both accept an optional caller-supplied `caller_id` for a stable
 // sourceId (falling back to the actions run identity), and both must
 // validate it as a UUID when present -- differing only in the error
@@ -502,42 +490,6 @@ function normalizeWorkflowDispatch({
         : {}),
     };
   }
-  if (inputs.kind === 'canary') {
-    // Fired exclusively by this repo's own trusted dispatch-canary.yml
-    // (hourly + workflow_dispatch) or post-deploy-smoke.yml (#307), which
-    // created `task.issue` moments earlier via GITHUB_TOKEN specifically so
-    // it could dispatch this. Like `reconcile` above, this bypasses
-    // per-actor authorization: triggering a workflow_dispatch already
-    // requires repo write access (the caller's own `actions: write`
-    // permission), and unlike the manual `intent` path below, `pipeline`
-    // is hardcoded to 'canary' here rather than caller-supplied, so this
-    // can never be used to smuggle an unauthorized claude/codex/opencode
-    // dispatch. broker.mjs's isDispatchPipeline gate and normalize.mjs's own
-    // WORKER_WORKFLOWS gate independently pin this to the dedicated no-op
-    // agent-dispatch-canary.yml worker.
-    const sourceId = resolveCallerSourceId(inputs, context, 'Canary dispatch');
-    return {
-      kind: 'intent',
-      intent: makeIntent({
-        task,
-        sourceKind: 'canary',
-        sourceId,
-        transportRunId: context.runId,
-        occurredAt: context.now,
-        pipeline: 'canary',
-        mode: 'implement',
-        reply: '',
-        runbook: '',
-        context: '',
-        authorization: {
-          authorized: true,
-          actor: context.actor,
-          configuredMaintainer: maintainer,
-          rule: AUTHORIZATION_RULES.CANARY_SCHEDULED_DISPATCH,
-        },
-      }),
-    };
-  }
   const sourceId = resolveCallerSourceId(inputs, context, 'Manual dispatch');
   const auth = authorization(
     context.actor,
@@ -591,15 +543,6 @@ function normalizeEvent({
   const semanticEventName =
     eventName === 'pull_request_target' ? 'pull_request' : eventName;
   const issue = event.issue ?? event.pull_request;
-  if (
-    isWebhookIngressCanary(issue) &&
-    !(
-      semanticEventName === 'issues' &&
-      ['closed', 'reopened'].includes(event.action)
-    )
-  ) {
-    return { kind: 'ignored', reason: 'webhook ingress canary sentinel' };
-  }
   if (semanticEventName === 'workflow_dispatch') {
     return normalizeWorkflowDispatch({
       inputs,

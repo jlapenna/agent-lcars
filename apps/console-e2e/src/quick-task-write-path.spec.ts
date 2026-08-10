@@ -4,7 +4,7 @@ import { useCliSessionFixtures } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 /**
- * agent-lcars#307 (part A, split from the epic's production canary half -
+ * agent-lcars#307 (part A).
  * see docs/e2e-security-boundary.md). This is the "complete mutation path
  * proven without real repositories, credentials, or paid model calls"
  * acceptance criterion: it drives the REAL Quick Task server action

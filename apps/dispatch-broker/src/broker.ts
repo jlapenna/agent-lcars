@@ -53,13 +53,6 @@ import {
   verifyPreflight,
 } from './modules/scheduler';
 
-// 'canary' (#307) is a dedicated, structurally-no-op fourth pipeline: it
-// exists purely to prove the broker's own claim/dispatch/completion-
-// callback path in production without ever invoking a paid model or a
-// self-hosted/privileged runner. Why it is unreachable by label now lives
-// with the shared pipeline registry -- see
-// libs/dispatch-contracts/src/pipelines.js's canary contract.
-
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -160,10 +153,7 @@ function applyAnchorControl(
     };
     if (control.kind === 'closed') {
       for (const generation of ledger.generations) {
-        if (
-          generation.pipeline !== 'canary' &&
-          (generation.state === 'pending' || generation.state === 'accepted')
-        ) {
+        if (generation.state === 'pending' || generation.state === 'accepted') {
           generation.state = 'superseded-by-close';
         }
       }

@@ -9,8 +9,6 @@ import {
   DISPATCH_PIPELINES,
   excludedPullRequestAuthors,
   GENERIC_REPLY_COMMAND,
-  isAgentPipeline,
-  isDispatchPipeline,
   PIPELINE_CONTRACTS,
   REPLY_COMMANDS,
   REVIEW_LABELS,
@@ -26,12 +24,7 @@ import {
 describe('pipeline registry', () => {
   it('derives the agent and dispatch pipeline lists', () => {
     expect(AGENT_PIPELINES).toEqual(['claude', 'codex', 'opencode']);
-    expect(DISPATCH_PIPELINES).toEqual([
-      'claude',
-      'codex',
-      'opencode',
-      'canary',
-    ]);
+    expect(DISPATCH_PIPELINES).toEqual(['claude', 'codex', 'opencode']);
   });
 
   it('derives the agent:* label map normalize.mjs used to hand-write', () => {
@@ -81,46 +74,14 @@ describe('pipeline registry', () => {
       'claude.yml',
       'codex.yml',
       'opencode.yml',
-      'agent-dispatch-canary.yml',
     ]);
   });
 
   it('resolves a worker workflow and rejects an unknown pipeline', () => {
     expect(workerWorkflow('opencode')).toBe('opencode.yml');
-    expect(workerWorkflow('canary')).toBe('agent-dispatch-canary.yml');
     expect(() => workerWorkflow('gemini' as never)).toThrowError(
       /Unsupported worker pipeline/u,
     );
-  });
-});
-
-describe('the canary pipeline', () => {
-  it('is dispatchable but is not an agent pipeline', () => {
-    expect(isDispatchPipeline('canary')).toBe(true);
-    expect(isAgentPipeline('canary')).toBe(false);
-    expect(AGENT_PIPELINES).not.toContain('canary');
-  });
-
-  it('carries no label, reply command, or bot login', () => {
-    // #307: nothing may ever select the canary from an issue. If any of
-    // these gained a value, a label or comment could route real dispatch to
-    // the structurally-no-op worker — or route the canary somewhere paid.
-    const canary = PIPELINE_CONTRACTS.canary;
-    expect(canary.label).toBeUndefined();
-    expect(canary.reviewLabel).toBeUndefined();
-    expect(canary.replyTrigger).toBeUndefined();
-    expect(canary.botLogin).toBeUndefined();
-  });
-
-  it('is rejected by the narrowed agent accessor', () => {
-    expect(() => agentPipelineContract('canary' as never)).toThrowError(
-      /Not an agent pipeline/u,
-    );
-  });
-
-  it('is excluded from the discovery labels and bot logins', () => {
-    expect(DISPATCH_LABELS).toHaveLength(6);
-    expect(AGENT_BOT_LOGINS).not.toContain(undefined);
   });
 });
 
@@ -153,7 +114,6 @@ describe('registry invariants', () => {
     for (const pipeline of AGENT_PIPELINES) {
       const contract = agentPipelineContract(pipeline);
       expect(contract.pipeline).toBe(pipeline);
-      expect(contract.contract).toBe('agent');
       expect(contract.label).toBe(`agent:${pipeline}`);
       expect(contract.reviewLabel).toBe(`review:${pipeline}`);
       expect(contract.workflowFile).toBe(`${pipeline}.yml`);

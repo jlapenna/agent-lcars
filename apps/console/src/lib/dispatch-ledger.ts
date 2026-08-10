@@ -50,10 +50,9 @@ export type {
   LedgerSource,
 };
 
-/** Every pipeline the broker can persist. `canary` is the trusted no-op
- * production probe, not a selectable coding-agent integration. Kept as a
- * console-local alias of the shared `DispatchPipeline` typedef since
- * existing callers reference it by this name. */
+/** Every pipeline the broker can persist. Kept as a console-local alias of
+ * the shared `DispatchPipeline` typedef since existing callers reference it
+ * by this name. */
 export type LedgerPipeline = DispatchPipeline;
 
 /** Every state a ledger generation can be in - the shared package's own

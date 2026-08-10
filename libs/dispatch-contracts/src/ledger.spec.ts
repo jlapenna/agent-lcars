@@ -249,19 +249,6 @@ describe('isWellFormedLedger', () => {
     ).toBe(false);
   });
 
-  it('accepts the canary pipeline, which the broker does persist', () => {
-    expect(
-      isWellFormedGeneration({
-        generation: 1,
-        intentId: 'i',
-        sourceId: 's',
-        occurredAt: 'now',
-        pipeline: 'canary',
-        state: 'active',
-      }),
-    ).toBe(true);
-  });
-
   it('accepts both authorization variants a source entry can carry', () => {
     // The broker persists two genuinely different shapes: a decision
     // (`authorized`, from a label or comment) and an observation

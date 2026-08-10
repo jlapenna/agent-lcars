@@ -217,7 +217,7 @@ export interface LaneReadinessBlocker {
   issue: number;
   title: string;
   url: string;
-  source: 'bootstrap-canary' | 'provider-canary' | 'lane-incident';
+  source: 'lane-incident';
 }
 
 /** A GitHub Actions workflow run, as returned by both the single-run GET
@@ -700,16 +700,14 @@ async function listAll<T>(api: GitHubApi, path: string): Promise<T[]> {
   throw new Error('GitHub pagination exceeded safety bound');
 }
 
-const workflowAlertMarker = (workflow: string): string =>
-  `<!-- agent-lcars:workflow-alert:v1:${workflow} -->`;
 const laneReadinessMarker = (pipeline: string): string =>
   `<!-- agent-lcars:lane-readiness:v1:${pipeline} -->`;
 
 /**
- * Read the runner platform's durable readiness projections. Open canary
- * alert issues are external health input to the controller, not state the
- * controller owns. A lane-specific incident is added after a worker proves
- * a shared credential/provider prerequisite failed. Listing issues rather
+ * Read the runner platform's durable readiness projections. Open lane
+ * incident issues are external health input to the controller, not state
+ * the controller owns. A lane-specific incident is added after a worker
+ * proves a shared credential/provider prerequisite failed. Listing issues rather
  * than using Search is intentional: issue-list reads are immediately
  * consistent enough to stop the next serialized dispatch, while search
  * indexing can lag behind the incident creation that must trip this breaker.
@@ -719,17 +717,9 @@ async function readLaneReadiness(
   task: LedgerTaskRef,
   pipeline: DispatchPipeline,
 ): Promise<LaneReadinessBlocker[]> {
-  if (pipeline === 'canary') return [];
   const expected = new Map<string, LaneReadinessBlocker['source']>([
-    [workflowAlertMarker('bootstrap-canary.yml'), 'bootstrap-canary'],
     [laneReadinessMarker(pipeline), 'lane-incident'],
   ]);
-  if (pipeline === 'opencode') {
-    expected.set(
-      workflowAlertMarker('opencode-model-canary.yml'),
-      'provider-canary',
-    );
-  }
   const root = repositoryPath(task);
   const issues = await listAll<GitHubReadinessIssue>(
     api,
@@ -755,11 +745,10 @@ async function readLaneReadiness(
 }
 
 /**
- * Open one durable incident per lane after a trusted completion callback or
- * isolated probe identifies a shared startup prerequisite. Codex incidents remain
+ * Open one durable incident per lane after a trusted completion callback
+ * identifies a shared startup prerequisite. Codex incidents remain
  * human-closed because that subscription credential has no honest network
- * probe. Claude incidents may be closed only by the distinct trusted harness
- * probe; OpenCode's independent provider canary remains auto-closing.
+ * probe.
  */
 async function ensureLaneReadinessAlert(
   api: GitHubApi,
@@ -770,9 +759,6 @@ async function ensureLaneReadinessAlert(
   maintainer: string,
   evidenceSource: 'worker-completion' | 'probe' = 'worker-completion',
 ): Promise<GitHubReadinessIssue> {
-  if (pipeline === 'canary') {
-    throw new Error('The no-op canary cannot create an agent lane incident');
-  }
   const marker = laneReadinessMarker(pipeline);
   const root = repositoryPath(task);
   const open = (
@@ -821,9 +807,6 @@ async function resolveLaneReadinessAlerts(
   pipeline: DispatchPipeline,
   probeRunUrl: string,
 ): Promise<GitHubReadinessIssue[]> {
-  if (pipeline === 'canary') {
-    throw new Error('The no-op canary cannot resolve an agent lane incident');
-  }
   const marker = laneReadinessMarker(pipeline);
   const root = repositoryPath(task);
   const open = (
@@ -863,12 +846,11 @@ async function resolveLaneReadinessAlerts(
   return open;
 }
 
-// Shared by main.mjs's dispatchReconcileScan and run-dispatch-canary/
-// run.mjs's sweepStaleCanaries: both fire one independent GitHub write (or
-// small sequence of writes) per discovered candidate, and both discovery
-// lanes can legitimately return a large backlog (a scheduled reconcile scan
-// over every agent-labeled/fleet-assigned issue; a canary janitor sweep over
-// every stale marked issue). Firing all of them at once via a bare
+// Used by main.mjs's dispatchReconcileScan: fires one independent GitHub
+// write (or small sequence of writes) per discovered candidate, and
+// discovery can legitimately return a large backlog (a scheduled reconcile
+// scan over every agent-labeled/fleet-assigned issue). Firing all of them
+// at once via a bare
 // Promise.all(Settled) would burst one request per candidate simultaneously
 // and risk tripping GitHub's secondary rate limits -- the resulting
 // rejections would just become per-candidate failures, silently skipping
@@ -1364,9 +1346,9 @@ function validateDispatchResponse(
   return { runId: runId as number, runUrl, htmlUrl };
 }
 
-// Shared by main.mjs's completionCallback/dispatchReconcileScan and
-// run-dispatch-canary/run.mjs's dispatchRouterCanary: every caller posts
-// the same workflow_dispatch shape at this repo's own agent-router.yml
+// Used by main.mjs's completionCallback/dispatchReconcileScan (legacy
+// rollback transport; the hosted controller owns the live path): callers
+// post the same workflow_dispatch shape at this repo's own agent-router.yml
 // (ref: 'main', a caller-supplied `inputs` object naming the `kind`) and
 // then validates the same response contract via validateDispatchResponse.
 // Only the `inputs` payload differs per caller.

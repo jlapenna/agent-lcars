@@ -176,7 +176,6 @@ function isDispatchOutcomeReference(value) {
 var PIPELINE_CONTRACTS = Object.freeze({
   claude: Object.freeze({
     pipeline: "claude",
-    contract: "agent",
     workflowFile: "claude.yml",
     displayName: "Claude",
     runNameLabel: "Claude issue agent",
@@ -189,7 +188,6 @@ var PIPELINE_CONTRACTS = Object.freeze({
   }),
   codex: Object.freeze({
     pipeline: "codex",
-    contract: "agent",
     workflowFile: "codex.yml",
     displayName: "Codex",
     runNameLabel: "Codex issue agent",
@@ -202,7 +200,6 @@ var PIPELINE_CONTRACTS = Object.freeze({
   }),
   opencode: Object.freeze({
     pipeline: "opencode",
-    contract: "agent",
     workflowFile: "opencode.yml",
     displayName: "OpenCode",
     runNameLabel: "OpenCode issue agent",
@@ -212,28 +209,10 @@ var PIPELINE_CONTRACTS = Object.freeze({
     replyTriggerAliases: Object.freeze(["/opencode"]),
     redispatchCommand: "/opencode",
     botLogin: "agent-lcars[bot]"
-  }),
-  canary: Object.freeze({
-    // #307's no-op production canary. It carries no label, no reply command,
-    // and no bot login because nothing may ever select it from an issue: the
-    // only way to produce a `canary` intent is normalize.mjs's dedicated
-    // workflow_dispatch `kind: 'canary'` branch, fired exclusively by this
-    // repo's own trusted dispatch-canary.yml/post-deploy-smoke.yml.
-    pipeline: "canary",
-    contract: "canary",
-    workflowFile: "agent-dispatch-canary.yml",
-    displayName: "Dispatch canary",
-    runNameLabel: "Dispatch canary worker",
-    replyTriggerAliases: Object.freeze([])
   })
 });
 var DISPATCH_PIPELINES = Object.freeze(
   Object.keys(PIPELINE_CONTRACTS)
-);
-var AGENT_PIPELINES = Object.freeze(
-  DISPATCH_PIPELINES.filter(
-    (pipeline) => PIPELINE_CONTRACTS[pipeline].contract === "agent"
-  )
 );
 var WORKER_WORKFLOW_FILES = Object.freeze(
   new Set(
@@ -243,13 +222,13 @@ var WORKER_WORKFLOW_FILES = Object.freeze(
   )
 );
 var AGENT_LABELS = new Map(
-  AGENT_PIPELINES.map((pipeline) => [
+  DISPATCH_PIPELINES.map((pipeline) => [
     PIPELINE_CONTRACTS[pipeline].label,
     pipeline
   ])
 );
 var REVIEW_LABELS = new Map(
-  AGENT_PIPELINES.map((pipeline) => [
+  DISPATCH_PIPELINES.map((pipeline) => [
     PIPELINE_CONTRACTS[pipeline].reviewLabel,
     pipeline
   ])
@@ -259,20 +238,17 @@ var DISPATCH_LABELS = Object.freeze([
   ...REVIEW_LABELS.keys()
 ]);
 var REPLY_COMMANDS = new Map(
-  AGENT_PIPELINES.flatMap((pipeline) => {
+  DISPATCH_PIPELINES.flatMap((pipeline) => {
     const contract = PIPELINE_CONTRACTS[pipeline];
-    return [
-      contract.replyTrigger,
-      ...contract.replyTriggerAliases
-    ].map((command) => [command, pipeline]);
+    return [contract.replyTrigger, ...contract.replyTriggerAliases].map(
+      (command) => [command, pipeline]
+    );
   })
 );
 var GENERIC_REPLY_COMMAND = "@agent";
 var AGENT_BOT_LOGINS = Object.freeze([
   ...new Set(
-    AGENT_PIPELINES.map(
-      (pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin
-    )
+    DISPATCH_PIPELINES.map((pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin)
   )
 ]);
 function isDispatchPipeline(pipeline) {
@@ -348,8 +324,6 @@ var HOSTED_COMPLETION_PATH = "/api/control-plane/completion";
 var HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
 var HOSTED_TASK_STATE_PATH = "/api/control-plane/task-state";
 var HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED_TASK_STATE_PATH}`;
-var WEBHOOK_INGRESS_PROBE_PATH = "/api/control-plane/webhook/probe";
-var WEBHOOK_INGRESS_PROBE_URL = `https://agent-console.supersprinkles.racing${WEBHOOK_INGRESS_PROBE_PATH}`;
 var HOSTED_RECOVERY_OBSERVATION_PATH = "/api/control-plane/recovery-observation";
 var HOSTED_RECOVERY_OBSERVATION_URL = `https://agent-console.supersprinkles.racing${HOSTED_RECOVERY_OBSERVATION_PATH}`;
 
@@ -380,10 +354,6 @@ var LANE_READINESS_FAILURES = [
 function isLaneReadinessFailure(value) {
   return typeof value === "string" && LANE_READINESS_FAILURES.includes(value);
 }
-
-// libs/dispatch-contracts/src/webhook-ingress.ts
-var WEBHOOK_INGRESS_CANARY_MARKER = "<!-- agent-lcars:webhook-ingress-canary:v1 -->";
-var WEBHOOK_INGRESS_CANARY_TITLE = "GitHub App webhook ingress canary sentinel";
 
 // libs/dispatch-reconcile/src/scan.ts
 var CLOSED_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1e3;
@@ -705,7 +675,7 @@ function acceptIntent(ledger, intent, now = (/* @__PURE__ */ new Date()).toISOSt
       outcome = "stale-control-state";
       return;
     }
-    if (ledger.control.closed && intent.pipeline !== "canary") {
+    if (ledger.control.closed) {
       generation.state = "superseded-by-close";
       outcome = "closed";
       return;
@@ -778,7 +748,7 @@ function attemptOf(generation) {
   return attempt;
 }
 function canDispatchOnAnchor(ledger, generation) {
-  return !ledger.control.closed || generation.pipeline === "canary";
+  return !ledger.control.closed;
 }
 function beginDispatch(ledger, generationNumber, token, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const generation = findGeneration(ledger, generationNumber);
@@ -981,7 +951,7 @@ function applyAnchorControl(ledger, control, now = (/* @__PURE__ */ new Date()).
     };
     if (control.kind === "closed") {
       for (const generation of ledger.generations) {
-        if (generation.pipeline !== "canary" && (generation.state === "pending" || generation.state === "accepted")) {
+        if (generation.state === "pending" || generation.state === "accepted") {
           generation.state = "superseded-by-close";
         }
       }
@@ -1258,20 +1228,11 @@ async function listAll(api2, path2) {
   }
   throw new Error("GitHub pagination exceeded safety bound");
 }
-var workflowAlertMarker = (workflow) => `<!-- agent-lcars:workflow-alert:v1:${workflow} -->`;
 var laneReadinessMarker = (pipeline) => `<!-- agent-lcars:lane-readiness:v1:${pipeline} -->`;
 async function readLaneReadiness(api2, task, pipeline) {
-  if (pipeline === "canary") return [];
   const expected = /* @__PURE__ */ new Map([
-    [workflowAlertMarker("bootstrap-canary.yml"), "bootstrap-canary"],
     [laneReadinessMarker(pipeline), "lane-incident"]
   ]);
-  if (pipeline === "opencode") {
-    expected.set(
-      workflowAlertMarker("opencode-model-canary.yml"),
-      "provider-canary"
-    );
-  }
   const root = repositoryPath(task);
   const issues = await listAll(
     api2,
@@ -1294,9 +1255,6 @@ async function readLaneReadiness(api2, task, pipeline) {
   return blockers.sort((left, right) => left.issue - right.issue);
 }
 async function ensureLaneReadinessAlert(api2, task, pipeline, failure, runUrl, maintainer, evidenceSource = "worker-completion") {
-  if (pipeline === "canary") {
-    throw new Error("The no-op canary cannot create an agent lane incident");
-  }
   const marker = laneReadinessMarker(pipeline);
   const root = repositoryPath(task);
   const open = (await listAll(api2, `${root}/issues?state=open`)).filter(
@@ -1323,9 +1281,6 @@ ${observation} a shared **${failure}** readiness failure for the \`${pipeline}\`
   });
 }
 async function resolveLaneReadinessAlerts(api2, task, pipeline, probeRunUrl) {
-  if (pipeline === "canary") {
-    throw new Error("The no-op canary cannot resolve an agent lane incident");
-  }
   const marker = laneReadinessMarker(pipeline);
   const root = repositoryPath(task);
   const open = (await listAll(api2, `${root}/issues?state=open`)).filter(
@@ -1910,7 +1865,6 @@ var AUTHORIZATION_RULES = Object.freeze({
   MANUAL_MAINTAINER: "manual-maintainer",
   OWNER_COMMENT: "owner-comment",
   MAINTAINER_ISSUE_EVENT: "maintainer-issue-event",
-  CANARY_SCHEDULED_DISPATCH: "canary-scheduled-dispatch",
   RECONCILE_LABEL_REPAIR: "reconcile-label-repair"
 });
 function authorization(actor, maintainer, rule, extra = {}) {
@@ -1924,11 +1878,6 @@ function authorization(actor, maintainer, rule, extra = {}) {
 }
 
 // apps/dispatch-broker/src/normalize.ts
-function isWebhookIngressCanary(issue) {
-  return Boolean(
-    issue && issue.title === WEBHOOK_INGRESS_CANARY_TITLE && issue.body?.includes(WEBHOOK_INGRESS_CANARY_MARKER)
-  );
-}
 var COMMANDS = new Map([...REPLY_COMMANDS, [GENERIC_REPLY_COMMAND, null]]);
 var WORKER_WORKFLOWS = WORKER_WORKFLOW_FILES;
 var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -2107,30 +2056,6 @@ function normalizeWorkflowDispatch({
       ...candidate.readinessFailure ? { readinessFailure: candidate.readinessFailure } : {}
     };
   }
-  if (inputs.kind === "canary") {
-    const sourceId2 = resolveCallerSourceId(inputs, context, "Canary dispatch");
-    return {
-      kind: "intent",
-      intent: makeIntent({
-        task,
-        sourceKind: "canary",
-        sourceId: sourceId2,
-        transportRunId: context.runId,
-        occurredAt: context.now,
-        pipeline: "canary",
-        mode: "implement",
-        reply: "",
-        runbook: "",
-        context: "",
-        authorization: {
-          authorized: true,
-          actor: context.actor,
-          configuredMaintainer: maintainer,
-          rule: AUTHORIZATION_RULES.CANARY_SCHEDULED_DISPATCH
-        }
-      })
-    };
-  }
   const sourceId = resolveCallerSourceId(inputs, context, "Manual dispatch");
   const auth = authorization(
     context.actor,
@@ -2171,9 +2096,6 @@ function normalizeEvent({
 }) {
   const semanticEventName = eventName === "pull_request_target" ? "pull_request" : eventName;
   const issue = event.issue ?? event.pull_request;
-  if (isWebhookIngressCanary(issue) && !(semanticEventName === "issues" && ["closed", "reopened"].includes(event.action))) {
-    return { kind: "ignored", reason: "webhook ingress canary sentinel" };
-  }
   if (semanticEventName === "workflow_dispatch") {
     return normalizeWorkflowDispatch({
       inputs,
@@ -3789,7 +3711,7 @@ The broker held generation ${generation.generation} **before worker allocation**
 
 ${blockers.map((blocker) => `- [#${blocker.issue}: ${blocker.title}](${blocker.url})`).join("\n")}
 
-This is an automatic infrastructure hold, not a human-owned task park. Repair the linked health incident and close it (or let its canary close it on recovery). Scheduled reconcile will retry the readiness check and resume this accepted generation; do not create another dispatch generation. This notice is live only while a linked health issue remains open.`
+This is an automatic infrastructure hold, not a human-owned task park. Repair the linked health incident and close it. Scheduled reconcile will retry the readiness check and resume this accepted generation; do not create another dispatch generation. This notice is live only while a linked health issue remains open.`
   );
   console.log(
     `::notice::Holding accepted ${generation.pipeline} generation ${generation.generation} for issue #${loaded.ledger.task.issue} before worker allocation: readiness blocker${blockers.length === 1 ? "" : "s"} ` + blockers.map((blocker) => `#${blocker.issue}`).join(", ")
@@ -3802,7 +3724,7 @@ async function dispatchAccepted(client, loaded) {
       (candidate) => candidate.state === "accepted"
     );
     if (!generation || activeGeneration(loaded.ledger)) return;
-    if (generation.pipeline !== "canary" && await anchorNeedsHuman(client, loaded.ledger.task)) {
+    if (await anchorNeedsHuman(client, loaded.ledger.task)) {
       console.log(
         `::notice::Holding accepted generation ${generation.generation} for issue #${loaded.ledger.task.issue}: status:needs-human is present. Remove the label to resume through the ordinary serialized broker path.`
       );

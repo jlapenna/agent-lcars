@@ -14,35 +14,29 @@
  */
 
 export type AgentPipeline = 'claude' | 'codex' | 'opencode';
-export type DispatchPipeline = AgentPipeline | 'canary';
+export type DispatchPipeline = AgentPipeline;
 
 export interface PipelineContract {
   /** Stable identifier used as the ledger's
    *   `pipeline` value and the router's `pipeline` workflow input. */
-  pipeline: DispatchPipeline;
-  /** Whether this pipeline runs a real,
-   *   paid agent (`agent`) or is #307's structurally-incapable no-op production
-   *   canary (`canary`). */
-  contract: 'agent' | 'canary';
+  pipeline: AgentPipeline;
   /** Worker workflow dispatched for this pipeline. */
   workflowFile: string;
   /** Human-facing name; the worker workflow's
    *   `AGENT_NAME` env value. */
   displayName: string;
   /** The workflow `run-name:` role text that
-   *   follows `#<issue>: `. Stored rather than derived because the canary reads
-   *   "worker", not "issue agent". */
+   *   follows `#<issue>: `. */
   runNameLabel: string;
   /** Durable `agent:*` control label selecting this
-   *   pipeline for implement mode. Absent for `canary`, which is unreachable by
-   *   label on purpose. */
-  label?: string;
+   *   pipeline for implement mode. */
+  label: string;
   /** Durable `review:*` control label selecting
    *   this pipeline for review mode on a pull request. */
-  reviewLabel?: string;
+  reviewLabel: string;
   /** Canonical comment command that hands a
    *   parked thread back to this pipeline. */
-  replyTrigger?: string;
+  replyTrigger: string;
   /** Additional comment commands
    *   accepted as equivalent to `replyTrigger`. */
   replyTriggerAliases: readonly string[];
@@ -51,21 +45,20 @@ export interface PipelineContract {
    *   allowed to differ from `replyTrigger`: opencode's console affordance offers
    *   the short `/oc` while its failure comments spell out `/opencode`. Both are
    *   accepted commands; this field records which one we print. */
-  redispatchCommand?: string;
+  redispatchCommand: string;
   /** REST-shaped login (docs/bot-identity-formats.md)
    *   this pipeline comments, reviews, and authors pull requests under. Not
    *   unique per pipeline — codex and opencode share `agent-lcars[bot]`, which is
    *   the acknowledged limitation behind `verify-deliverable`'s inability to tell
    *   their deliverables apart. */
-  botLogin?: string;
+  botLogin: string;
 }
 
 export const PIPELINE_CONTRACTS: Readonly<
-  Record<DispatchPipeline, PipelineContract>
+  Record<AgentPipeline, PipelineContract>
 > = Object.freeze({
   claude: Object.freeze({
     pipeline: 'claude',
-    contract: 'agent',
     workflowFile: 'claude.yml',
     displayName: 'Claude',
     runNameLabel: 'Claude issue agent',
@@ -78,7 +71,6 @@ export const PIPELINE_CONTRACTS: Readonly<
   }),
   codex: Object.freeze({
     pipeline: 'codex',
-    contract: 'agent',
     workflowFile: 'codex.yml',
     displayName: 'Codex',
     runNameLabel: 'Codex issue agent',
@@ -91,7 +83,6 @@ export const PIPELINE_CONTRACTS: Readonly<
   }),
   opencode: Object.freeze({
     pipeline: 'opencode',
-    contract: 'agent',
     workflowFile: 'opencode.yml',
     displayName: 'OpenCode',
     runNameLabel: 'OpenCode issue agent',
@@ -102,32 +93,15 @@ export const PIPELINE_CONTRACTS: Readonly<
     redispatchCommand: '/opencode',
     botLogin: 'agent-lcars[bot]',
   }),
-  canary: Object.freeze({
-    // #307's no-op production canary. It carries no label, no reply command,
-    // and no bot login because nothing may ever select it from an issue: the
-    // only way to produce a `canary` intent is normalize.mjs's dedicated
-    // workflow_dispatch `kind: 'canary'` branch, fired exclusively by this
-    // repo's own trusted dispatch-canary.yml/post-deploy-smoke.yml.
-    pipeline: 'canary',
-    contract: 'canary',
-    workflowFile: 'agent-dispatch-canary.yml',
-    displayName: 'Dispatch canary',
-    runNameLabel: 'Dispatch canary worker',
-    replyTriggerAliases: Object.freeze([]),
-  }),
-} as Record<DispatchPipeline, PipelineContract>);
+} as Record<AgentPipeline, PipelineContract>);
 
-/** Every pipeline the broker can dispatch, canary included. */
+/** Every pipeline the broker can dispatch. */
 export const DISPATCH_PIPELINES = Object.freeze(
-  Object.keys(PIPELINE_CONTRACTS) as DispatchPipeline[],
+  Object.keys(PIPELINE_CONTRACTS) as AgentPipeline[],
 );
 
-/** Pipelines that run a real agent — everything except the canary. */
-export const AGENT_PIPELINES = Object.freeze(
-  DISPATCH_PIPELINES.filter(
-    (pipeline) => PIPELINE_CONTRACTS[pipeline].contract === 'agent',
-  ) as AgentPipeline[],
-);
+/** Alias retained from when a no-op canary pipeline also existed. */
+export const AGENT_PIPELINES = DISPATCH_PIPELINES;
 
 /** Worker workflow files, for identity checks on a discovered run. */
 export const WORKER_WORKFLOW_FILES: ReadonlySet<string> = Object.freeze(
@@ -142,8 +116,8 @@ export const WORKER_WORKFLOW_FILES: ReadonlySet<string> = Object.freeze(
  * `agent:*` label -> pipeline. Selects implement mode.
  */
 export const AGENT_LABELS: ReadonlyMap<string, AgentPipeline> = new Map(
-  AGENT_PIPELINES.map((pipeline): [string, AgentPipeline] => [
-    PIPELINE_CONTRACTS[pipeline].label as string,
+  DISPATCH_PIPELINES.map((pipeline): [string, AgentPipeline] => [
+    PIPELINE_CONTRACTS[pipeline].label,
     pipeline,
   ]),
 );
@@ -155,8 +129,8 @@ export const AGENT_LABELS: ReadonlyMap<string, AgentPipeline> = new Map(
  * contradictory with each other — only within their own namespace.
  */
 export const REVIEW_LABELS: ReadonlyMap<string, AgentPipeline> = new Map(
-  AGENT_PIPELINES.map((pipeline): [string, AgentPipeline] => [
-    PIPELINE_CONTRACTS[pipeline].reviewLabel as string,
+  DISPATCH_PIPELINES.map((pipeline): [string, AgentPipeline] => [
+    PIPELINE_CONTRACTS[pipeline].reviewLabel,
     pipeline,
   ]),
 );
@@ -175,12 +149,11 @@ export const DISPATCH_LABELS: readonly string[] = Object.freeze([
  * Exact comment command -> pipeline, aliases included.
  */
 export const REPLY_COMMANDS: ReadonlyMap<string, AgentPipeline> = new Map(
-  AGENT_PIPELINES.flatMap((pipeline) => {
+  DISPATCH_PIPELINES.flatMap((pipeline) => {
     const contract = PIPELINE_CONTRACTS[pipeline];
-    return [
-      contract.replyTrigger as string,
-      ...contract.replyTriggerAliases,
-    ].map((command): [string, AgentPipeline] => [command, pipeline]);
+    return [contract.replyTrigger, ...contract.replyTriggerAliases].map(
+      (command): [string, AgentPipeline] => [command, pipeline],
+    );
   }),
 );
 
@@ -202,60 +175,30 @@ export const GENERIC_REPLY_COMMAND = '@agent';
  */
 export const AGENT_BOT_LOGINS: readonly string[] = Object.freeze([
   ...new Set(
-    AGENT_PIPELINES.map(
-      (pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin as string,
-    ),
+    DISPATCH_PIPELINES.map((pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin),
   ),
 ]);
 
-/**
- * A pipeline that runs a real agent. Every optional field on
- * `PipelineContract` is present here: they are optional on the base type only
- * because the canary has none of them, and the canary is the one pipeline
- * nothing may select from an issue.
- */
-export type AgentPipelineContract = PipelineContract &
-  Required<
-    Pick<
-      PipelineContract,
-      | 'label'
-      | 'reviewLabel'
-      | 'replyTrigger'
-      | 'redispatchCommand'
-      | 'botLogin'
-    >
-  >;
+/** Alias retained from when a no-op canary pipeline also existed. */
+export type AgentPipelineContract = PipelineContract;
 
 export function isDispatchPipeline(
   pipeline: string,
-): pipeline is DispatchPipeline {
+): pipeline is AgentPipeline {
   return Object.hasOwn(PIPELINE_CONTRACTS, pipeline);
 }
 
 export function isAgentPipeline(pipeline: string): pipeline is AgentPipeline {
-  return (
-    isDispatchPipeline(pipeline) &&
-    PIPELINE_CONTRACTS[pipeline].contract === 'agent'
-  );
+  return isDispatchPipeline(pipeline);
 }
 
-/**
- * The contract for a pipeline that runs a real agent, with the label, reply
- * command, and bot login narrowed to non-optional. Saves every consumer the
- * cast that reasoning "AGENT_PIPELINES excludes the canary, so these are
- * populated" would otherwise require.
- */
 export function agentPipelineContract(
   pipeline: AgentPipeline,
-): AgentPipelineContract {
-  const contract = pipelineContract(pipeline);
-  if (contract.contract !== 'agent') {
-    throw new Error(`Not an agent pipeline: ${pipeline}`);
-  }
-  return contract as AgentPipelineContract;
+): PipelineContract {
+  return pipelineContract(pipeline);
 }
 
-export function pipelineContract(pipeline: DispatchPipeline): PipelineContract {
+export function pipelineContract(pipeline: AgentPipeline): PipelineContract {
   const contract = PIPELINE_CONTRACTS[pipeline];
   if (!contract) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
   return contract;
@@ -264,7 +207,7 @@ export function pipelineContract(pipeline: DispatchPipeline): PipelineContract {
 /**
  * The worker workflow file for a pipeline.
  */
-export function workerWorkflow(pipeline: DispatchPipeline): string {
+export function workerWorkflow(pipeline: AgentPipeline): string {
   return pipelineContract(pipeline).workflowFile;
 }
 
@@ -275,7 +218,7 @@ export function workerWorkflow(pipeline: DispatchPipeline): string {
  * by construction rather than by special case.
  */
 export function excludedPullRequestAuthors(
-  pipeline: DispatchPipeline,
+  pipeline: AgentPipeline,
 ): readonly string[] {
   const own = PIPELINE_CONTRACTS[pipeline]?.botLogin;
   return Object.freeze(AGENT_BOT_LOGINS.filter((login) => login !== own));

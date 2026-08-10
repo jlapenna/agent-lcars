@@ -131,6 +131,4 @@ export class FirestoreRecoveryOperationPort implements RecoveryOperationPort {
       ? (snapshot.data() as RecordedRecoveryOperation)
       : undefined;
   }
-
-}
 }

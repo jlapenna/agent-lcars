@@ -423,7 +423,7 @@ jobs:
         env:
           # The job's own GITHUB_TOKEN, NOT the minted App token: installation
           # tokens expire after one hour, and this step can run at hour three
-          # of a long agent turn (canary run 30988771060 hit exactly that -
+          # of a long agent turn (run 30988771060 hit exactly that -
           # HTTP 401 on the failure report). The job token lives for the
           # whole job; attribution shifts to github-actions[bot].
           GH_TOKEN: ${{ github.token }}
