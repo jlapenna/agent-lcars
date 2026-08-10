@@ -481,7 +481,6 @@ test('authority launches when duplicate projection cleanup is rejected', async (
     task,
     { kind: 'reconcile', task },
     false,
-    'authority',
     'delivery:duplicate-projection',
     () => port,
   );
@@ -616,18 +615,7 @@ test('authority preflight reads the exact Firestore binding without touching cor
   const port = new InMemoryStoragePort();
   const ledger = boundLedger();
   await acquireAuthority(port, task, 'delivery:preflight', ledger);
-  const explosiveClient = {
-    requestOk: async () => {
-      throw new Error('comment-backed preflight must not run in authority');
-    },
-  };
-
-  const loaded = await loadPreflightLedger(
-    explosiveClient,
-    task,
-    'authority',
-    port,
-  );
+  const loaded = await loadPreflightLedger(task, port);
 
   assert.equal(loaded?.generations[0].attempt?.runId, 42);
 });
@@ -1177,27 +1165,48 @@ test('an ordinary pull request close with no dispatch ledger is an intentional n
   const client = {
     requestOk: async (path, options = {}) => {
       calls.push({ path, method: options.method ?? 'GET' });
-      if ((options.method ?? 'GET') === 'GET') return [];
+      if (
+        (options.method ?? 'GET') === 'GET' &&
+        path.includes('/issues/304/comments')
+      ) {
+        return [];
+      }
+      if (path.endsWith('/issues/304')) {
+        return { created_at: '2026-08-05T00:00:00.000Z' };
+      }
       throw new Error(`Unexpected write: ${options.method} ${path}`);
     },
   };
+  const port = new InMemoryStoragePort();
 
-  const loaded = await loadBrokerLedger(client, task, normalized, true);
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    normalized,
+    true,
+    'delivery:ordinary-pr-close',
+    () => port,
+    '2026-08-08T00:00:00.000Z',
+  );
 
   assert.equal(loaded, undefined);
   assert.deepEqual(
     calls.map((call) => call.method),
-    ['GET'],
+    ['GET', 'GET'],
   );
 });
 
-test('an issue close keeps the existing create-if-missing ledger behavior', async () => {
+test('a post-cutover issue close creates its authoritative ledger', async () => {
+  const port = new InMemoryStoragePort();
   const calls = [];
   const client = {
     requestOk: async (path, options = {}) => {
       const method = options.method ?? 'GET';
       calls.push({ path, method });
-      if (method === 'GET') return [];
+      if (method === 'GET' && path.includes('/issues/304/comments')) return [];
+      if (path.endsWith('/issues/304')) {
+        return { created_at: '2026-08-09T00:00:00.000Z' };
+      }
       if (method === 'POST' && path.endsWith('/issues/304/comments')) {
         return {
           id: 9,
@@ -1214,13 +1223,18 @@ test('an issue close keeps the existing create-if-missing ledger behavior', asyn
     task,
     { kind: 'anchor-control' },
     false,
+    'delivery:issue-close',
+    () => port,
+    '2026-08-08T00:00:00.000Z',
   );
 
+  assert.ok(loaded);
   assert.equal(loaded.created, true);
   assert.deepEqual(
     calls.map((call) => call.method),
-    ['GET', 'POST'],
+    ['GET', 'GET', 'GET', 'POST'],
   );
+  await releaseAuthority(loaded.authority, loaded.ledger);
 });
 
 test('authority rejects an existing comment-backed task that missed exact-state backfill', async () => {
@@ -1243,7 +1257,6 @@ test('authority rejects an existing comment-backed task that missed exact-state 
         task,
         { kind: 'reconcile', task },
         false,
-        'authority',
         'delivery:missing-backfill',
         () => port,
       ),
@@ -1268,7 +1281,6 @@ test('authority supports immediate lease deferral for unbounded hosted scans', a
         task,
         { kind: 'reconcile', task },
         false,
-        'authority',
         'hosted-scan',
         () => port,
         '',
@@ -1305,7 +1317,6 @@ test('authority may seed a genuinely new task with no compatibility projection',
     task,
     { kind: 'reconcile', task },
     false,
-    'authority',
     'delivery:new-task',
     () => port,
     '2026-08-08T00:00:00.000Z',
@@ -1335,7 +1346,6 @@ test('authority does not seed a pre-cutover task after its marker is removed', a
         task,
         { kind: 'reconcile', task },
         false,
-        'authority',
         'delivery:removed-marker',
         () => port,
         '2026-08-08T00:00:00.000Z',
@@ -1368,7 +1378,6 @@ test('authority ignores an ordinary pre-cutover pull request close with no compa
     task,
     { kind: 'anchor-control' },
     true,
-    'authority',
     'delivery:ordinary-pr-close',
     () => port,
     '2026-08-08T00:00:00.000Z',
@@ -1402,7 +1411,6 @@ test('authority fails closed for a tracked pull request control event that misse
         task,
         { kind: 'anchor-control' },
         true,
-        'authority',
         'delivery:tracked-pr-close',
         () => port,
         '2026-08-08T00:00:00.000Z',
@@ -1413,9 +1421,16 @@ test('authority fails closed for a tracked pull request control event that misse
 });
 
 test('tracked pull request close and reopen transitions persist to the existing ledger', async () => {
-  let persistedBody = renderLedgerComment(
-    createLedger(task, '2026-08-05T00:00:00.000Z'),
+  const initialLedger = createLedger(task, '2026-08-05T00:00:00.000Z');
+  let persistedBody = renderLedgerComment(initialLedger);
+  const port = new InMemoryStoragePort();
+  const initialAuthority = await acquireAuthority(
+    port,
+    task,
+    'delivery:seed-tracked-pull-request',
+    initialLedger,
   );
+  await releaseAuthority(initialAuthority.session, initialAuthority.ledger);
   const calls = [];
   const client = {
     requestOk: async (path, options = {}) => {
@@ -1472,10 +1487,18 @@ test('tracked pull request close and reopen transitions persist to the existing 
     true,
     9001,
   );
-  const closedLedger = await loadBrokerLedger(client, task, closed, true);
+  const closedLedger = await loadBrokerLedger(
+    client,
+    task,
+    closed,
+    true,
+    'delivery:closed-tracked-pull-request',
+    () => port,
+  );
   await applyAnchorControlTransition(client, closedLedger, closed.control);
   assert.equal(closedLedger.ledger.control.closed, true);
   assert.equal(closedLedger.ledger.control.merged, true);
+  await releaseAuthority(closedLedger.authority, closedLedger.ledger);
 
   const reopened = normalizePullRequest(
     'reopened',
@@ -1483,7 +1506,14 @@ test('tracked pull request close and reopen transitions persist to the existing 
     false,
     9002,
   );
-  const reopenedLedger = await loadBrokerLedger(client, task, reopened, true);
+  const reopenedLedger = await loadBrokerLedger(
+    client,
+    task,
+    reopened,
+    true,
+    'delivery:reopened-tracked-pull-request',
+    () => port,
+  );
   await applyAnchorControlTransition(client, reopenedLedger, reopened.control);
   assert.equal(reopenedLedger.ledger.control.closed, false);
   assert.deepEqual(
@@ -1491,6 +1521,7 @@ test('tracked pull request close and reopen transitions persist to the existing 
     ['closed', 'reopened'],
   );
   assert.equal(calls.filter((call) => call.method === 'PATCH').length, 2);
+  await releaseAuthority(reopenedLedger.authority, reopenedLedger.ledger);
 });
 
 test('worker run identity requires repository, event, workflow, and immutable marker', () => {
@@ -1613,7 +1644,6 @@ test('completion binding rejects missing authority state before initialization',
         },
         task,
         normalized,
-        'authority',
         () => port,
       ),
     CompletionBindingError,
@@ -1667,7 +1697,6 @@ test('authority completion waits for bindRun before validating and projecting', 
     task,
     normalized,
     false,
-    'authority',
     'completion:42',
     () => port,
     '',
@@ -1728,7 +1757,6 @@ test('authority completion rejects an invalid binding before GitHub projection',
           workflow: 'codex.yml',
         },
         false,
-        'authority',
         'completion:99',
         () => port,
       ),
@@ -1772,7 +1800,6 @@ test('authority completion rejects compatibility-only state before fail-closed s
           workflow: 'codex.yml',
         },
         false,
-        'authority',
         'completion:42',
         () => port,
       ),
