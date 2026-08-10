@@ -127,10 +127,13 @@ local-override path.
 
 `tools/e2e/validate-env.mjs` rejects verbose `DEBUG` mode and any
 credential-shaped key unless both its name and dummy value are explicitly
-approved. It also rejects dotenv keys outside the checked-in fixture schema,
-including process-injection controls such as `NODE_OPTIONS`. The internal
-implementation target refuses to run without the isolation marker set by the
-wrapper or Docker path. Its build is a separate uncached guard target that
+approved. The sole runtime exception is the exact paired Spark L2 cache
+server/token capability, which the hermetic wrapper admits only when both are
+set; it can cache deterministic build artifacts but not the E2E task. It also
+rejects dotenv keys outside the checked-in fixture schema, including
+process-injection controls such as `NODE_OPTIONS`. The internal implementation
+target refuses to run without the isolation marker set by the wrapper or
+Docker path. Its build is a separate uncached guard target that
 validates the boundary before invoking the console build, so Nx cannot run a
 dependency build ahead of the check. The same guard validates `.env` files that
 Next.js would auto-load from `apps/console`, closing the file-based path around

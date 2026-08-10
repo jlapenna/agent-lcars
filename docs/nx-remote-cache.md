@@ -100,3 +100,17 @@ The server keeps two distinct tokens: a write token and a read-only token that
 receives `403` on `PUT` while retaining reads. Both return `404` on the probe
 above, so the probe proves authentication but not publish rights. A checkout
 holding the read-only token will pull from L2 and never populate it.
+
+## CI and E2E
+
+CI gives the write capability to same-repository PRs as well as protected
+branch, merge-queue, and manual runs. Contributors opening those PRs already
+have repository write access, and PRs are the predominant cache workload; a
+read-only policy there would prevent most useful cache warming. Fork PRs are
+routed off the private network and receive neither cache variable.
+
+The E2E targets are explicitly `cache: false`, so a prior green test run can
+never be replayed while Nx still restores cached deterministic dependency
+artifacts. Its hermetic environment forwards only the complete L2
+server/token pair to cache the separate console bundle that the suite builds
+as a dependency. No broader CI credential crosses that boundary.

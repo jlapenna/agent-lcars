@@ -107,9 +107,10 @@ fi
 # Now the confirmed exclusive holder: record our pid for the next contender.
 echo "$$" >"$LOCK_FILE"
 
-# `--skip-nx-cache` deliberately: an e2e result replayed from the Nx cache
-# reports a green suite that never actually ran, which is worse than useless
-# when the suite is what you are trying to trust.
+# e2e-implementation is explicitly `cache: false`, so Nx always executes the
+# suite rather than replaying an earlier green result. Do not add
+# `--skip-nx-cache`: that broader switch would also prevent its deterministic
+# dependency builds from restoring artifacts from L2.
 exec "$HERMETIC_RUNNER" \
   pnpm exec nx run \
-    "${PROJECT}:e2e-implementation:emulator" --skip-nx-cache
+    "${PROJECT}:e2e-implementation:emulator"

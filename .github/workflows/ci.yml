@@ -49,7 +49,6 @@ jobs:
         with:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
-          read-only-token: ${{ secrets.NX_CACHE_TOKEN_READONLY }}
 
       # Moved ahead of "Validate GitHub Actions workflows": that step's
       # `go install` needs a `go` binary on PATH, which GitHub-hosted
@@ -209,11 +208,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The E2E targets are explicitly cache:false, so tests always run. Its
+      # hermetic wrapper admits only this L2 capability pair to let the
+      # deterministic console bundle reuse or warm the remote cache.
       - uses: ./.github/actions/setup-nx-remote-cache
         with:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
-          read-only-token: ${{ secrets.NX_CACHE_TOKEN_READONLY }}
 
       - uses: ./.github/actions/setup-node-pnpm
 

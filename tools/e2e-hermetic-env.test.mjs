@@ -49,6 +49,49 @@ test('ambient credentials cannot cross the E2E boundary', () => {
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /sentinel-value/u);
 });
 
+test('the remote cache capability crosses the E2E boundary only as a complete pair', () => {
+  const remoteCache = {
+    NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://spark.lan.jlapenna.net:3123',
+    NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: 'test-token-not-a-credential',
+  };
+  const probe = `
+    const expected = ${JSON.stringify(remoteCache)};
+    if (Object.entries(expected).some(([key, value]) => process.env[key] !== value)) {
+      process.exit(9);
+    }
+    process.stdout.write('remote cache capability verified\\n');
+  `;
+
+  const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, ...remoteCache },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'remote cache capability verified\n');
+});
+
+test('an incomplete remote cache capability cannot cross the E2E boundary', () => {
+  const probe = `
+    if (process.env.NX_SELF_HOSTED_REMOTE_CACHE_SERVER !== undefined) process.exit(9);
+    if (process.env.NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN !== undefined) process.exit(10);
+    process.stdout.write('incomplete remote cache capability rejected\\n');
+  `;
+
+  const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://spark.lan.jlapenna.net:3123',
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'incomplete remote cache capability rejected\n');
+});
+
 test('safe Playwright selection controls cross the E2E boundary', () => {
   const controls = {
     E2E_GREP: '@smoke|@visual',
@@ -227,7 +270,6 @@ test('ambient mode cannot select a non-hermetic live implementation', () => {
       'nx',
       'run',
       '@agent-lcars/console-e2e:e2e-implementation:emulator',
-      '--skip-nx-cache',
     ]);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -366,6 +408,8 @@ test('public and internal Nx targets explicitly reject live configuration', () =
   assert.equal(e2e.defaultConfiguration, 'emulator');
   assert.equal(e2e.configurations.live.command, rejectionCommand);
   assert.equal(e2e.options.command, './tools/e2e-local.sh');
+  assert.equal(project.targets['e2e-implementation'].cache, false);
+  assert.equal(project.targets['e2e-build-hermetic'].cache, false);
   assert.equal(
     project.targets['e2e-implementation'].configurations.live.command,
     rejectionCommand,
