@@ -68,7 +68,7 @@
     ]
   },
   "devDependencies": {
-    "@eslint-react/eslint-plugin": "5.18.2",
+    "@eslint-react/eslint-plugin": "5.18.3",
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.1",
     "@naxodev/gonx": "4.1.1",

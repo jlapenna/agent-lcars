@@ -246,7 +246,7 @@ jobs:
           steps.plan.outputs.watcher == 'true' ||
           steps.plan.outputs.exporter == 'true'
         with:
-          version: 0.11.17
+          version: 0.12.3
           python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: apps/github-actions-exporter/requirements.lock
