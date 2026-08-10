@@ -52,6 +52,13 @@
 # Currently: upstream v2.336.0, mirrored 2026-07-26.
 ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
 
+# Keep the Go compiler embedded in the JIT image aligned with the module the
+# Verify job tests. toolchain-health.test.sh compares this value with
+# apps/runner-autoscaler/go.mod so an update cannot silently leave CI using a
+# stale compiler. An exact release tag keeps the toolchain reproducible while
+# still letting BuildKit cache its immutable image layers.
+ARG GO_VERSION=1.26.3
+
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool
 # (apps/telemetry-watcher's `bundle` target) from source, baked into the
 # runner image below rather than published to GCS and curl-downloaded by
@@ -115,6 +122,38 @@ RUN node -e 'const version = require("./node_modules/@playwright/test/package.js
     > /playwright-version
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
 
+# CI's Verify job runs Go race tests and validates Actions syntax with
+# actionlint. On an ephemeral JIT runner actions/setup-go had to fetch and
+# unpack Go for every job, then `go install` compiled actionlint from scratch.
+# Build both once per runner-image revision instead. Compile actionlint on
+# the builder platform for the final target so publishing arm64 does not pay
+# an avoidable QEMU compiler pass.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS ci-tooling-build
+ARG GO_VERSION
+ARG TARGETOS
+ARG TARGETARCH
+COPY actionlint-version /tmp/actionlint-version
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    set -eux; \
+    ACTIONLINT_VERSION="$(tr -d '\r\n' < /tmp/actionlint-version)"; \
+    test "$GO_VERSION" = "$(go env GOVERSION | sed -nE 's/^go([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')"; \
+    printf '%s\n' "$ACTIONLINT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; \
+    GOOS="$TARGETOS" GOARCH="$TARGETARCH" CGO_ENABLED=0 \
+      go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"; \
+    mkdir -p /out; \
+    if [ -f /go/bin/actionlint ]; then \
+      install -m 0755 /go/bin/actionlint /out/actionlint; \
+    else \
+      install -m 0755 "/go/bin/${TARGETOS}_${TARGETARCH}/actionlint" /out/actionlint; \
+    fi
+
+# This stage deliberately follows the target platform. It has no RUN
+# instruction, so BuildKit only pulls the matching distribution; the final
+# image gets a runnable Go runtime for its own architecture without emulating
+# a compiler.
+FROM golang:${GO_VERSION}-bookworm AS go-runtime
+
 # Phase-2 JIT runner image for the autoscaler.
 #
 # Base: ghcr.io/actions/actions-runner — JIT-native (honors
@@ -138,8 +177,17 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
 # somewhere.
 FROM ${RUNNER_BASE}
 
+ARG GO_VERSION
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# The whole Go distribution is copied from the exact-version Go image above,
+# rather than relying on Ubuntu's older distribution package. Keep its bin
+# first on PATH so both CI and actionlint use this compiler consistently.
+COPY --from=go-runtime /usr/local/go /usr/local/go
+COPY --from=ci-tooling-build /out/actionlint /usr/local/bin/actionlint
+COPY actionlint-version /usr/local/share/agent-lcars-tooling/actionlint-version
+ENV PATH=/usr/local/go/bin:${PATH}
 
 # Keep Corepack's selected pnpm version tied to this repo's one
 # packageManager declaration instead of introducing a Dockerfile pin that can
@@ -228,6 +276,8 @@ RUN set -eux; \
     git-lfs --version; \
     gh --version; \
     python3 -m pip --version; \
+    test "$(go env GOVERSION)" = "go${GO_VERSION}"; \
+    actionlint -version; \
     java --version; \
     # Inside this RUN, and before the cleanup below, so it reuses the apt
     # lists already fetched above instead of paying a second `apt-get update`

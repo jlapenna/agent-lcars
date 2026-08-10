@@ -5,6 +5,23 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=toolchain-health.sh
 source "$here/toolchain-health.sh"
 
+# The Go image tag is intentionally duplicated only because Docker must know
+# it before any build stage exists. Keep that release identical to the Go
+# module Verify compiles, otherwise the baked image would hide a toolchain
+# mismatch until a real CI job ran.
+go_mod_version="$(sed -nE 's/^go ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' "$here/../go.mod")"
+docker_go_version="$(sed -nE 's/^ARG GO_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' "$here/Dockerfile")"
+if [[ -z "$go_mod_version" || "$go_mod_version" != "$docker_go_version" ]]; then
+  echo "runner image Go version must match apps/runner-autoscaler/go.mod" >&2
+  exit 1
+fi
+
+actionlint_version="$(tr -d '\r\n' < "$here/actionlint-version")"
+if ! [[ "$actionlint_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "actionlint-version must contain an exact semantic version" >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
