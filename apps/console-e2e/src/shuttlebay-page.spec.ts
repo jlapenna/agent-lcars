@@ -10,9 +10,9 @@ test.describe('/shuttlebay workspace', () => {
   }) => {
     await page.goto('/shuttlebay');
 
-    await expect(
-      page.getByRole('heading', { name: 'Shuttlebay' }),
-    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Shuttlebay' })).toHaveCount(
+      1,
+    );
     await expect(
       page.getByText('Refreshes automatically every 10 seconds.'),
     ).toBeVisible();

@@ -33,6 +33,10 @@ body:has(.console-header[data-current='inbox']:not([data-streaming-fallback]))
 body:has(.console-header[data-current='agents']:not([data-streaming-fallback]))
   .console-header[data-current='agents'][data-streaming-fallback],
 body:has(
+    .console-header[data-current='shuttlebay']:not([data-streaming-fallback])
+  )
+  .console-header[data-current='shuttlebay'][data-streaming-fallback],
+body:has(
     .console-header[data-current='sessions']:not([data-streaming-fallback])
   )
   .console-header[data-current='sessions'][data-streaming-fallback],

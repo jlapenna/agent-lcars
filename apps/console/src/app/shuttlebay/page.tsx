@@ -1,4 +1,5 @@
 import { Stack, Text } from '@mantine/core';
+import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -6,18 +7,14 @@ import { auth } from '../../auth';
 import { getAutoscalerStatuses } from '../../lib/autoscaler-status';
 import { ConsoleHeader, DataWarnings } from '../console-header';
 import { ConsolePageShell } from '../console-page-shell';
+import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
 
-export default async function ShuttlebayPage() {
-  assertAdmin(await auth(), '/login');
+async function ShuttlebayBody() {
   const autoscaler = await getAutoscalerStatuses();
+
   return (
-    <ConsolePageShell>
-      <ConsoleHeader
-        current="shuttlebay"
-        title="Shuttlebay"
-        subtitle="Live runner fleet and queue status"
-      />
+    <>
       <DataWarnings warnings={autoscaler.warnings} />
       <Stack gap="md">
         <Text c="dimmed" size="sm">
@@ -25,6 +22,44 @@ export default async function ShuttlebayPage() {
         </Text>
         <RunnerAutoscalerStatus initial={autoscaler} />
       </Stack>
+    </>
+  );
+}
+
+async function ShuttlebayPageShell() {
+  const session = await auth();
+  assertAdmin(session, '/login');
+
+  return (
+    <ConsolePageShell className="shuttlebay-page-shell">
+      <ConsoleHeader
+        current="shuttlebay"
+        title="Shuttlebay"
+        subtitle="Live runner fleet and queue status"
+      />
+      <Suspense fallback={<PageLoading rows={4} header={false} />}>
+        <ShuttlebayBody />
+      </Suspense>
     </ConsolePageShell>
+  );
+}
+
+// Keep authentication and the uncached Firestore snapshot below the same
+// streaming boundaries as every other console destination. The header is
+// immediately recognizable while the runner projection resolves.
+export default function ShuttlebayPage() {
+  return (
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="shuttlebay"
+          title="Shuttlebay"
+          className="shuttlebay-page-shell"
+          rows={4}
+        />
+      }
+    >
+      <ShuttlebayPageShell />
+    </Suspense>
   );
 }
