@@ -93,6 +93,7 @@ async function InboxBody({
             fetchedAt={dataAsOf}
             initialLabel={formatRelativeTime(dataAsOf)}
             dataTestId="mobile-data-freshness"
+            compact
           />
         }
         mobileScopeLabel={mobileScopeLabel}

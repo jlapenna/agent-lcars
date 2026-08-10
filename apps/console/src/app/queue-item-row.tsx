@@ -72,14 +72,15 @@ export function QueueItemRow({
                 </Badge>
               )}
               {item.ciRunning && (
-                <Badge
-                  color="indigo"
-                  variant="light"
-                  size="sm"
-                  className="ci-running-badge"
-                >
-                  CI running
-                </Badge>
+                <Tooltip label="CI running" openDelay={300}>
+                  <span
+                    className="queue-row-signal"
+                    role="status"
+                    aria-label="CI running"
+                  >
+                    <span aria-hidden="true" />
+                  </span>
+                </Tooltip>
               )}
             </Group>
           </Group>

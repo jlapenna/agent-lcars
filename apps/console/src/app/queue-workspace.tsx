@@ -10,12 +10,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import {
-  IconAdjustments,
-  IconChevronLeft,
-  IconSearch,
-  IconX,
-} from '@tabler/icons-react';
+import { IconAdjustments, IconSearch, IconX } from '@tabler/icons-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -25,11 +20,10 @@ import type { WatchedRepo } from '../lib/watched-repo';
 import { repoItemKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import type { BoardCard } from './board-card';
+import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
 import { PersistedDetails } from './persisted-details';
 import { QueueItemRow } from './queue-item-row';
 import { INBOX_FILTER_REASONS, queueReasonFor } from './queue-reason';
-import { QuickTaskButton } from './quick-task-button';
-import { RefreshButton } from './refresh-button';
 import { muteSignatureFor, useMutedItems } from './use-muted-items';
 
 type QueueFilter = 'all' | ActionType;
@@ -279,67 +273,17 @@ export function QueueWorkspace({
       data-mobile-view={explicitDetail ? 'detail' : 'list'}
       aria-label="Decision Inbox"
     >
-      <div className="queue-mobile-bar">
-        {explicitDetail ? (
-          <>
-            <Button
-              component="a"
-              href={backHref}
-              variant="filled"
-              color="blue"
-              leftSection={<IconChevronLeft aria-hidden="true" size={18} />}
-              className="queue-mobile-back"
-              aria-label="Back to Inbox list"
-            >
-              {/* Not "Inbox": the sticky top strip's active nav pill
-                  already reads "Inbox" in the same viewport (#890) - repeating
-                  it here read as a duplicate header stacked directly beneath
-                  it. "Back" still identifies the affordance via the chevron
-                  + this row's own repo/item breadcrumb next to it. */}
-              Back
-            </Button>
-            <Text component="span" ff="monospace" size="xs" c="dimmed" truncate>
-              {selectedCard
-                ? `${selectedCard.item.repo.name} / #${selectedCard.item.number}`
-                : 'Item unavailable'}
-            </Text>
-          </>
-        ) : (
-          <>
-            <div
-              className="queue-mobile-identity"
-              aria-label={`${visibleCards.length} open queue items`}
-            >
-              <Text component="span" className="queue-mobile-title">
-                Inbox
-              </Text>
-              <Text component="span" ff="monospace" size="xs">
-                {visibleCards.length.toString().padStart(2, '0')} open
-              </Text>
-            </div>
-            <Group gap={4} wrap="nowrap" className="queue-mobile-utilities">
-              <QuickTaskButton
-                watchedRepos={watchedRepos}
-                initialRepoKey={searchParams.get('repo') ?? undefined}
-                size="compact-xs"
-              />
-              <RefreshButton compact bustsGithubCache />
-              {mobileUtilityMenu}
-            </Group>
-          </>
-        )}
-      </div>
-
-      {mobileDataFreshness && (
-        <div className="queue-mobile-meta">
-          {mobileScopeLabel && (
-            <Text component="span" className="queue-mobile-scope">
-              {mobileScopeLabel}
-            </Text>
-          )}
-          <div className="queue-mobile-freshness">{mobileDataFreshness}</div>
-        </div>
-      )}
+      <InboxMobileCommandDeck
+        view={explicitDetail ? 'detail' : 'list'}
+        openItemCount={visibleCards.length}
+        selectedItem={selectedCard?.item}
+        backHref={backHref}
+        watchedRepos={watchedRepos}
+        initialRepoKey={searchParams.get('repo') ?? undefined}
+        utilityMenu={mobileUtilityMenu}
+        scopeLabel={mobileScopeLabel}
+        dataFreshness={mobileDataFreshness}
+      />
 
       <div className="queue-workspace__list">
         <div className="queue-workspace__list-header">

@@ -17,10 +17,14 @@ export function DataFreshness({
   fetchedAt,
   initialLabel,
   dataTestId = 'data-freshness',
+  compact = false,
 }: {
   fetchedAt: string;
   initialLabel: string;
   dataTestId?: string;
+  /** Short visual copy for dense command rails; the full wording remains
+   * available to assistive technology through the accessible name. */
+  compact?: boolean;
 }) {
   const [label, setLabel] = useState(initialLabel);
 
@@ -32,8 +36,15 @@ export function DataFreshness({
   }, [fetchedAt]);
 
   return (
-    <Text size="xs" c="dimmed" ta="right" data-testid={dataTestId}>
-      Data as of <time dateTime={fetchedAt}>{label}</time>
+    <Text
+      size="xs"
+      c="dimmed"
+      ta="right"
+      data-testid={dataTestId}
+      aria-label={`Data as of ${label}`}
+    >
+      {compact ? 'Updated ' : 'Data as of '}
+      <time dateTime={fetchedAt}>{label}</time>
     </Text>
   );
 }

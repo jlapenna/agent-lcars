@@ -517,6 +517,7 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
 
     const queueIdentity = workspace.locator('.queue-mobile-identity');
+    await expect(page.getByTestId('inbox-mobile-command-deck')).toBeVisible();
     await expect(queueIdentity).toHaveText(/Inbox/);
     await expect(queueIdentity).toHaveAttribute(
       'aria-label',
@@ -525,11 +526,20 @@ test.describe('responsive decision inbox', () => {
 
     const freshness = page.getByTestId('mobile-data-freshness');
     await expect(freshness).toBeVisible();
+    await expect(freshness).toHaveText(/^Updated /);
     expect(
       await freshness.evaluate(
         (element) => element.scrollWidth <= element.clientWidth,
       ),
     ).toBe(true);
+
+    const runningRow = workspace.getByTestId(
+      `queue-row-${E2E_ITEM_NUMBERS.runFailed}`,
+    );
+    await expect(
+      runningRow.getByRole('status', { name: 'CI running' }),
+    ).toBeVisible();
+    await expect(runningRow.locator('.ci-running-badge')).toHaveCount(0);
 
     await expect(workspace.locator('.queue-mobile-bar')).toHaveCSS(
       'height',
@@ -570,6 +580,10 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
     await expect(header).toBeHidden();
     await expect(freshness).toBeVisible();
+    await expect(workspace.locator('.queue-detail-identity')).toBeHidden();
+    await expect(workspace.locator('.queue-mobile-detail-identity')).toHaveText(
+      `sprinkles / #${E2E_ITEM_NUMBERS.reviewRequested}`,
+    );
     const backLink = workspace.getByRole('link', {
       name: 'Back to Inbox list',
       exact: true,
@@ -708,6 +722,43 @@ test.describe('populated page captures', () => {
     const detailCapture = testInfo.outputPath('inbox-mobile-detail.png');
     await page.screenshot({ path: detailCapture });
     await testInfo.attach('inbox-mobile-detail.png', {
+      path: detailCapture,
+      contentType: 'image/png',
+    });
+  });
+
+  test('captures the Inbox list and detail at narrow-phone width', async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto('/inbox');
+
+    const workspace = page.getByRole('region', { name: 'Decision Inbox' });
+    await expect(workspace).toBeVisible();
+    await expect(
+      workspace.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    const listCapture = testInfo.outputPath('inbox-narrow-list.png');
+    await page.screenshot({ path: listCapture });
+    await testInfo.attach('inbox-narrow-list.png', {
+      path: listCapture,
+      contentType: 'image/png',
+    });
+
+    await workspace
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    await expect(workspace.locator('.queue-detail-identity')).toBeHidden();
+    const detailCapture = testInfo.outputPath('inbox-narrow-detail.png');
+    await page.screenshot({ path: detailCapture });
+    await testInfo.attach('inbox-narrow-detail.png', {
       path: detailCapture,
       contentType: 'image/png',
     });
