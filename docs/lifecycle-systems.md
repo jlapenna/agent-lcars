@@ -8,26 +8,21 @@ label. This document is that issue's Phase 6 checkbox, "Document operational
 ownership and runbooks for all five systems." It answers one question per
 system: when this breaks, whose problem is it, and what do you check first.
 
-The dispatch controller has an explicit migration switch:
-`DISPATCH_STORAGE_MODE=shadow` projects the issue-comment ledger into
-Firestore for comparison, while `authority` makes the Firestore task
-aggregate authoritative under a compare-and-swap lease. In authority mode
-the pinned `<!-- agent-lcars:dispatch-ledger:v1 -->` comment remains a
-human-readable compatibility projection, but a forged comment cannot change
-controller truth. Worker preflight also reads the exact Firestore aggregate
-in authority mode, using a short-lived, read-only WIF identity minted before
-any untrusted agent code runs. Controller state lives in the dedicated
-`dispatch-controller` database; both the worker's preflight identity and the
-telemetry writer are constrained with per-database IAM Conditions, so neither
-can write controller state. Production event writes enter the existing App
-Hosting backend through the GitHub App webhook, pass an HMAC check and Cloud
-Tasks queue, and execute through the shared controller under a Firestore
-lease. Worker completion callbacks and the scheduled reconciler authenticate
-to separate hosted endpoints with exact-workflow GitHub Actions OIDC. The
-`workflow_dispatch`-only `agent-router.yml` retains the prior WIF writer as a
-manual rollback path. Shadow/off preflight retains the comment reader for
-rollback compatibility. `off` is the rollback position before authority
-cutover.
+The Firestore task aggregate is the dispatch controller's authority under a
+compare-and-swap lease. The pinned
+`<!-- agent-lcars:dispatch-ledger:v1 -->` comment is a human-readable
+compatibility projection; a forged comment cannot change controller truth.
+Worker preflight reads the exact Firestore aggregate using a short-lived,
+read-only WIF identity minted before any untrusted agent code runs. Controller
+state lives in the dedicated `dispatch-controller` database; both the worker's
+preflight identity and the telemetry writer are constrained with per-database
+IAM Conditions, so neither can write controller state. Production event writes
+enter the existing App Hosting backend through the GitHub App webhook, pass an
+HMAC check and Cloud Tasks queue, and execute through the shared controller
+under a Firestore lease. Worker completion callbacks and the scheduled
+reconciler authenticate to separate hosted endpoints with exact-workflow
+GitHub Actions OIDC. The `workflow_dispatch`-only `agent-router.yml` uses the
+same authority path for manual recovery.
 
 The measurable exit criteria, bounded rollback drill, and final constrained
 topology are tracked in
@@ -37,11 +32,11 @@ workflow success alone is not a soak exit.
 
 Authority initialization fails closed across the migration boundary.
 `DISPATCH_AUTHORITY_EPOCH` records the trusted cutover instant. If a task
-created before that instant has no Firestore aggregate, it must have missed
-shadow backfill and is rejected even when its compatibility comment is absent;
-workers can delete comments, but they cannot change GitHub's `created_at` or
-the repository configuration. Only tasks GitHub created at or after the epoch
-may initialize an empty aggregate automatically.
+created before that instant has no Firestore aggregate, it is rejected even
+when its compatibility comment is absent; workers can delete comments, but
+they cannot change GitHub's `created_at` or the repository configuration. Only
+tasks GitHub created at or after the epoch may initialize an empty aggregate
+automatically.
 
 One narrow retirement rule prevents migration debris from becoming a durable
 retry backlog: reconciliation and delayed webhook replay may quarantine a
@@ -60,8 +55,8 @@ Two seams are load-bearing enough to read before anything else:
   job includes commenting on an issue necessarily holds — can rewrite the
   ledger while the author check keeps passing, because nothing about
   authorship changed. This is why `apps/dispatch-broker/src/storage/port.ts`
-  exists (see its own header for the full finding): in authority mode it
-  provides state the controlled code cannot write, and no
+  exists (see its own header for the full finding): it provides state the
+  controlled code cannot write, and no
   credential-scoping fix closes the gap, because the capability that lets an
   agent do its job is the same capability that lets it rewrite the ledger.
 - **A GitHub concurrency group is a lossy queue, not a throughput limiter.**
@@ -109,10 +104,8 @@ and the dispatch ledger itself.
 
 **Code:**
 
-- `apps/dispatch-broker/src/main.ts` — orchestration: `normalize`,
-  `broker`, `preflight`, `completionCallback`, `scanReconcile`, plus the
-  reconciliation functions `reconcileActive`, `trackMissingRun`,
-  `trackStuckRun`, `reconcileLedger`.
+- `apps/dispatch-broker/src/main.ts` — the Action entrypoint; orchestration
+  lives in `apps/dispatch-broker/src/controller-core.ts`.
 - `apps/dispatch-broker/src/broker.ts` — the module's public re-export
   surface over the extracted modules below (kept as one-way imports
   deliberately, to avoid an ESM temporal-dead-zone cycle in the control
@@ -363,7 +356,7 @@ invoking the requested agent/provider combination.
   completed (#639). This is a bootstrap-independent safety path, not yet a
   full extraction of every normal finalization into the second job. All
   three share the same sequence: checkout → snapshot enforcement scripts →
-  authority-storage auth (authority mode only) → broker preflight → mint
+  authority-storage auth → broker preflight → mint
   agent token → claim issue → agent setup → verify agent identity → prepare
   dispatch context → start telemetry sidecar → run the agent → run
   post-agent gates.

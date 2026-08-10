@@ -7,12 +7,9 @@
  * correctness under real contention is exactly the property a mock cannot
  * prove.
  *
- * `main.ts` imports this class for both shadow observation and Action-side
- * authority. Its storage factory is never invoked in `'off'` mode (see
- * `./shadow.ts`'s inertness argument). It is still deliberately NOT imported
- * from `canary/run.ts`
- * or `rerun-infra-killed-runs/main.ts` -- neither has a shadow-mode
- * observation step of its own -- and `./firestore-port.ts` (the client-
+ * `controller-core.ts` imports this class for Action-side Firestore authority.
+ * It is deliberately NOT imported from `canary/run.ts` or
+ * `rerun-infra-killed-runs/main.ts`, and `./firestore-port.ts` (the client-
  * library adapter) stays unimported everywhere in the live dispatch path
  * for the bundle-size reason its own header gives.
  *

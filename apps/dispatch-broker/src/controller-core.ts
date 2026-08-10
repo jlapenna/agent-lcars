@@ -62,7 +62,6 @@ import {
   GitHubApiError,
   type LedgerProjectionIdentity,
   listAll,
-  loadLedger,
   loadLedgerProjection,
   pinLedgerWhenUnoccupied,
   readLaneReadiness,
@@ -118,10 +117,6 @@ import {
 } from './storage/authority';
 import { FirestoreRestStoragePort } from './storage/firestore-rest-port';
 import type { LaunchOutboxOperation, StoragePort } from './storage/port';
-import {
-  maybeObserveDispatchStorage,
-  parseDispatchStorageMode,
-} from './storage/shadow';
 
 // --- GitHub webhook/REST shapes main.mjs reads. One set covering every
 // endpoint this file calls: the raw event payload off disk (normalize()),
@@ -254,11 +249,9 @@ function api(): GitHubApiClient {
   return createGitHubApi({ token: env('GITHUB_TOKEN') });
 }
 
-// The Action adapter's one `FirestoreRestStoragePort` factory. Shadow mode
-// invokes it lazily after a comment-ledger transition; authority mode uses
-// it before any transition to acquire the shared per-task lease. An `off`
-// run reaches neither path, so it reads no storage credential and performs
-// no Firestore request. Credential resolution stays out of the adapter itself
+// The Action adapter's one `FirestoreRestStoragePort` factory. Every broker
+// transition acquires the shared per-task authority lease before changing
+// controller state. Credential resolution stays out of the adapter itself
 // (firestore-rest-port.ts's own "Auth" section): agent-router.yml's
 // google-github-actions/auth step mints the access token and this file only
 // ever reads the resulting env var, never derives one itself.
@@ -1865,25 +1858,17 @@ export function assertCompletionLedgerBinding(
 /**
  * Authenticate a completion against existing compatibility state without
  * creating state, projecting a comment, or invoking fail-closed parking.
- * Authority mode instead acquires its shared lease in loadBrokerLedger before
- * validating, so a fast callback cannot race the controller's bindRun write.
- * The loaded copy is checked again below before mutation in either mode.
+ * The Firestore authority path acquires its shared lease in loadBrokerLedger
+ * before validating, so a fast callback cannot race the controller's bindRun
+ * write. The loaded copy is checked again below before mutation.
  */
 export async function assertCompletionBindingBeforeInitialization(
-  client: GitHubApiClient,
+  _client: GitHubApiClient,
   task: LedgerTaskRef,
   normalized: CompletionEvent,
-  storageMode: ReturnType<typeof parseDispatchStorageMode>,
   storagePortFactory: () => StoragePort,
 ): Promise<void> {
-  const ledger =
-    storageMode === 'authority'
-      ? (await storagePortFactory().readTask(task))?.controllerState
-      : (
-          await loadLedger(client, task, undefined, {
-            createIfMissing: false,
-          })
-        )?.ledger;
+  const ledger = (await storagePortFactory().readTask(task))?.controllerState;
   if (!ledger) {
     throw new CompletionBindingError(
       'Completion callback does not match the bound worker run',
@@ -2248,7 +2233,6 @@ async function loadBrokerLedger(
   task: LedgerTaskRef,
   normalized: NormalizedEvent,
   isPullRequest: boolean,
-  storageMode: ReturnType<typeof parseDispatchStorageMode> = 'off',
   leaseOwner = '',
   storagePortFactory: () => StoragePort = createStoragePort,
   authorityEpoch = '',
@@ -2263,7 +2247,7 @@ async function loadBrokerLedger(
   // ledger normally.
   const untrackedPullRequestControl =
     isPullRequest && normalized.kind === 'anchor-control';
-  if (storageMode === 'authority') {
+  {
     const port = storagePortFactory();
     let authority;
     try {
@@ -2280,7 +2264,7 @@ async function loadBrokerLedger(
         },
       );
     } catch (error) {
-      // Neither an absent task nor a compatibility-only shadow record can
+      // Neither an absent task nor a compatibility-only record can
       // authenticate a hosted completion. Convert both before the generic
       // initialization/fail-closed paths so caller-selected input cannot
       // create projection or parking side effects.
@@ -2378,15 +2362,6 @@ async function loadBrokerLedger(
       };
     }
   }
-  const loaded: LoadedLedger | undefined = await loadLedger(
-    client,
-    task,
-    undefined,
-    {
-      createIfMissing: !untrackedPullRequestControl,
-    },
-  );
-  return loaded;
 }
 
 async function applyAnchorControlTransition(
@@ -2401,7 +2376,6 @@ async function applyAnchorControlTransition(
 export interface BrokerPassOptions {
   normalized: NormalizedEvent;
   githubToken: string;
-  storageMode: string;
   authorityEpoch?: string;
   storagePortFactory: () => StoragePort;
   isPullRequest: boolean;
@@ -2433,7 +2407,6 @@ export interface BrokerPassOptions {
 export async function processNormalizedEvent({
   normalized,
   githubToken,
-  storageMode: storageModeInput,
   authorityEpoch: authorityEpochInput = '',
   storagePortFactory,
   isPullRequest,
@@ -2446,13 +2419,7 @@ export async function processNormalizedEvent({
   authorityBusyWaitMs = 130_000,
 }: BrokerPassOptions): Promise<void> {
   if (normalized.kind === 'ignored') return;
-  // #645 Phase 6: parsed once, up front, before any ledger work -- a
-  // misconfigured DISPATCH_STORAGE_MODE repo variable (anything other than
-  // 'off'/unset/'shadow') must fail this run immediately and loudly, not be
-  // discovered after a dispatch pass already did real work, and never be
-  // silently treated as 'off' (see storage/shadow.ts's header).
-  const storageMode = parseDispatchStorageMode(storageModeInput);
-  const authorityEpoch = storageMode === 'authority' ? authorityEpochInput : '';
+  const authorityEpoch = authorityEpochInput;
   const task = resolveTask(normalized);
   const client = createGitHubApi({ token: githubToken });
   // GITHUB_EVENT_NAME is a standard runner-provided variable (already
@@ -2485,15 +2452,6 @@ export async function processNormalizedEvent({
       throw error;
     }
   }
-  if (normalized.kind === 'completion' && storageMode !== 'authority') {
-    await assertCompletionBindingBeforeInitialization(
-      client,
-      task,
-      normalized,
-      storageMode,
-      storagePortFactory,
-    );
-  }
   let loaded: LoadedLedger | undefined;
   try {
     loaded = await loadBrokerLedger(
@@ -2501,7 +2459,6 @@ export async function processNormalizedEvent({
       task,
       normalized,
       isPullRequest,
-      storageMode,
       authorityOwner,
       storagePortFactory,
       authorityEpoch,
@@ -2642,14 +2599,6 @@ export async function processNormalizedEvent({
           `::warning::Failed to record the projector's convergence checkpoint: ${message}`,
         );
       }
-      // Shadow writes the resulting comment-ledger state for comparison.
-      // Authority mode already persisted every checkpoint and this helper is
-      // intentionally inert there; off mode never invokes the port factory.
-      await maybeObserveDispatchStorage(
-        storageMode,
-        storagePortFactory,
-        loaded.ledger,
-      );
     } catch (error) {
       await failClosed(client, task, maintainer, error);
     }
@@ -2680,7 +2629,6 @@ async function broker(): Promise<void> {
     {
       normalized,
       githubToken: env('GITHUB_TOKEN'),
-      storageMode: env('DISPATCH_STORAGE_MODE', false),
       authorityEpoch: env('DISPATCH_AUTHORITY_EPOCH', false),
       isPullRequest: env('ANCHOR_IS_PR', false) === 'true',
       transportRunId: runId,
@@ -2718,11 +2666,7 @@ async function preflight(): Promise<void> {
     runId: Number(env('GITHUB_RUN_ID')),
   };
   const client = api();
-  const storageMode = parseDispatchStorageMode(
-    env('DISPATCH_STORAGE_MODE', false),
-  );
-  const authorityPort =
-    storageMode === 'authority' ? createStoragePort() : undefined;
+  const authorityPort = createStoragePort();
   // This job (a worker run's own preflight step) never writes the ledger --
   // control-plane writes are only ever made from the serialized broker job
   // (see healStaleAgentLabels' comment for the same invariant) -- so
@@ -2731,12 +2675,7 @@ async function preflight(): Promise<void> {
   await runPhase(undefined, 'authorization', async () => {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
-      const ledger = await loadPreflightLedger(
-        client,
-        task,
-        storageMode,
-        authorityPort,
-      );
+      const ledger = await loadPreflightLedger(task, authorityPort);
       if (ledger && verifyPreflight(ledger, expected)) {
         const generation = ledger.generations.find(
           (candidate) => candidate.generation === expected.generation,
@@ -2805,22 +2744,10 @@ async function preflight(): Promise<void> {
 }
 
 async function loadPreflightLedger(
-  client: GitHubApiClient,
   task: LedgerTaskRef,
-  storageMode: ReturnType<typeof parseDispatchStorageMode>,
-  authorityPort?: StoragePort,
+  authorityPort: StoragePort,
 ): Promise<DispatchLedger | undefined> {
-  if (storageMode === 'authority') {
-    if (!authorityPort) {
-      throw new Error('Authority preflight requires a dispatch storage port');
-    }
-    return (await authorityPort.readTask(task))?.controllerState;
-  }
-  return (
-    await loadLedger(client, task, 'github-actions[bot]', {
-      createIfMissing: false,
-    })
-  )?.ledger;
+  return (await authorityPort.readTask(task))?.controllerState;
 }
 
 async function completionCallback(): Promise<void> {

@@ -5,7 +5,6 @@ import type { StoragePort } from '../storage/port';
 export interface HostedAdmissionInput {
   normalized: NormalizedEvent;
   githubToken: string;
-  storageMode: string;
   authorityEpoch?: string;
   isPullRequest: boolean;
   transportRunId: number;

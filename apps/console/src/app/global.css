@@ -33,6 +33,10 @@ body:has(.console-header[data-current='inbox']:not([data-streaming-fallback]))
 body:has(.console-header[data-current='agents']:not([data-streaming-fallback]))
   .console-header[data-current='agents'][data-streaming-fallback],
 body:has(
+    .console-header[data-current='shuttlebay']:not([data-streaming-fallback])
+  )
+  .console-header[data-current='shuttlebay'][data-streaming-fallback],
+body:has(
     .console-header[data-current='sessions']:not([data-streaming-fallback])
   )
   .console-header[data-current='sessions'][data-streaming-fallback],
@@ -1139,6 +1143,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     background: var(--mantine-color-violet-5) !important;
   }
 
+  .console-header[data-current='shuttlebay'] .lcars-header::before,
+  .console-header[data-current='shuttlebay'] .lcars-header::after {
+    background: var(--mantine-color-blue-5);
+  }
+
+  .console-header[data-current='shuttlebay']
+    .lcars-nav-pill[data-accent='blue'][data-active] {
+    border-color: var(--mantine-color-blue-5) !important;
+    color: var(--mantine-color-white) !important;
+    background: var(--mantine-color-blue-5) !important;
+  }
+
   .console-header[data-current='sessions'] .lcars-header::before,
   .console-header[data-current='sessions'] .lcars-header::after {
     background: var(--mantine-color-cyan-5);
@@ -1192,6 +1208,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding: 7px 14px;
   }
 
+  .console-header[data-current]
+    .lcars-nav-pill[data-destination='shuttlebay']:not([data-active]),
   .console-header[data-current]
     .lcars-nav-pill[data-accent='teal']:not([data-active]),
   .console-header[data-current]
@@ -1277,6 +1295,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current='agents'] .lcars-nav-pill[data-active] {
     background: var(--mantine-color-violet-5);
+  }
+
+  .console-header[data-current='shuttlebay'] .lcars-nav-pill[data-active] {
+    background: var(--mantine-color-blue-5);
   }
 
   .console-header[data-current='deck'] .lcars-nav-pill[data-active] {
