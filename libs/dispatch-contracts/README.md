@@ -17,10 +17,11 @@ re-derive it.**
 
 Covered today:
 
-| Contract                               | Previously hand-copied in                                                                                                                                   |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pipeline identity registry             | `normalize.mjs`, `github-api.mjs` (twice), `broker.mjs`, console `watched-repo.ts`, console `action-items.ts`, and the four worker workflows' `env:` blocks |
-| Dispatch marker `[dispatch:g<n>:<id>]` | `main.mjs`, `github-api.mjs`, console `agent-activity.ts`, and four `run-name:` YAML strings                                                                |
+| Contract                                            | Previously hand-copied in                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pipeline identity registry                          | `normalize.mjs`, `github-api.mjs` (twice), `broker.mjs`, console `watched-repo.ts`, console `action-items.ts`, and the four worker workflows' `env:` blocks                                                                                                                                                |
+| Dispatch marker `[dispatch:g<n>:<id>]`              | `main.mjs`, `github-api.mjs`, console `agent-activity.ts`, and four `run-name:` YAML strings                                                                                                                                                                                                               |
+| Recovery operation key (`recovery/v1:<domain>:...`) | Never shared before — `pr-heal.yml`'s `pr-heal-ledger:v1` comment and `post-deploy-verify.yml`'s `post-deploy-verify-dispatch:<sha>` marker in `supersprinklesracing/sprinkles` each independently invented an equivalent idempotency key (see [#864](https://github.com/jlapenna/agent-lcars/issues/864)) |
 
 ## Why it has zero dependencies
 

@@ -13,6 +13,7 @@ import {
   primaryWatchedRepo,
   type WatchedRepo,
 } from './github-client';
+import { executeHostedControllerCommand } from './hosted-controller-command';
 import { type Pipeline } from './primary-action';
 import type { QuickTaskReceipt, QuickTaskRequest } from './quick-task-contract';
 import { deriveQuickTaskTitle } from './quick-task-evidence';
@@ -401,89 +402,14 @@ export async function cancelWorkflowRun(
   await notifyReconcileForCancelledRun(repo, runId);
 }
 
-// Dispatches the same workflow_dispatch event a human triggers from the
-// Actions tab or `gh workflow run` — see playbook-unstick-prs.yml.
 const DEFAULT_BRANCH = 'main';
-const AGENT_ROUTER_WORKFLOW = 'agent-router.yml';
 const DISPATCH_CALLER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-// A watched repo's own agent-router.yml is a separate file that repo
-// maintains independently (this codebase deliberately keeps no shared
-// build context with a consuming repo - see AGENTS.md), so a newly added
-// *optional* workflow_dispatch input like `caller_id` can reach a repo
-// whose copy of the workflow predates it. GitHub rejects the whole
-// dispatch with a 422 naming exactly the inputs it doesn't recognize
-// (`Unexpected inputs provided: ["caller_id"]`) rather than ignoring them.
-// Since every optional input this call sends has a documented fallback on
-// the receiving end (see apps/dispatch-broker/src/normalize.ts's
-// resolveCallerSourceId), retrying
-// once without the rejected keys degrades gracefully instead of leaving
-// retrigger permanently broken for a lagging repo.
-const UNEXPECTED_INPUTS_PATTERN = /Unexpected inputs provided: (\[.*\])/u;
-
-function withoutUnexpectedInputs(
-  error: unknown,
-  inputs: Record<string, string>,
-): Record<string, string> | undefined {
-  const message = error instanceof Error ? error.message : undefined;
-  const match = message ? UNEXPECTED_INPUTS_PATTERN.exec(message) : null;
-  if (!match) return undefined;
-  let unexpectedKeys: unknown;
-  try {
-    unexpectedKeys = JSON.parse(match[1]);
-  } catch {
-    return undefined;
-  }
-  if (
-    !Array.isArray(unexpectedKeys) ||
-    unexpectedKeys.length === 0 ||
-    !unexpectedKeys.every((key): key is string => typeof key === 'string')
-  ) {
-    return undefined;
-  }
-  return Object.fromEntries(
-    Object.entries(inputs).filter(([key]) => !unexpectedKeys.includes(key)),
-  );
-}
-
-// One workflow_dispatch POST at this repo's own agent-router.yml, with the
-// same lagging-repo degrade every caller needs (see withoutUnexpectedInputs
-// above): retry once with any input GitHub's 422 names as unrecognized,
-// and only then let the failure propagate. retriggerIssue's own intent
-// dispatch and notifyReconcile's follow-up `kind: reconcile` ping both
-// route through this single function rather than each re-implementing the
-// same retry dance.
-async function dispatchAgentRouter(
-  repo: WatchedRepo,
-  inputs: Record<string, string>,
-): Promise<void> {
-  const octokit = getGithubClient();
-  try {
-    await octokit.rest.actions.createWorkflowDispatch({
-      owner: repo.owner,
-      repo: repo.name,
-      workflow_id: AGENT_ROUTER_WORKFLOW,
-      ref: DEFAULT_BRANCH,
-      inputs,
-    });
-  } catch (error) {
-    const retryInputs = withoutUnexpectedInputs(error, inputs);
-    if (!retryInputs) throw error;
-    await octokit.rest.actions.createWorkflowDispatch({
-      owner: repo.owner,
-      repo: repo.name,
-      workflow_id: AGENT_ROUTER_WORKFLOW,
-      ref: DEFAULT_BRANCH,
-      inputs: retryInputs,
-    });
-  }
-}
-
 // After a console action mutates a fact the dispatch ledger tracks (a
 // park-state label, `control.closed`, a merge, a cancelled active-
-// generation run) without going through agent-router.yml itself, ping it
-// with `kind: reconcile` for the affected anchor so the controller
+// generation run), ask the hosted controller to reconcile the affected
+// anchor so the controller
 // converges immediately instead of only picking up the change on
 // dispatch-reconcile.yml's next scheduled sweep (up to 30 minutes later).
 // #715 taught that scheduled sweep to eventually repair a diverged
@@ -491,10 +417,7 @@ async function dispatchAgentRouter(
 // relying solely on that backstop.
 //
 // The mutation this follows has already landed on GitHub by the time this
-// runs, so any failure here - a lagging watched repo whose agent-router.yml
-// predates `kind: reconcile` (422, degraded by dispatchAgentRouter above
-// same as any other unrecognised input), one with no agent-router.yml at
-// all (404), or a transient GitHub error - is logged and swallowed rather
+// runs, so any controller failure is logged and swallowed rather
 // than surfaced to the caller. A red toast over a best-effort follow-up
 // ping would be a worse bug than the stale ledger entry this exists to
 // shrink; the scheduled sweep remains the backstop either way.
@@ -503,9 +426,11 @@ async function notifyReconcile(
   anchorNumber: number,
 ): Promise<void> {
   try {
-    await dispatchAgentRouter(repo, {
+    await executeHostedControllerCommand({
       kind: 'reconcile',
-      issue: String(anchorNumber),
+      repository: repo,
+      issueNumber: anchorNumber,
+      requestId: randomUUID(),
     });
   } catch (error) {
     console.error(
@@ -655,13 +580,13 @@ export async function retriggerIssue(
     }
   }
 
-  const inputs = {
-    issue: String(issueNumber),
+  await executeHostedControllerCommand({
+    kind: 'retrigger',
+    repository: repo,
+    issueNumber,
     pipeline,
-    mode: 'implement',
-    caller_id: callerId,
-  };
-  await dispatchAgentRouter(repo, inputs);
+    requestId: callerId,
+  });
 }
 
 // The console's "hand this off to a different agent" action (#143) - e.g. a

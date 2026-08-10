@@ -5,7 +5,7 @@ import {
   parseTerminalQuickTaskBody,
   quickTaskDigest as contractQuickTaskDigest,
 } from '@agent-lcars/dispatch-contracts';
-import { describe, expect, it, type Mock, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
   approveAndMergePr,
@@ -24,6 +24,7 @@ import {
   updatePrBranch,
 } from './backend-actions';
 import { getGithubClient } from './github-client';
+import { executeHostedControllerCommand } from './hosted-controller-command';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
@@ -35,6 +36,15 @@ vi.mock('./github-client', async (importOriginal) => {
     getGithubClient: vi.fn(),
     getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
   };
+});
+
+vi.mock('./hosted-controller-command', () => ({
+  executeHostedControllerCommand: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+beforeEach(() => {
+  (executeHostedControllerCommand as Mock).mockReset();
+  (executeHostedControllerCommand as Mock).mockResolvedValue({ ok: true });
 });
 
 describe('closeIssue', () => {
@@ -60,17 +70,16 @@ describe('closeIssue', () => {
     });
   });
 
-  it('notifies the dispatch controller to reconcile the closed issue', async () => {
-    const { createWorkflowDispatch } = mockOctokit();
+  it('notifies the hosted controller to reconcile the closed issue', async () => {
+    mockOctokit();
 
     await closeIssue(DEFAULT_REPO, 2709);
 
-    expect(createWorkflowDispatch).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      workflow_id: 'agent-router.yml',
-      ref: 'main',
-      inputs: { kind: 'reconcile', issue: '2709' },
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'reconcile',
+      repository: DEFAULT_REPO,
+      issueNumber: 2709,
+      requestId: expect.any(String),
     });
   });
 
@@ -103,36 +112,14 @@ describe('closeIssue', () => {
     expect(update).toHaveBeenCalled();
   });
 
-  it("degrades like retriggerIssue's dispatch when the target repo's router predates kind: reconcile", async () => {
-    const { createWorkflowDispatch } = mockOctokit();
-    createWorkflowDispatch
-      .mockRejectedValueOnce(
-        Object.assign(new Error('Unexpected inputs provided: ["kind"]'), {
-          status: 422,
-        }),
-      )
-      .mockResolvedValueOnce({});
-
-    await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
-
-    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
-    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ inputs: { issue: '2709' } }),
-    );
-  });
-
-  it('still does not fail the close when even the retried reconcile ping fails', async () => {
-    const { update, createWorkflowDispatch } = mockOctokit();
-    createWorkflowDispatch.mockRejectedValue(
-      Object.assign(new Error('Unexpected inputs provided: ["kind"]'), {
-        status: 422,
-      }),
+  it('still does not fail the close when the hosted reconcile command fails', async () => {
+    const { update } = mockOctokit();
+    (executeHostedControllerCommand as Mock).mockRejectedValueOnce(
+      new Error('controller unavailable'),
     );
 
     await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
     expect(update).toHaveBeenCalled();
-    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -300,16 +287,17 @@ describe('clearHumanNeededLabel', () => {
     });
   });
 
-  it('notifies the dispatch controller to reconcile after clearing the park state', async () => {
-    const { createWorkflowDispatch } = mockOctokit();
+  it('notifies the hosted controller to reconcile after clearing the park state', async () => {
+    mockOctokit();
 
     await clearHumanNeededLabel(DEFAULT_REPO, 2709);
 
-    expect(createWorkflowDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        inputs: { kind: 'reconcile', issue: '2709' },
-      }),
-    );
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'reconcile',
+      repository: DEFAULT_REPO,
+      issueNumber: 2709,
+      requestId: expect.any(String),
+    });
   });
 
   it('swallows a 404 (label was already absent) and does not notify', async () => {
@@ -573,17 +561,16 @@ describe('approveAndMergePr', () => {
     });
   });
 
-  it('notifies the dispatch controller to reconcile the merged PR anchor', async () => {
-    const { createWorkflowDispatch } = mockOctokit();
+  it('notifies the hosted controller to reconcile the merged PR anchor', async () => {
+    mockOctokit();
 
     await approveAndMergePr(DEFAULT_REPO, 42);
 
-    expect(createWorkflowDispatch).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      workflow_id: 'agent-router.yml',
-      ref: 'main',
-      inputs: { kind: 'reconcile', issue: '42' },
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'reconcile',
+      repository: DEFAULT_REPO,
+      issueNumber: 42,
+      requestId: expect.any(String),
     });
   });
 
@@ -662,8 +649,8 @@ describe('cancelWorkflowRun', () => {
     });
   });
 
-  it("notifies the dispatch controller to reconcile the run's anchor issue", async () => {
-    const { getWorkflowRun, createWorkflowDispatch } = mockOctokit({
+  it("notifies the hosted controller to reconcile the run's anchor issue", async () => {
+    const { getWorkflowRun } = mockOctokit({
       displayTitle: '#4242: Fix the flaky test',
     });
 
@@ -674,35 +661,35 @@ describe('cancelWorkflowRun', () => {
       repo: 'sprinkles',
       run_id: 12345,
     });
-    expect(createWorkflowDispatch).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      workflow_id: 'agent-router.yml',
-      ref: 'main',
-      inputs: { kind: 'reconcile', issue: '4242' },
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'reconcile',
+      repository: DEFAULT_REPO,
+      issueNumber: 4242,
+      requestId: expect.any(String),
     });
   });
 
   it('waits for GitHub to finish cancellation before reconciling the run', async () => {
     vi.useFakeTimers();
     try {
-      const { getWorkflowRun, createWorkflowDispatch } = mockOctokit({
+      const { getWorkflowRun } = mockOctokit({
         runStatuses: ['in_progress', 'completed'],
       });
 
       const cancellation = cancelWorkflowRun(DEFAULT_REPO, 12345);
       await vi.advanceTimersByTimeAsync(0);
       expect(getWorkflowRun).toHaveBeenCalledTimes(1);
-      expect(createWorkflowDispatch).not.toHaveBeenCalled();
+      expect(executeHostedControllerCommand).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(250);
       await cancellation;
       expect(getWorkflowRun).toHaveBeenCalledTimes(2);
-      expect(createWorkflowDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          inputs: { kind: 'reconcile', issue: '4242' },
-        }),
-      );
+      expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+        kind: 'reconcile',
+        repository: DEFAULT_REPO,
+        issueNumber: 4242,
+        requestId: expect.any(String),
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -733,17 +720,18 @@ describe('cancelWorkflowRun', () => {
   });
 
   it('parses the anchor from an opencode-prefixed display title the same way the dashboard does', async () => {
-    const { createWorkflowDispatch } = mockOctokit({
+    mockOctokit({
       displayTitle: 'opencode #777: Investigate the outage',
     });
 
     await cancelWorkflowRun(DEFAULT_REPO, 12345);
 
-    expect(createWorkflowDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        inputs: { kind: 'reconcile', issue: '777' },
-      }),
-    );
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'reconcile',
+      repository: DEFAULT_REPO,
+      issueNumber: 777,
+      requestId: expect.any(String),
+    });
   });
 
   it('skips the reconcile ping when the title carries no anchor number', async () => {
@@ -860,9 +848,7 @@ describe('retriggerIssue (pipeline routing)', () => {
   }
 
   it('defaults to cycling the claude label', async () => {
-    const { removeLabel, addLabels, createWorkflowDispatch } = mockOctokit([
-      'agent:claude',
-    ]);
+    const { removeLabel, addLabels } = mockOctokit(['agent:claude']);
 
     await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
@@ -870,23 +856,17 @@ describe('retriggerIssue (pipeline routing)', () => {
       expect.objectContaining({ name: 'agent:claude' }),
     );
     expect(addLabels).not.toHaveBeenCalled();
-    expect(createWorkflowDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workflow_id: 'agent-router.yml',
-        inputs: {
-          issue: '2709',
-          pipeline: 'claude',
-          mode: 'implement',
-          caller_id: DISPATCH_ID,
-        },
-      }),
-    );
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'retrigger',
+      repository: DEFAULT_REPO,
+      issueNumber: 2709,
+      pipeline: 'claude',
+      requestId: DISPATCH_ID,
+    });
   });
 
   it('cycles the opencode label for the opencode pipeline', async () => {
-    const { removeLabel, addLabels, createWorkflowDispatch } = mockOctokit([
-      'agent:opencode',
-    ]);
+    const { removeLabel, addLabels } = mockOctokit(['agent:opencode']);
 
     await retriggerIssue(
       DEFAULT_REPO,
@@ -900,16 +880,13 @@ describe('retriggerIssue (pipeline routing)', () => {
       expect.objectContaining({ name: 'agent:opencode' }),
     );
     expect(addLabels).not.toHaveBeenCalled();
-    expect(createWorkflowDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        inputs: {
-          issue: '2709',
-          pipeline: 'opencode',
-          mode: 'implement',
-          caller_id: DISPATCH_ID,
-        },
-      }),
-    );
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'retrigger',
+      repository: DEFAULT_REPO,
+      issueNumber: 2709,
+      pipeline: 'opencode',
+      requestId: DISPATCH_ID,
+    });
   });
 
   it('400s when the issue lacks the target pipeline label', async () => {
@@ -923,8 +900,9 @@ describe('retriggerIssue (pipeline routing)', () => {
   });
 
   it('posts the steering note and still cycles the label when the note carries no mention', async () => {
-    const { createComment, removeLabel, addLabels, createWorkflowDispatch } =
-      mockOctokit(['agent:opencode']);
+    const { createComment, removeLabel, addLabels } = mockOctokit([
+      'agent:opencode',
+    ]);
 
     await retriggerIssue(
       DEFAULT_REPO,
@@ -941,12 +919,15 @@ describe('retriggerIssue (pipeline routing)', () => {
       expect.objectContaining({ name: 'status:needs-human' }),
     );
     expect(addLabels).not.toHaveBeenCalled();
-    expect(createWorkflowDispatch).toHaveBeenCalled();
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'retrigger', pipeline: 'opencode' }),
+    );
   });
 
   it('skips the label cycle when the note already carries the pipeline mention (would double-dispatch)', async () => {
-    const { createComment, removeLabel, addLabels, createWorkflowDispatch } =
-      mockOctokit(['agent:opencode']);
+    const { createComment, removeLabel, addLabels } = mockOctokit([
+      'agent:opencode',
+    ]);
 
     await retriggerIssue(
       DEFAULT_REPO,
@@ -970,18 +951,14 @@ describe('retriggerIssue (pipeline routing)', () => {
     // label really was cleared just above), but the agent-triggering intent
     // dispatch must stay skipped, or the /oc mention in the note would run
     // the agent a second time - which is what this test guards against.
-    expect(createWorkflowDispatch).toHaveBeenCalledTimes(1);
-    expect(createWorkflowDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        inputs: { kind: 'reconcile', issue: '2709' },
-      }),
+    expect(executeHostedControllerCommand).toHaveBeenCalledTimes(1);
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'reconcile', issueNumber: 2709 }),
     );
   });
 
   it('a claude-pipeline note carrying /oc does not trigger the claude early-return', async () => {
-    const { removeLabel, addLabels, createWorkflowDispatch } = mockOctokit([
-      'agent:claude',
-    ]);
+    const { removeLabel, addLabels } = mockOctokit(['agent:claude']);
 
     await retriggerIssue(
       DEFAULT_REPO,
@@ -995,69 +972,21 @@ describe('retriggerIssue (pipeline routing)', () => {
       expect.objectContaining({ name: 'status:needs-human' }),
     );
     expect(addLabels).not.toHaveBeenCalled();
-    expect(createWorkflowDispatch).toHaveBeenCalled();
-  });
-
-  it("retries without caller_id when the target repo's router predates that input", async () => {
-    const { createWorkflowDispatch } = mockOctokit(['agent:claude']);
-    // Simulate a repo whose agent-router.yml specifically doesn't recognize
-    // `caller_id` yet (rather than queuing one rejection by call order):
-    // clearNeedsHumanLabel's own reconcile ping fires first and carries no
-    // `caller_id`, so it must not be the call that trips this 422.
-    createWorkflowDispatch.mockImplementation(
-      async ({ inputs }: { inputs: Record<string, string> }) => {
-        if ('caller_id' in inputs) {
-          throw Object.assign(
-            new Error('Unexpected inputs provided: ["caller_id"]'),
-            { status: 422 },
-          );
-        }
-        return {};
-      },
-    );
-
-    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
-
-    expect(createWorkflowDispatch).toHaveBeenCalledTimes(3);
-    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        inputs: { kind: 'reconcile', issue: '2709' },
-      }),
-    );
-    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        inputs: {
-          issue: '2709',
-          pipeline: 'claude',
-          mode: 'implement',
-          caller_id: DISPATCH_ID,
-        },
-      }),
-    );
-    expect(createWorkflowDispatch).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        inputs: { issue: '2709', pipeline: 'claude', mode: 'implement' },
-      }),
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'retrigger', pipeline: 'claude' }),
     );
   });
 
-  it('propagates a GitHub error unrelated to unexpected inputs', async () => {
-    const { createWorkflowDispatch } = mockOctokit(['agent:claude']);
-    createWorkflowDispatch.mockRejectedValue(
-      Object.assign(new Error('Server Error'), { status: 500 }),
-    );
+  it('propagates an unavailable controller from an explicit retrigger', async () => {
+    mockOctokit(['agent:claude']);
+    (executeHostedControllerCommand as Mock)
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error('controller unavailable'));
 
     await expect(
       retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
-    ).rejects.toThrow('Server Error');
-    // clearNeedsHumanLabel's reconcile ping attempts and fails first (its
-    // own failure is swallowed - see the closeIssue/clearHumanNeededLabel
-    // notify tests), then the real intent dispatch attempts and fails,
-    // which is what actually propagates out of retriggerIssue.
-    expect(createWorkflowDispatch).toHaveBeenCalledTimes(2);
+    ).rejects.toThrow('controller unavailable');
+    expect(executeHostedControllerCommand).toHaveBeenCalledTimes(2);
   });
 });
 

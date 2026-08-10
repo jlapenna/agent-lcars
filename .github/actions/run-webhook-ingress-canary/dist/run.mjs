@@ -114,6 +114,8 @@ var HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED
 var WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE = "agent-lcars-webhook-ingress-canary";
 var WEBHOOK_INGRESS_PROBE_PATH = "/api/control-plane/webhook/probe";
 var WEBHOOK_INGRESS_PROBE_URL = `https://agent-console.supersprinkles.racing${WEBHOOK_INGRESS_PROBE_PATH}`;
+var HOSTED_RECOVERY_OBSERVATION_PATH = "/api/control-plane/recovery-observation";
+var HOSTED_RECOVERY_OBSERVATION_URL = `https://agent-console.supersprinkles.racing${HOSTED_RECOVERY_OBSERVATION_PATH}`;
 
 // libs/dispatch-contracts/src/webhook-ingress.ts
 var WEBHOOK_INGRESS_CANARY_MARKER = "<!-- agent-lcars:webhook-ingress-canary:v1 -->";

@@ -297,10 +297,10 @@ export function QueueWorkspace({
           </>
         ) : (
           <>
-            <div className="queue-mobile-identity">
-              <Text component="span" fw={700} tt="uppercase">
-                Inbox
-              </Text>
+            <div
+              className="queue-mobile-identity"
+              aria-label={`Queue item count: ${visibleCards.length}`}
+            >
               <Text component="span" ff="monospace" size="xs">
                 {visibleCards.length.toString().padStart(2, '0')}
               </Text>

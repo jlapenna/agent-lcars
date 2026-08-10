@@ -19,4 +19,12 @@ describe('console proxy public control-plane routes', () => {
       expect(proxy(request).status).toBe(200);
     }
   });
+
+  it('lets the canary read the public authoritative task-state projection', () => {
+    const request = new NextRequest(
+      'https://agent-console.supersprinkles.racing/api/control-plane/task-state/jlapenna/agent-lcars/779?repositoryId=1307149765',
+    );
+
+    expect(proxy(request).status).toBe(200);
+  });
 });
