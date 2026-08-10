@@ -4,12 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionArchiveQuery } from '@/lib/session-archive';
 
-import { ConsoleHeader, ConsoleNavRail } from './console-header';
+import { ConsoleHeader, ConsoleNavRail, type NavKey } from './console-header';
 
-function renderHeader(
-  current: 'deck' | 'inbox' | 'agents' | 'sessions' | 'costs',
-  archiveQuery?: SessionArchiveQuery,
-) {
+function renderHeader(current: NavKey, archiveQuery?: SessionArchiveQuery) {
   return render(
     <MantineProvider>
       <ConsoleHeader
@@ -65,6 +62,7 @@ describe('ConsoleHeader nav rail', () => {
       ['Bridge', '/'],
       ['Inbox', '/inbox'],
       ['Agents', '/agents'],
+      ['Shuttlebay', '/shuttlebay'],
       ['Sessions', '/sessions'],
       ['Costs', '/costs'],
     ]) {
@@ -137,7 +135,7 @@ describe('ConsoleHeader nav rail', () => {
 });
 
 describe('ConsoleNavRail (standalone)', () => {
-  it('renders all five destinations with the parent marked current', () => {
+  it('renders every destination with the parent marked current', () => {
     render(
       <MantineProvider>
         <ConsoleNavRail current="sessions" />
@@ -145,7 +143,7 @@ describe('ConsoleNavRail (standalone)', () => {
     );
     const nav = screen.getByRole('navigation', { name: 'Console sections' });
     const links = within(nav).getAllByRole('link');
-    expect(links).toHaveLength(5);
+    expect(links).toHaveLength(6);
     expect(within(nav).getByRole('link', { name: 'Sessions' })).toHaveAttribute(
       'aria-current',
       'page',

@@ -56,8 +56,8 @@ export function PageLoading({
 }
 
 /**
- * Outer-Suspense fallback for the five nav-destination pages (dashboard,
- * inbox, agents, sessions, costs). Each of those pages' own shell only
+ * Outer-Suspense fallback for the six nav-destination pages (dashboard,
+ * inbox, agents, Shuttlebay, sessions, costs). Each of those pages' own shell only
  * waits on `auth()` + `searchParams` before it can render a real
  * `ConsoleHeader` (see console-header.tsx's doc comment) - neither depends
  * on the slow GitHub/Firestore reads - but `cacheComponents` still forces
