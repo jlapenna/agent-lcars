@@ -1,0 +1,75 @@
+name: Setup Nx remote cache
+description: >-
+  Point Nx at the self-hosted L2 remote cache, choosing the read-only or write
+  credential from the triggering event. Internal dedup for this repo's own
+  workflows; consumer repos have their own conventions and should not adopt
+  this one. Complements agent-setup, which wires the host-mounted L1
+  (NX_CACHE_DIRECTORY) rather than the remote server.
+
+inputs:
+  url:
+    description: >-
+      Remote cache server base URL, normally vars.NX_CACHE_URL. When empty the
+      action is a no-op, so an unconfigured repo degrades to local
+      recomputation instead of failing.
+    required: false
+    default: ''
+  write-token:
+    description: >-
+      Read-write credential, normally secrets.NX_CACHE_TOKEN. Used only for
+      trusted events (anything that is not a pull_request).
+    required: false
+    default: ''
+  read-only-token:
+    description: >-
+      Read-only credential, normally secrets.NX_CACHE_TOKEN_READONLY. Used for
+      pull_request events so untrusted code cannot publish entries that
+      trusted builds later consume.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # A fork PR is routed to a GitHub-hosted runner with no route to the
+    # cache host. Nx fails OPEN on an unreachable server but pays roughly 45s
+    # of request timeouts per task write, so pointing a fork at it is strictly
+    # slower than leaving the cache off.
+    #
+    # Selecting the credential here rather than in each caller keeps the
+    # trust rule in one place: pull_request gets read-only, everything else
+    # gets write. An empty token simply disables the cache -- it never falls
+    # back to the other tier.
+    - name: Select Nx remote cache credential
+      if: >-
+        inputs.url != ''
+        && !(github.event_name == 'pull_request'
+             && github.event.pull_request.head.repo.fork)
+      shell: bash
+      env:
+        NX_REMOTE_CACHE_URL: ${{ inputs.url }}
+        # Both tiers are passed in and chosen below in bash. Deliberately NOT
+        # selected with `cond && A || B` in an expression: that idiom falls
+        # through to B whenever A is falsy, so an empty read-only secret would
+        # hand a pull_request the write token -- silently inverting the trust
+        # boundary this action exists to enforce.
+        NX_REMOTE_CACHE_WRITE_TOKEN: ${{ inputs.write-token }}
+        NX_REMOTE_CACHE_READ_ONLY_TOKEN: ${{ inputs.read-only-token }}
+        NX_REMOTE_CACHE_EVENT: ${{ github.event_name }}
+      run: |
+        if [ "$NX_REMOTE_CACHE_EVENT" = "pull_request" ]; then
+          tier="read-only"
+          token="$NX_REMOTE_CACHE_READ_ONLY_TOKEN"
+        else
+          tier="write"
+          token="$NX_REMOTE_CACHE_WRITE_TOKEN"
+        fi
+
+        if [ -z "$token" ]; then
+          echo "::notice::Nx remote cache disabled: no ${tier} token configured."
+          exit 0
+        fi
+
+        echo "NX_SELF_HOSTED_REMOTE_CACHE_SERVER=$NX_REMOTE_CACHE_URL" >>"$GITHUB_ENV"
+        echo "NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN=$token" >>"$GITHUB_ENV"
+        echo "::notice::Nx remote cache enabled (${tier}) against ${NX_REMOTE_CACHE_URL}."

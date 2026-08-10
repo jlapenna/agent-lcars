@@ -41,6 +41,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # This job runs the whole `test typecheck build --all` gate on an
+      # ephemeral autoscaled runner, so its local cache starts cold every
+      # time and the remote cache is the only thing standing between a push
+      # and a full-tree recompile.
+      - uses: ./.github/actions/setup-nx-remote-cache
+        with:
+          url: ${{ vars.NX_CACHE_URL }}
+          write-token: ${{ secrets.NX_CACHE_TOKEN }}
+          read-only-token: ${{ secrets.NX_CACHE_TOKEN_READONLY }}
+
       # Moved ahead of "Validate GitHub Actions workflows": that step's
       # `go install` needs a `go` binary on PATH, which GitHub-hosted
       # ubuntu-latest ships preinstalled but this repo's self-hosted runner
@@ -198,6 +208,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - uses: ./.github/actions/setup-nx-remote-cache
+        with:
+          url: ${{ vars.NX_CACHE_URL }}
+          write-token: ${{ secrets.NX_CACHE_TOKEN }}
+          read-only-token: ${{ secrets.NX_CACHE_TOKEN_READONLY }}
 
       - uses: ./.github/actions/setup-node-pnpm
 
