@@ -54,20 +54,39 @@ if [ "${1:-}" = "reset" ] && [ -n "${NX_CACHE_DIRECTORY:-}" ] &&
 fi
 
 # Self-hosted Nx remote cache (the same spark server CI uses). The vars live
-# in the gitignored .nx-remote-cache.env — written by setup-repo.sh, copied
-# into worktrees by setup-worktree.sh — rather than .env.local, so that ONLY
-# this wrapper enables them, and only after a fast reachability probe: nx
-# fails open on an unreachable server but pays ~45s of request timeouts per
-# task write (measured), which would tax laptops off the VPN. Explicit env
-# (CI sets these directly) wins and skips the probe.
-if [ -z "${NX_SELF_HOSTED_REMOTE_CACHE_SERVER:-}" ] && [ -f .nx-remote-cache.env ]; then
-  rc_server="$(sed -n 's/^NX_SELF_HOSTED_REMOTE_CACHE_SERVER=//p' .nx-remote-cache.env | tail -1)"
-  if [ -n "$rc_server" ] &&
-    curl -sf --max-time 0.4 -o /dev/null "$rc_server/healthz" 2>/dev/null; then
-    set -a
-    # shellcheck source=/dev/null
-    . ./.nx-remote-cache.env
-    set +a
+# in the gitignored .nx-remote-cache.env — written by
+# tools/setup-nx-remote-cache.sh — rather than .env.local, so that ONLY this
+# wrapper enables them, and only after a fast reachability probe: nx fails
+# open on an unreachable server but pays
+# ~45s of request timeouts per task write (measured), which would tax laptops
+# off the VPN. Explicit env (CI sets these directly) wins and skips the probe.
+#
+# Linked worktrees do not inherit ignored files, and a worktree created by a
+# bare `git worktree add` never runs setup-worktree.sh — so fall back to the
+# primary checkout's copy instead of requiring every worktree to hold its own.
+# That keeps ONE credential on disk and makes a rotation in the primary reach
+# every worktree immediately, with no stale copy able to win over it.
+if [ -z "${NX_SELF_HOSTED_REMOTE_CACHE_SERVER:-}" ]; then
+  rc_env=""
+  if [ -f .nx-remote-cache.env ]; then
+    rc_env=".nx-remote-cache.env"
+  else
+    rc_common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -n "$rc_common_dir" ] &&
+      [ -f "$(dirname "$rc_common_dir")/.nx-remote-cache.env" ]; then
+      rc_env="$(dirname "$rc_common_dir")/.nx-remote-cache.env"
+    fi
+  fi
+
+  if [ -n "$rc_env" ]; then
+    rc_server="$(sed -n 's/^NX_SELF_HOSTED_REMOTE_CACHE_SERVER=//p' "$rc_env" | tail -1)"
+    if [ -n "$rc_server" ] &&
+      curl -sf --max-time 0.4 -o /dev/null "$rc_server/healthz" 2>/dev/null; then
+      set -a
+      # shellcheck source=/dev/null
+      . "$rc_env"
+      set +a
+    fi
   fi
 fi
 
