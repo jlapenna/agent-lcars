@@ -30,6 +30,15 @@ export type HostedControllerCommand =
   | (HostedCommandBase & {
       kind: 'reassign-pipeline';
       targetPipeline: AgentPipeline;
+      /** This repo's configured `agent:*` label for `targetPipeline`
+       *  (`agentIntegration(repo, targetPipeline).label` -- may differ from
+       *  the fleet-wide default via `WatchedRepo.agents`). */
+      targetLabel: string;
+      /** Every `agent:*` label this repo's own integrations declare;
+       *  always includes `targetLabel`. What the controller recognizes as
+       *  "a pipeline selection" when validating the anchor's live label
+       *  state, instead of reconstructing it from the fleet-wide default. */
+      pipelineLabels: string[];
     });
 
 export type HostedControllerCommandResult = {
@@ -55,6 +64,8 @@ function normalizeInputsFor(command: HostedControllerCommand) {
       return {
         kind: 'reassign-pipeline' as const,
         pipeline: command.targetPipeline,
+        target_label: command.targetLabel,
+        pipeline_labels: JSON.stringify(command.pipelineLabels),
         caller_id: command.requestId,
       };
   }

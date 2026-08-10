@@ -616,10 +616,17 @@ export async function reassignPipeline(
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
   }
-  // Repo-config gate, orthogonal to the controller's own generic
-  // agent:*-label validation: does this specific watched repo even declare
-  // an integration for the target pipeline at all.
-  requireAgentIntegration(repo, targetPipeline);
+  // Repo-config gate, orthogonal to the controller's own generic label
+  // validation: does this specific watched repo even declare an integration
+  // for the target pipeline at all.
+  const targetIntegration = requireAgentIntegration(repo, targetPipeline);
+  // This repo's own configured labels, resolved here (not reconstructed by
+  // the broker from the fleet-wide default): a watched repo's `agents`
+  // config can override the `agent:*` label per pipeline, and the broker has
+  // no notion of per-repo config of its own (#811 Codex review on #904).
+  const pipelineLabels = supportedAgentPipelines(repo)
+    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
+    .filter((label): label is string => Boolean(label));
 
   try {
     await executeHostedControllerCommand({
@@ -627,6 +634,8 @@ export async function reassignPipeline(
       repository: repo,
       issueNumber,
       targetPipeline,
+      targetLabel: targetIntegration.label,
+      pipelineLabels,
       requestId: callerId,
     });
   } catch (error) {

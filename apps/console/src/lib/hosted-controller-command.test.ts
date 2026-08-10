@@ -84,6 +84,8 @@ describe('executeHostedControllerCommand', () => {
       repository,
       issueNumber: 821,
       targetPipeline: 'claude' as const,
+      targetLabel: 'agent:claude',
+      pipelineLabels: ['agent:claude', 'agent:codex', 'agent:opencode'],
       requestId,
     };
 
@@ -98,12 +100,39 @@ describe('executeHostedControllerCommand', () => {
       sourceKind: 'pipeline-reassignment',
       sourceId: requestId,
       targetPipeline: 'claude',
+      targetLabel: 'agent:claude',
+      pipelineLabels: ['agent:claude', 'agent:codex', 'agent:opencode'],
     });
     expect(second.normalized).toMatchObject({
       sourceId: first.normalized.sourceId,
     });
     expect(second.transportRunId).toBe(first.transportRunId);
     expect(second.authorityOwner).toBe(`console-command:${requestId}`);
+  });
+
+  // #811 Codex review on #904: a watched repo's own `agents` config can
+  // declare a custom label per pipeline -- the command must carry that
+  // resolved label set through to normalizeEvent's wire inputs verbatim,
+  // not encode/derive it from `targetPipeline` alone.
+  it('threads a custom per-repo label contract through to the workflow_dispatch inputs', async () => {
+    await executeHostedControllerCommand({
+      kind: 'reassign-pipeline',
+      repository,
+      issueNumber: 821,
+      targetPipeline: 'claude',
+      targetLabel: 'bot:claude',
+      pipelineLabels: ['bot:claude', 'bot:codex'],
+      requestId,
+    });
+
+    expect(processHostedControllerEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        normalized: expect.objectContaining({
+          targetLabel: 'bot:claude',
+          pipelineLabels: ['bot:claude', 'bot:codex'],
+        }),
+      }),
+    );
   });
 
   it('reports controller unavailability to explicit callers', async () => {

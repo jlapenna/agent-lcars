@@ -190,15 +190,24 @@ test("reconcile dispatch threads the live issue's open/closed state through as i
   assert.equal('issueClosed' in unknown, false);
 });
 
+const REASSIGN_UUID = '11111111-1111-4111-8111-111111111111';
+
+function reassignInputs(overrides = {}) {
+  return {
+    kind: 'reassign-pipeline',
+    pipeline: 'codex',
+    target_label: 'agent:codex',
+    pipeline_labels: JSON.stringify(['agent:claude', 'agent:codex']),
+    caller_id: REASSIGN_UUID,
+    ...overrides,
+  };
+}
+
 test('pipeline reassignment normalizes to evidence, never an intent, and requires a stable caller UUID (#811)', () => {
   const normalized = normalizeEvent({
     eventName: 'workflow_dispatch',
     event: {},
-    inputs: {
-      kind: 'reassign-pipeline',
-      pipeline: 'codex',
-      caller_id: '11111111-1111-4111-8111-111111111111',
-    },
+    inputs: reassignInputs(),
     context,
     maintainer: 'jlapenna',
   });
@@ -206,10 +215,12 @@ test('pipeline reassignment normalizes to evidence, never an intent, and require
     kind: 'pipeline-reassignment',
     task: { repositoryId: 123, repository: 'jlapenna/agent-lcars', issue: 304 },
     sourceKind: 'pipeline-reassignment',
-    sourceId: '11111111-1111-4111-8111-111111111111',
+    sourceId: REASSIGN_UUID,
     transportRunId: 9001,
     occurredAt: context.now,
     targetPipeline: 'codex',
+    targetLabel: 'agent:codex',
+    pipelineLabels: ['agent:claude', 'agent:codex'],
     authorization: {
       authorized: true,
       actor: 'jlapenna',
@@ -226,7 +237,7 @@ test('pipeline reassignment normalizes to evidence, never an intent, and require
       normalizeEvent({
         eventName: 'workflow_dispatch',
         event: {},
-        inputs: { kind: 'reassign-pipeline', pipeline: 'codex' },
+        inputs: reassignInputs({ caller_id: undefined }),
         context,
         maintainer: 'jlapenna',
       }),
@@ -237,11 +248,7 @@ test('pipeline reassignment normalizes to evidence, never an intent, and require
       normalizeEvent({
         eventName: 'workflow_dispatch',
         event: {},
-        inputs: {
-          kind: 'reassign-pipeline',
-          pipeline: 'codex',
-          caller_id: 'not-a-uuid',
-        },
+        inputs: reassignInputs({ caller_id: 'not-a-uuid' }),
         context,
         maintainer: 'jlapenna',
       }),
@@ -252,11 +259,7 @@ test('pipeline reassignment normalizes to evidence, never an intent, and require
       normalizeEvent({
         eventName: 'workflow_dispatch',
         event: {},
-        inputs: {
-          kind: 'reassign-pipeline',
-          pipeline: 'codex',
-          caller_id: '11111111-1111-4111-8111-111111111111',
-        },
+        inputs: reassignInputs(),
         context: { ...context, actor: 'collaborator' },
         maintainer: 'jlapenna',
       }),
@@ -267,16 +270,58 @@ test('pipeline reassignment normalizes to evidence, never an intent, and require
       normalizeEvent({
         eventName: 'workflow_dispatch',
         event: {},
-        inputs: {
-          kind: 'reassign-pipeline',
-          pipeline: 'not-a-real-pipeline',
-          caller_id: '11111111-1111-4111-8111-111111111111',
-        },
+        inputs: reassignInputs({ pipeline: 'not-a-real-pipeline' }),
         context,
         maintainer: 'jlapenna',
       }),
     /Unsupported pipeline reassignment target/u,
   );
+});
+
+// #811 Codex review on #904: a watched repo's own `agents` config can
+// declare a custom `agent:*` label per pipeline, different from the
+// fleet-wide default -- normalize.mjs must carry whatever label set the
+// console resolved rather than reconstructing one from AGENT_LABELS, or a
+// custom-label repo would be silently rejected or mislabeled.
+test('pipeline reassignment carries the caller-supplied label contract verbatim, not a reconstructed fleet-wide default', () => {
+  const normalized = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: {},
+    inputs: reassignInputs({
+      target_label: 'bot:codex',
+      pipeline_labels: JSON.stringify(['bot:claude', 'bot:codex']),
+    }),
+    context,
+    maintainer: 'jlapenna',
+  });
+  assert.equal(normalized.targetLabel, 'bot:codex');
+  assert.deepEqual(normalized.pipelineLabels, ['bot:claude', 'bot:codex']);
+});
+
+test('pipeline reassignment requires a well-formed, non-empty label set that includes the target label', () => {
+  for (const overrides of [
+    { target_label: undefined },
+    { target_label: '' },
+    { pipeline_labels: undefined },
+    { pipeline_labels: 'not json' },
+    { pipeline_labels: JSON.stringify([]) },
+    { pipeline_labels: JSON.stringify('agent:codex') },
+    { pipeline_labels: JSON.stringify(['agent:claude']) },
+    { pipeline_labels: JSON.stringify(['agent:claude', '']) },
+  ]) {
+    assert.throws(
+      () =>
+        normalizeEvent({
+          eventName: 'workflow_dispatch',
+          event: {},
+          inputs: reassignInputs(overrides),
+          context,
+          maintainer: 'jlapenna',
+        }),
+      /Pipeline reassignment (target label is required|label set is malformed)/u,
+      `expected inputs ${JSON.stringify(overrides)} to be rejected`,
+    );
+  }
 });
 
 test('Actions-tab dispatch falls back to stable workflow run identity', () => {

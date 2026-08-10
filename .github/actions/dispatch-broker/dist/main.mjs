@@ -17822,9 +17822,9 @@ async function applyPipelineReassignment(client, loaded, normalized) {
     (label) => typeof label === "string" ? label : label.name
   );
   const currentPipelineLabels = liveLabels.filter(
-    (label) => AGENT_LABELS.has(label)
+    (label) => normalized.pipelineLabels.includes(label)
   );
-  const targetLabel = `agent:${normalized.targetPipeline}`;
+  const targetLabel = normalized.targetLabel;
   if (currentPipelineLabels.length === 0) {
     throw new PipelineReassignmentError(
       "no-pipeline",
@@ -17844,18 +17844,31 @@ async function applyPipelineReassignment(client, loaded, normalized) {
     );
   }
   const nextLabels = liveLabels.filter(
-    (label) => !AGENT_LABELS.has(label) && label !== "status:needs-human"
+    (label) => !normalized.pipelineLabels.includes(label) && label !== "status:needs-human"
   ).concat(targetLabel);
   await replaceIssueLabels(client, task, nextLabels);
-  const evidence = recordControlEvidence(ledger, {
-    sourceKind: normalized.sourceKind,
-    sourceId: normalized.sourceId,
-    transportRunId: normalized.transportRunId,
-    occurredAt: normalized.occurredAt,
-    authorization: normalized.authorization,
-    label: targetLabel
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const evidence = recordControlEvidence(
+    ledger,
+    {
+      sourceKind: normalized.sourceKind,
+      sourceId: normalized.sourceId,
+      transportRunId: normalized.transportRunId,
+      occurredAt: normalized.occurredAt,
+      authorization: normalized.authorization,
+      label: targetLabel
+    },
+    now
+  );
+  if (evidence.outcome !== "recorded") return;
+  mutate(ledger, now, () => {
+    for (const generation of ledger.generations) {
+      if ((generation.state === "accepted" || generation.state === "pending") && generation.pipeline !== normalized.targetPipeline) {
+        generation.state = "superseded";
+      }
+    }
   });
-  if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
+  await saveLedger2(client, loaded);
 }
 async function loadBrokerLedger(client, task, normalized, isPullRequest, leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities, authorityBusyWaitMs = 13e4) {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
@@ -18073,6 +18086,7 @@ async function processNormalizedEvent({
         );
       }
     } catch (error51) {
+      if (error51 instanceof PipelineReassignmentError) throw error51;
       await failClosed(client, task, maintainer, error51);
     }
   } finally {

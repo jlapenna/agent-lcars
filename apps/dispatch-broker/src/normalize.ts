@@ -14,6 +14,7 @@ import {
   GENERIC_REPLY_COMMAND,
   isDispatchOutcomeKind,
   isDispatchOutcomeReference,
+  isDispatchPipeline,
   isLaneReadinessFailure,
   quickTaskDigest,
   quickTaskMarkerMatcher,
@@ -104,6 +105,17 @@ interface WorkflowDispatchInputs {
   reply?: string;
   runbook?: string;
   context?: string;
+  /** `reassign-pipeline` only: the exact `agent:*` label to select
+   *  `pipeline` on THIS repository -- a watched repo's `agents` config can
+   *  override the fleet-wide default (agent-lcars#811 Codex review), so
+   *  the console supplies the resolved string rather than this file
+   *  reconstructing it from AGENT_LABELS. */
+  target_label?: string;
+  /** `reassign-pipeline` only: JSON array of every `agent:*` label this
+   *  repo's own integrations declare (fleet-wide default or custom) --
+   *  what counts as "a pipeline selection" when validating the anchor's
+   *  live label state. Always includes `target_label`. */
+  pipeline_labels?: string;
 }
 
 export interface IgnoredEvent {
@@ -180,6 +192,16 @@ export interface PipelineReassignmentEvent {
   transportRunId: number;
   occurredAt: string;
   targetPipeline: AgentPipeline;
+  /** This repo's configured `agent:*` label for `targetPipeline` -- may
+   *  differ from the fleet-wide default (a watched repo's own `agents`
+   *  config, agent-lcars#811 Codex review). */
+  targetLabel: string;
+  /** Every `agent:*` label this repo's own integrations declare; always
+   *  includes `targetLabel`. What controller-core.mjs's
+   *  applyPipelineReassignment recognizes as "a pipeline selection" when
+   *  validating the anchor's live label state, instead of the fleet-wide
+   *  AGENT_LABELS map. */
+  pipelineLabels: string[];
   authorization: LedgerAuthorizationDecision;
 }
 
@@ -467,8 +489,31 @@ function normalizeWorkflowDispatch({
     if (!auth.authorized) {
       throw new Error('Unauthorized pipeline reassignment');
     }
-    if (!AGENT_LABELS.has(`agent:${inputs.pipeline}`)) {
+    // isDispatchPipeline (a pipeline-NAME check), not AGENT_LABELS.has(...):
+    // this command's label strings come from the console's own repo config
+    // below, which can differ from the fleet-wide `agent:*` convention this
+    // file's real-webhook branches assume (agent-lcars#811 Codex review).
+    if (!inputs.pipeline || !isDispatchPipeline(inputs.pipeline)) {
       throw new Error('Unsupported pipeline reassignment target');
+    }
+    if (!inputs.target_label) {
+      throw new Error('Pipeline reassignment target label is required');
+    }
+    let pipelineLabels: unknown;
+    try {
+      pipelineLabels = JSON.parse(inputs.pipeline_labels ?? '');
+    } catch {
+      throw new Error('Pipeline reassignment label set is malformed');
+    }
+    if (
+      !Array.isArray(pipelineLabels) ||
+      pipelineLabels.length === 0 ||
+      !pipelineLabels.every(
+        (label) => typeof label === 'string' && label.length > 0,
+      ) ||
+      !pipelineLabels.includes(inputs.target_label)
+    ) {
+      throw new Error('Pipeline reassignment label set is malformed');
     }
     return {
       kind: 'pipeline-reassignment',
@@ -477,10 +522,9 @@ function normalizeWorkflowDispatch({
       sourceId: inputs.caller_id,
       transportRunId: context.runId,
       occurredAt: context.now,
-      // Validated two lines up: AGENT_LABELS' keys are exactly
-      // `agent:claude`/`agent:codex`/`agent:opencode`, so the has() check
-      // above already proved inputs.pipeline is one of those three names.
-      targetPipeline: inputs.pipeline as AgentPipeline,
+      targetPipeline: inputs.pipeline,
+      targetLabel: inputs.target_label,
+      pipelineLabels: pipelineLabels as string[],
       authorization: auth,
     };
   }

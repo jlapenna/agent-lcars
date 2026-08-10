@@ -11,7 +11,6 @@ import type {
   OwningSystem,
 } from '@agent-lcars/dispatch-contracts';
 import {
-  AGENT_LABELS,
   classifyFailure,
   displayTitleMatchesAttempt,
   formatAttemptId,
@@ -32,6 +31,7 @@ import {
   createLedger,
   markDispatchRejected,
   markDispatchUnknown,
+  mutate,
   observeCompletion,
   recordControlEvidence,
   recordOutcome,
@@ -1889,6 +1889,15 @@ export class PipelineReassignmentError extends Error {
  * if another controller-owned write (a concurrent webhook, a completion
  * callback) changed labels between the console's initial read and this
  * pass acquiring the lease.
+ *
+ * `normalized.targetLabel`/`pipelineLabels` -- not a reconstructed
+ * `agent:${targetPipeline}` against the fleet-wide `AGENT_LABELS` map --
+ * are what this function reads and writes: a watched repo's own `agents`
+ * config can declare a custom label per pipeline (`WatchedRepo.agents` in
+ * the console, agent-lcars#811 Codex review), and the console resolves that
+ * repo-specific contract before building the command. Recomputing it here
+ * from the fleet-wide default would silently reject or mislabel any repo
+ * using a custom integration.
  */
 async function applyPipelineReassignment(
   client: GitHubApiClient,
@@ -1911,9 +1920,9 @@ async function applyPipelineReassignment(
     typeof label === 'string' ? label : label.name,
   );
   const currentPipelineLabels = liveLabels.filter((label) =>
-    AGENT_LABELS.has(label),
+    normalized.pipelineLabels.includes(label),
   );
-  const targetLabel = `agent:${normalized.targetPipeline}`;
+  const targetLabel = normalized.targetLabel;
   if (currentPipelineLabels.length === 0) {
     throw new PipelineReassignmentError(
       'no-pipeline',
@@ -1943,20 +1952,50 @@ async function applyPipelineReassignment(
   // pipeline it just handed the issue to.
   const nextLabels = liveLabels
     .filter(
-      (label) => !AGENT_LABELS.has(label) && label !== 'status:needs-human',
+      (label) =>
+        !normalized.pipelineLabels.includes(label) &&
+        label !== 'status:needs-human',
     )
     .concat(targetLabel);
   await replaceIssueLabels(client, task, nextLabels);
 
-  const evidence = recordControlEvidence(ledger, {
-    sourceKind: normalized.sourceKind,
-    sourceId: normalized.sourceId,
-    transportRunId: normalized.transportRunId,
-    occurredAt: normalized.occurredAt,
-    authorization: normalized.authorization,
-    label: targetLabel,
+  const now = new Date().toISOString();
+  const evidence = recordControlEvidence(
+    ledger,
+    {
+      sourceKind: normalized.sourceKind,
+      sourceId: normalized.sourceId,
+      transportRunId: normalized.transportRunId,
+      occurredAt: normalized.occurredAt,
+      authorization: normalized.authorization,
+      label: targetLabel,
+    },
+    now,
+  );
+  if (evidence.outcome !== 'recorded') return;
+  // Neither 'accepted' nor 'pending' is in ACTIVE_STATES, so
+  // reconcileActive() never touches either -- only the unconditional
+  // dispatchAccepted() call at the end of every controller pass does, and
+  // it has no idea a reassignment just happened. Left alone, dropping
+  // status:needs-human as part of the label write above would immediately
+  // unblock dispatchAccepted() into launching whichever OTHER pipeline's
+  // held generation was accepted/queued before this reassignment -- a
+  // stale worker run this command's own contract promises never to
+  // manufacture (Codex review on #904). Superseding is itself idempotent
+  // (a retry sees these generations already 'superseded' and this loop is
+  // a no-op), so folding it into the same 'recorded' guard above costs
+  // nothing extra.
+  mutate(ledger, now, () => {
+    for (const generation of ledger.generations) {
+      if (
+        (generation.state === 'accepted' || generation.state === 'pending') &&
+        generation.pipeline !== normalized.targetPipeline
+      ) {
+        generation.state = 'superseded';
+      }
+    }
   });
-  if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
+  await saveLedger(client, loaded);
 }
 
 async function loadBrokerLedger(
@@ -2297,6 +2336,14 @@ export async function processNormalizedEvent({
         );
       }
     } catch (error) {
+      // A PipelineReassignmentError is an expected, typed precondition
+      // rejection (no-pipeline/already-targeted/conflicting-pipeline) on
+      // the CALLER's request, not a controller fault -- parking the anchor
+      // needs-human and assigning the maintainer for an ordinary "issue is
+      // already assigned to X" click would be a real, visible side effect
+      // for what the console promises is a clean 400 (Codex review on
+      // #904). Same posture as CompletionBindingError's own skip above.
+      if (error instanceof PipelineReassignmentError) throw error;
       await failClosed(client, task, maintainer, error);
     }
   } finally {

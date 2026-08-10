@@ -214,10 +214,24 @@ export async function POST(
     // fixture (docs/e2e-security-boundary.md), so this stands in for
     // applyPipelineReassignment's own atomic replace + typed rejections
     // directly against the fixture's issue store, keeping the "one PUT,
-    // unrelated labels preserved" contract observable end to end.
+    // unrelated labels preserved" contract observable end to end. Reads
+    // targetLabel/pipelineLabels straight off the command body -- the
+    // console resolves the repo's own label contract before posting here
+    // (Codex review on #904), so this fixture never reconstructs a label
+    // from a bare pipeline name either.
     if (body['kind'] === 'reassign-pipeline') {
       const targetPipeline = String(body['targetPipeline']);
-      if (!['claude', 'codex', 'opencode'].includes(targetPipeline)) {
+      const targetLabel = body['targetLabel'];
+      const pipelineLabels = body['pipelineLabels'];
+      if (
+        !['claude', 'codex', 'opencode'].includes(targetPipeline) ||
+        typeof targetLabel !== 'string' ||
+        !targetLabel ||
+        !Array.isArray(pipelineLabels) ||
+        pipelineLabels.length === 0 ||
+        !pipelineLabels.every((label) => typeof label === 'string') ||
+        !pipelineLabels.includes(targetLabel)
+      ) {
         return NextResponse.json(
           { message: 'Invalid hosted controller command fixture request' },
           { status: 422 },
@@ -225,7 +239,8 @@ export async function POST(
       }
       const result = reassignFixtureIssuePipeline(
         Number(body['issueNumber']),
-        targetPipeline as 'claude' | 'codex' | 'opencode',
+        targetLabel,
+        pipelineLabels,
       );
       return result.ok
         ? NextResponse.json({ ok: true, requestId: body['requestId'] })

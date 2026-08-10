@@ -1002,7 +1002,7 @@ describe('reassignPipeline', () => {
   // cover the console-side contract: command shape, the caller-ID gate, the
   // repo-integration pre-check, and typed-rejection translation.
 
-  it('delegates to the hosted controller with a reassign-pipeline command', async () => {
+  it('delegates to the hosted controller with a reassign-pipeline command, resolving the fleet-wide default labels', async () => {
     await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
 
     expect(executeHostedControllerCommand).toHaveBeenCalledWith({
@@ -1010,8 +1010,42 @@ describe('reassignPipeline', () => {
       repository: DEFAULT_REPO,
       issueNumber: 2709,
       targetPipeline: 'claude',
+      targetLabel: 'agent:claude',
+      pipelineLabels: ['agent:claude', 'agent:codex', 'agent:opencode'],
       requestId: DISPATCH_ID,
     });
+  });
+
+  // #811 Codex review on #904: a watched repo's own `agents` config can
+  // override the `agent:*` label per pipeline. reassignPipeline must resolve
+  // and forward THIS repo's actual configured labels, not the fleet-wide
+  // default, or the controller would validate/write the wrong label.
+  it('resolves a custom per-repo label contract instead of the fleet-wide default', async () => {
+    const customRepo = {
+      ...DEFAULT_REPO,
+      agents: {
+        claude: {
+          workflowFile: 'claude.yml',
+          label: 'bot:claude',
+          replyTrigger: '@claude',
+        },
+        codex: {
+          workflowFile: 'codex.yml',
+          label: 'bot:codex',
+          replyTrigger: '/codex',
+        },
+      },
+    };
+
+    await reassignPipeline(customRepo, 2709, 'claude', DISPATCH_ID);
+
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetPipeline: 'claude',
+        targetLabel: 'bot:claude',
+        pipelineLabels: ['bot:claude', 'bot:codex'],
+      }),
+    );
   });
 
   it('400s on a malformed caller ID before ever calling the controller', async () => {
