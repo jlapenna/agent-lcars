@@ -3,14 +3,37 @@ import { describe, expect, it } from 'vitest';
 
 import proxy, { publicRoutes } from './proxy';
 
+// Kept independent of proxy.ts's publicRoutes export on purpose (Codex
+// review on #894): asserting against a copy of THIS list, rather than
+// iterating publicRoutes directly, is what lets the exact-equality check
+// below catch a route silently disappearing from the real allowlist - the
+// actual #885 failure mode (recovery-observation shipped without ever
+// being added to publicRoutes). Iterating the real array instead would
+// have made the loop just as blind to that omission as production was.
+const EXPECTED_PUBLIC_ROUTES = [
+  '/login',
+  '/api/logs/error',
+  '/api/control-plane/completion',
+  '/api/control-plane/completion/reconcile',
+  '/api/control-plane/reconcile',
+  '/api/control-plane/recovery-observation',
+  '/api/control-plane/webhook',
+  '/api/control-plane/webhook/process',
+  '/api/control-plane/webhook/probe',
+];
+
 describe('console proxy public control-plane routes', () => {
-  it('lets every route on the real public allowlist through unauthenticated', () => {
-    // Iterates the actual exported publicRoutes array (not a hand-copied
-    // subset) so a route added to production without a matching entry
-    // here would need to be missing from THAT array too to escape this
-    // test - the failure mode that left recovery-observation 401ing 100%
-    // of its callers (#885) can't hide behind a stale copy.
-    for (const path of publicRoutes) {
+  it('keeps the real allowlist in exact sync with the routes that must be public', () => {
+    // Catches drift in both directions: an entry dropped from publicRoutes
+    // (leaves callers 401ing, as recovery-observation did) or a route added
+    // to publicRoutes without a conscious update here.
+    expect([...publicRoutes].sort()).toEqual(
+      [...EXPECTED_PUBLIC_ROUTES].sort(),
+    );
+  });
+
+  it('lets every route that must be public through unauthenticated', () => {
+    for (const path of EXPECTED_PUBLIC_ROUTES) {
       const request = new NextRequest(
         `https://agent-console.supersprinkles.racing${path}`,
         { method: 'POST' },
