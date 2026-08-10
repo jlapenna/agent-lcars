@@ -8,6 +8,7 @@ describe('console proxy public control-plane routes', () => {
     for (const path of [
       '/api/control-plane/completion',
       '/api/control-plane/reconcile',
+      '/api/control-plane/recovery-observation',
       '/api/control-plane/webhook',
       '/api/control-plane/webhook/process',
     ]) {

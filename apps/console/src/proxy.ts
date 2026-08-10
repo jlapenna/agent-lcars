@@ -14,16 +14,18 @@ export const config = {
 };
 
 export default createAuthProxy({
-  // These control-plane routes do not use browser sessions. Reconcile and
-  // completion verify GitHub Actions OIDC claims, while webhook and the queued
-  // completion reconciler verify raw-body HMACs. Task state is an explicitly
-  // public, read-only projection with the private attempt capability redacted.
+  // These control-plane routes do not use browser sessions. Reconcile,
+  // completion, and recovery-observation verify GitHub Actions OIDC claims,
+  // while webhook and the queued completion reconciler verify raw-body HMACs.
+  // Task state is an explicitly public, read-only projection with the private
+  // attempt capability redacted.
   publicRoutes: [
     '/login',
     '/api/logs/error',
     '/api/control-plane/completion',
     '/api/control-plane/completion/reconcile',
     '/api/control-plane/reconcile',
+    '/api/control-plane/recovery-observation',
     '/api/control-plane/webhook',
     '/api/control-plane/webhook/process',
     '/api/control-plane/webhook/probe',
