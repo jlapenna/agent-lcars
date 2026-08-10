@@ -601,8 +601,8 @@ paths plus one read path, not one system:**
 - **`apps/console/src/lib/backend-actions.ts`** — the console's own direct
   `octokit` writes: `postComment`, `clearNeedsHumanLabel`,
   `approveAndMergePr`, `reassignPipeline`, `retriggerIssue`, and Quick Task
-  creation. `retriggerIssue` correctly delegates to `agent-router.yml`
-  (Phase 1's routing goal, done for this one action). `reassignPipeline`
+  creation. `retriggerIssue` delegates to the hosted controller through a
+  typed, idempotent console command. `reassignPipeline`
   does **not** — per the issue's own recorded finding, it is genuinely
   blocked: the broker has no label-writing capability of its own today
   (`removeIssueLabel` exists only for the dual-label self-heal), and the
@@ -750,3 +750,7 @@ exists now:
 - [Issue #645](https://github.com/jlapenna/agent-lcars/issues/645) — the
   full architecture decision, phase plan, and comment history this
   document draws its Phase 1–5 status from.
+- [`docs/consumer-lifecycle-inventory.md`](consumer-lifecycle-inventory.md) —
+  [#864](https://github.com/jlapenna/agent-lcars/issues/864)'s inventory of
+  consumer-repository recovery workflows this document's five systems do not
+  yet cover, and the `RecoveryDomain` contract published for them.

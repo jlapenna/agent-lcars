@@ -365,6 +365,8 @@ var HOSTED_TASK_STATE_PATH = "/api/control-plane/task-state";
 var HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED_TASK_STATE_PATH}`;
 var WEBHOOK_INGRESS_PROBE_PATH = "/api/control-plane/webhook/probe";
 var WEBHOOK_INGRESS_PROBE_URL = `https://agent-console.supersprinkles.racing${WEBHOOK_INGRESS_PROBE_PATH}`;
+var HOSTED_RECOVERY_OBSERVATION_PATH = "/api/control-plane/recovery-observation";
+var HOSTED_RECOVERY_OBSERVATION_URL = `https://agent-console.supersprinkles.racing${HOSTED_RECOVERY_OBSERVATION_PATH}`;
 
 // libs/dispatch-contracts/src/quick-task.ts
 function serializeIdentity({
