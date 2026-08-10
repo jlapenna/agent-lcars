@@ -20,9 +20,20 @@ name: Fixture 868 workflow permission proof
 # Delete this file (and the fixture branches it creates) once the proof run
 # URL + conclusion are recorded on #868 - see the PR body for the recorded
 # evidence. This file is not meant to be a permanent fixture.
+#
+# Trigger is `push` on this exact feature branch, not `workflow_dispatch`:
+# GitHub only resolves a workflow_dispatch-triggered workflow's ID once the
+# file exists on the DEFAULT branch (confirmed empirically -
+# `gh workflow run` 404s with "not found on the default branch" for a
+# brand-new file on a feature branch, regardless of --ref). `push` has no
+# such restriction - a workflow newly added in a commit fires for that same
+# push. Scoped to this literal branch name so it can never fire again once
+# the branch is gone.
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - feat/868-workflow-perm-capability
 
 permissions:
   contents: read
