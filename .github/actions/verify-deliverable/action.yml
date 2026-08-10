@@ -1,7 +1,7 @@
 name: Verify deliverable
 description: >-
-  Fail the job unless durable GitHub-side evidence exists that this
-  dispatch produced a visible deliverable, distinguishing a failed lookup
+  Fail the job unless an exact attempt-claim marker exists on a durable
+  GitHub artifact this dispatch produced, distinguishing a failed lookup
   from a genuine "no deliverable found" (see verify-deliverable.sh).
 
 inputs:
@@ -14,38 +14,20 @@ inputs:
   issue:
     description: Issue or pull request number that anchors the work.
     required: true
-  started-at:
-    description: UTC timestamp (from agent-setup's started-at output) marking when this run started.
-    required: true
   mode:
     description: >-
-      Dispatch mode. Only 'reply' (or a non-empty runbook) allows a bare
-      comment to count as evidence.
+      Dispatch mode. Only 'review' additionally checks pull request reviews
+      for the exact marker - the reviews endpoint 404s when `issue` is not
+      itself a pull request, and review mode is the one case this action
+      already knows it is.
     required: true
-  runbook:
+  attempt-id:
     description: >-
-      Runbook name when this is a runbook dispatch, empty otherwise. A
-      runbook's sanctioned deliverable can legitimately be a summary
-      comment, so a non-empty value enables comment evidence the same way
-      mode 'reply' does.
-    required: false
-    default: ''
-  expected-comment-login:
-    description: Bot login whose comment counts as reply-mode evidence.
+      This run's stable attempt identity (g<generation>:<intentId>, see
+      libs/dispatch-contracts/src/marker.ts's formatAttemptId). The exact
+      string a deliverable must carry inside
+      `<!-- attempt-claim:<attempt-id> -->` for this run to pass.
     required: true
-  exclude-pr-author:
-    description: >-
-      Comma-separated login(s) whose PRs are ignored (guards against
-      crediting a concurrently dispatched sibling pipeline's PR). Only
-      enforced when mode is not 'reply' - a reply dispatch's anchor is
-      explicit, so a post-start update to a PR referencing it is valid
-      evidence regardless of author.
-    required: false
-    default: ''
-  exclude-comment-id:
-    description: Comment ID to ignore, e.g. a scripted pickup comment that precedes any real evidence.
-    required: false
-    default: ''
 
 runs:
   using: composite
@@ -63,10 +45,6 @@ runs:
         AGENT: ${{ inputs.agent }}
         REPO: ${{ github.repository }}
         NUM: ${{ inputs.issue }}
-        STARTED_AT: ${{ inputs.started-at }}
         MODE: ${{ inputs.mode }}
-        RUNBOOK: ${{ inputs.runbook }}
-        EXPECTED_COMMENT_LOGIN: ${{ inputs.expected-comment-login }}
-        EXCLUDE_PR_AUTHOR: ${{ inputs.exclude-pr-author }}
-        EXCLUDE_COMMENT_ID: ${{ inputs.exclude-comment-id }}
+        ATTEMPT_ID: ${{ inputs.attempt-id }}
       run: bash "$GITHUB_ACTION_PATH/verify-deliverable.sh"

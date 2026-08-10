@@ -83,22 +83,22 @@ confirm the symptom but not the cause.
 The fast path. Match what you're looking at, then go to that system's
 section.
 
-| What you observe                                                                                                                                                 | Owning system                                                                 | Look here first                                                                                                                           |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue carries the right `agent:*` label but nothing dispatches, with no hosted admission log for its delivery                                                    | Dispatch controller (webhook admission)                                       | GitHub App delivery history, then `/api/control-plane/webhook` and Cloud Tasks logs                                                       |
-| Webhook ACKed but the queued `/api/control-plane/webhook/process` request repeatedly returns 4xx/5xx                                                             | Dispatch controller (hosted admission)                                        | App Hosting logs for HMAC, payload normalization, Firestore lease, or GitHub API failure                                                  |
-| The dedicated `Dispatch Canary Router` stays **queued**, never starting                                                                                          | GitHub Actions availability                                                   | The GitHub-hosted workflow run queue; this path no longer depends on a self-hosted runner                                                 |
-| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                          | Dispatch controller (hosted reconciliation)                                   | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                 |
-| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                           | Runner platform                                                               | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                      |
-| A published action (`rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                           | The failing step's raw log, before assuming an authorization/ordering bug                                                                 |
-| A scheduled workflow (self-healer or sweep) fails or times out repeatedly                                                                                        | Workflow failure alerts                                                       | Its workflow-specific `status:needs-human` issue (`<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`); see the coverage table below |
-| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                            | Worker runtime (bootstrap phase)                                              | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                   |
-| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                    | Worker runtime (provider admission/execution)                                 | The agent step's own log                                                                                                                  |
-| Agent process exits 0, but no PR/comment/label shows up, or an unrelated artifact gets credited                                                                  | Outcome finalizer                                                             | `.github/actions/verify-deliverable`'s log line naming which clause (0, a–e) it evaluated                                                 |
-| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                           | Outcome finalizer (post-dispatch landing observer)                            | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment        |
-| Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                    | Outcome finalizer / Projector (reporting) — see the seam note in that section | `.github/actions/report-failure`'s log                                                                                                    |
-| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                    | Projector/read model                                                          | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                              |
-| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                           | Dispatch controller (reconciliation)                                          | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                     |
+| What you observe                                                                                                                                                 | Owning system                                                                 | Look here first                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Issue carries the right `agent:*` label but nothing dispatches, with no hosted admission log for its delivery                                                    | Dispatch controller (webhook admission)                                       | GitHub App delivery history, then `/api/control-plane/webhook` and Cloud Tasks logs                                                           |
+| Webhook ACKed but the queued `/api/control-plane/webhook/process` request repeatedly returns 4xx/5xx                                                             | Dispatch controller (hosted admission)                                        | App Hosting logs for HMAC, payload normalization, Firestore lease, or GitHub API failure                                                      |
+| The dedicated `Dispatch Canary Router` stays **queued**, never starting                                                                                          | GitHub Actions availability                                                   | The GitHub-hosted workflow run queue; this path no longer depends on a self-hosted runner                                                     |
+| `dispatch-reconcile.yml` fails invoking `/api/control-plane/reconcile`, or the endpoint returns 401/5xx                                                          | Dispatch controller (hosted reconciliation)                                   | The GitHub-hosted job log, then App Hosting logs for OIDC rejection, discovery failure, or per-candidate dispatch failure                     |
+| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                                                           | Runner platform                                                               | Same check, against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                                          |
+| A published action (`rerun-infra-killed-runs`, `dispatch-broker`) fails immediately with a load-time error (e.g. `ERR_MODULE_NOT_FOUND`) in its **own** step log | Dispatch controller                                                           | The failing step's raw log, before assuming an authorization/ordering bug                                                                     |
+| A scheduled workflow (self-healer or sweep) fails or times out repeatedly                                                                                        | Workflow failure alerts                                                       | Its workflow-specific `status:needs-human` issue (`<!-- agent-lcars:workflow-alert:v1:<workflow-file> -->`); see the coverage table below     |
+| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs                                            | Worker runtime (bootstrap phase)                                              | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                       |
+| Worker fails with a provider/model error (rate limit, graph allocation, auth)                                                                                    | Worker runtime (provider admission/execution)                                 | The agent step's own log                                                                                                                      |
+| Agent process exits 0, but no PR/comment/review carries the exact attempt-claim marker, or an unrelated artifact gets credited                                   | Outcome finalizer                                                             | `.github/actions/verify-deliverable`'s log line naming the exact artifact it matched (or the FAILED-lookup name, if the check itself errored) |
+| Dispatch completed successfully, but its agent PR is still open with a stale/red/missing check or a broken merge chain                                           | Outcome finalizer (post-dispatch landing observer)                            | `.github/workflows/deliverable-watchdog.yml`, then the anchor's `<!-- agent-lcars:deliverable-watchdog:v1:pr=<number> -->` comment            |
+| Deliverable clearly exists, but the issue never got a comment, `status:needs-human`, or maintainer assignment                                                    | Outcome finalizer / Projector (reporting) — see the seam note in that section | `.github/actions/report-failure`'s log                                                                                                        |
+| GitHub state (labels, comments, PR) is correct but the console shows something stale or wrong                                                                    | Projector/read model                                                          | `apps/console/src/lib/dispatch-ledger.ts`'s parse of the same ledger comment                                                                  |
+| Ledger stuck on the same revision for a long time, no anomaly recorded                                                                                           | Dispatch controller (reconciliation)                                          | `dispatch-reconcile.yml`'s GitHub-hosted invocation and the App Hosting endpoint logs                                                         |
 
 ## 1. Dispatch controller
 
@@ -493,23 +493,32 @@ it's already one system:
 
 - **Deliverable validation** — `.github/actions/verify-deliverable/verify-deliverable.sh`,
   invoked directly from each worker workflow (`claude.yml`/`codex.yml`/
-  `opencode.yml`) via `post-agent-gates.sh`. Five clauses, evaluated in
-  order: clause 0 is exact evidence (an attempt-claim marker,
-  `<!-- attempt-claim:<attempt-id> -->`, stamped on the specific PR/comment/
-  review this run produced — see `libs/dispatch-contracts/src/marker.ts`'s
-  `formatClaimMarker`); clauses (a)–(e) are inference-based fallbacks (a
-  matching open/updated PR since the run started, the issue closing, a
-  `status:needs-human` label appearing, an expected bot comment on a reply
-  or runbook dispatch, or a PR review on a review dispatch). The inference
-  path is explicitly kept until soak, per #645, not removed yet.
+  `opencode.yml`) via `post-agent-gates.sh`. Exact evidence only (#815): a
+  run passes only when a PR, an issue/PR comment, or (review dispatches
+  only) a pull request review carries THIS run's own hidden
+  `<!-- attempt-claim:<attempt-id> -->` marker — see
+  `libs/dispatch-contracts/src/marker.ts`'s `formatClaimMarker`. The marker
+  is the whole identity check: no time window, no bot-login comparison, no
+  author exclusion. Earlier revisions also accepted five inference-based
+  fallback clauses (a matching open/updated PR since the run started, the
+  issue closing, a `status:needs-human` label appearing, an expected bot
+  comment on a reply or runbook dispatch, or a bare PR review on a review
+  dispatch), each scoped by a `STARTED_AT` time window plus a shared bot
+  login (`EXCLUDE_PR_AUTHOR`). #815 retired them once every live lane
+  (Claude, Codex, OpenCode) adopted the exact marker: a shared login could
+  credit an unrelated artifact touched by the same identity during the same
+  window to a run that produced nothing — confirmed live on #650 generation
+  9, where a human's PR #711 that merely said "Issue #650" in its body got
+  credited as #650's own deliverable.
   A comment carrying both the exact attempt claim and
   `<!-- agent-result:v1:no-op -->` is the machine-verifiable already-resolved
-  result; a generic implement-mode comment still does not pass. The verifier
-  publishes a typed lifecycle outcome and, for PR evidence, the exact PR
-  number. `post-agent-gates.sh` separately classifies startup failure, agent
-  trajectory failure, and outcome-gate failure, and the worker's trusted
-  completion callback persists both outcome and PR reference on that exact
-  ledger attempt. GitHub's coarse workflow conclusion remains separate.
+  result; the same comment without the claim marker does not pass. The
+  verifier publishes a typed lifecycle outcome and, for PR evidence, the
+  exact PR number. `post-agent-gates.sh` separately classifies startup
+  failure, agent trajectory failure, and outcome-gate failure, and the
+  worker's trusted completion callback persists both outcome and PR
+  reference on that exact ledger attempt. GitHub's coarse workflow
+  conclusion remains separate.
 - **Execution-state classification** (`not_started`/`running`/`exited`/
   `timed_out`/`cancelled`/`lost`) — the **finalizer reconciler** owns this
   decision in `apps/dispatch-broker/src/modules/outcome-finalizer.ts`. Its
@@ -533,28 +542,29 @@ it's already one system:
   failure may own that same label.
 
 **What breaking looks like:** an agent process exits zero, but
-`verify-deliverable` finds no clause satisfied — no attempt-claim marker, no
-new/updated PR, no issue close, no label, no expected comment or review.
-The job fails, and `report-failure` posts the visible failure (see the
-Projector section — that step is also, awkwardly, part of today's reporting
-path, not this system's). The inverse failure mode is what clause 0 exists
-to close: before the attempt-claim marker shipped (#645 Phase 4), an
-unrelated PR created by a shared bot identity, or a stale label from
-earlier work, could satisfy an inference clause it shouldn't have —
-`EXCLUDE_PR_AUTHOR` and the `STARTED_AT` time window are the (imperfect)
-guards against that for the clauses that remain.
+`verify-deliverable` finds no PR, comment, or review carrying this run's
+exact attempt-claim marker. The job fails, and `report-failure` posts the
+visible failure (see the Projector section — that step is also, awkwardly,
+part of today's reporting path, not this system's). The inverse failure
+mode — an unrelated PR created by a shared bot identity, or a stale label
+from earlier work, satisfying validation for work no agent did — is what
+the exact marker exists to close (#815; see #650 generation 9 for the
+confirmed live incident that motivated it). There is no longer a time
+window or bot-login exclusion list to keep in sync with the fleet's
+pipelines: the marker names one specific attempt, so nothing but that exact
+string satisfies the gate.
 
 **First three things to check:**
 
-1. `verify-deliverable`'s own log — it names which clause it evaluated and
-   why each one did or didn't match; do not guess from the job's red/green
-   status alone.
+1. `verify-deliverable`'s own log — it names the exact artifact it matched,
+   or the FAILED-lookup name if the check itself errored (distinct from a
+   confirmed absence); do not guess from the job's red/green status alone.
 2. Whether the run actually produced the artifact you expect (a PR, a
-   comment, a label) and whether that artifact carries the attempt-claim
-   marker — if the artifact exists but lacks the marker and doesn't satisfy
-   any inference clause either, that's a real gap, not a false negative. If
-   the PR exists but did not land, inspect its required check and the durable
-   deliverable-watchdog comment on its anchor.
+   comment, a review) and whether that artifact carries the attempt-claim
+   marker — if the artifact exists but lacks the marker, that's a real gap
+   (the agent didn't stamp it per agent-protocol.md #5), not a false
+   negative. If the PR exists but did not land, inspect its required check
+   and the durable deliverable-watchdog comment on its anchor.
 3. If the failure is about execution state (cancelled/lost) rather than
    deliverable validity, check the ledger's `generations` entry directly —
    that classification comes from the controller's reconciliation code

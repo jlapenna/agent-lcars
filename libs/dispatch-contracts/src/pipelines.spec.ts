@@ -5,7 +5,6 @@ import {
   AGENT_LABELS,
   DISPATCH_LABELS,
   DISPATCH_PIPELINES,
-  excludedPullRequestAuthors,
   GENERIC_REPLY_COMMAND,
   PIPELINE_CONTRACTS,
   pipelineContract,
@@ -90,20 +89,6 @@ describe('bot identities', () => {
     // their deliverables apart, so the list must be deduplicated, not
     // per-pipeline.
     expect(AGENT_BOT_LOGINS).toEqual(['claude[bot]', 'agent-lcars[bot]']);
-  });
-
-  it('excludes only the other pipelines pull request authors', () => {
-    expect(excludedPullRequestAuthors('claude')).toEqual(['agent-lcars[bot]']);
-    expect(excludedPullRequestAuthors('codex')).toEqual(['claude[bot]']);
-    expect(excludedPullRequestAuthors('opencode')).toEqual(['claude[bot]']);
-  });
-
-  it('never excludes a pipeline from its own login', () => {
-    for (const pipeline of DISPATCH_PIPELINES) {
-      expect(excludedPullRequestAuthors(pipeline)).not.toContain(
-        PIPELINE_CONTRACTS[pipeline].botLogin,
-      );
-    }
   });
 });
 

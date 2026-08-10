@@ -123,14 +123,17 @@ export function displayTitleMatchesAttempt(
  * The attempt-scoped artifact-claim marker: `<!-- attempt-claim:<attemptId> -->`.
  *
  * #645 Phase 4's exit criterion is "agents cannot certify themselves,
- * unrelated artifacts cannot satisfy a run". Today, `verify-deliverable.sh`
- * proves a deliverable exists by inference: an open/updated PR referencing
- * the anchor, touched inside this run's time window, under a bot login that
- * is not always unique to one pipeline (codex and opencode both push as
- * `agent-lcars[bot]`, an acknowledged limitation — see
- * `excludedPullRequestAuthors`). A time window plus a shared identity is not
- * proof: an unrelated PR touched during the window by the same shared login
- * can satisfy a run that produced nothing.
+ * unrelated artifacts cannot satisfy a run". Before this marker existed,
+ * `verify-deliverable.sh` proved a deliverable existed by inference: an
+ * open/updated PR referencing the anchor, touched inside this run's time
+ * window, under a bot login that is not always unique to one pipeline
+ * (codex and opencode both push as `agent-lcars[bot]`). A time window plus a
+ * shared identity is not proof: an unrelated PR touched during the window by
+ * the same shared login could satisfy a run that produced nothing —
+ * confirmed live on jlapenna/agent-lcars#650 generation 9. #815 retired
+ * that inference entirely once every live lane adopted this marker;
+ * `verify-deliverable.sh` now requires it (or the exact claimed no-op
+ * result below) on every run.
  *
  * This marker replaces inference with an exact claim for the artifacts that
  * can carry a body: an agent stamps it, hidden in an HTML comment so it does

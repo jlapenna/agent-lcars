@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Each case below runs in its own `( ... )` subshell so exported overrides
-# (MODE, EXCLUDE_*) never leak into the next case; shellcheck can't see
+# (MODE, ATTEMPT_ID) never leak into the next case; shellcheck can't see
 # across that isolation, hence the blanket disable below.
 # shellcheck disable=SC2030,SC2031
 set -euo pipefail
@@ -14,6 +14,11 @@ trap 'rm -rf "$test_root"' EXIT
 # from JSON fixtures under $FAKE_GH_DIR, or simulates a transient failure
 # when a `<key>.fail` marker file is present. Missing fixtures default to
 # "nothing found" so each case only has to set up what it cares about.
+# Fixture kinds beyond pulls/comments/reviews (timeline, issue) are kept
+# here even though the exact-marker-only script no longer reads them - the
+# negative cases below build fixtures shaped like what the retired
+# inference clauses used to accept, to prove they no longer satisfy the
+# gate, and a stray unread fixture is harmless.
 fake_bin="$test_root/bin"
 mkdir -p "$fake_bin"
 cat > "$fake_bin/gh" <<'FAKE_GH'
@@ -77,17 +82,17 @@ chmod +x "$fake_bin/gh"
 export PATH="$fake_bin:$PATH"
 
 # Common env every case starts from; each case overrides what it needs.
+# ATTEMPT_ID is always set - #815 made it required, matching production:
+# every real dispatch is bound at broker preflight before the agent step
+# runs, and preflight always publishes it (see verify-deliverable.sh's own
+# header comment).
 base_env() {
   export GH_TOKEN=test-token
   export AGENT="Test Agent"
   export REPO=example/consumer
   export NUM=42
-  export STARTED_AT=2024-01-01T00:00:00Z
   export MODE=implement
-  export RUNBOOK=
-  export EXPECTED_COMMENT_LOGIN="agent-lcars[bot]"
-  export EXCLUDE_PR_AUTHOR=
-  export EXCLUDE_COMMENT_ID=
+  export ATTEMPT_ID="g1:test-intent"
 }
 
 run_case() {
@@ -113,463 +118,187 @@ fail() {
   exit 1
 }
 
-# --- Case 1: clause (a) - PR referencing the issue, updated since start,
-# authored by the agent's own identity (EXPECTED_COMMENT_LOGIN, the login
-# GitHub actually attributes to this run's PRs - see clause (a)'s own
-# comment for why that login and not AGENT_GIT_LOGIN) ---
+# ============================================================================
+# Positive cases: an exact attempt-claim marker on a PR, comment, or review.
+# ============================================================================
+
+# --- Case 1: an exact attempt-claim marker on a PR passes ---
 (
   base_env
-  case_dir="$test_root/pr-passes"
+  case_dir="$test_root/claim-marker-on-pr"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
 JSON
-  run_case pr-passes
-  test "$status" = 0 || fail "clause (a) should pass"
+  run_case claim-marker-on-pr
+  test "$status" = 0 || fail "an exact attempt-claim marker on a PR should pass"
   case "$output" in
-    *"Deliverable evidence: PR referencing #42"*) ;;
-    *) fail "clause (a) message missing expected text" ;;
+    *"::notice::"*"verified via exact attempt-claim marker"*) ;;
+    *) fail "expected the exact-marker notice" ;;
   esac
-  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "clause (a) must publish its PR outcome"
-  grep -qx 'outcome-reference=7' "$GITHUB_OUTPUT" || fail "clause (a) must publish the exact PR number"
+  case "$output" in
+    *"Deliverable evidence: PR carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
+    *) fail "PR message missing expected text" ;;
+  esac
+  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its outcome kind"
+  grep -qx 'outcome-reference=99' "$GITHUB_OUTPUT" || fail "exact PR evidence must publish the exact PR number"
 )
 
-# --- Case 1b: clause (a) - a REFERENCING PR authored by an unrelated login
-# (neither a sibling pipeline nor this run's own identity - e.g. a human)
-# must NOT satisfy the gate merely by mentioning #NUM in its title/body.
-# REGRESSION TEST for the bug confirmed live on jlapenna/agent-lcars#650
-# generation 9: a human's PR (#711) that only said "Issue #650" in its body
-# got credited as #650's deliverable even though no agent produced
-# anything. EXCLUDE_PR_AUTHOR is deliberately left unset here - the old
-# clause only filtered logins EXCLUDE_PR_AUTHOR named, so an author absent
-# from that list (any human, any third-party bot) sailed through
-# regardless; the fix requires the author to actually BE this run's own
-# identity, independent of what is or isn't on the exclusion list. ---
+# A duplicated exact marker still proves that at least one PR exists, but it
+# is ambiguous which PR a later merge should be credited to. The verifier
+# must therefore publish the outcome category without inventing a reference.
 (
   base_env
-  case_dir="$test_root/pr-unrelated-human-author-not-deliverable-regression"
+  case_dir="$test_root/claim-marker-on-two-prs"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":711,"title":"fix(gates): stop a stale needs-human park counting as a deliverable","body":"See Issue #42 for background.","updated_at":"2024-01-02T00:00:00Z","user":{"login":"jlapenna"}}]
+[{"number":99,"title":"One","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}},{"number":100,"title":"Two","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
 JSON
-  run_case pr-unrelated-human-author-not-deliverable-regression
-  test "$status" = 1 || fail "REGRESSION: a PR by an unrelated human author that merely references #NUM must not satisfy clause (a)"
-  case "$output" in
-    *"no deliverable"*) ;;
-    *) fail "expected the no-deliverable message for an unrelated author's referencing PR" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "an unrelated author's referencing PR must still be a genuine (not errored) no-deliverable"
-)
-
-# --- Case 1c: clause (a) - a REFERENCING PR authored by this run's own
-# identity (EXPECTED_COMMENT_LOGIN) still satisfies the gate, even when
-# EXPECTED_COMMENT_LOGIN is not the pr-passes case's default login - proves
-# the new author check keys off EXPECTED_COMMENT_LOGIN specifically, not a
-# hardcoded string ---
-(
-  base_env
-  export EXPECTED_COMMENT_LOGIN="claude[bot]"
-  case_dir="$test_root/pr-own-identity-author-passes"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}}]
-JSON
-  run_case pr-own-identity-author-passes
-  test "$status" = 0 || fail "a referencing PR authored by EXPECTED_COMMENT_LOGIN should satisfy clause (a)"
-  case "$output" in
-    *"Deliverable evidence: PR referencing #42"*) ;;
-    *) fail "own-identity-author message missing expected text" ;;
-  esac
-)
-
-# --- Case 2: clause (a) excludes a sibling pipeline's PR by author on an
-# implement dispatch (mode defaults to implement in base_env) ---
-(
-  base_env
-  export EXCLUDE_PR_AUTHOR="claude[bot]"
-  case_dir="$test_root/pr-excluded-author-implement"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}}]
-JSON
-  run_case pr-excluded-author-implement
-  test "$status" = 1 || fail "excluded-author PR must not satisfy clause (a) on an implement dispatch"
-  case "$output" in
-    *"no deliverable"*) ;;
-    *) fail "excluded-author case should fall through to no-deliverable" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "excluded-author case should still be a genuine (not errored) no-deliverable"
-)
-
-# --- Case 2a2: clause (a)'s author exclusion is comma-separated - every
-# listed sibling pipeline login is excluded ---
-(
-  base_env
-  export EXCLUDE_PR_AUTHOR="claude[bot],agent-lcars[bot]"
-  case_dir="$test_root/pr-excluded-author-list"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}},{"number":8,"title":"Also #42","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
-JSON
-  run_case pr-excluded-author-list
-  test "$status" = 1 || fail "every login in a comma-separated exclusion list must be excluded"
-)
-# An author absent from EXCLUDE_PR_AUTHOR still counts - but, post-fix, only
-# when it is ALSO this run's own identity (EXPECTED_COMMENT_LOGIN). In
-# production EXCLUDE_PR_AUTHOR only ever lists sibling pipelines' logins,
-# never the agent's own (see clause (a)'s header comment), so "absent from
-# the list" and "is this run's own identity" coincide for every real
-# dispatch; case 1b above is the regression test proving an unlisted author
-# that is NOT this run's own identity no longer counts.
-(
-  base_env
-  export EXCLUDE_PR_AUTHOR="claude[bot]"
-  case_dir="$test_root/pr-unlisted-author-passes"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":9,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
-JSON
-  run_case pr-unlisted-author-passes
-  test "$status" = 0 || fail "an author absent from the exclusion list, and equal to this run's own identity, must still satisfy clause (a)"
-)
-
-# --- Case 2b: clause (a) does NOT exclude by author on a reply dispatch -
-# the anchor is explicit, so an update to a PR referencing it is valid
-# evidence regardless of author (e.g. a @claude reply continuing a PR codex
-# originally opened must not be discarded as "not my PR") ---
-(
-  base_env
-  export MODE=reply
-  export EXCLUDE_PR_AUTHOR="claude[bot]"
-  case_dir="$test_root/pr-excluded-author-reply-bypass"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"claude[bot]"}}]
-JSON
-  run_case pr-excluded-author-reply-bypass
-  test "$status" = 0 || fail "an excluded-author PR must still satisfy clause (a) on a reply dispatch"
-  case "$output" in
-    *"Deliverable evidence: PR referencing #42"*) ;;
-    *) fail "reply-mode bypass message missing expected text" ;;
-  esac
-)
-
-# --- Case 2b2: reply mode's bypass extends past the sibling-exclusion list
-# to the new own-identity author check too - an entirely unrelated author
-# (not a sibling, not this run's own identity, no EXCLUDE_PR_AUTHOR even
-# set) still satisfies clause (a) on a reply dispatch, exactly as before
-# this fix. If this regressed, a @claude reply continuing a PR a human
-# (not any agent) had opened would wrongly be discarded. ---
-(
-  base_env
-  export MODE=reply
-  case_dir="$test_root/pr-unrelated-author-reply-bypass"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"jlapenna"}}]
-JSON
-  run_case pr-unrelated-author-reply-bypass
-  test "$status" = 0 || fail "an unrelated-author PR must still satisfy clause (a) on a reply dispatch (own-identity check must not apply there either)"
-  case "$output" in
-    *"Deliverable evidence: PR referencing #42"*) ;;
-    *) fail "reply-mode unrelated-author message missing expected text" ;;
-  esac
-)
-
-# --- Case 2c: clause (a) also matches when #NUM IS the PR's own number -
-# an implement dispatch whose anchor is a pull request (agent:* takeover,
-# #567), where the pushed-to PR never mentions its own number in its own
-# title/body ---
-(
-  base_env
-  case_dir="$test_root/pr-self-referencing-anchor"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":42,"title":"Fix widget","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
-JSON
-  run_case pr-self-referencing-anchor
-  test "$status" = 0 || fail "clause (a) should pass when the PR IS #NUM"
-  case "$output" in
-    *"Deliverable evidence: PR referencing #42"*) ;;
-    *) fail "self-referencing-anchor message missing expected text" ;;
-  esac
-)
-
-# --- Case 2c2: the takeover anchor (#NUM IS the PR's own number) satisfies
-# clause (a) even when authored by a HUMAN, on an implement dispatch - the
-# whole point of the takeover carve-out (#567): the anchor and the
-# pushed-to PR are the same object, and a human may have opened it before
-# the agent took it over. The new own-identity author check must not
-# regress this - it is explicitly exempted for the anchor PR. ---
-(
-  base_env
-  case_dir="$test_root/pr-self-referencing-anchor-human-author"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":42,"title":"Fix widget","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"jlapenna"}}]
-JSON
-  run_case pr-self-referencing-anchor-human-author
-  test "$status" = 0 || fail "clause (a) should pass when the PR IS #NUM, even authored by a human (takeover, #567)"
-  case "$output" in
-    *"Deliverable evidence: PR referencing #42"*) ;;
-    *) fail "human-authored self-referencing-anchor message missing expected text" ;;
-  esac
-)
-
-# --- Case 3: clause (b) - issue closed since start ---
-(
-  base_env
-  case_dir="$test_root/issue-closed"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/issue.json" <<'JSON'
-{"state":"closed","closed_at":"2024-01-02T00:00:00Z","labels":[]}
-JSON
-  run_case issue-closed
-  test "$status" = 0 || fail "clause (b) should pass"
-  case "$output" in
-    *"closed at 2024-01-02T00:00:00Z"*) ;;
-    *) fail "clause (b) message missing expected text" ;;
-  esac
-)
-
-# --- Case 4: clause (c) - status:needs-human label present AND applied
-# during this run (timeline `labeled` event at/after STARTED_AT) ---
-(
-  base_env
-  case_dir="$test_root/needs-human-label"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/issue.json" <<'JSON'
-{"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
-JSON
-  cat > "$case_dir/timeline.json" <<'JSON'
-[{"event":"labeled","label":{"name":"status:needs-human"},"created_at":"2024-01-02T00:00:00Z"}]
-JSON
-  run_case needs-human-label
-  test "$status" = 0 || fail "clause (c) should pass when the label was applied during this run"
-  case "$output" in
-    *"status:needs-human label applied on #42 since 2024-01-01T00:00:00Z"*) ;;
-    *) fail "clause (c) message missing expected text" ;;
-  esac
-)
-
-# --- Case 4b: clause (c) - the label is currently present but the
-# timeline's `labeled` event predates STARTED_AT (a stale, pre-existing
-# park from an earlier run) - must NOT satisfy the gate. Regression test
-# for the bug confirmed live on #650: a park from an earlier failed
-# generation let a later no-op generation's run report success. ---
-(
-  base_env
-  case_dir="$test_root/needs-human-label-stale"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/issue.json" <<'JSON'
-{"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
-JSON
-  cat > "$case_dir/timeline.json" <<'JSON'
-[{"event":"labeled","label":{"name":"status:needs-human"},"created_at":"2023-12-31T00:00:00Z"}]
-JSON
-  run_case needs-human-label-stale
-  test "$status" = 1 || fail "a stale, pre-existing park must not satisfy clause (c)"
-  case "$output" in
-    *"no deliverable"*) ;;
-    *) fail "expected the no-deliverable message for a stale park" ;;
-  esac
-  case "$output" in
-    *"status:needs-human label applied"*) fail "a stale park must not be reported as evidence" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a stale park must still be a genuine (not errored) no-deliverable"
-)
-
-# --- Case 4e: clause (c) - the label WAS applied during this run but has
-# since been REMOVED (the run became unblocked, or a human unparked it).
-# A `labeled` timeline event is permanent, so recency alone would keep
-# satisfying the gate forever even though the issue is no longer parked.
-# Both halves are required: applied by THIS run, and still parked now. ---
-(
-  base_env
-  case_dir="$test_root/needs-human-label-applied-then-removed"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/issue.json" <<'JSON'
-{"state":"open","closed_at":null,"labels":[]}
-JSON
-  cat > "$case_dir/timeline.json" <<'JSON'
-[{"event":"labeled","label":{"name":"status:needs-human"},"created_at":"2024-01-02T00:00:00Z"},
- {"event":"unlabeled","label":{"name":"status:needs-human"},"created_at":"2024-01-02T01:00:00Z"}]
-JSON
-  run_case needs-human-label-applied-then-removed
-  test "$status" = 1 || fail "a park applied then removed must not satisfy clause (c)"
-  case "$output" in
-    *"status:needs-human label applied"*) fail "a removed park must not be reported as evidence" ;;
-    *) ;;
-  esac
-)
-
-# --- Case 4c: clause (c) - the label is absent entirely (current default
-# behaviour, unchanged by the recency fix) ---
-(
-  base_env
-  case_dir="$test_root/needs-human-label-absent"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/issue.json" <<'JSON'
-{"state":"open","closed_at":null,"labels":[]}
-JSON
-  run_case needs-human-label-absent
-  test "$status" = 1 || fail "no label at all must not satisfy clause (c)"
-  case "$output" in
-    *"no deliverable"*) ;;
-    *) fail "expected the no-deliverable message when the label is absent" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a genuinely absent label must still be a genuine (not errored) no-deliverable"
-)
-
-# --- Case 4d: clause (c) - the timeline lookup itself fails; this must be
-# reported as an inconclusive error, not silently treated as "no
-# deliverable" (this repo already fixed that class of bug once - see the
-# header comment's "A FAILED lookup is never silently treated as 'no
-# deliverable found'" rule - and it must not regress here). ---
-(
-  base_env
-  case_dir="$test_root/needs-human-timeline-lookup-fails"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/issue.json" <<'JSON'
-{"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
-JSON
-  : > "$case_dir/timeline.fail"
-  run_case needs-human-timeline-lookup-fails
-  test "$status" = 1 || fail "a failed timeline lookup must fail the step"
-  case "$output" in
-    *"FAILED lookup, distinct from 'no deliverable found'"*"Issue timeline lookup"*) ;;
-    *) fail "expected a distinct FAILED-lookup message naming the issue timeline lookup" ;;
-  esac
-  case "$output" in
-    *"produced no deliverable"*) fail "a failed timeline lookup must not be reported as a confirmed empty result" ;;
-  esac
-  if grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" 2>/dev/null; then
-    fail "an inconclusive (errored) timeline lookup must not set NO_DELIVERABLE=1"
+  run_case claim-marker-on-two-prs
+  test "$status" = 0 || fail "duplicate exact PR markers still prove a PR deliverable"
+  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "duplicate exact PR markers must retain the PR outcome"
+  if grep -q '^outcome-reference=' "$GITHUB_OUTPUT"; then
+    fail "duplicate exact PR markers must not select an arbitrary merge reference"
   fi
 )
 
-# --- Case 5: clause (d) - reply-mode comment, pickup comment excluded ---
-(
-  base_env
-  export MODE=reply
-  export EXCLUDE_COMMENT_ID=555
-  case_dir="$test_root/reply-comment"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/comments.json" <<'JSON'
-[{"id":555,"user":{"login":"agent-lcars[bot]"}},{"id":556,"user":{"login":"agent-lcars[bot]"}}]
-JSON
-  run_case reply-comment
-  test "$status" = 0 || fail "clause (d) should pass on reply mode"
-  case "$output" in
-    *"agent-lcars[bot] posted a comment"*) ;;
-    *) fail "clause (d) message missing expected text" ;;
-  esac
-)
-
-# --- Case 5b: clause (d) also fires on a runbook dispatch (implement mode
-# but RUNBOOK non-empty) - a runbook's sanctioned deliverable can be a
-# summary comment ---
+# --- Case 2: an exact attempt-claim marker on a comment passes, in implement
+# mode, from ANY commenter - the marker itself is the identity check, not
+# the retired reply-mode-only bot-login inference. ---
 (
   base_env
   export MODE=implement
-  export RUNBOOK=unsticking-stuck-prs
-  case_dir="$test_root/runbook-comment"
+  case_dir="$test_root/claim-marker-on-comment"
   mkdir -p "$case_dir"
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":600,"user":{"login":"agent-lcars[bot]"}}]
+[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
 JSON
-  run_case runbook-comment
-  test "$status" = 0 || fail "clause (d) should pass on a runbook dispatch"
+  run_case claim-marker-on-comment
+  test "$status" = 0 || fail "an exact attempt-claim marker on a comment should pass, even in implement mode"
   case "$output" in
-    *"agent-lcars[bot] posted a comment"*) ;;
-    *) fail "runbook clause (d) message missing expected text" ;;
+    *"::notice::"*"verified via exact attempt-claim marker"*) ;;
+    *) fail "expected the exact-marker notice" ;;
+  esac
+  case "$output" in
+    *"Deliverable evidence: comment carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
+    *) fail "comment message missing expected text" ;;
   esac
 )
 
-# --- Case 6: clause (d) is NOT evaluated outside reply mode, even with a
-# qualifying comment present - the whole run must still fail ---
+# --- Case 3: a structured no-op is recognized only when the same comment
+# carries both its typed result marker and this run's exact claim marker. ---
+(
+  base_env
+  case_dir="$test_root/structured-no-op"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":702,"user":{"login":"agent-lcars[bot]"},"body":"NO-OP: PR #99 already contains the requested fix and check run 123 is green.\n<!-- agent-result:v1:no-op -->\n<!-- attempt-claim:g1:test-intent -->"}]
+JSON
+  run_case structured-no-op
+  test "$status" = 0 || fail "an evidence-backed structured no-op should pass"
+  case "$output" in
+    *"evidence-backed structured no-op"*) ;;
+    *) fail "expected structured no-op evidence" ;;
+  esac
+  grep -qx 'outcome-kind=no-op' "$GITHUB_OUTPUT" || fail "structured no-op must publish its durable outcome kind"
+)
+
+# A comment carrying the typed no-op marker WITHOUT this run's own exact
+# claim marker must not be promoted to no-op (or to anything else) - the
+# claimed no-op result is only trustworthy when it is also this run's claim.
+(
+  base_env
+  case_dir="$test_root/no-op-marker-without-claim"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":703,"user":{"login":"agent-lcars[bot]"},"body":"NO-OP: already fixed.\n<!-- agent-result:v1:no-op -->"}]
+JSON
+  run_case no-op-marker-without-claim
+  test "$status" = 1 || fail "a no-op marker without this run's own claim marker must not satisfy the gate"
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 4: an exact attempt-claim marker on a PR review passes in review
+# mode. ---
+(
+  base_env
+  export MODE=review
+  case_dir="$test_root/claim-marker-on-review"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/reviews.json" <<'JSON'
+[{"user":{"login":"someone-else"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
+JSON
+  run_case claim-marker-on-review
+  test "$status" = 0 || fail "an exact attempt-claim marker on a review should pass"
+  case "$output" in
+    *"::notice::"*"verified via exact attempt-claim marker"*) ;;
+    *) fail "expected the exact-marker notice" ;;
+  esac
+  case "$output" in
+    *"Deliverable evidence: pull request review carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
+    *) fail "review message missing expected text" ;;
+  esac
+)
+
+# --- Case 5: a review carrying the marker is NOT checked outside review
+# mode - the reviews endpoint 404s when #NUM is not a pull request, so this
+# must stay gated on MODE=review. ---
 (
   base_env
   export MODE=implement
-  case_dir="$test_root/comment-ignored-outside-reply"
+  case_dir="$test_root/review-marker-ignored-outside-review-mode"
   mkdir -p "$case_dir"
-  cat > "$case_dir/comments.json" <<'JSON'
-[{"id":556,"user":{"login":"agent-lcars[bot]"}}]
+  cat > "$case_dir/reviews.json" <<'JSON'
+[{"user":{"login":"someone-else"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
 JSON
-  run_case comment-ignored-outside-reply
-  test "$status" = 1 || fail "a bare comment must not satisfy the gate outside reply mode"
+  run_case review-marker-ignored-outside-review-mode
+  test "$status" = 1 || fail "a review marker must not be checked outside review mode"
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+)
+
+# --- Case 6: a claim marker naming a DIFFERENT attempt must NOT satisfy this
+# run - that is the whole point of an exact claim. A PR and a comment both
+# carry a foreign attempt's marker; with no other evidence, the run must
+# still fail as a genuine no-deliverable ---
+(
+  base_env
+  case_dir="$test_root/claim-marker-wrong-attempt"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g9:someone-elses-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g9:someone-elses-intent -->"}]
+JSON
+  run_case claim-marker-wrong-attempt
+  test "$status" = 1 || fail "a marker naming a different attempt must not satisfy this run"
+  case "$output" in
+    *"verified via exact attempt-claim marker"*) fail "a foreign attempt's marker must not be reported as this run's exact evidence" ;;
+  esac
   case "$output" in
     *"no deliverable"*) ;;
     *) fail "expected the no-deliverable message" ;;
   esac
-  case "$output" in
-    *"no qualifying comment posted"*) fail "reply-only clause should not be mentioned outside reply mode" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "expected NO_DELIVERABLE=1 to be recorded"
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a foreign marker with no other evidence must still be a genuine (not errored) no-deliverable"
 )
 
-# --- Case 6b: clause (e) - review-mode PR review evidence ---
+# --- Case 7: evidence found later still passes even if an earlier lookup
+# itself failed (the PR lookup errors; the comment lookup then finds the
+# marker) ---
 (
   base_env
-  export MODE=review
-  case_dir="$test_root/review-comment"
+  case_dir="$test_root/error-then-found"
   mkdir -p "$case_dir"
-  cat > "$case_dir/reviews.json" <<'JSON'
-[{"user":{"login":"agent-lcars[bot]"},"submitted_at":"2024-01-02T00:00:00Z"}]
+  : > "$case_dir/pulls.fail"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
 JSON
-  run_case review-comment
-  test "$status" = 0 || fail "clause (e) should pass on review mode"
+  run_case error-then-found
+  test "$status" = 0 || fail "found evidence should win even after an earlier lookup failed"
   case "$output" in
-    *"agent-lcars[bot] submitted a pull request review"*) ;;
-    *) fail "clause (e) message missing expected text" ;;
+    *"Deliverable evidence: comment carrying this run's attempt-claim marker"*) ;;
+    *) fail "expected the comment evidence message" ;;
   esac
-)
-
-# --- Case 6c: clause (e) is NOT evaluated outside review mode, even with a
-# qualifying review present - the whole run must still fail ---
-(
-  base_env
-  export MODE=implement
-  case_dir="$test_root/review-ignored-outside-review"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/reviews.json" <<'JSON'
-[{"user":{"login":"agent-lcars[bot]"},"submitted_at":"2024-01-02T00:00:00Z"}]
-JSON
-  run_case review-ignored-outside-review
-  test "$status" = 1 || fail "a bare review must not satisfy the gate outside review mode"
-  case "$output" in
-    *"no deliverable"*) ;;
-    *) fail "expected the no-deliverable message" ;;
-  esac
-  case "$output" in
-    *"no qualifying pull request review submitted"*) fail "review-only clause should not be mentioned outside review mode" ;;
-  esac
-)
-
-# --- Case 7: all four clauses empty (reply mode) - genuine no-deliverable ---
-(
-  base_env
-  export MODE=reply
-  run_case all-empty-reply
-  test "$status" = 1 || fail "all-empty case must fail"
-  case "$output" in
-    *"no deliverable"*"no qualifying comment posted"*) ;;
-    *) fail "all-empty reply-mode message should name the missing comment clause too" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1"
-)
-
-# --- Case 7b: all clauses empty (review mode) - genuine no-deliverable ---
-(
-  base_env
-  export MODE=review
-  run_case all-empty-review
-  test "$status" = 1 || fail "all-empty review case must fail"
-  case "$output" in
-    *"no deliverable"*"no qualifying pull request review submitted"*) ;;
-    *) fail "all-empty review-mode message should name the missing review clause too" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1"
 )
 
 # --- Case 8: a FAILED lookup is distinguishable from "no deliverable found" ---
@@ -592,244 +321,190 @@ JSON
   fi
 )
 
-# --- Case 9: evidence found later still passes even if an earlier clause's
-# lookup itself failed ---
+# --- Case 9: a comment-lookup failure is reported as inconclusive in every
+# mode now - unlike the retired script, nothing gates this on MODE/RUNBOOK
+# any more, because there is no second clause left to repeat the lookup. ---
 (
   base_env
-  case_dir="$test_root/error-then-found"
-  mkdir -p "$case_dir"
-  : > "$case_dir/pulls.fail"
-  cat > "$case_dir/issue.json" <<'JSON'
-{"state":"closed","closed_at":"2024-01-02T00:00:00Z","labels":[]}
-JSON
-  run_case error-then-found
-  test "$status" = 0 || fail "found evidence should win even after an earlier clause's lookup failed"
-  case "$output" in
-    *"closed at 2024-01-02T00:00:00Z"*) ;;
-    *) fail "expected the issue-closed evidence message" ;;
-  esac
-)
-
-# --- Case 10: clause (0) - an exact attempt-claim marker on a PR passes,
-# WITHOUT going through clause (a)'s inference at all. The PR is built so
-# clause (a) would reject it on every one of its own grounds (updated
-# BEFORE STARTED_AT, author on the exclusion list, no "#42" reference and
-# not #NUM itself) - if this still passes, only clause (0) could have found
-# it ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  export EXCLUDE_PR_AUTHOR="agent-lcars[bot]"
-  case_dir="$test_root/claim-marker-on-pr"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
-JSON
-  run_case claim-marker-on-pr
-  test "$status" = 0 || fail "an exact attempt-claim marker on a PR should pass"
-  case "$output" in
-    *"::notice::"*"verified via EXACT attempt-claim marker"*) ;;
-    *) fail "expected the EXACT-path notice" ;;
-  esac
-  case "$output" in
-    *"Deliverable evidence: PR carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
-    *) fail "clause (0) PR message missing expected text" ;;
-  esac
-  case "$output" in
-    *"PR referencing #42"*) fail "should not have gone through clause (a)'s inference message" ;;
-  esac
-  grep -qx 'outcome-reference=99' "$GITHUB_OUTPUT" || fail "exact PR evidence must publish the exact PR number"
-)
-
-# --- Case 11: clause (0) - an exact attempt-claim marker on a comment
-# passes even in implement mode, where clause (d)'s bare-comment inference
-# is never evaluated at all ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
   export MODE=implement
-  case_dir="$test_root/claim-marker-on-comment"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/comments.json" <<'JSON'
-[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
-JSON
-  run_case claim-marker-on-comment
-  test "$status" = 0 || fail "an exact attempt-claim marker on a comment should pass, even in implement mode"
-  case "$output" in
-    *"::notice::"*"verified via EXACT attempt-claim marker"*) ;;
-    *) fail "expected the EXACT-path notice" ;;
-  esac
-  case "$output" in
-    *"Deliverable evidence: comment carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
-    *) fail "clause (0) comment message missing expected text" ;;
-  esac
-)
-
-# A duplicated exact marker still proves that at least one PR exists, but it
-# is ambiguous which PR a later merge should be credited to. The verifier
-# must therefore publish the outcome category without inventing a reference.
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  case_dir="$test_root/claim-marker-on-two-prs"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":99,"title":"One","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}},{"number":100,"title":"Two","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
-JSON
-  run_case claim-marker-on-two-prs
-  test "$status" = 0 || fail "duplicate exact PR markers still prove a PR deliverable"
-  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "duplicate exact PR markers must retain the PR outcome"
-  if grep -q '^outcome-reference=' "$GITHUB_OUTPUT"; then
-    fail "duplicate exact PR markers must not select an arbitrary merge reference"
-  fi
-)
-
-# --- Case 12: clause (0) - an exact attempt-claim marker on a PR review
-# passes in review mode, without needing submitted_at >= STARTED_AT the way
-# clause (e)'s inference does ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  export MODE=review
-  case_dir="$test_root/claim-marker-on-review"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/reviews.json" <<'JSON'
-[{"user":{"login":"someone-else"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
-JSON
-  run_case claim-marker-on-review
-  test "$status" = 0 || fail "an exact attempt-claim marker on a review should pass"
-  case "$output" in
-    *"::notice::"*"verified via EXACT attempt-claim marker"*) ;;
-    *) fail "expected the EXACT-path notice" ;;
-  esac
-  case "$output" in
-    *"Deliverable evidence: pull request review carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
-    *) fail "clause (0) review message missing expected text" ;;
-  esac
-)
-
-# --- Case 13: a structured no-op is recognized only when the same comment
-# carries both its typed result marker and this run's exact claim marker. ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  case_dir="$test_root/structured-no-op"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/comments.json" <<'JSON'
-[{"id":702,"user":{"login":"agent-lcars[bot]"},"body":"NO-OP: PR #99 already contains the requested fix and check run 123 is green.\n<!-- agent-result:v1:no-op -->\n<!-- attempt-claim:g1:test-intent -->"}]
-JSON
-  run_case structured-no-op
-  test "$status" = 0 || fail "an evidence-backed structured no-op should pass"
-  case "$output" in
-    *"evidence-backed structured no-op"*) ;;
-    *) fail "expected structured no-op evidence" ;;
-  esac
-  grep -qx 'outcome-kind=no-op' "$GITHUB_OUTPUT" || fail "structured no-op must publish its durable outcome kind"
-)
-
-# --- Case 14: a claim marker naming a DIFFERENT attempt must NOT satisfy
-# this run - that is the whole point of an exact claim. A PR and a comment
-# both carry a foreign attempt's marker; with no other evidence, the run
-# must still fail as a genuine no-deliverable ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  case_dir="$test_root/claim-marker-wrong-attempt"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g9:someone-elses-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
-JSON
-  cat > "$case_dir/comments.json" <<'JSON'
-[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g9:someone-elses-intent -->"}]
-JSON
-  run_case claim-marker-wrong-attempt
-  test "$status" = 1 || fail "a marker naming a different attempt must not satisfy this run"
-  case "$output" in
-    *"verified via EXACT attempt-claim marker"*) fail "a foreign attempt's marker must not be reported as this run's exact evidence" ;;
-  esac
-  case "$output" in
-    *"no deliverable"*) ;;
-    *) fail "expected the no-deliverable message" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "a foreign marker with no other evidence must still be a genuine (not errored) no-deliverable"
-)
-
-# --- Case 15: ATTEMPT_ID is set but no artifact carries a claim marker -
-# clause (0) no-ops and the run still passes via the existing inference
-# clause (a), exactly as it did before clause (0) existed ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  case_dir="$test_root/attempt-id-set-inference-still-works"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
-JSON
-  run_case attempt-id-set-inference-still-works
-  test "$status" = 0 || fail "inference should still pass when ATTEMPT_ID is set but unclaimed"
-  case "$output" in
-    *"::notice::"*"verified via INFERENCE"*) ;;
-    *) fail "expected the INFERENCE-path notice" ;;
-  esac
-  case "$output" in
-    *"Deliverable evidence: PR referencing #42"*) ;;
-    *) fail "expected clause (a)'s own evidence message" ;;
-  esac
-)
-
-# --- Case 16: ATTEMPT_ID is set, no claim marker anywhere, and no inference
-# evidence either - genuine no-deliverable, same as the no-ATTEMPT_ID case ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  run_case attempt-id-set-neither-found
-  test "$status" = 1 || fail "neither exact nor inferred evidence must still fail"
-  case "$output" in
-    *"no deliverable"*) ;;
-    *) fail "expected the no-deliverable message" ;;
-  esac
-  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1 even with ATTEMPT_ID set"
-)
-
-# --- Case 17: in implement mode a transient comment-lookup failure must be
-# reported as inconclusive, NOT as a confirmed absence. Clause (d) only runs
-# for reply mode or a runbook dispatch, so nothing else re-queries comments
-# here -- letting clause 0's failure fall through silently would turn "we
-# could not tell" into NO_DELIVERABLE=1 and blame the agent for a network
-# blip. ---
-(
-  base_env
-  export ATTEMPT_ID="g1:test-intent"
-  export MODE=implement
-  case_dir="$test_root/attempt-claim-comment-lookup-failure"
+  case_dir="$test_root/comment-lookup-fails-implement"
   mkdir -p "$case_dir"
   : > "$case_dir/comments.fail"
-  run_case attempt-claim-comment-lookup-failure
+  run_case comment-lookup-fails-implement
   test "$status" = 1 || fail "a failed comment lookup must not pass"
   case "$output" in
-    *"FAILED lookup"*) ;;
-    *) fail "expected the failed-lookup message, not a genuine-absence one" ;;
+    *"FAILED lookup"*"Attempt-claim comment lookup"*) ;;
+    *) fail "expected the failed-lookup message naming the comment lookup" ;;
+  esac
+  if grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" 2>/dev/null; then
+    fail "an inconclusive lookup must NOT be recorded as a confirmed missing deliverable"
+  fi
+)
+(
+  base_env
+  export MODE=reply
+  case_dir="$test_root/comment-lookup-fails-reply"
+  mkdir -p "$case_dir"
+  : > "$case_dir/comments.fail"
+  run_case comment-lookup-fails-reply
+  test "$status" = 1 || fail "a failed comment lookup must not pass in reply mode either"
+  case "$output" in
+    *"FAILED lookup"*"Attempt-claim comment lookup"*) ;;
+    *) fail "expected the failed-lookup message naming the comment lookup" ;;
+  esac
+)
+
+# --- Case 10: a review-lookup failure in review mode is reported as
+# inconclusive, not a confirmed absence. ---
+(
+  base_env
+  export MODE=review
+  case_dir="$test_root/review-lookup-fails"
+  mkdir -p "$case_dir"
+  : > "$case_dir/reviews.fail"
+  run_case review-lookup-fails
+  test "$status" = 1 || fail "a failed review lookup must not pass"
+  case "$output" in
+    *"FAILED lookup"*"PR review lookup"*) ;;
+    *) fail "expected the failed-lookup message naming the review lookup" ;;
   esac
   if grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" 2>/dev/null; then
     fail "an inconclusive lookup must NOT be recorded as a confirmed missing deliverable"
   fi
 )
 
-# --- Case 18: the same failure in reply mode falls through as designed,
-# because clause (d) does repeat the lookup and owns the distinction. ---
+# --- Case 11: genuine no-deliverable, nothing anywhere carries the marker ---
 (
   base_env
-  export ATTEMPT_ID="g1:test-intent"
-  export MODE=reply
-  case_dir="$test_root/attempt-claim-comment-failure-reply-mode"
-  mkdir -p "$case_dir"
-  : > "$case_dir/comments.fail"
-  run_case attempt-claim-comment-failure-reply-mode
-  test "$status" = 1 || fail "a failed comment lookup must not pass in reply mode either"
+  run_case genuine-no-deliverable-implement
+  test "$status" = 1 || fail "no evidence anywhere must fail"
   case "$output" in
-    *"FAILED lookup"*) ;;
-    *) fail "clause (d) should have recorded the failed lookup" ;;
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message" ;;
   esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1"
+)
+(
+  base_env
+  export MODE=review
+  run_case genuine-no-deliverable-review
+  test "$status" = 1 || fail "no evidence anywhere must fail in review mode too"
+  case "$output" in
+    *"no deliverable"*"pull request review"*) ;;
+    *) fail "review-mode no-deliverable message should name the missing review too" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "genuine no-deliverable must set NO_DELIVERABLE=1"
+)
+
+# ============================================================================
+# Negative cases (#815): each of the five retired inference clauses is
+# proven gone by feeding the exact shape of fixture that USED to satisfy it
+# - a time-windowed PR, an issue closure, a status:needs-human label, a bare
+# reply-mode bot comment, and a bare review - all WITHOUT this run's exact
+# attempt-claim marker anywhere. Every one must now be a genuine
+# no-deliverable, matching "An unrelated PR, old label, generic bot comment,
+# issue closure, or review CANNOT satisfy validation" (#815 acceptance
+# criteria).
+# ============================================================================
+
+# --- N1: an unrelated/time-windowed PR - updated recently, authored by the
+# agent's own bot login, even referencing #NUM in its title - no longer
+# satisfies the gate without the exact marker. This is also the #650
+# generation-9 regression shape (a PR that merely mentions the issue number)
+# generalized: no author or recency signal substitutes for the marker any
+# more. ---
+(
+  base_env
+  case_dir="$test_root/unrelated-time-windowed-pr-no-marker"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2099-01-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case unrelated-time-windowed-pr-no-marker
+  test "$status" = 1 || fail "a recently-updated PR merely referencing #NUM must not satisfy the gate without the exact marker"
+  case "$output" in
+    *"no deliverable"*) ;;
+    *) fail "expected the no-deliverable message" ;;
+  esac
+  case "$output" in
+    *"PR referencing #42"*) fail "the retired inference wording must not appear" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+)
+
+# --- N2: an OLD/stale status:needs-human label, currently present and even
+# recorded on the issue timeline, no longer satisfies the gate. ---
+(
+  base_env
+  case_dir="$test_root/old-needs-human-label-no-marker"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/issue.json" <<'JSON'
+{"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
+JSON
+  cat > "$case_dir/timeline.json" <<'JSON'
+[{"event":"labeled","label":{"name":"status:needs-human"},"created_at":"2020-01-01T00:00:00Z"}]
+JSON
+  run_case old-needs-human-label-no-marker
+  test "$status" = 1 || fail "a status:needs-human label must not satisfy the gate without the exact marker"
+  case "$output" in
+    *"status:needs-human label applied"*) fail "the retired inference wording must not appear" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+)
+
+# --- N3: a generic bot comment on a reply dispatch, from exactly the login
+# the retired clause trusted, no longer satisfies the gate without the exact
+# marker. ---
+(
+  base_env
+  export MODE=reply
+  case_dir="$test_root/generic-bot-comment-reply-no-marker"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":556,"user":{"login":"agent-lcars[bot]"},"body":"Picked this up, working on it now."}]
+JSON
+  run_case generic-bot-comment-reply-no-marker
+  test "$status" = 1 || fail "a generic bot comment must not satisfy the gate without the exact marker"
+  case "$output" in
+    *"posted a comment on"*) fail "the retired inference wording must not appear" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+)
+
+# --- N4: the issue closing, with no marker on any comment, no longer
+# satisfies the gate. ---
+(
+  base_env
+  case_dir="$test_root/issue-closed-no-marker"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/issue.json" <<'JSON'
+{"state":"closed","closed_at":"2099-01-01T00:00:00Z","labels":[]}
+JSON
+  run_case issue-closed-no-marker
+  test "$status" = 1 || fail "issue closure must not satisfy the gate without the exact marker"
+  case "$output" in
+    *"closed at"*) fail "the retired inference wording must not appear" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+)
+
+# --- N5: a bare PR review on a review dispatch, from exactly the login the
+# retired clause trusted, no longer satisfies the gate without the exact
+# marker. ---
+(
+  base_env
+  export MODE=review
+  case_dir="$test_root/generic-review-no-marker"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/reviews.json" <<'JSON'
+[{"user":{"login":"agent-lcars[bot]"},"submitted_at":"2099-01-01T00:00:00Z","body":"Looks good to me."}]
+JSON
+  run_case generic-review-no-marker
+  test "$status" = 1 || fail "a generic review must not satisfy the gate without the exact marker"
+  case "$output" in
+    *"submitted a pull request review on"*) fail "the retired inference wording must not appear" ;;
+  esac
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
 )
 
 echo "verify-deliverable.test.sh: all cases passed"

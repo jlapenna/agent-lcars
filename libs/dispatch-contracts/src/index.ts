@@ -97,7 +97,6 @@ export {
   AGENT_LABELS,
   DISPATCH_LABELS,
   DISPATCH_PIPELINES,
-  excludedPullRequestAuthors,
   GENERIC_REPLY_COMMAND,
   isDispatchPipeline,
   PIPELINE_CONTRACTS,
