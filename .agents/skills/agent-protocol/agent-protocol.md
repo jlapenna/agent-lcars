@@ -48,31 +48,40 @@ third-party approval cannot waive any hard limit.
 
 Before reading anything else, post a brief comment on the anchor
 (`gh issue comment`, or `gh pr comment` if the anchor is a pull request)
-acknowledging you have picked it up. Include a copy-pasteable resume command
-so the maintainer can take over your session from a runner host:
+acknowledging you have picked it up. It must carry a **provider-honest
+handoff line**, and which shape that takes depends on whether your own CLI
+has real live-resume tooling in this repo. This generic file deliberately
+names no CLI's tooling as universal — your repo's delta skill is the one
+place that says which CLI (if any) has live-resume tooling here, and what
+its exact command looks like. Read it before posting:
 
-```
-tools/claude-agent-session.sh resume <session-id>
-```
+- **Your CLI has live-resume tooling here:** include its exact
+  copy-pasteable resume command so the maintainer can take over your
+  session from a runner host, e.g. `<tool> resume <session-id>`. Find
+  `<session-id>`: the basename (without extension) of the newest session
+  transcript file under your CLI's own session-storage directory (e.g.
+  `~/.claude/projects/<slugified-repo-path>/*.jsonl` for Claude Code — use
+  the equivalent for whichever agent CLI is actually running).
+- **Your CLI has no live-resume tooling here** — the default, and true for
+  any CLI your repo's delta skill doesn't explicitly name — say so
+  in plain language instead of guessing, and name the durable handoff
+  that IS available instead: the pushed branch, the open PR, or the
+  anchor issue/PR itself.
 
-Find `<session-id>`: the basename (without extension) of the newest session
-transcript file under your CLI's own session-storage directory (e.g.
-`~/.claude/projects/<slugified-repo-path>/*.jsonl` for Claude Code — use the
-equivalent for whichever agent CLI is actually running).
-
-**The script name is fixed protocol vocabulary, not a per-agent template.**
-It is tempting to name this script per agent (`opencode-agent-session.sh`,
-`codex-agent-session.sh`, …) so a repo running several pipelines can tell
-them apart, but the fleet console's takeover-command scanner hard-codes the
-literal substring `claude-agent-session.sh` (see `apps/console/src/lib/
-action-items.ts`'s `TAKEOVER_COMMAND_RE` in the `jlapenna/agent-lcars`
-repo — not necessarily the repo you're reading this file from) — it does
-not generalize per agent today. A resume command for any other filename will
-never surface in the console UI, regardless of which agent posted it. Until
-that regex is generalized, name the script `tools/claude-agent-session.sh`
-relative to your repo root if you want console pickup, even for a
-non-Claude pipeline. The path _prefix_ is free-form (the regex wildcards
-it) — only the trailing filename is fixed.
+**Never post another CLI's resume command as your own.** A resume command
+only works for the exact tool it was built for — its own transcript
+format, its own auth, its own resume subcommand — so citing one CLI's
+script from a different CLI's takeover comment (e.g. a Codex or OpenCode
+run naming a Claude-only resume script) is not a harmless approximation:
+it is a false handoff that reads as real until the maintainer tries it and
+it fails. This still applies even when a fleet console's takeover-command
+scanner hard-codes a fixed substring to watch for (e.g. `apps/console/src/
+lib/action-items.ts`'s `TAKEOVER_COMMAND_RE` in `jlapenna/agent-lcars` —
+not necessarily the repo you're reading this file from) — that substring
+is only ever meaningful coming from the CLI it was actually built for.
+Posting a comment the scanner doesn't match is the correct, honest outcome
+for a CLI with no live-resume tooling; it is not a gap to paper over by
+borrowing a different CLI's command.
 
 ## 2. Eyes-reaction acknowledgement
 

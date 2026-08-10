@@ -258,13 +258,18 @@ exception.
 
 ## Session-resume script
 
-Per agent-protocol.md §1, the console's takeover-command scanner expects a
-resume command containing the literal substring `claude-agent-session.sh`.
-**`tools/claude-agent-session.sh` exists in this repo.** What to post
-depends on which pipeline dispatched you, because the script is
-Claude-specific — it discovers transcripts only under
-`~/.claude/projects`, authenticates with `CLAUDE_CODE_OAUTH_TOKEN`, and
-hands off to `claude --resume`.
+This section is this repo's answer to the question agent-protocol.md §1
+leaves to each repo's delta skill: which CLI (if any) has real
+live-resume tooling here, and what its exact command looks like. The
+console's takeover-command scanner expects a resume command containing the
+literal substring `claude-agent-session.sh`. **`tools/claude-agent-session.sh`
+exists in this repo.** What to post depends on which pipeline dispatched
+you, because the script is Claude-specific — it discovers transcripts only
+under `~/.claude/projects`, authenticates with `CLAUDE_CODE_OAUTH_TOKEN`,
+and hands off to `claude --resume`. Only a `claude.yml` run's takeover
+comment is exempt from agent-protocol.md §1's "no live-resume tooling"
+default below — a `codex.yml` or `opencode.yml` run must follow that
+default and never borrow this script's name.
 
 **Dispatched by `claude.yml`:** post the real command.
 
