@@ -107,6 +107,20 @@ if [ -n "${E2E_GREP:-}" ]; then
   SAFE_ENV+=("E2E_GREP=$E2E_GREP")
 fi
 
+# The E2E target itself is deliberately uncached: replaying a green test run
+# would mean the suite never actually exercised the app. Its dependency graph
+# includes a separately invoked, deterministic console bundle, though, and
+# that build is safe and valuable to share through L2. Admit only the complete
+# remote-cache capability pair; no other caller credentials cross this
+# hermetic boundary.
+if [ -n "${NX_SELF_HOSTED_REMOTE_CACHE_SERVER:-}" ] && \
+  [ -n "${NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN:-}" ]; then
+  SAFE_ENV+=(
+    "NX_SELF_HOSTED_REMOTE_CACHE_SERVER=$NX_SELF_HOSTED_REMOTE_CACHE_SERVER"
+    "NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN=$NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN"
+  )
+fi
+
 # Playwright normally installs browsers below the caller's HOME. Preserve only
 # that cache location while replacing HOME itself; no other caller state crosses
 # the boundary.

@@ -12,16 +12,11 @@ if [ "$git_dir" = "$common_dir" ]; then
   exit 1
 fi
 
-# The remote-cache config is intentionally ignored because it contains the
-# cache credential. Linked worktrees do not inherit ignored files, so copy the
-# primary checkout's local config when it exists. This keeps the setup path
-# aligned with tools/nx, which loads this file only after a reachability probe.
-primary_root="$(dirname "$common_dir")"
-if [ ! -f .nx-remote-cache.env ] && [ -f "$primary_root/.nx-remote-cache.env" ]; then
-  cp "$primary_root/.nx-remote-cache.env" .nx-remote-cache.env
-  chmod 600 .nx-remote-cache.env
-  echo "==> Copied .nx-remote-cache.env from the primary checkout"
-fi
+# No .nx-remote-cache.env copy here on purpose. tools/nx reads through to the
+# primary checkout's copy when a worktree has none, so the credential exists
+# once on disk and a rotation there reaches every worktree immediately. Copying
+# it would also mean a worktree made by a bare `git worktree add` (which never
+# runs this script) silently loses the remote cache.
 
 echo "==> Installing dependencies"
 HUSKY=0 pnpm install --frozen-lockfile
