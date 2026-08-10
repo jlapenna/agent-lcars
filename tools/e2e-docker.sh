@@ -12,11 +12,24 @@
 # for anything on the host directly.
 #
 # Ported from members' tools/e2e-docker.sh (this repo's origin, #2373 Phase
-# 2's hardening), trimmed to agent-lcars' single e2e project and simplified
-# where members' version depends on infra this repo doesn't have (a
-# registry-published image, a multi-frontend port list). The Docker-in-Docker
-# path translation, resource caps, and forwardAllArgs safety check below are
-# kept as-is: they fix real, previously-hit failures, not stylistic choices.
+# 2's hardening), trimmed to agent-lcars' single e2e project. #908 reconciled
+# the two remaining differences that mattered: this now PULLS the same
+# content-hash-tagged image .github/workflows/publish-images.yml publishes to
+# HOMELAB_REGISTRY (agent-lcars/e2e, keyed off tools/e2e/Dockerfile's own
+# sha256) instead of building on demand, and it skips `pnpm install` entirely
+# once install.stamp already matches the lockfile/package.json/patches/image
+# tuple -- ported from sprinkles' v4 design (#4049), but deliberately NOT its
+# run.lock/suite.lock/MemTotal-sized concurrency-slot machinery: that exists
+# there to schedule SEVEN suites against finite host memory, and this repo
+# has one. What one suite genuinely needs -- and lacked before #908 -- is
+# mutual exclusion, full stop: a single exclusive flock for the whole
+# invocation (install-if-needed, then the suite itself), the same shape
+# tools/e2e-local.sh already uses for its own host-direct run. This finally
+# fixes the race this file used to just document as a caveat: two
+# e2e-docker.sh runs from different worktrees writing into the same shared
+# node_modules mount at once. The Docker-in-Docker path translation, resource
+# caps, and forwardAllArgs safety check below are kept as-is: they fix real,
+# previously-hit failures, not stylistic choices.
 #
 # Usage:
 #   tools/e2e-docker.sh <nx-project> [--update] [-- <playwright args>]
@@ -65,10 +78,20 @@
 # silently bake in as empty/undefined.
 #
 # Because the host glibc differs from the container's, the container gets its
-# own node_modules and pnpm store (shared across worktrees under
+# own node_modules (shared across worktrees under
 # ~/.cache/agent-lcars-e2e-docker; override with E2E_DOCKER_CACHE_DIR) so
 # host-built native binaries are never reused inside the container and vice
-# versa -- without paying a cold install per worktree.
+# versa -- without paying a cold install per worktree. The install.stamp
+# cache and run.lock below live in that same shared directory, so the lock
+# correctly serializes every worktree of this checkout against the ONE
+# node_modules mount they all share -- not just concurrent runs within a
+# single worktree.
+#
+# E2E_DOCKER_DRY_RUN=1 prints the derived image tag, the install.stamp
+# hit/miss decision, and the exact `docker run` argv instead of doing
+# anything -- no docker, pull, or lock involved, so
+# tools/e2e-docker-isolation.test.sh can exercise this wrapper's stamp/tag
+# logic without Docker.
 set -euo pipefail
 
 PROJECT="${1:?usage: tools/e2e-docker.sh <nx-project> [--update] [-- <playwright args>]}"
@@ -93,6 +116,11 @@ done
 # without --update (e.g. a CI label-driven run).
 if [ "${UPDATE_SNAPSHOTS:-}" = "1" ]; then
   UPDATE_ENV=(-e UPDATE_SNAPSHOTS=1)
+fi
+
+DRY_RUN=0
+if [ "${E2E_DOCKER_DRY_RUN:-}" = "1" ]; then
+  DRY_RUN=1
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -156,7 +184,7 @@ if [ "${#UPDATE_ENV[@]}" -gt 0 ] && [ -z "${E2E_GREP:-}" ] && [ "${#PASSTHROUGH_
   echo "# To scope this to one spec/suite instead:" >&2
   echo "#   E2E_GREP=\"pattern\" $0 $PROJECT --update" >&2
   echo "############################################################" >&2
-  if [ -z "${CI:-}" ] && [ -t 0 ]; then
+  if [ "$DRY_RUN" -eq 0 ] && [ -z "${CI:-}" ] && [ -t 0 ]; then
     echo ">> Ctrl-C now to abort, or wait 5s to continue with the full-suite regen..." >&2
     sleep 5
   fi
@@ -213,21 +241,84 @@ to_host_path() {
 
 # Shared across ALL worktrees of this repo (a per-worktree cache would cost a
 # cold multi-GB pnpm install + node_modules copy in every fresh worktree).
-# Caveat: two SIMULTANEOUS docker e2e runs from different worktrees would
-# race on the shared node_modules; run one at a time (the resource caps below
-# make parallel local runs impractical anyway).
 DK_DIR="${E2E_DOCKER_CACHE_DIR:-$HOME/.cache/agent-lcars-e2e-docker}"
 
+# Tag derives from the Dockerfile's content, so any Dockerfile change yields a
+# new tag. Must match the derivation in .github/workflows/publish-images.yml's
+# "Compute e2e image tag" step.
 DOCKERFILE="$ROOT/tools/e2e/Dockerfile"
-IMAGE_TAG="agent-lcars-e2e:$(sha256sum "$DOCKERFILE" | cut -c1-12)"
+E2E_TAG="df-$(sha256sum "$DOCKERFILE" | cut -c1-12)"
+IMAGE="${E2E_DOCKER_IMAGE:-docker-registry.lan.jlapenna.net/agent-lcars/e2e:${E2E_TAG}}"
 
-if ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-  echo ">> building $IMAGE_TAG ..."
-  docker build -t "$IMAGE_TAG" -f "$DOCKERFILE" "$ROOT/tools/e2e"
+# The node_modules mount is only correct for a given (lockfile, workspace
+# package.json set, patches, image) tuple: hash the working-tree content of
+# all of them, plus the resolved image tag. Any mismatch (or a missing
+# stamp/modules) means `pnpm install` must run; a match skips it entirely --
+# ported from sprinkles' install.stamp (#4049), ~470 lines lighter: no
+# run.lock/suite.lock split and no MemTotal-sized concurrency slots, because
+# those exist there to schedule seven suites against finite host memory and
+# this repo has one (see this file's header comment).
+#
+# Computed before the registry pull below (unlike the code it's derived
+# from) so the test hook right after it needs neither Docker nor network
+# access.
+compute_install_stamp() {
+  (
+    cd "$ROOT"
+    printf '%s\n' "$E2E_TAG"
+    git ls-files -- pnpm-lock.yaml pnpm-workspace.yaml .npmrc '*package.json' patches |
+      while IFS= read -r f; do
+        { [ -f "$f" ] && sha256sum -- "$f"; } || true
+      done
+  ) | sha256sum | cut -c1-16
+}
+DESIRED_STAMP="$(compute_install_stamp)"
+
+# Test hook (tools/e2e-docker-isolation.test.sh): print the stamp this
+# checkout would require and exit, so the stamp-hit/miss path is exercisable
+# without Docker and without the test re-implementing this derivation.
+if [ "${E2E_DOCKER_PRINT_STAMP:-}" = "1" ]; then
+  printf '%s\n' "$DESIRED_STAMP"
+  exit 0
 fi
 
-# Isolated, host-user-owned dirs the container can write to without perm issues.
-mkdir -p "$DK_DIR/node_modules" "$DK_DIR/home" "$DK_DIR/nx-cache"
+INSTALL_STAMP="$DK_DIR/install.stamp"
+
+# Prefer whatever's already local (no network round-trip), else pull the
+# published image (identical bytes everywhere -- this is what makes local
+# screenshot runs trustworthy against CI's own baselines). Deliberately no
+# local-build fallback (#908): a missing tag means either
+# tools/e2e/Dockerfile changed and hasn't reached main yet (fix: merge it, so
+# publish-images.yml's push-to-main trigger can publish this exact tag), or
+# the registry is unreachable -- either way, silently spending several
+# minutes on a local rebuild here masked both cases rather than surfacing
+# them (the same tradeoff sprinkles' tools/e2e-docker.sh makes, and the
+# reconciliation #908 exists to converge on).
+if [ "$DRY_RUN" -eq 0 ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo ">> e2e-docker: pulling $IMAGE ..." >&2
+  if ! docker pull "$IMAGE"; then
+    echo ">> e2e-docker: ERROR — $IMAGE not found locally or in the registry." >&2
+    echo ">> If tools/e2e/Dockerfile changed on a branch that hasn't reached" >&2
+    echo ">> main yet, merge it -- publish-images.yml publishes this exact" >&2
+    echo ">> content-hash tag on every push to main. Otherwise check registry" >&2
+    echo ">> connectivity to docker-registry.lan.jlapenna.net." >&2
+    exit 1
+  fi
+fi
+
+# Isolated, host-user-owned dir the container can write to without perm
+# issues. Also holds install.stamp and run.lock below. Skipped in DRY_RUN:
+# it touches only the shared cache dir, not this checkout, but DRY_RUN's own
+# contract (see header) is to touch nothing at all.
+if [ "$DRY_RUN" -eq 0 ]; then
+  mkdir -p "$DK_DIR/node_modules" "$DK_DIR/home" "$DK_DIR/nx-cache"
+fi
+
+install_is_current() {
+  [ -f "$INSTALL_STAMP" ] &&
+    [ "$(cat "$INSTALL_STAMP")" = "$DESIRED_STAMP" ] &&
+    [ -d "$DK_DIR/node_modules/.pnpm" ]
+}
 
 # Mount *sources* must be host paths (see to_host_path above); everything the
 # e2e container sees stays at the usual /work-relative paths.
@@ -244,8 +335,13 @@ DK_DIR_HOST="$(to_host_path "$DK_DIR")"
 # root-owned one directly on the host checkout the moment the container
 # starts (the same host-poisoning failure guarded against below, just scoped
 # to this one deliberately-tracked nested path).
-rm -rf "$ROOT/node_modules"
-mkdir -p "$ROOT/node_modules"
+#
+# DESTRUCTIVE (see the file header's WARNING) -- gated on DRY_RUN like the
+# rest of this section, so a dry run genuinely touches nothing on disk.
+if [ "$DRY_RUN" -eq 0 ]; then
+  rm -rf "$ROOT/node_modules"
+  mkdir -p "$ROOT/node_modules"
+fi
 
 # Resource caps so an overweight run (Next build + emulator JVM + Chromium +
 # parallel nx workers) is OOM-killed *inside* the container instead of
@@ -255,19 +351,36 @@ MEM="${E2E_DOCKER_MEMORY:-12g}"
 MEM_SWAP="${E2E_DOCKER_MEMORY_SWAP:-14g}"
 PIDS="${E2E_DOCKER_PIDS:-8192}"
 
-echo ">> running ${PROJECT}:e2e-implementation in container (${UPDATE_ENV[*]:-no-update}; mem=$MEM) ..."
-
 QUOTED_PASSTHROUGH=""
 if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
   QUOTED_PASSTHROUGH=" -- $(printf '%q ' "${PASSTHROUGH_ARGS[@]}")"
+fi
+
+# The install step, when it runs, writes the stamp itself -- gated on `pnpm
+# install` actually succeeding, and BEFORE `nx run` starts, so a suite
+# failure (a real test failure, not a dependency problem) still leaves the
+# next invocation able to skip straight to the suite.
+decide_install_step() {
+  if install_is_current; then
+    INSTALL_NOTE="dependencies current (install.stamp hit); skipping pnpm install"
+    INNER_CMD="pnpm exec nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"
+  else
+    INSTALL_NOTE="installing dependencies (install.stamp miss)"
+    INNER_CMD="pnpm install --frozen-lockfile && echo -n ${DESIRED_STAMP} > /e2e-cache/install.stamp && pnpm exec nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"
+  fi
+}
+
+# For DRY_RUN only: decide now, purely for display -- see the real path
+# below for why this decision is deferred until the lock is held there.
+if [ "$DRY_RUN" -eq 1 ]; then
+  decide_install_step
 fi
 
 # Deliberately NOT --network host: the emulators, dev server, and Playwright
 # all run inside this one container and only ever talk to each other over its
 # own loopback, so nothing outside needs the fixed ports (4200/9099/8080/...)
 # published on the host. The default bridge network gives each run its own
-# namespace for free (still races on the shared node_modules/cache dir above
-# if run concurrently from the same DK_DIR -- that's unrelated).
+# namespace for free.
 #
 # $DK_DIR_HOST/{home,nx-cache} mount at a TOP-LEVEL container path (a sibling
 # of /work, not nested under it) -- deliberately, not just for tidiness.
@@ -280,37 +393,78 @@ fi
 # checkout. node_modules can't join them here (Turbopack, see above) -- it
 # gets its own nested mount instead, onto the directory pre-created above
 # specifically to avoid this same trap.
-exec docker run --rm -t \
-  --ipc=host \
-  --memory="$MEM" \
-  --memory-swap="$MEM_SWAP" \
-  --pids-limit="$PIDS" \
-  --user "$(id -u):$(id -g)" \
-  -v "$ROOT_HOST":/work \
-  -v "$DK_DIR_HOST/node_modules":/work/node_modules \
-  -v "$DK_DIR_HOST":/e2e-cache \
-  -e HOME=/e2e-cache/home \
-  -e NX_CACHE_DIRECTORY=/e2e-cache/nx-cache \
-  -e NX_MAX_PARALLEL="${NX_MAX_PARALLEL:-2}" \
-  -e NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}" \
-  -e HUSKY=0 \
-  -e CI=1 \
-  -e VISUAL_ONLY="${VISUAL_ONLY:-}" \
-  -e SKIP_VISUAL="${SKIP_VISUAL:-}" \
-  -e E2E_GREP="${E2E_GREP:-}" \
-  -e E2E_HERMETIC=1 \
-  -e NX_LOAD_DOT_ENV_FILES=false \
-  -e E2E_ENV_FILE=/work/tools/e2e/ci.env \
-  -e E2E_ENV_LOCAL_FILE=/e2e-cache/home/.env.e2e.local \
-  -e AUTH_SECRET="$(ci_env_value AUTH_SECRET)" \
-  -e NEXT_PUBLIC_FIREBASE_API_KEY="$(ci_env_value NEXT_PUBLIC_FIREBASE_API_KEY)" \
-  -e NEXT_PUBLIC_FIREBASE_APP_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_APP_ID)" \
-  -e NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="$(ci_env_value NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN)" \
-  -e NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST="$(ci_env_value NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST)" \
-  -e NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)" \
-  -e NEXT_PUBLIC_FIREBASE_PROJECT_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_PROJECT_ID)" \
-  -e NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$(ci_env_value NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)" \
-  "${UPDATE_ENV[@]}" \
-  -w /work \
-  "$IMAGE_TAG" \
-  bash -lc "pnpm install --frozen-lockfile && pnpm exec nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"
+DOCKER_ARGS=(
+  run --rm -t
+  --ipc=host
+  --memory="$MEM"
+  --memory-swap="$MEM_SWAP"
+  --pids-limit="$PIDS"
+  --user "$(id -u):$(id -g)"
+  -v "$ROOT_HOST:/work"
+  -v "$DK_DIR_HOST/node_modules:/work/node_modules"
+  -v "$DK_DIR_HOST:/e2e-cache"
+  -e HOME=/e2e-cache/home
+  -e NX_CACHE_DIRECTORY=/e2e-cache/nx-cache
+  -e NX_MAX_PARALLEL="${NX_MAX_PARALLEL:-2}"
+  -e NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}"
+  -e HUSKY=0
+  -e CI=1
+  -e VISUAL_ONLY="${VISUAL_ONLY:-}"
+  -e SKIP_VISUAL="${SKIP_VISUAL:-}"
+  -e E2E_GREP="${E2E_GREP:-}"
+  -e E2E_HERMETIC=1
+  -e NX_LOAD_DOT_ENV_FILES=false
+  -e E2E_ENV_FILE=/work/tools/e2e/ci.env
+  -e E2E_ENV_LOCAL_FILE=/e2e-cache/home/.env.e2e.local
+  -e AUTH_SECRET="$(ci_env_value AUTH_SECRET)"
+  -e NEXT_PUBLIC_FIREBASE_API_KEY="$(ci_env_value NEXT_PUBLIC_FIREBASE_API_KEY)"
+  -e NEXT_PUBLIC_FIREBASE_APP_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_APP_ID)"
+  -e NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="$(ci_env_value NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN)"
+  -e NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST="$(ci_env_value NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST)"
+  -e NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)"
+  -e NEXT_PUBLIC_FIREBASE_PROJECT_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_PROJECT_ID)"
+  -e NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$(ci_env_value NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)"
+  "${UPDATE_ENV[@]}"
+  -w /work
+  "$IMAGE"
+)
+# bash -lc "$INNER_CMD" is appended separately below, once INNER_CMD is
+# actually decided -- see the two branches' own comments for why that
+# decision point differs between DRY_RUN and the real path.
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo ">> e2e-docker: DRY RUN — image: $IMAGE" >&2
+  echo ">> e2e-docker: DRY RUN — $INSTALL_NOTE" >&2
+  echo ">> e2e-docker: DRY RUN — would run:" >&2
+  echo "docker"
+  for arg in "${DOCKER_ARGS[@]}" bash -lc "$INNER_CMD"; do
+    printf '%s\n' "$arg"
+  done
+  echo ">> inner command: $INNER_CMD" >&2
+  exit 0
+fi
+
+# A single exclusive flock for the whole invocation -- $DK_DIR is shared
+# across every worktree of this checkout, so this serializes every
+# e2e-docker.sh run against the one node_modules mount and test-output paths
+# they all share, the same shape tools/e2e-local.sh already uses for its own
+# host-direct run (see that script's own lock). Non-blocking first so a
+# human sees an immediate, actionable message instead of silently hanging.
+RUN_LOCK="$DK_DIR/run.lock"
+exec {RUN_LOCK_FD}>"$RUN_LOCK"
+if ! flock -n -x "$RUN_LOCK_FD"; then
+  echo ">> e2e-docker: another e2e-docker run is using this checkout's shared cache" >&2
+  echo ">> ($DK_DIR, across every worktree) -- waiting for it to finish..." >&2
+  flock -x "$RUN_LOCK_FD"
+fi
+
+# Only NOW -- holding the lock -- is it safe to decide whether install.stamp
+# is current: deciding earlier would race a concurrent run that finishes its
+# own install and updates the stamp while this one was still waiting on the
+# lock above, making this run redundantly reinstall dependencies the other
+# invocation had just made current.
+decide_install_step
+
+echo ">> e2e-docker: $INSTALL_NOTE" >&2
+echo ">> running ${PROJECT}:e2e-implementation in container (${UPDATE_ENV[*]:-no-update}; mem=$MEM) ..."
+exec docker "${DOCKER_ARGS[@]}" bash -lc "$INNER_CMD"
