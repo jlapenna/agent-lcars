@@ -25,6 +25,8 @@
  * whose state authority, credentials, or failure containment is implicated,
  * not merely the one that noticed.
  */
+import { z } from 'zod';
+
 export type OwningSystem =
   'controller' | 'runner' | 'worker' | 'finalizer' | 'projector';
 
@@ -309,46 +311,26 @@ export function formatFailure(failure: FailureClassification): string {
  * So the read side re-validates against the same vocabularies, exactly as it
  * already does for a generation's `pipeline` and `state`.
  */
+const failureClassificationSchema = z.looseObject({
+  owningSystem: z.custom<OwningSystem>(
+    (value) => typeof value === 'string' && SYSTEMS.has(value),
+  ),
+  phase: z.custom<FailurePhase>(
+    (value) => typeof value === 'string' && PHASES.has(value),
+  ),
+  reason: z.custom<FailureReason>(
+    (value) => typeof value === 'string' && REASONS.has(value),
+  ),
+  retryDisposition: z.custom<RetryDisposition>(
+    (value) => typeof value === 'string' && DISPOSITIONS.has(value),
+  ),
+  retryBudget: z.number().int().safe().nonnegative().optional(),
+  evidence: z.string().optional(),
+  detail: z.string().optional(),
+});
+
 export function isWellFormedFailureClassification(
   value: unknown,
 ): value is FailureClassification {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  if (
-    typeof candidate.owningSystem !== 'string' ||
-    !SYSTEMS.has(candidate.owningSystem)
-  ) {
-    return false;
-  }
-  if (typeof candidate.phase !== 'string' || !PHASES.has(candidate.phase)) {
-    return false;
-  }
-  if (typeof candidate.reason !== 'string' || !REASONS.has(candidate.reason)) {
-    return false;
-  }
-  if (
-    typeof candidate.retryDisposition !== 'string' ||
-    !DISPOSITIONS.has(candidate.retryDisposition)
-  ) {
-    return false;
-  }
-  if (
-    candidate.retryBudget !== undefined &&
-    (!Number.isSafeInteger(candidate.retryBudget) ||
-      Number(candidate.retryBudget) < 0)
-  ) {
-    return false;
-  }
-  if (
-    candidate.evidence !== undefined &&
-    typeof candidate.evidence !== 'string'
-  ) {
-    return false;
-  }
-  if (candidate.detail !== undefined && typeof candidate.detail !== 'string') {
-    return false;
-  }
-  return true;
+  return failureClassificationSchema.safeParse(value).success;
 }

@@ -19,6 +19,8 @@
  * genuinely different requirements, so each side keeps its own gate and
  * builds it on this one set of definitions.
  */
+import { z } from 'zod';
+
 import type { FailureClassification } from './failure';
 import { isWellFormedFailureClassification } from './failure';
 import type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
@@ -339,24 +341,58 @@ export function isPlainObject(
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) > 0;
-}
-
-// Widened to `string` deliberately: this set exists to answer "is this
-// arbitrary parsed value one of the known states", which a `Set` of the
-// literal union would refuse to be asked.
-const GENERATION_STATES: ReadonlySet<string> = new Set(
-  LEDGER_GENERATION_STATES,
-);
+const nonEmptyString = z.string().min(1);
+const positiveSafeInteger = z.number().int().safe().positive();
 
 /**
- * Per-element shape check for one `generations` entry.
+ * Per-element schema for one `generations` entry (#884: zod).
  *
+ * Loose on purpose, exactly like the hand-rolled predicate it replaced: it
+ * checks the fields consumers dereference unguarded and passes everything
+ * else through, so every ledger the broker has ever written keeps reading
+ * as well-formed. The `check` preserves the old conditional: an
+ * `attempt.outcomeReference` is only meaningful on a `pull-request`
+ * outcome.
+ */
+const ledgerGenerationSchema = z
+  .looseObject({
+    generation: positiveSafeInteger,
+    intentId: nonEmptyString,
+    sourceId: nonEmptyString,
+    occurredAt: nonEmptyString,
+    pipeline: z.custom<DispatchPipeline>(
+      (value) => typeof value === 'string' && isDispatchPipeline(value),
+    ),
+    state: z.enum(LEDGER_GENERATION_STATES),
+    attempt: z
+      .looseObject({
+        outcome: z
+          .custom<DispatchOutcomeKind>((value) => isDispatchOutcomeKind(value))
+          .optional(),
+        outcomeReference: z
+          .custom<DispatchOutcomeReference>((value) =>
+            isDispatchOutcomeReference(value),
+          )
+          .optional(),
+      })
+      .optional(),
+  })
+  .check((ctx) => {
+    const attempt = ctx.value.attempt;
+    if (
+      attempt?.outcomeReference !== undefined &&
+      attempt.outcome !== 'pull-request'
+    ) {
+      ctx.issues.push({
+        code: 'custom',
+        message: 'outcomeReference requires a pull-request outcome',
+        input: attempt.outcomeReference,
+        path: ['attempt', 'outcomeReference'],
+      });
+    }
+  });
+
+/**
  * This guards a real crash, not a hypothetical one: consumers dereference
  * `state`/`generation`/`pipeline`/`intentId`/`sourceId`/`occurredAt`
  * unguarded, trusting that whatever survived the ledger-level check has this
@@ -367,74 +403,36 @@ const GENERATION_STATES: ReadonlySet<string> = new Set(
 export function isWellFormedGeneration(
   value: unknown,
 ): value is LedgerGeneration {
-  if (!isPlainObject(value)) return false;
-  if (!isPositiveInteger(value.generation)) return false;
-  if (!isNonEmptyString(value.intentId)) return false;
-  if (!isNonEmptyString(value.sourceId)) return false;
-  if (!isNonEmptyString(value.occurredAt)) return false;
-  if (
-    typeof value.pipeline !== 'string' ||
-    !isDispatchPipeline(value.pipeline)
-  ) {
-    return false;
-  }
-  if (typeof value.state !== 'string' || !GENERATION_STATES.has(value.state)) {
-    return false;
-  }
-  // `attempt` is optional, but a non-object value here would still signal a
-  // corrupted ledger even though no consumer reads its fields unguarded.
-  if (value.attempt !== undefined && !isPlainObject(value.attempt)) {
-    return false;
-  }
-  if (isPlainObject(value.attempt)) {
-    if (
-      value.attempt.outcome !== undefined &&
-      !isDispatchOutcomeKind(value.attempt.outcome)
-    ) {
-      return false;
-    }
-    if (
-      value.attempt.outcomeReference !== undefined &&
-      !isDispatchOutcomeReference(value.attempt.outcomeReference)
-    ) {
-      return false;
-    }
-    if (
-      value.attempt.outcomeReference !== undefined &&
-      value.attempt.outcome !== 'pull-request'
-    ) {
-      return false;
-    }
-  }
-  return true;
+  return ledgerGenerationSchema.safeParse(value).success;
 }
+
+const ledgerSourceSchema = z.looseObject({
+  sourceKind: nonEmptyString,
+  sourceId: nonEmptyString,
+});
 
 export function isWellFormedSource(value: unknown): value is LedgerSource {
-  if (!isPlainObject(value)) return false;
-  return isNonEmptyString(value.sourceKind) && isNonEmptyString(value.sourceId);
+  return ledgerSourceSchema.safeParse(value).success;
 }
 
+// `failure` is optional -- every anomaly recorded before #645 has none,
+// and those must keep reading as well-formed rather than rejecting older
+// ledgers. When present it is validated against the real vocabularies, not
+// merely shape-checked: `classifyFailure` refuses to build an invalid
+// classification, but that guarantee does not survive a round trip through
+// a hand-editable GitHub comment.
+const ledgerAnomalySchema = z.looseObject({
+  kind: nonEmptyString,
+  occurredAt: nonEmptyString,
+  failure: z
+    .custom<FailureClassification>((value) =>
+      isWellFormedFailureClassification(value),
+    )
+    .optional(),
+});
+
 export function isWellFormedAnomaly(value: unknown): value is LedgerAnomaly {
-  if (!isPlainObject(value)) return false;
-  if (!isNonEmptyString(value.kind) || !isNonEmptyString(value.occurredAt)) {
-    return false;
-  }
-  // `failure` is optional -- every anomaly recorded before #645 has none,
-  // and those must keep reading as well-formed rather than rejecting older
-  // ledgers. When present it is validated against the real vocabularies, not
-  // merely shape-checked: `classifyFailure` refuses to build an invalid
-  // classification, but that guarantee does not survive a round trip through
-  // a hand-editable GitHub comment, and this predicate narrows its input to
-  // a typed `FailureClassification` that consumers then render as
-  // operational data. Same reasoning already applied to a generation's
-  // `pipeline` and `state` above.
-  if (
-    value.failure !== undefined &&
-    !isWellFormedFailureClassification(value.failure)
-  ) {
-    return false;
-  }
-  return true;
+  return ledgerAnomalySchema.safeParse(value).success;
 }
 
 /**
@@ -444,45 +442,32 @@ export function isWellFormedAnomaly(value: unknown): value is LedgerAnomaly {
  * This is deliberately NOT the writer's full gate — it does not enforce
  * active/pending cardinality or cross-check the numeric `repositoryId`, both
  * of which the broker must enforce and a read path has no cheap way to. A
- * caller that needs those layers them on top.
+ * caller that needs those layers them on top. `projection` stays optional for
+ * the same reason `anomalies[].failure` is: every ledger written before it
+ * existed must keep reading as well-formed, but a present-and-malformed value
+ * must not reach a consumer as though it were real convergence data.
  */
+const dispatchLedgerSchema = z.looseObject({
+  schema: z.literal(LEDGER_SCHEMA),
+  revision: z.number().int().safe().nonnegative(),
+  task: z.looseObject({
+    repository: nonEmptyString,
+    // `repositoryId` is checked for presence and shape, not identity: it is
+    // the field that survives a repository rename, which is the one job the
+    // `repository` string cannot do. Cross-checking it against the task the
+    // caller expected stays the caller's decision.
+    repositoryId: positiveSafeInteger,
+    issue: positiveSafeInteger,
+  }),
+  control: z.looseObject({}),
+  sources: z.array(ledgerSourceSchema),
+  generations: z.array(ledgerGenerationSchema),
+  anomalies: z.array(ledgerAnomalySchema),
+  projection: z
+    .custom<ProjectionStatus>((value) => isWellFormedProjectionStatus(value))
+    .optional(),
+});
+
 export function isWellFormedLedger(value: unknown): value is DispatchLedger {
-  if (!isPlainObject(value)) return false;
-  if (value.schema !== LEDGER_SCHEMA) return false;
-  if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 0) {
-    return false;
-  }
-  if (!isPlainObject(value.task)) return false;
-  if (!isNonEmptyString(value.task.repository)) return false;
-  if (!isPositiveInteger(value.task.issue)) return false;
-  // `repositoryId` is checked for presence and shape, not identity. The type
-  // guard declares a `LedgerTaskRef` with a required numeric `repositoryId`,
-  // so letting a ledger without one through would hand every downstream
-  // consumer `undefined` from a field the compiler promised was a number --
-  // and it is the field that survives a repository rename, which is the one
-  // job the `repository` string cannot do. Cross-checking it against the
-  // task the caller expected stays the caller's decision; the writer's
-  // `assertTaskRef` has always required it, so nothing the broker has ever
-  // written is rejected by this.
-  if (!isPositiveInteger(value.task.repositoryId)) return false;
-  if (!Array.isArray(value.sources) || !Array.isArray(value.generations)) {
-    return false;
-  }
-  if (!Array.isArray(value.anomalies)) return false;
-  if (!isPlainObject(value.control)) return false;
-  if (!value.generations.every(isWellFormedGeneration)) return false;
-  if (!value.sources.every(isWellFormedSource)) return false;
-  if (!value.anomalies.every(isWellFormedAnomaly)) return false;
-  // `projection` is optional for the same reason `anomalies[].failure` is
-  // (see isWellFormedAnomaly above): every ledger written before it existed
-  // must keep reading as well-formed, but a present-and-malformed value —
-  // hand-edited or corrupted — must not reach a consumer as though it were
-  // real convergence data.
-  if (
-    value.projection !== undefined &&
-    !isWellFormedProjectionStatus(value.projection)
-  ) {
-    return false;
-  }
-  return true;
+  return dispatchLedgerSchema.safeParse(value).success;
 }

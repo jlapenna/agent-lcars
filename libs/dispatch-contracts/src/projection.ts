@@ -19,6 +19,8 @@
  * projection" without the projector needing its own clock.
  */
 
+import { z } from 'zod';
+
 export const PROJECTION_CONVERGENCE_STATES = [
   /** No convergence attempt has been recorded yet. */
   'pending',
@@ -31,8 +33,12 @@ export const PROJECTION_CONVERGENCE_STATES = [
   'diverged',
 ] as const;
 
-export type ProjectionConvergenceState =
-  (typeof PROJECTION_CONVERGENCE_STATES)[number];
+export const projectionConvergenceStateSchema = z.enum(
+  PROJECTION_CONVERGENCE_STATES,
+);
+export type ProjectionConvergenceState = z.infer<
+  typeof projectionConvergenceStateSchema
+>;
 
 /**
  * A convergence checkpoint. `desiredRevision` is the ledger revision the
@@ -40,21 +46,14 @@ export type ProjectionConvergenceState =
  * ledger revision GitHub has actually been made to reflect. Equal exactly
  * when `state === 'converged'`.
  */
-export interface ProjectionStatus {
-  desiredRevision: number;
-  observedRevision: number;
-  state: ProjectionConvergenceState;
+export const projectionStatusSchema = z.looseObject({
+  desiredRevision: z.number().int().safe().nonnegative(),
+  observedRevision: z.number().int().safe().nonnegative(),
+  state: projectionConvergenceStateSchema,
   /** When this checkpoint was recorded. */
-  observedAt: string;
-}
-
-const CONVERGENCE_STATES: ReadonlySet<string> = new Set(
-  PROJECTION_CONVERGENCE_STATES,
-);
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
+  observedAt: z.string().min(1),
+});
+export type ProjectionStatus = z.infer<typeof projectionStatusSchema>;
 
 /**
  * Whether an arbitrary parsed value is a `ProjectionStatus` worth trusting.
@@ -66,23 +65,5 @@ function isNonNegativeInteger(value: unknown): value is number {
 export function isWellFormedProjectionStatus(
   value: unknown,
 ): value is ProjectionStatus {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  if (!isNonNegativeInteger(candidate.desiredRevision)) return false;
-  if (!isNonNegativeInteger(candidate.observedRevision)) return false;
-  if (
-    typeof candidate.state !== 'string' ||
-    !CONVERGENCE_STATES.has(candidate.state)
-  ) {
-    return false;
-  }
-  if (
-    typeof candidate.observedAt !== 'string' ||
-    candidate.observedAt.length === 0
-  ) {
-    return false;
-  }
-  return true;
+  return projectionStatusSchema.safeParse(value).success;
 }
