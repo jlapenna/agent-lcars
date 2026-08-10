@@ -55,8 +55,8 @@ function navHref(
 }
 
 /**
- * Shared top-of-page chrome for the five console destinations (Bridge,
- * Inbox, agents, sessions, costs): title/subtitle row and the LCARS pill nav rail
+ * Shared top-of-page chrome for the console destinations (Bridge, Inbox,
+ * Agents, Shuttlebay, Sessions, Costs): title/subtitle row and the LCARS pill nav rail
  * (the one page every page can jump from/to). The session detail page (a
  * drill-down, not a nav destination) keeps its own lighter back-link header
  * instead of this component.
@@ -135,7 +135,7 @@ export function ConsoleHeader({
 }
 
 /**
- * The five-destination pill rail on its own - ConsoleHeader composes it
+ * The destination pill rail on its own - ConsoleHeader composes it
  * under the title block, and the drill-down pages (session detail, task)
  * render it bare in place of what used to be a single hardcoded back
  * link, so they stop being navigation dead ends while keeping their
@@ -160,6 +160,7 @@ export function ConsoleNavRail({
           href={navHref(item, archiveQuery, repoFilter)}
           underline="never"
           className="lcars-nav-pill"
+          data-destination={item.key}
           data-accent={item.accent}
           data-active={item.key === current ? '' : undefined}
           aria-current={item.key === current ? 'page' : undefined}
