@@ -21,6 +21,13 @@ outputs:
   rerun:
     description: Number of runs identified as infra-killed and automatically reran
     value: ${{ steps.run.outputs.rerun }}
+  rerun-run-ids:
+    description: >-
+      JSON array of {runId, runAttempt, anchor, runUrl} for every run this
+      pass reran, for a caller to report one ci_retry recovery observation
+      per entry (see jlapenna/agent-lcars#864/#869/#875); anchor is the
+      associated PR number, or 0 when none was found.
+    value: ${{ steps.run.outputs.rerun-run-ids }}
 
 runs:
   using: composite

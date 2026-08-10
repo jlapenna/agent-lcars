@@ -3,6 +3,7 @@ import 'server-only';
 import {
   COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
+  RECOVERY_OBSERVATION_OIDC_AUDIENCE,
   WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
   WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH,
   WORKER_WORKFLOW_FILES,
@@ -177,4 +178,47 @@ export async function verifyCompletionOidcToken(
     audience: COMPLETION_OIDC_AUDIENCE,
   });
   return assertCompletionOidcClaims(payload, repository);
+}
+
+export type RecoveryObservationOidcIdentity = ReconcileOidcIdentity;
+
+/**
+ * Not pinned to one workflow path, unlike `assertReconcileOidcClaims`/
+ * `assertCompletionOidcClaims` -- no workflow in this repository calls this
+ * endpoint yet (see #869/#870), so there is no real caller to pin to. What
+ * IS fixed, matching every other hosted endpoint here: the caller must be
+ * `repository` itself on `main`. Extending trust to a consumer repository's
+ * OIDC identity (`supersprinklesracing/sprinkles`, `jlapenna/homelab`) is a
+ * deliberately separate, later change -- see #870 -- not something this
+ * function does by broadening `repository` past a single exact match.
+ */
+export function assertRecoveryObservationOidcClaims(
+  claims: JWTPayload,
+  repository: string,
+): RecoveryObservationOidcIdentity {
+  if (claims['repository'] !== repository) {
+    throw new Error('OIDC repository claim does not match the control plane');
+  }
+  if (claims['ref'] !== 'refs/heads/main') {
+    throw new Error('OIDC ref claim is not main');
+  }
+  return {
+    repository,
+    repositoryId: positiveIntegerClaim(
+      claims['repository_id'],
+      'repository_id',
+    ),
+    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
+  };
+}
+
+export async function verifyRecoveryObservationOidcToken(
+  token: string,
+  repository: string,
+): Promise<RecoveryObservationOidcIdentity> {
+  const { payload } = await jwtVerify(token, githubActionsJwks, {
+    issuer: GITHUB_ACTIONS_ISSUER,
+    audience: RECOVERY_OBSERVATION_OIDC_AUDIENCE,
+  });
+  return assertRecoveryObservationOidcClaims(payload, repository);
 }

@@ -14,10 +14,10 @@ export const config = {
 };
 
 export default createAuthProxy({
-  // These control-plane routes perform stronger request authentication
-  // themselves: reconcile and completion verify GitHub Actions OIDC claims,
-  // while webhook and the queued completion reconciler verify raw-body HMACs.
-  // None has a browser session.
+  // These control-plane routes do not use browser sessions. Reconcile and
+  // completion verify GitHub Actions OIDC claims, while webhook and the queued
+  // completion reconciler verify raw-body HMACs. Task state is an explicitly
+  // public, read-only projection with the private attempt capability redacted.
   publicRoutes: [
     '/login',
     '/api/logs/error',
@@ -32,5 +32,5 @@ export default createAuthProxy({
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page
   // that carries the X-e2e-auth-user header.
-  publicPrefixes: ['/api/e2e/'],
+  publicPrefixes: ['/api/e2e/', '/api/control-plane/task-state/'],
 });

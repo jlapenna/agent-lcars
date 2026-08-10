@@ -76,8 +76,11 @@ export {
   COMPLETION_OIDC_AUDIENCE,
   HOSTED_COMPLETION_PATH,
   HOSTED_COMPLETION_URL,
+  HOSTED_RECOVERY_OBSERVATION_PATH,
+  HOSTED_RECOVERY_OBSERVATION_URL,
   HOSTED_TASK_STATE_PATH,
   HOSTED_TASK_STATE_URL,
+  RECOVERY_OBSERVATION_OIDC_AUDIENCE,
   WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
   WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH,
   WEBHOOK_INGRESS_PROBE_PATH,
@@ -132,6 +135,23 @@ export {
 } from './quick-task';
 export type { LaneReadinessFailure } from './readiness';
 export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';
+export type {
+  ParsedRecoveryOperationKey,
+  RecoveryDomain,
+  RecoveryObservation,
+  RecoveryOperationTarget,
+  RecoverySourceKind,
+} from './recovery-observation';
+export {
+  buildRecoveryObservation,
+  formatOperationKey,
+  isRecoveryDomain,
+  isRecoverySourceKind,
+  isWellFormedRecoveryObservation,
+  parseOperationKey,
+  RECOVERY_DOMAINS,
+  RECOVERY_SOURCE_KINDS,
+} from './recovery-observation';
 export type { AuthoritativeTaskState } from './task-state';
 export {
   AUTHORITATIVE_TASK_STATE_SCHEMA,
