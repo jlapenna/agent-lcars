@@ -1706,6 +1706,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   .queue-list-controls,
   .queue-search-input {
     width: 100%;
+    flex-basis: 100%;
     max-width: none;
   }
 
