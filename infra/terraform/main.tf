@@ -361,6 +361,44 @@ resource "google_secret_manager_secret" "telemetry_writer_key" {
   depends_on = [google_project_service.services]
 }
 
+# Write credential for the self-hosted Nx remote cache on spark. Terraform
+# owns the container; the VALUE is minted by hand with `openssl rand -hex 32`
+# on the cache host and copied here with `gcloud secrets versions add`, the
+# same split used by codex_auth below.
+#
+# This is the second of the two sources tools/setup-nx-remote-cache.sh tries,
+# and it exists for the case the first cannot serve: a run outside the
+# maintainer's home directory, which has workload identity but no age key.
+# See docs/nx-remote-cache.md.
+#
+# The lowercase-hyphen secret_id is deliberate and must match what that script
+# and sprinkles' tools/setup-repo.sh look up. It is the same credential and
+# the same name in both repos' projects; the cache server holds exactly one
+# write token fleet-wide (homelab#500 tracks making that per-consumer).
+resource "google_secret_manager_secret" "nx_cache_access_token" {
+  secret_id = "nx-cache-access-token"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+# The agent jobs are the only identities that reach this from CI, and both
+# already receive the same token through the NX_CACHE_TOKEN Actions secret,
+# so granting read here widens no blast radius -- it only lets a job that
+# runs the setup script resolve the credential the same way a workstation
+# does. Scoped to this one secret rather than a project-level role, for the
+# reason spelled out on codex_auth_accessor below.
+resource "google_secret_manager_secret_iam_member" "nx_cache_access_token_accessor" {
+  for_each = toset([
+    google_service_account.codex_agent.email,
+    google_service_account.dispatch_preflight.email,
+  ])
+  secret_id = google_secret_manager_secret.nx_cache_access_token.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${each.value}"
+}
+
 # codex.yml's ChatGPT subscription credential (issue #47). Terraform owns
 # the container; the VALUE is minted by hand (`codex login` on a
 # workstation, then `gcloud secrets versions add`) and never lives in this
