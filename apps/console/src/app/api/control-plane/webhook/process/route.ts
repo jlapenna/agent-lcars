@@ -21,6 +21,16 @@ function header(request: Request, name: string): string {
   return value;
 }
 
+// A delivery that keeps failing this many times is a poison pill (e.g. a
+// deterministically unparseable payload), not a transient outage: returning
+// 500 forever keeps Cloud Tasks redelivering it every few seconds
+// indefinitely (observed 2026-08-08..10: eight pull_request:labeled
+// deliveries at 800+ attempts each, ~10s apart, for 31 hours — the queue's
+// own max-attempts did not stop them). Past this bound the delivery is
+// acked and dropped with a loud log; the reconcile scan rebuilds any state
+// the event carried from GitHub itself.
+const MAX_PROCESS_ATTEMPTS = 10;
+
 export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = Buffer.from(await request.arrayBuffer());
   if (
@@ -35,7 +45,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   let canary: WebhookIngressCanaryIdentity | undefined;
-  let attempt = 1;
+  const attempt = parseCloudTasksAttempt(
+    request.headers.get('x-cloudtasks-taskretrycount'),
+  );
   try {
     const deliveryId = header(request, 'x-github-delivery');
     const eventName = header(request, 'x-github-event');
@@ -44,9 +56,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     ) as GitHubWebhookPayload;
     canary = identifyWebhookIngressCanary(deliveryId, eventName, payload);
     if (canary) {
-      attempt = parseCloudTasksAttempt(
-        request.headers.get('x-cloudtasks-taskretrycount'),
-      );
       await recordWebhookIngressProcessing(canary, attempt);
     }
     const result = await admitGitHubWebhook({
@@ -70,6 +79,16 @@ export async function POST(request: Request): Promise<NextResponse> {
           receiptError,
         );
       }
+    }
+    if (attempt >= MAX_PROCESS_ATTEMPTS) {
+      console.error(
+        `agent-lcars: dropping webhook delivery after ${attempt} failed attempts; reconcile will heal any state it carried`,
+        error,
+      );
+      return NextResponse.json(
+        { outcome: 'dropped_after_retries', attempt },
+        { status: 200, headers: { 'Cache-Control': 'no-store' } },
+      );
     }
     console.error('agent-lcars: hosted admission failed', error);
     return NextResponse.json(
