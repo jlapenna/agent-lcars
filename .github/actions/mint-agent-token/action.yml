@@ -40,6 +40,23 @@ inputs:
     description: Actions permission level to request.
     required: false
     default: ''
+  permission-metadata:
+    description: Metadata permission level to request.
+    required: false
+    default: ''
+  permission-workflows:
+    description: >-
+      Workflows permission level to request (only 'write' is meaningful -
+      lets the token create or update .github/workflows/** files). Opt-in
+      and unset by default: every existing caller that does not set this
+      keeps its current scope unchanged, even after an installation
+      approves the App's own workflows permission grant (jlapenna/
+      agent-lcars#868). When set, this action verifies the installation
+      actually granted it (see verify-workflows-grant.sh) and fails before
+      returning a token, rather than silently handing back a token that
+      will only fail much later at push time.
+    required: false
+    default: ''
 
 outputs:
   token:
@@ -48,6 +65,9 @@ outputs:
   app-slug:
     description: App slug the token was minted for.
     value: ${{ steps.mint.outputs.app-slug }}
+  installation-id:
+    description: Installation ID the token was minted for.
+    value: ${{ steps.mint.outputs.installation-id }}
 
 runs:
   using: composite
@@ -64,3 +84,48 @@ runs:
         permission-contents: ${{ inputs.permission-contents }}
         permission-pull-requests: ${{ inputs.permission-pull-requests }}
         permission-actions: ${{ inputs.permission-actions }}
+        permission-metadata: ${{ inputs.permission-metadata }}
+        permission-workflows: ${{ inputs.permission-workflows }}
+
+    # The early trusted capability check (#868): runs BEFORE this action
+    # returns (composite steps run in order and stop on the first failure by
+    # default - no `if:` needed to skip this after a failed mint), so every
+    # caller - including every lane workflow's own "Mint agent token" step,
+    # which always runs before claim/checkout/the model-invocation step -
+    # fails here rather than deep into an agent's turn at push time.
+    #
+    # Unconditional, not gated on inputs.permission-workflows: a published
+    # action (docs/published-actions.md) is referenced cross-repo at `@main`
+    # with whatever permission-* inputs that caller chooses, including none
+    # at all - and this composite's own long-documented "leave everything
+    # blank to get every installation permission" behavior would otherwise
+    # let `workflows` leak into such a caller's token silently, with no
+    # opt-in, the moment an installation approves it (Codex review on #903).
+    # verify-workflows-grant.sh mints its own probe token with this same
+    # call's exact permission-* inputs and inspects THAT token's actual
+    # grant - not GET /app/installations/{id}, which reports the
+    # installation's overall ceiling rather than what a specifically-scoped
+    # token receives, and produced a false failure here for exactly the
+    # narrowed-allowlist case this step exists to protect (see the script's
+    # own header for the full story). Blank permission-workflows means
+    # "expect workflows to be absent from a token minted this way", not
+    # "skip the check".
+    #
+    # Gated strictly on what a REVIEWED WORKFLOW-YAML CHANGE sets via
+    # inputs.permission-*: nothing an issue comment, PR body, or agent tool
+    # call can influence at runtime. The check only ever reads what its own
+    # probe token actually receives; it never widens what the real token
+    # above was minted with.
+    - name: Verify workflows permission was actually granted
+      shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.client-id }}
+        PRIVATE_KEY: ${{ inputs.private-key }}
+        INSTALLATION_ID: ${{ steps.mint.outputs.installation-id }}
+        PERMISSION_ISSUES: ${{ inputs.permission-issues }}
+        PERMISSION_CONTENTS: ${{ inputs.permission-contents }}
+        PERMISSION_PULL_REQUESTS: ${{ inputs.permission-pull-requests }}
+        PERMISSION_ACTIONS: ${{ inputs.permission-actions }}
+        PERMISSION_METADATA: ${{ inputs.permission-metadata }}
+        REQUESTED_LEVEL: ${{ inputs.permission-workflows }}
+      run: bash "$GITHUB_ACTION_PATH/verify-workflows-grant.sh"

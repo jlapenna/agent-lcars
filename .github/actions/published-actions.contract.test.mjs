@@ -36,8 +36,19 @@ const PUBLISHED = {
       'permission-contents': { required: false, default: '' },
       'permission-pull-requests': { required: false, default: '' },
       'permission-actions': { required: false, default: '' },
+      // permission-metadata/permission-workflows added deliberately
+      // (agent-lcars#868): both additive, unset by default, so an existing
+      // consumer that omits them is unaffected. permission-workflows also
+      // gates a new preflight step (verify-workflows-grant.sh) that fails
+      // the mint before returning a token if the installation has not
+      // actually approved `workflows` - see docs/agent-workflow-write-permission.md.
+      'permission-metadata': { required: false, default: '' },
+      'permission-workflows': { required: false, default: '' },
     },
-    outputs: ['token', 'app-slug'],
+    // installation-id added deliberately (#868): additive, alongside
+    // token/app-slug - an existing consumer that only reads those two is
+    // unaffected by an output it never asked for.
+    outputs: ['token', 'app-slug', 'installation-id'],
   },
   'claim-issue': {
     inputs: {

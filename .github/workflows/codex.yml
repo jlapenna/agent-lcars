@@ -158,12 +158,30 @@ jobs:
           intent-id: ${{ inputs.broker_intent_id }}
           dispatch-token: ${{ inputs.broker_dispatch_token }}
 
+      # Explicit permission-* allowlist (#868), not the blank/"all
+      # installation permissions" default this step used before: the Agent
+      # LCARS App now also declares `workflows` (approved on the
+      # supersprinklesracing org installation; see #868), and
+      # actions/create-github-app-token grants a token EVERY permission the
+      # installation has approved whenever no permission-* input narrows it.
+      # Left blank, this step's token would silently start carrying
+      # workflows:write the moment this repo's own installation approves
+      # it too - with no opt-in, no preflight, and no dispatch ever having
+      # asked for it. Enumerating exactly today's actually-used set (not a
+      # smaller guess) keeps this step's behavior unchanged while making
+      # `workflows` opt-in only, via mint-agent-token's own
+      # permission-workflows input (unset here on purpose).
       - name: Mint agent token
         id: agent-lcars-token
         uses: ./.github/actions/mint-agent-token
         with:
           client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-actions: write
+          permission-contents: write
+          permission-issues: write
+          permission-metadata: read
+          permission-pull-requests: write
 
       - name: Claim the issue as the agent fleet
         id: claim
