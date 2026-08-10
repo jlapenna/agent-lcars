@@ -135,7 +135,15 @@ type FleetHostConfig struct {
 	RequireReadiness  bool   `yaml:"require_readiness,omitempty"`
 	RunnerLimit       *int   `yaml:"runner_limit,omitempty"`
 	WorkDirSizeCapRaw string `yaml:"workdir_size_cap,omitempty"`
-	DockerSocketGID   string `yaml:"docker_socket_gid,omitempty"`
+	// PnpmStoreBudgetRaw bounds the shared pnpm content-addressable store
+	// (agent-lcars#852). Unlike WorkDirSizeCapRaw, this is OPTIONAL: it falls
+	// back to defaultPnpmStoreBudgetBytes when unset, so retrofitting this
+	// field never breaks an existing deployment's orchestrator.yml the way
+	// making it required would. Always validated to sit below the same
+	// host's workdir_size_cap (resolve() below) -- the store is one tenant
+	// of the shared workdir, not a separate budget.
+	PnpmStoreBudgetRaw string `yaml:"pnpm_store_budget,omitempty"`
+	DockerSocketGID    string `yaml:"docker_socket_gid,omitempty"`
 }
 
 type FleetPlacementFile struct {
@@ -299,13 +307,14 @@ func underAllowlist(path string, allowlist []string) bool {
 }
 
 type resolvedOrchestratorConfig struct {
-	Raw             OrchestratorConfig
-	DockerHosts     []string
-	RunnerLimits    map[string]int
-	WorkDirSizeCaps map[string]int64
-	DockerSocketGID map[string]string
-	MainsRequired   map[string]bool
-	MetricsViaSSH   map[string]bool
+	Raw              OrchestratorConfig
+	DockerHosts      []string
+	RunnerLimits     map[string]int
+	WorkDirSizeCaps  map[string]int64
+	PnpmStoreBudgets map[string]int64
+	DockerSocketGID  map[string]string
+	MainsRequired    map[string]bool
+	MetricsViaSSH    map[string]bool
 	// ReadinessRequired names the hosts whose placement is gated on the
 	// operator-supplied readiness signal. Nil when no host opts in.
 	ReadinessRequired map[string]bool
@@ -364,6 +373,7 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 
 	r.RunnerLimits = map[string]int{}
 	r.WorkDirSizeCaps = map[string]int64{}
+	r.PnpmStoreBudgets = map[string]int64{}
 	r.DockerSocketGID = map[string]string{}
 	seenHosts := map[string]bool{}
 	for i, h := range c.Fleet.Hosts {
@@ -406,6 +416,29 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 				return fmt.Errorf("host %q has invalid workdir_size_cap %q", h.Name, h.WorkDirSizeCapRaw)
 			}
 			r.WorkDirSizeCaps[h.Name] = sz
+		}
+		if h.PnpmStoreBudgetRaw != "" {
+			sz, err := units.RAMInBytes(h.PnpmStoreBudgetRaw)
+			if err != nil || sz <= 0 {
+				return fmt.Errorf("host %q has invalid pnpm_store_budget %q", h.Name, h.PnpmStoreBudgetRaw)
+			}
+			r.PnpmStoreBudgets[h.Name] = sz
+		}
+		// The pnpm store budget must sit strictly below the workdir cap: it
+		// is one tenant of that shared tree, not an independent ceiling
+		// (agent-lcars#852). Compared against the RESOLVED budget (explicit
+		// override or defaultPnpmStoreBudgetBytes) so a too-small
+		// workdir_size_cap fails --check-config even when pnpm_store_budget
+		// itself is left at its default rather than silently never letting a
+		// shared-workdir runner place on that host.
+		if capBytes, hasCap := r.WorkDirSizeCaps[h.Name]; hasCap {
+			budget := int64(defaultPnpmStoreBudgetBytes)
+			if override, ok := r.PnpmStoreBudgets[h.Name]; ok {
+				budget = override
+			}
+			if budget >= capBytes {
+				return fmt.Errorf("host %q pnpm store budget %d bytes must be less than its workdir_size_cap %d bytes", h.Name, budget, capBytes)
+			}
 		}
 		if h.DockerSocketGID != "" {
 			gid, err := strconv.Atoi(h.DockerSocketGID)

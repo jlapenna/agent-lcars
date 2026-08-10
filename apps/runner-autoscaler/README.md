@@ -46,6 +46,87 @@ The deployment-owned alert can page on unavailable runners persisting for ten
 minutes without mistaking the brief registration window during startup for a
 dead broker connection.
 
+## Shared pnpm store: budget and metrics
+
+A `share_workdir: true` scale set bind-mounts a persistent
+`/home/runner/_work` on its host, and pnpm's package store lives inside it at
+`.pnpm-store` (content-addressable, shared across every job that lands on
+that host). #827 added an idle-safe prune/evict for it under
+`workdir_size_cap` (see `### Configuration` below), but that only runs
+between jobs. #852/#853 add a placement-time budget and dedicated metrics so
+the store cannot grow past a safe point while nothing is idle to sweep it,
+and so an operator can see the store — not just the whole workdir — without
+shelling in.
+
+**Budget.** `fleet.hosts[].pnpm_store_budget` is an optional per-host size
+(same units as `workdir_size_cap`, e.g. `20g`). Unlike `workdir_size_cap`, it
+is **not required** — a host without one falls back to a 20 GiB default,
+comfortably under the smallest `workdir_size_cap` deployed today (30 GiB),
+so adding this to an existing `orchestrator.yml` is optional. Whichever value
+applies (explicit or default) must sit strictly below that host's
+`workdir_size_cap` — the store is one tenant of the shared workdir, not an
+independent ceiling — and `--check-config` rejects a configuration where it
+does not.
+
+```yaml
+fleet:
+  hosts:
+    - name: janeway
+      workdir_size_cap: 30g
+      pnpm_store_budget: 15g # optional; defaults to 20g
+```
+
+**Enforcement.** The idle-host sweep (`RunWorkDirSweeper`/`SweepWorkDirs`)
+already measures the shared workdir on every periodic pass and immediately
+after each job completes on a host; it now also measures `.pnpm-store`
+itself and caches the result. Runner placement (`pickHostLocked`) reads that
+cache — never a live filesystem check, so this adds no latency to placement
+— and refuses a **new** shared-workdir runner on any host whose last-known
+store size is at or above budget, incrementing
+`github_runner_autoscaler_placement_blocked_total{reason="pnpm_store_budget"}`.
+This never touches an active job: every host considered here is already
+confirmed idle by the existing shared-workdir-exclusivity check, so excluding
+one only leaves it idle a little longer, which is exactly what lets the next
+sweep prune or evict it back under budget. A host with no cached measurement
+yet (never swept) is not excluded — the same fail-open policy the host-load
+gate uses for missing telemetry, otherwise a host could never receive its
+first placement.
+
+The sweep's own pnpm prune/evict step runs whenever _either_ the whole
+workdir exceeds `workdir_size_cap` _or_ the store alone exceeds its own
+(tighter) budget — not only the former. The store can drift over its own
+budget while the rest of the workdir stays comfortably under its cap, and
+without this second, independent trigger nothing would ever prune or evict
+it back down in that case, permanently wedging the placement gate above
+blocked on that host.
+
+**Metrics** (all by `host`, all under `github_runner_autoscaler_`):
+
+- `pnpm_store_bytes` — the store's size after the last sweep.
+- `pnpm_store_budget_bytes` — the configured (or defaulted) budget, so a
+  dashboard/alert can compute `pnpm_store_bytes / pnpm_store_budget_bytes`
+  without hardcoding the number from `orchestrator.yml`.
+- `pnpm_store_prune_total{result}` / `pnpm_store_eviction_total{result}` —
+  outcomes of the sweep's `pnpm store prune` and last-resort full-store
+  eviction, `result` bounded to `success`, `failure`, `skipped` (not
+  attempted this sweep — workdir was under cap, or, prune only, the
+  `runner_image` has no `pnpm` binary).
+- `workdir_sweep_success_total` / `workdir_sweep_failures_total{reason}` —
+  whether the idle-host maintenance sweep itself (the helper container that
+  produces all of the above, plus the pre-existing `workdir_bytes` /
+  `workdir_swept_bytes_total`) completed, `reason` bounded to
+  `container_create`, `container_start`, `container_wait`, `exit_nonzero`,
+  `logs_read`, `output_unparseable`.
+
+**Operator query path.** Same Prometheus/Grafana instance and `/metrics`
+endpoint as every other `github_runner_autoscaler_*` series in this file —
+see `docs/observability.md`'s `github-runner-autoscaler` entry in
+`jlapenna/homelab` for the dashboard, and that repo's
+`observability/prometheus/rules.yml` for the `RunnerAutoscalerPnpmStore*`
+alert/recording rules (sustained growth, evictions, cleanup failures) this
+metric family feeds. Ad hoc: `pnpm_store_bytes / pnpm_store_budget_bytes` in
+Grafana Explore or `promtool query instant` against the homelab Prometheus.
+
 ## LCARS live runner status
 
 The autoscaler can publish its current queue depth and each scale set's

@@ -22,11 +22,16 @@ type FleetCoordinator struct {
 	lastFleetCounts           map[string]int
 	dockerSocketGIDs          map[string]string
 	workDirSizeCaps           map[string]int64
-	hostRunnerLimits          map[string]int
-	mainsRequired             map[string]bool
-	metricsViaSSH             map[string]bool
-	readinessRequired         map[string]bool
-	gate                      *weightedPlacementGate
+	// pnpmStoreBudgets: configured per-host budget for the shared pnpm
+	// store (agent-lcars#852), consulted by pickHostLocked. See
+	// Scaler.pnpmStoreBudgetBytes/pnpmStoreBudgets for the fallback-default
+	// resolution.
+	pnpmStoreBudgets  map[string]int64
+	hostRunnerLimits  map[string]int
+	mainsRequired     map[string]bool
+	metricsViaSSH     map[string]bool
+	readinessRequired map[string]bool
+	gate              *weightedPlacementGate
 
 	hostSampleMu     sync.Mutex
 	hostSamples      map[string]hostSample
@@ -36,6 +41,16 @@ type FleetCoordinator struct {
 	placementMu      sync.Mutex
 	placementCursor  int
 	hostWorkDirLocks sync.Map
+
+	// pnpmStoreMu guards pnpmStoreBytes, the last-known shared pnpm-store
+	// size per host (agent-lcars#852/#853). Populated by sweepHostWorkDir on
+	// every idle-host sweep -- periodic and immediately after each job
+	// completes on that host -- and read by pickHostLocked's budget gate. A
+	// dedicated mutex, not hostSampleMu/mu: this cache is written from the
+	// sweep's own goroutine, never under fleet.mu, and updating it must
+	// never contend with (or be mistaken for) host-load telemetry.
+	pnpmStoreMu    sync.Mutex
+	pnpmStoreBytes map[string]int64
 }
 
 // hostReservation tracks one in-flight placement decision so its release
@@ -54,7 +69,8 @@ func newFleetCoordinator(maxRunners int, limits map[string]int, workCaps map[str
 		reservations: map[string]int{}, sharedWorkDirReservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
 		hostRunnerLimits: limits, workDirSizeCaps: workCaps, dockerSocketGIDs: socketGIDs, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
-		gate: newWeightedPlacementGate(weights, order),
+		pnpmStoreBytes: map[string]int64{},
+		gate:           newWeightedPlacementGate(weights, order),
 	}
 }
 

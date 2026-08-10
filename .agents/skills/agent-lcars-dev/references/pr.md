@@ -24,6 +24,26 @@
    interactively-driven PR merges normally through GitHub's own review
    flow.
 
+   **The `Protect main` ruleset is the only thing protecting `main`.** The
+   classic branch protection that used to sit alongside it was retired on
+   2026-08-10; `GET /repos/:owner/:repo/branches/main/protection` now
+   returns 404 by design, and `GET /repos/:owner/:repo/rules/branches/main`
+   is the authoritative view. Do not re-add classic protection: the two
+   systems enforce the same branch independently and drifted apart in
+   practice, and a violation names the rule without saying which system
+   raised it, so the failure reads like a broken flag rather than policy.
+
+   The ruleset enforces required `Verify`, a strict up-to-date-branch
+   policy, `required_review_thread_resolution`, and no deletion or
+   force-push. Admins (`RepositoryRole:5`) hold `bypass_mode: always` as a
+   deliberate escape hatch. That bypass is the whole reason `--admin` works
+   — while classic protection existed it set `enforce_admins: true`, which
+   revoked the exemption and made `gh pr merge --admin` fail with
+   `Required status check "Verify" is expected` even on a green PR, because
+   a check that passed against a stale base does not count under the strict
+   policy. If an admin merge is refused now, update the branch and let
+   `Verify` re-run rather than reaching for a bigger hammer.
+
 5. **Resolve every review thread — replying is not enough.** The
    `Protect main` ruleset sets `required_review_thread_resolution: true`
    on its `pull_request` rule: a PR with any unresolved review thread

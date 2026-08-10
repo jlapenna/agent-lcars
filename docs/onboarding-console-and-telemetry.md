@@ -48,14 +48,36 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
 
 - Write that delta skill (mirror `.agents/skills/lcars/lcars-protocol.md`
   in this repo): name the fleet-claim identity, the PR reviewer/park
-  assignee, the reply triggers, the repo's own verify commands, and any
-  hard limits additive to `agent-protocol.md §11`.
-- Add `tools/claude-agent-session.sh` at that **exact path and filename**
-  — the console's takeover-command scanner
+  assignee, the reply triggers, the repo's own verify commands, any hard
+  limits additive to `agent-protocol.md §11`, **and — required, not
+  optional — which CLI(s) (if any) have real live-resume tooling in this
+  repo, with the exact command to post.** agent-protocol.md §1 defaults
+  every CLI the delta skill doesn't explicitly name to "no live-resume
+  tooling," so installing a working script per the next bullet without
+  also declaring it here leaves the capability silently unreported: an
+  agent that only reads §1's default posts an honest-but-wrong "no resume
+  tooling exists" comment despite the script actually working, and the
+  console's takeover affordance stays dark for no reason. Mirror
+  `.agents/skills/lcars/lcars-protocol.md`'s "Session-resume script"
+  section, which is exactly this declaration for this repo.
+- **For a Claude dispatch that ships genuinely Claude-capable resume
+  tooling:** add `tools/claude-agent-session.sh` at that **exact path and
+  filename** — the console's takeover-command scanner
   (`apps/console/src/lib/action-items.ts`'s `TAKEOVER_COMMAND_RE`)
   hard-codes the literal substring `claude-agent-session.sh` and does not
-  generalize per agent. A takeover comment referencing any other filename
-  never surfaces in the console UI, even for a non-Claude pipeline.
+  generalize per agent, so a takeover comment referencing any other
+  filename never surfaces in the console UI.
+- **For Codex, OpenCode, or any pipeline without real live-resume tooling
+  in the new repo:** do not create a script under that name (or any other
+  name) just to satisfy the scanner, and do not name
+  `claude-agent-session.sh` in that pipeline's takeover comment — it is a
+  Claude-only tool and citing it from a different CLI's comment is a false
+  handoff, not an honest gap disclosure. Follow agent-protocol.md §1's
+  provider-honest default instead: state plainly that no live-resume
+  tooling exists for that CLI, and point at the pushed branch/PR. This
+  repo's own `.agents/skills/lcars/lcars-protocol.md` ("Session-resume
+  script") is a worked example of the split between the Claude case and
+  the Codex/OpenCode case.
 - Use the exact fixed vocabulary agent-protocol.md calls out: the
   `status:needs-human` label (never renamed/localized), the assignee-plus-label
   parking pattern, the eyes-reaction acknowledgement, one continuously
