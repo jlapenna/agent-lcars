@@ -206,9 +206,16 @@ fi
 # directory. Outside a container this is the identity. Escape hatch:
 # E2E_DOCKER_PATH_TRANSLATE=0 (e.g. a true docker-in-docker daemon that
 # really does see this container's filesystem).
+#
+# Also skipped entirely in DRY_RUN (agent-lcars#908): nothing gets mounted,
+# so an accurate host path is pointless to compute -- and this repo's own
+# self-hosted CI runners ARE containers (the JIT runner image), where /tmp is
+# routinely tmpfs. tools/e2e-docker-isolation.test.sh's mktemp-based cache
+# dirs hit exactly that "no host identity" refusal on those runners before
+# this exemption existed, despite never touching Docker at all.
 to_host_path() {
   local path="$1"
-  if [ ! -f /.dockerenv ] || [ "${E2E_DOCKER_PATH_TRANSLATE:-1}" = "0" ]; then
+  if [ "$DRY_RUN" -eq 1 ] || [ ! -f /.dockerenv ] || [ "${E2E_DOCKER_PATH_TRANSLATE:-1}" = "0" ]; then
     printf '%s\n' "$path"
     return 0
   fi
