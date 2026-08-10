@@ -1,0 +1,134 @@
+name: Fixture 868 workflow permission proof
+
+# One-off, throwaway proof for jlapenna/agent-lcars#868: does a token minted
+# from the Agent LCARS GitHub App, requesting the `workflows` permission,
+# actually carry it on THIS repo's (personal-account) installation?
+#
+# The org installation (supersprinklesracing) already shows workflows:write
+# approved (verified via `gh api orgs/supersprinklesracing/installations`
+# ahead of this run). The personal-account installation, which covers
+# jlapenna/agent-lcars and jlapenna/homelab, cannot be listed by API from an
+# ordinary user token (`gh api /repos/jlapenna/agent-lcars/installation` 401s
+# - it needs App-level JWT auth) - this run is the direct proof instead.
+#
+# Deliberately calls actions/create-github-app-token directly, not through
+# ./.github/actions/mint-agent-token: this proof has to stand on its own,
+# independent of whatever mint-agent-token capability plumbing lands in the
+# same PR, so a bug in that plumbing can never make this proof look better
+# (or worse) than the installation's real, ground-truth permission state.
+#
+# Delete this file (and the fixture branches it creates) once the proof run
+# URL + conclusion are recorded on #868 - see the PR body for the recorded
+# evidence. This file is not meant to be a permanent fixture.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    timeout-minutes: 10
+    steps:
+      # Requests exactly the two permissions the real fix needs: `contents`
+      # (to push at all) and `workflows` (the specific gated permission
+      # #868 is about). Nothing else - this is a probe, not a working
+      # credential for any other operation.
+      - name: Mint a token requesting workflows:write
+        id: mint
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
+      # fetch-depth: 0 so both fixture branches below can be created from a
+      # real history and cleanly deleted afterward. persist-credentials
+      # stores the minted token as the git push credential (masked by
+      # Actions' own secret-masking of the mint step's output - the token
+      # itself is never echoed anywhere in this workflow).
+      - name: Checkout with the minted credential
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.mint.outputs.token }}
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name 'agent-lcars[bot]'
+          git config user.email 'agent-lcars[bot]@users.noreply.github.com'
+
+      # The exact gated operation from #868's background: create a new file
+      # under .github/workflows/. A no-trigger workflow (workflow_dispatch
+      # only) so even an unexpected surviving copy can never fire on its
+      # own before cleanup.
+      - name: Push a workflow-file fixture branch (the gated operation)
+        id: workflow-push
+        continue-on-error: true
+        run: |
+          git checkout -b fixture/868-workflow-perm-proof
+          cat > .github/workflows/fixture-868-noop.yml <<'FIXTURE_YAML'
+          name: Fixture 868 noop (throwaway, no trigger)
+          on:
+            workflow_dispatch:
+          jobs:
+            noop:
+              runs-on: ubuntu-latest
+              steps:
+                - run: echo "fixture only - proves nothing on its own"
+          FIXTURE_YAML
+          git add .github/workflows/fixture-868-noop.yml
+          git commit -m 'fixture(868): prove workflows:write push capability'
+          git push origin fixture/868-workflow-perm-proof
+
+      # Regression check: the same token, pushing an ordinary (non-workflow)
+      # file, must still succeed - #868's fix must not cost the fleet its
+      # existing source-write capability.
+      - name: Push an ordinary source fixture (regression check)
+        id: source-push
+        continue-on-error: true
+        run: |
+          git checkout main
+          git checkout -b fixture/868-source-proof
+          mkdir -p .github/.fixture-868
+          date -u +%s > .github/.fixture-868/source-proof.tmp
+          git add .github/.fixture-868/source-proof.tmp
+          git commit -m 'fixture(868): prove ordinary source push still works'
+          git push origin fixture/868-source-proof
+
+      # Job conclusion is the record: red means the personal installation
+      # has not approved workflows:write yet (or approved a narrower level);
+      # a source-push failure is an unrelated regression either way. Never
+      # print $GITHUB_TOKEN or the minted token here.
+      - name: Report results
+        if: always()
+        run: |
+          {
+            echo "### Fixture 868 workflow permission proof"
+            echo "- workflow-file push: \`${{ steps.workflow-push.outcome }}\`"
+            echo "- ordinary source push: \`${{ steps.source-push.outcome }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          if [ '${{ steps.workflow-push.outcome }}' != 'success' ]; then
+            echo '::error::Workflow-file push FAILED - the personal-account installation most likely has not approved the workflows permission yet. Approve it at github.com/settings/installations (or the org installations page) and re-dispatch this workflow.'
+            status=1
+          fi
+          if [ '${{ steps.source-push.outcome }}' != 'success' ]; then
+            echo '::error::Ordinary source push FAILED - unexpected regression, unrelated to the workflows permission.'
+            status=1
+          fi
+          exit "$status"
+
+      # Best-effort cleanup regardless of outcome above - a fixture branch
+      # must never outlive this run. The push steps run continue-on-error,
+      # so a branch that never got created here (create-github-app-token
+      # itself failing, say) is simply a silent no-op delete.
+      - name: Delete fixture branches
+        if: always()
+        run: |
+          git push origin --delete fixture/868-workflow-perm-proof || true
+          git push origin --delete fixture/868-source-proof || true
