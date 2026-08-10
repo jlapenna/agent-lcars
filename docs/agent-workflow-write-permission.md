@@ -53,7 +53,14 @@ there.
   `permission-actions/contents/issues/metadata/pull-requests` — that
   reproduces exactly what those calls already had before #868, and leaves
   `permission-workflows` unset. `workflows` stays available only to a
-  caller that deliberately sets it.
+  caller that deliberately sets it. Since agent-lcars#823, the "Mint agent
+  token" step itself lives inside the shared
+  `.github/actions/dispatch-bootstrap` composite (all three lanes call it
+  the same way); `dispatch-bootstrap` forwards its own
+  `permission-workflows` input straight through to `mint-agent-token`
+  unchanged, so the opt-in stays exactly as per-caller as it was before
+  that extraction — see "Using the capability" below for the updated call
+  site.
 - **Early, trusted capability check, unconditional**: because GitHub does
   not reject a mint call that requests more than an installation has
   approved — it silently narrows the token instead (["the installation
@@ -105,21 +112,34 @@ No dispatch requests `permission-workflows` yet — #868's own acceptance
 criteria defer redispatching agent-lcars#823/#815/#813 and
 supersprinklesracing/sprinkles#4179 (already merged) to a future task, once
 this capability is live. When a lane workflow does need it for a specific
-dispatch, add the input to that lane's own "Mint agent token" step:
+dispatch, add the input to that lane's own "Dispatch bootstrap" step
+(agent-lcars#823 moved "Mint agent token" itself inside the shared
+`dispatch-bootstrap` composite, which forwards this one input through
+unchanged):
 
 ```yaml
-- name: Mint agent token
-  uses: ./.github/actions/mint-agent-token
+- name: Dispatch bootstrap
+  uses: ./.github/actions/dispatch-bootstrap
   with:
-    client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
-    private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-    permission-actions: write
-    permission-contents: write
-    permission-issues: write
-    permission-metadata: read
-    permission-pull-requests: write
+    issue: ${{ inputs.issue }}
+    broker-generation: ${{ inputs.broker_generation }}
+    broker-intent-id: ${{ inputs.broker_intent_id }}
+    broker-dispatch-token: ${{ inputs.broker_dispatch_token }}
+    gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
+    gcp-dispatch-preflight-sa: ${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}
+    dispatch-firestore-database-id: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
+    gcp-project-id: ${{ vars.GCP_PROJECT_ID }}
+    agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
+    maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
+    agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+    agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
     permission-workflows: write
 ```
+
+The other five `permission-*` values (`actions`/`contents`/`issues`/
+`metadata`/`pull-requests`) are fixed inside `dispatch-bootstrap` itself,
+not exposed as inputs — they have never varied across the three lane
+callers. `permission-workflows` is the one deliberate exception.
 
 Only a reviewed workflow-YAML change can set this — nothing in an issue
 comment, PR body, or an agent's own tool calls can reach it at runtime, so

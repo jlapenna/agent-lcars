@@ -36,13 +36,22 @@ workflows, no separate actions repo, and no Marketplace listing.
 
 ### Internal
 
-`setup-node-pnpm` — this repo's pnpm/Node/frozen-lockfile block. Consumers
-have their own setup actions; do not adopt.
+- `setup-node-pnpm` — this repo's pnpm/Node/frozen-lockfile block.
+  Consumers have their own setup actions; do not adopt.
+- `agent-handoff` — claude.yml/codex.yml/opencode.yml's shared
+  agent-setup + verify-agent-identity pairing (agent-lcars#823). Purely an
+  orchestration convenience local to this repo's own three lane workflows;
+  a consumer repo should call the wrapped `agent-setup`/
+  `verify-agent-identity` actions directly instead, which remain Published.
 
 ### Coupled — do not consume
 
 - `dispatch-broker` — hardcodes this repo's label→workflow maps and the
   `agent-lcars-dispatch-v1` ledger/concurrency namespace.
+- `dispatch-bootstrap` — claude.yml/codex.yml/opencode.yml's shared
+  snapshot/assert-vars/broker-preflight/mint-token/claim sequence
+  (agent-lcars#823). Wraps a call to `dispatch-broker` (above), so it
+  inherits the same repo-specific dispatch-ledger coupling.
 - `telemetry-start` / `telemetry-finalize` — depend on
   `/usr/local/lib/agent-lcars/sidecar-lifecycle.sh`, baked into the shared
   runner image (consumers on that image may still call them; the coupling

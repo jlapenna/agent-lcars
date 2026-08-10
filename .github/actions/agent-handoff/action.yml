@@ -1,0 +1,49 @@
+name: Agent handoff
+description: >-
+  Shared trusted finalization handoff common to claude.yml, codex.yml, and
+  opencode.yml (agent-lcars#823): configure the agent git identity, record
+  the run-start timestamp, point Nx at the shared host cache when present,
+  and verify the minted App token's identity and the checkout's push
+  credential - the last trusted gate before the caller's own untrusted
+  model-invocation step runs. Internal dedup only (no stability promise;
+  see docs/published-actions.md's "Internal" tier) - the wrapped
+  agent-setup/verify-agent-identity actions remain the Published surface a
+  consumer repo should reference directly.
+
+inputs:
+  agent-login:
+    description: Git identity used for agent commits (agent-setup's own input).
+    required: true
+  token:
+    description: Minted GitHub App installation token to verify.
+    required: true
+  agent:
+    description: Agent name used in error messages (e.g. Claude, Codex, OpenCode).
+    required: true
+  app-slug:
+    description: App slug reported by the token-minting step's app-slug output.
+    required: true
+
+outputs:
+  started-at:
+    description: UTC timestamp used by the deliverable gate.
+    # Bracket notation matches every existing reader of this same
+    # agent-setup output (each lane workflow's own STARTED_AT/started-at
+    # references, pre-dating this composite).
+    value: ${{ steps.agent-setup.outputs['started-at'] }}
+
+runs:
+  using: composite
+  steps:
+    - name: Shared agent setup
+      id: agent-setup
+      uses: ./.github/actions/agent-setup
+      with:
+        agent-login: ${{ inputs.agent-login }}
+
+    - name: Verify agent identity
+      uses: ./.github/actions/verify-agent-identity
+      with:
+        token: ${{ inputs.token }}
+        agent: ${{ inputs.agent }}
+        app-slug: ${{ inputs.app-slug }}
