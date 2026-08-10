@@ -26,7 +26,7 @@ function state() {
         intentId: 'intent-1',
         sourceId: 'source-1',
         occurredAt: '2026-08-09T00:00:00.000Z',
-        pipeline: 'canary',
+        pipeline: 'codex',
         state: 'active',
         attempt: { token: 'private-capability', runId: 42 },
       },

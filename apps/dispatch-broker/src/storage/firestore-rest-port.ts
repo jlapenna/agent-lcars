@@ -8,7 +8,7 @@
  * prove.
  *
  * `controller-core.ts` imports this class for Action-side Firestore authority.
- * It is deliberately NOT imported from `canary/run.ts` or
+ * It is deliberately NOT imported from bundled action entrypoints or
  * `rerun-infra-killed-runs/main.ts`, and `./firestore-port.ts` (the client-
  * library adapter) stays unimported everywhere in the live dispatch path
  * for the bundle-size reason its own header gives.
@@ -19,7 +19,7 @@
  * correct but unusable from the broker: bundling that client measures at
  * 4.3 MB, and the broker ships as a *committed* dependency-free esbuild
  * bundle -- currently ~101 KB -- regenerated and drift-diffed by CI on every
- * source change (apps/dispatch-broker/project.json's `build`/`build-canary`/
+ * source change (apps/dispatch-broker/project.json build targets).
  * `build-rerun-infra-killed-runs` targets; .github/workflows/ci.yml's drift
  * check). Committing a 4.3 MB artifact that churns on every edit is not
  * acceptable. The broker already talks to GitHub over plain REST with

@@ -15,7 +15,7 @@ pickup_comment_id=""
 # `gh api -f 'assignees[]=...' --silent` can apply the mutation and then
 # exit non-zero with "unexpected end of JSON input" because --silent hides
 # the response body before gh's typed-field parser consumes it (#346; live
-# canary run 31261284910 reproduced this in claim-issue). Send an explicit
+# run 31261284910 reproduced this in claim-issue). Send an explicit
 # JSON request body and redirect the successfully parsed response instead.
 if jq -cn --arg login "$CLAIM_LOGIN" '{assignees: [$login]}' |
   gh api "repos/$REPO/issues/$NUM/assignees" \

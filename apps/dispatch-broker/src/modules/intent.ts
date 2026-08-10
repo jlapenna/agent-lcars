@@ -202,12 +202,7 @@ function acceptIntent(
       outcome = 'stale-control-state';
       return;
     }
-    // The production canary reuses one canonical issue (#677), closing it
-    // while healthy and reopening it only while a run is active or failed.
-    // Its hardcoded no-op pipeline is therefore the sole intent allowed to
-    // enter a closed anchor. Every human/agent pipeline retains the normal
-    // fail-closed rule.
-    if (ledger.control.closed && intent.pipeline !== 'canary') {
+    if (ledger.control.closed) {
       generation.state = 'superseded-by-close';
       outcome = 'closed';
       return;

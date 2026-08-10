@@ -6,13 +6,13 @@
  * Firestore emulator, not a mock -- CAS correctness is exactly the property
  * a mock cannot prove).
  *
- * This module is deliberately NOT imported from `main.ts`, `canary/run.ts`,
+ * This module is deliberately NOT imported from `main.ts`
  * or `rerun-infra-killed-runs/main.ts` -- per port.ts's header, wiring a
  * durable backend into the live dispatch path is Phase 6 work this task
  * does not do. Keeping the only reference to `@google-cloud/firestore` in a
  * module those three entry points never import is what keeps that
  * (comparatively heavy) client out of their bundles; see the `build`,
- * `build-canary`, and `build-rerun-infra-killed-runs` targets in
+ * and `build-rerun-infra-killed-runs` targets in
  * apps/dispatch-broker/project.json; and the drift check in
  * .github/workflows/ci.yml that diffs the committed bundles against a fresh
  * rebuild. Do not add an import of this file to any of those three entry

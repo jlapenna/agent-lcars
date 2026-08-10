@@ -124,14 +124,8 @@ function attemptOf(generation: LedgerGeneration): LedgerRunAttempt {
   return attempt;
 }
 
-function canDispatchOnAnchor(
-  ledger: DispatchLedger,
-  generation: LedgerGeneration,
-): boolean {
-  // #677's canonical production canary is deliberately closed while
-  // healthy. Only its structurally no-op pipeline may continue dispatching
-  // against that reused anchor; ordinary work remains blocked by closure.
-  return !ledger.control.closed || generation.pipeline === 'canary';
+function canDispatchOnAnchor(ledger: DispatchLedger): boolean {
+  return !ledger.control.closed;
 }
 
 function beginDispatch(
@@ -144,7 +138,7 @@ function beginDispatch(
   if (!generation || !['accepted', 'pending'].includes(generation.state)) {
     throw new Error('Generation is not dispatchable');
   }
-  if (!canDispatchOnAnchor(ledger, generation)) {
+  if (!canDispatchOnAnchor(ledger)) {
     throw new Error('Closed anchor cannot dispatch');
   }
   if (
@@ -210,7 +204,7 @@ function markDispatchRejected(
     attempt.rejectionReason = reason;
     promoted = ledger.generations.find(
       (candidate) =>
-        candidate.state === 'pending' && canDispatchOnAnchor(ledger, candidate),
+        candidate.state === 'pending' && canDispatchOnAnchor(ledger),
     );
     if (promoted) promoted.state = 'accepted';
   });
@@ -370,7 +364,7 @@ function completeRun(
     attempt.completedAt = observation.completedAt ?? now;
     promoted = ledger.generations.find(
       (candidate) =>
-        candidate.state === 'pending' && canDispatchOnAnchor(ledger, candidate),
+        candidate.state === 'pending' && canDispatchOnAnchor(ledger),
     );
     if (promoted) promoted.state = 'accepted';
   });

@@ -43,25 +43,3 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: node tools/sync-github-labels.mjs --repo="${{ matrix.full_name }}"
-
-  alert:
-    needs: audit
-    if: always()
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-      issues: write
-    steps:
-      - name: Checkout trusted revision
-        uses: actions/checkout@v7
-
-      - name: Alert on label-audit failure / resolve on recovery
-        uses: ./.github/actions/canary-alert
-        with:
-          token: ${{ github.token }}
-          workflow-status: ${{ needs.audit.result }}
-          workflow-file: label-contract-audit.yml
-          maintainer: ${{ vars.MAINTAINER_LOGIN }}

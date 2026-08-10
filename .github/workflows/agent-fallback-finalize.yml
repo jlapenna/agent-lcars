@@ -167,11 +167,6 @@ jobs:
               expected_comment_login='agent-lcars[bot]'
               exclude_pr_author='claude[bot]'
               ;;
-            agent-dispatch-canary.yml)
-              agent_step='Verify the exact canary artifact through the outcome finalizer'
-              expected_comment_login='github-actions[bot]'
-              exclude_pr_author=''
-              ;;
             *)
               echo "::error::Unsupported worker workflow"
               exit 1
@@ -231,11 +226,7 @@ jobs:
                 fi
                 ;;
               failure)
-                if [ "$WORKER_WORKFLOW" = 'agent-dispatch-canary.yml' ]; then
-                  outcome_kind='outcome-gate-failure'
-                else
-                  outcome_kind='trajectory-failure'
-                fi
+                outcome_kind='trajectory-failure'
                 ;;
               *) outcome_kind='trajectory-failure' ;;
             esac
@@ -310,9 +301,7 @@ jobs:
           started_at="$(jq -r --arg step "$agent_step" \
             '[.steps[]? | select(.name == $step)] | last | .started_at // ""' \
             <<<"$worker_job")"
-          if [ -z "$outcome_kind" ] && \
-            [ "$WORKER_WORKFLOW" != 'agent-dispatch-canary.yml' ] && \
-            [ -n "$started_at" ]; then
+          if [ -z "$outcome_kind" ] && [ -n "$started_at" ]; then
             if inference_pr_json="$(gh api \
               "repos/$REPO/pulls?state=all&sort=updated&direction=desc&per_page=50")"; then
               matching_prs="$(jq -c \
@@ -405,12 +394,6 @@ jobs:
             fi
           fi
 
-          if [ "$WORKER_WORKFLOW" = 'agent-dispatch-canary.yml' ] && \
-            [ "$outcome_kind" != 'comment' ]; then
-            echo "::error::Successful dispatch canary lacks its exact comment outcome"
-            printf '%s\n' 'outcome-kind=outcome-gate-failure' >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
           printf 'outcome-kind=%s\n' "${outcome_kind:-unknown-success}" >> "$GITHUB_OUTPUT"
           if [ -n "$outcome_reference" ]; then
             printf 'outcome-reference=%s\n' "$outcome_reference" >> "$GITHUB_OUTPUT"

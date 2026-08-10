@@ -48,9 +48,8 @@ on:
   schedule:
     # Every 30 minutes, offset from :00/:30 to avoid the scheduling
     # stampede (see label-contract-audit.yml's '17 13 * * *' for daily
-    # granularity, dispatch-reconcile.yml's '7,37 * * * *' and
-    # dispatch-canary.yml's '13 * * * *' for the same convention at this
-    # granularity -- :22/:52 avoids all three).
+    # granularity, dispatch-reconcile.yml's '7,37 * * * *' for the same
+    # convention at this granularity -- :22/:52 avoids both).
     - cron: '22,52 * * * *'
   workflow_dispatch:
 
@@ -156,25 +155,3 @@ jobs:
               "$RECOVERY_URL" \
               || echo "::warning::rerun-infra-killed-runs: failed to report the recovery observation for run $run_id"
           done
-
-  alert:
-    needs: scan
-    if: always()
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-      issues: write
-    steps:
-      - name: Checkout trusted revision
-        uses: actions/checkout@v7
-
-      - name: Alert on scanner failure / resolve on recovery
-        uses: ./.github/actions/canary-alert
-        with:
-          token: ${{ github.token }}
-          workflow-status: ${{ needs.scan.result }}
-          workflow-file: rerun-infra-killed-runs.yml
-          maintainer: ${{ vars.MAINTAINER_LOGIN }}

@@ -81,10 +81,6 @@ export {
   HOSTED_TASK_STATE_PATH,
   HOSTED_TASK_STATE_URL,
   RECOVERY_OBSERVATION_OIDC_AUDIENCE,
-  WEBHOOK_INGRESS_CANARY_OIDC_AUDIENCE,
-  WEBHOOK_INGRESS_CANARY_WORKFLOW_PATH,
-  WEBHOOK_INGRESS_PROBE_PATH,
-  WEBHOOK_INGRESS_PROBE_URL,
 } from './oidc';
 export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
 export {
@@ -158,10 +154,3 @@ export {
   isAuthoritativeTaskState,
   redactAuthoritativeTaskState,
 } from './task-state';
-export type { WebhookIngressCanaryAction } from './webhook-ingress';
-export {
-  isWebhookIngressCanaryAction,
-  WEBHOOK_INGRESS_CANARY_ACTIONS,
-  WEBHOOK_INGRESS_CANARY_MARKER,
-  WEBHOOK_INGRESS_CANARY_TITLE,
-} from './webhook-ingress';

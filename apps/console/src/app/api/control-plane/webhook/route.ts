@@ -5,11 +5,6 @@ import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import type { GitHubWebhookPayload } from '@/lib/hosted-admission';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
-import {
-  identifyWebhookIngressCanary,
-  recordWebhookIngressEnqueued,
-  recordWebhookIngressReceived,
-} from '@/lib/webhook-ingress-receipt';
 
 const ADMITTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
 
@@ -75,17 +70,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const canary = identifyWebhookIngressCanary(deliveryId, eventName, payload);
-    if (canary) await recordWebhookIngressReceived(canary);
     const result = await enqueueGitHubWebhook({
       rawBody,
       deliveryId,
       eventName,
       signature: header(request, 'x-hub-signature-256'),
     });
-    if (canary) {
-      await recordWebhookIngressEnqueued(canary, result.outcome);
-    }
     console.info('agent-lcars: hosted admission durably queued', result);
     return NextResponse.json(result, {
       status: 202,

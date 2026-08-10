@@ -108,12 +108,11 @@ test('dispatch requires 200 with same-repository run details', () => {
   }
 });
 
-test('worker pipeline resolves to exactly one worker workflow file, including the #307 canary', () => {
+test('worker pipeline resolves to exactly one worker workflow file', () => {
   assert.deepEqual(agentWorkerPipelines, ['claude', 'codex', 'opencode']);
   assert.equal(workerWorkflow('claude'), 'claude.yml');
   assert.equal(workerWorkflow('codex'), 'codex.yml');
   assert.equal(workerWorkflow('opencode'), 'opencode.yml');
-  assert.equal(workerWorkflow('canary'), 'agent-dispatch-canary.yml');
   assert.throws(
     () => workerWorkflow('not-a-real-pipeline'),
     /Unsupported worker pipeline/u,
@@ -122,18 +121,6 @@ test('worker pipeline resolves to exactly one worker workflow file, including th
 
 test('lane readiness maps only the durable health incidents that apply to the selected agent', async () => {
   const issues = [
-    {
-      number: 801,
-      title: 'Bootstrap Canary is failing',
-      body: '<!-- agent-lcars:workflow-alert:v1:bootstrap-canary.yml -->',
-      html_url: 'https://github.com/jlapenna/agent-lcars/issues/801',
-    },
-    {
-      number: 802,
-      title: 'OpenCode Model Canary is failing',
-      body: '<!-- agent-lcars:workflow-alert:v1:opencode-model-canary.yml -->',
-      html_url: 'https://github.com/jlapenna/agent-lcars/issues/802',
-    },
     {
       number: 803,
       title: 'Codex agent lane is unavailable',
@@ -151,13 +138,9 @@ test('lane readiness maps only the durable health incidents that apply to the se
 
   assert.deepEqual(
     (await readLaneReadiness(api, task, 'codex')).map((item) => item.issue),
-    [801, 803],
+    [803],
   );
-  assert.deepEqual(
-    (await readLaneReadiness(api, task, 'opencode')).map((item) => item.issue),
-    [801, 802],
-  );
-  assert.deepEqual(await readLaneReadiness(api, task, 'canary'), []);
+  assert.deepEqual(await readLaneReadiness(api, task, 'opencode'), []);
 });
 
 test('a proven shared startup failure creates one actionable lane incident and reuses it on redelivery', async () => {

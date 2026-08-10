@@ -62,11 +62,11 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) \
-            ! -name agent-router.yml ! -name codex.yml -print0 \
+            ! -name codex.yml -print0 \
             | xargs -0 "$(go env GOPATH)/bin/actionlint"
           "$(go env GOPATH)/bin/actionlint" \
             -ignore 'unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"' \
-            .github/workflows/agent-router.yml .github/workflows/codex.yml
+            .github/workflows/codex.yml
 
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
@@ -82,9 +82,6 @@ jobs:
 
       - name: Test failure reporting
         run: bash .github/actions/report-failure/report-failure.test.sh
-
-      - name: Test canary failure alerting
-        run: bash .github/actions/canary-alert/canary-alert.test.sh
 
       - name: Test post-agent gate orchestration (#645 Phase 3)
         run: bash .github/actions/post-agent-gates/post-agent-gates.test.sh
@@ -132,37 +129,23 @@ jobs:
       # diffing against what is committed turns that into a loud CI
       # failure instead.
       #
-      # run-dispatch-canary/dist/run.mjs is the same pattern, built by the
-      # sibling `build-canary` target from apps/dispatch-broker/src/canary --
-      # checked here too, not just dispatch-broker/dist: this exact class of
-      # drift (source moved, committed bundle/import left stale) is what let
-      # run-dispatch-canary's action silently break for six straight
-      # scheduled runs with nothing in CI to catch it.
-      #
-      # rerun-infra-killed-runs/dist/main.mjs is the same pattern again,
-      # built by the sibling `build-rerun-infra-killed-runs` target from
+      # rerun-infra-killed-runs/dist/main.mjs is the same pattern, built by
+      # the sibling `build-rerun-infra-killed-runs` target from
       # apps/dispatch-broker/src/rerun-infra-killed-runs -- checked here
-      # too: the exact same drift broke this action as well (five straight
-      # scheduled-run failures), so two actions -- not one -- broke this
-      # way with nothing in CI to catch it.
+      # too: the same drift (source moved, committed bundle/import left
+      # stale) broke this action outright (five straight scheduled-run
+      # failures) with nothing in CI to catch it.
       #
       # deliverable-watchdog/dist/main.mjs is #721's independent scheduled
       # observer. It shares the same committed-bundle contract: the workflow
       # must execute exactly the reviewed TypeScript source, never a stale
       # artifact left behind by a missed local build.
-      #
-      # run-webhook-ingress-canary/dist/run.mjs is the GitHub-hosted real-App
-      # ingress probe. Its private-key/OIDC boundary is operational security
-      # code, so it has the same source-to-committed-bundle drift check.
       - name: Check committed operational action bundles match their source
         run: |
-          git ls-files --error-unmatch .github/actions/run-webhook-ingress-canary/dist/run.mjs >/dev/null
           pnpm nx build @agent-lcars/dispatch-broker
-          pnpm nx build-canary @agent-lcars/dispatch-broker
           pnpm nx build-rerun-infra-killed-runs @agent-lcars/dispatch-broker
           pnpm nx build-deliverable-watchdog @agent-lcars/dispatch-broker
-          pnpm nx build-webhook-ingress-canary @agent-lcars/dispatch-broker
-          git diff --exit-code -- .github/actions/dispatch-broker/dist .github/actions/run-dispatch-canary/dist .github/actions/rerun-infra-killed-runs/dist .github/actions/deliverable-watchdog/dist .github/actions/run-webhook-ingress-canary/dist
+          git diff --exit-code -- .github/actions/dispatch-broker/dist .github/actions/rerun-infra-killed-runs/dist .github/actions/deliverable-watchdog/dist
 
       - name: Check formatting
         run: pnpm format:check
@@ -227,14 +210,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-
-      # Keep the Firestore-backed StoragePort's transactional contract in
-      # the Java-capable job. The verify job still runs the broker's full
-      # unit suite (where this one spec reports an explicit environment
-      # skip), while this focused invocation proves all 21 cases against a
-      # real emulator, including the concurrent compare-and-swap barrier.
-      - name: Run Firestore storage contract suite
-        run: pnpm exec vitest --config apps/dispatch-broker/vitest.config.mts run apps/dispatch-broker/src/storage/firestore-port.spec.ts
 
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium

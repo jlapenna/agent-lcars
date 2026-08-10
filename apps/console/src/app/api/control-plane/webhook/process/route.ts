@@ -6,14 +6,6 @@ import {
   admitGitHubWebhook,
   type GitHubWebhookPayload,
 } from '@/lib/hosted-admission';
-import {
-  identifyWebhookIngressCanary,
-  parseCloudTasksAttempt,
-  recordWebhookIngressProcessed,
-  recordWebhookIngressProcessing,
-  recordWebhookIngressProcessorFailure,
-  type WebhookIngressCanaryIdentity,
-} from '@/lib/webhook-ingress-receipt';
 
 function header(request: Request, name: string): string {
   const value = request.headers.get(name)?.trim();
@@ -25,11 +17,17 @@ function header(request: Request, name: string): string {
 // deterministically unparseable payload), not a transient outage: returning
 // 500 forever keeps Cloud Tasks redelivering it every few seconds
 // indefinitely (observed 2026-08-08..10: eight pull_request:labeled
-// deliveries at 800+ attempts each, ~10s apart, for 31 hours — the queue's
+// deliveries at 800+ attempts each, ~10s apart, for 31 hours -- the queue's
 // own max-attempts did not stop them). Past this bound the delivery is
 // acked and dropped with a loud log; the reconcile scan rebuilds any state
 // the event carried from GitHub itself.
 const MAX_PROCESS_ATTEMPTS = 10;
+
+function parseAttempt(retryCount: string | null): number {
+  if (retryCount === null || !/^\d+$/u.test(retryCount)) return 1;
+  const parsed = Number(retryCount);
+  return Number.isSafeInteger(parsed) ? parsed + 1 : 1;
+}
 
 export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = Buffer.from(await request.arrayBuffer());
@@ -44,8 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let canary: WebhookIngressCanaryIdentity | undefined;
-  const attempt = parseCloudTasksAttempt(
+  const attempt = parseAttempt(
     request.headers.get('x-cloudtasks-taskretrycount'),
   );
   try {
@@ -54,32 +51,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     const payload = JSON.parse(
       rawBody.toString('utf8'),
     ) as GitHubWebhookPayload;
-    canary = identifyWebhookIngressCanary(deliveryId, eventName, payload);
-    if (canary) {
-      await recordWebhookIngressProcessing(canary, attempt);
-    }
     const result = await admitGitHubWebhook({
       deliveryId,
       eventName,
       payload,
     });
-    if (canary) await recordWebhookIngressProcessed(canary);
     console.info('agent-lcars: hosted admission completed', result);
     return NextResponse.json(result, {
       status: 200,
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    if (canary) {
-      try {
-        await recordWebhookIngressProcessorFailure(canary, attempt, error);
-      } catch (receiptError) {
-        console.error(
-          'agent-lcars: failed to record webhook canary processor failure',
-          receiptError,
-        );
-      }
-    }
     if (attempt >= MAX_PROCESS_ATTEMPTS) {
       console.error(
         `agent-lcars: dropping webhook delivery after ${attempt} failed attempts; reconcile will heal any state it carried`,

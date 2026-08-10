@@ -35,7 +35,7 @@ runs:
     # GITHUB_TOKEN is deliberately not set here -- the calling workflow's
     # own step env is what this composite action's step actually runs
     # with, the same convention dispatch-broker/action.yml and
-    # run-dispatch-canary/action.yml both use.
+    # pattern other bundled actions here use.
     - name: Scan and rerun infrastructure-killed CI runs
       id: run
       shell: bash
