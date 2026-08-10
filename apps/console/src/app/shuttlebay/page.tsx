@@ -5,7 +5,9 @@ import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
 import { getAutoscalerStatuses } from '../../lib/autoscaler-status';
+import { getWatchedRepos } from '../../lib/github-client';
 import { ConsoleAppShell } from '../console-app-shell';
+import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
@@ -29,6 +31,7 @@ async function ShuttlebayBody() {
 async function ShuttlebayPageShell() {
   const session = await auth();
   assertAdmin(session, '/login');
+  const watchedRepos = getWatchedRepos();
 
   return (
     <ConsoleAppShell
@@ -36,6 +39,14 @@ async function ShuttlebayPageShell() {
       current="shuttlebay"
       title="Shuttlebay"
       subtitle="Live runner fleet and queue status"
+      utilities={
+        <div className="shuttlebay-utilities shuttlebay-utilities--mobile">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            includeNavigation
+          />
+        </div>
+      }
     >
       <Suspense fallback={<PageLoading rows={4} header={false} />}>
         <ShuttlebayBody />

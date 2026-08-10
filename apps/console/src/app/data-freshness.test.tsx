@@ -49,4 +49,20 @@ describe('DataFreshness', () => {
       'Data as of 3 minutes ago',
     );
   });
+
+  it('can use compact visual copy without losing the full accessible age', () => {
+    render(
+      <MantineProvider>
+        <DataFreshness
+          fetchedAt="2026-08-03T11:59:40Z"
+          initialLabel="just now"
+          compact
+        />
+      </MantineProvider>,
+    );
+
+    const note = screen.getByTestId('data-freshness');
+    expect(note.textContent).toBe('Updated just now');
+    expect(note).toHaveAttribute('aria-label', 'Data as of just now');
+  });
 });

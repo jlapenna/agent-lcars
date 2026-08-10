@@ -126,6 +126,14 @@ describe('QueueWorkspace', () => {
     expect(screen.getByLabelText('1 open queue items')).toBeTruthy();
   });
 
+  it('keeps a running CI state secondary to the one actionable row reason', () => {
+    renderWorkspace([makeCard({ ciRunning: true })]);
+
+    expect(screen.getByText('Human needed')).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'CI running' })).toBeTruthy();
+    expect(screen.queryByText('CI running', { exact: true })).toBeNull();
+  });
+
   // The list command deck already owns the visible Inbox identity. Its detail
   // branch keeps the same back affordance terse rather than repeating that
   // label directly beneath the selected item breadcrumb.

@@ -327,7 +327,14 @@ export function ActionItemCard({
         <Group justify="space-between" align="flex-start" gap="sm">
           <div style={{ minWidth: 0 }}>
             {workspace && (
-              <Text component="div" size="xs" c="dimmed" ff="monospace" mb={4}>
+              <Text
+                component="div"
+                size="xs"
+                c="dimmed"
+                ff="monospace"
+                mb={4}
+                className="queue-detail-identity"
+              >
                 {repoDisplayName(item.repo)} / #{item.number}
               </Text>
             )}

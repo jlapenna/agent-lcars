@@ -34,4 +34,21 @@ describe('NavPageLoading', () => {
         ?.hasAttribute('data-streaming-fallback'),
     ).toBe(true);
   });
+
+  it('keeps Inbox labelled and navigable while its command deck is unavailable', () => {
+    render(
+      <MantineProvider>
+        <NavPageLoading
+          current="inbox"
+          title="Decision Inbox"
+          className="inbox-page-shell"
+        />
+      </MantineProvider>,
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'Inbox' }).getAttribute('aria-current'),
+    ).toBe('page');
+    expect(screen.getByLabelText('Loading')).toBeTruthy();
+  });
 });

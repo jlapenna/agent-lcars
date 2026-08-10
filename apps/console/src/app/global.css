@@ -375,6 +375,20 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   display: none;
 }
 
+.shuttlebay-utilities--mobile {
+  display: none;
+}
+
+/* Shuttlebay carries utilities through its compact/tablet command rail. Hide
+   the empty shared wrapper only once the full desktop navigation is present,
+   so tablet users retain the overflow menu for the destinations hidden there. */
+@media (min-width: 64em) {
+  .console-header[data-current='shuttlebay']
+    .lcars-command-utilities:has(.shuttlebay-utilities--mobile) {
+    display: none;
+  }
+}
+
 .agents-workspace {
 }
 
@@ -965,6 +979,32 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   max-width: 9rem;
 }
 
+.queue-row-signal {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid
+    color-mix(in srgb, var(--mantine-color-indigo-4) 58%, transparent);
+  border-radius: 50%;
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-indigo-5) 16%,
+    transparent
+  );
+}
+
+.queue-row-signal > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mantine-color-indigo-4);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--mantine-color-indigo-5) 18%, transparent);
+}
+
 .queue-muted-items {
   margin-top: 4px;
   padding: 8px 14px;
@@ -1268,6 +1308,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   .deck-utilities--mobile,
   .inbox-utilities--mobile,
   .agents-utilities--mobile,
+  .shuttlebay-utilities--mobile,
   .sessions-utilities--mobile,
   .costs-utilities--mobile {
     display: block;
@@ -1415,6 +1456,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   .deck-utilities--mobile,
   .inbox-utilities--mobile,
   .agents-utilities--mobile,
+  .shuttlebay-utilities--mobile,
   .sessions-utilities--mobile,
   .costs-utilities--mobile {
     display: block;
@@ -1848,6 +1890,13 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     font-size: 1.35rem;
   }
 
+  /* The phone command deck already names the selected repository and item.
+     Repeating that breadcrumb above the detail title makes the first fold
+     read like three headers instead of one selected record. */
+  .queue-detail-identity {
+    display: none;
+  }
+
   .queue-github-link {
     min-height: 44px;
   }
@@ -1875,6 +1924,29 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .queue-detail-state .mantine-Button-root {
     min-height: 44px;
+  }
+}
+
+/* Below 352px the mobile strip still carries one route identity plus three
+   reachable utilities. Tightening only this shared control geometry keeps
+   every console destination operable without wrapping a second header row. */
+@media (max-width: 21.99em) {
+  .console-header[data-current] .lcars-command-row {
+    gap: 0;
+    padding-right: 4px;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-active] {
+    min-width: 6.75rem;
+    padding-inline: 12px;
+    font-size: 0.75rem;
+  }
+
+  .console-header[data-current]:not([data-current='inbox'])
+    .lcars-command-utilities
+    .mantine-Button-root {
+    padding-inline: 6px;
+    font-size: 0.625rem;
   }
 }
 
