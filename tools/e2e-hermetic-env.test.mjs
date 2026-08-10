@@ -344,6 +344,69 @@ test('a concurrent e2e-local run fails fast against the held host lock', async (
   }
 });
 
+test('SIGTERM forwards to the E2E child before its temporary HOME is removed', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-signal-'));
+  const fakeBin = path.join(tempDir, 'bin');
+  const pnpm = path.join(fakeBin, 'pnpm');
+  const readyFile = path.join(tempDir, 'ready');
+  const signalFile = path.join(tempDir, 'signal');
+  const lockFile = path.join(tempDir, 'e2e-local.lock');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(
+    pnpm,
+    [
+      '#!/bin/sh',
+      `trap 'if [ -d "$HOME" ] && [ -d "$TMPDIR" ]; then printf TERM > ${JSON.stringify(signalFile)}; else printf missing-home > ${JSON.stringify(signalFile)}; fi; exit 0' TERM`,
+      `printf ready > ${JSON.stringify(readyFile)}`,
+      'while :; do sleep 1; done',
+      '',
+    ].join('\n'),
+  );
+  fs.chmodSync(pnpm, 0o755);
+  const env = {
+    ...process.env,
+    E2E_LOCAL_LOCK_FILE: lockFile,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+  };
+  const holder = spawn(e2eLocal, [], { cwd: root, env });
+  const holderExit = new Promise((resolve) => {
+    holder.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !fs.existsSync(readyFile)) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(fs.existsSync(readyFile), 'the E2E child should have started');
+
+    assert.ok(holder.pid, 'the e2e-local parent should expose a pid');
+    process.kill(holder.pid, 'SIGTERM');
+    const result = await holderExit;
+    assert.equal(result.code, 143);
+    assert.equal(result.signal, null);
+    assert.equal(fs.readFileSync(signalFile, 'utf8'), 'TERM');
+
+    fs.writeFileSync(pnpm, '#!/bin/sh\nexit 0\n');
+    const successor = spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env,
+    });
+    assert.equal(successor.status, 0, successor.stderr);
+  } finally {
+    if (holder.exitCode === null && holder.signalCode === null && holder.pid) {
+      try {
+        process.kill(holder.pid, 'SIGKILL');
+      } catch {
+        // Already exited.
+      }
+    }
+    await holderExit;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('the host lock releases once the holder exits', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-lock-'));
   const fakeBin = path.join(tempDir, 'bin');

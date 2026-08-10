@@ -123,7 +123,35 @@ if [ -z "$NODE_BIN" ]; then
 fi
 
 TEMP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/agent-lcars-e2e-home.XXXXXX")"
-trap 'rm -rf "$TEMP_HOME"' EXIT
+CHILD_PID=""
+cleanup() {
+  rm -rf "$TEMP_HOME"
+}
+forward_termination() {
+  local signal="$1"
+
+  # `env` is run in the background below so this shell can clean up its
+  # temporary HOME after the child exits. Forward direct termination signals
+  # first; otherwise the child can outlive this process with its HOME removed
+  # and a stale e2e-local pid in the host lock file.
+  if [ -n "$CHILD_PID" ]; then
+    kill "-$signal" "$CHILD_PID" 2>/dev/null || true
+    if ! wait "$CHILD_PID"; then
+      :
+    fi
+    CHILD_PID=""
+  fi
+
+  case "$signal" in
+    HUP) exit 129 ;;
+    INT) exit 130 ;;
+    TERM) exit 143 ;;
+  esac
+}
+trap cleanup EXIT
+trap 'forward_termination HUP' HUP
+trap 'forward_termination INT' INT
+trap 'forward_termination TERM' TERM
 mkdir -p "$TEMP_HOME/tmp"
 
 # Reads one KEY="value" entry from the checked-in emulator-only fixture.
@@ -250,6 +278,21 @@ env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
   "$NODE_BIN" "$VALIDATOR" --require-hermetic \
   --next-root "$ROOT/apps/console" "$CI_ENV"
 
-env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
-  pnpm exec nx run \
-    "${PROJECT}:e2e-implementation:emulator"
+# Run the child in its own subshell so it does not inherit our lock descriptor:
+# this parent keeps the lock until it has observed child exit, including after a
+# signal. The child becomes `pnpm` directly so the forwarded signal reaches the
+# process that owns Nx and its emulator descendants.
+(
+  exec 9>&-
+  exec env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
+    pnpm exec nx run \
+      "${PROJECT}:e2e-implementation:emulator"
+) &
+CHILD_PID=$!
+if wait "$CHILD_PID"; then
+  status=0
+else
+  status=$?
+fi
+CHILD_PID=""
+exit "$status"
