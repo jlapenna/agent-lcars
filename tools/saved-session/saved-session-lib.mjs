@@ -11,7 +11,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
-export const DEFAULT_ORIGIN = 'https://agent-console.supersprinkles.racing';
+export const DEFAULT_ORIGIN = 'https://lcars.jlapenna.net';
 export const DEFAULT_PROJECT = 'agent-lcars';
 export const SESSION_ROLES = ['admin', 'user'];
 export const STORAGE_BACKENDS = ['local', 'secret'];
