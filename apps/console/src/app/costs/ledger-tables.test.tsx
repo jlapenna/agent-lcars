@@ -113,7 +113,7 @@ describe('LedgerTables', () => {
     expect(screen.getAllByTestId('ledger-issue-row-compact')).toHaveLength(15);
   });
 
-  it('prefixes an estimated cost total with ~ and leaves a fully-measured total unmarked', () => {
+  it('labels an estimated cost total beyond its visual tilde and leaves a fully-measured total unmarked', () => {
     renderLedger({
       byIssue: [
         {
@@ -135,7 +135,11 @@ describe('LedgerTables', () => {
       byWeek: [],
     });
 
-    expect(screen.getAllByText('~$3.50')).toHaveLength(2);
+    const estimates = screen.getAllByLabelText('Estimated cost $3.50');
+    expect(estimates).toHaveLength(2);
+    expect(
+      estimates.every((estimate) => estimate.textContent === '~$3.50est.'),
+    ).toBe(true);
     expect(screen.getAllByText('$2.50')).toHaveLength(2);
   });
 
@@ -147,7 +151,7 @@ describe('LedgerTables', () => {
       byWeek: [],
     });
 
-    expect(screen.getByText(/partial dollar figure/)).toBeTruthy();
+    expect(screen.getByText(/bucket can still be partial/)).toBeTruthy();
   });
 
   it('drops Turns and cost-weighted tokens from the compact per-issue table, but keeps Cost (#203)', () => {

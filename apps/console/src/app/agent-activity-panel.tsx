@@ -660,9 +660,18 @@ export function CliSessionRow({
   const { host, artifacts } = session;
   return (
     <Stack gap={2} data-testid={`cli-session-${session.sessionId}`}>
-      <Text size="sm" fw={600} style={{ minWidth: 0 }} truncate>
+      <Anchor
+        href={`/sessions/${session.sessionId}`}
+        size="sm"
+        fw={600}
+        c="inherit"
+        truncate
+        style={{ minWidth: 0 }}
+        className="cli-session-title-link"
+        data-testid="cli-session-link"
+      >
         {session.title ?? session.branch ?? session.sessionId}
-      </Text>
+      </Anchor>
       <Group gap="xs" wrap="nowrap">
         <Badge
           variant="filled"
@@ -675,14 +684,6 @@ export function CliSessionRow({
         </Badge>
         <AgentBadge agent={session.agent} />
         {session.repo && <RepoBadge repo={session.repo} />}
-        <Anchor
-          href={`/sessions/${session.sessionId}`}
-          size="xs"
-          c="dimmed"
-          data-testid="cli-session-link"
-        >
-          session
-        </Anchor>
         {session.pr && (
           <Anchor
             href={session.pr.url}

@@ -13,12 +13,16 @@ export function AgentsWorkspace({
   active,
   claimedIdle,
   recentOutcomes,
+  hasSecondary = true,
 }: {
   warnings?: ReactNode;
   fleet: ReactNode;
   active: ReactNode;
   claimedIdle: ReactNode;
   recentOutcomes: ReactNode;
+  /** Empty secondary panels are omitted on the source page; do not reserve a
+   * desktop column or a mobile viewport slice for them. */
+  hasSecondary?: boolean;
 }) {
   return (
     <ConsoleWorkspace
@@ -29,10 +33,12 @@ export function AgentsWorkspace({
       {fleet}
       <div className="agents-workspace__operations">
         <div className="agents-workspace__primary">{active}</div>
-        <div className="agents-workspace__secondary">
-          {claimedIdle}
-          {recentOutcomes}
-        </div>
+        {hasSecondary && (
+          <div className="agents-workspace__secondary">
+            {claimedIdle}
+            {recentOutcomes}
+          </div>
+        )}
       </div>
     </ConsoleWorkspace>
   );

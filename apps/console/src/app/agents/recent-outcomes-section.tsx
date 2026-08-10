@@ -1,6 +1,6 @@
 import type { DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
-import { Stack, Text } from '@mantine/core';
+import { Stack } from '@mantine/core';
 
 import type { AgentPipeline, AgentRun } from '../../lib/agent-activity';
 import { FinishedRunRow } from '../agent-activity-panel';
@@ -33,17 +33,17 @@ export function RecentOutcomesSection({
   /** Broker-owned lifecycle outcomes keyed by the exact bound workflow run. */
   outcomesByRunId?: Record<number, DispatchOutcomeKind>;
 }) {
+  // Recent outcomes are useful evidence only when there is evidence to
+  // inspect. Suppressing the empty panel keeps the first viewport focused on
+  // activity and exceptions, without hiding any actionable state.
+  if (recentRuns.length === 0) return null;
+
   return (
     <AgentOperationsPanel
       title="Recent Outcomes"
       className="agents-panel--recent"
       testId="recent-outcomes"
     >
-      {recentRuns.length === 0 && (
-        <Text size="sm" c="dimmed">
-          No recently finished runs.
-        </Text>
-      )}
       {PIPELINES.map((pipeline) => {
         const runs = recentRuns.filter((run) => run.pipeline === pipeline);
         if (runs.length === 0) return null;

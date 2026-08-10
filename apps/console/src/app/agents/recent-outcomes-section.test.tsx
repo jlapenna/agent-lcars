@@ -46,13 +46,13 @@ function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
 }
 
 describe('RecentOutcomesSection', () => {
-  it('shows the empty state when there are no recent runs', () => {
+  it('omits itself when there are no recent runs', () => {
     render(
       <MantineProvider>
         <RecentOutcomesSection recentRuns={[]} />
       </MantineProvider>,
     );
-    expect(screen.getByText('No recently finished runs.')).toBeTruthy();
+    expect(screen.queryByTestId('recent-outcomes')).toBeNull();
   });
 
   it('groups runs under their own pipeline heading', () => {

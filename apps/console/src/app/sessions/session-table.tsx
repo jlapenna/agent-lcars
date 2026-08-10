@@ -87,11 +87,12 @@ function SessionCard({ row }: { row: SessionRow }) {
           href={`/sessions/${row.sessionId}`}
           size="sm"
           fw={500}
-          truncate
-          className="session-title-link"
+          className="session-title-link session-card__title"
           style={{ display: 'block' }}
         >
-          {row.title}
+          <Text component="span" inherit lineClamp={2}>
+            {row.title}
+          </Text>
         </Anchor>
 
         {(row.issueNumber !== undefined || row.prUrls.length > 0) && (

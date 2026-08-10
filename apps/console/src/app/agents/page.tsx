@@ -287,18 +287,25 @@ async function AgentsPageBody({
           sessionsByRunId={sessionsByRunId}
         />
       }
+      hasSecondary={
+        filteredClaimedIdle.length > 0 || filteredActivity.recentRuns.length > 0
+      }
       claimedIdle={
-        <ClaimedIdleSection
-          items={filteredClaimedIdle}
-          cliSessions={filteredCliSessions}
-        />
+        filteredClaimedIdle.length > 0 ? (
+          <ClaimedIdleSection
+            items={filteredClaimedIdle}
+            cliSessions={filteredCliSessions}
+          />
+        ) : null
       }
       recentOutcomes={
-        <RecentOutcomesSection
-          recentRuns={filteredActivity.recentRuns}
-          sessionsByRunId={sessionsByRunId}
-          outcomesByRunId={outcomesByRunId}
-        />
+        filteredActivity.recentRuns.length > 0 ? (
+          <RecentOutcomesSection
+            recentRuns={filteredActivity.recentRuns}
+            sessionsByRunId={sessionsByRunId}
+            outcomesByRunId={outcomesByRunId}
+          />
+        ) : null
       }
     />
   );

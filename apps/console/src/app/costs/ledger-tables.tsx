@@ -31,12 +31,23 @@ function CostCell({ row }: { row: LedgerTotals }) {
   if (row.costUsd === undefined) {
     return <>—</>;
   }
-  return (
-    <>
-      {row.costEstimated ? '~' : ''}
-      {formatCost(row.costUsd)}
-    </>
-  );
+  const cost = formatCost(row.costUsd);
+  if (row.costEstimated) {
+    return (
+      <span
+        className="costs-estimated-value"
+        aria-label={`Estimated cost ${cost}`}
+        title="Estimated from published model rates"
+      >
+        <span aria-hidden="true">~</span>
+        {cost}
+        <span className="costs-estimated-value__label" aria-hidden="true">
+          est.
+        </span>
+      </span>
+    );
+  }
+  return <>{cost}</>;
 }
 
 /** Each ledger is already fully sorted (cost desc, then tokens desc) by
@@ -262,7 +273,8 @@ function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
  * total rather than an em-dash, called out by the footnote below rather
  * than tracked per-row. `~$…` (CostCell, driven by `costEstimated`) marks a
  * total that includes at least one estimate rather than being entirely
- * recorded costs.
+ * recorded costs. The visible `est.` label and accessible name mean that
+ * distinction is not carried by the symbolic tilde alone.
  */
 export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
   if (ledger.byIssue.length === 0 && ledger.byWeek.length === 0) {
@@ -296,12 +308,9 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
         </section>
       </div>
       <Text size="xs" c="dimmed" className="costs-ledger-note">
-        Token totals include every session in view. Cost totals use each
-        session&apos;s recorded cost where available, otherwise an estimate from
-        published Claude API rates for its model and token usage (
-        <code>~$…</code>); a session with no recorded cost and no recognized
-        model is excluded, so a bucket mixing priced and unpriced sessions still
-        shows a partial dollar figure.
+        Costs use recorded spend when available; <code>est.</code> uses
+        published model rates. Unpriced sessions are excluded, so a mixed bucket
+        can still be partial.
       </Text>
     </Stack>
   );

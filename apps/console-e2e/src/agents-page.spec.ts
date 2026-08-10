@@ -11,16 +11,15 @@ useE2eAdminBeforeEach();
 useCliSessionFixtures();
 
 // @smoke: a minimal render check for the new agent-focused /agents route
-// (#3024) - every section is present and the seeded CLI sessions (shared
-// with the home page's fixture, see seed.ts) render inside Active Agents,
-// proving the section correctly reuses agent-activity-panel's row
-// components. getActionItems() always returns an empty list in this e2e
+// (#3024) - active agent rows are the working set; no-result secondary
+// panels intentionally disappear so the seeded CLI sessions can own the
+// first viewport. getActionItems() always returns an empty list in this e2e
 // environment (the github fixture route at api/e2e/github only answers the
 // branch->PR search getCliSessions() needs, not the action-item search
-// queries - see that route's own doc comment), so Claimed but Idle is
-// exercised only via its unit tests (claimed-idle.test.ts), not here.
+// queries - see that route's own doc comment), so stale claims are exercised
+// only via their focused unit tests.
 test.describe('/agents page @smoke', () => {
-  test('renders every section, cross-links to home, and lists active CLI sessions', async ({
+  test('renders activity, cross-links to home, and lists active CLI sessions', async ({
     page,
   }) => {
     await page.goto('/');
@@ -37,12 +36,8 @@ test.describe('/agents page @smoke', () => {
     await expect(
       page.getByRole('heading', { name: 'Active Agents' }),
     ).toBeVisible();
-    await expect(
-      page.getByRole('heading', { name: /Claimed but Idle/ }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole('heading', { name: 'Recent Outcomes' }),
-    ).toBeVisible();
+    await expect(page.getByTestId('claimed-idle-section')).toHaveCount(0);
+    await expect(page.getByTestId('recent-outcomes')).toHaveCount(0);
 
     // Cache Components intentionally preserve the previous route's DOM in
     // a hidden React Activity boundary during client navigation. Scope
@@ -73,11 +68,6 @@ test.describe('/agents page @smoke', () => {
       activeAgents.getByTestId(`cli-session-${E2E_CLI_SESSION_IDS.stale}`),
     ).toHaveCount(0);
 
-    // No action items are seeded in this environment (see the module doc
-    // above), so the claim list is genuinely empty - assert the zero state
-    // rather than asserting nothing.
-    await expect(page.getByText('Claimed but Idle (0)')).toBeVisible();
-
     // Cross-link back to the overview (the shared ConsoleHeader nav rail's
     // "Bridge" pill, see console-header.tsx).
     await header.getByRole('link', { name: 'Bridge' }).click();
@@ -104,11 +94,11 @@ test.describe('/agents page @smoke', () => {
 
     await expect(workspace.locator('.agents-workspace__operations')).toHaveCSS(
       'display',
-      'grid',
+      'block',
     );
     await expect(workspace.getByTestId('active-agents-section')).toBeVisible();
-    await expect(workspace.getByTestId('claimed-idle-section')).toBeVisible();
-    await expect(workspace.getByTestId('recent-outcomes')).toBeVisible();
+    await expect(workspace.getByTestId('claimed-idle-section')).toHaveCount(0);
+    await expect(workspace.getByTestId('recent-outcomes')).toHaveCount(0);
 
     const capture = testInfo.outputPath('agents-desktop.png');
     await page.screenshot({ path: capture, fullPage: true });
@@ -176,8 +166,6 @@ test.describe('/agents page @smoke', () => {
       [
         page.getByTestId('fleet-snapshot-bar'),
         page.getByTestId('active-agents-section'),
-        page.getByTestId('claimed-idle-section'),
-        page.getByTestId('recent-outcomes'),
       ].map(async (locator) => (await locator.boundingBox())?.y ?? -1),
     );
     expect(sectionTops).toEqual([...sectionTops].sort((a, b) => a - b));

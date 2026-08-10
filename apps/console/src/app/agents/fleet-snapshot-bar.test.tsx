@@ -90,6 +90,13 @@ describe('FleetSnapshotBar', () => {
     expect(screen.getByText('3 active')).toBeTruthy();
   });
 
+  it('summarizes inactive workflow lanes instead of rendering three zero badges', () => {
+    renderBar(EMPTY_ACTIVITY);
+
+    expect(screen.getByText('No workflow runs active')).toBeTruthy();
+    expect(screen.queryByTestId('pipeline-badge-claude')).toBeNull();
+  });
+
   it('passes the fleet summary through to the shared fleet chip', () => {
     renderBar({ ...EMPTY_ACTIVITY, fleet: { online: 4, busy: 2 } });
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent('4 online');
@@ -143,5 +150,20 @@ describe('FleetSnapshotBar', () => {
       runningAttempts: 0,
     });
     expect(screen.queryByTestId('metric-runner-occupancy')).toBeNull();
+  });
+
+  it('summarizes an all-clear dispatch queue instead of spending a mobile row on four zeroes', () => {
+    renderBar(EMPTY_ACTIVITY, 0, {
+      logicalTaskCount: 0,
+      queuedAttempts: 0,
+      runningAttempts: 0,
+      onlineRunners: 0,
+      busyRunners: 0,
+    });
+
+    expect(screen.getByTestId('activity-metrics-row')).toHaveTextContent(
+      'No queued or running dispatches',
+    );
+    expect(screen.queryByTestId('metric-logical-tasks')).toBeNull();
   });
 });

@@ -43,14 +43,9 @@ function renderSection(items: ActionItem[], cliSessions: CliSession[] = []) {
 }
 
 describe('ClaimedIdleSection', () => {
-  it('shows the empty state when nothing is stale', () => {
+  it('omits itself when there are no stale claims', () => {
     renderSection([]);
-    expect(
-      screen.getByText(
-        'Every jclaw-bot claim has a live run or session behind it.',
-      ),
-    ).toBeTruthy();
-    expect(screen.getByText('Claimed but Idle (0)')).toBeTruthy();
+    expect(screen.queryByTestId('claimed-idle-section')).toBeNull();
   });
 
   it('renders one row per stale claim with its updated-at age', () => {
