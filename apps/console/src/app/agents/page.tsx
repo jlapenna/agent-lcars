@@ -1,4 +1,4 @@
-import { Anchor, Group } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -14,7 +14,6 @@ import {
   getCachedAgentActivity,
   oldestFetchedAt,
 } from '../../lib/dashboard-data';
-import { consoleRepositoryUrl } from '../../lib/deployment';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
@@ -33,16 +32,13 @@ import { getCachedRecentTaskEnrichment } from '../../lib/recent-task-enrichment'
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
-import { ConsoleHeader, DataWarnings } from '../console-header';
+import { ConsoleAppShell } from '../console-app-shell';
+import { ConsoleCommandUtilities } from '../console-command-utilities';
+import { DataWarnings } from '../console-header';
 import { repoScopedConsoleHrefs } from '../console-hrefs';
-import { ConsolePageShell } from '../console-page-shell';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
-import { QueueUtilityMenu } from '../queue-utility-menu';
-import { QuickTaskButton } from '../quick-task-button';
-import { RefreshButton } from '../refresh-button';
-import { SignOutButton } from '../sign-out-button';
 import { ActiveAgentsSection } from './active-agents-section';
 import { AgentsWorkspace } from './agents-workspace';
 import { ClaimedIdleSection } from './claimed-idle-section';
@@ -308,35 +304,6 @@ async function AgentsPageBody({
   );
 }
 
-function AgentsUtilities({
-  watchedRepos,
-  repoFilter,
-  includeNavigation = false,
-}: {
-  watchedRepos: ReturnType<typeof getWatchedRepos>;
-  repoFilter?: WatchedRepo;
-  includeNavigation?: boolean;
-}) {
-  return (
-    <Group gap={4} wrap="nowrap">
-      <QuickTaskButton
-        watchedRepos={watchedRepos}
-        initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
-        size="compact-xs"
-      />
-      <RefreshButton compact bustsGithubCache />
-      <QueueUtilityMenu
-        repositoryUrl={consoleRepositoryUrl()}
-        includeNavigation={includeNavigation}
-        navigationHrefs={repoScopedConsoleHrefs(
-          repoFilter ? repoKey(repoFilter) : undefined,
-        )}
-        signOutControl={<SignOutButton />}
-      />
-    </Group>
-  );
-}
-
 /**
  * Auth-gate, title/subtitle, and nav render eagerly here - none of it needs
  * the slow GitHub/Firestore reads `AgentsPageBody` fetches, so this shell
@@ -360,47 +327,51 @@ async function AgentsPageShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <ConsolePageShell className="agents-page-shell">
-      <ConsoleHeader
-        current="agents"
-        title="Agent Status"
-        repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
-        subtitle={
-          <>
-            {subtitle}
-            {repoFilter && (
-              <>
-                {' · '}
-                <Anchor href="/agents" size="sm">
-                  show all repos
-                </Anchor>
-              </>
-            )}
-          </>
-        }
-        utilities={
-          <>
-            <div className="agents-utilities agents-utilities--desktop">
-              <AgentsUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={repoFilter}
-              />
-            </div>
-            <div className="agents-utilities agents-utilities--mobile">
-              <AgentsUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={repoFilter}
-                includeNavigation
-              />
-            </div>
-          </>
-        }
-      />
-
+    <ConsoleAppShell
+      className="agents-page-shell"
+      current="agents"
+      title="Agent Status"
+      repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
+      subtitle={
+        <>
+          {subtitle}
+          {repoFilter && (
+            <>
+              {' · '}
+              <Anchor href="/agents" size="sm">
+                show all repos
+              </Anchor>
+            </>
+          )}
+        </>
+      }
+      utilities={
+        <>
+          <div className="agents-utilities agents-utilities--desktop">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
+              bustsGithubCache
+            />
+          </div>
+          <div className="agents-utilities agents-utilities--mobile">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
+              bustsGithubCache
+              includeNavigation
+              navigationHrefs={repoScopedConsoleHrefs(
+                repoFilter ? repoKey(repoFilter) : undefined,
+              )}
+            />
+          </div>
+        </>
+      }
+    >
       <Suspense fallback={<PageLoading rows={5} header={false} />}>
         <AgentsPageBody repoFilter={repoFilter} />
       </Suspense>
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }
 

@@ -27,9 +27,9 @@ import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
-import { ConsoleHeader, DataWarnings } from './console-header';
+import { ConsoleAppShell } from './console-app-shell';
+import { DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
-import { ConsolePageShell } from './console-page-shell';
 import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
@@ -202,47 +202,46 @@ async function IndexShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <ConsolePageShell className="deck-page-shell">
-      <ConsoleHeader
-        current="deck"
-        title="Bridge"
-        repoFilter={repoFilterKey}
-        subtitle={
-          <>
-            {subtitle}
-            {repoFilter && (
-              <>
-                {' · '}
-                <Anchor href="/" size="sm">
-                  show all repos
-                </Anchor>
-              </>
-            )}
-          </>
-        }
-        utilities={
-          <>
-            <div className="deck-utilities deck-utilities--desktop">
-              <QueueConsoleUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={repoFilterKey}
-              />
-            </div>
-            <div className="deck-utilities deck-utilities--mobile">
-              <QueueConsoleUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={repoFilterKey}
-                includeNavigation
-              />
-            </div>
-          </>
-        }
-      />
-
+    <ConsoleAppShell
+      className="deck-page-shell"
+      current="deck"
+      title="Bridge"
+      repoFilter={repoFilterKey}
+      subtitle={
+        <>
+          {subtitle}
+          {repoFilter && (
+            <>
+              {' · '}
+              <Anchor href="/" size="sm">
+                show all repos
+              </Anchor>
+            </>
+          )}
+        </>
+      }
+      utilities={
+        <>
+          <div className="deck-utilities deck-utilities--desktop">
+            <QueueConsoleUtilities
+              watchedRepos={watchedRepos}
+              repoFilter={repoFilterKey}
+            />
+          </div>
+          <div className="deck-utilities deck-utilities--mobile">
+            <QueueConsoleUtilities
+              watchedRepos={watchedRepos}
+              repoFilter={repoFilterKey}
+              includeNavigation
+            />
+          </div>
+        </>
+      }
+    >
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <IndexBody repoFilter={repoFilter} />
       </Suspense>
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }
 

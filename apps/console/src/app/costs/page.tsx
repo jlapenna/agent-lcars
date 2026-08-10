@@ -1,10 +1,9 @@
-import { Group, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
-import { consoleRepositoryUrl } from '../../lib/deployment';
 import { getWatchedRepos } from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
@@ -13,13 +12,10 @@ import {
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
-import { ConsoleHeader, DataWarnings } from '../console-header';
-import { ConsolePageShell } from '../console-page-shell';
+import { ConsoleAppShell } from '../console-app-shell';
+import { ConsoleCommandUtilities } from '../console-command-utilities';
+import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
-import { QueueUtilityMenu } from '../queue-utility-menu';
-import { QuickTaskButton } from '../quick-task-button';
-import { RefreshButton } from '../refresh-button';
-import { SignOutButton } from '../sign-out-button';
 import { CostsWorkspace } from './costs-workspace';
 import { LedgerTables } from './ledger-tables';
 
@@ -87,32 +83,6 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
   return queryString ? `${path}?${queryString}` : path;
 }
 
-function CostsUtilities({
-  watchedRepos,
-  includeNavigation = false,
-  navigationHrefs,
-}: {
-  watchedRepos: ReturnType<typeof getWatchedRepos>;
-  includeNavigation?: boolean;
-  navigationHrefs?: {
-    sessions: string;
-    costs: string;
-  };
-}) {
-  return (
-    <Group gap={4} wrap="nowrap">
-      <QuickTaskButton watchedRepos={watchedRepos} size="compact-xs" />
-      <RefreshButton compact />
-      <QueueUtilityMenu
-        repositoryUrl={consoleRepositoryUrl()}
-        includeNavigation={includeNavigation}
-        navigationHrefs={navigationHrefs}
-        signOutControl={<SignOutButton />}
-      />
-    </Group>
-  );
-}
-
 /**
  * What the fleet costs, by issue and by week.
  *
@@ -138,39 +108,38 @@ async function CostsPageShell({ searchParams }: PageProps) {
   };
 
   return (
-    <ConsolePageShell className="costs-page-shell">
-      <ConsoleHeader
-        current="costs"
-        archiveQuery={query}
-        title="Cost Ledger"
-        subtitle={
-          <>
-            {describeArchiveWindow(query)} ·{' '}
-            <Suspense fallback="…">
-              <SessionCount query={query} />
-            </Suspense>
-          </>
-        }
-        utilities={
-          <>
-            <div className="costs-utilities costs-utilities--desktop">
-              <CostsUtilities watchedRepos={watchedRepos} />
-            </div>
-            <div className="costs-utilities costs-utilities--mobile">
-              <CostsUtilities
-                watchedRepos={watchedRepos}
-                includeNavigation
-                navigationHrefs={mobileNavigationHrefs}
-              />
-            </div>
-          </>
-        }
-      />
-
+    <ConsoleAppShell
+      className="costs-page-shell"
+      current="costs"
+      archiveQuery={query}
+      title="Cost Ledger"
+      subtitle={
+        <>
+          {describeArchiveWindow(query)} ·{' '}
+          <Suspense fallback="…">
+            <SessionCount query={query} />
+          </Suspense>
+        </>
+      }
+      utilities={
+        <>
+          <div className="costs-utilities costs-utilities--desktop">
+            <ConsoleCommandUtilities watchedRepos={watchedRepos} />
+          </div>
+          <div className="costs-utilities costs-utilities--mobile">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              includeNavigation
+              navigationHrefs={mobileNavigationHrefs}
+            />
+          </div>
+        </>
+      }
+    >
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <CostsBody query={query} />
       </Suspense>
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }
 

@@ -1,6 +1,6 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { isSessionRenderable, sessionAgent } from '@agent-lcars/telemetry';
-import { Code, Group, Stack, Text, Title } from '@mantine/core';
+import { Code, Stack, Text, Title } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -10,11 +10,10 @@ import { auth } from '../../../auth';
 import { getWatchedRepos } from '../../../lib/github-client';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
+import { ConsoleAppShell } from '../../console-app-shell';
 import { ConsoleFooter } from '../../console-footer';
-import { ConsoleNavRail } from '../../console-header';
-import { ConsolePageShell } from '../../console-page-shell';
 import { formatRelativeTime } from '../../format';
-import { PageLoading } from '../../page-loading';
+import { NavPageLoading } from '../../page-loading';
 import { QuickTaskButton } from '../../quick-task-button';
 import { RefreshButton } from '../../refresh-button';
 import { SessionHeader } from './session-header';
@@ -108,17 +107,71 @@ async function SessionDetailPageContent({ params }: PageProps) {
   }
 
   const generatedAt = new Date().toISOString();
+  const title =
+    detail.status === 'ok'
+      ? (detail.doc.title ?? detail.doc.sessionId)
+      : 'Session unavailable';
+  const subtitle =
+    detail.status === 'ok'
+      ? `${detail.doc.source === 'issue-agent' ? 'Automation' : 'CLI'} session · ${detail.doc.sessionId}`
+      : 'The session archive could not be read.';
 
   return (
-    <ConsolePageShell>
-      <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
-        <ConsoleNavRail current="sessions" />
+    <ConsoleAppShell
+      current="sessions"
+      title={title}
+      subtitle={subtitle}
+      utilities={
         <RefreshButton
           generatedAt={generatedAt}
           initialLabel={formatRelativeTime(generatedAt)}
         />
-      </Group>
-
+      }
+      footer={
+        <ConsoleFooter
+          actions={
+            <QuickTaskButton
+              watchedRepos={getWatchedRepos()}
+              initialRepoKey={
+                detail.status === 'ok' && detail.doc.repo
+                  ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+                  : undefined
+              }
+              sourceIdentities={
+                detail.status === 'ok'
+                  ? [
+                      {
+                        label: 'Session' as const,
+                        value: detail.doc.sessionId,
+                      },
+                      ...(detail.doc.source === 'issue-agent' &&
+                      detail.doc.repo &&
+                      detail.doc.runId
+                        ? [
+                            {
+                              label: 'Workflow run' as const,
+                              value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.runId}`,
+                            },
+                          ]
+                        : []),
+                      ...(detail.doc.source === 'issue-agent' &&
+                      detail.doc.repo &&
+                      detail.doc.issueNumber
+                        ? [
+                            {
+                              label: 'Task' as const,
+                              value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.issueNumber}`,
+                            },
+                          ]
+                        : []),
+                    ]
+                  : []
+              }
+            />
+          }
+        />
+      }
+    >
       {detail.status === 'error' && (
         <Text size="sm" c="orange" mb="md" data-testid="session-detail-error">
           {detail.warning}
@@ -137,50 +190,7 @@ async function SessionDetailPageContent({ params }: PageProps) {
           )}
         </>
       )}
-
-      <ConsoleFooter
-        actions={
-          <QuickTaskButton
-            watchedRepos={getWatchedRepos()}
-            initialRepoKey={
-              detail.status === 'ok' && detail.doc.repo
-                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
-                : undefined
-            }
-            sourceIdentities={
-              detail.status === 'ok'
-                ? [
-                    {
-                      label: 'Session' as const,
-                      value: detail.doc.sessionId,
-                    },
-                    ...(detail.doc.source === 'issue-agent' &&
-                    detail.doc.repo &&
-                    detail.doc.runId
-                      ? [
-                          {
-                            label: 'Workflow run' as const,
-                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.runId}`,
-                          },
-                        ]
-                      : []),
-                    ...(detail.doc.source === 'issue-agent' &&
-                    detail.doc.repo &&
-                    detail.doc.issueNumber
-                      ? [
-                          {
-                            label: 'Task' as const,
-                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.issueNumber}`,
-                          },
-                        ]
-                      : []),
-                  ]
-                : []
-            }
-          />
-        }
-      />
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }
 
@@ -189,7 +199,16 @@ async function SessionDetailPageContent({ params }: PageProps) {
 // than blocking the whole route on the GitHub/Firestore reads.
 export default function SessionDetailPage({ params }: PageProps) {
   return (
-    <Suspense fallback={<PageLoading rows={4} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="sessions"
+          title="Session detail"
+          className="sessions-page-shell"
+          rows={4}
+        />
+      }
+    >
       <SessionDetailPageContent params={params} />
     </Suspense>
   );

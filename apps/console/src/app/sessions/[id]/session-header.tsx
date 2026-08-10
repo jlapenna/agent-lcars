@@ -4,15 +4,7 @@ import {
   sessionAgent,
   totalTokens,
 } from '@agent-lcars/telemetry';
-import {
-  Anchor,
-  Badge,
-  Group,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Anchor, Badge, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import {
@@ -62,8 +54,8 @@ function formatTokens(doc: SessionDoc): string {
 }
 
 /**
- * The detail page's header: everything about a session that isn't the
- * transcript itself - identity, liveness, cost/token totals, and
+ * The detail page's session summary: everything below the shared page header
+ * that isn't the transcript itself - identity, liveness, cost/token totals, and
  * source-specific fields (cli: host/cwd/worktree/branch + artifacts;
  * issue-agent: run/issue links). Renders unconditionally (never gated on
  * the transcript load succeeding) so a GCS failure never takes down the
@@ -102,9 +94,6 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           {LIVENESS_LABELS[liveness]}
         </Badge>
         <AgentBadge agent={sessionAgent(doc)} />
-        <Title order={1} size="h3">
-          {doc.title ?? doc.sessionId}
-        </Title>
       </Group>
 
       <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">

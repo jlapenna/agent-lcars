@@ -43,6 +43,31 @@ test.describe('/sessions workspace @smoke', () => {
     });
   });
 
+  test('clips an oversized session title inside the fixed desktop header', async ({
+    page,
+  }, testInfo) => {
+    await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
+
+    const header = page.locator('.console-header[data-current="sessions"]');
+    const title = header.locator('.lcars-header-title');
+
+    await expectDesktopBridgeHeader(header);
+    await expect(title).toHaveCSS('text-overflow', 'ellipsis');
+    await expect(title).toHaveCSS('white-space', 'nowrap');
+    expect(
+      await title.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      ),
+    ).toBe(true);
+
+    const capture = testInfo.outputPath('session-detail-desktop-title.png');
+    await page.screenshot({ path: capture, fullPage: true });
+    await testInfo.attach('session-detail-desktop-title.png', {
+      path: capture,
+      contentType: 'image/png',
+    });
+  });
+
   test('switches between flat and by-issue archive views', async ({ page }) => {
     await page.goto('/sessions');
 
@@ -124,6 +149,38 @@ test.describe('/sessions workspace @smoke', () => {
     const capture = testInfo.outputPath('sessions-mobile.png');
     await page.screenshot({ path: capture, fullPage: true });
     await testInfo.attach('sessions-mobile.png', {
+      path: capture,
+      contentType: 'image/png',
+    });
+  });
+
+  test('keeps the session-detail title visible below the mobile command strip', async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
+
+    const header = page.locator('.console-header[data-current="sessions"]');
+    const mobileTitle = page.locator(
+      '.console-page-mobile-title[data-current="sessions"]',
+    );
+
+    await expectMobileBridgeHeader(header);
+    await expect(
+      mobileTitle.getByRole('heading', {
+        name: 'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
+      }),
+    ).toBeVisible();
+    await expect(page.getByTestId('session-header')).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+
+    const capture = testInfo.outputPath('session-detail-mobile-title.png');
+    await page.screenshot({ path: capture, fullPage: true });
+    await testInfo.attach('session-detail-mobile-title.png', {
       path: capture,
       contentType: 'image/png',
     });
