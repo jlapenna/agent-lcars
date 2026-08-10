@@ -365,23 +365,36 @@ jobs:
 
       # #813: the ONLY remaining direct write in this workflow, narrowed to
       # the minimum bootstrap-safe fallback the issue asks for -- fires
-      # ONLY when the authenticated completion callback above could not be
-      # delivered (steps.callback.outputs.completion-sent != 'true'), i.e.
-      # exactly when no evidence reached the hosted control plane at all.
-      # In the normal case (the callback succeeded), the dispatch
-      # controller's projector already converged the failure comment and
-      # the needs-human park through that same callback
+      # when the controller has no way to have already projected this
+      # failure through the callback above:
+      #   - the authenticated completion callback could not be delivered at
+      #     all (steps.callback.outputs.completion-sent != 'true'), or
+      #   - it WAS delivered, but carried no typed outcome for the
+      #     controller to classify -- "Derive trusted completion evidence"
+      #     exits 0 without setting outcome-kind when it cannot even read
+      #     this run's own job/step metadata (e.g. the Actions jobs API
+      #     itself failed, or no matching worker job was found at all), so
+      #     completion-sent can be 'true' with nothing for the projector to
+      #     act on (Codex review on #923).
+      # In every other case (the callback succeeded AND carried a typed
+      # outcome), the dispatch controller's projector already converged the
+      # failure comment and the needs-human park through that same callback
       # (apps/dispatch-broker/src/modules/projector.ts's
       # projectWorkerFailure) -- writing it again here, unconditionally,
       # would be exactly the second uncoordinated write path #813 retired.
-      # Moved after the callback attempt (was the very first step) so its
-      # own `if:` can read `steps.callback`'s outcome; unrelated to
-      # inputs.worker-result, which stays the outer gate (no direct write
-      # at all on a successful worker result).
+      #
+      # `always()` is load-bearing, not decoration: this step runs AFTER
+      # the callback step, and an `if:` with no explicit status-check
+      # function implicitly ANDs in `success()` -- without `always()`, a
+      # failed callback (steps.callback itself exiting non-zero, exactly
+      # the scenario this fallback exists for) would make GitHub Actions
+      # skip this step entirely rather than run it (Codex review on #923).
       - name: Report and park bootstrap-independent failure
         if: >-
+          always() &&
           inputs.worker-result != 'success' &&
-          steps.callback.outputs.completion-sent != 'true'
+          (steps.callback.outputs.completion-sent != 'true' ||
+           steps.evidence.outputs.outcome-kind == '')
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
