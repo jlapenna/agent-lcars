@@ -327,10 +327,131 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
         self.assertIn(
-            'github_actions_jobs_current{job="repository validation",repository="jlapenna/homelab",runner_group="Default",status="queued",workflow="validate"} 1.0',
+            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",status="queued",workflow="validate"} 1.0',
             metrics,
         )
         self.assertIn("github_actions_job_oldest_queued_seconds", metrics)
+
+    def test_confirmed_concurrency_group_membership_is_exported(self):
+        run = workflow_run(status="in_progress", conclusion=None)
+        job = workflow_job(
+            id=789, status="queued", conclusion=None, started_at=None, completed_at=None
+        )
+        self.database.upsert_run("jlapenna/homelab", run)
+        self.database.upsert_jobs(
+            "jlapenna/homelab",
+            run,
+            [job],
+            [{"group_name": "ci-refs/heads/main", "group_members": [{"job_id": 789}]}],
+        )
+
+        metrics = self.metrics()
+
+        self.assertIn(
+            'github_actions_jobs_current{concurrency_group="ci-refs/heads/main",'
+            'job="repository validation",repository="jlapenna/homelab",'
+            'runner_group="Default",status="queued",workflow="validate"} 1.0',
+            metrics,
+        )
+
+    def test_attempted_but_empty_concurrency_listing_is_unknown_not_none(self):
+        # GitHub's own concurrency-groups listing is documented (see
+        # apps/dispatch-broker/src/github-api.ts:398-449) to report zero
+        # group membership for a run even when a job genuinely holds a
+        # concurrency group. An empty-but-attempted listing (an empty list,
+        # as opposed to the "never attempted" None default) must not be
+        # false-labeled "none" -- that would systematically misreport every
+        # job caught by the endpoint's failure mode.
+        run = workflow_run(status="in_progress", conclusion=None)
+        job = workflow_job(
+            status="queued", conclusion=None, started_at=None, completed_at=None
+        )
+        self.database.upsert_run("jlapenna/homelab", run)
+        self.database.upsert_jobs("jlapenna/homelab", run, [job], [])
+
+        metrics = self.metrics()
+
+        self.assertIn(
+            'github_actions_jobs_current{concurrency_group="unknown",'
+            'job="repository validation",repository="jlapenna/homelab",'
+            'runner_group="Default",status="queued",workflow="validate"} 1.0',
+            metrics,
+        )
+        self.assertNotIn('concurrency_group="none"', metrics)
+
+    def test_dynamic_concurrency_group_names_are_capped_per_workflow(self):
+        run = workflow_run(status="in_progress", conclusion=None)
+        with patch.object(exporter, "MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW", 2):
+            self.database.upsert_run("jlapenna/homelab", run)
+            self.database.upsert_jobs(
+                "jlapenna/homelab",
+                run,
+                [
+                    workflow_job(
+                        id=1,
+                        name="job one",
+                        status="queued",
+                        conclusion=None,
+                        started_at=None,
+                        completed_at=None,
+                    ),
+                    workflow_job(
+                        id=2,
+                        name="job two",
+                        status="queued",
+                        conclusion=None,
+                        started_at=None,
+                        completed_at=None,
+                    ),
+                    workflow_job(
+                        id=3,
+                        name="job three",
+                        status="queued",
+                        conclusion=None,
+                        started_at=None,
+                        completed_at=None,
+                    ),
+                ],
+                [
+                    {
+                        "group_name": "pr-1000000001",
+                        "group_members": [{"job_id": 1}],
+                    },
+                    {
+                        "group_name": "pr-1000000002",
+                        "group_members": [{"job_id": 2}],
+                    },
+                    {
+                        "group_name": "pr-1000000003",
+                        "group_members": [{"job_id": 3}],
+                    },
+                ],
+            )
+
+        metrics = self.metrics()
+        self.assertIn('concurrency_group="pr-1000000001"', metrics)
+        self.assertIn('concurrency_group="pr-1000000002"', metrics)
+        self.assertIn('concurrency_group="__other__"', metrics)
+        self.assertNotIn('concurrency_group="pr-1000000003"', metrics)
+
+    def test_poller_fetches_concurrency_groups_only_for_active_runs(self):
+        repository = "jlapenna/homelab"
+        active_run = workflow_run(id=1, status="in_progress", conclusion=None)
+        completed_run = workflow_run(id=2)
+        api = Mock()
+        api.list_runs.return_value = [active_run, completed_run]
+        api.list_jobs.return_value = []
+        api.list_concurrency_groups.return_value = []
+        poller = exporter.Poller(
+            exporter.Config(token="test", repositories=(repository,)),
+            self.database,
+            api,
+            FakeState(),
+        )
+
+        poller.refresh_repository(repository)
+
+        api.list_concurrency_groups.assert_called_once_with(repository, 1)
 
     def test_failed_initial_backfill_is_retried(self):
         class FailingAPI(FakeAPI):
