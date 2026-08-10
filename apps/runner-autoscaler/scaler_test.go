@@ -202,7 +202,7 @@ func TestParsePnpmMaintenanceResult(t *testing.T) {
 }
 
 func TestWorkDirSweepScriptBoundsPnpmStore(t *testing.T) {
-	script := workDirSweepScript(30 * 1024 * 1024 * 1024)
+	script := workDirSweepScript(30*1024*1024*1024, 10*1024*1024*1024)
 	for _, want := range []string{
 		`pnpm_store=/home/runner/_work/.pnpm-store`,
 		`if pnpm --store-dir "$pnpm_store" store prune; then`,
@@ -216,13 +216,22 @@ func TestWorkDirSweepScriptBoundsPnpmStore(t *testing.T) {
 		`echo "PNPM_STORE_BYTES=$pnpm_store_bytes"`,
 		`echo "PNPM_PRUNE=$pnpm_prune"`,
 		`echo "PNPM_EVICT=$pnpm_evict"`,
+		// agent-lcars#852: pnpm maintenance must be its own, WIDER trigger
+		// (workdir over cap OR store over its own tighter budget), not
+		// nested inside the workdir-cap-only block -- otherwise a store that
+		// drifts over budget while the rest of the workdir stays under cap
+		// would never get pruned/evicted, permanently wedging
+		// pickHostLocked's placement-time budget gate blocked.
+		`pnpm_budget=10737418240`,
+		`if [ -d "$pnpm_store" ] && { [ "$before" -gt "$cap" ] || [ "$pnpm_store_bytes" -gt "$pnpm_budget" ]; }; then`,
+		`if [ "$current" -gt "$cap" ] || [ "$current_pnpm" -gt "$pnpm_budget" ]; then`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("workDirSweepScript() missing %q", want)
 		}
 	}
-	if !strings.Contains(script, `if [ "$current" -gt "$cap" ]; then`) {
-		t.Fatal("workDirSweepScript() does not evict the pnpm store when it keeps the workdir over cap")
+	if !strings.Contains(script, `if [ "$before" -gt "$cap" ]; then`) {
+		t.Fatal("workDirSweepScript() does not run generic workdir cleanup when the workdir itself is over cap")
 	}
 }
 

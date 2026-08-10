@@ -92,6 +92,14 @@ yet (never swept) is not excluded — the same fail-open policy the host-load
 gate uses for missing telemetry, otherwise a host could never receive its
 first placement.
 
+The sweep's own pnpm prune/evict step runs whenever _either_ the whole
+workdir exceeds `workdir_size_cap` _or_ the store alone exceeds its own
+(tighter) budget — not only the former. The store can drift over its own
+budget while the rest of the workdir stays comfortably under its cap, and
+without this second, independent trigger nothing would ever prune or evict
+it back down in that case, permanently wedging the placement gate above
+blocked on that host.
+
 **Metrics** (all by `host`, all under `github_runner_autoscaler_`):
 
 - `pnpm_store_bytes` — the store's size after the last sweep.

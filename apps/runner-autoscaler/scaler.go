@@ -1372,14 +1372,25 @@ func (a *Scaler) pnpmStoreOverBudget(fleet *FleetCoordinator, host string) bool 
 	if !ok {
 		return false
 	}
-	budget := a.pnpmStoreBudgetBytes
-	if override, has := a.pnpmStoreBudgets[host]; has {
-		budget = override
-	}
+	budget := a.resolvedPnpmStoreBudget(host)
 	if budget <= 0 {
 		return false
 	}
 	return bytes >= budget
+}
+
+// resolvedPnpmStoreBudget returns host's effective pnpm-store budget: its
+// per-host override if configured, else the scale set's default
+// (pnpmStoreBudgetBytes, itself defaultPnpmStoreBudgetBytes unless the
+// process overrides it). Shared by pnpmStoreOverBudget (the placement gate)
+// and sweepHostWorkDir (which threads it into workDirSweepScript as the
+// SECOND, independent maintenance trigger) so the two can never resolve a
+// different number for the same host.
+func (a *Scaler) resolvedPnpmStoreBudget(host string) int64 {
+	if override, has := a.pnpmStoreBudgets[host]; has {
+		return override
+	}
+	return a.pnpmStoreBudgetBytes
 }
 
 // hostOnMains is deliberately fail-closed for mains-required hosts: a missing
@@ -2459,17 +2470,28 @@ const sweepStaleMinutes = 60
 // class of thing a non-shared runner container's writable layer would have
 // discarded on its own when removed. See jlapenna/homelab's docs/incidents.md
 // 2026-07-18: this shared dir has no per-container lifecycle, so without this
-// nothing else ever reclaims it. The pnpm content-addressable store is
-// different: after an idle-safe pnpm prune, it is evicted as a last resort
-// when it is what keeps the workdir above the configured cap. A future install
-// can restore it, whereas allowing it to consume the host filesystem can
-// prevent every unrelated runner from starting.
-func workDirSweepScript(capBytes int64) string {
+// nothing else ever reclaims it.
+//
+// The pnpm content-addressable store's own maintenance (prune, then evict as
+// a last resort) is gated SEPARATELY, on pnpmBudgetBytes OR capBytes,
+// whichever is exceeded (agent-lcars#852): the store can drift over its own
+// (deliberately tighter) budget while the rest of the shared workdir stays
+// comfortably under its cap, and nothing else would ever shrink it back down
+// in that case. Without this second trigger, pickHostLocked's placement-time
+// budget gate (pnpmStoreOverBudget) could block a host indefinitely -- the
+// generic cap-only condition below would never fire to let prune/evict run,
+// so the very sweep the gate depends on to self-heal would never happen. A
+// future install can restore an evicted store, whereas leaving it to consume
+// the host filesystem (or leaving a host permanently excluded from
+// placement) can prevent every unrelated runner from starting.
+func workDirSweepScript(capBytes, pnpmBudgetBytes int64) string {
 	return fmt.Sprintf(`set -e
 rm -rf /home/runner/_work/_temp/* 2>/dev/null || true
 before=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); before=${before:-0}
 cap=%d
+pnpm_budget=%d
 pnpm_store=/home/runner/_work/.pnpm-store
+pnpm_store_bytes=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); pnpm_store_bytes=${pnpm_store_bytes:-0}
 pnpm_prune=skipped
 pnpm_evict=skipped
 if [ "$before" -gt "$cap" ]; then
@@ -2495,41 +2517,42 @@ if [ "$before" -gt "$cap" ]; then
         ;;
     esac
   done
+fi
 
-  # The shared pnpm content-addressable store is not tied to a runner
-  # container. First let pnpm remove packages no project references. If the
-  # idle host is still over its workdir cap, evict the store entirely: all of
-  # its contents are reproducible and the next install will repopulate it.
-  # sweepHostIfIdle holds the same host lock used by runner placement, so this
-  # cannot race an install or a newly starting shared-workdir runner.
-  #
-  # Both steps report a result (success/failure/skipped) instead of relying
-  # on set -e -- a failing "pnpm store prune" or "rm -rf" must not abort
-  # this script before the SWEEP/PNPM_* lines below print, or the whole
-  # sweep (and its metrics) goes dark instead of just this one step
-  # (agent-lcars#853).
-  if [ -d "$pnpm_store" ]; then
-    if command -v pnpm >/dev/null 2>&1; then
-      if pnpm --store-dir "$pnpm_store" store prune; then
-        pnpm_prune=success
-      else
-        pnpm_prune=failure
-      fi
+# The shared pnpm content-addressable store is not tied to a runner
+# container. First let pnpm remove packages no project references. If the
+# store (or the whole workdir) is still over its threshold, evict the store
+# entirely: all of its contents are reproducible and the next install will
+# repopulate it. sweepHostIfIdle holds the same host lock used by runner
+# placement, so this cannot race an install or a newly starting
+# shared-workdir runner.
+#
+# Both steps report a result (success/failure/skipped) instead of relying on
+# set -e -- a failing "pnpm store prune" or "rm -rf" must not abort this
+# script before the SWEEP/PNPM_* lines below print, or the whole sweep (and
+# its metrics) goes dark instead of just this one step (agent-lcars#853).
+if [ -d "$pnpm_store" ] && { [ "$before" -gt "$cap" ] || [ "$pnpm_store_bytes" -gt "$pnpm_budget" ]; }; then
+  if command -v pnpm >/dev/null 2>&1; then
+    if pnpm --store-dir "$pnpm_store" store prune; then
+      pnpm_prune=success
+    else
+      pnpm_prune=failure
     fi
-    current=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); current=${current:-0}
-    if [ "$current" -gt "$cap" ]; then
-      if rm -rf "$pnpm_store"; then
-        pnpm_evict=success
-      else
-        pnpm_evict=failure
-      fi
+  fi
+  current=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); current=${current:-0}
+  current_pnpm=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); current_pnpm=${current_pnpm:-0}
+  if [ "$current" -gt "$cap" ] || [ "$current_pnpm" -gt "$pnpm_budget" ]; then
+    if rm -rf "$pnpm_store"; then
+      pnpm_evict=success
+    else
+      pnpm_evict=failure
     fi
   fi
 fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
-# Measured unconditionally (not just when over cap): the steady-state size
-# is exactly what operators watch for sustained growth (agent-lcars#853),
-# not only the value at the moment maintenance ran.
+# Measured unconditionally (not just when maintenance ran): the steady-state
+# size is exactly what operators watch for sustained growth (agent-lcars
+# #853), not only the value at the moment maintenance ran.
 pnpm_store_bytes=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); pnpm_store_bytes=${pnpm_store_bytes:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
 echo "PNPM_STORE_BYTES=$pnpm_store_bytes"
@@ -2561,7 +2584,7 @@ if [ -f /usr/local/lib/agent-lcars/externals-health.sh ]; then
 else
   echo "EXTERNALS_HEALTHY_SKIPPED"
 fi
-`, capBytes, sweepStaleMinutes, sweepStaleMinutes)
+`, capBytes, pnpmBudgetBytes, sweepStaleMinutes, sweepStaleMinutes)
 }
 
 func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
@@ -2569,7 +2592,7 @@ func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Clie
 	if override, ok := a.workDirSizeCaps[host]; ok {
 		capBytes = override
 	}
-	script := workDirSweepScript(capBytes)
+	script := workDirSweepScript(capBytes, a.resolvedPnpmStoreBudget(host))
 
 	resp, err := a.createContainerWithImageRecovery(
 		ctx,
