@@ -101,20 +101,31 @@ runs:
     # blank to get every installation permission" behavior would otherwise
     # let `workflows` leak into such a caller's token silently, with no
     # opt-in, the moment an installation approves it (Codex review on #903).
-    # verify-workflows-grant.sh compares the installation's actual grant
-    # against inputs.permission-workflows exactly as requested - blank
-    # means "expect workflows to be absent", not "skip the check".
+    # verify-workflows-grant.sh mints its own probe token with this same
+    # call's exact permission-* inputs and inspects THAT token's actual
+    # grant - not GET /app/installations/{id}, which reports the
+    # installation's overall ceiling rather than what a specifically-scoped
+    # token receives, and produced a false failure here for exactly the
+    # narrowed-allowlist case this step exists to protect (see the script's
+    # own header for the full story). Blank permission-workflows means
+    # "expect workflows to be absent from a token minted this way", not
+    # "skip the check".
     #
     # Gated strictly on what a REVIEWED WORKFLOW-YAML CHANGE sets via
-    # inputs.permission-workflows: nothing an issue comment, PR body, or
-    # agent tool call can influence at runtime. The check only ever reads
-    # the installation's actual grant; it never widens what the token above
-    # was minted with.
+    # inputs.permission-*: nothing an issue comment, PR body, or agent tool
+    # call can influence at runtime. The check only ever reads what its own
+    # probe token actually receives; it never widens what the real token
+    # above was minted with.
     - name: Verify workflows permission was actually granted
       shell: bash
       env:
         CLIENT_ID: ${{ inputs.client-id }}
         PRIVATE_KEY: ${{ inputs.private-key }}
         INSTALLATION_ID: ${{ steps.mint.outputs.installation-id }}
+        PERMISSION_ISSUES: ${{ inputs.permission-issues }}
+        PERMISSION_CONTENTS: ${{ inputs.permission-contents }}
+        PERMISSION_PULL_REQUESTS: ${{ inputs.permission-pull-requests }}
+        PERMISSION_ACTIONS: ${{ inputs.permission-actions }}
+        PERMISSION_METADATA: ${{ inputs.permission-metadata }}
         REQUESTED_LEVEL: ${{ inputs.permission-workflows }}
       run: bash "$GITHUB_ACTION_PATH/verify-workflows-grant.sh"
