@@ -55,7 +55,7 @@ on:
 # Least privilege: enough to comment on / claim the anchor issue, read its
 # own run during preflight, and mint the short-lived completion OIDC token.
 # Deliberately no contents:write, pull-requests:write, or secret at all.
-# Authority mode adds only a short-lived, read-before-agent Firestore token;
+# Firestore authority adds only a short-lived, read-before-agent token;
 # this workflow still has no model or App secret and never runs agent code.
 permissions:
   contents: read

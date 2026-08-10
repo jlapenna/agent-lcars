@@ -129,7 +129,7 @@ export class AuthorityStateMissingError extends Error {
     public readonly compatibilityQuiescent = false,
   ) {
     super(
-      `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; return to shadow mode and backfill it before authority cutover`,
+      `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; recover the missing controller state before retrying`,
     );
     this.name = 'AuthorityStateMissingError';
   }

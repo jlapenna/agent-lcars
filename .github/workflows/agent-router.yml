@@ -144,10 +144,9 @@ jobs:
           MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
           HOSTED_CONTROLLER_LOGIN: ${{ vars.HOSTED_CONTROLLER_LOGIN }}
           ANCHOR_IS_PR: ${{ needs.normalize.outputs.is-pr }}
-          # The mode switch itself, plus what main.ts's storage adapter needs
-          # in shadow or authority mode.
-          # DISPATCH_STORAGE_TOKEN/GCP_PROJECT_ID are simply unused strings
-          # gate means neither is ever read.
+          # The broker always uses the Firestore authority path. The storage
+          # token and project ID are consumed by its adapter, never by agent
+          # code.
           DISPATCH_STORAGE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
           DISPATCH_FIRESTORE_DATABASE_ID: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
           DISPATCH_AUTHORITY_EPOCH: ${{ vars.DISPATCH_AUTHORITY_EPOCH }}

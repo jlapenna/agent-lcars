@@ -24,8 +24,8 @@
  * it did. See the issue-#645 comment "The comment ledger is forgeable by the
  * agents it controls" for the full finding.
  *
- * In `DISPATCH_STORAGE_MODE=authority`, this port provides state the
- * controlled code cannot write. Firestore stores the exact controller
+ * This port provides state the controlled code cannot write. Firestore stores
+ * the exact controller
  * aggregate alongside its query-friendly signal/intent projections and a
  * CAS lease shared by hosted admission and the Action fallback. The
  * in-memory implementation and contract suite remain the executable
@@ -190,7 +190,7 @@ export interface AuthorizationObservationRecord {
  * `LedgerAuthorization`'s own two-variant union (ledger.ts) for the same
  * "reuse the domain's existing vocabulary" reason `TaskRef` gives. This
  * union is what makes it possible for a projection like dispatch-broker's
- * `shadow.ts` to represent observational evidence faithfully instead of
+ * a compatibility projection to represent observational evidence faithfully instead of
  * mapping it onto a fabricated decision.
  */
 export type AuthorizationRecord =

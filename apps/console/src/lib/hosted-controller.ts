@@ -37,7 +37,6 @@ export function processHostedControllerEvent({
     {
       normalized,
       githubToken: required('AGENT_LCARS_GITHUB_TOKEN'),
-      storageMode: 'authority',
       authorityEpoch: required('DISPATCH_AUTHORITY_EPOCH'),
       isPullRequest,
       transportRunId,

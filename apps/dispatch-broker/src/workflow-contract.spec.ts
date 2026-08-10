@@ -1657,6 +1657,34 @@ test('every worker captures the verified attempt ID via the broker preflight cal
   }
 });
 
+test('dispatch admission has no storage-mode escape hatch', async () => {
+  const controller = await fs.readFile(
+    path.join(workspaceRoot, 'apps/dispatch-broker/src/controller-core.ts'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    controller,
+    /DISPATCH_STORAGE_MODE/u,
+    'controller admission must always use Firestore authority, not a repository variable',
+  );
+
+  for (const workflow of [
+    'agent-router.yml',
+    'agent-dispatch-canary.yml',
+    ...workerWorkflowNames,
+  ]) {
+    const source = await fs.readFile(
+      path.join(workflowsDirectory, workflow),
+      'utf8',
+    );
+    assert.doesNotMatch(
+      source,
+      /DISPATCH_STORAGE_MODE/u,
+      `${workflow} must not reintroduce a storage-mode configuration path`,
+    );
+  }
+});
+
 test('deploy-console.yml uses a workflow-restricted provider for its project-IAM identity', async () => {
   const source = await fs.readFile(
     path.join(workflowsDirectory, 'deploy-console.yml'),

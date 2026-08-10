@@ -1737,7 +1737,7 @@ test('authority completion rejects an invalid binding before GitHub projection',
   assert.equal((await port.readTask(task))?.lease, undefined);
 });
 
-test('authority completion rejects shadow-only state before fail-closed side effects', async () => {
+test('authority completion rejects compatibility-only state before fail-closed side effects', async () => {
   const port = new InMemoryStoragePort();
   await port.writeTask(
     task,
@@ -1747,10 +1747,10 @@ test('authority completion rejects shadow-only state before fail-closed side eff
   );
   const client = {
     request: async () => {
-      throw new Error('Shadow-only completion must not mutate GitHub');
+      throw new Error('Compatibility-only completion must not mutate GitHub');
     },
     requestOk: async () => {
-      throw new Error('Shadow-only completion must not read GitHub');
+      throw new Error('Compatibility-only completion must not read GitHub');
     },
   };
 

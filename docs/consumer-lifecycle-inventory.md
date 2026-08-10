@@ -102,8 +102,8 @@ its own.
 
 It does **not** land:
 
-- a hosted ingestion endpoint or storage for these observations (migration
-  plan step 2's other half, and step 3's shadow mode) — a separate follow-up,
+- a hosted ingestion endpoint or storage for these observations (the remaining
+  migration work) — a separate follow-up,
   scoped to this repository;
 - any change to the eleven consumer workflows themselves — cutover requires
   write access this session does not have in
@@ -117,7 +117,7 @@ It does **not** land:
   narrower gap, and deserves its own issue and its own explicit approval
   before any code follows it.
 
-Follow-up work — the hosted ingestion/shadow-mode/cutover phases for Group B,
+Follow-up work — the hosted-ingestion and cutover phases for Group B,
 the Group A design decision, and the actual consumer-workflow changes in
 `sprinkles`/`homelab` — should be tracked as separate issues once this
 contract exists, filed in the repository each change belongs to.
