@@ -4388,10 +4388,7 @@ async function preflight() {
   await runPhase(void 0, "authorization", async () => {
     const deadline = Date.now() + 6e4;
     while (Date.now() < deadline) {
-      const ledger = await loadPreflightLedger(
-        task,
-        authorityPort
-      );
+      const ledger = await loadPreflightLedger(task, authorityPort);
       if (ledger && verifyPreflight(ledger, expected)) {
         const generation = ledger.generations.find(
           (candidate) => candidate.generation === expected.generation
