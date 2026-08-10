@@ -9,8 +9,40 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const e2eLocal = path.join(root, 'tools/e2e-local.sh');
-const wrapper = path.join(root, 'tools/e2e/run-hermetic.sh');
 const validator = path.join(root, 'tools/e2e/validate-env.mjs');
+
+function runThroughE2eBoundary(probe, env = {}, excludedEnvironmentKeys = []) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-probe-'));
+  const fakeBin = path.join(tempDir, 'bin');
+  const probeFile = path.join(tempDir, 'probe.mjs');
+  const pnpm = path.join(fakeBin, 'pnpm');
+  const inheritedEnvironment = { ...process.env };
+  for (const key of excludedEnvironmentKeys) {
+    delete inheritedEnvironment[key];
+  }
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(probeFile, probe);
+  fs.writeFileSync(
+    pnpm,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(probeFile)}\n`,
+  );
+  fs.chmodSync(pnpm, 0o755);
+
+  try {
+    return spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...inheritedEnvironment,
+        ...env,
+        E2E_LOCAL_LOCK_FILE: path.join(tempDir, 'e2e-local.lock'),
+        PATH: `${fakeBin}:${env.PATH ?? process.env.PATH}`,
+      },
+    });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 
 test('ambient credentials cannot cross the E2E boundary', () => {
   const sentinel = 'sentinel-value-that-must-not-appear';
@@ -33,15 +65,10 @@ test('ambient credentials cannot cross the E2E boundary', () => {
     process.stdout.write('hermetic environment verified\\n');
   `;
 
-  const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
-    cwd: root,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      ...Object.fromEntries(credentialKeys.map((key) => [key, sentinel])),
-      LCARS_E2E_UNRELATED: sentinel,
-      DEBUG: 'true',
-    },
+  const result = runThroughE2eBoundary(probe, {
+    ...Object.fromEntries(credentialKeys.map((key) => [key, sentinel])),
+    LCARS_E2E_UNRELATED: sentinel,
+    DEBUG: 'true',
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -62,36 +89,29 @@ test('the remote cache capability crosses the E2E boundary only as a complete pa
     process.stdout.write('remote cache capability verified\\n');
   `;
 
-  const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, ...remoteCache },
-  });
+  const result = runThroughE2eBoundary(probe, remoteCache);
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'remote cache capability verified\n');
 });
 
 test('an incomplete remote cache capability cannot cross the E2E boundary', () => {
-  const {
-    NX_SELF_HOSTED_REMOTE_CACHE_SERVER: _inheritedServer,
-    NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: _inheritedToken,
-    ...environmentWithoutRemoteCache
-  } = process.env;
   const probe = `
     if (process.env.NX_SELF_HOSTED_REMOTE_CACHE_SERVER !== undefined) process.exit(9);
     if (process.env.NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN !== undefined) process.exit(10);
     process.stdout.write('incomplete remote cache capability rejected\\n');
   `;
 
-  const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
-    cwd: root,
-    encoding: 'utf8',
-    env: {
-      ...environmentWithoutRemoteCache,
+  const result = runThroughE2eBoundary(
+    probe,
+    {
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://spark.lan.jlapenna.net:3123',
     },
-  });
+    [
+      'NX_SELF_HOSTED_REMOTE_CACHE_SERVER',
+      'NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN',
+    ],
+  );
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'incomplete remote cache capability rejected\n');
@@ -112,11 +132,7 @@ test('safe Playwright selection controls cross the E2E boundary', () => {
     process.stdout.write('selection controls verified\\n');
   `;
 
-  const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, ...controls },
-  });
+  const result = runThroughE2eBoundary(probe, controls);
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'selection controls verified\n');
@@ -143,11 +159,7 @@ test('tool caches stay durable while HOME remains isolated', () => {
   `;
 
   try {
-    const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, HOME: callerHome },
-    });
+    const result = runThroughE2eBoundary(probe, { HOME: callerHome });
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, 'tool caches verified\n');
@@ -177,14 +189,9 @@ test('Corepack uses the platform-specific Windows cache', () => {
   `;
 
   try {
-    const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        HOME: callerHome,
-        PATH: `${fakeBin}:${process.env.PATH}`,
-      },
+    const result = runThroughE2eBoundary(probe, {
+      HOME: callerHome,
+      PATH: `${fakeBin}:${process.env.PATH}`,
     });
 
     assert.equal(result.status, 0, result.stderr);
@@ -215,15 +222,10 @@ test('Playwright uses the platform-specific macOS browser cache', () => {
   `;
 
   try {
-    const result = spawnSync(wrapper, [process.execPath, '-e', probe], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        HOME: callerHome,
-        PATH: `${fakeBin}:${process.env.PATH}`,
-        PLAYWRIGHT_BROWSERS_PATH: '',
-      },
+    const result = runThroughE2eBoundary(probe, {
+      HOME: callerHome,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      PLAYWRIGHT_BROWSERS_PATH: '',
     });
 
     assert.equal(result.status, 0, result.stderr);
