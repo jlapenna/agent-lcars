@@ -73,6 +73,11 @@ test('the remote cache capability crosses the E2E boundary only as a complete pa
 });
 
 test('an incomplete remote cache capability cannot cross the E2E boundary', () => {
+  const {
+    NX_SELF_HOSTED_REMOTE_CACHE_SERVER: _inheritedServer,
+    NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: _inheritedToken,
+    ...environmentWithoutRemoteCache
+  } = process.env;
   const probe = `
     if (process.env.NX_SELF_HOSTED_REMOTE_CACHE_SERVER !== undefined) process.exit(9);
     if (process.env.NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN !== undefined) process.exit(10);
@@ -83,7 +88,7 @@ test('an incomplete remote cache capability cannot cross the E2E boundary', () =
     cwd: root,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...environmentWithoutRemoteCache,
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://spark.lan.jlapenna.net:3123',
     },
   });
