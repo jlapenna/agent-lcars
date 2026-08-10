@@ -153,6 +153,29 @@ WORKDIR /usr/local/share/agent-lcars-corepack
 # toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
 
+# Playwright's browser system libraries are baked below rather than installed
+# per job. `playwright install --with-deps` shells out to `sudo apt-get
+# install` for ~80 packages on this base (Ubuntu 24.04 noble), and every E2E
+# job that calls it pays that download, dpkg unpack, and the resulting disk
+# churn again -- measured on pike as sustained 50%+ IO stall with ~400ms write
+# latency while it ran. We build this image anyway; the libraries belong in it.
+#
+# The list is deliberately NOT enumerated here. `install-deps` asks Playwright
+# for the set matching this base's distro, so a base refresh or a Playwright
+# upgrade re-resolves it at build time instead of silently drifting from a
+# hand-copied list -- the noble names carry `t64` suffixes that do not exist on
+# other releases, so a stale literal list would fail in a confusing way.
+#
+# Keep in step with the RESOLVED version in the consuming repos, not the range
+# in package.json: both declare `@playwright/test: ^1.59.1` but pnpm-lock.yaml
+# resolves 1.62.1, and sprinkles' own E2E sandbox independently pins
+# mcr.microsoft.com/playwright:v1.62.1-noble. Baking the range floor instead
+# would leave every job re-downloading a browser this image already has.
+#
+# A job on a NEWER Playwright still works: the system libraries here stay
+# valid, and only its browser binary is fetched.
+ARG PLAYWRIGHT_VERSION=1.62.1
+
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
@@ -193,6 +216,10 @@ RUN set -eux; \
     git-lfs --version; \
     gh --version; \
     python3 -m pip --version; \
+    # Inside this RUN, and before the cleanup below, so it reuses the apt
+    # lists already fetched above instead of paying a second `apt-get update`
+    # and leaving a second lists/ directory in the layer.
+    npx --yes playwright@"${PLAYWRIGHT_VERSION}" install-deps chromium; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
@@ -247,6 +274,23 @@ USER runner
 # copied manifest resolves the exact repo-pinned version, and deliberately
 # leaves the cache under /home/runner for offline job startup.
 RUN pnpm --version
+
+# Chromium itself, for the same reason as the corepack cache above: the
+# browser cache is per-user, so installing it root-side would warm /root and
+# leave jobs -- which run as `runner` -- downloading it anyway.
+#
+# Deliberately not pinned behind PLAYWRIGHT_BROWSERS_PATH. Left at the default
+# ~/.cache/ms-playwright, `runner` owns the directory, so a job on a different
+# Playwright version simply fetches its own build alongside this one. A shared
+# root-owned path would be unwritable for exactly that case and would turn a
+# version skew into a hard failure instead of a slow first run.
+#
+# Chromium only, matching `install-deps chromium` above and what ci.yml's E2E
+# job actually installs. A bare `install-deps` also pulls firefox and webkit's
+# stack -- gstreamer, libmanette, CJK fonts -- which measured ~1.7GB of image
+# for browsers nothing here runs. A suite that later needs those should widen
+# both lines together rather than carry the cost speculatively.
+RUN npx --yes playwright@"${PLAYWRIGHT_VERSION}" install chromium
 
 WORKDIR /home/runner
 
