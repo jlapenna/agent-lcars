@@ -108,18 +108,21 @@ a real GitHub pull request review (`gh pr review --comment`/
 `--request-changes`/`--approve`, with a body) — not a plain issue comment.
 This repo's deliverable-evidence gate (`verify-deliverable.sh`, per
 agent-protocol.md §5) checks for exactly that: on a review dispatch, a
-submitted PR review from your own bot login is the sanctioned deliverable,
-the same way a posted comment is the sanctioned deliverable on a reply
-dispatch. A takeover/progress comment alone does not count.
+submitted PR review is the sanctioned deliverable, the same way a posted
+comment is the sanctioned deliverable on a reply dispatch — but it must
+carry your run's exact `<!-- attempt-claim:$ATTEMPT_ID -->` marker (#815:
+the gate no longer accepts a bare review from your bot login on its own).
+Stamp the marker in the review body. A takeover/progress comment alone does
+not count.
 
 If you are dispatched with `mode: implement` and the anchor is a pull
 request (an `agent:*` label applied to it, not an issue), your job is to
 **take the PR over and keep iterating on its own branch** — push commits
-the normal way, same as any other implement dispatch. `verify-deliverable.sh`
-clause (a) matches this case too: a PR anchor's own number satisfies "PR
-referencing #NUM", not just a title/body mention of it, so a push to the
-same PR is recognized evidence without requiring the PR to reference
-itself in prose.
+the normal way, same as any other implement dispatch. Pushing to the PR is
+not, by itself, evidence any more (#815 retired the inference clause that
+treated any push to the anchor PR as sufficient): stamp the exact
+attempt-claim marker into the PR body, or post a comment on it carrying the
+marker, before you finish.
 
 The rest of the protocol still applies unchanged in either mode —
 takeover comment, eyes reactions, one edited progress comment, parking on

@@ -113,10 +113,8 @@ base_env() {
   export ISSUE=42
   export JOB_STATUS=success
   export MAINTAINER=maintainer-login
-  export STARTED_AT=2024-01-01T00:00:00Z
   export MODE=implement
-  export EXPECTED_COMMENT_LOGIN="agent-lcars[bot]"
-  export EXCLUDE_PR_AUTHOR=
+  export ATTEMPT_ID="g1:test-intent"
   export WRITER_CREDENTIALS_FILE=
   export NO_DELIVERABLE_REASON="LANE_NO_DELIVERABLE_MARKER"
   export FAILURE_LOG_SCAN_SCRIPT=
@@ -182,7 +180,7 @@ assert_telemetry_finalize_ran() {
   case_dir="$test_root/success-deliverable-found"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":7,"title":"Fix widget (#42)","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
 JSON
   run_case success-deliverable-found
   test "$status" = 0 || fail "a found deliverable must exit 0"

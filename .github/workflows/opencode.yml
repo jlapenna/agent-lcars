@@ -91,8 +91,6 @@ jobs:
       AGENT_NAME: OpenCode
       WORKER_WORKFLOW: opencode.yml
       AGENT_GIT_LOGIN: agent-lcars[bot]
-      EXPECTED_COMMENT_LOGIN: agent-lcars[bot]
-      EXCLUDE_PR_AUTHOR: claude[bot]
       AGENT_LABEL: agent:opencode
       REDISPATCH_COMMAND: /opencode
     steps:
@@ -366,17 +364,14 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
           ISSUE: ${{ inputs.issue }}
-          STARTED_AT: ${{ steps.agent-handoff.outputs['started-at'] }}
           MODE: ${{ inputs.mode }}
-          EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}
-          # Guards against crediting a concurrently dispatched claude run's
-          # PR on the same issue (a testing artifact, not normal usage - the
-          # router enforces exactly one agent label per issue). Cannot also
-          # distinguish a codex PR: codex and opencode share the same
-          # agent-lcars[bot] push identity, an existing, accepted limitation
-          # unrelated to this dedup. verify-deliverable.sh itself skips this
-          # exclusion on a reply dispatch, where the anchor is explicit.
-          EXCLUDE_PR_AUTHOR: ${{ env.EXCLUDE_PR_AUTHOR }}
+          # This run's verified attempt identity (#815): verify-deliverable.sh
+          # now requires an exact `<!-- attempt-claim:<ATTEMPT_ID> -->` marker
+          # on the PR/comment/review this run produced. Ambient from
+          # dispatch-bootstrap's "Verify broker binding" step, which always
+          # runs earlier in this same job and publishes it via $GITHUB_ENV -
+          # named explicitly here to document the dependency.
+          ATTEMPT_ID: ${{ env.ATTEMPT_ID }}
           JOB_STATUS: ${{ job.status }}
           AGENT_STEP_OUTCOME: ${{ steps.agent.outcome }}
           MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}

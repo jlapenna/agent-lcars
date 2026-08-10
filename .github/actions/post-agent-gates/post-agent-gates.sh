@@ -43,8 +43,7 @@
 #   Always required: GH_TOKEN, AGENT, REPO, SERVER_URL, RUN_ID, ISSUE,
 #     JOB_STATUS, MAINTAINER.
 #   Required only when JOB_STATUS is "success" (verify-deliverable's own
-#     inputs at that point): STARTED_AT, MODE, EXPECTED_COMMENT_LOGIN.
-#     Optional then: EXCLUDE_PR_AUTHOR.
+#     inputs at that point, #815): MODE, ATTEMPT_ID.
 #   Optional: WRITER_CREDENTIALS_FILE (telemetry-finalize's own credential
 #     path; empty is valid, matching telemetry-start being best-effort);
 #     NO_DELIVERABLE_REASON (each lane's own no-deliverable wording,
@@ -110,9 +109,8 @@ WRITER_CREDENTIALS_FILE="$WRITER_CREDENTIALS_FILE" RUN_ID="$RUN_ID" NUM="$ISSUE"
 deliverable_failed=0
 no_deliverable=0
 if [ "$JOB_STATUS" = "success" ]; then
-  : "${STARTED_AT:?STARTED_AT is required when JOB_STATUS is success}"
   : "${MODE:?MODE is required when JOB_STATUS is success}"
-  : "${EXPECTED_COMMENT_LOGIN:?EXPECTED_COMMENT_LOGIN is required when JOB_STATUS is success}"
+  : "${ATTEMPT_ID:?ATTEMPT_ID is required when JOB_STATUS is success}"
   if ! NUM="$ISSUE" bash "$trusted_dir/verify-deliverable/verify-deliverable.sh"; then
     deliverable_failed=1
     if [ -n "${GITHUB_ENV:-}" ] && [ -f "$GITHUB_ENV" ] && \
