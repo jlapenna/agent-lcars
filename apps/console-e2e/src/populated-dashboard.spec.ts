@@ -496,10 +496,14 @@ test.describe('responsive decision inbox', () => {
     // The active Inbox pill is the sole visual header. Keep the H1 for
     // assistive technology, but never allocate a second title band below it.
     await expect(mobileTitle).toHaveText('Decision Inbox');
+    await expect(
+      page.getByRole('heading', { name: 'Decision Inbox' }),
+    ).toBeVisible();
     expect(
       await mobileTitle.evaluate((element) => {
         const style = getComputedStyle(element);
         return (
+          style.display === 'block' &&
           style.position === 'absolute' &&
           style.width === '1px' &&
           style.height === '1px' &&
