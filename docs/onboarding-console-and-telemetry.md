@@ -48,8 +48,18 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
 
 - Write that delta skill (mirror `.agents/skills/lcars/lcars-protocol.md`
   in this repo): name the fleet-claim identity, the PR reviewer/park
-  assignee, the reply triggers, the repo's own verify commands, and any
-  hard limits additive to `agent-protocol.md §11`.
+  assignee, the reply triggers, the repo's own verify commands, any hard
+  limits additive to `agent-protocol.md §11`, **and — required, not
+  optional — which CLI(s) (if any) have real live-resume tooling in this
+  repo, with the exact command to post.** agent-protocol.md §1 defaults
+  every CLI the delta skill doesn't explicitly name to "no live-resume
+  tooling," so installing a working script per the next bullet without
+  also declaring it here leaves the capability silently unreported: an
+  agent that only reads §1's default posts an honest-but-wrong "no resume
+  tooling exists" comment despite the script actually working, and the
+  console's takeover affordance stays dark for no reason. Mirror
+  `.agents/skills/lcars/lcars-protocol.md`'s "Session-resume script"
+  section, which is exactly this declaration for this repo.
 - **For a Claude dispatch that ships genuinely Claude-capable resume
   tooling:** add `tools/claude-agent-session.sh` at that **exact path and
   filename** — the console's takeover-command scanner
