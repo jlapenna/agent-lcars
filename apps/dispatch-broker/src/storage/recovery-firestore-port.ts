@@ -43,29 +43,19 @@
  */
 
 import crypto from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
 
 import type { RecoveryObservation } from '@agent-lcars/dispatch-contracts';
 import { type CollectionReference, Firestore } from '@google-cloud/firestore';
 
-import {
-  type RecordedRecoveryOperation,
-  RecoveryOperationAlreadyResolvedError,
-  RecoveryOperationNotRecordedError,
-  type RecoveryOperationPort,
-  type RecoveryOperationStatus,
+import type {
+  RecordedRecoveryOperation,
+  RecoveryOperationPort,
 } from './recovery-port';
 
 const RECOVERY_OPERATIONS_COLLECTION = 'recoveryOperations';
 
 function defaultNow(): string {
   return new Date().toISOString();
-}
-
-/** Same rationale as `./firestore-port.ts`'s `sameResolution`: compares two
- *  in-process values, never a wire/hash format. */
-function sameDetail(a: string | undefined, b: string | undefined): boolean {
-  return isDeepStrictEqual(a, b);
 }
 
 /** Firestore document IDs cannot contain `/` (path separator), have other
@@ -127,43 +117,9 @@ export class FirestoreRecoveryOperationPort implements RecoveryOperationPort {
         operationKey: observation.operationKey,
         observation: structuredClone(observation),
         recordedAt: now,
-        status: 'pending',
       };
       tx.set(docRef, created);
       return created;
-    });
-  }
-
-  async resolveRecoveryOperation(
-    operationKey: string,
-    status: Exclude<RecoveryOperationStatus, 'pending'>,
-    detail?: string,
-    now: string = defaultNow(),
-  ): Promise<RecordedRecoveryOperation> {
-    const docRef = this.#operations.doc(docId(operationKey));
-    return this.#firestore.runTransaction(async (tx) => {
-      const snapshot = await tx.get(docRef);
-      if (!snapshot.exists) {
-        throw new RecoveryOperationNotRecordedError(operationKey);
-      }
-      const existing = snapshot.data() as RecordedRecoveryOperation;
-      if (existing.status !== 'pending') {
-        const same =
-          existing.status === status && sameDetail(existing.detail, detail);
-        if (same) return existing;
-        throw new RecoveryOperationAlreadyResolvedError(
-          operationKey,
-          existing.status,
-        );
-      }
-      const resolved: RecordedRecoveryOperation = {
-        ...existing,
-        status,
-        resolvedAt: now,
-        ...(detail === undefined ? {} : { detail }),
-      };
-      tx.set(docRef, resolved);
-      return resolved;
     });
   }
 
@@ -176,10 +132,5 @@ export class FirestoreRecoveryOperationPort implements RecoveryOperationPort {
       : undefined;
   }
 
-  async listPendingRecoveryOperations(): Promise<RecordedRecoveryOperation[]> {
-    const snapshot = await this.#operations
-      .where('status', '==', 'pending')
-      .get();
-    return snapshot.docs.map((doc) => doc.data() as RecordedRecoveryOperation);
-  }
+}
 }
