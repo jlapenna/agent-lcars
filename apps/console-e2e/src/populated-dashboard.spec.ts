@@ -464,11 +464,11 @@ test.describe('responsive decision inbox', () => {
       new RegExp(`\\bitem=[^&]*${E2E_ITEM_NUMBERS.reviewRequested}`),
     );
 
-    const filter = workspace.getByRole('button', { name: 'Filter' });
+    const filter = workspace.getByRole('button', { name: 'Filter and sort' });
     await filter.focus();
     await page.keyboard.press('Enter');
     const choices = page.getByRole('menuitem');
-    await expect(choices).toHaveCount(7);
+    await expect(choices).toHaveCount(10);
     await expect(
       page.getByRole('menuitem', { name: 'All reasons' }),
     ).toHaveAttribute('aria-current', 'true');
@@ -514,9 +514,34 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 
-    const capture = testInfo.outputPath('inbox-mobile-single-header.png');
+    const freshness = page.getByTestId('data-freshness');
+    await expect(freshness).toBeVisible();
+    expect(
+      await freshness.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+
+    await expect(workspace.locator('.queue-mobile-bar')).toHaveCSS(
+      'height',
+      '52px',
+    );
+    const search = workspace.getByRole('textbox', {
+      name: 'Search the Inbox',
+    });
+    const searchBounds = await search.boundingBox();
+    expect(searchBounds?.width).toBeGreaterThan(340);
+    await expect(
+      workspace.getByRole('button', { name: 'Filter and sort' }),
+    ).toHaveCSS('min-height', '44px');
+
+    await workspace.getByRole('button', { name: 'Filter and sort' }).click();
+    await page.getByRole('menuitem', { name: 'Newest update' }).click();
+    await expect(page).toHaveURL(/sort=newest/);
+
+    const capture = testInfo.outputPath('inbox-mobile-polished.png');
     await page.screenshot({ path: capture, fullPage: false });
-    await testInfo.attach('inbox-mobile-single-header.png', {
+    await testInfo.attach('inbox-mobile-polished.png', {
       path: capture,
       contentType: 'image/png',
     });

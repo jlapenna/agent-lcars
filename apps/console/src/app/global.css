@@ -1633,8 +1633,8 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     top: 0;
     z-index: 20;
     display: flex;
-    height: 64px;
-    min-height: 64px;
+    height: 52px;
+    min-height: 52px;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
@@ -1645,13 +1645,13 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .queue-mobile-identity {
     align-self: stretch;
-    min-width: 8rem;
-    padding: 0 16px;
+    min-width: 5.75rem;
+    padding: 0 14px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    border-bottom-right-radius: 24px;
+    border-bottom-right-radius: 20px;
     background: var(--mantine-color-blue-5);
     color: var(--mantine-color-white);
     font-family: var(--font-display), sans-serif;
@@ -1681,7 +1681,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .queue-workspace__list,
   .queue-workspace__detail {
-    height: calc(100dvh - 64px);
+    height: calc(100dvh - 52px);
     border: 0;
   }
 
@@ -1696,11 +1696,45 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
      list). */
   .queue-workspace__list-header {
     min-height: 0;
-    padding: 6px 14px 10px;
+    padding: 6px 12px 10px;
   }
 
   .queue-workspace__list-header > div:first-child {
     display: none;
+  }
+
+  .queue-list-controls {
+    width: 100%;
+  }
+
+  .queue-list-controls .queue-search-input {
+    width: 100%;
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .queue-search-input .mantine-Input-wrapper {
+    --input-height: 44px !important;
+    --input-right-section-width: 44px !important;
+  }
+
+  .queue-search-input:has([aria-label='Clear search text'])
+    .mantine-Input-wrapper {
+    --input-right-section-width: 88px !important;
+  }
+
+  .queue-search-input .queue-refine-control {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .console-page-content > [data-testid='data-freshness'] {
+    min-height: 20px;
+    padding: 2px 12px 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .queue-workspace__rows {
@@ -1796,7 +1830,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 }
 
 /* Inbox search (queue-workspace.tsx): compact enough to share the header
-   row with Filter/Sort; grows only on wide viewports. */
+   row with its refine menu; grows only on wide viewports. */
 .queue-search-input {
   flex: 1 1 9rem;
   min-width: 7rem;
