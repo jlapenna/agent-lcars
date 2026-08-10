@@ -1,4 +1,5 @@
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
+import type { ReactNode } from 'react';
 
 import { mostRecentSessionForItem } from '../lib/claimed-idle';
 import type { CliSession } from '../lib/cli-sessions';
@@ -24,10 +25,14 @@ export function DecisionInbox({
   yourQueue,
   selectedItemKey,
   repoFilter,
+  mobileDataFreshness,
+  mobileScopeLabel,
 }: {
   yourQueue: BoardCard[];
   selectedItemKey?: string;
   repoFilter?: string;
+  mobileDataFreshness?: ReactNode;
+  mobileScopeLabel?: string;
 }) {
   const watchedRepos = getWatchedRepos();
 
@@ -36,6 +41,8 @@ export function DecisionInbox({
       cards={yourQueue}
       selectedItemKey={selectedItemKey}
       watchedRepos={watchedRepos}
+      mobileDataFreshness={mobileDataFreshness}
+      mobileScopeLabel={mobileScopeLabel}
       mobileUtilityMenu={
         <QueueUtilityMenu
           repositoryUrl={consoleRepositoryUrl()}

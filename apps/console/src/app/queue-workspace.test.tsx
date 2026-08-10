@@ -113,7 +113,7 @@ describe('queueSelectionHref', () => {
 });
 
 describe('QueueWorkspace', () => {
-  it('leaves the page title to the shared ConsoleHeader', () => {
+  it('makes the mobile command deck the single visible Inbox identity', () => {
     renderWorkspace([makeCard()]);
 
     expect(
@@ -122,17 +122,13 @@ describe('QueueWorkspace', () => {
     expect(
       screen.getByText(/1 item · needs your decision or response/),
     ).toBeTruthy();
-    expect(screen.queryByText('Inbox', { exact: true })).toBeNull();
-    expect(screen.getByLabelText('Queue item count: 1')).toBeTruthy();
+    expect(screen.getByText('Inbox', { exact: true })).toBeTruthy();
+    expect(screen.getByLabelText('1 open queue items')).toBeTruthy();
   });
 
-  // #890: the sticky mobile nav strip's active pill already reads "Inbox"
-  // in the same viewport as this component's own mobile detail back button.
-  // The list-view case above already guarded the exact text "Inbox" never
-  // duplicating the shared ConsoleHeader's title; the detail-view branch
-  // (only rendered once an item is selected) was the untested state where
-  // the "Inbox"-labeled back button actually shipped, stacking a second
-  // "Inbox" directly under the nav pill on a real phone.
+  // The list command deck already owns the visible Inbox identity. Its detail
+  // branch keeps the same back affordance terse rather than repeating that
+  // label directly beneath the selected item breadcrumb.
   it('never repeats "Inbox" in the mobile detail-view back affordance either', () => {
     renderWorkspace([makeCard()], 'agent/lcars#249');
 

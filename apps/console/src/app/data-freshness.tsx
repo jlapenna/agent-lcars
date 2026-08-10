@@ -16,9 +16,11 @@ import { formatRelativeTime } from './format';
 export function DataFreshness({
   fetchedAt,
   initialLabel,
+  dataTestId = 'data-freshness',
 }: {
   fetchedAt: string;
   initialLabel: string;
+  dataTestId?: string;
 }) {
   const [label, setLabel] = useState(initialLabel);
 
@@ -30,7 +32,7 @@ export function DataFreshness({
   }, [fetchedAt]);
 
   return (
-    <Text size="xs" c="dimmed" ta="right" data-testid="data-freshness">
+    <Text size="xs" c="dimmed" ta="right" data-testid={dataTestId}>
       Data as of <time dateTime={fetchedAt}>{label}</time>
     </Text>
   );

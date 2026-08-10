@@ -85,11 +85,15 @@ export function QueueWorkspace({
   cards,
   selectedItemKey,
   watchedRepos,
+  mobileDataFreshness,
+  mobileScopeLabel,
   mobileUtilityMenu,
 }: {
   cards: BoardCard[];
   selectedItemKey?: string;
   watchedRepos: WatchedRepo[];
+  mobileDataFreshness?: ReactNode;
+  mobileScopeLabel?: string;
   mobileUtilityMenu: ReactNode;
 }) {
   const searchParams = useSearchParams();
@@ -304,10 +308,13 @@ export function QueueWorkspace({
           <>
             <div
               className="queue-mobile-identity"
-              aria-label={`Queue item count: ${visibleCards.length}`}
+              aria-label={`${visibleCards.length} open queue items`}
             >
+              <Text component="span" className="queue-mobile-title">
+                Inbox
+              </Text>
               <Text component="span" ff="monospace" size="xs">
-                {visibleCards.length.toString().padStart(2, '0')}
+                {visibleCards.length.toString().padStart(2, '0')} open
               </Text>
             </div>
             <Group gap={4} wrap="nowrap" className="queue-mobile-utilities">
@@ -322,6 +329,17 @@ export function QueueWorkspace({
           </>
         )}
       </div>
+
+      {mobileDataFreshness && !explicitDetail && (
+        <div className="queue-mobile-meta">
+          {mobileScopeLabel && (
+            <Text component="span" className="queue-mobile-scope">
+              {mobileScopeLabel}
+            </Text>
+          )}
+          <div className="queue-mobile-freshness">{mobileDataFreshness}</div>
+        </div>
+      )}
 
       <div className="queue-workspace__list">
         <div className="queue-workspace__list-header">
