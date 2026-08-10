@@ -1,0 +1,200 @@
+name: Dispatch bootstrap
+description: >-
+  Shared trusted worker lifecycle scaffolding common to claude.yml,
+  codex.yml, and opencode.yml (agent-lcars#823): freeze the post-agent
+  enforcement scripts, assert required repo variables are set, verify the
+  broker binding against the authoritative dispatch ledger, mint the Agent
+  LCARS App token, and claim the anchor issue/PR for the agent fleet - in
+  that exact order, byte-identical across all three lanes before this
+  extraction. One implementation now owns this sequence instead of three
+  hand-copied ones, so a change to the broker-binding/claim contract can
+  never drift between lanes.
+
+  Coupled to this repo's own dispatch-broker semantics (the
+  broker-generation/broker-intent-id/broker-dispatch-token vocabulary, the
+  Firestore ledger, and the AGENT_FLEET_LOGIN/MAINTAINER_LOGIN repo
+  variables) via its wrapped call to the dispatch-broker action - do not
+  consume this from another repo (see docs/published-actions.md's
+  "Coupled" tier).
+
+  Requires the caller to have already checked out the repository: every
+  wrapped step below resolves a local composite action
+  (`uses: ./.github/actions/...`), which GitHub Actions can only do once
+  the repo containing it is on disk - a platform constraint, not a
+  preference (see snapshot-enforcement-scripts/action.yml and
+  dispatch-broker/action.yml for the individual rationale). This action
+  does not perform that checkout itself: claude.yml checks out once with
+  fetch-depth 0 before calling this action (the claude-code-action manages
+  its own push credential internally), while codex.yml/opencode.yml check
+  out a minimal copy before calling this action and a second full copy
+  with this action's minted token afterward (their agent steps push with
+  plain `git`/`gh`, so they need the credential persisted to disk) - that
+  divergence is a genuine per-lane difference, not scaffolding, and stays
+  in each lane's own workflow file.
+
+inputs:
+  issue:
+    description: Issue number to run against (the worker workflow's own `inputs.issue`).
+    required: true
+  broker-generation:
+    description: Monotonic broker generation (the worker workflow's own `inputs.broker_generation`).
+    required: true
+  broker-intent-id:
+    description: Immutable broker intent ID (the worker workflow's own `inputs.broker_intent_id`).
+    required: true
+  broker-dispatch-token:
+    description: Immutable broker dispatch token (the worker workflow's own `inputs.broker_dispatch_token`).
+    required: true
+  gcp-wif-provider:
+    description: Terraform-managed WIF provider (repo variable GCP_WIF_PROVIDER).
+    required: true
+  gcp-dispatch-preflight-sa:
+    description: >-
+      Service account impersonated to authenticate to the authoritative
+      dispatch storage (repo variable GCP_DISPATCH_PREFLIGHT_SA).
+    required: true
+  dispatch-firestore-database-id:
+    description: Firestore database ID backing the dispatch ledger (repo variable DISPATCH_FIRESTORE_DATABASE_ID).
+    required: true
+  gcp-project-id:
+    description: GCP project ID (repo variable GCP_PROJECT_ID).
+    required: true
+  agent-fleet-login:
+    description: >-
+      Fleet-claim login (repo variable AGENT_FLEET_LOGIN) - used both for
+      the required-repo-vars assertion and as the issue claim's
+      claim-login.
+    required: true
+  maintainer-login:
+    description: Maintainer login (repo variable MAINTAINER_LOGIN), asserted present before dispatch proceeds.
+    required: true
+  agent-lcars-client-id:
+    description: Agent LCARS GitHub App client ID (repo variable AGENT_LCARS_CLIENT_ID).
+    required: true
+  agent-lcars-private-key:
+    description: Agent LCARS GitHub App private key (repo secret AGENT_LCARS_PRIVATE_KEY).
+    required: true
+  permission-workflows:
+    description: >-
+      Passthrough to mint-agent-token's own permission-workflows input
+      (agent-lcars#868/#903). Unset by default, matching every caller of
+      this action today - the only permission-* knob exposed here, because
+      it is the one PR #868 documented as a deliberate future per-lane
+      opt-in (docs/agent-workflow-write-permission.md), unlike the fixed
+      actions/contents/issues/metadata/pull-requests set below, which has
+      never varied across callers and stays hardcoded so it cannot drift.
+    required: false
+    default: ''
+
+outputs:
+  token:
+    description: Minted Agent LCARS App installation token.
+    value: ${{ steps.agent-lcars-token.outputs.token }}
+  app-slug:
+    description: App slug the token was minted for.
+    value: ${{ steps.agent-lcars-token.outputs.app-slug }}
+  prior-terminal-state:
+    description: Compact JSON summary of the latest earlier terminal generation, from broker preflight.
+    value: ${{ steps.broker-preflight.outputs.prior-terminal-state }}
+
+runs:
+  using: composite
+  steps:
+    # The agent step later in the caller's job has unrestricted Bash on the
+    # same checkout, so the post-agent gates (verify-deliverable,
+    # report-failure, telemetry-finalize, and the post-agent-gates
+    # orchestrator that drives all three) must run from a copy frozen now,
+    # while the tree is still exactly what the trusted dispatched ref
+    # checked out - and via `run:` from $RUNNER_TEMP, never `uses:`, at
+    # gate time. The full rationale lives in
+    # snapshot-enforcement-scripts/action.yml. Runs first so failure
+    # reporting stays trusted even if broker preflight or the token mint
+    # below fails.
+    - name: Snapshot post-agent enforcement scripts
+      uses: ./.github/actions/snapshot-enforcement-scripts
+
+    # vars.AGENT_RUNNER_LABEL (consumed by the caller's own `runs-on`)
+    # cannot be asserted here - job placement onto a runner happens before
+    # any step runs, so an empty/unset value already fails the job loudly
+    # on its own before this step could ever fire.
+    - name: Assert required repo variables are set
+      uses: ./.github/actions/assert-repo-vars
+      with:
+        vars: |
+          AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
+          MAINTAINER_LOGIN=${{ inputs.maintainer-login }}
+
+    # The worker is untrusted until its own Actions run ID is durably bound
+    # to this exact task/generation/intent/token in the serialized ledger.
+    - name: Authenticate to authoritative dispatch storage
+      id: worker-storage-auth
+      uses: google-github-actions/auth@v3
+      with:
+        workload_identity_provider: ${{ inputs.gcp-wif-provider }}
+        service_account: ${{ inputs.gcp-dispatch-preflight-sa }}
+        token_format: access_token
+        create_credentials_file: false
+        export_environment_variables: false
+
+    - name: Verify broker binding
+      id: broker-preflight
+      uses: ./.github/actions/dispatch-broker
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        DISPATCH_STORAGE_TOKEN: ${{ steps.worker-storage-auth.outputs.access_token }}
+        DISPATCH_FIRESTORE_DATABASE_ID: ${{ inputs.dispatch-firestore-database-id }}
+        GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
+      with:
+        operation: preflight
+        issue: ${{ inputs.issue }}
+        generation: ${{ inputs.broker-generation }}
+        intent-id: ${{ inputs.broker-intent-id }}
+        dispatch-token: ${{ inputs.broker-dispatch-token }}
+
+    # Explicit permission-* allowlist (#868), not the blank/"all
+    # installation permissions" default this step used before: the Agent
+    # LCARS App now also declares `workflows` (approved on the
+    # supersprinklesracing org installation; see #868), and
+    # actions/create-github-app-token grants a token EVERY permission the
+    # installation has approved whenever no permission-* input narrows it.
+    # Left blank, this step's token would silently start carrying
+    # workflows:write the moment this repo's own installation approves it
+    # too - with no opt-in, no preflight, and no dispatch ever having asked
+    # for it. Enumerating exactly today's actually-used set (not a smaller
+    # guess) keeps this step's behavior unchanged while making `workflows`
+    # opt-in only, via this action's own permission-workflows passthrough
+    # input (empty here by default, matching every caller today). The
+    # other five permission-* values are fixed, not passed through: they
+    # have never varied across the three lane callers, and hardcoding them
+    # here means the lanes can never drift apart on them by accident - a
+    # lane that needs a different grant among those five extends this
+    # action's inputs deliberately, in review, rather than silently
+    # diverging. `permission-workflows` alone is exposed because #868
+    # documented it as a deliberate future per-lane opt-in (see
+    # docs/agent-workflow-write-permission.md).
+    - name: Mint agent token
+      id: agent-lcars-token
+      uses: ./.github/actions/mint-agent-token
+      with:
+        client-id: ${{ inputs.agent-lcars-client-id }}
+        private-key: ${{ inputs.agent-lcars-private-key }}
+        permission-actions: write
+        permission-contents: write
+        permission-issues: write
+        permission-metadata: read
+        permission-pull-requests: write
+        permission-workflows: ${{ inputs.permission-workflows }}
+
+    # Only a broker-authorized run may mutate the anchor or start the paid
+    # agent. The fleet login is assignable; the provider App identities are
+    # not (see agent-protocol.md §10). Claim the anchor issue/PR for the
+    # agent fleet the moment the run starts, so ownership is visible at a
+    # glance (and filterable via `gh issue list --assignee <fleet-login>`).
+    # Additive and idempotent: this never removes a human assignee.
+    - name: Claim the issue as the agent fleet
+      id: claim
+      uses: ./.github/actions/claim-issue
+      with:
+        token: ${{ steps.agent-lcars-token.outputs.token }}
+        issue: ${{ inputs.issue }}
+        claim-login: ${{ inputs.agent-fleet-login }}

@@ -107,89 +107,30 @@ jobs:
       - name: Bootstrap checkout for broker preflight
         uses: actions/checkout@v7
 
-      # The agent step below has unrestricted Bash on this same checkout,
-      # so the post-agent gates (verify-deliverable, report-failure,
-      # telemetry-finalize, and the post-agent-gates orchestrator that
-      # drives all three - see "Run post-agent gates" below) must run from
-      # a copy frozen now, while the tree is still exactly what the trusted
-      # dispatched ref checked out - and via `run:` from $RUNNER_TEMP,
-      # never `uses:`, at gate time. Snapshot before broker preflight and
-      # token mint so failure reporting remains trusted even if either
-      # prerequisite fails.
-      - name: Snapshot post-agent enforcement scripts
-        uses: ./.github/actions/snapshot-enforcement-scripts
-
-      # vars.AGENT_RUNNER_LABEL (consumed by runs-on above) cannot be
-      # asserted here - job placement onto a runner happens before any step
-      # runs, so an empty/unset value already fails the job loudly on its
-      # own before this step could ever fire. This check follows checkout
-      # because a local composite action cannot be resolved before then.
-      - name: Assert required repo variables are set
-        uses: ./.github/actions/assert-repo-vars
+      # Shared trusted worker lifecycle (agent-lcars#823): freezes the
+      # post-agent enforcement scripts, asserts required repo variables,
+      # verifies the broker binding against the authoritative dispatch
+      # ledger, mints the Agent LCARS App token, and claims the anchor
+      # issue/PR for the agent fleet - identical across claude.yml,
+      # codex.yml, and opencode.yml. See
+      # .github/actions/dispatch-bootstrap/action.yml for the full
+      # step-by-step rationale.
+      - name: Dispatch bootstrap
+        id: dispatch-bootstrap
+        uses: ./.github/actions/dispatch-bootstrap
         with:
-          vars: |
-            AGENT_FLEET_LOGIN=${{ vars.AGENT_FLEET_LOGIN }}
-            MAINTAINER_LOGIN=${{ vars.MAINTAINER_LOGIN }}
-
-      # The worker is untrusted until its own Actions run ID is durably bound
-      # to this exact task/generation/intent/token in the serialized ledger.
-      - name: Authenticate to authoritative dispatch storage
-        id: worker-storage-auth
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}
-          token_format: access_token
-          create_credentials_file: false
-          export_environment_variables: false
-
-      - name: Verify broker binding
-        id: broker-preflight
-        uses: ./.github/actions/dispatch-broker
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          DISPATCH_STORAGE_TOKEN: ${{ steps.worker-storage-auth.outputs.access_token }}
-          DISPATCH_FIRESTORE_DATABASE_ID: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
-          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-        with:
-          operation: preflight
           issue: ${{ inputs.issue }}
-          generation: ${{ inputs.broker_generation }}
-          intent-id: ${{ inputs.broker_intent_id }}
-          dispatch-token: ${{ inputs.broker_dispatch_token }}
-
-      # Explicit permission-* allowlist (#868), not the blank/"all
-      # installation permissions" default this step used before: the Agent
-      # LCARS App now also declares `workflows` (approved on the
-      # supersprinklesracing org installation; see #868), and
-      # actions/create-github-app-token grants a token EVERY permission the
-      # installation has approved whenever no permission-* input narrows it.
-      # Left blank, this step's token would silently start carrying
-      # workflows:write the moment this repo's own installation approves
-      # it too - with no opt-in, no preflight, and no dispatch ever having
-      # asked for it. Enumerating exactly today's actually-used set (not a
-      # smaller guess) keeps this step's behavior unchanged while making
-      # `workflows` opt-in only, via mint-agent-token's own
-      # permission-workflows input (unset here on purpose).
-      - name: Mint agent token
-        id: agent-lcars-token
-        uses: ./.github/actions/mint-agent-token
-        with:
-          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
-          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-          permission-actions: write
-          permission-contents: write
-          permission-issues: write
-          permission-metadata: read
-          permission-pull-requests: write
-
-      - name: Claim the issue as the agent fleet
-        id: claim
-        uses: ./.github/actions/claim-issue
-        with:
-          token: ${{ steps.agent-lcars-token.outputs.token }}
-          issue: ${{ inputs.issue }}
-          claim-login: ${{ vars.AGENT_FLEET_LOGIN }}
+          broker-generation: ${{ inputs.broker_generation }}
+          broker-intent-id: ${{ inputs.broker_intent_id }}
+          broker-dispatch-token: ${{ inputs.broker_dispatch_token }}
+          gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gcp-dispatch-preflight-sa: ${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}
+          dispatch-firestore-database-id: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
+          gcp-project-id: ${{ vars.GCP_PROJECT_ID }}
+          agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
+          maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
+          agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 
       # The real checkout, now that the App token exists: this one carries
       # fetch-depth: 0 and the minted token, so the eventual `git push`
@@ -199,21 +140,21 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ steps.agent-lcars-token.outputs.token }}
+          token: ${{ steps.dispatch-bootstrap.outputs.token }}
           persist-credentials: true
 
-      - name: Shared agent setup
-        id: agent-setup
-        uses: ./.github/actions/agent-setup
+      # Trusted finalization handoff (agent-lcars#823): agent git identity,
+      # run-start timestamp, shared Nx cache, and the App-identity/push-
+      # credential verification - the last trusted gate before "Run Codex"
+      # below. See .github/actions/agent-handoff/action.yml.
+      - name: Agent handoff
+        id: agent-handoff
+        uses: ./.github/actions/agent-handoff
         with:
           agent-login: ${{ env.AGENT_GIT_LOGIN }}
-
-      - name: Verify agent identity
-        uses: ./.github/actions/verify-agent-identity
-        with:
-          token: ${{ steps.agent-lcars-token.outputs.token }}
+          token: ${{ steps.dispatch-bootstrap.outputs.token }}
           agent: ${{ env.AGENT_NAME }}
-          app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
+          app-slug: ${{ steps.dispatch-bootstrap.outputs.app-slug }}
 
       # Two distinct GCP identities are used by this job, deliberately kept
       # separate:
@@ -342,14 +283,14 @@ jobs:
         id: dispatch-brief
         uses: ./.github/actions/prepare-agent-dispatch
         with:
-          token: ${{ steps.agent-lcars-token.outputs.token }}
+          token: ${{ steps.dispatch-bootstrap.outputs.token }}
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
           context: ${{ inputs.context }}
-          prior-terminal-state: ${{ steps.broker-preflight.outputs.prior-terminal-state }}
+          prior-terminal-state: ${{ steps.dispatch-bootstrap.outputs.prior-terminal-state }}
           budget-minutes: '60'
           artifact-checkpoint-minutes: '25'
           finalize-checkpoint-minutes: '45'
@@ -373,8 +314,8 @@ jobs:
         # and the issue was never told.
         timeout-minutes: 60
         env:
-          GH_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
+          GH_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token }}
           # Same CI-rerun affordance claude.yml grants its agent (see
           # agent-protocol.md §8). A classic PAT at public_repo scope --
           # NOT github.token. Classic scopes cannot express "actions:
@@ -450,7 +391,7 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
           ISSUE: ${{ inputs.issue }}
-          STARTED_AT: ${{ steps.agent-setup.outputs['started-at'] }}
+          STARTED_AT: ${{ steps.agent-handoff.outputs['started-at'] }}
           MODE: ${{ inputs.mode }}
           EXPECTED_COMMENT_LOGIN: ${{ env.EXPECTED_COMMENT_LOGIN }}
           # Guards against crediting a concurrently dispatched claude run's
