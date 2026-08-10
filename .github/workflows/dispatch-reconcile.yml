@@ -1,0 +1,44 @@
+name: Hosted Dispatch Reconciler
+
+# Periodically and manually invoke App Hosting's reconciliation endpoint. It
+# discovers open agent-labeled or fleet-assigned anchors, then processes each
+# directly through the hosted controller under its Firestore authority lease.
+# This scheduler is deliberately GitHub-hosted so recovery remains available
+# when the self-hosted worker pool is unavailable.
+
+on:
+  schedule:
+    # Offset from :00/:30 to avoid the scheduling stampede.
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  # This prevents redundant full scans. Per-anchor serialization remains the
+  # hosted controller's Firestore authority lease.
+  group: dispatch-reconcile-scan
+  cancel-in-progress: false
+
+jobs:
+  hosted-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    permissions:
+      id-token: write
+    steps:
+      - name: Invoke hosted reconciler with GitHub Actions OIDC
+        env:
+          RECONCILE_URL: https://agent-console.supersprinkles.racing/api/control-plane/reconcile
+          RECONCILE_AUDIENCE: agent-lcars-dispatch-reconcile
+        run: |
+          set -euo pipefail
+          token_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$RECONCILE_AUDIENCE")"
+          oidc_token="$(jq -er '.value | select(type == "string" and length > 0)' \
+            <<<"$token_response")"
+          curl --fail-with-body --silent --show-error --max-time 360 \
+            -X POST \
+            -H "Authorization: Bearer $oidc_token" \
+            "$RECONCILE_URL"

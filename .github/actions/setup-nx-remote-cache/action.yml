@@ -1,0 +1,54 @@
+name: Setup Nx remote cache
+description: >-
+  Point trusted Nx jobs at the self-hosted L2 remote cache. Same-repository PRs
+  can warm the cache; fork PRs receive no cache capability. Internal dedup for
+  this repo's own workflows; consumer repos have their own conventions and
+  should not adopt this one. Complements agent-setup, which wires the
+  host-mounted L1 (NX_CACHE_DIRECTORY) rather than the remote server.
+
+inputs:
+  url:
+    description: >-
+      Remote cache server base URL, normally vars.NX_CACHE_URL. When empty the
+      action is a no-op, so an unconfigured repo degrades to local
+      recomputation instead of failing.
+    required: false
+    default: ''
+  write-token:
+    description: >-
+      Read-write credential, normally secrets.NX_CACHE_TOKEN. Same-repository
+      PRs are trusted contributors with write access to this repository, so
+      they use it to make L2 useful for the predominant PR workload.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # A fork PR is routed to a GitHub-hosted runner with no route to the
+    # cache host. Nx fails OPEN on an unreachable server but pays roughly 45s
+    # of request timeouts per task write, so pointing a fork at it is strictly
+    # slower than leaving the cache off.
+    #
+    # A same-repository PR is opened by a contributor who already has write
+    # access, so it can safely warm the cache just like push and dispatch
+    # builds. Forks cannot receive this capability and are routed to a
+    # GitHub-hosted runner without a route to spark.
+    - name: Configure Nx remote cache
+      if: >-
+        inputs.url != ''
+        && !(github.event_name == 'pull_request'
+             && github.event.pull_request.head.repo.fork)
+      shell: bash
+      env:
+        NX_REMOTE_CACHE_URL: ${{ inputs.url }}
+        NX_REMOTE_CACHE_WRITE_TOKEN: ${{ inputs.write-token }}
+      run: |
+        if [ -z "$NX_REMOTE_CACHE_WRITE_TOKEN" ]; then
+          echo "::notice::Nx remote cache disabled: no write token configured."
+          exit 0
+        fi
+
+        echo "NX_SELF_HOSTED_REMOTE_CACHE_SERVER=$NX_REMOTE_CACHE_URL" >>"$GITHUB_ENV"
+        echo "NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN=$NX_REMOTE_CACHE_WRITE_TOKEN" >>"$GITHUB_ENV"
+        echo "::notice::Nx remote cache enabled (write) against ${NX_REMOTE_CACHE_URL}."

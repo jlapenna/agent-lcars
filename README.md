@@ -149,6 +149,8 @@ issues and pull requests. GitHub App identities, including
   Sessions, live transcripts).
 - [docs/onboarding-autoscaler.md](docs/onboarding-autoscaler.md) — adding a
   new GitHub account/repo as a registration on the shared runner fleet.
+- [docs/e2e-security-boundary.md](docs/e2e-security-boundary.md) — the
+  credential-free local/CI E2E boundary.
 - [docs/trajectory-evaluation.md](docs/trajectory-evaluation.md) — the
   reviewed production-trajectory corpus, rolling read-only report, and
   mutation-free prompt/setup comparison boundary.

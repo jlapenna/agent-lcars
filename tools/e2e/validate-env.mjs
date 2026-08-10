@@ -10,6 +10,9 @@ const SAFE_CREDENTIAL_VALUES = new Map([
   ['AUTH_SECRET', 'dummy-secret'],
   ['NEXT_PUBLIC_FIREBASE_API_KEY', 'demo-api-key'],
 ]);
+const REMOTE_CACHE_SERVER = 'http://spark.lan.jlapenna.net:3123';
+const REMOTE_CACHE_TOKEN = 'NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN';
+const REMOTE_CACHE_URL = 'NX_SELF_HOSTED_REMOTE_CACHE_SERVER';
 
 const CREDENTIAL_KEY =
   /(?:^|_)(?:TOKEN|SECRET|PASSWORD|CREDENTIALS?|PRIVATE_KEY|API_KEY|ACCESS_KEY|KEY)(?:_|$)/i;
@@ -107,8 +110,29 @@ function validateFile(file, schema) {
 }
 
 function validateProcessEnvironment() {
+  const remoteCacheServer = process.env[REMOTE_CACHE_URL];
+  const remoteCacheToken = process.env[REMOTE_CACHE_TOKEN];
+  if (remoteCacheServer !== undefined || remoteCacheToken !== undefined) {
+    if (
+      !remoteCacheServer ||
+      !remoteCacheToken ||
+      remoteCacheServer !== REMOTE_CACHE_SERVER
+    ) {
+      throw new Error(
+        'process environment has an incomplete or unapproved remote-cache capability',
+      );
+    }
+  }
+
   for (const [key, value] of Object.entries(process.env)) {
     if (!CREDENTIAL_KEY.test(key)) {
+      continue;
+    }
+
+    if (
+      key === REMOTE_CACHE_TOKEN &&
+      remoteCacheServer === REMOTE_CACHE_SERVER
+    ) {
       continue;
     }
 
