@@ -83,6 +83,9 @@ jobs:
       - name: Test issue claiming
         run: bash .github/actions/claim-issue/claim.test.sh
 
+      - name: Test workflows-permission grant verification (#868)
+        run: bash .github/actions/mint-agent-token/verify-workflows-grant.test.sh
+
       - name: Test image publish path-based routing (#441)
         run: node --test .github/actions/plan-image-publish/*.test.mjs
 
