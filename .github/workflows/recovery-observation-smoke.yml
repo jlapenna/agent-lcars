@@ -1,0 +1,176 @@
+name: Recovery Observation Smoke
+
+# Manually-dispatched production smoke test for the hosted recovery-observation
+# ingestion path (agent-lcars#864/#869/#875/#877/#878). The scheduled caller in
+# rerun-infra-killed-runs.yml only exercises the OIDC-mint -> POST -> Firestore
+# -> shadow-verify chain when a real infra-killed run was actually rerun, which
+# is rare -- so between incidents the full path can regress without any signal.
+# This workflow proves the whole chain on demand by reporting a TRUE historical
+# recovery (a run that genuinely reached the claimed attempt) and asserting the
+# endpoint records it and shadow-verifies it against GitHub to `executed`.
+#
+# The defaults reference CI run 31334422237 attempt 2 (PR #875's Verify run,
+# which really was infra-killed and manually rerun on 2026-08-09) -- reporting
+# it is accurate operational data, not a synthetic fixture. The ingestion
+# store is idempotent on the operation key, which means each truthful retry
+# can prove the FULL record -> shadow-verify -> resolve chain exactly once:
+# a later dispatch with the same inputs only exercises the auth + replay-read
+# path. `require-fresh` (default true) makes that limit explicit -- a green
+# default run guarantees the full chain executed during THIS dispatch, and a
+# replay-only pass must be requested deliberately. So the shipped defaults
+# work exactly once; subsequent full-chain smokes need a new not-yet-reported
+# truthful retry as input.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: Workflow run ID whose rerun really happened
+        required: true
+        default: '31334422237'
+      run-attempt:
+        description: Attempt number the recovery produced (2+, and <= the run's real attempt count)
+        required: true
+        default: '2'
+      anchor:
+        description: PR/issue number the run belonged to (0 for none)
+        required: true
+        default: '875'
+      require-fresh:
+        description: Fail unless this dispatch executed the full verification chain (not a replay of an already-recorded observation)
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+      actions: read
+    steps:
+      # Refuse to fabricate history: only report a retry GitHub itself
+      # confirms happened. The server-side shadow verifier accepts any
+      # claimed attempt <= the run's real attempt count (an attempt-1 claim
+      # against an ordinary run passes it), so the truthfulness bar --
+      # "attempt 2+ actually occurred on this exact run" -- must be enforced
+      # here, before anything durable is written.
+      - name: Verify the claimed retry really happened
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_ATTEMPT: ${{ inputs.run-attempt }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$RUN_ATTEMPT" -lt 2 ]; then
+            echo "::error::run-attempt must be 2+ -- attempt 1 is not a retry, and reporting it would fabricate a ci_retry recovery that never happened"
+            exit 1
+          fi
+          real_attempt=$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq '.run_attempt') \
+            || { echo "::error::run ${RUN_ID} not found in ${REPOSITORY}"; exit 1; }
+          if [ "$real_attempt" -lt "$RUN_ATTEMPT" ]; then
+            echo "::error::run ${RUN_ID} is only at attempt ${real_attempt}; claiming attempt ${RUN_ATTEMPT} would fabricate history"
+            exit 1
+          fi
+          echo "Confirmed: run ${RUN_ID} really reached attempt ${real_attempt} (claiming ${RUN_ATTEMPT})."
+      - name: Report a truthful ci_retry observation and assert executed
+        env:
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_ATTEMPT: ${{ inputs.run-attempt }}
+          ANCHOR: ${{ inputs.anchor }}
+          RECOVERY_URL: https://agent-console.supersprinkles.racing/api/control-plane/recovery-observation
+          RECOVERY_AUDIENCE: agent-lcars-recovery-observation
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          REQUIRE_FRESH: ${{ inputs.require-fresh }}
+        run: |
+          set -euo pipefail
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # 5-minute skew margin between this runner's clock and the
+          # console server's, for the freshness check below.
+          fresh_floor="$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+          exact_identity="run:${RUN_ID}:${RUN_ATTEMPT}"
+          operation_key="recovery/v1:ci_retry:${REPOSITORY_ID}:${ANCHOR}:${exact_identity}"
+
+          body=$(jq -n \
+            --arg operationKey "$operation_key" \
+            --argjson repositoryId "$REPOSITORY_ID" \
+            --arg repository "$REPOSITORY" \
+            --argjson anchor "$ANCHOR" \
+            --arg exactIdentity "$exact_identity" \
+            --arg observedAt "$now" \
+            --arg evidence "https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            '{
+              operationKey: $operationKey,
+              target: {
+                domain: "ci_retry",
+                repositoryId: $repositoryId,
+                repository: $repository,
+                anchor: $anchor,
+                exactIdentity: $exactIdentity
+              },
+              sourceKind: "operator",
+              observedAt: $observedAt,
+              evidence: $evidence
+            }')
+
+          token_response=$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$RECOVERY_AUDIENCE")
+          oidc_token=$(jq -er '.value | select(type == "string" and length > 0)' \
+            <<<"$token_response")
+
+          echo "POST 1: fresh record + shadow verification"
+          first=$(curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST \
+            -H "Authorization: Bearer $oidc_token" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            "$RECOVERY_URL")
+          jq . <<<"$first"
+          first_status=$(jq -r '.status' <<<"$first")
+          recorded_at=$(jq -r '.recordedAt' <<<"$first")
+          # `executed` proves the endpoint recorded the observation AND
+          # independently confirmed the claimed attempt against GitHub.
+          # `pending` means GitHub was unavailable for verification --
+          # a soft outcome the ingestion path tolerates, but this smoke
+          # test exists to prove the full chain, so it fails loudly.
+          if [ "$first_status" != "executed" ]; then
+            echo "::error::expected status executed, got ${first_status}"
+            exit 1
+          fi
+          # An idempotent store resolves each operation key's full
+          # record -> shadow-verify -> resolve chain exactly once; a replay
+          # returns that terminal record WITHOUT re-running verification.
+          # `recordedAt` older than this dispatch means verification did
+          # not execute just now -- an `executed` here proves only the
+          # auth + replay-read path, which must never silently masquerade
+          # as a full-chain pass.
+          if [[ "$recorded_at" < "$fresh_floor" ]]; then
+            if [ "$REQUIRE_FRESH" = "true" ]; then
+              echo "::error::observation was already recorded at ${recorded_at} -- this dispatch replayed an existing record and did NOT re-execute the verification chain. Supply a not-yet-reported truthful retry (run-id/run-attempt/anchor), or re-dispatch with require-fresh disabled to smoke only the ingestion/replay path."
+              exit 1
+            fi
+            echo "::warning::replay-only smoke: record existed since ${recorded_at}; the verification chain was NOT re-executed by this dispatch."
+          else
+            echo "Fresh record: full record -> shadow-verify -> resolve chain executed during this dispatch."
+          fi
+
+          echo "POST 2: idempotent replay of the same operation key"
+          second=$(curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST \
+            -H "Authorization: Bearer $oidc_token" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            "$RECOVERY_URL")
+          jq . <<<"$second"
+          second_status=$(jq -r '.status' <<<"$second")
+          second_key=$(jq -r '.operationKey' <<<"$second")
+          if [ "$second_status" != "executed" ] || [ "$second_key" != "$operation_key" ]; then
+            echo "::error::replay was not idempotent (status=${second_status} key=${second_key})"
+            exit 1
+          fi
+
+          echo "End-to-end smoke passed: recorded, shadow-verified, replay-idempotent."
