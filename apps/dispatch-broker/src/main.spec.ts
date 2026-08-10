@@ -2163,12 +2163,74 @@ test('a trusted completion persists the exact PR reference beside its immutable 
   });
 });
 
+test('#813: a worker-failure projection failure records a reporting/projector-phase anomaly and rethrows, without losing the already-recorded outcome', async () => {
+  const ledger = boundLedger();
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) return workerRun('completed');
+      // The ledger's own compatibility comment -- unrelated to the
+      // projection write under test, must keep succeeding so runPhase's
+      // own anomaly-recording saveLedger() can land.
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      // The worker-failure comment's own GitHub write is what fails here.
+      if (path.includes('/issues/304/comments')) {
+        throw new Error('GitHub is unreachable');
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const completion = {
+    kind: 'completion',
+    task,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workerRunId: 42,
+    workflow: 'codex.yml',
+    sourceKind: 'completion',
+    sourceId: 'worker-run:42',
+    transportRunId: 9010,
+    outcome: 'trajectory-failure',
+  };
+
+  await assert.rejects(
+    () =>
+      handleCompletion(client, { ledger, comment: { id: 9 } }, completion, {
+        maintainer: 'jlapenna',
+      }),
+    /GitHub is unreachable/u,
+  );
+
+  // The attempt outcome recorded above the failed projection call is not
+  // rolled back by the projection failure -- #645's "reporting failure
+  // cannot alter outcome truth" contract, reused here for #813's own
+  // worker-failure write.
+  assert.equal(ledger.generations[0].attempt.outcome, 'trajectory-failure');
+
+  // The failure IS recorded, attributed to the projector's reporting phase,
+  // not swallowed into an unattributed generic failure.
+  const phaseFailures = ledger.anomalies.filter(
+    (anomaly) => anomaly.kind === 'phase-failure',
+  );
+  assert.equal(phaseFailures.length, 1);
+  assert.equal(phaseFailures[0].failure.owningSystem, 'projector');
+  assert.equal(phaseFailures[0].failure.phase, 'reporting');
+});
+
 test('a trusted credential failure opens the lane breaker before completion can promote more work, without reopening on stale redelivery (#523)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {
     const ledger = boundLedger();
     const calls = [];
     let openIssues = [];
+    // Task issue #304's own comments/labels/assignees -- separate durable
+    // state from `openIssues` (the lane-incident issue, #902), so this test
+    // can assert on each independently. #813: a `startup-failure` outcome
+    // now also drives the projector's own worker-failure comment + park on
+    // #304 itself, alongside the pre-existing lane-incident projection.
+    let taskComments = [];
+    let taskLabels = [];
+    let taskAssignees = [];
     const client = {
       requestOk: async (path, options = {}) => {
         calls.push({
@@ -2192,6 +2254,48 @@ test('a trusted credential failure opens the lane breaker before completion can 
           return openIssues[0];
         }
         if (path.endsWith('/issues/comments/9')) return { id: 9 };
+        if (
+          path.includes('/issues/304/comments') &&
+          (options.method ?? 'GET') === 'GET'
+        ) {
+          return taskComments;
+        }
+        if (
+          path.endsWith('/issues/304/comments') &&
+          options.method === 'POST'
+        ) {
+          const created = {
+            id: taskComments.length + 1,
+            body: options.body.body,
+          };
+          taskComments = [...taskComments, created];
+          return created;
+        }
+        if (
+          path.match(/\/issues\/comments\/\d+$/u) &&
+          options.method === 'PATCH'
+        ) {
+          const id = Number(path.match(/\/issues\/comments\/(\d+)$/u)[1]);
+          const updated = { id, body: options.body.body };
+          taskComments = taskComments.map((c) => (c.id === id ? updated : c));
+          return updated;
+        }
+        if (path.endsWith('/issues/304/labels') && options.method === 'POST') {
+          taskLabels = [...new Set([...taskLabels, ...options.body.labels])];
+          return {};
+        }
+        if (
+          path.endsWith('/issues/304/assignees') &&
+          options.method === 'POST'
+        ) {
+          taskAssignees = [
+            ...new Set([...taskAssignees, ...options.body.assignees]),
+          ];
+          return {};
+        }
+        if (path.endsWith('/issues/304')) {
+          return { labels: taskLabels, assignees: taskAssignees };
+        }
         throw new Error(`Unexpected completion readiness path: ${path}`);
       },
     };
@@ -2223,6 +2327,17 @@ test('a trusted credential failure opens the lane breaker before completion can 
       1,
     );
 
+    // #813: the projector converged exactly one failure comment on the task
+    // issue itself and parked it needs-human, independent of the lane
+    // incident above.
+    assert.equal(taskComments.length, 1);
+    assert.match(
+      taskComments[0].body,
+      /agent-lcars:projection:worker-failure/u,
+    );
+    assert.ok(taskLabels.includes('status:needs-human'));
+    assert.ok(taskAssignees.includes('jlapenna'));
+
     // Model an operator closing the incident after repairing the credential.
     // The already-recorded completion source makes a stale callback a no-op,
     // so it must not recreate the breaker from old evidence.
@@ -2235,6 +2350,19 @@ test('a trusted credential failure opens the lane breaker before completion can 
         (call) => call.path.endsWith('/issues') && call.method === 'POST',
       ).length,
       1,
+    );
+
+    // #813 idempotence proof: a duplicate delivery of the exact same
+    // completion converges on the SAME worker-failure comment (an update,
+    // not a second create) and does not duplicate the park.
+    assert.equal(taskComments.length, 1);
+    assert.equal(
+      calls.filter(
+        (call) =>
+          call.path.endsWith('/issues/304/comments') && call.method === 'POST',
+      ).length,
+      1,
+      'a retried completion must never POST a second worker-failure comment',
     );
   } finally {
     delete process.env.MAINTAINER_LOGIN;

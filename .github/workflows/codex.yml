@@ -400,7 +400,6 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           AGENT_STEP_OUTCOME: ${{ steps.agent.outcome }}
           READINESS_FAILURE: ${{ (steps.codex-credential-auth.outcome == 'failure' || steps.restore-auth.outcome == 'failure') && 'credential' || '' }}
-          MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
           # Codex's own no-deliverable wording - rendered here with this
           # lane's own AGENT_LABEL/REDISPATCH_COMMAND rather than inside the

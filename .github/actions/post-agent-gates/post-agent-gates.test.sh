@@ -10,12 +10,16 @@ script="$action_dir/post-agent-gates.sh"
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 
-# A fake `gh` on PATH covering every call post-agent-gates.sh's three
-# sub-scripts (verify-deliverable.sh, report-failure.sh, and an optional
-# FAILURE_LOG_SCAN_SCRIPT) can make: REST lookups, `gh issue comment`, and
-# `gh run view --log`. Every call is logged so a case can assert on what
-# was (or was not) actually invoked -- e.g. that verify-deliverable's own
-# lookups never fire once an earlier gate has already failed the job.
+# A fake `gh` on PATH covering every call post-agent-gates.sh's sub-scripts
+# can make: verify-deliverable.sh's REST lookups and an optional
+# FAILURE_LOG_SCAN_SCRIPT's `gh run view --log`. Every call is logged so a
+# case can assert on what was (or was not) actually invoked -- e.g. that
+# verify-deliverable's own lookups never fire once an earlier gate has
+# already failed the job. report-failure.sh no longer calls `gh` at all
+# (#813) -- its own report-failure.test.sh proves that in isolation; the
+# `issue comment`/`labels`/`assignees` branches below stay wired only so a
+# case here can assert their ABSENCE (a regression back to a direct write
+# would still show up as an unexpected call in $FAKE_GH_DIR/calls).
 fake_bin="$test_root/bin"
 mkdir -p "$fake_bin"
 cat > "$fake_bin/gh" <<'FAKE_GH'
@@ -112,7 +116,8 @@ base_env() {
   export RUN_ID=30749363701
   export ISSUE=42
   export JOB_STATUS=success
-  export MAINTAINER=maintainer-login
+  # #813: MAINTAINER is no longer a post-agent-gates.sh input -- report-
+  # failure.sh stopped needing it once it stopped writing GitHub state.
   export MODE=implement
   export ATTEMPT_ID="g1:test-intent"
   export WRITER_CREDENTIALS_FILE=
@@ -202,13 +207,21 @@ JSON
   export MODE=implement
   run_case success-no-deliverable
   test "$status" = 1 || fail "a genuine no-deliverable must exit 1"
-  grep -q 'issue comment 42' "$FAKE_GH_DIR/calls" || fail "expected a failure comment"
-  # The REASON text lands inside the `gh issue comment ... --body ...`
-  # invocation report-failure.sh makes, which the fake gh logs verbatim -
-  # it is never echoed to this script's own stdout/stderr.
-  grep -q 'LANE_NO_DELIVERABLE_MARKER' "$FAKE_GH_DIR/calls" || fail "expected the lane-provided NO_DELIVERABLE_REASON text in the report"
-  grep -q '/issues/42/labels' "$FAKE_GH_DIR/calls" || fail "expected the status:needs-human label mutation"
-  grep -q '/issues/42/assignees' "$FAKE_GH_DIR/calls" || fail "expected the maintainer assignment mutation"
+  # #813: report-failure.sh only logs now -- the REASON text lands in its
+  # own `::notice::` line on this script's stdout, which run_case captures
+  # as $output. It must never reach gh at all: the hosted finalizer's
+  # completion callback reports through the projector's one writer instead.
+  grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged in this run's own output"
+  grep -q 'LANE_NO_DELIVERABLE_MARKER' <<<"$output" || fail "expected the lane-provided NO_DELIVERABLE_REASON text in the log"
+  if grep -q '/issues/42/labels' "$FAKE_GH_DIR/calls"; then
+    fail "must not write status:needs-human directly (#813)"
+  fi
+  if grep -q '/issues/42/assignees' "$FAKE_GH_DIR/calls"; then
+    fail "must not assign the maintainer directly (#813)"
+  fi
+  if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
+    fail "must not post the failure comment directly (#813)"
+  fi
   grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a landed no-deliverable report must suppress a duplicate fallback"
   grep -qx 'outcome-kind=outcome-gate-failure' "$GITHUB_OUTPUT" || fail "a missing deliverable must be classified separately"
 )
@@ -224,8 +237,8 @@ JSON
   : > "$case_dir/pulls.fail"
   run_case success-lookup-fails
   test "$status" = 1 || fail "a failed deliverable lookup must exit 1"
-  grep -q 'issue comment 42' "$FAKE_GH_DIR/calls" || fail "expected a failure comment even on an inconclusive lookup"
-  if grep -q 'LANE_NO_DELIVERABLE_MARKER' "$FAKE_GH_DIR/calls"; then
+  grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged even on an inconclusive lookup"
+  if grep -q 'LANE_NO_DELIVERABLE_MARKER' <<<"$output"; then
     fail "an inconclusive lookup must not use the no-deliverable wording"
   fi
 )
@@ -244,8 +257,8 @@ JSON
   if grep -q '/pulls?' "$FAKE_GH_DIR/calls"; then
     fail "verify-deliverable must be skipped once JOB_STATUS is not success"
   fi
-  grep -q 'issue comment 42' "$FAKE_GH_DIR/calls" || fail "expected a failure comment"
-  if grep -q 'was cancelled' "$FAKE_GH_DIR/calls"; then
+  grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged"
+  if grep -q 'was cancelled' <<<"$output"; then
     fail "an ordinary failure must not be reported as cancelled"
   fi
   grep -qx 'outcome-kind=trajectory-failure' "$GITHUB_OUTPUT" || fail "an agent-step failure must be classified as trajectory"
@@ -270,7 +283,7 @@ JSON
   export JOB_STATUS=cancelled
   run_case already-cancelled
   test "$status" = 0 || fail "a cancelled run with a landed report must still exit 0"
-  grep -q 'was cancelled' "$FAKE_GH_DIR/calls" || fail "expected the cancelled-specific message"
+  grep -q 'was cancelled' <<<"$output" || fail "expected the cancelled-specific message"
 )
 
 # --- Case 6: FAILURE_LOG_SCAN_SCRIPT (claude's adapter-style extra signal)
@@ -289,7 +302,7 @@ SCAN
   export FAILURE_LOG_SCAN_SCRIPT="$case_dir/scan.sh"
   run_case log-scan-used
   test "$status" = 0 || fail "log-scan case with a landed report must still exit 0"
-  grep -q 'EXTRA_LOG_SCAN_MARKER' "$FAKE_GH_DIR/calls" || fail "expected the lane-provided log-scan script's own REASON text"
+  grep -q 'EXTRA_LOG_SCAN_MARKER' <<<"$output" || fail "expected the lane-provided log-scan script's own REASON text"
 )
 
 # --- Case 7: NO_DELIVERABLE takes priority over FAILURE_LOG_SCAN_SCRIPT -
@@ -307,28 +320,16 @@ SCAN
   export FAILURE_LOG_SCAN_SCRIPT="$case_dir/scan.sh"
   run_case no-deliverable-wins-over-log-scan
   test "$status" = 1 || fail "a genuine no-deliverable must still exit 1"
-  grep -q 'LANE_NO_DELIVERABLE_MARKER' "$FAKE_GH_DIR/calls" || fail "expected the no-deliverable wording to win"
-  if grep -q 'SHOULD_NOT_APPEAR_MARKER' "$FAKE_GH_DIR/calls"; then
+  grep -q 'LANE_NO_DELIVERABLE_MARKER' <<<"$output" || fail "expected the no-deliverable wording to win"
+  if grep -q 'SHOULD_NOT_APPEAR_MARKER' <<<"$output"; then
     fail "the log-scan script must not run once NO_DELIVERABLE is set"
   fi
 )
 
-# --- Case 8: report-failure itself fails to land (e.g. the comment post
-# errors) - this step must still fail red even though nothing upstream
-# (JOB_STATUS, verify-deliverable) forced that on its own, mirroring the
-# original "Report failure on the issue" step having no continue-on-error. ---
-(
-  base_env
-  export JOB_STATUS=failure
-  case_dir="$test_root/report-failure-itself-fails"
-  mkdir -p "$case_dir"
-  : > "$case_dir/comment.fail"
-  run_case report-failure-itself-fails
-  test "$status" = 1 || fail "a failed failure-report must itself exit 1"
-  if grep -qx 'complete=true' "$GITHUB_OUTPUT"; then
-    fail "a failed primary report must leave the hosted fallback enabled"
-  fi
-)
+# Case 8 used to prove report-failure.sh's own comment-post failure still
+# failed this step red. #813 retired that GitHub write entirely -- log-only
+# report-failure.sh has no external call left that can fail, so that
+# scenario no longer exists (removed rather than kept as dead coverage).
 
 # --- Case 9: telemetry-finalize's own always()-equivalent behavior holds
 # even when nothing else about the run failed. ---
@@ -356,9 +357,9 @@ SCAN
   printf '%s\n' '[{"type":"result","subtype":"error_max_turns","is_error":true}]' > "$CLAUDE_EXECUTION_FILE"
   run_case claude-log-scan-turn-budget
   test "$status" = 0 || fail "log-scan turn-budget case with a landed report must still exit 0"
-  grep -q 'error_max_turns' "$FAKE_GH_DIR/calls" || fail "expected the turn-budget REASON text"
-  grep -q 'agent:claude' "$FAKE_GH_DIR/calls" || fail "expected AGENT_LABEL substituted into the turn-budget REASON text"
-  grep -q '@claude' "$FAKE_GH_DIR/calls" || fail "expected REDISPATCH_COMMAND substituted into the turn-budget REASON text"
+  grep -q 'error_max_turns' <<<"$output" || fail "expected the turn-budget REASON text"
+  grep -q 'agent:claude' <<<"$output" || fail "expected AGENT_LABEL substituted into the turn-budget REASON text"
+  grep -q '@claude' <<<"$output" || fail "expected REDISPATCH_COMMAND substituted into the turn-budget REASON text"
   if grep -q '^run view ' "$FAKE_GH_DIR/calls"; then
     fail "the structured execution file must avoid the unavailable in-progress run-log API"
   fi
@@ -376,7 +377,7 @@ SCAN
   printf '%s\n' '[{"type":"result","subtype":"success","is_error": true,"api_error_status": 401,"total_cost_usd": 0}]' > "$CLAUDE_EXECUTION_FILE"
   run_case claude-log-scan-oauth
   test "$status" = 0 || fail "log-scan oauth case with a landed report must still exit 0"
-  grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' "$FAKE_GH_DIR/calls" || fail "expected the OAuth-token REASON text"
+  grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' <<<"$output" || fail "expected the OAuth-token REASON text"
   grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the OAuth signature to publish a credential readiness failure"
   if grep -q '^run view ' "$FAKE_GH_DIR/calls"; then
     fail "the structured execution file must avoid the unavailable in-progress run-log API"
@@ -395,9 +396,9 @@ SCAN
   printf '%s\n' '[{"type":"result","subtype":"success","is_error": true,"total_cost_usd": 0}]' > "$CLAUDE_EXECUTION_FILE"
   run_case claude-log-scan-provider
   test "$status" = 0 || fail "provider-init case with a landed report must still exit 0"
-  grep -q 'failed during provider initialization' "$FAKE_GH_DIR/calls" || fail "expected the provider-init REASON text"
+  grep -q 'failed during provider initialization' <<<"$output" || fail "expected the provider-init REASON text"
   grep -qx 'readiness-failure=provider' "$GITHUB_OUTPUT" || fail "expected a provider readiness failure without a 401"
-  if grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' "$FAKE_GH_DIR/calls"; then
+  if grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' <<<"$output"; then
     fail "a generic zero-cost failure must not guess that the OAuth token expired"
   fi
 )

@@ -149,6 +149,16 @@ export const FAILURE_REASONS = [
   'work_token_mint_failed',
   'checkout_failed',
   'tool_setup_failed',
+  // worker / bootstrap, coarse -- the hosted finalizer's own trusted
+  // `startup-failure` completion outcome (agent-lcars#813): the agent step
+  // never ran (its own step name is absent or `skipped` in GitHub's job
+  // metadata) and, unlike the three reasons above, nothing narrower is
+  // knowable from a completion callback alone -- only the job's own log
+  // distinguishes a token-mint, checkout, or tool-setup failure. Reserved
+  // for exactly this coarse, callback-derived classification; a call site
+  // that CAN name the finer reason should use one of the three above
+  // instead of this one.
+  'worker_startup_failed',
   // worker / provider + agent
   'provider_admission_denied',
   'provider_graph_allocation_failed',

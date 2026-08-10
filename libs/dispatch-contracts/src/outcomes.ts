@@ -49,3 +49,21 @@ export function isDispatchOutcomeReference(
 ): value is DispatchOutcomeReference {
   return dispatchOutcomeReferenceSchema.safeParse(value).success;
 }
+
+/**
+ * The three outcome kinds that mean the attempt itself failed, as opposed to
+ * a park/no-op/successful-artifact result. This is the ONE place that
+ * distinction is named (agent-lcars#813): the projector's worker-failure
+ * classification (`modules/worker-failure.ts` in the dispatch broker) reads
+ * this instead of re-deriving its own list, so whether a future outcome kind
+ * counts as "failure" has exactly one place to change.
+ */
+const FAILURE_OUTCOME_KINDS: ReadonlySet<DispatchOutcomeKind> = new Set([
+  'startup-failure',
+  'trajectory-failure',
+  'outcome-gate-failure',
+]);
+
+export function isFailureOutcomeKind(outcome: DispatchOutcomeKind): boolean {
+  return FAILURE_OUTCOME_KINDS.has(outcome);
+}

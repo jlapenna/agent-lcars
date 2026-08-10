@@ -14599,6 +14599,16 @@ var FAILURE_REASONS = [
   "work_token_mint_failed",
   "checkout_failed",
   "tool_setup_failed",
+  // worker / bootstrap, coarse -- the hosted finalizer's own trusted
+  // `startup-failure` completion outcome (agent-lcars#813): the agent step
+  // never ran (its own step name is absent or `skipped` in GitHub's job
+  // metadata) and, unlike the three reasons above, nothing narrower is
+  // knowable from a completion callback alone -- only the job's own log
+  // distinguishes a token-mint, checkout, or tool-setup failure. Reserved
+  // for exactly this coarse, callback-derived classification; a call site
+  // that CAN name the finer reason should use one of the three above
+  // instead of this one.
+  "worker_startup_failed",
   // worker / provider + agent
   "provider_admission_denied",
   "provider_graph_allocation_failed",
@@ -14711,6 +14721,14 @@ function isDispatchOutcomeKind(value) {
 }
 function isDispatchOutcomeReference(value) {
   return dispatchOutcomeReferenceSchema.safeParse(value).success;
+}
+var FAILURE_OUTCOME_KINDS = /* @__PURE__ */ new Set([
+  "startup-failure",
+  "trajectory-failure",
+  "outcome-gate-failure"
+]);
+function isFailureOutcomeKind(outcome) {
+  return FAILURE_OUTCOME_KINDS.has(outcome);
 }
 
 // libs/dispatch-contracts/src/pipelines.ts
@@ -16129,6 +16147,23 @@ async function projectNeedsHumanPark(api2, task, maintainer, failure) {
   await ensureNeedsHumanParked(api2, task, maintainer);
   return { parked: true };
 }
+async function projectWorkerFailure(api2, task, maintainer, attempt, failure) {
+  if (!needsMaintainer(failure)) return { park: { parked: false } };
+  const display = attempt.pipeline.length > 0 ? attempt.pipeline[0].toUpperCase() + attempt.pipeline.slice(1) : attempt.pipeline;
+  const comment = await projectComment(
+    api2,
+    task,
+    "worker-failure",
+    attempt.attemptId,
+    (marker) => `${marker}
+
+${display} agent run failed: ${attempt.runUrl}
+
+${failure.evidence ?? `[${failure.owningSystem}/${failure.phase}] ${failure.reason}`}`
+  );
+  const park = await projectNeedsHumanPark(api2, task, maintainer, failure);
+  return { comment, park };
+}
 function recordProjectionStatus(ledger, converged, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const desiredRevision = ledger.revision;
   const observedRevision = converged ? desiredRevision : ledger.projection?.observedRevision ?? 0;
@@ -16138,6 +16173,36 @@ function recordProjectionStatus(ledger, converged, now = (/* @__PURE__ */ new Da
     state: converged ? "converged" : observedRevision > 0 ? "diverged" : "pending",
     observedAt: now
   });
+}
+
+// apps/dispatch-broker/src/modules/worker-failure.ts
+function classifyWorkerFailureOutcome(outcome) {
+  if (!isFailureOutcomeKind(outcome)) return void 0;
+  switch (outcome) {
+    case "startup-failure":
+      return classifyFailure({
+        phase: "bootstrap",
+        reason: "worker_startup_failed",
+        retryDisposition: "manual",
+        evidence: "Worker lifecycle outcome reported startup-failure: the agent step never ran"
+      });
+    case "trajectory-failure":
+      return classifyFailure({
+        phase: "agent_execution",
+        reason: "agent_exited_nonzero",
+        retryDisposition: "manual",
+        evidence: "Worker lifecycle outcome reported trajectory-failure"
+      });
+    case "outcome-gate-failure":
+      return classifyFailure({
+        phase: "validation",
+        reason: "deliverable_absent",
+        retryDisposition: "manual",
+        evidence: "Worker lifecycle outcome reported outcome-gate-failure: no verifiable deliverable was found"
+      });
+    default:
+      return void 0;
+  }
 }
 
 // apps/dispatch-broker/src/normalize.ts
@@ -17662,6 +17727,25 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
       normalized.outcome,
       normalized.outcomeReference
     );
+    const workerFailure = classifyWorkerFailureOutcome(normalized.outcome);
+    if (workerFailure) {
+      await runPhase(
+        { client, loaded },
+        "reporting",
+        () => projectWorkerFailure(
+          client,
+          loaded.ledger.task,
+          polling.maintainer ?? "",
+          {
+            attemptId: generation.attempt?.attemptId ?? formatAttemptId(generation),
+            pipeline: generation.pipeline,
+            runUrl: run.html_url
+          },
+          workerFailure
+        ),
+        "projector"
+      );
+    }
   }
   if (normalized.readinessFailure && evidence.outcome === "recorded") {
     await ensureLaneReadinessAlert(

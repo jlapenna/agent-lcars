@@ -395,7 +395,6 @@ jobs:
           ATTEMPT_ID: ${{ env.ATTEMPT_ID }}
           JOB_STATUS: ${{ job.status }}
           AGENT_STEP_OUTCOME: ${{ steps.agent.outcome }}
-          MAINTAINER: ${{ vars.MAINTAINER_LOGIN }}
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] }}
           # Claude's own no-deliverable wording (agent-protocol.md #5) -
           # rendered here with this lane's own AGENT_LABEL/
