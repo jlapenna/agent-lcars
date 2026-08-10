@@ -21,7 +21,31 @@ describe('ConsoleAppShell', () => {
     expect(
       screen.getByRole('navigation', { name: 'Console sections' }),
     ).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Bridge' })).toBeTruthy();
+    expect(screen.getAllByRole('heading', { name: 'Bridge' })).toHaveLength(2);
+    expect(
+      document.querySelector('.console-page-mobile-title'),
+    ).toHaveTextContent('Bridge');
     expect(screen.getByRole('main')).toHaveTextContent('Route content');
+  });
+
+  it('marks its mobile title as a streamed fallback with the shared header', () => {
+    const { container } = render(
+      <MantineProvider>
+        <ConsoleAppShell
+          current="sessions"
+          title="Session detail"
+          subtitle="A streamed archive record"
+          streamingFallback
+        >
+          <p>Loading route content</p>
+        </ConsoleAppShell>
+      </MantineProvider>,
+    );
+
+    expect(
+      container.querySelector(
+        '.console-page-mobile-title[data-current="sessions"][data-streaming-fallback]',
+      ),
+    ).toHaveTextContent('Session detail');
   });
 });

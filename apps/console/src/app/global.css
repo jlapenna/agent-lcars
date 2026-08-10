@@ -45,6 +45,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: none;
 }
 
+/* The server shell supplies the mobile title immediately after the 64px
+   command strip. Suppress only its streamed placeholder during the brief
+   fallback/resolved overlap, matching the header suppression above. */
+body:has(.console-header[data-current]:not([data-streaming-fallback]))
+  .console-page-mobile-title[data-streaming-fallback] {
+  display: none;
+}
+
 /* ---- Eyebrow label (condensed display face, used for section micro-headers
    and field labels) ---- */
 
@@ -94,6 +102,11 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .lcars-header-title {
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.lcars-header-copy {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .lcars-header-bar {
@@ -335,6 +348,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .console-page-shell {
   width: 100%;
   max-width: none;
+}
+
+/* Desktop keeps the title inside the fixed command header. The server shell
+   reveals this companion title only on narrow screens, where that header is
+   intentionally reduced to a 64px command strip. */
+.console-page-mobile-title {
+  display: none;
 }
 
 .console-workspace {
@@ -1070,8 +1090,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border-right: 1px solid var(--mantine-color-dark-4);
   }
 
+  .console-header[data-current] .lcars-header > .mantine-Group-root {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   .console-header[data-current] .lcars-header-title {
     display: block !important;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: clamp(1.35rem, 2.2vw, 1.75rem);
     line-height: 1;
     color: var(--mantine-color-gray-0) !important;
@@ -1256,6 +1286,35 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current] .lcars-header {
     display: none;
+  }
+
+  /* The compact command strip deliberately keeps its fixed 64px height.
+     Put the page identity in the shared shell immediately below it so every
+     route, including error and detail states, retains an H1 on a phone. */
+  .console-page-mobile-title {
+    display: block;
+    padding: 18px 16px 16px;
+    color: var(--mantine-color-gray-0);
+    background: var(--mantine-color-dark-9);
+    border-bottom: 1px solid var(--mantine-color-dark-4);
+  }
+
+  .console-page-mobile-title__heading {
+    overflow-wrap: anywhere;
+    color: inherit;
+    font-size: clamp(1.35rem, 7vw, 1.9rem);
+    line-height: 1.1;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .console-page-mobile-title__subtitle {
+    display: -webkit-box;
+    margin-top: 4px;
+    overflow: hidden;
+    color: var(--mantine-color-dark-2);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .console-header[data-current] .lcars-command-row {
