@@ -330,7 +330,7 @@ export function QueueWorkspace({
         )}
       </div>
 
-      {mobileDataFreshness && !explicitDetail && (
+      {mobileDataFreshness && (
         <div className="queue-mobile-meta">
           {mobileScopeLabel && (
             <Text component="span" className="queue-mobile-scope">

@@ -569,6 +569,7 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-workspace__list')).toBeHidden();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
     await expect(header).toBeHidden();
+    await expect(freshness).toBeVisible();
     const backLink = workspace.getByRole('link', {
       name: 'Back to Inbox list',
       exact: true,

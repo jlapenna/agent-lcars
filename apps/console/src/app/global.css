@@ -778,6 +778,10 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   display: none;
 }
 
+.queue-mobile-meta {
+  display: none;
+}
+
 .queue-workspace__list {
   position: relative;
   display: flex;
@@ -1344,10 +1348,11 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     display: none;
   }
 
-  /* Inbox has its own contextual command deck below. Hiding this generic
-     route pill prevents two competing headers while its menu retains every
-     console destination. */
-  .console-header[data-current='inbox'] {
+  /* Inbox has its own contextual command deck below. Keep the shared route
+     rail while the page is loading, then suppress it only once the command
+     deck exists. This avoids an unlabelled loading state without reintroducing
+     competing headers for the actual workspace. */
+  body:has(.queue-workspace) .console-header[data-current='inbox'] {
     display: none;
     height: 0;
     min-height: 0;
@@ -1743,7 +1748,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   .queue-workspace__detail {
-    height: calc(100dvh - 52px);
+    height: calc(100dvh - 72px);
     border: 0;
   }
 
