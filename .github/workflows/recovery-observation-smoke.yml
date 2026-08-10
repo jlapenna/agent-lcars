@@ -1,0 +1,119 @@
+name: Recovery Observation Smoke
+
+# Manually-dispatched production smoke test for the hosted recovery-observation
+# ingestion path (agent-lcars#864/#869/#875/#877/#878). The scheduled caller in
+# rerun-infra-killed-runs.yml only exercises the OIDC-mint -> POST -> Firestore
+# -> shadow-verify chain when a real infra-killed run was actually rerun, which
+# is rare -- so between incidents the full path can regress without any signal.
+# This workflow proves the whole chain on demand by reporting a TRUE historical
+# recovery (a run that genuinely reached the claimed attempt) and asserting the
+# endpoint records it and shadow-verifies it against GitHub to `executed`.
+#
+# The defaults reference CI run 31334422237 attempt 2 (PR #875's Verify run,
+# which really was infra-killed and manually rerun on 2026-08-09) -- reporting
+# it is accurate operational data, not a synthetic fixture. Replaying the same
+# observation is idempotent by design (the operation key is the identity), so
+# re-dispatching this workflow never creates duplicate records; the second POST
+# below asserts exactly that.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: Workflow run ID whose rerun really happened
+        required: true
+        default: '31334422237'
+      run-attempt:
+        description: Attempt number the recovery produced (must be <= the run's real attempt count)
+        required: true
+        default: '2'
+      anchor:
+        description: PR/issue number the run belonged to (0 for none)
+        required: true
+        default: '875'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Report a truthful ci_retry observation and assert executed
+        env:
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_ATTEMPT: ${{ inputs.run-attempt }}
+          ANCHOR: ${{ inputs.anchor }}
+          RECOVERY_URL: https://agent-console.supersprinkles.racing/api/control-plane/recovery-observation
+          RECOVERY_AUDIENCE: agent-lcars-recovery-observation
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          exact_identity="run:${RUN_ID}:${RUN_ATTEMPT}"
+          operation_key="recovery/v1:ci_retry:${REPOSITORY_ID}:${ANCHOR}:${exact_identity}"
+
+          body=$(jq -n \
+            --arg operationKey "$operation_key" \
+            --argjson repositoryId "$REPOSITORY_ID" \
+            --arg repository "$REPOSITORY" \
+            --argjson anchor "$ANCHOR" \
+            --arg exactIdentity "$exact_identity" \
+            --arg observedAt "$now" \
+            --arg evidence "https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            '{
+              operationKey: $operationKey,
+              target: {
+                domain: "ci_retry",
+                repositoryId: $repositoryId,
+                repository: $repository,
+                anchor: $anchor,
+                exactIdentity: $exactIdentity
+              },
+              sourceKind: "operator",
+              observedAt: $observedAt,
+              evidence: $evidence
+            }')
+
+          token_response=$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$RECOVERY_AUDIENCE")
+          oidc_token=$(jq -er '.value | select(type == "string" and length > 0)' \
+            <<<"$token_response")
+
+          echo "POST 1: fresh record + shadow verification"
+          first=$(curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST \
+            -H "Authorization: Bearer $oidc_token" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            "$RECOVERY_URL")
+          jq . <<<"$first"
+          first_status=$(jq -r '.status' <<<"$first")
+          # `executed` proves the endpoint recorded the observation AND
+          # independently confirmed the claimed attempt against GitHub.
+          # `pending` means GitHub was unavailable for verification --
+          # a soft outcome the ingestion path tolerates, but this smoke
+          # test exists to prove the full chain, so it fails loudly.
+          if [ "$first_status" != "executed" ]; then
+            echo "::error::expected status executed, got ${first_status}"
+            exit 1
+          fi
+
+          echo "POST 2: idempotent replay of the same operation key"
+          second=$(curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST \
+            -H "Authorization: Bearer $oidc_token" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            "$RECOVERY_URL")
+          jq . <<<"$second"
+          second_status=$(jq -r '.status' <<<"$second")
+          second_key=$(jq -r '.operationKey' <<<"$second")
+          if [ "$second_status" != "executed" ] || [ "$second_key" != "$operation_key" ]; then
+            echo "::error::replay was not idempotent (status=${second_status} key=${second_key})"
+            exit 1
+          fi
+
+          echo "End-to-end smoke passed: recorded, shadow-verified, replay-idempotent."
