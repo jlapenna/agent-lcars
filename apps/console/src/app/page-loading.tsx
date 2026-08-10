@@ -1,7 +1,7 @@
 import { Container, Skeleton, Stack } from '@mantine/core';
 
-import { ConsoleHeader, type NavKey } from './console-header';
-import { ConsolePageShell } from './console-page-shell';
+import { ConsoleAppShell } from './console-app-shell';
+import type { NavKey } from './console-header';
 
 /**
  * Streaming fallback for the console's pages.
@@ -16,14 +16,10 @@ import { ConsolePageShell } from './console-page-shell';
  * rows are uniform, so bars at roughly the right size and count keep the
  * layout from jumping when the real content swaps in.
  *
- * `header` defaults to `true` for the pages that still gate their real
- * title/subtitle behind this same boundary (session detail, login, task -
- * none of those splits an eager shell out the way the five nav-destination
- * pages do). Every nav-destination page passes `header={false}` here for
- * its inner, data-only Suspense - it renders its own `ConsoleHeader` for
- * real above this, and its *outer* boundary uses `NavPageLoading` below
- * instead of this component, so this skeleton block never actually reaches
- * a nav-destination page's screen (#585).
+ * `header` defaults to `true` only for the unauthenticated login exception.
+ * Every authenticated route now uses `ConsoleAppShell`: nested data-only
+ * boundaries pass `header={false}`, while outer boundaries use
+ * `NavPageLoading` so the real `ConsoleHeader` structure is always present.
  */
 export function PageLoading({
   rows = 5,
@@ -84,14 +80,14 @@ export function NavPageLoading({
   rows?: number;
 }) {
   return (
-    <ConsolePageShell className={className}>
-      <ConsoleHeader
-        current={current}
-        title={title}
-        subtitle="…"
-        streamingFallback
-      />
+    <ConsoleAppShell
+      className={className}
+      current={current}
+      title={title}
+      subtitle="…"
+      streamingFallback
+    >
       <PageLoading rows={rows} header={false} />
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }

@@ -7,12 +7,11 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../../../../auth';
 import { getWatchedRepos } from '../../../../../lib/github-client';
 import { getTaskDetail } from '../../../../../lib/task-detail';
+import { ConsoleAppShell } from '../../../../console-app-shell';
 import { ConsoleFooter } from '../../../../console-footer';
-import { ConsoleNavRail } from '../../../../console-header';
-import { ConsolePageShell } from '../../../../console-page-shell';
 import { formatRelativeTime } from '../../../../format';
 import { ItemOverflowMenu } from '../../../../item-overflow-menu';
-import { PageLoading } from '../../../../page-loading';
+import { NavPageLoading } from '../../../../page-loading';
 import { QuickTaskButton } from '../../../../quick-task-button';
 import { RefreshButton } from '../../../../refresh-button';
 import { LogicalWorkCard } from '../../../logical-work-card';
@@ -52,10 +51,21 @@ async function TaskDetailPageContent({ params }: PageProps) {
   // render time.
   const generatedAt =
     detail.status === 'ok' ? detail.generatedAt : new Date().toISOString();
+  const title =
+    detail.status === 'ok'
+      ? `Task #${detail.item.number}`
+      : `Task #${issueNumber}`;
+  const subtitle =
+    detail.status === 'ok'
+      ? `${detail.repo.owner}/${detail.repo.name} · ${detail.item.kind === 'pr' ? 'Pull request' : 'Issue'}`
+      : `${owner}/${repo}`;
+
   return (
-    <ConsolePageShell>
-      <Group justify="space-between" align="flex-start" gap="sm" mb="xl">
-        <ConsoleNavRail current="deck" />
+    <ConsoleAppShell
+      current="deck"
+      title={title}
+      subtitle={subtitle}
+      utilities={
         <Group gap="xs" wrap="nowrap">
           <RefreshButton
             generatedAt={generatedAt}
@@ -66,8 +76,33 @@ async function TaskDetailPageContent({ params }: PageProps) {
             <ItemOverflowMenu item={detail.item} />
           )}
         </Group>
-      </Group>
-
+      }
+      footer={
+        <ConsoleFooter
+          actions={
+            <QuickTaskButton
+              watchedRepos={getWatchedRepos()}
+              initialRepoKey={
+                detail.status === 'ok'
+                  ? `${detail.repo.owner}/${detail.repo.name}`
+                  : undefined
+              }
+              sourceIdentities={
+                detail.status === 'ok'
+                  ? [
+                      {
+                        label:
+                          detail.item.kind === 'pr' ? 'Pull request' : 'Task',
+                        value: `${detail.repo.owner}/${detail.repo.name}#${detail.item.number}`,
+                      },
+                    ]
+                  : []
+              }
+            />
+          }
+        />
+      }
+    >
       {detail.status === 'error' && (
         <Text size="sm" c="orange" mb="md" data-testid="task-detail-error">
           {detail.warning}
@@ -77,31 +112,7 @@ async function TaskDetailPageContent({ params }: PageProps) {
       {detail.status === 'ok' && (
         <LogicalWorkCard work={detail.work} anchorState={detail.anchorState} />
       )}
-
-      <ConsoleFooter
-        actions={
-          <QuickTaskButton
-            watchedRepos={getWatchedRepos()}
-            initialRepoKey={
-              detail.status === 'ok'
-                ? `${detail.repo.owner}/${detail.repo.name}`
-                : undefined
-            }
-            sourceIdentities={
-              detail.status === 'ok'
-                ? [
-                    {
-                      label:
-                        detail.item.kind === 'pr' ? 'Pull request' : 'Task',
-                      value: `${detail.repo.owner}/${detail.repo.name}#${detail.item.number}`,
-                    },
-                  ]
-                : []
-            }
-          />
-        }
-      />
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }
 
@@ -109,7 +120,16 @@ async function TaskDetailPageContent({ params }: PageProps) {
 // boundary, same as /sessions/[id] - see that page's identical comment.
 export default function TaskDetailPage({ params }: PageProps) {
   return (
-    <Suspense fallback={<PageLoading rows={4} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="deck"
+          title="Task detail"
+          className="deck-page-shell"
+          rows={4}
+        />
+      }
+    >
       <TaskDetailPageContent params={params} />
     </Suspense>
   );

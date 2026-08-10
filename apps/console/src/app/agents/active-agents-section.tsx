@@ -1,5 +1,5 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
-import { Card, Stack, Text, Title } from '@mantine/core';
+import { Stack, Text } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import type { AgentRun } from '../../lib/agent-activity';
@@ -10,7 +10,7 @@ import {
   LiveRunGroupList,
   type RunItemRef,
 } from '../agent-activity-panel';
-import { lcarsPanelStyle } from '../lcars';
+import { AgentOperationsPanel } from './agent-operations-panel';
 
 /**
  * One row per actor currently working something, agent by agent - the
@@ -40,48 +40,39 @@ export function ActiveAgentsSection({
   const hasActivity = liveRuns.length > 0 || activeSessions.length > 0;
 
   return (
-    <Card
-      withBorder
-      radius="md"
-      padding="md"
-      mb="xl"
-      data-testid="active-agents-section"
-      className="lcars-panel agents-panel agents-panel--active"
-      style={lcarsPanelStyle('periwinkle')}
+    <AgentOperationsPanel
+      title="Active Agents"
+      className="agents-panel--active"
+      testId="active-agents-section"
+      separated
     >
-      <Stack gap="sm">
-        <Title order={2} size="h4">
-          Active Agents
-        </Title>
+      {!hasActivity && (
+        <Text size="sm" c="dimmed">
+          No agent runs or CLI sessions in flight.
+        </Text>
+      )}
 
-        {!hasActivity && (
-          <Text size="sm" c="dimmed">
-            No agent runs or CLI sessions in flight.
-          </Text>
-        )}
+      {liveRuns.length > 0 && (
+        <LiveRunGroupList
+          liveRuns={liveRuns}
+          itemsByRunId={itemsByRunId}
+          sessionsByRunId={sessionsByRunId}
+        />
+      )}
 
-        {liveRuns.length > 0 && (
-          <LiveRunGroupList
-            liveRuns={liveRuns}
-            itemsByRunId={itemsByRunId}
-            sessionsByRunId={sessionsByRunId}
-          />
-        )}
-
-        {activeSessions.length > 0 && (
-          <Stack gap="xs">
-            {activeSessions.map((session) => (
-              <CliSessionRow
-                key={session.sessionId}
-                session={session}
-                takeoverCommand={
-                  findItemForSession(session, items)?.takeoverCommand
-                }
-              />
-            ))}
-          </Stack>
-        )}
-      </Stack>
-    </Card>
+      {activeSessions.length > 0 && (
+        <Stack gap="xs">
+          {activeSessions.map((session) => (
+            <CliSessionRow
+              key={session.sessionId}
+              session={session}
+              takeoverCommand={
+                findItemForSession(session, items)?.takeoverCommand
+              }
+            />
+          ))}
+        </Stack>
+      )}
+    </AgentOperationsPanel>
   );
 }

@@ -175,7 +175,8 @@ function fixtureIssueAgentSession(): IssueAgentSessionDoc {
     },
     model: 'claude-opus-5',
     permissionMode: 'acceptEdits',
-    title: 'E2E fixture: issue-agent session that did no work',
+    title:
+      'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
     totalCostUsd: 0,
     result: { subtype: 'success', isError: false },
     deliverables: { prNumbers: [], commitShas: [] },

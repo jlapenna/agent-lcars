@@ -21,7 +21,9 @@ describe('NavPageLoading', () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Agent Status' })).toBeTruthy();
+    expect(
+      screen.getAllByRole('heading', { name: 'Agent Status' }),
+    ).toHaveLength(2);
     expect(
       screen.getByRole('link', { name: 'Agents' }).getAttribute('aria-current'),
     ).toBe('page');

@@ -1,11 +1,10 @@
-import { Anchor, Group } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
-import { consoleRepositoryUrl } from '../../lib/deployment';
 import {
   getWatchedRepos,
   repoDisplayName,
@@ -19,13 +18,10 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { groupSessionsByIssue } from '../../lib/session-issue-groups';
-import { ConsoleHeader, DataWarnings } from '../console-header';
-import { ConsolePageShell } from '../console-page-shell';
+import { ConsoleAppShell } from '../console-app-shell';
+import { ConsoleCommandUtilities } from '../console-command-utilities';
+import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
-import { QueueUtilityMenu } from '../queue-utility-menu';
-import { QuickTaskButton } from '../quick-task-button';
-import { RefreshButton } from '../refresh-button';
-import { SignOutButton } from '../sign-out-button';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
 import { SessionsWorkspace } from './sessions-workspace';
@@ -132,38 +128,6 @@ async function SessionsBody({
  * ledger has no equivalent view, and since #192 it isn't on this page at
  * all - it's the top-level /costs destination. */
 
-function SessionsUtilities({
-  watchedRepos,
-  repoFilter,
-  includeNavigation = false,
-  navigationHrefs,
-}: {
-  watchedRepos: ReturnType<typeof getWatchedRepos>;
-  repoFilter?: SessionArchiveQuery['repo'];
-  includeNavigation?: boolean;
-  navigationHrefs?: {
-    sessions: string;
-    costs: string;
-  };
-}) {
-  return (
-    <Group gap={4} wrap="nowrap">
-      <QuickTaskButton
-        watchedRepos={watchedRepos}
-        initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
-        size="compact-xs"
-      />
-      <RefreshButton compact />
-      <QueueUtilityMenu
-        repositoryUrl={consoleRepositoryUrl()}
-        includeNavigation={includeNavigation}
-        navigationHrefs={navigationHrefs}
-        signOutControl={<SignOutButton />}
-      />
-    </Group>
-  );
-}
-
 /**
  * The session archive: every CLI and issue-agent session (not just the last
  * 24h the dashboard shows), searchable by four plain query params
@@ -213,55 +177,54 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   }
 
   return (
-    <ConsolePageShell className="sessions-page-shell">
-      <ConsoleHeader
-        current="sessions"
-        archiveQuery={query}
-        title="Session Archive"
-        subtitle={
-          <>
-            {query.repo && `${repoDisplayName(query.repo)} — `}
-            {describeArchiveWindow(query)} ·{' '}
-            <Suspense fallback="…">
-              <SessionCount query={query} />
-            </Suspense>
-            {query.repo && (
-              <>
-                {' · '}
-                <Anchor
-                  href={displayHref({ ...query, repo: undefined }, { view })}
-                  size="sm"
-                >
-                  show all repos
-                </Anchor>
-              </>
-            )}
-          </>
-        }
-        utilities={
-          <>
-            <div className="sessions-utilities sessions-utilities--desktop">
-              <SessionsUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={query.repo}
-              />
-            </div>
-            <div className="sessions-utilities sessions-utilities--mobile">
-              <SessionsUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={query.repo}
-                includeNavigation
-                navigationHrefs={mobileNavigationHrefs}
-              />
-            </div>
-          </>
-        }
-      />
-
+    <ConsoleAppShell
+      className="sessions-page-shell"
+      current="sessions"
+      archiveQuery={query}
+      title="Session Archive"
+      subtitle={
+        <>
+          {query.repo && `${repoDisplayName(query.repo)} — `}
+          {describeArchiveWindow(query)} ·{' '}
+          <Suspense fallback="…">
+            <SessionCount query={query} />
+          </Suspense>
+          {query.repo && (
+            <>
+              {' · '}
+              <Anchor
+                href={displayHref({ ...query, repo: undefined }, { view })}
+                size="sm"
+              >
+                show all repos
+              </Anchor>
+            </>
+          )}
+        </>
+      }
+      utilities={
+        <>
+          <div className="sessions-utilities sessions-utilities--desktop">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              initialRepoKey={query.repo ? repoKey(query.repo) : undefined}
+            />
+          </div>
+          <div className="sessions-utilities sessions-utilities--mobile">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              initialRepoKey={query.repo ? repoKey(query.repo) : undefined}
+              includeNavigation
+              navigationHrefs={mobileNavigationHrefs}
+            />
+          </div>
+        </>
+      }
+    >
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <SessionsBody query={query} view={view} />
       </Suspense>
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }
 

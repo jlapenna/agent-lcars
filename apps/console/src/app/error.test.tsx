@@ -19,7 +19,9 @@ describe('GlobalError', () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    expect(
+      screen.getAllByRole('heading', { name: 'Something went wrong' }),
+    ).toHaveLength(2);
 
     fireEvent.click(screen.getByRole('button', { name: /try again/i }));
 
@@ -36,7 +38,9 @@ describe('GlobalError', () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText('Console was updated')).toBeTruthy();
+    expect(
+      screen.getAllByRole('heading', { name: 'Console was updated' }),
+    ).toHaveLength(2);
     expect(screen.getByText(/redeployed under this tab/i)).toBeTruthy();
 
     // jsdom cannot mock window.location.reload (it's non-configurable), so

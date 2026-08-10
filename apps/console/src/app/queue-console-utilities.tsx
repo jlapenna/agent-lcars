@@ -1,12 +1,6 @@
-import { Group } from '@mantine/core';
-
-import { consoleRepositoryUrl } from '../lib/deployment';
 import type { WatchedRepo } from '../lib/watched-repo';
+import { ConsoleCommandUtilities } from './console-command-utilities';
 import { repoScopedConsoleHrefs } from './console-hrefs';
-import { QueueUtilityMenu } from './queue-utility-menu';
-import { QuickTaskButton } from './quick-task-button';
-import { RefreshButton } from './refresh-button';
-import { SignOutButton } from './sign-out-button';
 
 /** Shared Deck/Inbox command controls. Both routes use the same responsive
  * behavior and repository-scoped destinations, so keeping the composition in
@@ -21,19 +15,12 @@ export function QueueConsoleUtilities({
   includeNavigation?: boolean;
 }) {
   return (
-    <Group gap={4} wrap="nowrap">
-      <QuickTaskButton
-        watchedRepos={watchedRepos}
-        initialRepoKey={repoFilter}
-        size="compact-xs"
-      />
-      <RefreshButton compact bustsGithubCache />
-      <QueueUtilityMenu
-        repositoryUrl={consoleRepositoryUrl()}
-        includeNavigation={includeNavigation}
-        navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
-        signOutControl={<SignOutButton />}
-      />
-    </Group>
+    <ConsoleCommandUtilities
+      watchedRepos={watchedRepos}
+      initialRepoKey={repoFilter}
+      bustsGithubCache
+      includeNavigation={includeNavigation}
+      navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
+    />
   );
 }

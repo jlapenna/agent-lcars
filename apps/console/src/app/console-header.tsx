@@ -57,9 +57,9 @@ function navHref(
 /**
  * Shared top-of-page chrome for the console destinations (Bridge, Inbox,
  * Agents, Shuttlebay, Sessions, Costs): title/subtitle row and the LCARS pill nav rail
- * (the one page every page can jump from/to). The session detail page (a
- * drill-down, not a nav destination) keeps its own lighter back-link header
- * instead of this component.
+ * (the one page every page can jump from/to). Drill-down pages use the same
+ * header with their logical parent marked active, so they retain both a
+ * visible title and a route back to every console destination.
  *
  * The title/subtitle row itself carries the swept-corner "elbow" accent
  * (`.lcars-header`, sized up from the same shape `.lcars-panel` uses for
@@ -101,7 +101,7 @@ export function ConsoleHeader({
     >
       <div className="lcars-header">
         <Group justify="space-between" align="flex-start" gap="sm">
-          <div>
+          <div className="lcars-header-copy">
             <Title order={1} className="lcars-header-title">
               {title}
             </Title>
@@ -136,10 +136,9 @@ export function ConsoleHeader({
 
 /**
  * The destination pill rail on its own - ConsoleHeader composes it
- * under the title block, and the drill-down pages (session detail, task)
- * render it bare in place of what used to be a single hardcoded back
- * link, so they stop being navigation dead ends while keeping their
- * deliberately lighter no-title chrome.
+ * under the title block. It is exported for the rare embedded navigation
+ * use case, while all routed pages use the complete `ConsoleHeader` through
+ * `ConsoleAppShell`.
  */
 export function ConsoleNavRail({
   current,
