@@ -90,4 +90,24 @@ run_case http-error 401 '{"message":"Bad credentials"}' write
 test "$status_code" = 1
 grep -q 'Could not read installation' "$test_root/http-error/output"
 
+# Runs unconditionally now (#903 Codex review): a caller that never sets
+# permission-workflows at all (REQUESTED_LEVEL blank - e.g. an external
+# published-action consumer following the pre-#868 "leave everything blank"
+# pattern) and whose installation genuinely has no `workflows` grant passes
+# quietly - no error, no notice (the common, unremarkable case must not add
+# log noise to every existing caller fleet-wide).
+run_case unrequested-and-absent 200 '{"permissions":{"contents":"write"}}' ''
+test "$status_code" = 0
+test -z "$(cat "$test_root/unrequested-and-absent/output")"
+
+# The exact gap the Codex review on #903 found: REQUESTED_LEVEL blank, but
+# the installation grants `workflows` anyway (a fully-unscoped mint once its
+# installation approves the permission). Must fail closed, not silently
+# hand back a token with an unrequested, more-sensitive permission.
+run_case unrequested-but-granted 200 '{"permissions":{"workflows":"write"}}' ''
+test "$status_code" = 1
+grep -q 'did not request permission-workflows' "$test_root/unrequested-but-granted/output"
+grep -q '868' "$test_root/unrequested-but-granted/output"
+grep -q '903' "$test_root/unrequested-but-granted/output"
+
 echo 'verify-workflows-grant.test.sh: all cases passed'

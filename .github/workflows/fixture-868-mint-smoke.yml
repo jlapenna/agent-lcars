@@ -1,0 +1,65 @@
+name: Fixture 868 mint-agent-token smoke test
+
+# Temporary, throwaway: exercises the REAL mint-agent-token composite action
+# (this branch's own copy, via `uses: ./.github/actions/mint-agent-token`)
+# end to end on a live runner against the real Agent LCARS App/installation,
+# not the stubbed unit test. verify-workflows-grant.test.sh already covers
+# the script's JWT-signing and comparison logic with a real ephemeral RSA
+# key, but stubs the network call - this checks the one thing that can't be
+# stubbed: does the real composite step run cleanly in a real GitHub Actions
+# environment and does GitHub's API actually respond the way the script
+# assumes. The new "Verify workflows permission was actually granted" step
+# now runs unconditionally on every mint-agent-token call fleet-wide
+# (#903 Codex review), so this is worth confirming live before it becomes
+# load-bearing for every future dispatch.
+#
+# Delete this file once its run URL/conclusion are recorded on #868/#903.
+
+on:
+  push:
+    branches:
+      - feat/868-workflow-perm-capability
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # Matches the new explicit allowlist claude.yml/codex.yml/opencode.yml
+      # use - permission-workflows left unset. The unconditional verify
+      # step must find "workflows: none, expected: none" and pass quietly.
+      - name: Mint with the lane-workflow allowlist (workflows NOT requested)
+        id: mint-narrow
+        uses: ./.github/actions/mint-agent-token
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-actions: write
+          permission-contents: write
+          permission-issues: write
+          permission-metadata: read
+          permission-pull-requests: write
+
+      # Explicit opt-in path - the unconditional verify step must find
+      # "workflows: write, expected: write" and pass with a notice.
+      - name: Mint requesting permission-workflows explicitly
+        id: mint-workflows
+        uses: ./.github/actions/mint-agent-token
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
+      - name: Report
+        run: |
+          {
+            echo "### Fixture 868 mint-agent-token smoke test"
+            echo "- narrow allowlist mint (workflows not requested): succeeded, installation-id=${{ steps.mint-narrow.outputs.installation-id }}"
+            echo "- explicit permission-workflows mint: succeeded, installation-id=${{ steps.mint-workflows.outputs.installation-id }}"
+          } >> "$GITHUB_STEP_SUMMARY"

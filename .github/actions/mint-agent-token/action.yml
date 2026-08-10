@@ -88,16 +88,29 @@ runs:
         permission-workflows: ${{ inputs.permission-workflows }}
 
     # The early trusted capability check (#868): runs BEFORE this action
-    # returns, so every caller - including every lane workflow's own
-    # "Mint agent token" step, which always runs before claim/checkout/the
-    # model-invocation step - fails here rather than deep into an agent's
-    # turn at push time. Gated strictly on inputs.permission-workflows,
-    # which only a reviewed workflow-YAML change can set: nothing an issue
-    # comment, PR body, or agent tool call can influence at runtime. The
-    # check only ever reads the installation's actual grant; it never
-    # widens what the token above was minted with.
+    # returns (composite steps run in order and stop on the first failure by
+    # default - no `if:` needed to skip this after a failed mint), so every
+    # caller - including every lane workflow's own "Mint agent token" step,
+    # which always runs before claim/checkout/the model-invocation step -
+    # fails here rather than deep into an agent's turn at push time.
+    #
+    # Unconditional, not gated on inputs.permission-workflows: a published
+    # action (docs/published-actions.md) is referenced cross-repo at `@main`
+    # with whatever permission-* inputs that caller chooses, including none
+    # at all - and this composite's own long-documented "leave everything
+    # blank to get every installation permission" behavior would otherwise
+    # let `workflows` leak into such a caller's token silently, with no
+    # opt-in, the moment an installation approves it (Codex review on #903).
+    # verify-workflows-grant.sh compares the installation's actual grant
+    # against inputs.permission-workflows exactly as requested - blank
+    # means "expect workflows to be absent", not "skip the check".
+    #
+    # Gated strictly on what a REVIEWED WORKFLOW-YAML CHANGE sets via
+    # inputs.permission-workflows: nothing an issue comment, PR body, or
+    # agent tool call can influence at runtime. The check only ever reads
+    # the installation's actual grant; it never widens what the token above
+    # was minted with.
     - name: Verify workflows permission was actually granted
-      if: inputs.permission-workflows != ''
       shell: bash
       env:
         CLIENT_ID: ${{ inputs.client-id }}
