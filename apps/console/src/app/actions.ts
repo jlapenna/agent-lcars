@@ -13,6 +13,7 @@ import {
   ActionError,
   approveAndMergePr,
   approveAndRebasePr,
+  assignPipeline as assignPipelineLib,
   cancelWorkflowRun as cancelWorkflowRunLib,
   clearHumanNeededLabel,
   closeIssue as closeIssueLib,
@@ -276,6 +277,21 @@ export async function reassignPipeline(
   await requireAdmin();
   try {
     await reassignPipelineLib(resolveWatchedRepo(repo), number, pipeline);
+    revalidateDashboard();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function assignPipeline(
+  repo: WatchedRepo,
+  number: number,
+  pipeline: Pipeline,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await assignPipelineLib(resolveWatchedRepo(repo), number, pipeline);
     revalidateDashboard();
     return { ok: true };
   } catch (error) {

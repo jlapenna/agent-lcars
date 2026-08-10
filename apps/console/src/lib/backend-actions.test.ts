@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import {
   approveAndMergePr,
   approveAndRebasePr,
+  assignPipeline,
   cancelWorkflowRun,
   clearHumanNeededLabel,
   closeIssue,
@@ -1038,6 +1039,71 @@ describe('reassignPipeline', () => {
     await expect(
       reassignPipeline(DEFAULT_REPO, 2709, 'claude'),
     ).rejects.toThrow('Issue does not carry a pipeline label');
+  });
+});
+
+describe('assignPipeline', () => {
+  function mockOctokit(
+    labels: string[],
+    overrides: Record<string, unknown> = {},
+  ) {
+    const get = vi.fn().mockResolvedValue({
+      data: { state: 'open', pull_request: undefined, labels, ...overrides },
+    });
+    const setLabels = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { get, setLabels } },
+    });
+    return { get, setLabels };
+  }
+
+  it('adds the target pipeline label to an unclaimed issue', async () => {
+    const { setLabels } = mockOctokit(['type:bug']);
+
+    await assignPipeline(DEFAULT_REPO, 2709, 'claude');
+
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['type:bug', 'agent:claude'] }),
+    );
+  });
+
+  // The primary production path for this action: assigning straight from a
+  // status:ready-for-agent Inbox item. Leaving that label in place would
+  // have action-items.ts keep classifying the now-dispatched issue as
+  // ready-for-agent even though it already carries an agent label (#859
+  // review).
+  it('clears status:ready-for-agent as part of the same label write', async () => {
+    const { setLabels } = mockOctokit(['status:ready-for-agent', 'type:bug']);
+
+    await assignPipeline(DEFAULT_REPO, 2709, 'codex');
+
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['type:bug', 'agent:codex'] }),
+    );
+  });
+
+  it('400s when the issue already has an agent assignment', async () => {
+    mockOctokit(['agent:claude']);
+
+    await expect(assignPipeline(DEFAULT_REPO, 2709, 'codex')).rejects.toThrow(
+      'Issue already has an agent assignment',
+    );
+  });
+
+  it('400s for a closed issue', async () => {
+    mockOctokit([], { state: 'closed' });
+
+    await expect(assignPipeline(DEFAULT_REPO, 2709, 'claude')).rejects.toThrow(
+      'Only open issues can be assigned to an agent',
+    );
+  });
+
+  it('400s for a pull request', async () => {
+    mockOctokit([], { pull_request: {} });
+
+    await expect(assignPipeline(DEFAULT_REPO, 2709, 'claude')).rejects.toThrow(
+      'Only open issues can be assigned to an agent',
+    );
   });
 });
 
