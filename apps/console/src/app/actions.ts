@@ -273,10 +273,16 @@ export async function reassignPipeline(
   repo: WatchedRepo,
   number: number,
   pipeline: Pipeline,
+  callerId: string,
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await reassignPipelineLib(resolveWatchedRepo(repo), number, pipeline);
+    await reassignPipelineLib(
+      resolveWatchedRepo(repo),
+      number,
+      pipeline,
+      callerId,
+    );
     revalidateDashboard();
     return { ok: true };
   } catch (error) {

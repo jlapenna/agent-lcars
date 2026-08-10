@@ -515,6 +515,56 @@ export function resetIssueContentEdits(): void {
   (globalThis as Record<string, unknown>)[ISSUE_CONTENT_EDITS_KEY] = new Map();
 }
 
+export type ReassignFixtureIssuePipelineResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'no-pipeline'
+        | 'already-targeted'
+        | 'conflicting-pipeline';
+    };
+
+/**
+ * The fixture stand-in for `applyPipelineReassignment`'s own three typed
+ * rejections (`apps/dispatch-broker/src/controller-core.ts`) - real
+ * controller logic never runs against this fixture
+ * (docs/e2e-security-boundary.md). Validates against the issue's current
+ * fixture snapshot but, like every other GitHub label write this fixture
+ * answers (the atomic label-set PUT below, and clearNeedsHumanLabel's own
+ * DELETE), never persists a change of its own - each is a validate-then-echo,
+ * so a spec's curated items stay stable for every later assertion in the
+ * same test.
+ *
+ * Takes the resolved `targetLabel`/`pipelineLabels` pair the command itself
+ * carries (agent-lcars#811 Codex review), not a bare pipeline name it would
+ * have to reconstruct a label from - this fixture only ever sees the
+ * fleet-wide default labels in practice, but matching the real command's
+ * shape keeps the two from silently drifting.
+ */
+export function reassignFixtureIssuePipeline(
+  number: number,
+  targetLabel: string,
+  pipelineLabels: string[],
+): ReassignFixtureIssuePipelineResult {
+  const fixtureIssue = issue(number);
+  if (!fixtureIssue) return { ok: false, reason: 'not-found' };
+  const currentPipelineLabels = fixtureIssue.labels
+    .map((label) => label.name)
+    .filter((name) => pipelineLabels.includes(name));
+  if (currentPipelineLabels.length === 0) {
+    return { ok: false, reason: 'no-pipeline' };
+  }
+  if (currentPipelineLabels.length > 1) {
+    return { ok: false, reason: 'conflicting-pipeline' };
+  }
+  if (currentPipelineLabels[0] === targetLabel) {
+    return { ok: false, reason: 'already-targeted' };
+  }
+  return { ok: true };
+}
+
 /**
  * Stateful Quick Task write-path fixture (agent-lcars#307 part A). Everything
  * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually

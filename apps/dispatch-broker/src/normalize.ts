@@ -5,6 +5,7 @@ import type {
   DispatchOutcomeKind,
   DispatchOutcomeReference,
   LaneReadinessFailure,
+  LedgerAuthorizationDecision,
   LedgerTaskRef,
   QuickTaskIdentity,
 } from '@agent-lcars/dispatch-contracts';
@@ -13,6 +14,7 @@ import {
   GENERIC_REPLY_COMMAND,
   isDispatchOutcomeKind,
   isDispatchOutcomeReference,
+  isDispatchPipeline,
   isLaneReadinessFailure,
   quickTaskDigest,
   quickTaskMarkerMatcher,
@@ -103,6 +105,17 @@ interface WorkflowDispatchInputs {
   reply?: string;
   runbook?: string;
   context?: string;
+  /** `reassign-pipeline` only: the exact `agent:*` label to select
+   *  `pipeline` on THIS repository -- a watched repo's `agents` config can
+   *  override the fleet-wide default (agent-lcars#811 Codex review), so
+   *  the console supplies the resolved string rather than this file
+   *  reconstructing it from AGENT_LABELS. */
+  target_label?: string;
+  /** `reassign-pipeline` only: JSON array of every `agent:*` label this
+   *  repo's own integrations declare (fleet-wide default or custom) --
+   *  what counts as "a pipeline selection" when validating the anchor's
+   *  live label state. Always includes `target_label`. */
+  pipeline_labels?: string;
 }
 
 export interface IgnoredEvent {
@@ -157,13 +170,49 @@ export interface ControlEvidenceEvent {
   evidence: ControlEvidence;
 }
 
+/**
+ * A hosted-command-only transition: swap which single `agent:*` label an
+ * anchor carries. Unlike an `intent` (which `acceptIntent()` can turn into a
+ * new ledger generation and, eventually, a dispatched worker run), this kind
+ * never reaches `acceptIntent()` -- controller-core.mjs's own handler records
+ * it as evidence (`ledger.sources`, the same idempotent dedup every other
+ * evidence kind uses) and rewrites the label, but manufactures no generation.
+ * The controller retains sole ownership of whether/when the newly-labeled
+ * pipeline is actually dispatched, exactly as it does for a genuine
+ * maintainer relabel through the GitHub UI. See `PipelineReassignmentError`
+ * (controller-core.mjs) for the three rejections this command's own handler
+ * enforces against the *live* label snapshot at apply time, not here --
+ * normalize.mjs only validates the caller's own request shape.
+ */
+export interface PipelineReassignmentEvent {
+  kind: 'pipeline-reassignment';
+  task: LedgerTaskRef;
+  sourceKind: 'pipeline-reassignment';
+  sourceId: string;
+  transportRunId: number;
+  occurredAt: string;
+  targetPipeline: AgentPipeline;
+  /** This repo's configured `agent:*` label for `targetPipeline` -- may
+   *  differ from the fleet-wide default (a watched repo's own `agents`
+   *  config, agent-lcars#811 Codex review). */
+  targetLabel: string;
+  /** Every `agent:*` label this repo's own integrations declare; always
+   *  includes `targetLabel`. What controller-core.mjs's
+   *  applyPipelineReassignment recognizes as "a pipeline selection" when
+   *  validating the anchor's live label state, instead of the fleet-wide
+   *  AGENT_LABELS map. */
+  pipelineLabels: string[];
+  authorization: LedgerAuthorizationDecision;
+}
+
 export type NormalizedEvent =
   | IgnoredEvent
   | ReconcileEvent
   | CompletionEvent
   | IntentEvent
   | AnchorControlEvent
-  | ControlEvidenceEvent;
+  | ControlEvidenceEvent
+  | PipelineReassignmentEvent;
 
 // `null` is a sentinel, not a pipeline: `@agent` (#573) doesn't name a
 // specific integration, it defers to whichever `agent:*` label the issue
@@ -414,6 +463,69 @@ function normalizeWorkflowDispatch({
       ...(issue?.state === 'open' || issue?.state === 'closed'
         ? { issueClosed: issue.state === 'closed' }
         : {}),
+    };
+  }
+  // A pipeline hand-off command, exclusively from the authenticated console
+  // backend (executeHostedControllerCommand) -- never from a real GitHub
+  // webhook payload, so (unlike the `labeled`/`unlabeled` branches further
+  // down) there is no timeline event to disambiguate against. Always
+  // requires the caller's own stable request UUID: the console generates one
+  // per user action and reuses it across a transport-level retry, and that
+  // UUID is this command's whole idempotency key (see
+  // controller-core.mjs's applyPipelineReassignment). Unlike manual
+  // dispatch's own `caller_id` (optional, falls back to the actions run
+  // identity), a fallback here would make two different browser retries of
+  // the same click collide on an actions-run identity that does not exist
+  // for an in-process console call.
+  if (inputs.kind === 'reassign-pipeline') {
+    if (!inputs.caller_id || !UUID.test(inputs.caller_id)) {
+      throw new Error('Pipeline reassignment caller ID must be a UUID');
+    }
+    const auth = authorization(
+      context.actor,
+      maintainer,
+      AUTHORIZATION_RULES.MANUAL_MAINTAINER,
+    );
+    if (!auth.authorized) {
+      throw new Error('Unauthorized pipeline reassignment');
+    }
+    // isDispatchPipeline (a pipeline-NAME check), not AGENT_LABELS.has(...):
+    // this command's label strings come from the console's own repo config
+    // below, which can differ from the fleet-wide `agent:*` convention this
+    // file's real-webhook branches assume (agent-lcars#811 Codex review).
+    if (!inputs.pipeline || !isDispatchPipeline(inputs.pipeline)) {
+      throw new Error('Unsupported pipeline reassignment target');
+    }
+    if (!inputs.target_label) {
+      throw new Error('Pipeline reassignment target label is required');
+    }
+    let pipelineLabels: unknown;
+    try {
+      pipelineLabels = JSON.parse(inputs.pipeline_labels ?? '');
+    } catch {
+      throw new Error('Pipeline reassignment label set is malformed');
+    }
+    if (
+      !Array.isArray(pipelineLabels) ||
+      pipelineLabels.length === 0 ||
+      !pipelineLabels.every(
+        (label) => typeof label === 'string' && label.length > 0,
+      ) ||
+      !pipelineLabels.includes(inputs.target_label)
+    ) {
+      throw new Error('Pipeline reassignment label set is malformed');
+    }
+    return {
+      kind: 'pipeline-reassignment',
+      task,
+      sourceKind: 'pipeline-reassignment',
+      sourceId: inputs.caller_id,
+      transportRunId: context.runId,
+      occurredAt: context.now,
+      targetPipeline: inputs.pipeline,
+      targetLabel: inputs.target_label,
+      pipelineLabels: pipelineLabels as string[],
+      authorization: auth,
     };
   }
   if (inputs.kind === 'completion') {

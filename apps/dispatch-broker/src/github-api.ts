@@ -914,6 +914,29 @@ async function removeIssueLabel(
   return { removed: true };
 }
 
+// The controller's own label-writing capability for a pipeline hand-off
+// (docs/lifecycle-systems.md's previously-recorded gap: "the broker has no
+// label-writing capability of its own today ... and the router has no
+// 'relabel, don't dispatch' input"). PUT /issues/{number}/labels replaces
+// the issue's ENTIRE label set in one call -- the only GitHub endpoint that
+// can swap a pipeline label without a separate add/remove pair, so GitHub
+// (and any webhook consumer) never observes an intermediate zero- or
+// multi-agent state. The caller (controller-core.mjs's
+// applyPipelineReassignment) computes `labels` from a live read taken under
+// the same authority lease as this write, and is responsible for preserving
+// every unrelated label itself -- this function is a thin, literal PUT.
+async function replaceIssueLabels(
+  api: GitHubApi,
+  task: LedgerTaskRef,
+  labels: string[],
+): Promise<void> {
+  const root = repositoryPath(task);
+  await api.requestOk(`${root}/issues/${task.issue}/labels`, {
+    method: 'PUT',
+    body: { labels },
+  });
+}
+
 async function failClosed(
   api: GitHubApi,
   task: LedgerTaskRef,
@@ -1040,6 +1063,7 @@ export {
   pinLedgerWhenUnoccupied,
   readLaneReadiness,
   removeIssueLabel,
+  replaceIssueLabels,
   repositoryPath,
   resolveLaneReadinessAlerts,
   saveLedger,

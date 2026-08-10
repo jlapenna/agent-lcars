@@ -31,6 +31,7 @@ import {
   rebasePr,
   updateIssueContent,
 } from './actions';
+import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
 /**
@@ -170,7 +171,12 @@ export function ItemOverflowMenu({
 
   const handleReassign = (target: Pipeline) => {
     startTransition(async () => {
-      const result = await reassignPipeline(item.repo, item.number, target);
+      const result = await reassignPipeline(
+        item.repo,
+        item.number,
+        target,
+        createRandomId(),
+      );
       if (!result.ok) {
         showErrorToast(result.message);
         return;
