@@ -1,4 +1,4 @@
-import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Group, Stack, Text } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import { mostRecentSessionForItem } from '../../lib/claimed-idle';
@@ -7,9 +7,9 @@ import { agentFleetLogin } from '../../lib/deployment';
 import { repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
 import { ItemOverflowMenu } from '../item-overflow-menu';
-import { lcarsPanelStyle } from '../lcars';
 import { RelativeTime } from '../relative-time';
 import { TakeoverCommand } from '../takeover-command';
+import { AgentOperationsPanel } from './agent-operations-panel';
 
 /**
  * "Claimed but Idle": open items the fleet has claimed (assignee
@@ -33,64 +33,56 @@ export function ClaimedIdleSection({
   cliSessions?: CliSession[];
 }) {
   return (
-    <Card
-      withBorder
-      radius="md"
-      padding="md"
-      mb="xl"
-      data-testid="claimed-idle-section"
-      className="lcars-panel agents-panel agents-panel--claimed"
-      style={lcarsPanelStyle('periwinkle')}
+    <AgentOperationsPanel
+      title={`Claimed but Idle (${items.length})`}
+      className="agents-panel--claimed"
+      testId="claimed-idle-section"
+      separated
     >
-      <Stack gap="sm">
-        <Title order={2} size="h4">
-          Claimed but Idle ({items.length})
-        </Title>
-        {items.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            Every {agentFleetLogin()} claim has a live run or session behind it.
-          </Text>
-        ) : (
-          <Stack gap="xs">
-            {items.map((item) => {
-              const session = mostRecentSessionForItem(item, cliSessions);
-              return (
-                <Stack
-                  key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
-                  gap={4}
-                >
-                  <CompactItemRow
-                    item={item}
-                    hint={
-                      <>
-                        updated <RelativeTime iso={item.updatedAt} />
-                      </>
-                    }
-                    action={
-                      <Group gap={4} wrap="nowrap">
-                        {session && (
-                          <Anchor
-                            href={`/sessions/${session.sessionId}`}
-                            size="xs"
-                            c="dimmed"
-                            data-testid="claimed-idle-session-link"
-                          >
-                            session
-                          </Anchor>
-                        )}
-                        <ItemOverflowMenu item={item} />
-                      </Group>
-                    }
-                  />
-                  {item.takeoverCommand && (
-                    <TakeoverCommand command={item.takeoverCommand} />
-                  )}
-                </Stack>
-              );
-            })}
-          </Stack>
-        )}
-      </Stack>
-    </Card>
+      {items.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          Every {agentFleetLogin()} claim has a live run or session behind it.
+        </Text>
+      ) : (
+        <Stack gap="xs">
+          {items.map((item) => {
+            const session = mostRecentSessionForItem(item, cliSessions);
+            return (
+              <Stack
+                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
+                gap={4}
+              >
+                <CompactItemRow
+                  item={item}
+                  hint={
+                    <>
+                      updated <RelativeTime iso={item.updatedAt} />
+                    </>
+                  }
+                  action={
+                    <Group gap={4} wrap="nowrap">
+                      {session && (
+                        <Anchor
+                          href={`/sessions/${session.sessionId}`}
+                          size="xs"
+                          c="dimmed"
+                          data-testid="claimed-idle-session-link"
+                        >
+                          session
+                        </Anchor>
+                      )}
+                      <ItemOverflowMenu item={item} />
+                    </Group>
+                  }
+                />
+                {item.takeoverCommand && (
+                  <TakeoverCommand command={item.takeoverCommand} />
+                )}
+              </Stack>
+            );
+          })}
+        </Stack>
+      )}
+    </AgentOperationsPanel>
   );
 }

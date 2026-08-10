@@ -1,9 +1,11 @@
 'use client';
 
-import { Button, Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Button, Group, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react';
 import { unstable_isUnrecognizedActionError } from 'next/navigation';
 import { useEffect } from 'react';
+
+import { ConsoleAppShell } from './console-app-shell';
 
 export default function GlobalError({
   error,
@@ -19,7 +21,11 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <Container size="sm" py={100}>
+    <ConsoleAppShell
+      current="deck"
+      title={isStaleDeploy ? 'Console was updated' : 'Something went wrong'}
+      subtitle="The current console view is temporarily unavailable."
+    >
       <Stack align="center" gap="xl">
         <IconAlertTriangle
           aria-hidden="true"
@@ -27,9 +33,6 @@ export default function GlobalError({
           color="var(--mantine-color-red-6)"
         />
         <Stack align="center" gap="xs">
-          <Title order={1} ta="center">
-            {isStaleDeploy ? 'Console was updated' : 'Something went wrong'}
-          </Title>
           <Text c="dimmed" size="lg" ta="center" maw={500}>
             {isStaleDeploy
               ? 'The console was redeployed under this tab. Reload the page to pick up the latest version.'
@@ -53,6 +56,6 @@ export default function GlobalError({
           </Button>
         </Group>
       </Stack>
-    </Container>
+    </ConsoleAppShell>
   );
 }

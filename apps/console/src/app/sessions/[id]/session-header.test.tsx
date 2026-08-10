@@ -70,9 +70,9 @@ function renderHeader(doc: CliSessionDoc | IssueAgentSessionDoc) {
 }
 
 describe('SessionHeader', () => {
-  it('renders the title, or falls back to the sessionId', () => {
+  it('keeps its details below the shared page heading', () => {
     renderHeader(cliDoc({ title: 'Fix flaky login test' }));
-    expect(screen.getByText('Fix flaky login test')).toBeTruthy();
+    expect(screen.queryByRole('heading')).toBeNull();
   });
 
   it('renders CLI host/cwd/worktree/branch fields', () => {

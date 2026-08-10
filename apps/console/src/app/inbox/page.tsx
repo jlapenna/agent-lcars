@@ -21,8 +21,8 @@ import { derivePrimaryAction } from '../../lib/primary-action';
 import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
-import { ConsoleHeader, DataWarnings } from '../console-header';
-import { ConsolePageShell } from '../console-page-shell';
+import { ConsoleAppShell } from '../console-app-shell';
+import { DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
@@ -105,50 +105,49 @@ async function InboxPageShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <ConsolePageShell className="inbox-page-shell">
-      <ConsoleHeader
-        current="inbox"
-        title="Decision Inbox"
-        repoFilter={repoFilterKey}
-        subtitle={
-          <>
-            {subtitle}
-            {repoFilter && (
-              <>
-                {' · '}
-                <Anchor href="/inbox" size="sm">
-                  show all repos
-                </Anchor>
-              </>
-            )}
-          </>
-        }
-        utilities={
-          <>
-            <div className="inbox-utilities inbox-utilities--desktop">
-              <QueueConsoleUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={repoFilterKey}
-              />
-            </div>
-            <div className="inbox-utilities inbox-utilities--mobile">
-              <QueueConsoleUtilities
-                watchedRepos={watchedRepos}
-                repoFilter={repoFilterKey}
-                includeNavigation
-              />
-            </div>
-          </>
-        }
-      />
-
+    <ConsoleAppShell
+      className="inbox-page-shell"
+      current="inbox"
+      title="Decision Inbox"
+      repoFilter={repoFilterKey}
+      subtitle={
+        <>
+          {subtitle}
+          {repoFilter && (
+            <>
+              {' · '}
+              <Anchor href="/inbox" size="sm">
+                show all repos
+              </Anchor>
+            </>
+          )}
+        </>
+      }
+      utilities={
+        <>
+          <div className="inbox-utilities inbox-utilities--desktop">
+            <QueueConsoleUtilities
+              watchedRepos={watchedRepos}
+              repoFilter={repoFilterKey}
+            />
+          </div>
+          <div className="inbox-utilities inbox-utilities--mobile">
+            <QueueConsoleUtilities
+              watchedRepos={watchedRepos}
+              repoFilter={repoFilterKey}
+              includeNavigation
+            />
+          </div>
+        </>
+      }
+    >
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <InboxBody
           repoFilter={repoFilter}
           selectedItemKey={params.item || undefined}
         />
       </Suspense>
-    </ConsolePageShell>
+    </ConsoleAppShell>
   );
 }
 
