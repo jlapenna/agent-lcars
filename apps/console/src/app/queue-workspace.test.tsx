@@ -122,6 +122,8 @@ describe('QueueWorkspace', () => {
     expect(
       screen.getByText(/1 item · needs your decision or response/),
     ).toBeTruthy();
+    expect(screen.queryByText('Inbox', { exact: true })).toBeNull();
+    expect(screen.getByLabelText('Queue item count: 1')).toBeTruthy();
   });
 
   it('selects the first visible item locally and emits URL-backed row links', () => {
