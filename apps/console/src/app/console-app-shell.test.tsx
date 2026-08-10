@@ -21,6 +21,9 @@ describe('ConsoleAppShell', () => {
     expect(
       screen.getByRole('navigation', { name: 'Console sections' }),
     ).toBeTruthy();
+    // The desktop ConsoleHeader supplies the visual H1; its mobile-only
+    // companion keeps that semantic title available when the command strip
+    // becomes the sole visual header at narrow widths.
     expect(screen.getAllByRole('heading', { name: 'Bridge' })).toHaveLength(2);
     expect(
       document.querySelector('.console-page-mobile-title'),
@@ -28,7 +31,7 @@ describe('ConsoleAppShell', () => {
     expect(screen.getByRole('main')).toHaveTextContent('Route content');
   });
 
-  it('marks its mobile title as a streamed fallback with the shared header', () => {
+  it('marks its screen-reader mobile title as a streamed fallback with the shared header', () => {
     const { container } = render(
       <MantineProvider>
         <ConsoleAppShell

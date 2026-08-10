@@ -479,17 +479,43 @@ test.describe('responsive decision inbox', () => {
     await expect(filter).toBeFocused();
   });
 
-  test('uses a list-to-detail flow on a phone viewport', async ({ page }) => {
+  test('uses a list-to-detail flow on a phone viewport', async ({
+    page,
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
     const header = page.locator('.console-header[data-current="inbox"]');
+    const mobileTitle = page.locator(
+      '.console-page-mobile-title[data-current="inbox"]',
+    );
     await expect(header).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
     await expectMobileBridgeHeader(header);
+    // The active Inbox pill is the sole visual header. Keep the H1 for
+    // assistive technology, but never allocate a second title band below it.
+    await expect(mobileTitle).toHaveText('Decision Inbox');
+    expect(
+      await mobileTitle.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return (
+          style.position === 'absolute' &&
+          style.width === '1px' &&
+          style.height === '1px' &&
+          style.overflow === 'hidden'
+        );
+      }),
+    ).toBe(true);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
+
+    const capture = testInfo.outputPath('inbox-mobile-single-header.png');
+    await page.screenshot({ path: capture, fullPage: false });
+    await testInfo.attach('inbox-mobile-single-header.png', {
+      path: capture,
+      contentType: 'image/png',
+    });
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');

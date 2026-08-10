@@ -154,7 +154,7 @@ test.describe('/sessions workspace @smoke', () => {
     });
   });
 
-  test('keeps the session-detail title visible below the mobile command strip', async ({
+  test('uses the command strip as the only visual mobile header', async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -166,11 +166,20 @@ test.describe('/sessions workspace @smoke', () => {
     );
 
     await expectMobileBridgeHeader(header);
-    await expect(
-      mobileTitle.getByRole('heading', {
-        name: 'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
+    await expect(mobileTitle).toHaveText(
+      'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
+    );
+    expect(
+      await mobileTitle.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return (
+          style.position === 'absolute' &&
+          style.width === '1px' &&
+          style.height === '1px' &&
+          style.overflow === 'hidden'
+        );
       }),
-    ).toBeVisible();
+    ).toBe(true);
     await expect(page.getByTestId('session-header')).toBeVisible();
     expect(
       await page.evaluate(
