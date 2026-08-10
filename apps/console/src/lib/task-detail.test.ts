@@ -413,5 +413,9 @@ describe('getTaskDetail', () => {
 
     const result = await getTaskDetail('Supersprinklesracing', 'sprinkles', 42);
     expect(result.status).toBe('not-found');
+    // Distinguishes "rejected at resolveWatchedRepo" (correct) from
+    // "silently case-normalized, then 404'd from GitHub" (would produce the
+    // same status but means the exact-match guard was bypassed).
+    expect(issuesGet).not.toHaveBeenCalled();
   });
 });
