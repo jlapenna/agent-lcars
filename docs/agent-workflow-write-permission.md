@@ -54,23 +54,38 @@ there.
   reproduces exactly what those calls already had before #868, and leaves
   `permission-workflows` unset. `workflows` stays available only to a
   caller that deliberately sets it.
-- **Early, trusted capability check**: because GitHub does not reject a
-  mint call that requests more than an installation has approved — it
-  silently narrows the token instead (["the installation access token
-  cannot be granted permissions that the app was not
+- **Early, trusted capability check, unconditional**: because GitHub does
+  not reject a mint call that requests more than an installation has
+  approved — it silently narrows the token instead (["the installation
+  access token cannot be granted permissions that the app was not
   granted"](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app))
   — a caller that sets `permission-workflows: write` cannot tell from the
   mint step's own output whether it actually got `workflows`. `mint-agent-token`
-  closes that gap itself: whenever `permission-workflows` is set, it signs
-  a short-lived App JWT from the same `client-id`/`private-key` inputs
-  (`verify-workflows-grant.sh`) and reads the installation's real grant
-  back with `GET /app/installations/{id}` — the one REST call that
-  authoritatively reports what an installation has approved. A mismatch
-  fails the step immediately, before the caller's later steps (claim,
-  checkout, and — in every lane workflow — the model-invocation step, which
-  always runs after "Mint agent token") ever run. This is what "fails or
-  parks before model invocation" means in practice here: the failure
-  happens at the very first step of the job, and the existing
+  closes that gap itself: it signs a short-lived App JWT from the same
+  `client-id`/`private-key` inputs (`verify-workflows-grant.sh`) and mints
+  its own short-lived **probe token**, requesting the exact same
+  `permission-*` inputs the real mint step just used, then reads that
+  probe's own response and revokes it immediately. This runs on **every**
+  call, not only ones that set `permission-workflows` — a caller that
+  leaves every `permission-*` input blank (this action's own long-standing
+  "give me everything the installation approves" default) would otherwise
+  silently start receiving `workflows: write` too, once an installation
+  approves it, with no opt-in and no preflight; this protects that consumer
+  the same way (Codex review on PR #903).
+  Deliberately **not** `GET /app/installations/{id}` — an earlier version
+  of this check used that endpoint and produced a false failure for the
+  narrowed-allowlist case: it reports the installation's overall approved
+  ceiling, not what a specifically-scoped token actually receives, so a
+  lane workflow's own explicit allowlist (which correctly excludes
+  `workflows`) still showed up as "granted" by that endpoint once the
+  installation's ceiling included it. Minting a real probe with the same
+  permissions object is the only way to see what GitHub actually scopes a
+  token down to.
+  A mismatch fails the step immediately, before the caller's later steps
+  (claim, checkout, and — in every lane workflow — the model-invocation
+  step, which always runs after "Mint agent token") ever run. This is what
+  "fails or parks before model invocation" means in practice here: the
+  failure happens at the very first step of the job, and the existing
   `agent-fallback-finalize.yml` machinery (agent-protocol.md §5: a failed
   worker is itself a machine-authored parking path) turns that into a
   `status:needs-human` park with the maintainer assigned, the same as any
@@ -145,6 +160,22 @@ approved `workflows: write` as of 2026-08-10. Reuse the same pattern (a `push`-t
 scratch branch, not `workflow_dispatch` — see the file's own header comment
 for why) to re-prove the capability after any future permission change,
 without needing to merge a throwaway file to `main` first.
+
+A second, separate one-off (`fixture-868-mint-smoke.yml`, also deleted)
+exercised `mint-agent-token`'s own composite action end to end against the
+live App/installation, rather than the raw marketplace action — the check
+now runs unconditionally on every mint, so it was worth confirming live
+before it became load-bearing for every future dispatch fleet-wide. Its
+first run (https://github.com/jlapenna/agent-lcars/actions/runs/31413451088)
+caught a real bug: the original check read `GET /app/installations/{id}`
+(the installation's overall ceiling) instead of probing what the specific
+requested permissions actually produce, and false-failed the narrowed
+lane-workflow allowlist. The fixed version
+(https://github.com/jlapenna/agent-lcars/actions/runs/31413820860) passed
+both cases live: the explicit allowlist (workflows excluded) resolved
+silently, and an explicit `permission-workflows: write` request logged
+`Installation 150568943 has granted 'workflows: write' - matches the
+requested level`.
 
 ## Rollback
 
