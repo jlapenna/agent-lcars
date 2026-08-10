@@ -1123,9 +1123,6 @@ test('an ordinary pull request close with no dispatch ledger is an intentional n
       ) {
         return [];
       }
-      if (path.endsWith('/issues/304')) {
-        return { created_at: '2026-08-05T00:00:00.000Z' };
-      }
       throw new Error(`Unexpected write: ${options.method} ${path}`);
     },
   };
@@ -1138,17 +1135,16 @@ test('an ordinary pull request close with no dispatch ledger is an intentional n
     true,
     'delivery:ordinary-pr-close',
     () => port,
-    '2026-08-08T00:00:00.000Z',
   );
 
   assert.equal(loaded, undefined);
   assert.deepEqual(
     calls.map((call) => call.method),
-    ['GET', 'GET'],
+    ['GET'],
   );
 });
 
-test('a post-cutover issue close creates its authoritative ledger', async () => {
+test('an untracked issue close creates its authoritative ledger', async () => {
   const port = new InMemoryStoragePort();
   const calls = [];
   const client = {
@@ -1156,9 +1152,6 @@ test('a post-cutover issue close creates its authoritative ledger', async () => 
       const method = options.method ?? 'GET';
       calls.push({ path, method });
       if (method === 'GET' && path.includes('/issues/304/comments')) return [];
-      if (path.endsWith('/issues/304')) {
-        return { created_at: '2026-08-09T00:00:00.000Z' };
-      }
       if (method === 'POST' && path.endsWith('/issues/304/comments')) {
         return {
           id: 9,
@@ -1177,14 +1170,13 @@ test('a post-cutover issue close creates its authoritative ledger', async () => 
     false,
     'delivery:issue-close',
     () => port,
-    '2026-08-08T00:00:00.000Z',
   );
 
   assert.ok(loaded);
   assert.equal(loaded.created, true);
   assert.deepEqual(
     calls.map((call) => call.method),
-    ['GET', 'GET', 'GET', 'POST'],
+    ['GET', 'GET', 'POST'],
   );
   await releaseAuthority(loaded.authority, loaded.ledger);
 });
@@ -1235,7 +1227,6 @@ test('authority supports immediate lease deferral for unbounded hosted scans', a
         false,
         'hosted-scan',
         () => port,
-        '',
         undefined,
         0,
       ),
@@ -1243,15 +1234,12 @@ test('authority supports immediate lease deferral for unbounded hosted scans', a
   );
 });
 
-test('authority may seed a genuinely new task with no compatibility projection', async () => {
+test('authority seeds a genuinely new task with no compatibility projection', async () => {
   const port = new InMemoryStoragePort();
   const calls = [];
   const client = {
     requestOk: async (path, options = {}) => {
       calls.push({ path, method: options.method ?? 'GET' });
-      if ((options.method ?? 'GET') === 'GET' && path.endsWith('/issues/304')) {
-        return { created_at: '2026-08-09T00:00:00.000Z' };
-      }
       if ((options.method ?? 'GET') === 'GET') return [];
       if (options.method === 'POST') {
         return {
@@ -1271,57 +1259,61 @@ test('authority may seed a genuinely new task with no compatibility projection',
     false,
     'delivery:new-task',
     () => port,
-    '2026-08-08T00:00:00.000Z',
   );
 
   assert.equal(loaded.ledger.generations.length, 0);
   assert.ok((await port.readTask(task))?.controllerState);
   assert.deepEqual(
     calls.map(({ method }) => method),
-    ['GET', 'GET', 'GET', 'POST'],
+    ['GET', 'GET', 'POST'],
   );
 });
 
-test('authority does not seed a pre-cutover task after its marker is removed', async () => {
+test('authority seeds an untracked task regardless of its apparent age', async () => {
   const port = new InMemoryStoragePort();
   const client = {
-    requestOk: async (path) =>
-      path.endsWith('/issues/304')
-        ? { created_at: '2026-08-07T00:00:00.000Z' }
-        : [],
+    requestOk: async (path, options = {}) => {
+      // The task's live `created_at` must never be fetched: initialization
+      // no longer gates on age, only on whether a controller-owned
+      // projection exists.
+      if (!path.includes('/issues/304/comments')) {
+        throw new Error(`Unexpected age-gating request: ${path}`);
+      }
+      if ((options.method ?? 'GET') === 'GET') return [];
+      return {
+        id: 9,
+        body: options.body.body,
+        user: { login: 'github-actions[bot]', type: 'Bot' },
+      };
+    },
   };
 
-  await assert.rejects(
-    () =>
-      loadBrokerLedger(
-        client,
-        task,
-        { kind: 'reconcile', task },
-        false,
-        'delivery:removed-marker',
-        () => port,
-        '2026-08-08T00:00:00.000Z',
-      ),
-    /no exact authoritative controller state/u,
+  const loaded = await loadBrokerLedger(
+    client,
+    task,
+    { kind: 'reconcile', task },
+    false,
+    'delivery:removed-marker',
+    () => port,
   );
-  assert.equal(await port.readTask(task), undefined);
+
+  assert.ok(loaded);
+  assert.ok((await port.readTask(task))?.controllerState);
 });
 
-test('authority ignores an ordinary pre-cutover pull request close with no compatibility projection', async () => {
+test('authority ignores an ordinary pull request close with no controller-owned projection', async () => {
   const port = new InMemoryStoragePort();
   const calls = [];
   const client = {
     requestOk: async (path, options = {}) => {
       calls.push({ path, method: options.method ?? 'GET' });
-      return path.endsWith('/issues/304')
-        ? { created_at: '2026-08-07T00:00:00.000Z' }
-        : [
-            {
-              id: 9,
-              body: renderLedgerComment(createLedger(task)),
-              user: { login: 'agent-lcars[bot]', type: 'Bot' },
-            },
-          ];
+      return [
+        {
+          id: 9,
+          body: renderLedgerComment(createLedger(task)),
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+        },
+      ];
     },
   };
 
@@ -1332,14 +1324,13 @@ test('authority ignores an ordinary pre-cutover pull request close with no compa
     true,
     'delivery:ordinary-pr-close',
     () => port,
-    '2026-08-08T00:00:00.000Z',
   );
 
   assert.equal(loaded, undefined);
   assert.equal(await port.readTask(task), undefined);
   assert.deepEqual(
     calls.map(({ method }) => method),
-    ['GET', 'GET'],
+    ['GET'],
   );
 });
 
@@ -1365,7 +1356,6 @@ test('authority fails closed for a tracked pull request control event that misse
         true,
         'delivery:tracked-pr-close',
         () => port,
-        '2026-08-08T00:00:00.000Z',
       ),
     /no exact authoritative controller state/u,
   );
@@ -1651,7 +1641,6 @@ test('authority completion waits for bindRun before validating and projecting', 
     false,
     'completion:42',
     () => port,
-    '',
     undefined,
     500,
   );

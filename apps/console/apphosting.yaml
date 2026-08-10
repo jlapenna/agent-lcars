@@ -106,12 +106,6 @@ env:
     availability:
       - RUNTIME
 
-  # Production Firestore authority cutover instant (#736).
-  - variable: DISPATCH_AUTHORITY_EPOCH
-    value: '2026-08-08T09:57:07.766246530Z'
-    availability:
-      - RUNTIME
-
   - variable: AGENT_LCARS_ARTIFACT_SHARE_BASE_URL
     value: 'https://share.lan.jlapenna.net'
     availability:

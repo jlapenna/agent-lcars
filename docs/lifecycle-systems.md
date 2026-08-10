@@ -41,19 +41,13 @@ topology are tracked in
 authoritative for deciding when the remaining Action fallbacks may be retired;
 workflow success alone is not a soak exit.
 
-Authority initialization fails closed across the migration boundary.
-`DISPATCH_AUTHORITY_EPOCH` records the trusted cutover instant. If a task
-created before that instant has no Firestore aggregate, it is rejected even
-when its compatibility comment is absent; workers can delete comments, but
-they cannot change GitHub's `created_at` or the repository configuration. Only
-tasks GitHub created at or after the epoch may initialize an empty aggregate
-automatically.
-
-One narrow retirement rule prevents migration debris from becoming a durable
-retry backlog: reconciliation and delayed webhook replay may quarantine a
-compatibility-only task only when live GitHub state proves that it is closed,
-predates the cutover, and carries no `agent:*` or `review:*` intent. Open,
-active-label, and post-cutover authority gaps continue to fail closed.
+Authority initialization now has one post-cutover rule (#818 retired the
+migration bridge). A task with no Firestore record and no controller-owned
+projection initializes an empty aggregate, regardless of its GitHub creation
+date. A controller-owned projection or a stored task missing its exact
+controller state proves an authority gap and fails closed. Admission and
+reconciliation apply that rule equally; there is no closed-task compatibility
+quarantine and no live-GitHub retirement check.
 
 Two seams are load-bearing enough to read before anything else:
 

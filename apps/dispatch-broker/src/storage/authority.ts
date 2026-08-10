@@ -120,14 +120,7 @@ export class AuthorityStateNotFoundError extends Error {
 }
 
 export class AuthorityStateMissingError extends Error {
-  constructor(
-    public readonly task: TaskRef,
-    /** True only when the compatibility projection proves no intent remains
-     * accepted, pending, dispatching, or active. Callers may use this narrow
-     * fact to quarantine a retired task; absence of a compatibility record
-     * and any live-looking projection remain fail-closed. */
-    public readonly compatibilityQuiescent = false,
-  ) {
+  constructor(public readonly task: TaskRef) {
     super(
       `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; recover the missing controller state before retrying`,
     );
@@ -185,12 +178,7 @@ export async function acquireAuthority(
       throw new AuthorityStateNotFoundError(task);
     }
     if (current && !current.controllerState) {
-      const compatibilityQuiescent =
-        current.desiredIntentId === undefined &&
-        current.intents.every((intent) =>
-          ['completed', 'superseded'].includes(intent.state),
-        );
-      throw new AuthorityStateMissingError(task, compatibilityQuiescent);
+      throw new AuthorityStateMissingError(task);
     }
     if (
       current?.lease &&

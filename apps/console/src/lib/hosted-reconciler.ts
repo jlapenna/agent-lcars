@@ -6,17 +6,13 @@ import {
   type IssueOrPullRequest,
   normalizeEvent,
 } from '@agent-lcars/dispatch-controller/normalize';
-import {
-  AuthorityStateMissingError,
-  TaskLeaseBusyError,
-} from '@agent-lcars/dispatch-controller/storage/authority';
+import { TaskLeaseBusyError } from '@agent-lcars/dispatch-controller/storage/authority';
 import type {
   ReconcileIssueQuery,
   ReconcileScanResult,
   ReconcileTransport,
 } from '@agent-lcars/dispatch-reconcile';
 import { runReconcileScan } from '@agent-lcars/dispatch-reconcile';
-import { required } from '@agent-lcars/util-server';
 import type { Octokit } from '@octokit/rest';
 
 import {
@@ -27,7 +23,6 @@ import {
 import type { ReconcileOidcIdentity } from './github-actions-oidc';
 import { getGithubClient } from './github-client';
 import { processHostedControllerEvent } from './hosted-controller';
-import { isRetiredLegacyCandidate } from './retired-legacy-candidate';
 
 function splitRepository(repository: string): { owner: string; repo: string } {
   const [owner, repo, ...rest] = repository.split('/');
@@ -42,7 +37,6 @@ export function createOctokitReconcileTransport(
   identity: ReconcileOidcIdentity,
   now: Date | string = new Date(),
   invocationId: string = crypto.randomUUID(),
-  authorityEpoch = '',
 ): ReconcileTransport {
   return {
     listIssues: async (query: ReconcileIssueQuery) => {
@@ -105,16 +99,6 @@ export function createOctokitReconcileTransport(
           );
           return;
         }
-        if (
-          error instanceof AuthorityStateMissingError &&
-          isRetiredLegacyCandidate(liveIssue, authorityEpoch)
-        ) {
-          console.info(
-            `agent-lcars: quarantined compatibility-only state for retired ` +
-              `${repository}#${issue}; the closed sweep will age it out`,
-          );
-          return;
-        }
         throw error;
       }
     },
@@ -134,7 +118,6 @@ export function runHostedReconcile(
       identity,
       now,
       crypto.randomUUID(),
-      required('DISPATCH_AUTHORITY_EPOCH'),
     ),
     repository,
     fleetLogin,
