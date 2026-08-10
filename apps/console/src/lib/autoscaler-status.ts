@@ -1,6 +1,9 @@
 import 'server-only';
 
-import { getAgentTelemetryReaderFirestore } from '@agent-lcars/telemetry/server';
+import {
+  forClient,
+  getAgentTelemetryReaderFirestore,
+} from '@agent-lcars/telemetry/server';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 export const RUNNER_STATUS_STALENESS_MS = 30_000;
@@ -109,7 +112,7 @@ export async function getAutoscalerStatuses(): Promise<AutoscalerStatusResult> {
     const snapshot = await firestore.collection(RUNNER_STATUS_COLLECTION).get();
     const now = Date.now();
     const statuses = snapshot.docs
-      .map((doc) => parseStatus(doc.data()))
+      .map((doc) => parseStatus(forClient(doc.data())))
       .filter((status): status is AutoscalerScaleSetStatus => {
         if (!status) return false;
         const updatedAt = Date.parse(status.updatedAt);
