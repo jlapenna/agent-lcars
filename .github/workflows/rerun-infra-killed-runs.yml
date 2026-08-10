@@ -12,10 +12,9 @@ name: Rerun Infra-Killed CI Runs
 # hand.
 #
 # This is deliberately a NEW, narrowly-scoped workflow rather than an
-# addition to dispatch-reconcile.yml's `operation: reconcile` scan, even
-# though that scan already runs on a similar cadence: its backing action
-# (dispatch-broker) is purpose-built for the agent dispatch ledger on
-# issues/PRs (normalize/broker/preflight/completion-callback/reconcile),
+# addition to the hosted control-plane reconciliation loop, even though it
+# runs on a similar cadence: that controller is purpose-built for the agent
+# dispatch ledger on issues/PRs,
 # not for CI run health, and its workflow permissions (`actions: write,
 # contents: read, issues: read`) lack the `pull-requests: write` this
 # self-healer needs to leave its audit-trail comment on the PR the killed
@@ -48,8 +47,7 @@ on:
   schedule:
     # Every 30 minutes, offset from :00/:30 to avoid the scheduling
     # stampede (see label-contract-audit.yml's '17 13 * * *' for daily
-    # granularity, dispatch-reconcile.yml's '7,37 * * * *' for the same
-    # convention at this granularity -- :22/:52 avoids both).
+    # granularity; :22/:52 avoids the common :00/:30 stampede).
     - cron: '22,52 * * * *'
   workflow_dispatch:
 

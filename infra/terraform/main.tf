@@ -102,29 +102,11 @@ resource "google_project_iam_member" "writer_firestore" {
   }
 }
 
-# The controller writer is reachable only through the workflow-specific WIF
-# pool below and can write only the dedicated controller database.
-resource "google_service_account" "dispatch_broker" {
-  account_id   = "dispatch-broker"
-  display_name = "Agent LCARS dispatch broker"
-}
-
 # Worker preflight deliberately has no write permission. Agent code can mint
 # this identity, so it must remain harmless even when fully compromised.
 resource "google_service_account" "dispatch_preflight" {
   account_id   = "dispatch-preflight"
   display_name = "Agent LCARS dispatch preflight reader"
-}
-
-resource "google_project_iam_member" "dispatch_controller_firestore" {
-  project = var.project_id
-  role    = "roles/datastore.user"
-  member  = "serviceAccount:${google_service_account.dispatch_broker.email}"
-  condition {
-    title       = "dispatch-controller-writer"
-    description = "Controller writes are confined to the dispatch database."
-    expression  = "resource.name == \"projects/${var.project_id}/databases/${google_firestore_database.dispatch_controller.name}\""
-  }
 }
 
 resource "google_project_iam_member" "dispatch_preflight_firestore" {
@@ -150,9 +132,9 @@ resource "google_project_iam_member" "apphosting_firestore" {
   }
 }
 
-# Hosted admission shares controller authority with the Action fallback during
-# migration. Keep the grant at the dedicated database boundary; the console
-# remains read-only in telemetry's default database above.
+# The hosted controller is the only writer for dispatch state. Keep the grant
+# at the dedicated database boundary; the console remains read-only in
+# telemetry's default database above.
 resource "google_project_iam_member" "apphosting_dispatch_controller" {
   project = var.project_id
   role    = "roles/datastore.user"
@@ -313,26 +295,6 @@ resource "google_iam_workload_identity_pool_provider" "github_app_webhook_config
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
 
-resource "google_iam_workload_identity_pool" "dispatch_controller" {
-  workload_identity_pool_id = "dispatch-controller"
-  display_name              = "GitHub dispatch controller"
-}
-
-resource "google_iam_workload_identity_pool_provider" "dispatch_controller" {
-  workload_identity_pool_id          = google_iam_workload_identity_pool.dispatch_controller.workload_identity_pool_id
-  workload_identity_pool_provider_id = "github"
-  display_name                       = "GitHub agent-router main"
-  attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.repository" = "assertion.repository"
-  }
-  # agent-router's privileged PR lane uses pull_request_target, whose OIDC ref
-  # and workflow_ref both remain on the trusted base branch. Never admit the
-  # PR-controlled refs/pull/<n>/merge context to this writer identity.
-  attribute_condition = "assertion.repository == '${var.github_owner}/${var.github_repository}' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == '${var.github_owner}/${var.github_repository}/.github/workflows/agent-router.yml@refs/heads/main'"
-  oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
-}
-
 resource "google_service_account_iam_member" "github_deployer_impersonation" {
   service_account_id = google_service_account.github_deployer.name
   role               = "roles/iam.workloadIdentityUser"
@@ -349,12 +311,6 @@ resource "google_service_account_iam_member" "members_writer_impersonation" {
   service_account_id = google_service_account.telemetry_writer.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.sprinkles_repository}"
-}
-
-resource "google_service_account_iam_member" "dispatch_controller_impersonation" {
-  service_account_id = google_service_account.dispatch_broker.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.dispatch_controller.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
 resource "google_service_account_iam_member" "dispatch_preflight_impersonation" {

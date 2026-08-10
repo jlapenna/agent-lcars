@@ -1,5 +1,5 @@
-name: Serialized dispatch broker
-description: Normalize, serialize, bind, and verify durable agent dispatch intents.
+name: Dispatch worker adapter
+description: Verify worker bindings, deliver completion observations, and project Claude lane readiness.
 # main.mjs imports the shared libs/dispatch-contracts package via a
 # repo-relative path above this action directory
 # (../../../libs/dispatch-contracts/src/index.js), so a cross-repo `uses:`
@@ -8,16 +8,8 @@ description: Normalize, serialize, bind, and verify durable agent dispatch inten
 
 inputs:
   operation:
-    description: normalize, broker, preflight, completion-callback, reconcile, classify-claude-readiness, or claude-readiness
+    description: preflight, completion-callback, classify-claude-readiness, or claude-readiness. normalize, broker, and reconcile are retained only to fail fast and direct callers to the hosted control-plane controller.
     required: true
-  payload:
-    description: Base64url normalized intent emitted by the normalize operation
-    required: false
-    default: ''
-  group:
-    description: Canonical concurrency group emitted by normalization
-    required: false
-    default: ''
   issue:
     description: Canonical issue number for worker preflight
     required: false
@@ -68,27 +60,6 @@ inputs:
     default: ''
 
 outputs:
-  eligible:
-    description: Whether normalization produced a broker event
-    value: ${{ steps.run.outputs.eligible }}
-  issue:
-    description: Canonical issue number
-    value: ${{ steps.run.outputs.issue }}
-  repository-id:
-    description: Immutable numeric GitHub repository ID
-    value: ${{ steps.run.outputs.repository-id }}
-  is-pr:
-    description: Whether the canonical anchor is a pull request
-    value: ${{ steps.run.outputs.is-pr }}
-  group:
-    description: Repository-wide collision-safe broker concurrency group
-    value: ${{ steps.run.outputs.group }}
-  payload:
-    description: Base64url normalized broker event
-    value: ${{ steps.run.outputs.payload }}
-  reason:
-    description: Reason an event was ignored
-    value: ${{ steps.run.outputs.reason }}
   authorized:
     description: Whether worker preflight found an exact binding
     value: ${{ steps.run.outputs.authorized }}
@@ -108,12 +79,6 @@ outputs:
   prior-terminal-state:
     description: Compact JSON summary of the latest earlier terminal generation
     value: ${{ steps.run.outputs.prior-terminal-state }}
-  candidates:
-    description: Number of open agent-labeled issues/PRs the reconcile scan discovered
-    value: ${{ steps.run.outputs.candidates }}
-  dispatched:
-    description: Number of candidates the reconcile scan successfully dispatched
-    value: ${{ steps.run.outputs.dispatched }}
   readiness-incidents:
     description: Number of Claude lane incidents created/reused or resolved
     value: ${{ steps.run.outputs.readiness-incidents }}
@@ -128,8 +93,6 @@ runs:
       id: run
       shell: bash
       env:
-        BROKER_PAYLOAD: ${{ inputs.payload }}
-        BROKER_GROUP: ${{ inputs.group }}
         BROKER_ISSUE: ${{ inputs.issue }}
         BROKER_GENERATION: ${{ inputs.generation }}
         BROKER_INTENT_ID: ${{ inputs.intent-id }}

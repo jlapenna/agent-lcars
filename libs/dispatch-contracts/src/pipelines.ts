@@ -100,9 +100,6 @@ export const DISPATCH_PIPELINES = Object.freeze(
   Object.keys(PIPELINE_CONTRACTS) as AgentPipeline[],
 );
 
-/** Alias retained from when a no-op canary pipeline also existed. */
-export const AGENT_PIPELINES = DISPATCH_PIPELINES;
-
 /** Worker workflow files, for identity checks on a discovered run. */
 export const WORKER_WORKFLOW_FILES: ReadonlySet<string> = Object.freeze(
   new Set(
@@ -179,23 +176,10 @@ export const AGENT_BOT_LOGINS: readonly string[] = Object.freeze([
   ),
 ]);
 
-/** Alias retained from when a no-op canary pipeline also existed. */
-export type AgentPipelineContract = PipelineContract;
-
 export function isDispatchPipeline(
   pipeline: string,
 ): pipeline is AgentPipeline {
   return Object.hasOwn(PIPELINE_CONTRACTS, pipeline);
-}
-
-export function isAgentPipeline(pipeline: string): pipeline is AgentPipeline {
-  return isDispatchPipeline(pipeline);
-}
-
-export function agentPipelineContract(
-  pipeline: AgentPipeline,
-): PipelineContract {
-  return pipelineContract(pipeline);
 }
 
 export function pipelineContract(pipeline: AgentPipeline): PipelineContract {

@@ -3,13 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_BOT_LOGINS,
   AGENT_LABELS,
-  AGENT_PIPELINES,
-  agentPipelineContract,
   DISPATCH_LABELS,
   DISPATCH_PIPELINES,
   excludedPullRequestAuthors,
   GENERIC_REPLY_COMMAND,
   PIPELINE_CONTRACTS,
+  pipelineContract,
   REPLY_COMMANDS,
   REVIEW_LABELS,
   WORKER_WORKFLOW_FILES,
@@ -22,8 +21,7 @@ import {
 // those files produced, so the migration is provably behavior-preserving
 // rather than merely plausible.
 describe('pipeline registry', () => {
-  it('derives the agent and dispatch pipeline lists', () => {
-    expect(AGENT_PIPELINES).toEqual(['claude', 'codex', 'opencode']);
+  it('derives the dispatch pipeline list', () => {
     expect(DISPATCH_PIPELINES).toEqual(['claude', 'codex', 'opencode']);
   });
 
@@ -101,7 +99,7 @@ describe('bot identities', () => {
   });
 
   it('never excludes a pipeline from its own login', () => {
-    for (const pipeline of AGENT_PIPELINES) {
+    for (const pipeline of DISPATCH_PIPELINES) {
       expect(excludedPullRequestAuthors(pipeline)).not.toContain(
         PIPELINE_CONTRACTS[pipeline].botLogin,
       );
@@ -111,8 +109,8 @@ describe('bot identities', () => {
 
 describe('registry invariants', () => {
   it('gives every agent pipeline a complete contract', () => {
-    for (const pipeline of AGENT_PIPELINES) {
-      const contract = agentPipelineContract(pipeline);
+    for (const pipeline of DISPATCH_PIPELINES) {
+      const contract = pipelineContract(pipeline);
       expect(contract.pipeline).toBe(pipeline);
       expect(contract.label).toBe(`agent:${pipeline}`);
       expect(contract.reviewLabel).toBe(`review:${pipeline}`);
@@ -131,7 +129,7 @@ describe('registry invariants', () => {
   it('never lets two pipelines claim the same label or command', () => {
     expect(new Set(DISPATCH_LABELS).size).toBe(DISPATCH_LABELS.length);
     expect(REPLY_COMMANDS.size).toBe(
-      AGENT_PIPELINES.reduce(
+      DISPATCH_PIPELINES.reduce(
         (total, pipeline) =>
           total + 1 + PIPELINE_CONTRACTS[pipeline].replyTriggerAliases.length,
         0,
@@ -143,8 +141,8 @@ describe('registry invariants', () => {
     // opencode deliberately prints `/opencode` in failure comments while the
     // console offers `/oc`. Both must remain commands the broker recognizes,
     // or a failure comment would tell a human to type something inert.
-    for (const pipeline of AGENT_PIPELINES) {
-      const { redispatchCommand } = agentPipelineContract(pipeline);
+    for (const pipeline of DISPATCH_PIPELINES) {
+      const { redispatchCommand } = pipelineContract(pipeline);
       expect(REPLY_COMMANDS.get(redispatchCommand)).toBe(pipeline);
     }
   });

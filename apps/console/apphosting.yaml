@@ -84,8 +84,8 @@ env:
     availability:
       - RUNTIME
 
-  # GitHub App webhook delivery is the production event authority. The
-  # workflow_dispatch-only agent-router remains as the manual rollback path.
+  # GitHub App webhook delivery is the production event authority; hosted
+  # reconciliation handles manual recovery as well.
   - variable: AGENT_LCARS_HOSTED_ADMISSION_MODE
     value: 'authority'
     availability:

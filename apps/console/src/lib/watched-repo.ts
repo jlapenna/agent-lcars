@@ -12,9 +12,9 @@
  */
 
 import {
-  AGENT_PIPELINES,
   type AgentPipeline as SharedAgentPipeline,
-  agentPipelineContract,
+  DISPATCH_PIPELINES,
+  pipelineContract,
 } from '@agent-lcars/dispatch-contracts';
 
 /** Coding-agent pipelines understood by the current console UI. */
@@ -37,7 +37,7 @@ export interface AgentIntegration {
  * table used to be shaped, and callers like `backend-actions.ts`'s
  * `replyTriggers` already treat "absent" and "empty" the same via `?? []`. */
 function integrationFromContract(pipeline: AgentPipeline): AgentIntegration {
-  const contract = agentPipelineContract(pipeline);
+  const contract = pipelineContract(pipeline);
   return {
     workflowFile: contract.workflowFile,
     label: contract.label,
@@ -52,7 +52,7 @@ export const DEFAULT_AGENT_INTEGRATIONS: Record<
   AgentPipeline,
   AgentIntegration
 > = Object.fromEntries(
-  AGENT_PIPELINES.map((pipeline) => [
+  DISPATCH_PIPELINES.map((pipeline) => [
     pipeline,
     integrationFromContract(pipeline),
   ]),

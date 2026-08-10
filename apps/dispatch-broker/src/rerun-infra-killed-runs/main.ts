@@ -192,7 +192,7 @@ interface ProcessRunOutcome {
    *  this module -- see `rerunRuns` on `ScanAndRerunResult` for why that
    *  split keeps this action's own blast radius limited to GitHub Actions
    *  REST calls, matching this repo's existing OIDC-hosted-endpoint
-   *  convention in `dispatch-reconcile.yml`. */
+   *  convention. */
   anchor?: number;
 }
 

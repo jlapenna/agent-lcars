@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 
-import { formatRouterGroupMarker } from '@agent-lcars/dispatch-contracts';
 import { test } from 'vitest';
 
 import {
@@ -14,12 +13,7 @@ import {
   recordControlEvidence,
   renderLedgerComment,
 } from './broker.js';
-import {
-  BrokerConcurrencyMismatchError,
-  CONCURRENCY_VERIFY_MAX_ATTEMPTS,
-  GitHubApiError,
-  verifyBrokerConcurrency,
-} from './github-api.js';
+import { GitHubApiError } from './github-api.js';
 import {
   anchorNeedsHuman,
   applyAnchorControlTransition,
@@ -28,12 +22,7 @@ import {
   assertWorkerRun,
   CompletionBindingError,
   completionMatches,
-  decode,
-  discoverRecentlyClosedReconcileCandidates,
-  discoverReconcileCandidates,
   dispatchAccepted,
-  dispatchReconcileScan,
-  encode,
   FRESH_INTENT_OUTCOMES,
   handleCompletion,
   healStaleAgentLabels,
@@ -41,7 +30,6 @@ import {
   loadBrokerLedger,
   loadPreflightLedger,
   projectClaudeReadiness,
-  RECONCILE_DISPATCH_CONCURRENCY,
   RECONCILE_MISSING_RUN_GRACE_MS,
   RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
@@ -53,11 +41,11 @@ import {
   reconcileLedger,
   repairMissingIntentFromLabel,
   resolveTask,
+  runOperation,
   runPhase,
   saveProjectionCheckpoint,
   trustedActionsRunUrl,
   trustedClaudeExecutionFile,
-  wasSupersededEviction,
 } from './main.js';
 import { digestQuickTask, makeIntent, normalizeEvent } from './normalize.js';
 import {
@@ -72,6 +60,19 @@ const task = {
   repository: 'jlapenna/agent-lcars',
   issue: 304,
 };
+
+test.each(['normalize', 'broker', 'reconcile'])(
+  'rejects retired Actions %s operations with the hosted-controller migration',
+  async (operation) => {
+    await assert.rejects(
+      () => runOperation(operation),
+      new RegExp(
+        `Actions ${operation} operation was retired with agent-router\\.yml`,
+        'u',
+      ),
+    );
+  },
+);
 
 function boundGeneration() {
   const ledger = createLedger(task);
@@ -727,11 +728,6 @@ function workerRun(status = 'in_progress') {
   };
 }
 
-test('normalized payload encoding round-trips without shell quoting', () => {
-  const value = { body: "apostrophe ' newline\n and unicode ✅" };
-  assert.deepEqual(decode(encode(value)), value);
-});
-
 test('status:needs-human label edges become serialized control evidence so unpark wakes a held generation (#720)', () => {
   const context = {
     repository: task.repository,
@@ -951,15 +947,15 @@ test('anchorNeedsHuman accepts both REST label shapes and fails closed on lookup
   );
 });
 
-test('resolveTask recovers a canonical TaskRef from real normalize() output for every payload kind (#337)', () => {
-  // Regression test for #337: broker() used to read `normalized.task`
-  // unconditionally, but normalize()'s intent emitter (makeIntent) nests
+test('resolveTask recovers a canonical TaskRef from each normalized payload kind (#337)', () => {
+  // Regression test for #337: the controller used to read `normalized.task`
+  // unconditionally, but the intent emitter (makeIntent) nests
   // the TaskRef at `.intent.task` while completion/anchor-control/
   // control-evidence carry `.task` at the top level. Every actual agent
-  // dispatch is an intent, so this crashed broker() on every intent.
+  // dispatch is an intent, so this crashed the controller on every intent.
   //
-  // This drives the REAL normalizeEvent() -- not a hand-built broker
-  // input -- so it exercises the exact shape normalize() produces.
+  // This drives the REAL normalizeEvent() -- not a hand-built controller
+  // input -- so it exercises the exact normalized shape.
   const context = {
     repository: 'jlapenna/agent-lcars',
     repositoryId: 123,
@@ -985,7 +981,7 @@ test('resolveTask recovers a canonical TaskRef from real normalize() output for 
 
   // intent -- an issues:labeled event with an agent:* label and a
   // maintainer actor: the exact shape of the live event that crashed
-  // broker() on main (see #337 / #334 / #335 / #336).
+  // the controller on main (see #337 / #334 / #335 / #336).
   const labeled = normalizeEvent({
     eventName: 'issues',
     event: {
@@ -1081,8 +1077,7 @@ test('resolveTask recovers a canonical TaskRef from real normalize() output for 
   assert.equal(completion.kind, 'completion');
   assert.deepEqual(resolveTask(completion), expectedTask);
 
-  // reconcile -- dispatch-reconcile.yml's scan-fired ping also carries
-  // `.task` at the top level (#305).
+  // Reconciliation also carries `.task` at the top level (#305).
   const reconcile = normalizeEvent({
     eventName: 'workflow_dispatch',
     event: {},
@@ -1926,8 +1921,8 @@ test('healStaleAgentLabels skips a stale label that is simply gone (already heal
   assert.equal(ledger.sources.length, 0);
 });
 
-test('broker()-style gating: a fresh intent heals, a redelivered/duplicate intent never reaches healStaleAgentLabels (#355 review)', async () => {
-  // Mirrors broker()'s exact sequence: acceptIntent(), then only call
+test('controller-style gating: a fresh intent heals, a redelivered/duplicate intent never reaches healStaleAgentLabels (#355 review)', async () => {
+  // Mirrors the hosted controller's exact sequence: acceptIntent(), then only call
   // healStaleAgentLabels when the outcome is in FRESH_INTENT_OUTCOMES.
   const ledger = createLedger(task);
   const intent = {
@@ -1978,10 +1973,10 @@ test('broker()-style gating: a fresh intent heals, a redelivered/duplicate inten
 
 test('a self-healed dual-label intent produces only a benign follow-on unlabeled control-evidence event -- no loop (#304)', async () => {
   // End-to-end regression using the real normalizeEvent() -- the exact
-  // shape main.js's broker() consumes. A manual relabel produces a
+  // shape the hosted controller consumes. A manual relabel produces a
   // self-heal intent carrying staleAgentLabels; healStaleAgentLabels
   // removes the stale label via the API, which fires a genuine `unlabeled`
-  // webhook for that same label back through the router. Feeding that
+  // webhook for that same label back through the hosted controller. Feeding that
   // follow-on event through normalizeEvent + recordControlEvidence must
   // never create a second generation, dispatch anything, or throw.
   const context = {
@@ -3828,14 +3823,9 @@ test('reconcileLedger surfaces and parks a pending generation stranded with no c
 //
 // The success-path bug: GitHub closes an anchor (an automerge-linked PR's
 // `Fixes #N` auto-close, or agent-automerge.yml's own `gh issue close`
-// backstop) using GITHUB_TOKEN, whose recursion guard drops the resulting
-// `issues.closed`/`pull_request.closed` webhook before agent-router.yml
-// ever sees it -- so applyAnchorControlTransition (the live path's own
-// write) never runs and `control.closed` stays stale forever. These tests
-// exercise the read-and-catch-up half: `issueClosed`, threaded from
-// normalize.mjs's ReconcileEvent, is what a bounded closed-issue sweep
-// (listRecentlyClosedAgentLabeledIssues, github-api.mjs) puts back in front
-// of a reconcile pass.
+// backstop) using GITHUB_TOKEN. Its recursion guard can suppress the
+// webhook delivery, leaving `control.closed` stale. These tests exercise the
+// hosted reconciler's read-and-catch-up path through `issueClosed`.
 
 function completedLedger() {
   const ledger = boundLedger();
@@ -4072,9 +4062,9 @@ function duplicateAttemptStubClient() {
   return { client, calls };
 }
 
-test('an anchor whose reconcileActive() throws on an unrelated duplicate-attempt anomaly still converges control.closed, because broker() now converges it first -- and the anomaly still surfaces rather than being swallowed (#715 Codex P2 on #645/#663)', async () => {
-  // Reproduces broker()'s new composition for a `reconcile` event carrying
-  // `issueClosed: true` (see broker() in main.mjs): reconcileControlState()
+test('an anchor whose reconcileActive() throws on an unrelated duplicate-attempt anomaly still converges control.closed, because the hosted controller now converges it first -- and the anomaly still surfaces rather than being swallowed (#715 Codex P2 on #645/#663)', async () => {
+  // Reproduces the hosted controller's composition for a `reconcile` event carrying
+  // `issueClosed: true`: reconcileControlState()
   // now runs BEFORE reconcileActive(), specifically so an anomaly in the
   // anchor's own active generation -- unrelated to whether the anchor is
   // closed -- can never again starve control-state convergence the way it
@@ -4104,11 +4094,11 @@ test('an anchor whose reconcileActive() throws on an unrelated duplicate-attempt
     'the convergence write must have actually landed',
   );
 
-  // reconcileActive() still runs next, exactly as broker() does, and still
+  // reconcileActive() still runs next, exactly as the hosted controller does, and still
   // throws on the unrelated duplicate-attempt anomaly -- that anomaly is a
   // genuine, distinct problem (>1 worker run bound to one generation) this
   // fix does not paper over; it must still surface, not be swallowed
-  // (broker()'s own catch routes any throw here to failClosed(), which
+  // (the controller's own catch routes any throw here to failClosed(), which
   // always parks needs-human AND rethrows -- see failClosed in
   // github-api.mjs).
   await assert.rejects(
@@ -4123,304 +4113,6 @@ test('an anchor whose reconcileActive() throws on an unrelated duplicate-attempt
   // The earlier convergence must survive the later throw untouched -- the
   // whole point of running it first.
   assert.equal(ledger.control.closed, true);
-});
-
-test('dispatchReconcileScan fires one workflow_dispatch per candidate with kind=reconcile and the exact issue number', async () => {
-  const requests = [];
-  const client = {
-    request: async (path, options) => {
-      requests.push({ path, options });
-      return {
-        status: 200,
-        data: {
-          workflow_run_id: 500 + requests.length,
-          run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${500 + requests.length}`,
-          html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${500 + requests.length}`,
-        },
-      };
-    },
-  };
-  const results = await dispatchReconcileScan(
-    client,
-    'jlapenna/agent-lcars',
-    [304, 305],
-  );
-  assert.deepEqual(results, { dispatched: 2, failed: [] });
-  assert.equal(requests.length, 2);
-  for (const [index, issueNumber] of [304, 305].entries()) {
-    assert.equal(
-      requests[index].path,
-      '/repos/jlapenna/agent-lcars/actions/workflows/agent-router.yml/dispatches',
-    );
-    assert.equal(requests[index].options.method, 'POST');
-    assert.deepEqual(requests[index].options.body.inputs, {
-      kind: 'reconcile',
-      issue: String(issueNumber),
-    });
-  }
-});
-
-test('dispatchReconcileScan continues past a per-candidate dispatch failure and reports it without blocking the rest', async () => {
-  const client = {
-    request: async (_path, options) => {
-      const issue = options.body.inputs.issue;
-      if (issue === '305') {
-        return { status: 500, data: { message: 'boom' } };
-      }
-      return {
-        status: 200,
-        data: {
-          workflow_run_id: 9,
-          run_url:
-            'https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/9',
-          html_url: 'https://github.com/jlapenna/agent-lcars/actions/runs/9',
-        },
-      };
-    },
-  };
-  const results = await dispatchReconcileScan(
-    client,
-    'jlapenna/agent-lcars',
-    [304, 305, 306],
-  );
-  assert.equal(results.dispatched, 2);
-  assert.equal(results.failed.length, 1);
-  assert.equal(results.failed[0].issue, 305);
-});
-
-// PR #374 review (P2): an unbounded Promise.allSettled over a large
-// fleet-assignee discovery backlog fired one workflow_dispatch POST per
-// candidate simultaneously, risking GitHub's secondary rate limits.
-test('dispatchReconcileScan bounds concurrent workflow_dispatch POSTs to RECONCILE_DISPATCH_CONCURRENCY while still dispatching every candidate', async () => {
-  let active = 0;
-  let maxActive = 0;
-  let calls = 0;
-  const client = {
-    request: async () => {
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      calls += 1;
-      const runId = 700 + calls;
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      active -= 1;
-      return {
-        status: 200,
-        data: {
-          workflow_run_id: runId,
-          run_url: `https://api.github.com/repos/jlapenna/agent-lcars/actions/runs/${runId}`,
-          html_url: `https://github.com/jlapenna/agent-lcars/actions/runs/${runId}`,
-        },
-      };
-    },
-  };
-  const issueNumbers = Array.from(
-    { length: RECONCILE_DISPATCH_CONCURRENCY * 3 + 1 },
-    (_, index) => 400 + index,
-  );
-  const results = await dispatchReconcileScan(
-    client,
-    'jlapenna/agent-lcars',
-    issueNumbers,
-  );
-  assert.equal(results.dispatched, issueNumbers.length);
-  assert.equal(results.failed.length, 0);
-  assert.equal(active, 0);
-  assert.ok(
-    maxActive <= RECONCILE_DISPATCH_CONCURRENCY,
-    `expected at most ${RECONCILE_DISPATCH_CONCURRENCY} concurrent dispatches, saw ${maxActive}`,
-  );
-  assert.equal(
-    maxActive,
-    RECONCILE_DISPATCH_CONCURRENCY,
-    'expected the pool to actually reach its concurrency limit given a backlog larger than it',
-  );
-});
-
-// --- discoverReconcileCandidates (#363 review: label-independent lane) --
-
-test('discoverReconcileCandidates includes an unlabeled issue with an active generation via the fleet-assignee lane, merged with labeled candidates (#363 review)', async () => {
-  // Issue #500: its last agent:* label was removed while the worker was
-  // still active (recorded only as control-evidence -- see #363's review),
-  // so it carries no agent:* label anymore, but claim-issue's assignment of
-  // the fleet login is durable and was never cleared. Issue #304 is the
-  // ordinary, still-labeled case.
-  const seenUrls = [];
-  const client = {
-    requestOk: async (url) => {
-      seenUrls.push(url);
-      if (url.includes('labels=agent%3Aclaude')) {
-        return [{ number: 304 }];
-      }
-      if (
-        url.includes('labels=agent%3Acodex') ||
-        url.includes('labels=agent%3Aopencode') ||
-        url.includes('labels=review%3Aclaude') ||
-        url.includes('labels=review%3Acodex') ||
-        url.includes('labels=review%3Aopencode')
-      ) {
-        return [];
-      }
-      if (url.includes('assignee=jclaw-bot')) {
-        return [{ number: 500 }];
-      }
-      throw new Error(`Unexpected API path: ${url}`);
-    },
-  };
-  const candidates = await discoverReconcileCandidates(
-    client,
-    'jlapenna/agent-lcars',
-    'jclaw-bot',
-  );
-  assert.deepEqual(
-    candidates.map((issue) => issue.number),
-    [304, 500],
-  );
-  assert.ok(seenUrls.some((url) => url.includes('assignee=jclaw-bot')));
-});
-
-test('discoverReconcileCandidates dedupes an issue that is both labeled and fleet-assigned', async () => {
-  const client = {
-    requestOk: async (url) => {
-      if (url.includes('labels=agent%3Aclaude')) return [{ number: 304 }];
-      if (url.includes('labels=')) return [];
-      if (url.includes('assignee=')) return [{ number: 304 }];
-      throw new Error(`Unexpected API path: ${url}`);
-    },
-  };
-  const candidates = await discoverReconcileCandidates(
-    client,
-    'jlapenna/agent-lcars',
-    'jclaw-bot',
-  );
-  assert.deepEqual(
-    candidates.map((issue) => issue.number),
-    [304],
-  );
-});
-
-test('discoverReconcileCandidates skips the fleet-assignee lane entirely when no fleet login is configured', async () => {
-  const seenUrls = [];
-  const client = {
-    requestOk: async (url) => {
-      seenUrls.push(url);
-      if (url.includes('labels=')) return [];
-      throw new Error(
-        `Unexpected API path (assignee lane should be skipped): ${url}`,
-      );
-    },
-  };
-  const candidates = await discoverReconcileCandidates(
-    client,
-    'jlapenna/agent-lcars',
-    '',
-  );
-  assert.deepEqual(candidates, []);
-  assert.ok(seenUrls.every((url) => !url.includes('assignee=')));
-});
-
-// --- discoverRecentlyClosedReconcileCandidates (#715 review: closed
-// counterpart to the fleet-assignee lane) --------------------------------
-
-test('discoverRecentlyClosedReconcileCandidates discovers a closed, fleet-assigned, unlabeled anchor merged with closed labeled candidates, and that anchor then converges control.closed (#715 Codex P2 on #645/#663)', async () => {
-  // Issue #500: closed via GITHUB_TOKEN (agent-automerge.yml's `gh issue
-  // close` backstop, or an automerge-linked PR's `Fixes #N` auto-close)
-  // after its last agent:* label was already removed while its worker was
-  // still active -- exactly the case listRecentlyClosedIssuesAssignedTo
-  // exists to cover, mirroring listOpenIssuesAssignedTo's own open-side
-  // coverage (#363 review). Issue #304 is the ordinary, still-labeled
-  // closed case listRecentlyClosedAgentLabeledIssues already covered
-  // before this fix.
-  const seenUrls = [];
-  const client = {
-    requestOk: async (url) => {
-      seenUrls.push(url);
-      if (url.includes('labels=agent%3Aclaude')) {
-        return [{ number: 304 }];
-      }
-      if (
-        url.includes('labels=agent%3Acodex') ||
-        url.includes('labels=agent%3Aopencode') ||
-        url.includes('labels=review%3Aclaude') ||
-        url.includes('labels=review%3Acodex') ||
-        url.includes('labels=review%3Aopencode')
-      ) {
-        return [];
-      }
-      if (url.includes('assignee=jclaw-bot')) {
-        assert.ok(url.includes('state=closed'));
-        return [{ number: 500 }];
-      }
-      throw new Error(`Unexpected API path: ${url}`);
-    },
-  };
-  const candidates = await discoverRecentlyClosedReconcileCandidates(
-    client,
-    'jlapenna/agent-lcars',
-    'jclaw-bot',
-    '2026-08-07T12:00:00.000Z',
-  );
-  assert.deepEqual(
-    candidates.map((issue) => issue.number),
-    [304, 500],
-  );
-  assert.ok(seenUrls.some((url) => url.includes('assignee=jclaw-bot')));
-
-  // Discovery alone only proves the anchor is back in front of a reconcile
-  // pass; the repair this whole PR is about is that such a pass then
-  // converges the ledger's own control.closed copy. Prove that second half
-  // directly: exactly what a `reconcile` event for issue #500, carrying
-  // `issueClosed: true`, does to its ledger.
-  const ledger = boundLedger();
-  assert.equal(ledger.control.closed, false);
-  const isClosed = await reconcileControlState(
-    reconcileStubClient().client,
-    { ledger, comment: { id: 9 } },
-    true,
-    '2026-08-07T12:00:01.000Z',
-    30990000,
-  );
-  assert.equal(isClosed, true);
-  assert.equal(ledger.control.closed, true);
-});
-
-test('discoverRecentlyClosedReconcileCandidates dedupes an issue that is both closed-labeled and closed-fleet-assigned', async () => {
-  const client = {
-    requestOk: async (url) => {
-      if (url.includes('labels=agent%3Aclaude')) return [{ number: 304 }];
-      if (url.includes('labels=')) return [];
-      if (url.includes('assignee=')) return [{ number: 304 }];
-      throw new Error(`Unexpected API path: ${url}`);
-    },
-  };
-  const candidates = await discoverRecentlyClosedReconcileCandidates(
-    client,
-    'jlapenna/agent-lcars',
-    'jclaw-bot',
-  );
-  assert.deepEqual(
-    candidates.map((issue) => issue.number),
-    [304],
-  );
-});
-
-test('discoverRecentlyClosedReconcileCandidates skips the closed fleet-assignee lane entirely when no fleet login is configured', async () => {
-  const seenUrls = [];
-  const client = {
-    requestOk: async (url) => {
-      seenUrls.push(url);
-      if (url.includes('labels=')) return [];
-      throw new Error(
-        `Unexpected API path (assignee lane should be skipped): ${url}`,
-      );
-    },
-  };
-  const candidates = await discoverRecentlyClosedReconcileCandidates(
-    client,
-    'jlapenna/agent-lcars',
-    '',
-  );
-  assert.deepEqual(candidates, []);
-  assert.ok(seenUrls.every((url) => !url.includes('assignee=')));
 });
 
 // --- end-to-end: findRunsForGeneration truncation no longer false-parks --
@@ -4463,7 +4155,7 @@ test('an old dispatch buried past 100 newer unrelated runs is found and bound, n
   };
   const loaded = { ledger, comment };
 
-  // Reproduces broker()'s exact composition for a `reconcile` event: bind
+  // Reproduces the hosted controller's exact composition for a `reconcile` event: bind
   // first via reconcileActive(), then reconcileLedger()'s missing-run
   // tracking only ever sees a still-dispatching generation with no runId.
   await reconcileActive(client, loaded);
@@ -4478,305 +4170,6 @@ test('an old dispatch buried past 100 newer unrelated runs is found and bound, n
     ).length,
     0,
     'a genuinely bound run must never be recorded as missing',
-  );
-});
-
-// Run 9002's display_title carries the router-group marker (#545) -- what
-// makes it, from `findConflictingRouterRun`'s point of view, a genuine
-// candidate for `task`'s group -- and its `broker` job is `in_progress`,
-// which is what actually makes it a conflict: the marker alone only narrows
-// candidates, the per-candidate jobs listing decides (see the long comment
-// above `findConflictingRouterRun` in github-api.mjs). It is ALSO checked
-// against `/actions/runs/9002/concurrency_groups` -- what
-// `findSupersedingRouterRun` (untouched by that fix) separately still needs
-// to positively corroborate an eviction. `holds` controls only the latter.
-function supersedingClient(group, { holds = true } = {}) {
-  const marker = formatRouterGroupMarker({
-    repositoryId: task.repositoryId,
-    issue: task.issue,
-  });
-  return {
-    requestOk: async (path) => {
-      if (path.includes('/workflows/agent-router.yml/runs?')) {
-        return {
-          workflow_runs: [
-            {
-              id: 9002,
-              display_title: `route #304: labeled agent:codex ${marker}`,
-            },
-          ],
-        };
-      }
-      if (path.includes('/actions/runs/9002/jobs')) {
-        return { jobs: [{ name: 'broker', status: 'in_progress' }] };
-      }
-      if (path.includes('/actions/runs/9002/concurrency_groups')) {
-        return {
-          concurrency_groups: holds ? [{ group_name: group }] : [],
-        };
-      }
-      throw new Error(`Unexpected API path: ${path}`);
-    },
-  };
-}
-
-// Drives the REAL verifyBrokerConcurrency (dispatch path, #348) against a
-// fake API where a genuinely newer router run (9002) carries this run's
-// (9001) expected group's router-group marker (#545) -- indistinguishable,
-// from the dispatch run's own perspective, from ordinary contention.
-// Retries exhaust into a retryable BrokerConcurrencyMismatchError, proving
-// #348's indirect verification path feeds the exact same error shape
-// #345/#347's eviction handling already expects, regardless of which
-// concrete signal (previously per-run concurrency_groups self-listing,
-// now the router-group marker) produced it.
-async function exhaustedDispatchConflictError(group) {
-  const client = supersedingClient(group);
-  const sleeps = [];
-  let verifyError;
-  try {
-    await verifyBrokerConcurrency(client, task, 9001, group, {
-      eventName: 'workflow_dispatch',
-      sleepImpl: async (ms) => {
-        sleeps.push(ms);
-      },
-    });
-    assert.fail('expected verifyBrokerConcurrency to throw');
-  } catch (error) {
-    verifyError = error;
-  }
-  assert.equal(verifyError.name, 'BrokerConcurrencyMismatchError');
-  assert.equal(verifyError.retryable, true);
-  assert.equal(sleeps.length, CONCURRENCY_VERIFY_MAX_ATTEMPTS - 1);
-  return { client, verifyError };
-}
-
-test('wasSupersededEviction exits gracefully when evicted control-evidence has a corroborated superseding run (#344)', async () => {
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const client = supersedingClient(group);
-  const error = new BrokerConcurrencyMismatchError(
-    'Broker run does not report the expected concurrency group (after 5 attempts)',
-    { retryable: true },
-  );
-  const originalLog = console.log;
-  const logged = [];
-  console.log = (message) => logged.push(message);
-  let handled;
-  try {
-    handled = await wasSupersededEviction(
-      client,
-      task,
-      9001,
-      group,
-      'control-evidence',
-      error,
-    );
-  } finally {
-    console.log = originalLog;
-  }
-  assert.equal(handled, true);
-  assert.equal(logged.length, 1);
-  assert.match(logged[0], /^::notice::/u);
-  assert.match(logged[0], /evicted/u);
-  assert.match(logged[0], /9002/u);
-});
-
-test('wasSupersededEviction also exits gracefully for an evicted reconcile ping with a corroborated superseding run (#305) -- it carries no unique evidence and dispatch-reconcile.yml re-fires it on its own cadence regardless', async () => {
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const client = supersedingClient(group);
-  const error = new BrokerConcurrencyMismatchError(
-    'Broker run does not report the expected concurrency group (after 5 attempts)',
-    { retryable: true },
-  );
-  const originalLog = console.log;
-  const logged = [];
-  console.log = (message) => logged.push(message);
-  let handled;
-  try {
-    handled = await wasSupersededEviction(
-      client,
-      task,
-      9001,
-      group,
-      'reconcile',
-      error,
-    );
-  } finally {
-    console.log = originalLog;
-  }
-  assert.equal(handled, true);
-  assert.equal(logged.length, 1);
-  assert.match(logged[0], /^::notice::/u);
-  assert.match(logged[0], /9002/u);
-});
-
-test('wasSupersededEviction still fails a genuinely unexplained mismatch when no run corroborates eviction', async () => {
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const client = {
-    requestOk: async (path) => {
-      if (path.includes('/workflows/agent-router.yml/runs?')) {
-        return { workflow_runs: [] };
-      }
-      throw new Error(`Unexpected API path: ${path}`);
-    },
-  };
-  const error = new BrokerConcurrencyMismatchError(
-    'Broker run does not report the expected concurrency group (after 5 attempts)',
-    { retryable: true },
-  );
-  assert.equal(
-    await wasSupersededEviction(
-      client,
-      task,
-      9001,
-      group,
-      'control-evidence',
-      error,
-    ),
-    false,
-  );
-});
-
-test('wasSupersededEviction never queries for a superseding run on a non-retryable mismatch (a real anomaly)', async () => {
-  const client = {
-    requestOk: async () => {
-      throw new Error('must not query for supersession on a real anomaly');
-    },
-  };
-  const error = new BrokerConcurrencyMismatchError(
-    'Broker concurrency output does not match its TaskRef',
-    { retryable: false },
-  );
-  assert.equal(
-    await wasSupersededEviction(
-      client,
-      task,
-      9001,
-      'group',
-      'control-evidence',
-      error,
-    ),
-    false,
-  );
-});
-
-test('a queue-evicted dispatch-triggered run carrying control-evidence is still corroborated end-to-end and exits gracefully (#348 + #344 + #347)', async () => {
-  // Post-#347: only an evicted control-evidence payload may be dropped on
-  // a corroborated eviction. This proves #348's new dispatch-path
-  // verification composes correctly with that: the retryable error it
-  // produces still reaches wasSupersededEviction's graceful-skip branch
-  // for the one kind that's actually eligible for it.
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const { client, verifyError } = await exhaustedDispatchConflictError(group);
-
-  const originalLog = console.log;
-  const logged = [];
-  console.log = (message) => logged.push(message);
-  let handled;
-  try {
-    handled = await wasSupersededEviction(
-      client,
-      task,
-      9001,
-      group,
-      'control-evidence',
-      verifyError,
-    );
-  } finally {
-    console.log = originalLog;
-  }
-  assert.equal(handled, true);
-  assert.equal(logged.length, 1);
-  assert.match(logged[0], /^::notice::/u);
-  assert.match(logged[0], /9002/u);
-});
-
-test('a queue-evicted dispatch-triggered intent with a corroborated superseding run still fails red end-to-end -- an authorized intent must never be silently dropped (#348 + #347)', async () => {
-  // Same #348 dispatch-path exhaustion as above, but for an intent: #347
-  // restricted the graceful skip to control-evidence only, so this must
-  // still throw naming the superseding run rather than being silently
-  // accepted, proving #348's new path doesn't bypass #347's contract for
-  // non-evidence payload kinds.
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const { client, verifyError } = await exhaustedDispatchConflictError(group);
-
-  await assert.rejects(
-    () =>
-      wasSupersededEviction(client, task, 9001, group, 'intent', verifyError),
-    (thrown) => {
-      assert.match(thrown.message, /intent/u);
-      assert.match(thrown.message, /9002/u);
-      assert.match(thrown.message, /manually re-dispatch/u);
-      assert.equal(thrown.cause, verifyError);
-      return true;
-    },
-  );
-});
-
-test('wasSupersededEviction ignores errors that are not a retryable BrokerConcurrencyMismatchError', async () => {
-  const client = {
-    requestOk: async () => {
-      throw new Error('must not query for supersession on an unrelated error');
-    },
-  };
-  assert.equal(
-    await wasSupersededEviction(
-      client,
-      task,
-      9001,
-      'group',
-      'control-evidence',
-      new GitHubApiError('boom', 500),
-    ),
-    false,
-  );
-});
-
-test('wasSupersededEviction still fails red for an evicted intent even with a corroborated superseding run -- an authorized intent must never be silently dropped (#344 follow-up)', async () => {
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const client = supersedingClient(group);
-  const error = new BrokerConcurrencyMismatchError(
-    'Broker run does not report the expected concurrency group (after 5 attempts)',
-    { retryable: true },
-  );
-  await assert.rejects(
-    () => wasSupersededEviction(client, task, 9001, group, 'intent', error),
-    (thrown) => {
-      assert.match(thrown.message, /intent/u);
-      assert.match(thrown.message, /9002/u);
-      assert.match(thrown.message, /manually re-dispatch/u);
-      assert.equal(thrown.cause, error);
-      return true;
-    },
-  );
-});
-
-test('wasSupersededEviction still fails red for an evicted completion even with a corroborated superseding run -- a stuck-active generation must never be silently accepted (#344 follow-up)', async () => {
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const client = supersedingClient(group);
-  const error = new BrokerConcurrencyMismatchError(
-    'Broker run does not report the expected concurrency group (after 5 attempts)',
-    { retryable: true },
-  );
-  await assert.rejects(
-    () => wasSupersededEviction(client, task, 9001, group, 'completion', error),
-    (thrown) => {
-      assert.match(thrown.message, /completion/u);
-      assert.match(thrown.message, /manually re-dispatch/u);
-      assert.equal(thrown.cause, error);
-      return true;
-    },
-  );
-});
-
-test('wasSupersededEviction still fails red for an evicted anchor-control even with a corroborated superseding run', async () => {
-  const group = 'agent-lcars-dispatch-v1-123-304';
-  const client = supersedingClient(group);
-  const error = new BrokerConcurrencyMismatchError(
-    'Broker run does not report the expected concurrency group (after 5 attempts)',
-    { retryable: true },
-  );
-  await assert.rejects(() =>
-    wasSupersededEviction(client, task, 9001, group, 'anchor-control', error),
   );
 });
 
@@ -4814,13 +4207,11 @@ function captureLogs() {
 test('runPhase attributes and records a Quick Task digest mismatch instead of letting it crash normalization unattributed (#645 Phase 2)', async () => {
   // The concrete regression case #645 Phase 2 names: a Quick Task digest
   // mismatch (quickTaskRequest, called from normalizeEvent in
-  // normalize.mjs) used to crash normalize()'s call to normalizeEvent() as
-  // a bare, unattributed exception -- no phase, no owning system, no record
-  // anywhere. This drives the REAL normalizeEvent() through the REAL
-  // runPhase() wrapper main.js's normalize() now uses at that exact call
-  // site, with no ledger available -- exactly like the real job, since no
-  // ledger exists yet at normalization time (see the comment on that call
-  // site in main.mjs).
+  // normalize.ts) used to crash hosted event normalization as a bare,
+  // unattributed exception -- no phase, no owning system, no record
+  // anywhere. This drives the REAL normalizeEvent() through the same
+  // runPhase() boundary the hosted controller uses, with no ledger
+  // available yet -- exactly like the live controller.
   const context = {
     repository: 'jlapenna/agent-lcars',
     repositoryId: 123,

@@ -153,12 +153,11 @@ test('reconcile dispatch normalizes to a bare TaskRef ping, carrying no evidence
   assert.equal(fromCollaborator.kind, 'reconcile');
 });
 
-// #663: main.mjs's normalize() already fetches the live issue for every
-// workflow_dispatch (see its own header comment) -- a `reconcile` ping
-// threads that fetch's `state` through as `issueClosed` so main.mjs's
-// reconcileControlState can converge a stale `control.closed` without a
-// second GET of its own. Both directions, and the "state truly unknown"
-// fallback above, are covered here.
+// #663: hosted reconciliation normalizes every workflow_dispatch with its
+// live issue state. A `reconcile` event threads that state through as
+// `issueClosed` so the hosted controller can converge a stale
+// `control.closed` without a second GET. Both directions, and the "state
+// truly unknown" fallback above, are covered here.
 test("reconcile dispatch threads the live issue's open/closed state through as issueClosed (#663)", () => {
   const closed = normalizeEvent({
     eventName: 'workflow_dispatch',
