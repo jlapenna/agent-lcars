@@ -248,15 +248,27 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # The self-hosted JIT image bakes Chromium's system dependencies. Keep
-      # the hosted fallback complete for untrusted fork PRs, whose runners do
-      # not use that image.
-      - name: Install Playwright browser
-        if: runner.environment == 'self-hosted'
+      # The version marker only exists in an image that baked Chromium's
+      # system dependencies. This preserves the --with-deps fallback while
+      # pre-rollout self-hosted runners are still using the prior image.
+      - name: Detect baked Playwright dependencies
+        id: playwright-deps
+        shell: bash
+        run: |
+          baked_version_file=/usr/local/share/agent-lcars-corepack/playwright-version
+          if [[ -r "$baked_version_file" ]] && \
+            [[ "$(cat "$baked_version_file")" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Playwright browser from baked dependencies
+        if: steps.playwright-deps.outputs.ready == 'true'
         run: pnpm exec playwright install chromium
 
       - name: Install Playwright browser and dependencies
-        if: runner.environment == 'github-hosted'
+        if: steps.playwright-deps.outputs.ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
       # No @visual specs exist yet, so this runs directly on the runner
