@@ -2005,7 +2005,6 @@ async function loadBrokerLedger(
   isPullRequest: boolean,
   leaseOwner = '',
   storagePortFactory: () => StoragePort = createStoragePort,
-  authorityEpoch = '',
   projectionIdentities?: readonly LedgerProjectionIdentity[],
   authorityBusyWaitMs = 130_000,
 ): Promise<LoadedLedger | undefined> {
@@ -2052,7 +2051,6 @@ async function loadBrokerLedger(
           await classifyAuthorityTaskInitialization(
             client,
             task,
-            authorityEpoch,
             projectionIdentities,
           );
         // Every PR close/reopen is routed here. With no exact state and no
@@ -2063,11 +2061,11 @@ async function loadBrokerLedger(
         // backfill instead of silently discarding the control event.
         if (
           untrackedPullRequestControl &&
-          initializationEvidence !== 'compatibility-projection'
+          initializationEvidence === 'untracked'
         ) {
           return undefined;
         }
-        if (initializationEvidence !== 'post-cutover') {
+        if (initializationEvidence === 'compatibility-projection') {
           throw new AuthorityStateMissingError(task);
         }
         authority = await acquireAuthority(
@@ -2146,7 +2144,6 @@ async function applyAnchorControlTransition(
 export interface BrokerPassOptions {
   normalized: NormalizedEvent;
   githubToken: string;
-  authorityEpoch?: string;
   storagePortFactory: () => StoragePort;
   isPullRequest: boolean;
   transportRunId: number;
@@ -2172,7 +2169,6 @@ export interface BrokerPassOptions {
 export async function processNormalizedEvent({
   normalized,
   githubToken,
-  authorityEpoch: authorityEpochInput = '',
   storagePortFactory,
   isPullRequest,
   transportRunId: runId,
@@ -2183,7 +2179,6 @@ export async function processNormalizedEvent({
   authorityBusyWaitMs = 130_000,
 }: BrokerPassOptions): Promise<void> {
   if (normalized.kind === 'ignored') return;
-  const authorityEpoch = authorityEpochInput;
   const task = resolveTask(normalized);
   const client = createGitHubApi({ token: githubToken });
   let loaded: LoadedLedger | undefined;
@@ -2195,7 +2190,6 @@ export async function processNormalizedEvent({
       isPullRequest,
       authorityOwner,
       storagePortFactory,
-      authorityEpoch,
       projectionIdentities,
       authorityBusyWaitMs,
     );

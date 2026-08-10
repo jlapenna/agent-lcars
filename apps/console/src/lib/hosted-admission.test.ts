@@ -1,23 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  getIssue,
-  listEventsForTimeline,
-  paginate,
-  processHostedControllerEvent,
-} = vi.hoisted(() => ({
-  getIssue: vi.fn(),
-  listEventsForTimeline: vi.fn(),
-  paginate: vi.fn(),
-  processHostedControllerEvent: vi.fn(),
-}));
+const { listEventsForTimeline, paginate, processHostedControllerEvent } =
+  vi.hoisted(() => ({
+    listEventsForTimeline: vi.fn(),
+    paginate: vi.fn(),
+    processHostedControllerEvent: vi.fn(),
+  }));
 
 vi.mock('./hosted-controller', () => ({ processHostedControllerEvent }));
 
 vi.mock('./github-client', () => ({
   getGithubClient: () => ({
     paginate,
-    rest: { issues: { get: getIssue, listEventsForTimeline } },
+    rest: { issues: { listEventsForTimeline } },
   }),
 }));
 
@@ -55,16 +50,16 @@ function statusLabelPayload() {
   };
 }
 
-function authorityGap(compatibilityQuiescent: boolean) {
-  return new AuthorityStateMissingError(
-    { repository, repositoryId, issue: issueNumber },
-    compatibilityQuiescent,
-  );
+function authorityGap() {
+  return new AuthorityStateMissingError({
+    repository,
+    repositoryId,
+    issue: issueNumber,
+  });
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.stubEnv('DISPATCH_AUTHORITY_EPOCH', '2026-08-08T00:00:00.000Z');
   processHostedControllerEvent.mockResolvedValue(undefined);
   paginate.mockResolvedValue([
     {
@@ -75,7 +70,6 @@ beforeEach(() => {
       created_at: eventTime,
     },
   ]);
-  getIssue.mockResolvedValue({ data: statusLabelPayload().issue });
 });
 
 describe('hosted webhook admission primitives', () => {
@@ -129,58 +123,9 @@ describe('hosted webhook admission primitives', () => {
     });
   });
 
-  it.each([true, false])(
-    'acknowledges a retired replay after checking live GitHub state (compatibilityQuiescent=%s)',
-    async (compatibilityQuiescent) => {
-      processHostedControllerEvent.mockRejectedValueOnce(
-        authorityGap(compatibilityQuiescent),
-      );
-
-      await expect(
-        admitGitHubWebhook({
-          deliveryId,
-          eventName: 'issues',
-          payload: statusLabelPayload(),
-          mode: 'authority',
-        }),
-      ).resolves.toMatchObject({
-        outcome: 'ignored',
-        reason: 'retired pre-cutover task quarantined',
-      });
-      expect(getIssue).toHaveBeenCalledWith({
-        owner: 'jlapenna',
-        repo: 'agent-lcars',
-        issue_number: issueNumber,
-      });
-    },
-  );
-
-  it.each([
-    {
-      name: 'the issue is still open',
-      compatibilityQuiescent: true,
-      liveIssue: { ...statusLabelPayload().issue, state: 'open' },
-    },
-    {
-      name: 'live dispatch intent remains',
-      compatibilityQuiescent: true,
-      liveIssue: {
-        ...statusLabelPayload().issue,
-        labels: [{ name: 'agent:codex' }],
-      },
-    },
-    {
-      name: 'the issue was created after cutover',
-      compatibilityQuiescent: true,
-      liveIssue: {
-        ...statusLabelPayload().issue,
-        created_at: '2026-08-09T00:00:00.000Z',
-      },
-    },
-  ])('keeps failing closed when $name', async (scenario) => {
-    const gap = authorityGap(scenario.compatibilityQuiescent);
+  it('propagates an authority gap unconditionally; there is no compatibility quarantine', async () => {
+    const gap = authorityGap();
     processHostedControllerEvent.mockRejectedValueOnce(gap);
-    getIssue.mockResolvedValueOnce({ data: scenario.liveIssue });
 
     await expect(
       admitGitHubWebhook({

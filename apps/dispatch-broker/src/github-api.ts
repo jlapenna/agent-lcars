@@ -594,22 +594,20 @@ async function loadLedgerProjection(
 }
 
 export type AuthorityInitializationEvidence =
-  'compatibility-projection' | 'pre-cutover' | 'post-cutover';
+  'compatibility-projection' | 'untracked';
 
 /**
  * Classify the evidence available when an authority record is missing.
  *
- * Marker absence is not evidence: a controlled worker can edit or delete
- * comments. The trusted cutover epoch and GitHub's immutable issue/PR
- * `created_at` are the non-forgeable boundary. Tasks created before that
- * boundary must already have an aggregate, so missing state fails
- * closed even if every compatibility marker has been removed. Tasks created
- * at or after the boundary are genuinely post-authority and may be seeded.
+ * A controller-owned projection proves that the task was tracked and
+ * therefore must already have exact authoritative state, so missing state
+ * fails closed. With the cutover complete, an absent record and no trusted
+ * projection has one rule regardless of task age: initialize a new
+ * authoritative aggregate.
  */
 async function classifyAuthorityTaskInitialization(
   api: GitHubApi,
   task: LedgerTaskRef,
-  authorityEpoch: string,
   controllerIdentities: readonly LedgerProjectionIdentity[] = [
     { login: 'github-actions[bot]', type: 'Bot' },
   ],
@@ -632,22 +630,7 @@ async function classifyAuthorityTaskInitialization(
   );
   if (hasProjection) return 'compatibility-projection';
 
-  const epoch = Date.parse(authorityEpoch);
-  if (!Number.isFinite(epoch)) {
-    throw new Error(
-      `DISPATCH_AUTHORITY_EPOCH must be a valid timestamp, got ${JSON.stringify(authorityEpoch)}`,
-    );
-  }
-  const issue = await api.requestOk<GitHubIssueDetail>(
-    `${repositoryPath(task)}/issues/${task.issue}`,
-  );
-  const createdAt = Date.parse(issue.created_at);
-  if (!Number.isFinite(createdAt)) {
-    throw new Error(
-      `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`,
-    );
-  }
-  return createdAt >= epoch ? 'post-cutover' : 'pre-cutover';
+  return 'untracked';
 }
 
 async function saveLedger(

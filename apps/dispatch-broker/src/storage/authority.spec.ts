@@ -124,7 +124,6 @@ describe('storage authority lease', () => {
     {
       name: 'an empty compatibility projection',
       state: { signals: [], intents: [] },
-      expected: true,
     },
     {
       name: 'terminal compatibility history',
@@ -139,7 +138,6 @@ describe('storage authority lease', () => {
           },
         ],
       },
-      expected: true,
     },
     {
       name: 'an active compatibility intent',
@@ -155,22 +153,23 @@ describe('storage authority lease', () => {
           },
         ],
       },
-      expected: false,
     },
-  ])('classifies $name before failing closed', async ({ state, expected }) => {
-    const port = new InMemoryStoragePort();
-    await port.writeTask(task, undefined, state);
+  ])(
+    'fails closed uniformly for $name, regardless of age',
+    async ({ state }) => {
+      const port = new InMemoryStoragePort();
+      await port.writeTask(task, undefined, state);
 
-    await expect(
-      acquireAuthority(
-        port,
-        task,
-        'delivery:migration-check',
-        createLedger(task),
-      ),
-    ).rejects.toMatchObject({
-      name: 'AuthorityStateMissingError',
-      compatibilityQuiescent: expected,
-    });
-  });
+      await expect(
+        acquireAuthority(
+          port,
+          task,
+          'delivery:migration-check',
+          createLedger(task),
+        ),
+      ).rejects.toMatchObject({
+        name: 'AuthorityStateMissingError',
+      });
+    },
+  );
 });

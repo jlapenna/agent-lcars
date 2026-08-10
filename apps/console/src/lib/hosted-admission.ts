@@ -3,19 +3,16 @@ import 'server-only';
 import crypto from 'node:crypto';
 
 import {
-  type IssueOrPullRequest,
   normalizeEvent,
   type TimelineEvent,
   type WebhookEvent,
 } from '@agent-lcars/dispatch-controller/normalize';
-import { AuthorityStateMissingError } from '@agent-lcars/dispatch-controller/storage/authority';
-import { optional, required } from '@agent-lcars/util-server';
+import { optional } from '@agent-lcars/util-server';
 
 import { controlPlaneRepository, maintainerLogin } from './deployment';
 import { getGithubClient } from './github-client';
 import { assertGitHubDeliveryId } from './github-webhook-auth';
 import { processHostedControllerEvent } from './hosted-controller';
-import { isRetiredLegacyCandidate } from './retired-legacy-candidate';
 
 const SUPPORTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
 
@@ -156,50 +153,12 @@ export async function admitGitHubWebhook({
     };
   }
 
-  try {
-    await processHostedControllerEvent({
-      normalized,
-      isPullRequest: Boolean(
-        payload.pull_request ?? payload.issue?.pull_request,
-      ),
-      transportRunId,
-      authorityOwner: `webhook:${deliveryId}`,
-    });
-  } catch (error) {
-    if (!(error instanceof AuthorityStateMissingError)) {
-      throw error;
-    }
-
-    // A Cloud Task can be retried long after its event snapshot was taken.
-    // Re-read live GitHub state before deciding that a pre-cutover task is
-    // now retired; trusting only the queued payload could preserve stale
-    // dispatch labels or miss a later reopen.
-    const { owner, repo } = splitRepository(expectedRepository);
-    const liveIssue = (
-      await getGithubClient().rest.issues.get({
-        owner,
-        repo,
-        issue_number: error.task.issue,
-      })
-    ).data as IssueOrPullRequest;
-    if (
-      !isRetiredLegacyCandidate(liveIssue, required('DISPATCH_AUTHORITY_EPOCH'))
-    ) {
-      throw error;
-    }
-
-    console.info(
-      `agent-lcars: quarantined webhook replay for retired ` +
-        `${error.task.repository}#${error.task.issue}`,
-    );
-    return {
-      deliveryId,
-      eventName,
-      mode,
-      outcome: 'ignored',
-      reason: 'retired pre-cutover task quarantined',
-    };
-  }
+  await processHostedControllerEvent({
+    normalized,
+    isPullRequest: Boolean(payload.pull_request ?? payload.issue?.pull_request),
+    transportRunId,
+    authorityOwner: `webhook:${deliveryId}`,
+  });
 
   return { deliveryId, eventName, mode, outcome: 'processed' };
 }

@@ -499,11 +499,7 @@ test('authority refuses to initialize over an existing workflow-owned projection
   });
 
   assert.equal(
-    await classifyAuthorityTaskInitialization(
-      api,
-      task,
-      '2026-08-08T00:00:00.000Z',
-    ),
+    await classifyAuthorityTaskInitialization(api, task),
     'compatibility-projection',
   );
 });
@@ -522,87 +518,61 @@ test('authority refuses to initialize over a hosted controller projection', asyn
   });
 
   assert.equal(
-    await classifyAuthorityTaskInitialization(
-      api,
-      task,
-      '2026-08-08T00:00:00.000Z',
-      [
-        { login: 'github-actions[bot]', type: 'Bot' },
-        { login: 'jlapenna', type: 'User' },
-      ],
-    ),
+    await classifyAuthorityTaskInitialization(api, task, [
+      { login: 'github-actions[bot]', type: 'Bot' },
+      { login: 'jlapenna', type: 'User' },
+    ]),
     'compatibility-projection',
   );
 });
 
-test('authority ignores an unowned marker but requires immutable post-cutover creation evidence', async () => {
+test('authority treats an unowned marker as untracked, regardless of task age', async () => {
   const api = createGitHubApi({
     token: 'token',
-    fetchImpl: async (url) => {
-      if (url.endsWith('/issues/304')) {
-        return response(200, { created_at: '2026-08-09T00:00:00.000Z' });
-      }
-      return response(200, [
+    fetchImpl: async () =>
+      response(200, [
         {
           id: 2,
           body: '<!-- agent-lcars:dispatch-ledger:v1 --> attacker',
           user: { login: 'worker', type: 'User' },
         },
-      ]);
-    },
+      ]),
   });
 
   assert.equal(
-    await classifyAuthorityTaskInitialization(
-      api,
-      task,
-      '2026-08-08T00:00:00.000Z',
-    ),
-    'post-cutover',
+    await classifyAuthorityTaskInitialization(api, task),
+    'untracked',
   );
 });
 
 test('authority does not trust an App-bot marker as controller projection evidence', async () => {
   const api = createGitHubApi({
     token: 'token',
-    fetchImpl: async (url) =>
-      url.endsWith('/issues/304')
-        ? response(200, { created_at: '2026-08-07T00:00:00.000Z' })
-        : response(200, [
-            {
-              id: 2,
-              body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
-              user: { login: 'agent-lcars[bot]', type: 'Bot' },
-            },
-          ]),
+    fetchImpl: async () =>
+      response(200, [
+        {
+          id: 2,
+          body: '<!-- agent-lcars:dispatch-ledger:v1 --> app marker',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+        },
+      ]),
   });
 
   assert.equal(
-    await classifyAuthorityTaskInitialization(
-      api,
-      task,
-      '2026-08-08T00:00:00.000Z',
-    ),
-    'pre-cutover',
+    await classifyAuthorityTaskInitialization(api, task),
+    'untracked',
   );
 });
 
-test('authority refuses a pre-cutover task even after a worker removes every marker', async () => {
+test('authority treats a task with no comments at all as untracked', async () => {
   const api = createGitHubApi({
     token: 'token',
-    fetchImpl: async (url) =>
-      url.endsWith('/issues/304')
-        ? response(200, { created_at: '2026-08-07T23:59:59.000Z' })
-        : response(200, []),
+    fetchImpl: async () => response(200, []),
   });
 
   assert.equal(
-    await classifyAuthorityTaskInitialization(
-      api,
-      task,
-      '2026-08-08T00:00:00.000Z',
-    ),
-    'pre-cutover',
+    await classifyAuthorityTaskInitialization(api, task),
+    'untracked',
   );
 });
 

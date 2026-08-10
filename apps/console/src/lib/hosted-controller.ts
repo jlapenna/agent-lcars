@@ -23,7 +23,7 @@ type HostedControllerEvent = Pick<
 /**
  * Run one controller transition inside App Hosting. Webhook admission,
  * completion callbacks, and direct reconciliation deliberately share these
- * credentials, Firestore authority settings, and compatibility identities.
+ * credentials and Firestore authority settings.
  */
 export function processHostedControllerEvent({
   normalized,
@@ -37,7 +37,6 @@ export function processHostedControllerEvent({
     {
       normalized,
       githubToken: required('AGENT_LCARS_GITHUB_TOKEN'),
-      authorityEpoch: required('DISPATCH_AUTHORITY_EPOCH'),
       isPullRequest,
       transportRunId,
       authorityOwner,

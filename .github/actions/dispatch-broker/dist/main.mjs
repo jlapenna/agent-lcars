@@ -15685,7 +15685,7 @@ async function loadLedgerProjection(api2, task, ledger, controllerIdentities = [
     ...created && { existingComments: comments }
   };
 }
-async function classifyAuthorityTaskInitialization(api2, task, authorityEpoch, controllerIdentities = [
+async function classifyAuthorityTaskInitialization(api2, task, controllerIdentities = [
   { login: "github-actions[bot]", type: "Bot" }
 ]) {
   const comments = await listAll(
@@ -15698,22 +15698,7 @@ async function classifyAuthorityTaskInitialization(api2, task, authorityEpoch, c
     )
   );
   if (hasProjection) return "compatibility-projection";
-  const epoch = Date.parse(authorityEpoch);
-  if (!Number.isFinite(epoch)) {
-    throw new Error(
-      `DISPATCH_AUTHORITY_EPOCH must be a valid timestamp, got ${JSON.stringify(authorityEpoch)}`
-    );
-  }
-  const issue2 = await api2.requestOk(
-    `${repositoryPath(task)}/issues/${task.issue}`
-  );
-  const createdAt = Date.parse(issue2.created_at);
-  if (!Number.isFinite(createdAt)) {
-    throw new Error(
-      `GitHub returned an invalid created_at for ${task.repository}#${task.issue}`
-    );
-  }
-  return createdAt >= epoch ? "post-cutover" : "pre-cutover";
+  return "untracked";
 }
 async function saveLedger(api2, loaded) {
   const root = repositoryPath(loaded.ledger.task);
@@ -16381,16 +16366,14 @@ var AuthorityStateNotFoundError = class extends Error {
   task;
 };
 var AuthorityStateMissingError = class extends Error {
-  constructor(task, compatibilityQuiescent = false) {
+  constructor(task) {
     super(
       `Task ${task.repository}#${task.issue} has existing compatibility state but no exact authoritative controller state; recover the missing controller state before retrying`
     );
     this.task = task;
-    this.compatibilityQuiescent = compatibilityQuiescent;
     this.name = "AuthorityStateMissingError";
   }
   task;
-  compatibilityQuiescent;
 };
 function leaseIsLive(lease, now) {
   return Boolean(lease && Date.parse(lease.expiresAt) > Date.parse(now));
@@ -16412,10 +16395,7 @@ async function acquireAuthority(port, task, owner, seed, options = {}) {
       throw new AuthorityStateNotFoundError(task);
     }
     if (current && !current.controllerState) {
-      const compatibilityQuiescent = current.desiredIntentId === void 0 && current.intents.every(
-        (intent) => ["completed", "superseded"].includes(intent.state)
-      );
-      throw new AuthorityStateMissingError(task, compatibilityQuiescent);
+      throw new AuthorityStateMissingError(task);
     }
     if (current?.lease && current.lease.owner !== owner && leaseIsLive(current.lease, observedAt)) {
       const remainingBudget = busyDeadline - Date.now();
@@ -17870,7 +17850,7 @@ async function applyPipelineReassignment(client, loaded, normalized) {
   });
   await saveLedger2(client, loaded);
 }
-async function loadBrokerLedger(client, task, normalized, isPullRequest, leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities, authorityBusyWaitMs = 13e4) {
+async function loadBrokerLedger(client, task, normalized, isPullRequest, leaseOwner = "", storagePortFactory = createStoragePort, projectionIdentities, authorityBusyWaitMs = 13e4) {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
   {
     const port = storagePortFactory();
@@ -17898,13 +17878,12 @@ async function loadBrokerLedger(client, task, normalized, isPullRequest, leaseOw
         const initializationEvidence = await classifyAuthorityTaskInitialization(
           client,
           task,
-          authorityEpoch,
           projectionIdentities
         );
-        if (untrackedPullRequestControl && initializationEvidence !== "compatibility-projection") {
+        if (untrackedPullRequestControl && initializationEvidence === "untracked") {
           return void 0;
         }
-        if (initializationEvidence !== "post-cutover") {
+        if (initializationEvidence === "compatibility-projection") {
           throw new AuthorityStateMissingError(task);
         }
         authority = await acquireAuthority(
@@ -17965,7 +17944,6 @@ async function applyAnchorControlTransition(client, loaded, control) {
 async function processNormalizedEvent({
   normalized,
   githubToken,
-  authorityEpoch: authorityEpochInput = "",
   storagePortFactory,
   isPullRequest,
   transportRunId: runId,
@@ -17976,7 +17954,6 @@ async function processNormalizedEvent({
   authorityBusyWaitMs = 13e4
 }) {
   if (normalized.kind === "ignored") return;
-  const authorityEpoch = authorityEpochInput;
   const task = resolveTask(normalized);
   const client = createGitHubApi({ token: githubToken });
   let loaded;
@@ -17988,7 +17965,6 @@ async function processNormalizedEvent({
       isPullRequest,
       authorityOwner,
       storagePortFactory,
-      authorityEpoch,
       projectionIdentities,
       authorityBusyWaitMs
     );
