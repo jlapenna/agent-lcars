@@ -4,6 +4,8 @@
  * bootstrap failure from a model trajectory failure, a false-negative
  * deliverable gate, or a useful protocol outcome.
  */
+import { z } from 'zod';
+
 export const DISPATCH_OUTCOME_KINDS = [
   'startup-failure',
   'trajectory-failure',
@@ -18,7 +20,8 @@ export const DISPATCH_OUTCOME_KINDS = [
   'unknown-success',
 ] as const;
 
-export type DispatchOutcomeKind = (typeof DISPATCH_OUTCOME_KINDS)[number];
+export const dispatchOutcomeKindSchema = z.enum(DISPATCH_OUTCOME_KINDS);
+export type DispatchOutcomeKind = z.infer<typeof dispatchOutcomeKindSchema>;
 
 /** Exact GitHub object that backs a worker-reported outcome. The first
  * rollout only needs pull requests: comments/reviews already remain useful
@@ -27,27 +30,22 @@ export type DispatchOutcomeKind = (typeof DISPATCH_OUTCOME_KINDS)[number];
  * beside the immutable worker result lets readers make that later join
  * without guessing from timestamps, bot identities, or unrelated closing
  * references on a long-lived issue. */
-export interface DispatchOutcomeReference {
-  kind: 'pull-request';
-  number: number;
-}
+export const dispatchOutcomeReferenceSchema = z.looseObject({
+  kind: z.literal('pull-request'),
+  number: z.number().int().safe().positive(),
+});
+export type DispatchOutcomeReference = z.infer<
+  typeof dispatchOutcomeReferenceSchema
+>;
 
 export function isDispatchOutcomeKind(
   value: unknown,
 ): value is DispatchOutcomeKind {
-  return DISPATCH_OUTCOME_KINDS.includes(value as DispatchOutcomeKind);
+  return dispatchOutcomeKindSchema.safeParse(value).success;
 }
 
 export function isDispatchOutcomeReference(
   value: unknown,
 ): value is DispatchOutcomeReference {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return (
-    candidate.kind === 'pull-request' &&
-    Number.isSafeInteger(candidate.number) &&
-    Number(candidate.number) > 0
-  );
+  return dispatchOutcomeReferenceSchema.safeParse(value).success;
 }

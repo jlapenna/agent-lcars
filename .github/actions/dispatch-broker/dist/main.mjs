@@ -12,175 +12,6 @@ import crypto3 from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-// libs/dispatch-contracts/src/failure.ts
-var OWNING_SYSTEMS = Object.freeze([
-  "controller",
-  "runner",
-  "worker",
-  "finalizer",
-  "projector"
-]);
-var FAILURE_PHASES = [
-  "signal",
-  "authorization",
-  "intent",
-  "scheduling",
-  "launch",
-  "runner_allocation",
-  "bootstrap",
-  "provider_admission",
-  "provider_execution",
-  "agent_execution",
-  "validation",
-  "reporting",
-  "telemetry",
-  "reconciliation"
-];
-var PHASE_OWNERS = Object.freeze({
-  signal: "controller",
-  authorization: "controller",
-  intent: "controller",
-  scheduling: "controller",
-  launch: "controller",
-  runner_allocation: "runner",
-  bootstrap: "worker",
-  provider_admission: "worker",
-  provider_execution: "worker",
-  agent_execution: "worker",
-  validation: "finalizer",
-  reporting: "projector",
-  telemetry: "projector",
-  // Every system reconciles the state it owns, so this phase alone cannot
-  // name its owner from the phase. `classifyFailure` requires an explicit
-  // owningSystem when the phase is `reconciliation`; this default is the
-  // most common case, not an assumption the classifier is allowed to make
-  // silently.
-  reconciliation: "controller"
-});
-var RETRY_DISPOSITIONS = [
-  "never",
-  "immediate",
-  "backoff",
-  "after_health_change",
-  "after_configuration_change",
-  "manual"
-];
-var FAILURE_REASONS = [
-  // controller / signal + reconciliation
-  "signal_lost",
-  "signal_evicted",
-  "signal_unverifiable",
-  "quick_task_digest_mismatch",
-  "concurrency_group_unverifiable",
-  // controller / authorization + intent + scheduling + launch
-  "unauthorized_actor",
-  "ambiguous_pipeline_selection",
-  "intent_superseded",
-  "launch_response_lost",
-  "launch_rejected",
-  // runner
-  "runner_allocation_timeout",
-  "runner_lost",
-  // worker / bootstrap
-  "work_token_mint_failed",
-  "checkout_failed",
-  "tool_setup_failed",
-  // worker / provider + agent
-  "provider_admission_denied",
-  "provider_graph_allocation_failed",
-  "provider_unavailable",
-  "agent_turn_budget_exhausted",
-  "agent_exited_nonzero",
-  // finalizer
-  "deliverable_absent",
-  "deliverable_lookup_failed",
-  "deliverable_unattributable",
-  // projector
-  "github_write_failed",
-  "telemetry_upload_failed",
-  "telemetry_absent",
-  // any system
-  "internal_error"
-];
-var PHASES = new Set(FAILURE_PHASES);
-var REASONS = new Set(FAILURE_REASONS);
-var DISPOSITIONS = new Set(RETRY_DISPOSITIONS);
-var SYSTEMS = new Set(OWNING_SYSTEMS);
-function classifyFailure({
-  phase,
-  reason,
-  retryDisposition,
-  owningSystem,
-  retryBudget,
-  evidence,
-  detail
-}) {
-  if (!PHASES.has(phase)) {
-    throw new Error(`Unknown failure phase: ${phase}`);
-  }
-  if (!REASONS.has(reason)) {
-    throw new Error(`Unknown failure reason code: ${reason}`);
-  }
-  if (!DISPOSITIONS.has(retryDisposition)) {
-    throw new Error(`Unknown retry disposition: ${retryDisposition}`);
-  }
-  if (owningSystem !== void 0 && !SYSTEMS.has(owningSystem)) {
-    throw new Error(`Unknown owning system: ${owningSystem}`);
-  }
-  if (phase === "reconciliation" && owningSystem === void 0) {
-    throw new Error(
-      "Reconciliation failures must name their owning system: every system reconciles the state it owns"
-    );
-  }
-  if (retryBudget !== void 0 && (!Number.isSafeInteger(retryBudget) || retryBudget < 0)) {
-    throw new Error(`Invalid retry budget: ${retryBudget}`);
-  }
-  return {
-    owningSystem: owningSystem ?? PHASE_OWNERS[phase],
-    phase,
-    reason,
-    retryDisposition,
-    ...retryBudget === void 0 ? {} : { retryBudget },
-    ...evidence === void 0 ? {} : { evidence },
-    ...detail === void 0 ? {} : { detail }
-  };
-}
-function needsMaintainer(failure) {
-  return failure.retryDisposition === "manual" || failure.retryDisposition === "after_configuration_change" || failure.retryDisposition === "never" && failure.reason !== "intent_superseded";
-}
-function formatFailure(failure) {
-  const budget = failure.retryBudget === void 0 ? "" : ` budget=${failure.retryBudget}`;
-  return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
-}
-function isWellFormedFailureClassification(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value;
-  if (typeof candidate.owningSystem !== "string" || !SYSTEMS.has(candidate.owningSystem)) {
-    return false;
-  }
-  if (typeof candidate.phase !== "string" || !PHASES.has(candidate.phase)) {
-    return false;
-  }
-  if (typeof candidate.reason !== "string" || !REASONS.has(candidate.reason)) {
-    return false;
-  }
-  if (typeof candidate.retryDisposition !== "string" || !DISPOSITIONS.has(candidate.retryDisposition)) {
-    return false;
-  }
-  if (candidate.retryBudget !== void 0 && (!Number.isSafeInteger(candidate.retryBudget) || Number(candidate.retryBudget) < 0)) {
-    return false;
-  }
-  if (candidate.evidence !== void 0 && typeof candidate.evidence !== "string") {
-    return false;
-  }
-  if (candidate.detail !== void 0 && typeof candidate.detail !== "string") {
-    return false;
-  }
-  return true;
-}
-
 // node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -14695,6 +14526,167 @@ function date4(params) {
 // node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/classic/external.js
 config(en_default());
 
+// libs/dispatch-contracts/src/failure.ts
+var OWNING_SYSTEMS = Object.freeze([
+  "controller",
+  "runner",
+  "worker",
+  "finalizer",
+  "projector"
+]);
+var FAILURE_PHASES = [
+  "signal",
+  "authorization",
+  "intent",
+  "scheduling",
+  "launch",
+  "runner_allocation",
+  "bootstrap",
+  "provider_admission",
+  "provider_execution",
+  "agent_execution",
+  "validation",
+  "reporting",
+  "telemetry",
+  "reconciliation"
+];
+var PHASE_OWNERS = Object.freeze({
+  signal: "controller",
+  authorization: "controller",
+  intent: "controller",
+  scheduling: "controller",
+  launch: "controller",
+  runner_allocation: "runner",
+  bootstrap: "worker",
+  provider_admission: "worker",
+  provider_execution: "worker",
+  agent_execution: "worker",
+  validation: "finalizer",
+  reporting: "projector",
+  telemetry: "projector",
+  // Every system reconciles the state it owns, so this phase alone cannot
+  // name its owner from the phase. `classifyFailure` requires an explicit
+  // owningSystem when the phase is `reconciliation`; this default is the
+  // most common case, not an assumption the classifier is allowed to make
+  // silently.
+  reconciliation: "controller"
+});
+var RETRY_DISPOSITIONS = [
+  "never",
+  "immediate",
+  "backoff",
+  "after_health_change",
+  "after_configuration_change",
+  "manual"
+];
+var FAILURE_REASONS = [
+  // controller / signal + reconciliation
+  "signal_lost",
+  "signal_evicted",
+  "signal_unverifiable",
+  "quick_task_digest_mismatch",
+  "concurrency_group_unverifiable",
+  // controller / authorization + intent + scheduling + launch
+  "unauthorized_actor",
+  "ambiguous_pipeline_selection",
+  "intent_superseded",
+  "launch_response_lost",
+  "launch_rejected",
+  // runner
+  "runner_allocation_timeout",
+  "runner_lost",
+  // worker / bootstrap
+  "work_token_mint_failed",
+  "checkout_failed",
+  "tool_setup_failed",
+  // worker / provider + agent
+  "provider_admission_denied",
+  "provider_graph_allocation_failed",
+  "provider_unavailable",
+  "agent_turn_budget_exhausted",
+  "agent_exited_nonzero",
+  // finalizer
+  "deliverable_absent",
+  "deliverable_lookup_failed",
+  "deliverable_unattributable",
+  // projector
+  "github_write_failed",
+  "telemetry_upload_failed",
+  "telemetry_absent",
+  // any system
+  "internal_error"
+];
+var PHASES = new Set(FAILURE_PHASES);
+var REASONS = new Set(FAILURE_REASONS);
+var DISPOSITIONS = new Set(RETRY_DISPOSITIONS);
+var SYSTEMS = new Set(OWNING_SYSTEMS);
+function classifyFailure({
+  phase,
+  reason,
+  retryDisposition,
+  owningSystem,
+  retryBudget,
+  evidence,
+  detail
+}) {
+  if (!PHASES.has(phase)) {
+    throw new Error(`Unknown failure phase: ${phase}`);
+  }
+  if (!REASONS.has(reason)) {
+    throw new Error(`Unknown failure reason code: ${reason}`);
+  }
+  if (!DISPOSITIONS.has(retryDisposition)) {
+    throw new Error(`Unknown retry disposition: ${retryDisposition}`);
+  }
+  if (owningSystem !== void 0 && !SYSTEMS.has(owningSystem)) {
+    throw new Error(`Unknown owning system: ${owningSystem}`);
+  }
+  if (phase === "reconciliation" && owningSystem === void 0) {
+    throw new Error(
+      "Reconciliation failures must name their owning system: every system reconciles the state it owns"
+    );
+  }
+  if (retryBudget !== void 0 && (!Number.isSafeInteger(retryBudget) || retryBudget < 0)) {
+    throw new Error(`Invalid retry budget: ${retryBudget}`);
+  }
+  return {
+    owningSystem: owningSystem ?? PHASE_OWNERS[phase],
+    phase,
+    reason,
+    retryDisposition,
+    ...retryBudget === void 0 ? {} : { retryBudget },
+    ...evidence === void 0 ? {} : { evidence },
+    ...detail === void 0 ? {} : { detail }
+  };
+}
+function needsMaintainer(failure) {
+  return failure.retryDisposition === "manual" || failure.retryDisposition === "after_configuration_change" || failure.retryDisposition === "never" && failure.reason !== "intent_superseded";
+}
+function formatFailure(failure) {
+  const budget = failure.retryBudget === void 0 ? "" : ` budget=${failure.retryBudget}`;
+  return `[${failure.owningSystem}/${failure.phase}] ${failure.reason} retry=${failure.retryDisposition}${budget}`;
+}
+var failureClassificationSchema = external_exports.looseObject({
+  owningSystem: external_exports.custom(
+    (value) => typeof value === "string" && SYSTEMS.has(value)
+  ),
+  phase: external_exports.custom(
+    (value) => typeof value === "string" && PHASES.has(value)
+  ),
+  reason: external_exports.custom(
+    (value) => typeof value === "string" && REASONS.has(value)
+  ),
+  retryDisposition: external_exports.custom(
+    (value) => typeof value === "string" && DISPOSITIONS.has(value)
+  ),
+  retryBudget: external_exports.number().int().safe().nonnegative().optional(),
+  evidence: external_exports.string().optional(),
+  detail: external_exports.string().optional()
+});
+function isWellFormedFailureClassification(value) {
+  return failureClassificationSchema.safeParse(value).success;
+}
+
 // libs/dispatch-contracts/src/outcomes.ts
 var DISPATCH_OUTCOME_KINDS = [
   "startup-failure",
@@ -14709,15 +14701,16 @@ var DISPATCH_OUTCOME_KINDS = [
   "closed",
   "unknown-success"
 ];
+var dispatchOutcomeKindSchema = external_exports.enum(DISPATCH_OUTCOME_KINDS);
+var dispatchOutcomeReferenceSchema = external_exports.looseObject({
+  kind: external_exports.literal("pull-request"),
+  number: external_exports.number().int().safe().positive()
+});
 function isDispatchOutcomeKind(value) {
-  return DISPATCH_OUTCOME_KINDS.includes(value);
+  return dispatchOutcomeKindSchema.safeParse(value).success;
 }
 function isDispatchOutcomeReference(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value;
-  return candidate.kind === "pull-request" && Number.isSafeInteger(candidate.number) && Number(candidate.number) > 0;
+  return dispatchOutcomeReferenceSchema.safeParse(value).success;
 }
 
 // libs/dispatch-contracts/src/pipelines.ts
@@ -14823,26 +14816,18 @@ var PROJECTION_CONVERGENCE_STATES = [
    *  one), not the failed attempt's target. */
   "diverged"
 ];
-var CONVERGENCE_STATES = new Set(
+var projectionConvergenceStateSchema = external_exports.enum(
   PROJECTION_CONVERGENCE_STATES
 );
-function isNonNegativeInteger(value) {
-  return Number.isSafeInteger(value) && value >= 0;
-}
+var projectionStatusSchema = external_exports.looseObject({
+  desiredRevision: external_exports.number().int().safe().nonnegative(),
+  observedRevision: external_exports.number().int().safe().nonnegative(),
+  state: projectionConvergenceStateSchema,
+  /** When this checkpoint was recorded. */
+  observedAt: external_exports.string().min(1)
+});
 function isWellFormedProjectionStatus(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value;
-  if (!isNonNegativeInteger(candidate.desiredRevision)) return false;
-  if (!isNonNegativeInteger(candidate.observedRevision)) return false;
-  if (typeof candidate.state !== "string" || !CONVERGENCE_STATES.has(candidate.state)) {
-    return false;
-  }
-  if (typeof candidate.observedAt !== "string" || candidate.observedAt.length === 0) {
-    return false;
-  }
-  return true;
+  return projectionStatusSchema.safeParse(value).success;
 }
 
 // libs/dispatch-contracts/src/ledger.ts
