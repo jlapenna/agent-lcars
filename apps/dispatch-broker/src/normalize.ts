@@ -5,6 +5,7 @@ import type {
   DispatchOutcomeKind,
   DispatchOutcomeReference,
   LaneReadinessFailure,
+  LedgerAuthorizationDecision,
   LedgerTaskRef,
   QuickTaskIdentity,
 } from '@agent-lcars/dispatch-contracts';
@@ -157,13 +158,39 @@ export interface ControlEvidenceEvent {
   evidence: ControlEvidence;
 }
 
+/**
+ * A hosted-command-only transition: swap which single `agent:*` label an
+ * anchor carries. Unlike an `intent` (which `acceptIntent()` can turn into a
+ * new ledger generation and, eventually, a dispatched worker run), this kind
+ * never reaches `acceptIntent()` -- controller-core.mjs's own handler records
+ * it as evidence (`ledger.sources`, the same idempotent dedup every other
+ * evidence kind uses) and rewrites the label, but manufactures no generation.
+ * The controller retains sole ownership of whether/when the newly-labeled
+ * pipeline is actually dispatched, exactly as it does for a genuine
+ * maintainer relabel through the GitHub UI. See `PipelineReassignmentError`
+ * (controller-core.mjs) for the three rejections this command's own handler
+ * enforces against the *live* label snapshot at apply time, not here --
+ * normalize.mjs only validates the caller's own request shape.
+ */
+export interface PipelineReassignmentEvent {
+  kind: 'pipeline-reassignment';
+  task: LedgerTaskRef;
+  sourceKind: 'pipeline-reassignment';
+  sourceId: string;
+  transportRunId: number;
+  occurredAt: string;
+  targetPipeline: AgentPipeline;
+  authorization: LedgerAuthorizationDecision;
+}
+
 export type NormalizedEvent =
   | IgnoredEvent
   | ReconcileEvent
   | CompletionEvent
   | IntentEvent
   | AnchorControlEvent
-  | ControlEvidenceEvent;
+  | ControlEvidenceEvent
+  | PipelineReassignmentEvent;
 
 // `null` is a sentinel, not a pipeline: `@agent` (#573) doesn't name a
 // specific integration, it defers to whichever `agent:*` label the issue
@@ -414,6 +441,47 @@ function normalizeWorkflowDispatch({
       ...(issue?.state === 'open' || issue?.state === 'closed'
         ? { issueClosed: issue.state === 'closed' }
         : {}),
+    };
+  }
+  // A pipeline hand-off command, exclusively from the authenticated console
+  // backend (executeHostedControllerCommand) -- never from a real GitHub
+  // webhook payload, so (unlike the `labeled`/`unlabeled` branches further
+  // down) there is no timeline event to disambiguate against. Always
+  // requires the caller's own stable request UUID: the console generates one
+  // per user action and reuses it across a transport-level retry, and that
+  // UUID is this command's whole idempotency key (see
+  // controller-core.mjs's applyPipelineReassignment). Unlike manual
+  // dispatch's own `caller_id` (optional, falls back to the actions run
+  // identity), a fallback here would make two different browser retries of
+  // the same click collide on an actions-run identity that does not exist
+  // for an in-process console call.
+  if (inputs.kind === 'reassign-pipeline') {
+    if (!inputs.caller_id || !UUID.test(inputs.caller_id)) {
+      throw new Error('Pipeline reassignment caller ID must be a UUID');
+    }
+    const auth = authorization(
+      context.actor,
+      maintainer,
+      AUTHORIZATION_RULES.MANUAL_MAINTAINER,
+    );
+    if (!auth.authorized) {
+      throw new Error('Unauthorized pipeline reassignment');
+    }
+    if (!AGENT_LABELS.has(`agent:${inputs.pipeline}`)) {
+      throw new Error('Unsupported pipeline reassignment target');
+    }
+    return {
+      kind: 'pipeline-reassignment',
+      task,
+      sourceKind: 'pipeline-reassignment',
+      sourceId: inputs.caller_id,
+      transportRunId: context.runId,
+      occurredAt: context.now,
+      // Validated two lines up: AGENT_LABELS' keys are exactly
+      // `agent:claude`/`agent:codex`/`agent:opencode`, so the has() check
+      // above already proved inputs.pipeline is one of those three names.
+      targetPipeline: inputs.pipeline as AgentPipeline,
+      authorization: auth,
     };
   }
   if (inputs.kind === 'completion') {

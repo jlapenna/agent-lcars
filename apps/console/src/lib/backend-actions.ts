@@ -6,6 +6,7 @@ import {
   quickTaskDigest as sharedQuickTaskDigest,
   quickTaskMarkerMatcher,
 } from '@agent-lcars/dispatch-contracts';
+import { PipelineReassignmentError } from '@agent-lcars/dispatch-controller/main';
 
 import { issueNumberFromDisplayTitle } from './agent-activity';
 import {
@@ -594,56 +595,46 @@ export async function retriggerIssue(
 // Distinct from retriggerIssue's same-pipeline cycle: this swaps which
 // pipeline label the issue carries rather than re-firing the one it already
 // has.
+//
+// #811: this used to be a direct `octokit.rest.issues.setLabels()` write -
+// a controller-relevant lifecycle mutation outside the authoritative
+// controller, unlike hosted admission and reconcile. It now delegates the
+// whole transition (validation against the *live* label state, the atomic
+// label swap, and recording it in the authoritative task record) to the
+// hosted controller through the same typed command boundary retriggerIssue
+// already uses, via a `reassign-pipeline` HostedControllerCommand. `callerId`
+// is the console's own stable per-click UUID (see retrigger-button.tsx's
+// `createRandomId()` sibling in item-overflow-menu.tsx): it becomes the
+// command's idempotency key, so a Server Action network retry converges on
+// the same transition instead of risking a second one.
 export async function reassignPipeline(
   repo: WatchedRepo,
   issueNumber: number,
   targetPipeline: Pipeline,
+  callerId: string,
 ): Promise<void> {
-  const octokit = getGithubClient();
-  const targetIntegration = requireAgentIntegration(repo, targetPipeline);
-
-  const { data: issue } = await octokit.rest.issues.get({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-  });
-  const currentLabels = issue.labels.map((label) =>
-    typeof label === 'string' ? label : (label.name ?? ''),
-  );
-  const currentPipelineLabels = supportedAgentPipelines(repo)
-    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
-    .filter((label): label is string => Boolean(label))
-    .filter((label) => currentLabels.includes(label));
-  if (currentPipelineLabels.includes(targetIntegration.label)) {
-    throw new ActionError(
-      `Issue is already assigned to ${targetPipeline}`,
-      400,
-    );
+  if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
+    throw new ActionError('A valid dispatch caller ID is required', 400);
   }
-  if (currentPipelineLabels.length === 0) {
-    throw new ActionError(
-      'Issue does not carry a pipeline label; nothing to reassign',
-      400,
-    );
+  // Repo-config gate, orthogonal to the controller's own generic
+  // agent:*-label validation: does this specific watched repo even declare
+  // an integration for the target pipeline at all.
+  requireAgentIntegration(repo, targetPipeline);
+
+  try {
+    await executeHostedControllerCommand({
+      kind: 'reassign-pipeline',
+      repository: repo,
+      issueNumber,
+      targetPipeline,
+      requestId: callerId,
+    });
+  } catch (error) {
+    if (error instanceof PipelineReassignmentError) {
+      throw new ActionError(error.message, 400);
+    }
+    throw error;
   }
-
-  const allAgentLabels = supportedAgentPipelines(repo)
-    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
-    .filter((label): label is string => Boolean(label));
-  const labels = currentLabels
-    .filter((label) => !allAgentLabels.includes(label))
-    .filter((label) => label !== 'status:needs-human')
-    .concat(targetIntegration.label);
-
-  // One set operation is the control-plane transition. It preserves every
-  // unrelated label while ensuring GitHub never exposes an intermediate
-  // zero-agent or contradictory multi-agent selection to the router.
-  await octokit.rest.issues.setLabels({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-    labels,
-  });
 }
 
 /** Assigns an unclaimed open issue to an agent pipeline. */

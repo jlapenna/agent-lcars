@@ -5,9 +5,11 @@ import {
   parseTerminalQuickTaskBody,
   quickTaskDigest as contractQuickTaskDigest,
 } from '@agent-lcars/dispatch-contracts';
+import { PipelineReassignmentError } from '@agent-lcars/dispatch-controller/main';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
+  ActionError,
   approveAndMergePr,
   approveAndRebasePr,
   assignPipeline,
@@ -991,54 +993,69 @@ describe('retriggerIssue (pipeline routing)', () => {
 });
 
 describe('reassignPipeline', () => {
-  function mockOctokit(labels: string[]) {
-    const get = vi.fn().mockResolvedValue({ data: { labels } });
-    const setLabels = vi.fn().mockResolvedValue({});
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { get, setLabels } },
+  // #811: reassignPipeline no longer touches octokit at all - it delegates
+  // the whole transition (live-label validation, the atomic label swap, and
+  // recording it in the authoritative task record) to the hosted controller
+  // through executeHostedControllerCommand, exactly as retriggerIssue
+  // already does. The controller's own validation/atomicity is covered at
+  // the dispatch-broker level (pipeline-reassignment.spec.ts); these tests
+  // cover the console-side contract: command shape, the caller-ID gate, the
+  // repo-integration pre-check, and typed-rejection translation.
+
+  it('delegates to the hosted controller with a reassign-pipeline command', async () => {
+    await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
+
+    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
+      kind: 'reassign-pipeline',
+      repository: DEFAULT_REPO,
+      issueNumber: 2709,
+      targetPipeline: 'claude',
+      requestId: DISPATCH_ID,
     });
-    return { get, setLabels };
-  }
+  });
 
-  it('drops the current pipeline label and adds the target', async () => {
-    const { setLabels } = mockOctokit(['agent:codex', 'type:bug']);
+  it('400s on a malformed caller ID before ever calling the controller', async () => {
+    await expect(
+      reassignPipeline(DEFAULT_REPO, 2709, 'claude', 'not-a-uuid'),
+    ).rejects.toThrow('A valid dispatch caller ID is required');
+    expect(executeHostedControllerCommand).not.toHaveBeenCalled();
+  });
 
-    await reassignPipeline(DEFAULT_REPO, 2709, 'claude');
+  it('400s when the repo declares no integration for the target pipeline, without calling the controller', async () => {
+    await expect(
+      reassignPipeline(
+        { ...DEFAULT_REPO, agents: {} },
+        2709,
+        'claude',
+        DISPATCH_ID,
+      ),
+    ).rejects.toThrow(/does not declare a claude agent integration/);
+    expect(executeHostedControllerCommand).not.toHaveBeenCalled();
+  });
 
-    expect(setLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ['type:bug', 'agent:claude'] }),
+  it('translates a typed PipelineReassignmentError into a 400 ActionError', async () => {
+    (executeHostedControllerCommand as Mock).mockRejectedValueOnce(
+      new PipelineReassignmentError(
+        'already-targeted',
+        'Issue #2709 is already assigned to claude',
+      ),
+    );
+
+    await expect(
+      reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID),
+    ).rejects.toThrow(
+      new ActionError('Issue #2709 is already assigned to claude', 400),
     );
   });
 
-  it('drops every pipeline label present, not just one', async () => {
-    const { setLabels } = mockOctokit([
-      'agent:claude',
-      'agent:opencode',
-      'status:needs-human',
-      'type:feature',
-    ]);
-
-    await reassignPipeline(DEFAULT_REPO, 2709, 'codex');
-
-    expect(setLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ['type:feature', 'agent:codex'] }),
+  it('propagates a non-rejection controller failure unchanged', async () => {
+    (executeHostedControllerCommand as Mock).mockRejectedValueOnce(
+      new Error('controller unavailable'),
     );
-  });
-
-  it('400s when the issue already carries the target pipeline label', async () => {
-    mockOctokit(['agent:claude']);
 
     await expect(
-      reassignPipeline(DEFAULT_REPO, 2709, 'claude'),
-    ).rejects.toThrow('Issue is already assigned to claude');
-  });
-
-  it('400s when the issue carries no pipeline label at all', async () => {
-    mockOctokit(['intake:quick-task']);
-
-    await expect(
-      reassignPipeline(DEFAULT_REPO, 2709, 'claude'),
-    ).rejects.toThrow('Issue does not carry a pipeline label');
+      reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID),
+    ).rejects.toThrow('controller unavailable');
   });
 });
 

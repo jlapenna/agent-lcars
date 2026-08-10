@@ -600,14 +600,20 @@ paths plus one read path, not one system:**
   separate write path from the controller's own projector module above.
 - **`apps/console/src/lib/backend-actions.ts`** — the console's own direct
   `octokit` writes: `postComment`, `clearNeedsHumanLabel`,
-  `approveAndMergePr`, `reassignPipeline`, `retriggerIssue`, and Quick Task
-  creation. `retriggerIssue` delegates to the hosted controller through a
-  typed, idempotent console command. `reassignPipeline`
-  does **not** — per the issue's own recorded finding, it is genuinely
-  blocked: the broker has no label-writing capability of its own today
-  (`removeIssueLabel` exists only for the dual-label self-heal), and the
-  router has no "relabel, don't dispatch" input. Delegating it needs new
-  controller capability, not just a console-side change.
+  `approveAndMergePr`, `retriggerIssue`, and Quick Task creation.
+  `retriggerIssue` and `reassignPipeline` both delegate to the hosted
+  controller through a typed, idempotent console command
+  (`executeHostedControllerCommand`) rather than writing labels directly.
+  `reassignPipeline`'s own `reassign-pipeline` command
+  (agent-lcars#811) gave the broker the label-writing and "relabel, don't
+  dispatch" capability its own earlier recorded gap named as missing:
+  `applyPipelineReassignment` (`apps/dispatch-broker/src/controller-core.ts`)
+  validates the anchor's live label state, atomically replaces the one
+  `agent:*` label via `replaceIssueLabels`, and records the transition as
+  `ControlEvidence` — the same "converge already-decided state, no new
+  generation" shape `healStaleAgentLabels` already used — so a reassignment
+  can never manufacture a worker run of its own; the controller retains sole
+  ownership of whether/when the newly-labeled pipeline is dispatched.
 - **`apps/console/src/lib/dispatch-ledger.ts`** — the read side. Parses the
   same ledger comment `github-api.ts` writes, now importing
   `@agent-lcars/dispatch-contracts` directly instead of a hand-mirrored copy
@@ -644,8 +650,6 @@ write-path failure at all.
 2. If it's a console display issue, compare the raw ledger comment against
    what the console shows — a mismatch there is `dispatch-ledger.ts` or a
    downstream consumer, not a write-path failure at all.
-3. If it's `reassignPipeline`, stop looking for a bug: it is a known,
-   recorded gap (see above), not yet a controller capability.
 
 **Who/what repairs it:** nothing today. Per #645's "must not" list, a
 failed GitHub write must never change the underlying outcome, and none of

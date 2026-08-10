@@ -515,6 +515,52 @@ export function resetIssueContentEdits(): void {
   (globalThis as Record<string, unknown>)[ISSUE_CONTENT_EDITS_KEY] = new Map();
 }
 
+const AGENT_LABEL_PREFIX = 'agent:';
+
+export type ReassignFixtureIssuePipelineResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'no-pipeline'
+        | 'already-targeted'
+        | 'conflicting-pipeline';
+    };
+
+/**
+ * The fixture stand-in for `applyPipelineReassignment`'s own three typed
+ * rejections (`apps/dispatch-broker/src/controller-core.ts`) - real
+ * controller logic never runs against this fixture
+ * (docs/e2e-security-boundary.md). Validates against the issue's current
+ * fixture snapshot but, like every other GitHub label write this fixture
+ * answers (the atomic label-set PUT below, and clearNeedsHumanLabel's own
+ * DELETE), never persists a change of its own - each is a validate-then-echo,
+ * so a spec's curated items stay stable for every later assertion in the
+ * same test.
+ */
+export function reassignFixtureIssuePipeline(
+  number: number,
+  targetPipeline: AgentPipeline,
+): ReassignFixtureIssuePipelineResult {
+  const fixtureIssue = issue(number);
+  if (!fixtureIssue) return { ok: false, reason: 'not-found' };
+  const targetLabel = `${AGENT_LABEL_PREFIX}${targetPipeline}`;
+  const currentPipelineLabels = fixtureIssue.labels
+    .map((label) => label.name)
+    .filter((name) => name.startsWith(AGENT_LABEL_PREFIX));
+  if (currentPipelineLabels.length === 0) {
+    return { ok: false, reason: 'no-pipeline' };
+  }
+  if (currentPipelineLabels.length > 1) {
+    return { ok: false, reason: 'conflicting-pipeline' };
+  }
+  if (currentPipelineLabels[0] === targetLabel) {
+    return { ok: false, reason: 'already-targeted' };
+  }
+  return { ok: true };
+}
+
 /**
  * Stateful Quick Task write-path fixture (agent-lcars#307 part A). Everything
  * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually

@@ -190,6 +190,95 @@ test("reconcile dispatch threads the live issue's open/closed state through as i
   assert.equal('issueClosed' in unknown, false);
 });
 
+test('pipeline reassignment normalizes to evidence, never an intent, and requires a stable caller UUID (#811)', () => {
+  const normalized = normalizeEvent({
+    eventName: 'workflow_dispatch',
+    event: {},
+    inputs: {
+      kind: 'reassign-pipeline',
+      pipeline: 'codex',
+      caller_id: '11111111-1111-4111-8111-111111111111',
+    },
+    context,
+    maintainer: 'jlapenna',
+  });
+  assert.deepEqual(normalized, {
+    kind: 'pipeline-reassignment',
+    task: { repositoryId: 123, repository: 'jlapenna/agent-lcars', issue: 304 },
+    sourceKind: 'pipeline-reassignment',
+    sourceId: '11111111-1111-4111-8111-111111111111',
+    transportRunId: 9001,
+    occurredAt: context.now,
+    targetPipeline: 'codex',
+    authorization: {
+      authorized: true,
+      actor: 'jlapenna',
+      configuredMaintainer: 'jlapenna',
+      rule: 'manual-maintainer',
+    },
+  });
+
+  // Unlike manual dispatch's own `caller_id` (optional, falls back to the
+  // actions run identity), reassignment always requires one -- there is no
+  // Actions-tab equivalent for a console-only command.
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'workflow_dispatch',
+        event: {},
+        inputs: { kind: 'reassign-pipeline', pipeline: 'codex' },
+        context,
+        maintainer: 'jlapenna',
+      }),
+    /caller ID must be a UUID/u,
+  );
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'workflow_dispatch',
+        event: {},
+        inputs: {
+          kind: 'reassign-pipeline',
+          pipeline: 'codex',
+          caller_id: 'not-a-uuid',
+        },
+        context,
+        maintainer: 'jlapenna',
+      }),
+    /caller ID must be a UUID/u,
+  );
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'workflow_dispatch',
+        event: {},
+        inputs: {
+          kind: 'reassign-pipeline',
+          pipeline: 'codex',
+          caller_id: '11111111-1111-4111-8111-111111111111',
+        },
+        context: { ...context, actor: 'collaborator' },
+        maintainer: 'jlapenna',
+      }),
+    /Unauthorized pipeline reassignment/u,
+  );
+  assert.throws(
+    () =>
+      normalizeEvent({
+        eventName: 'workflow_dispatch',
+        event: {},
+        inputs: {
+          kind: 'reassign-pipeline',
+          pipeline: 'not-a-real-pipeline',
+          caller_id: '11111111-1111-4111-8111-111111111111',
+        },
+        context,
+        maintainer: 'jlapenna',
+      }),
+    /Unsupported pipeline reassignment target/u,
+  );
+});
+
 test('Actions-tab dispatch falls back to stable workflow run identity', () => {
   const normalized = normalizeEvent({
     eventName: 'workflow_dispatch',

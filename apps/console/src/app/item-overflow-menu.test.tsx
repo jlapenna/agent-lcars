@@ -362,7 +362,17 @@ describe('ItemOverflowMenu', () => {
     fireEvent.click(screen.getByText('Reassign to claude'));
 
     await waitFor(() =>
-      expect(reassignPipeline).toHaveBeenCalledWith(DEFAULT_REPO, 42, 'claude'),
+      expect(reassignPipeline).toHaveBeenCalledWith(
+        DEFAULT_REPO,
+        42,
+        'claude',
+        // The console's own stable per-click idempotency key (#811) -
+        // asserting a UUID shape here, not an exact value, matches how
+        // retrigger-button.tsx's own createRandomId() call is exercised.
+        expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+        ),
+      ),
     );
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({

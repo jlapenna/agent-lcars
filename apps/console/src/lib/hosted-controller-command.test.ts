@@ -78,6 +78,34 @@ describe('executeHostedControllerCommand', () => {
     );
   });
 
+  it('normalizes a pipeline reassignment as evidence, never an intent, and keeps it stable across retries (#811)', async () => {
+    const command = {
+      kind: 'reassign-pipeline' as const,
+      repository,
+      issueNumber: 821,
+      targetPipeline: 'claude' as const,
+      requestId,
+    };
+
+    await executeHostedControllerCommand(command);
+    await executeHostedControllerCommand(command);
+
+    expect(processHostedControllerEvent).toHaveBeenCalledTimes(2);
+    const first = processHostedControllerEvent.mock.calls[0][0];
+    const second = processHostedControllerEvent.mock.calls[1][0];
+    expect(first.normalized).toMatchObject({
+      kind: 'pipeline-reassignment',
+      sourceKind: 'pipeline-reassignment',
+      sourceId: requestId,
+      targetPipeline: 'claude',
+    });
+    expect(second.normalized).toMatchObject({
+      sourceId: first.normalized.sourceId,
+    });
+    expect(second.transportRunId).toBe(first.transportRunId);
+    expect(second.authorityOwner).toBe(`console-command:${requestId}`);
+  });
+
   it('reports controller unavailability to explicit callers', async () => {
     processHostedControllerEvent.mockRejectedValue(
       new Error('controller unavailable'),

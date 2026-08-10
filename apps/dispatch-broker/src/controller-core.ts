@@ -11,6 +11,7 @@ import type {
   OwningSystem,
 } from '@agent-lcars/dispatch-contracts';
 import {
+  AGENT_LABELS,
   classifyFailure,
   displayTitleMatchesAttempt,
   formatAttemptId,
@@ -76,12 +77,14 @@ import {
   projectNeedsHumanPark,
   recordProjectionStatus,
   removeIssueLabel,
+  replaceIssueLabels,
 } from './modules/projector';
 import type { PreflightExpectation } from './modules/scheduler';
 import type {
   AnchorControlEvent,
   CompletionEvent,
   NormalizedEvent,
+  PipelineReassignmentEvent,
 } from './normalize';
 import {
   makeIntent,
@@ -1831,6 +1834,131 @@ async function healStaleAgentLabels(
   if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
 }
 
+/** Why `applyPipelineReassignment` refused a hand-off, without a partial
+ *  mutation: the caller's own request never named an unsupported pipeline
+ *  (normalize.mjs already rejects that before this runs), so every
+ *  rejection here is about the anchor's *live* label state at apply time. */
+export type PipelineReassignmentRejection =
+  'no-pipeline' | 'already-targeted' | 'conflicting-pipeline';
+
+/** Thrown by `applyPipelineReassignment` before any GitHub write, so a
+ *  rejection can never leave the anchor's labels or the ledger half-changed.
+ *  `reason` lets every caller (the console's own `reassignPipeline`, and any
+ *  future one) translate this into a typed, user-facing rejection without
+ *  parsing `message`. */
+export class PipelineReassignmentError extends Error {
+  constructor(
+    public readonly reason: PipelineReassignmentRejection,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'PipelineReassignmentError';
+  }
+}
+
+/**
+ * The controller capability docs/lifecycle-systems.md recorded as missing
+ * (agent-lcars#811): swap exactly which `agent:*` label an anchor carries,
+ * atomically, without manufacturing a worker run. Unlike `acceptIntent`
+ * (the only path that can add a ledger generation), this never touches
+ * `ledger.generations` -- it only rewrites GitHub's label set and records
+ * `ControlEvidence`, the same "converge already-decided state, no dispatch"
+ * shape `healStaleAgentLabels` above already uses. The controller therefore
+ * retains sole ownership of whether/when the newly-labeled pipeline is ever
+ * actually dispatched -- exactly as it would for a genuine maintainer
+ * relabel through the GitHub UI, which this command stands in for.
+ *
+ * Idempotent on `normalized.sourceId` (the console's own stable request
+ * UUID): a retry that finds its own evidence already recorded short-
+ * circuits before any GitHub read, converging with no second write and no
+ * second ledger entry. The one narrow gap this leaves -- a retry arriving
+ * after the label PUT below succeeded but before `saveLedger` durably
+ * recorded the evidence -- re-reads live labels that already show the
+ * target and (having no recorded evidence to short-circuit on yet) reports
+ * `already-targeted` rather than silently reconverging. That is a rejection
+ * a maintainer can trivially recognize and dismiss, not a partial mutation
+ * or a duplicate transition, so it is accepted as a known, narrow limit
+ * rather than built out into a full launch-outbox-style two-phase record
+ * (dispatchAccepted's own `recordLaunchIntent` pattern) for a comparatively
+ * low-stakes, easily human-correctable operation.
+ *
+ * The live label read happens here, under the same authority lease
+ * `loadBrokerLedger` already acquired for this whole pass -- not earlier, in
+ * the console's own `executeHostedControllerCommand` -- so the validation
+ * below is judged against the freshest possible state and stays correct even
+ * if another controller-owned write (a concurrent webhook, a completion
+ * callback) changed labels between the console's initial read and this
+ * pass acquiring the lease.
+ */
+async function applyPipelineReassignment(
+  client: GitHubApiClient,
+  loaded: LoadedLedger,
+  normalized: PipelineReassignmentEvent,
+): Promise<void> {
+  const ledger = loaded.ledger;
+  const alreadyRecorded = ledger.sources.some(
+    (source) =>
+      source.sourceKind === normalized.sourceKind &&
+      source.sourceId === normalized.sourceId,
+  );
+  if (alreadyRecorded) return;
+
+  const task = ledger.task;
+  const issue = await client.requestOk<GitHubIssueDetail>(
+    `${repositoryPath(task)}/issues/${task.issue}`,
+  );
+  const liveLabels = (issue.labels ?? []).map((label) =>
+    typeof label === 'string' ? label : label.name,
+  );
+  const currentPipelineLabels = liveLabels.filter((label) =>
+    AGENT_LABELS.has(label),
+  );
+  const targetLabel = `agent:${normalized.targetPipeline}`;
+  if (currentPipelineLabels.length === 0) {
+    throw new PipelineReassignmentError(
+      'no-pipeline',
+      `Issue #${task.issue} does not carry a pipeline label; nothing to reassign`,
+    );
+  }
+  if (currentPipelineLabels.length > 1) {
+    throw new PipelineReassignmentError(
+      'conflicting-pipeline',
+      `Issue #${task.issue} carries more than one pipeline label (${currentPipelineLabels.join(', ')}); refusing an ambiguous reassignment`,
+    );
+  }
+  if (currentPipelineLabels[0] === targetLabel) {
+    throw new PipelineReassignmentError(
+      'already-targeted',
+      `Issue #${task.issue} is already assigned to ${normalized.targetPipeline}`,
+    );
+  }
+
+  // One set operation is the control-plane transition. It preserves every
+  // unrelated label (including `status:needs-human`'s own sibling park
+  // labels this filter doesn't touch) while ensuring GitHub never exposes an
+  // intermediate zero-agent or contradictory multi-agent selection to a real
+  // webhook consumer. Dropping `status:needs-human` here mirrors the
+  // console's pre-#811 direct write: a reassignment is itself an unstick
+  // action, so the park state it was answering no longer applies to the
+  // pipeline it just handed the issue to.
+  const nextLabels = liveLabels
+    .filter(
+      (label) => !AGENT_LABELS.has(label) && label !== 'status:needs-human',
+    )
+    .concat(targetLabel);
+  await replaceIssueLabels(client, task, nextLabels);
+
+  const evidence = recordControlEvidence(ledger, {
+    sourceKind: normalized.sourceKind,
+    sourceId: normalized.sourceId,
+    transportRunId: normalized.transportRunId,
+    occurredAt: normalized.occurredAt,
+    authorization: normalized.authorization,
+    label: targetLabel,
+  });
+  if (evidence.outcome === 'recorded') await saveLedger(client, loaded);
+}
+
 async function loadBrokerLedger(
   client: GitHubApiClient,
   task: LedgerTaskRef,
@@ -2118,6 +2246,8 @@ export async function processNormalizedEvent({
       } else if (normalized.kind === 'control-evidence') {
         recordControlEvidence(loaded.ledger, normalized.evidence);
         await saveLedger(client, loaded);
+      } else if (normalized.kind === 'pipeline-reassignment') {
+        await applyPipelineReassignment(client, loaded, normalized);
       } else if (normalized.kind === 'completion') {
         await handleCompletion(client, loaded, normalized, {
           pollUntilTerminal: pollCompletionUntilTerminal,
@@ -2411,6 +2541,7 @@ async function classifyClaudeReadinessProbe(): Promise<void> {
 export {
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  applyPipelineReassignment,
   assertWorkerRun,
   classifyClaudeReadinessProbe,
   claudeReadiness,

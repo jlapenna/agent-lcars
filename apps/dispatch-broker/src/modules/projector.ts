@@ -47,6 +47,7 @@ import {
   ensureNeedsHumanParked,
   listAll,
   removeIssueLabel,
+  replaceIssueLabels,
   repositoryPath,
 } from '../github-api';
 import { updateProjection } from './ledger-core';
@@ -177,6 +178,13 @@ export async function projectNeedsHumanPark(
 // rather than wrapped. github-api.ts's own export of it is also kept (see
 // its export list) so every existing importer keeps working unchanged.
 export { removeIssueLabel };
+
+// Pipeline reassignment (agent-lcars#811) is the same shape: a decision
+// already authorized elsewhere (the console command's own authorization
+// check in normalize.ts), converged onto GitHub as one label write. Kept a
+// thin re-export for the same reason `removeIssueLabel` is — the atomic
+// full-set PUT itself lives in github-api.ts, unwrapped.
+export { replaceIssueLabels };
 
 /**
  * Record a convergence checkpoint. `desiredRevision` is the ledger revision

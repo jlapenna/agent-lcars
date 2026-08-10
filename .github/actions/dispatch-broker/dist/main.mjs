@@ -15868,6 +15868,13 @@ async function removeIssueLabel(api2, task, label) {
   }
   return { removed: true };
 }
+async function replaceIssueLabels(api2, task, labels) {
+  const root = repositoryPath(task);
+  await api2.requestOk(`${root}/issues/${task.issue}/labels`, {
+    method: "PUT",
+    body: { labels }
+  });
+}
 async function failClosed(api2, task, maintainer, error51) {
   const originalError = error51 instanceof Error ? error51 : new Error(String(error51));
   let fallbackError;
@@ -17793,6 +17800,63 @@ async function healStaleAgentLabels(client, loaded, intent) {
   });
   if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
 }
+var PipelineReassignmentError = class extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.reason = reason;
+    this.name = "PipelineReassignmentError";
+  }
+  reason;
+};
+async function applyPipelineReassignment(client, loaded, normalized) {
+  const ledger = loaded.ledger;
+  const alreadyRecorded = ledger.sources.some(
+    (source) => source.sourceKind === normalized.sourceKind && source.sourceId === normalized.sourceId
+  );
+  if (alreadyRecorded) return;
+  const task = ledger.task;
+  const issue2 = await client.requestOk(
+    `${repositoryPath(task)}/issues/${task.issue}`
+  );
+  const liveLabels = (issue2.labels ?? []).map(
+    (label) => typeof label === "string" ? label : label.name
+  );
+  const currentPipelineLabels = liveLabels.filter(
+    (label) => AGENT_LABELS.has(label)
+  );
+  const targetLabel = `agent:${normalized.targetPipeline}`;
+  if (currentPipelineLabels.length === 0) {
+    throw new PipelineReassignmentError(
+      "no-pipeline",
+      `Issue #${task.issue} does not carry a pipeline label; nothing to reassign`
+    );
+  }
+  if (currentPipelineLabels.length > 1) {
+    throw new PipelineReassignmentError(
+      "conflicting-pipeline",
+      `Issue #${task.issue} carries more than one pipeline label (${currentPipelineLabels.join(", ")}); refusing an ambiguous reassignment`
+    );
+  }
+  if (currentPipelineLabels[0] === targetLabel) {
+    throw new PipelineReassignmentError(
+      "already-targeted",
+      `Issue #${task.issue} is already assigned to ${normalized.targetPipeline}`
+    );
+  }
+  const nextLabels = liveLabels.filter(
+    (label) => !AGENT_LABELS.has(label) && label !== "status:needs-human"
+  ).concat(targetLabel);
+  await replaceIssueLabels(client, task, nextLabels);
+  const evidence = recordControlEvidence(ledger, {
+    sourceKind: normalized.sourceKind,
+    sourceId: normalized.sourceId,
+    transportRunId: normalized.transportRunId,
+    occurredAt: normalized.occurredAt,
+    authorization: normalized.authorization,
+    label: targetLabel
+  });
+  if (evidence.outcome === "recorded") await saveLedger2(client, loaded);
+}
 async function loadBrokerLedger(client, task, normalized, isPullRequest, leaseOwner = "", storagePortFactory = createStoragePort, authorityEpoch = "", projectionIdentities, authorityBusyWaitMs = 13e4) {
   const untrackedPullRequestControl = isPullRequest && normalized.kind === "anchor-control";
   {
@@ -17974,6 +18038,8 @@ async function processNormalizedEvent({
       } else if (normalized.kind === "control-evidence") {
         recordControlEvidence(loaded.ledger, normalized.evidence);
         await saveLedger2(client, loaded);
+      } else if (normalized.kind === "pipeline-reassignment") {
+        await applyPipelineReassignment(client, loaded, normalized);
       } else if (normalized.kind === "completion") {
         await handleCompletion(client, loaded, normalized, {
           pollUntilTerminal: pollCompletionUntilTerminal,
@@ -18229,6 +18295,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 export {
   CompletionBindingError,
   FRESH_INTENT_OUTCOMES,
+  PipelineReassignmentError,
   MISSING_RUN_GRACE_MS as RECONCILE_MISSING_RUN_GRACE_MS,
   MISSING_RUN_MAX_OBSERVATIONS as RECONCILE_MISSING_RUN_MAX_ATTEMPTS,
   MISSING_RUN_MIN_INTERVAL_MS as RECONCILE_MISSING_RUN_MIN_INTERVAL_MS,
@@ -18237,6 +18304,7 @@ export {
   STUCK_RUN_MIN_INTERVAL_MS as RECONCILE_STUCK_RUN_MIN_INTERVAL_MS,
   anchorNeedsHuman,
   applyAnchorControlTransition,
+  applyPipelineReassignment,
   assertCompletionBindingBeforeInitialization,
   assertCompletionLedgerBinding,
   assertWorkerRun,

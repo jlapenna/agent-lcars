@@ -26,12 +26,39 @@ export type HostedControllerCommand =
   | (HostedCommandBase & {
       kind: 'retrigger';
       pipeline: AgentPipeline;
+    })
+  | (HostedCommandBase & {
+      kind: 'reassign-pipeline';
+      targetPipeline: AgentPipeline;
     });
 
 export type HostedControllerCommandResult = {
   ok: true;
   requestId: string;
 };
+
+/** normalizeEvent's own `workflow_dispatch` input shape, one variant per
+ *  `HostedControllerCommand` kind -- kept as its own function so the
+ *  exhaustiveness of the switch (not a chained ternary) is what the
+ *  compiler checks when a fourth kind is added later. */
+function normalizeInputsFor(command: HostedControllerCommand) {
+  switch (command.kind) {
+    case 'reconcile':
+      return { kind: 'reconcile' as const };
+    case 'retrigger':
+      return {
+        pipeline: command.pipeline,
+        mode: 'implement',
+        caller_id: command.requestId,
+      };
+    case 'reassign-pipeline':
+      return {
+        kind: 'reassign-pipeline' as const,
+        pipeline: command.targetPipeline,
+        caller_id: command.requestId,
+      };
+  }
+}
 
 async function executeE2eControllerCommand(
   baseUrl: string,
@@ -87,14 +114,7 @@ export async function executeHostedControllerCommand(
   const normalized = normalizeEvent({
     eventName: 'workflow_dispatch',
     event: { action: '', issue: liveIssue as IssueOrPullRequest },
-    inputs:
-      command.kind === 'reconcile'
-        ? { kind: 'reconcile' }
-        : {
-            pipeline: command.pipeline,
-            mode: 'implement',
-            caller_id: command.requestId,
-          },
+    inputs: normalizeInputsFor(command),
     context: {
       repository,
       repositoryId: liveRepository.id,
