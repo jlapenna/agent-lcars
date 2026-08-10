@@ -57,7 +57,7 @@ env:
 
   # NextAuth URL
   - variable: AUTH_URL
-    value: 'https://agent-console.supersprinkles.racing'
+    value: 'https://lcars.jlapenna.net'
     availability:
       - RUNTIME
 

@@ -14937,11 +14937,11 @@ function displayTitleMatchesAttempt(displayTitle, attempt) {
 // libs/dispatch-contracts/src/oidc.ts
 var COMPLETION_OIDC_AUDIENCE = "agent-lcars-dispatch-completion";
 var HOSTED_COMPLETION_PATH = "/api/control-plane/completion";
-var HOSTED_COMPLETION_URL = `https://agent-console.supersprinkles.racing${HOSTED_COMPLETION_PATH}`;
+var HOSTED_COMPLETION_URL = `https://lcars.jlapenna.net${HOSTED_COMPLETION_PATH}`;
 var HOSTED_TASK_STATE_PATH = "/api/control-plane/task-state";
-var HOSTED_TASK_STATE_URL = `https://agent-console.supersprinkles.racing${HOSTED_TASK_STATE_PATH}`;
+var HOSTED_TASK_STATE_URL = `https://lcars.jlapenna.net${HOSTED_TASK_STATE_PATH}`;
 var HOSTED_RECOVERY_OBSERVATION_PATH = "/api/control-plane/recovery-observation";
-var HOSTED_RECOVERY_OBSERVATION_URL = `https://agent-console.supersprinkles.racing${HOSTED_RECOVERY_OBSERVATION_PATH}`;
+var HOSTED_RECOVERY_OBSERVATION_URL = `https://lcars.jlapenna.net${HOSTED_RECOVERY_OBSERVATION_PATH}`;
 
 // libs/dispatch-contracts/src/quick-task.ts
 function serializeIdentity({

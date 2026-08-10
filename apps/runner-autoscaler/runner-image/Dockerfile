@@ -52,6 +52,13 @@
 # Currently: upstream v2.336.0, mirrored 2026-07-26.
 ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
 
+# Keep the Go compiler embedded in the JIT image aligned with the module the
+# Verify job tests. toolchain-health.test.sh compares this value with
+# apps/runner-autoscaler/go.mod so an update cannot silently leave CI using a
+# stale compiler. An exact release tag keeps the toolchain reproducible while
+# still letting BuildKit cache its immutable image layers.
+ARG GO_VERSION=1.26.3
+
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool
 # (apps/telemetry-watcher's `bundle` target) from source, baked into the
 # runner image below rather than published to GCS and curl-downloaded by
@@ -107,7 +114,45 @@ RUN echo "cache-bust: ${CACHE_BUST}" && \
 # correct as agent-lcars bumps it.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     HUSKY=0 CI=true pnpm install --frozen-lockfile
+# The frozen install resolves the direct @playwright/test dependency exactly as
+# pnpm-lock.yaml specifies. Export its verified package version so the runtime
+# stage below can install the matching browser without a second, hand-maintained
+# Dockerfile version pin drifting from the lockfile (#905 review).
+RUN node -e 'const version = require("./node_modules/@playwright/test/package.json").version; if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) { throw new Error(`unexpected @playwright/test version: ${version}`); } process.stdout.write(version);' \
+    > /playwright-version
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
+
+# CI's Verify job runs Go race tests and validates Actions syntax with
+# actionlint. On an ephemeral JIT runner actions/setup-go had to fetch and
+# unpack Go for every job, then `go install` compiled actionlint from scratch.
+# Build both once per runner-image revision instead. Compile actionlint on
+# the builder platform for the final target so publishing arm64 does not pay
+# an avoidable QEMU compiler pass.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS ci-tooling-build
+ARG GO_VERSION
+ARG TARGETOS
+ARG TARGETARCH
+COPY actionlint-version /tmp/actionlint-version
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    set -eux; \
+    ACTIONLINT_VERSION="$(tr -d '\r\n' < /tmp/actionlint-version)"; \
+    test "$GO_VERSION" = "$(go env GOVERSION | sed -nE 's/^go([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')"; \
+    printf '%s\n' "$ACTIONLINT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; \
+    GOOS="$TARGETOS" GOARCH="$TARGETARCH" CGO_ENABLED=0 \
+      go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"; \
+    mkdir -p /out; \
+    if [ -f /go/bin/actionlint ]; then \
+      install -m 0755 /go/bin/actionlint /out/actionlint; \
+    else \
+      install -m 0755 "/go/bin/${TARGETOS}_${TARGETARCH}/actionlint" /out/actionlint; \
+    fi
+
+# This stage deliberately follows the target platform. It has no RUN
+# instruction, so BuildKit only pulls the matching distribution; the final
+# image gets a runnable Go runtime for its own architecture without emulating
+# a compiler.
+FROM golang:${GO_VERSION}-bookworm AS go-runtime
 
 # Phase-2 JIT runner image for the autoscaler.
 #
@@ -132,8 +177,17 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
 # somewhere.
 FROM ${RUNNER_BASE}
 
+ARG GO_VERSION
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# The whole Go distribution is copied from the exact-version Go image above,
+# rather than relying on Ubuntu's older distribution package. Keep its bin
+# first on PATH so both CI and actionlint use this compiler consistently.
+COPY --from=go-runtime /usr/local/go /usr/local/go
+COPY --from=ci-tooling-build /out/actionlint /usr/local/bin/actionlint
+COPY actionlint-version /usr/local/share/agent-lcars-tooling/actionlint-version
+ENV PATH=/usr/local/go/bin:${PATH}
 
 # Keep Corepack's selected pnpm version tied to this repo's one
 # packageManager declaration instead of introducing a Dockerfile pin that can
@@ -142,6 +196,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # warm-up near the end of the image.
 COPY --from=telemetry-watcher-build /repo/package.json \
     /usr/local/share/agent-lcars-corepack/package.json
+# This is produced from the frozen dependency installation above, not copied
+# from package.json's semver range, so the image's browser always matches the
+# resolved Playwright version the jobs run.
+COPY --from=telemetry-watcher-build /playwright-version \
+    /usr/local/share/agent-lcars-corepack/playwright-version
 WORKDIR /usr/local/share/agent-lcars-corepack
 
 # Forward-looking hook (homelab#97): lets a future registration-specific
@@ -166,17 +225,16 @@ ARG EXTRA_APT_PACKAGES=""
 # hand-copied list -- the noble names carry `t64` suffixes that do not exist on
 # other releases, so a stale literal list would fail in a confusing way.
 #
-# Keep in step with the RESOLVED version in the consuming repos, not the range
-# in package.json: both declare `@playwright/test: ^1.59.1` but pnpm-lock.yaml
-# resolves 1.62.1, and sprinkles' own E2E sandbox independently pins
-# mcr.microsoft.com/playwright:v1.62.1-noble. Baking the range floor instead
-# would leave every job re-downloading a browser this image already has.
+# The exact Playwright version is read from playwright-version, which the build
+# stage derives after pnpm's frozen install of this repo's pnpm-lock.yaml.
+# This deliberately follows the lockfile rather than package.json's semver
+# range, so a Renovate update cannot leave the image baking an older browser.
 #
 # A job on a NEWER Playwright still works: the system libraries here stay
 # valid, and only its browser binary is fetched.
-ARG PLAYWRIGHT_VERSION=1.62.1
 
 RUN set -eux; \
+    PLAYWRIGHT_VERSION="$(cat /usr/local/share/agent-lcars-corepack/playwright-version)"; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
     install -m 0755 -d /etc/apt/keyrings; \
@@ -190,7 +248,9 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip $EXTRA_APT_PACKAGES; \
+    # The Firestore emulator requires Java 21+. Baking the JRE makes trusted
+    # E2E runners ready without downloading a Temurin distribution per job. \
+    apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
     node --version; \
     # NodeSource's nodejs package bundles the `corepack` binary but never
     # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
@@ -216,10 +276,13 @@ RUN set -eux; \
     git-lfs --version; \
     gh --version; \
     python3 -m pip --version; \
+    test "$(go env GOVERSION)" = "go${GO_VERSION}"; \
+    actionlint -version; \
+    java --version; \
     # Inside this RUN, and before the cleanup below, so it reuses the apt
     # lists already fetched above instead of paying a second `apt-get update`
     # and leaving a second lists/ directory in the layer.
-    npx --yes playwright@"${PLAYWRIGHT_VERSION}" install-deps chromium; \
+    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
@@ -290,7 +353,9 @@ RUN pnpm --version
 # stack -- gstreamer, libmanette, CJK fonts -- which measured ~1.7GB of image
 # for browsers nothing here runs. A suite that later needs those should widen
 # both lines together rather than carry the cost speculatively.
-RUN npx --yes playwright@"${PLAYWRIGHT_VERSION}" install chromium
+RUN set -eux; \
+    PLAYWRIGHT_VERSION="$(cat /usr/local/share/agent-lcars-corepack/playwright-version)"; \
+    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install chromium
 
 WORKDIR /home/runner
 

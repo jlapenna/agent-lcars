@@ -39,7 +39,7 @@ resource "google_firebase_app_hosting_domain" "production" {
   project         = var.project_id
   location        = var.region
   backend         = "agent-lcars"
-  domain_id       = "agent-console.supersprinkles.racing"
+  domain_id       = "lcars.jlapenna.net"
   deletion_policy = "ABANDON"
   depends_on      = [google_firebase_project.this]
 }

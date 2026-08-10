@@ -34,10 +34,9 @@ describe('console proxy public control-plane routes', () => {
 
   it('lets every route that must be public through unauthenticated', () => {
     for (const path of EXPECTED_PUBLIC_ROUTES) {
-      const request = new NextRequest(
-        `https://agent-console.supersprinkles.racing${path}`,
-        { method: 'POST' },
-      );
+      const request = new NextRequest(`https://lcars.jlapenna.net${path}`, {
+        method: 'POST',
+      });
 
       expect(proxy(request).status).toBe(200);
     }
@@ -45,7 +44,7 @@ describe('console proxy public control-plane routes', () => {
 
   it('lets non-browser callers read the public authoritative task-state projection', () => {
     const request = new NextRequest(
-      'https://agent-console.supersprinkles.racing/api/control-plane/task-state/jlapenna/agent-lcars/779?repositoryId=1307149765',
+      'https://lcars.jlapenna.net/api/control-plane/task-state/jlapenna/agent-lcars/779?repositoryId=1307149765',
     );
 
     expect(proxy(request).status).toBe(200);

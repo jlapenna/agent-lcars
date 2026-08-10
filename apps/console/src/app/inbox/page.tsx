@@ -42,9 +42,11 @@ function toCard(item: ActionItem): BoardCard {
 async function InboxBody({
   repoFilter,
   selectedItemKey,
+  mobileScopeLabel,
 }: {
   repoFilter: WatchedRepo | undefined;
   selectedItemKey?: string;
+  mobileScopeLabel: string;
 }) {
   const [
     {
@@ -69,10 +71,12 @@ async function InboxBody({
 
   return (
     <>
-      <DataFreshness
-        fetchedAt={dataAsOf}
-        initialLabel={formatRelativeTime(dataAsOf)}
-      />
+      <div className="inbox-data-freshness">
+        <DataFreshness
+          fetchedAt={dataAsOf}
+          initialLabel={formatRelativeTime(dataAsOf)}
+        />
+      </div>
       {warnings.length > 0 && (
         <Box mb="xl">
           <DataWarnings warnings={warnings} />
@@ -84,6 +88,14 @@ async function InboxBody({
           .map(toCard)}
         selectedItemKey={selectedItemKey}
         repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
+        mobileDataFreshness={
+          <DataFreshness
+            fetchedAt={dataAsOf}
+            initialLabel={formatRelativeTime(dataAsOf)}
+            dataTestId="mobile-data-freshness"
+          />
+        }
+        mobileScopeLabel={mobileScopeLabel}
       />
     </>
   );
@@ -145,6 +157,7 @@ async function InboxPageShell({ searchParams }: PageProps) {
         <InboxBody
           repoFilter={repoFilter}
           selectedItemKey={params.item || undefined}
+          mobileScopeLabel={subtitle}
         />
       </Suspense>
     </ConsoleAppShell>

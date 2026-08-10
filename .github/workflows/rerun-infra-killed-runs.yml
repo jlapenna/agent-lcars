@@ -98,7 +98,7 @@ jobs:
       - name: Report one ci_retry recovery observation per rerun
         env:
           RERUN_RUN_IDS: ${{ needs.scan.outputs.rerun-run-ids }}
-          RECOVERY_URL: https://agent-console.supersprinkles.racing/api/control-plane/recovery-observation
+          RECOVERY_URL: https://lcars.jlapenna.net/api/control-plane/recovery-observation
           RECOVERY_AUDIENCE: agent-lcars-recovery-observation
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_ID: ${{ github.repository_id }}

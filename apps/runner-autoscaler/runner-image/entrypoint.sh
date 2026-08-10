@@ -35,5 +35,10 @@ if ! pnpm_runs; then
   exit 1
 fi
 
+if ! java_21_runs; then
+  echo "FATAL: Java 21+ failed a preflight invocation" >&2
+  exit 1
+fi
+
 # Execute the runner's standard run script with passed arguments
 exec /home/runner/run.sh "$@"

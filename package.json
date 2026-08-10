@@ -28,7 +28,7 @@
   "dependencies": {
     "@google-cloud/firestore": "8.7.1",
     "@google-cloud/storage": "^7.19.0",
-    "@google-cloud/tasks": "^6.3.0",
+    "@google-cloud/tasks": "^7.0.0",
     "@mantine/core": "^9.0.2",
     "@mantine/modals": "^9.0.2",
     "@mantine/notifications": "^9.0.2",
@@ -68,7 +68,7 @@
     ]
   },
   "devDependencies": {
-    "@eslint-react/eslint-plugin": "5.18.2",
+    "@eslint-react/eslint-plugin": "5.18.3",
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.1",
     "@naxodev/gonx": "4.1.1",

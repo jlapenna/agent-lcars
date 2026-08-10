@@ -11,9 +11,8 @@ import {
   Title,
 } from '@mantine/core';
 import {
-  IconArrowsSort,
+  IconAdjustments,
   IconChevronLeft,
-  IconFilter,
   IconSearch,
   IconX,
 } from '@tabler/icons-react';
@@ -86,11 +85,15 @@ export function QueueWorkspace({
   cards,
   selectedItemKey,
   watchedRepos,
+  mobileDataFreshness,
+  mobileScopeLabel,
   mobileUtilityMenu,
 }: {
   cards: BoardCard[];
   selectedItemKey?: string;
   watchedRepos: WatchedRepo[];
+  mobileDataFreshness?: ReactNode;
+  mobileScopeLabel?: string;
   mobileUtilityMenu: ReactNode;
 }) {
   const searchParams = useSearchParams();
@@ -305,10 +308,13 @@ export function QueueWorkspace({
           <>
             <div
               className="queue-mobile-identity"
-              aria-label={`Queue item count: ${visibleCards.length}`}
+              aria-label={`${visibleCards.length} open queue items`}
             >
+              <Text component="span" className="queue-mobile-title">
+                Inbox
+              </Text>
               <Text component="span" ff="monospace" size="xs">
-                {visibleCards.length.toString().padStart(2, '0')}
+                {visibleCards.length.toString().padStart(2, '0')} open
               </Text>
             </div>
             <Group gap={4} wrap="nowrap" className="queue-mobile-utilities">
@@ -323,6 +329,17 @@ export function QueueWorkspace({
           </>
         )}
       </div>
+
+      {mobileDataFreshness && (
+        <div className="queue-mobile-meta">
+          {mobileScopeLabel && (
+            <Text component="span" className="queue-mobile-scope">
+              {mobileScopeLabel}
+            </Text>
+          )}
+          <div className="queue-mobile-freshness">{mobileDataFreshness}</div>
+        </div>
+      )}
 
       <div className="queue-workspace__list">
         <div className="queue-workspace__list-header">
@@ -346,6 +363,7 @@ export function QueueWorkspace({
             <TextInput
               ref={searchInputRef}
               size="xs"
+              rightSectionWidth={search ? 52 : 28}
               rightSectionPointerEvents="all"
               value={search}
               onChange={(event) => applySearch(event.currentTarget.value)}
@@ -353,74 +371,74 @@ export function QueueWorkspace({
               aria-label="Search the Inbox"
               leftSection={<IconSearch aria-hidden="true" size={13} />}
               rightSection={
-                search ? (
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    size="xs"
-                    aria-label="Clear search text"
-                    onClick={() => applySearch('')}
-                  >
-                    <IconX aria-hidden="true" size={12} />
-                  </ActionIcon>
-                ) : undefined
+                <Group gap={0} wrap="nowrap" justify="flex-end">
+                  {search && (
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="xs"
+                      aria-label="Clear search text"
+                      onClick={() => applySearch('')}
+                    >
+                      <IconX aria-hidden="true" size={12} />
+                    </ActionIcon>
+                  )}
+                  <Menu position="bottom-end" withinPortal>
+                    <Menu.Target>
+                      <ActionIcon
+                        variant={
+                          filter === 'all' && sort === 'priority'
+                            ? 'subtle'
+                            : 'light'
+                        }
+                        color={
+                          filter === 'all' && sort === 'priority'
+                            ? 'gray'
+                            : 'blue'
+                        }
+                        size="xs"
+                        aria-label="Filter and sort"
+                        className="queue-refine-control"
+                      >
+                        <IconAdjustments aria-hidden="true" size={14} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Label>Filter</Menu.Label>
+                      {FILTER_OPTIONS.map((option) => (
+                        <Menu.Item
+                          key={option.value}
+                          aria-current={
+                            filter === option.value ? 'true' : undefined
+                          }
+                          onClick={() => applyQueueControls(option.value, sort)}
+                          data-active={filter === option.value ? '' : undefined}
+                        >
+                          {option.label}
+                        </Menu.Item>
+                      ))}
+                      <Menu.Divider />
+                      <Menu.Label>Sort</Menu.Label>
+                      {SORT_OPTIONS.map((option) => (
+                        <Menu.Item
+                          key={option.value}
+                          aria-current={
+                            sort === option.value ? 'true' : undefined
+                          }
+                          onClick={() =>
+                            applyQueueControls(filter, option.value)
+                          }
+                          data-active={sort === option.value ? '' : undefined}
+                        >
+                          {option.label}
+                        </Menu.Item>
+                      ))}
+                    </Menu.Dropdown>
+                  </Menu>
+                </Group>
               }
               className="queue-search-input"
             />
-            <Menu position="bottom-end" withinPortal>
-              <Menu.Target>
-                <Button
-                  variant={filter === 'all' ? 'subtle' : 'light'}
-                  color={filter === 'all' ? 'gray' : 'blue'}
-                  size="compact-sm"
-                  leftSection={<IconFilter aria-hidden="true" size={14} />}
-                >
-                  {filter === 'all'
-                    ? 'Filter'
-                    : FILTER_OPTIONS.find((option) => option.value === filter)
-                        ?.label}
-                </Button>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {FILTER_OPTIONS.map((option) => (
-                  <Menu.Item
-                    key={option.value}
-                    aria-current={filter === option.value ? 'true' : undefined}
-                    onClick={() => applyQueueControls(option.value, sort)}
-                    data-active={filter === option.value ? '' : undefined}
-                  >
-                    {option.label}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
-            <Menu position="bottom-end" withinPortal>
-              <Menu.Target>
-                <Button
-                  variant={sort === 'priority' ? 'subtle' : 'light'}
-                  color={sort === 'priority' ? 'gray' : 'blue'}
-                  size="compact-sm"
-                  leftSection={<IconArrowsSort aria-hidden="true" size={14} />}
-                >
-                  {sort === 'priority'
-                    ? 'Sort'
-                    : SORT_OPTIONS.find((option) => option.value === sort)
-                        ?.label}
-                </Button>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {SORT_OPTIONS.map((option) => (
-                  <Menu.Item
-                    key={option.value}
-                    aria-current={sort === option.value ? 'true' : undefined}
-                    onClick={() => applyQueueControls(filter, option.value)}
-                    data-active={sort === option.value ? '' : undefined}
-                  >
-                    {option.label}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
           </Group>
         </div>
 

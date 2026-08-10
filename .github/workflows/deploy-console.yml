@@ -142,7 +142,7 @@ jobs:
 
           VERSION=${BUILD##*/}
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          APP_URL="https://agent-console.supersprinkles.racing"
+          APP_URL="https://lcars.jlapenna.net"
           BODY=$(printf \
             ":rocket: Deployed to production as App Hosting version \`%s\`.\n\n- App: %s\n- Deploy run: %s" \
             "$VERSION" "$APP_URL" "$RUN_URL")

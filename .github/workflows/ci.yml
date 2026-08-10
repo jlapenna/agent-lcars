@@ -50,18 +50,42 @@ jobs:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
 
-      # Moved ahead of "Validate GitHub Actions workflows": that step's
-      # `go install` needs a `go` binary on PATH, which GitHub-hosted
-      # ubuntu-latest ships preinstalled but this repo's self-hosted runner
-      # image does not (it's built for the Node/pnpm toolchain, not Go) --
-      # setup-go must run first here, not merely somewhere in the job.
-      #
+      # The trusted JIT image bakes Go and actionlint from these exact source
+      # versions. Fork PRs stay on GitHub-hosted runners, and a temporarily
+      # stale image must remain recoverable, so prove the baked tools before
+      # skipping the hosted-runner setup/install fallbacks.
+      - name: Detect baked CI tooling
+        id: ci-tooling
+        shell: bash
+        run: |
+          expected_go_version="$(sed -nE 's/^go ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' apps/runner-autoscaler/go.mod)"
+          expected_actionlint_version="$(tr -d '\r\n' < apps/runner-autoscaler/runner-image/actionlint-version)"
+          go_ready=false
+          actionlint_ready=false
+
+          if command -v go >/dev/null 2>&1 && \
+            [[ "$(go env GOVERSION)" == "go${expected_go_version}" ]]; then
+            go_ready=true
+          fi
+
+          baked_actionlint_version=/usr/local/share/agent-lcars-tooling/actionlint-version
+          if [[ -r "$baked_actionlint_version" && \
+            "$(tr -d '\r\n' < "$baked_actionlint_version")" == "$expected_actionlint_version" ]] && \
+            command -v actionlint >/dev/null 2>&1 && \
+            actionlint -version >/dev/null 2>&1; then
+            actionlint_ready=true
+          fi
+
+          echo "go_ready=$go_ready" >> "$GITHUB_OUTPUT"
+          echo "actionlint_ready=$actionlint_ready" >> "$GITHUB_OUTPUT"
+
       # This repo's only Go module lives at apps/runner-autoscaler/go.mod,
       # not the repo root. setup-go's default dependency-cache lookup only
       # checks the root, so without cache-dependency-path every run logs a
       # "Restore cache failed: Dependencies file is not found" warning and
       # never actually caches the module/build cache (agent-lcars#318).
       - uses: actions/setup-go@v7
+        if: steps.ci-tooling.outputs.go_ready != 'true'
         with:
           go-version-file: apps/runner-autoscaler/go.mod
           cache-dependency-path: apps/runner-autoscaler/go.mod
@@ -69,11 +93,17 @@ jobs:
 
       - name: Validate GitHub Actions workflows
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          if [[ "${{ steps.ci-tooling.outputs.actionlint_ready }}" == 'true' ]]; then
+            actionlint_command=actionlint
+          else
+            actionlint_version="$(tr -d '\r\n' < apps/runner-autoscaler/runner-image/actionlint-version)"
+            go install "github.com/rhysd/actionlint/cmd/actionlint@v${actionlint_version}"
+            actionlint_command="$(go env GOPATH)/bin/actionlint"
+          fi
           find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) \
             ! -name codex.yml -print0 \
-            | xargs -0 "$(go env GOPATH)/bin/actionlint"
-          "$(go env GOPATH)/bin/actionlint" \
+            | xargs -0 "$actionlint_command"
+          "$actionlint_command" \
             -ignore 'unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"' \
             .github/workflows/codex.yml
 
@@ -120,7 +150,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: 0.11.17
+          version: 0.12.3
           python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: apps/github-actions-exporter/requirements.lock
@@ -221,17 +251,54 @@ jobs:
 
       - uses: ./.github/actions/setup-node-pnpm
 
-      # firebase-tools' Firestore emulator requires Java 21+; ubuntu-latest's
-      # default `java` on PATH is only 17 (confirmed the hard way: this job
-      # failed with "firebase-tools no longer supports Java version before
-      # 21" before this step was added). Matches members' own setup-ci
-      # action's java-version pin.
+      # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
+      # emulator. Fork PRs use GitHub-hosted runners, where Java 17 remains
+      # the default, so retain setup-java only as that fallback.
+      - name: Detect Java 21 runtime
+        id: java-runtime
+        shell: bash
+        run: |
+          java_major=''
+          if command -v java >/dev/null 2>&1; then
+            java_major="$(
+              java -version 2>&1 |
+                sed -nE 's/.*version "([0-9]+).*/\1/p' |
+                head -n 1
+            )" || java_major=''
+          fi
+          if [[ "$java_major" =~ ^[0-9]+$ ]] && (( java_major >= 21 )); then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-java@v5
+        if: steps.java-runtime.outputs.ready != 'true'
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Install Playwright browsers
+      # The version marker only exists in an image that baked Chromium's
+      # system dependencies. This preserves the --with-deps fallback while
+      # pre-rollout self-hosted runners are still using the prior image.
+      - name: Detect baked Playwright dependencies
+        id: playwright-deps
+        shell: bash
+        run: |
+          baked_version_file=/usr/local/share/agent-lcars-corepack/playwright-version
+          if [[ -r "$baked_version_file" ]] && \
+            [[ "$(cat "$baked_version_file")" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Playwright browser from baked dependencies
+        if: steps.playwright-deps.outputs.ready == 'true'
+        run: pnpm exec playwright install chromium
+
+      - name: Install Playwright browser and dependencies
+        if: steps.playwright-deps.outputs.ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
       # No @visual specs exist yet, so this runs directly on the runner

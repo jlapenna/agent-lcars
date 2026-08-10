@@ -307,7 +307,7 @@ jobs:
           OUTCOME_KIND: ${{ steps.evidence.outputs.outcome-kind }}
           OUTCOME_REFERENCE: ${{ steps.evidence.outputs.outcome-reference }}
           READINESS_FAILURE: ${{ steps.evidence.outputs.readiness-failure }}
-          COMPLETION_URL: https://agent-console.supersprinkles.racing/api/control-plane/completion
+          COMPLETION_URL: https://lcars.jlapenna.net/api/control-plane/completion
           OIDC_AUDIENCE: agent-lcars-dispatch-completion
         run: |
           set -euo pipefail
@@ -489,7 +489,7 @@ jobs:
       - name: Run one isolated Claude harness turn
         id: probe
         continue-on-error: true
-        uses: anthropics/claude-code-action/base-action@c038e4dcdedfbbca18dfb17df35a17e40ded4ddc # v1.0.186
+        uses: anthropics/claude-code-action/base-action@6b082c41935b4c8a3b8b0ef85ba4ba4d9eeb8975 # v1.0.189
         env:
           CLAUDE_WORKING_DIR: ${{ runner.temp }}/claude-readiness-probe
         with:

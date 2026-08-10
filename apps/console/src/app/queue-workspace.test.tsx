@@ -113,7 +113,7 @@ describe('queueSelectionHref', () => {
 });
 
 describe('QueueWorkspace', () => {
-  it('leaves the page title to the shared ConsoleHeader', () => {
+  it('makes the mobile command deck the single visible Inbox identity', () => {
     renderWorkspace([makeCard()]);
 
     expect(
@@ -122,17 +122,13 @@ describe('QueueWorkspace', () => {
     expect(
       screen.getByText(/1 item · needs your decision or response/),
     ).toBeTruthy();
-    expect(screen.queryByText('Inbox', { exact: true })).toBeNull();
-    expect(screen.getByLabelText('Queue item count: 1')).toBeTruthy();
+    expect(screen.getByText('Inbox', { exact: true })).toBeTruthy();
+    expect(screen.getByLabelText('1 open queue items')).toBeTruthy();
   });
 
-  // #890: the sticky mobile nav strip's active pill already reads "Inbox"
-  // in the same viewport as this component's own mobile detail back button.
-  // The list-view case above already guarded the exact text "Inbox" never
-  // duplicating the shared ConsoleHeader's title; the detail-view branch
-  // (only rendered once an item is selected) was the untested state where
-  // the "Inbox"-labeled back button actually shipped, stacking a second
-  // "Inbox" directly under the nav pill on a real phone.
+  // The list command deck already owns the visible Inbox identity. Its detail
+  // branch keeps the same back affordance terse rather than repeating that
+  // label directly beneath the selected item breadcrumb.
   it('never repeats "Inbox" in the mobile detail-view back affordance either', () => {
     renderWorkspace([makeCard()], 'agent/lcars#249');
 
@@ -202,11 +198,11 @@ describe('QueueWorkspace', () => {
       }),
     ]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Filter and sort' }));
     const menu = await screen.findByRole('menu');
     expect(
       within(menu).getAllByRole('menuitem', { hidden: true }),
-    ).toHaveLength(7);
+    ).toHaveLength(10);
     expect(
       within(menu).getByRole('menuitem', {
         name: 'All reasons',
@@ -230,7 +226,7 @@ describe('QueueWorkspace', () => {
     expect(screen.getByText('Review the next item')).toBeTruthy();
   });
 
-  it('initializes filter and sort from the URL and marks the active controls', () => {
+  it('initializes filter and sort from the URL and marks the active controls', async () => {
     mockSearch = 'reason=review-requested&sort=newest';
     renderWorkspace([
       makeCard(),
@@ -243,17 +239,27 @@ describe('QueueWorkspace', () => {
 
     expect(screen.queryByText('Responsive Inbox')).toBeNull();
     expect(screen.getByText('Review the next item')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Filter and sort' }));
+    const menu = await screen.findByRole('menu');
     expect(
-      screen.getByRole('button', { name: 'Review requested' }),
-    ).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Newest update' })).toBeTruthy();
+      within(menu).getByRole('menuitem', {
+        name: 'Review requested',
+        hidden: true,
+      }),
+    ).toHaveAttribute('aria-current', 'true');
+    expect(
+      within(menu).getByRole('menuitem', {
+        name: 'Newest update',
+        hidden: true,
+      }),
+    ).toHaveAttribute('aria-current', 'true');
   });
 
   it('writes filter changes to the URL and offers a reset from the empty state', async () => {
     const replaceState = vi.spyOn(window.history, 'replaceState');
     renderWorkspace([makeCard()]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Filter and sort' }));
     const menu = await screen.findByRole('menu');
     fireEvent.click(
       within(menu).getByRole('menuitem', { name: 'Run failed', hidden: true }),

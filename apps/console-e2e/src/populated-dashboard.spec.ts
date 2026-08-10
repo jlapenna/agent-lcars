@@ -464,11 +464,11 @@ test.describe('responsive decision inbox', () => {
       new RegExp(`\\bitem=[^&]*${E2E_ITEM_NUMBERS.reviewRequested}`),
     );
 
-    const filter = workspace.getByRole('button', { name: 'Filter' });
+    const filter = workspace.getByRole('button', { name: 'Filter and sort' });
     await filter.focus();
     await page.keyboard.press('Enter');
     const choices = page.getByRole('menuitem');
-    await expect(choices).toHaveCount(7);
+    await expect(choices).toHaveCount(10);
     await expect(
       page.getByRole('menuitem', { name: 'All reasons' }),
     ).toHaveAttribute('aria-current', 'true');
@@ -479,17 +479,81 @@ test.describe('responsive decision inbox', () => {
     await expect(filter).toBeFocused();
   });
 
-  test('uses a list-to-detail flow on a phone viewport', async ({ page }) => {
+  test('uses a list-to-detail flow on a phone viewport', async ({
+    page,
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
     const header = page.locator('.console-header[data-current="inbox"]');
-    await expect(header).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
-    await expectMobileBridgeHeader(header);
+    const mobileTitle = page.locator(
+      '.console-page-mobile-title[data-current="inbox"]',
+    );
+    // Inbox owns a single contextual command deck on phones. The shared route
+    // rail remains available inside its overflow menu instead of competing
+    // visually with the queue identity.
+    await expect(header).toBeHidden();
+    await expect(mobileTitle).toHaveText('Decision Inbox');
+    await expect(
+      page.getByRole('heading', { name: 'Decision Inbox' }),
+    ).toBeVisible();
+    expect(
+      await mobileTitle.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return (
+          style.display === 'block' &&
+          style.position === 'absolute' &&
+          style.width === '1px' &&
+          style.height === '1px' &&
+          style.overflow === 'hidden'
+        );
+      }),
+    ).toBe(true);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
+    await expect(
+      workspace.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`),
+    ).toBeVisible();
+
+    const queueIdentity = workspace.locator('.queue-mobile-identity');
+    await expect(queueIdentity).toHaveText(/Inbox/);
+    await expect(queueIdentity).toHaveAttribute(
+      'aria-label',
+      /\d+ open queue items/,
+    );
+
+    const freshness = page.getByTestId('mobile-data-freshness');
+    await expect(freshness).toBeVisible();
+    expect(
+      await freshness.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+
+    await expect(workspace.locator('.queue-mobile-bar')).toHaveCSS(
+      'height',
+      '52px',
+    );
+    const search = workspace.getByRole('textbox', {
+      name: 'Search the Inbox',
+    });
+    const searchBounds = await search.boundingBox();
+    expect(searchBounds?.width).toBeGreaterThan(340);
+    await expect(
+      workspace.getByRole('button', { name: 'Filter and sort' }),
+    ).toHaveCSS('min-height', '44px');
+
+    await workspace.getByRole('button', { name: 'Filter and sort' }).click();
+    await page.getByRole('menuitem', { name: 'Newest update' }).click();
+    await expect(page).toHaveURL(/sort=newest/);
+
+    const capture = testInfo.outputPath('inbox-mobile-polished.png');
+    await page.screenshot({ path: capture, fullPage: false });
+    await testInfo.attach('inbox-mobile-polished.png', {
+      path: capture,
+      contentType: 'image/png',
+    });
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
@@ -504,14 +568,8 @@ test.describe('responsive decision inbox', () => {
 
     await expect(workspace.locator('.queue-workspace__list')).toBeHidden();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
-    // Not named "Inbox" (#890): the sticky header's own active nav pill
-    // already reads "Inbox" in the same viewport, directly above this
-    // button - giving this its own accessible name (while the header pill
-    // keeps its) avoids a second identically-named "Inbox" landmark
-    // stacked right underneath it.
-    await expect(
-      header.getByRole('link', { name: 'Inbox', exact: true }),
-    ).toBeVisible();
+    await expect(header).toBeHidden();
+    await expect(freshness).toBeVisible();
     const backLink = workspace.getByRole('link', {
       name: 'Back to Inbox list',
       exact: true,
