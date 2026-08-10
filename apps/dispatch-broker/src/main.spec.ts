@@ -2163,6 +2163,60 @@ test('a trusted completion persists the exact PR reference beside its immutable 
   });
 });
 
+test('#813: a worker-failure projection failure records a reporting/projector-phase anomaly and rethrows, without losing the already-recorded outcome', async () => {
+  const ledger = boundLedger();
+  const client = {
+    requestOk: async (path) => {
+      if (path.endsWith('/actions/runs/42')) return workerRun('completed');
+      // The ledger's own compatibility comment -- unrelated to the
+      // projection write under test, must keep succeeding so runPhase's
+      // own anomaly-recording saveLedger() can land.
+      if (path.endsWith('/issues/comments/9')) return { id: 9 };
+      // The worker-failure comment's own GitHub write is what fails here.
+      if (path.includes('/issues/304/comments')) {
+        throw new Error('GitHub is unreachable');
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    },
+  };
+  const completion = {
+    kind: 'completion',
+    task,
+    generation: 1,
+    intentId: 'intent-1',
+    token: 'dispatch_token_123456',
+    workerRunId: 42,
+    workflow: 'codex.yml',
+    sourceKind: 'completion',
+    sourceId: 'worker-run:42',
+    transportRunId: 9010,
+    outcome: 'trajectory-failure',
+  };
+
+  await assert.rejects(
+    () =>
+      handleCompletion(client, { ledger, comment: { id: 9 } }, completion, {
+        maintainer: 'jlapenna',
+      }),
+    /GitHub is unreachable/u,
+  );
+
+  // The attempt outcome recorded above the failed projection call is not
+  // rolled back by the projection failure -- #645's "reporting failure
+  // cannot alter outcome truth" contract, reused here for #813's own
+  // worker-failure write.
+  assert.equal(ledger.generations[0].attempt.outcome, 'trajectory-failure');
+
+  // The failure IS recorded, attributed to the projector's reporting phase,
+  // not swallowed into an unattributed generic failure.
+  const phaseFailures = ledger.anomalies.filter(
+    (anomaly) => anomaly.kind === 'phase-failure',
+  );
+  assert.equal(phaseFailures.length, 1);
+  assert.equal(phaseFailures[0].failure.owningSystem, 'projector');
+  assert.equal(phaseFailures[0].failure.phase, 'reporting');
+});
+
 test('a trusted credential failure opens the lane breaker before completion can promote more work, without reopening on stale redelivery (#523)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {

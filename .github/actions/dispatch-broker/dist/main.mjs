@@ -17729,16 +17729,21 @@ async function handleCompletion(client, loaded, normalized, polling = {}) {
     );
     const workerFailure = classifyWorkerFailureOutcome(normalized.outcome);
     if (workerFailure) {
-      await projectWorkerFailure(
-        client,
-        loaded.ledger.task,
-        polling.maintainer ?? "",
-        {
-          attemptId: generation.attempt?.attemptId ?? formatAttemptId(generation),
-          pipeline: generation.pipeline,
-          runUrl: run.html_url
-        },
-        workerFailure
+      await runPhase(
+        { client, loaded },
+        "reporting",
+        () => projectWorkerFailure(
+          client,
+          loaded.ledger.task,
+          polling.maintainer ?? "",
+          {
+            attemptId: generation.attempt?.attemptId ?? formatAttemptId(generation),
+            pipeline: generation.pipeline,
+            runUrl: run.html_url
+          },
+          workerFailure
+        ),
+        "projector"
       );
     }
   }

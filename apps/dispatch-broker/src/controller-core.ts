@@ -1654,19 +1654,34 @@ async function handleCompletion(
     // must still be allowed to converge, including one that arrives after
     // `recordControlEvidence` above already classified this exact source
     // as a duplicate.
+    //
+    // Wrapped in runPhase ('reporting'/'projector', #645 Phase 4's own
+    // convention for this module -- see modules/projector.ts's header):
+    // a GitHub write failure here must record a ledger anomaly (the
+    // "reporting failure records projection divergence" contract) rather
+    // than vanish into the generic, unattributed failClosed() fallback --
+    // and, per runPhase's own contract, it still rethrows the original
+    // error unchanged afterward, so the attempt's already-recorded
+    // outcome above is never rolled back by a projection failure.
     const workerFailure = classifyWorkerFailureOutcome(normalized.outcome);
     if (workerFailure) {
-      await projectWorkerFailure(
-        client,
-        loaded.ledger.task,
-        polling.maintainer ?? '',
-        {
-          attemptId:
-            generation.attempt?.attemptId ?? formatAttemptId(generation),
-          pipeline: generation.pipeline,
-          runUrl: run.html_url,
-        },
-        workerFailure,
+      await runPhase(
+        { client, loaded },
+        'reporting',
+        () =>
+          projectWorkerFailure(
+            client,
+            loaded.ledger.task,
+            polling.maintainer ?? '',
+            {
+              attemptId:
+                generation.attempt?.attemptId ?? formatAttemptId(generation),
+              pipeline: generation.pipeline,
+              runUrl: run.html_url,
+            },
+            workerFailure,
+          ),
+        'projector',
       );
     }
   }
