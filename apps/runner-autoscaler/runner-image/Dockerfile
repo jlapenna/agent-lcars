@@ -107,6 +107,12 @@ RUN echo "cache-bust: ${CACHE_BUST}" && \
 # correct as agent-lcars bumps it.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     HUSKY=0 CI=true pnpm install --frozen-lockfile
+# The frozen install resolves the direct @playwright/test dependency exactly as
+# pnpm-lock.yaml specifies. Export its verified package version so the runtime
+# stage below can install the matching browser without a second, hand-maintained
+# Dockerfile version pin drifting from the lockfile (#905 review).
+RUN node -e 'const version = require("./node_modules/@playwright/test/package.json").version; if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) { throw new Error(`unexpected @playwright/test version: ${version}`); } process.stdout.write(version);' \
+    > /playwright-version
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
 
 # Phase-2 JIT runner image for the autoscaler.
@@ -142,6 +148,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # warm-up near the end of the image.
 COPY --from=telemetry-watcher-build /repo/package.json \
     /usr/local/share/agent-lcars-corepack/package.json
+# This is produced from the frozen dependency installation above, not copied
+# from package.json's semver range, so the image's browser always matches the
+# resolved Playwright version the jobs run.
+COPY --from=telemetry-watcher-build /playwright-version \
+    /usr/local/share/agent-lcars-corepack/playwright-version
 WORKDIR /usr/local/share/agent-lcars-corepack
 
 # Forward-looking hook (homelab#97): lets a future registration-specific
@@ -166,17 +177,16 @@ ARG EXTRA_APT_PACKAGES=""
 # hand-copied list -- the noble names carry `t64` suffixes that do not exist on
 # other releases, so a stale literal list would fail in a confusing way.
 #
-# Keep in step with the RESOLVED version in the consuming repos, not the range
-# in package.json: both declare `@playwright/test: ^1.59.1` but pnpm-lock.yaml
-# resolves 1.62.1, and sprinkles' own E2E sandbox independently pins
-# mcr.microsoft.com/playwright:v1.62.1-noble. Baking the range floor instead
-# would leave every job re-downloading a browser this image already has.
+# The exact Playwright version is read from playwright-version, which the build
+# stage derives after pnpm's frozen install of this repo's pnpm-lock.yaml.
+# This deliberately follows the lockfile rather than package.json's semver
+# range, so a Renovate update cannot leave the image baking an older browser.
 #
 # A job on a NEWER Playwright still works: the system libraries here stay
 # valid, and only its browser binary is fetched.
-ARG PLAYWRIGHT_VERSION=1.62.1
 
 RUN set -eux; \
+    PLAYWRIGHT_VERSION="$(cat /usr/local/share/agent-lcars-corepack/playwright-version)"; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
     install -m 0755 -d /etc/apt/keyrings; \
@@ -190,7 +200,9 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip $EXTRA_APT_PACKAGES; \
+    # The Firestore emulator requires Java 21+. Baking the JRE makes trusted
+    # E2E runners ready without downloading a Temurin distribution per job. \
+    apt-get install -y --no-install-recommends nodejs git-lfs gh python3-pip openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
     node --version; \
     # NodeSource's nodejs package bundles the `corepack` binary but never
     # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
@@ -216,10 +228,11 @@ RUN set -eux; \
     git-lfs --version; \
     gh --version; \
     python3 -m pip --version; \
+    java --version; \
     # Inside this RUN, and before the cleanup below, so it reuses the apt
     # lists already fetched above instead of paying a second `apt-get update`
     # and leaving a second lists/ directory in the layer.
-    npx --yes playwright@"${PLAYWRIGHT_VERSION}" install-deps chromium; \
+    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
@@ -290,7 +303,9 @@ RUN pnpm --version
 # stack -- gstreamer, libmanette, CJK fonts -- which measured ~1.7GB of image
 # for browsers nothing here runs. A suite that later needs those should widen
 # both lines together rather than carry the cost speculatively.
-RUN npx --yes playwright@"${PLAYWRIGHT_VERSION}" install chromium
+RUN set -eux; \
+    PLAYWRIGHT_VERSION="$(cat /usr/local/share/agent-lcars-corepack/playwright-version)"; \
+    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install chromium
 
 WORKDIR /home/runner
 

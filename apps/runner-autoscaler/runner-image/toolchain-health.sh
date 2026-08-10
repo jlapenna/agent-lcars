@@ -14,3 +14,23 @@ pnpm_runs() {
       pnpm --version >/dev/null 2>&1
   )
 }
+
+# Firebase's Firestore emulator rejects Java runtimes older than 21. Keep the
+# check at the image boundary so a damaged or regressed JRE fails before the
+# runner registers and accepts an E2E job it cannot complete.
+java_21_runs() (
+  java_command="${AGENT_LCARS_JAVA_COMMAND:-java}"
+  command -v "$java_command" >/dev/null 2>&1 || return 1
+
+  java_output="$("$java_command" -version 2>&1)" || return 1
+  java_major="$(
+    printf '%s\n' "$java_output" |
+      sed -nE 's/.*version "([0-9]+)(\.[^"]*)?".*/\1/p' |
+      head -n 1
+  )"
+
+  case "$java_major" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$java_major" -ge 21 ]
+)

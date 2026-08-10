@@ -221,17 +221,39 @@ jobs:
 
       - uses: ./.github/actions/setup-node-pnpm
 
-      # firebase-tools' Firestore emulator requires Java 21+; ubuntu-latest's
-      # default `java` on PATH is only 17 (confirmed the hard way: this job
-      # failed with "firebase-tools no longer supports Java version before
-      # 21" before this step was added). Matches members' own setup-ci
-      # action's java-version pin.
+      # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
+      # emulator. Fork PRs use GitHub-hosted runners, where Java 17 remains
+      # the default, so retain setup-java only as that fallback.
+      - name: Detect Java 21 runtime
+        id: java-runtime
+        shell: bash
+        run: |
+          java_major="$(
+            java -version 2>&1 |
+              sed -nE 's/.*version "([0-9]+).*/\1/p' |
+              head -n 1
+          )"
+          if [[ "$java_major" =~ ^[0-9]+$ ]] && (( java_major >= 21 )); then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-java@v5
+        if: steps.java-runtime.outputs.ready != 'true'
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Install Playwright browsers
+      # The self-hosted JIT image bakes Chromium's system dependencies. Keep
+      # the hosted fallback complete for untrusted fork PRs, whose runners do
+      # not use that image.
+      - name: Install Playwright browser
+        if: runner.environment == 'self-hosted'
+        run: pnpm exec playwright install chromium
+
+      - name: Install Playwright browser and dependencies
+        if: runner.environment == 'github-hosted'
         run: pnpm exec playwright install --with-deps chromium
 
       # No @visual specs exist yet, so this runs directly on the runner
