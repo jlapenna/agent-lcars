@@ -27,7 +27,7 @@ workflows, no separate actions repo, and no Marketplace listing.
 | `prepare-agent-dispatch`       | Write the routed issue context as data for a headless agent                                     |
 | `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI                                            |
 | `verify-deliverable`           | The fleet deliverable-evidence gate (post-agent: run from snapshot, see below)                  |
-| `report-failure`               | Comment + `status:needs-human` + maintainer assignment (post-agent: run from snapshot)          |
+| `report-failure`               | Log this run's own failure (post-agent: run from snapshot) -- see below                         |
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                    |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                           |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                          |
@@ -77,6 +77,17 @@ compatible fix is a patch release, a new optional input or action is a minor
 release, and a removed or renamed input or a changed default requires a major
 release. The contract-test manifest diff in review is the "this needs a major
 bump" signal.
+
+`report-failure` (agent-lcars#813) dropped `token`/`issue`/`maintainer`: it no
+longer writes the anchor issue/PR at all (no comment, no
+`status:needs-human`, no assignee) -- it only logs this run's own failure to
+the job's own output. That write moved to the hosted finalizer's completion
+callback and the dispatch-controller projector's one idempotent writer
+(`apps/dispatch-broker/src/modules/projector.ts`'s `projectWorkerFailure`),
+which is not part of this repo's cross-repo Published surface. A consumer
+that supplied those three inputs can drop them; supplying them is now simply
+ignored rather than erroring, matching how a removed action input behaves
+here (see the contract-test manifest).
 
 `prepare-agent-dispatch` keeps its richer runtime contract backward-compatible
 for moving-`main` consumers: `token` falls back to the caller's

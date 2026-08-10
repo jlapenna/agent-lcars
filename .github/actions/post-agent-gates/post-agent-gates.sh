@@ -41,7 +41,7 @@
 #
 # Driven entirely by environment variables:
 #   Always required: GH_TOKEN, AGENT, REPO, SERVER_URL, RUN_ID, ISSUE,
-#     JOB_STATUS, MAINTAINER.
+#     JOB_STATUS.
 #   Required only when JOB_STATUS is "success" (verify-deliverable's own
 #     inputs at that point, #815): MODE, ATTEMPT_ID.
 #   Optional: WRITER_CREDENTIALS_FILE (telemetry-finalize's own credential
@@ -54,6 +54,10 @@
 #     structured runtime result for supplementary failure signals --
 #     claude.yml only, see claude-log-scan.sh; codex.yml/opencode.yml leave
 #     this unset and get none of claude's extra signals, exactly as before).
+#   #813: MAINTAINER is no longer required here -- report-failure.sh stopped
+#     writing GitHub state (and therefore stopped needing the maintainer
+#     login) once the hosted finalizer's completion callback took over
+#     status:needs-human/assignment through the projector's one writer.
 set -uo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
@@ -63,7 +67,6 @@ set -uo pipefail
 : "${RUN_ID:?RUN_ID is required}"
 : "${ISSUE:?ISSUE is required}"
 : "${JOB_STATUS:?JOB_STATUS is required}"
-: "${MAINTAINER:?MAINTAINER is required}"
 WRITER_CREDENTIALS_FILE="${WRITER_CREDENTIALS_FILE:-}"
 NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
@@ -148,9 +151,10 @@ elif [ -n "$FAILURE_LOG_SCAN_SCRIPT" ] && [ -f "$FAILURE_LOG_SCAN_SCRIPT" ]; the
 fi
 
 # --- Report failure on the issue: was if: failure() || cancelled() ---------
-GH_TOKEN="$GH_TOKEN" AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
-  RUN_ID="$RUN_ID" ISSUE_NUM="$ISSUE" REASON="$reason" JOB_STATUS="$JOB_STATUS" \
-  MAINTAINER="$MAINTAINER" \
+# #813: no GH_TOKEN/ISSUE_NUM/MAINTAINER anymore -- report-failure.sh only
+# logs now, it no longer writes GitHub state.
+AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
+  RUN_ID="$RUN_ID" REASON="$reason" JOB_STATUS="$JOB_STATUS" \
   bash "$trusted_dir/report-failure/report-failure.sh"
 report_status=$?
 

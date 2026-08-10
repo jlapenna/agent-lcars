@@ -170,6 +170,84 @@ export async function projectNeedsHumanPark(
   return { parked: true };
 }
 
+/** The stable identity `projectWorkerFailure` converges on. Deliberately
+ *  narrower than a full `LedgerGeneration` -- the projector only needs the
+ *  attempt's own public identity (the projection key), which pipeline it
+ *  was, and the exact run URL to link. */
+export interface WorkerFailureAttempt {
+  /** `g<generation>:<intentId>` (`formatAttemptId` /
+   *  `@agent-lcars/dispatch-contracts`) -- stable across every delivery of
+   *  evidence for the same attempt, which is what makes it the correct
+   *  `projectComment` key: the hosted finalizer's own completion callback,
+   *  retried or reinvoked for the same worker run, always names the same
+   *  attemptId, so every delivery converges on the same comment. */
+  attemptId: string;
+  pipeline: string;
+  runUrl: string;
+}
+
+export interface ProjectWorkerFailureResult {
+  /** `undefined` means the classification did not need a maintainer
+   *  (`needsMaintainer(failure)` was false) and this call posted nothing at
+   *  all -- see the function doc for why a retryable failure is a full
+   *  no-op here, not just a skipped park. */
+  comment?: ProjectCommentResult;
+  park: ProjectNeedsHumanResult;
+}
+
+/**
+ * The projector's ONE writer for a worker attempt's own reported failure
+ * (agent-lcars#813). Given an already-classified failure
+ * (`modules/worker-failure.ts`'s `classifyWorkerFailureOutcome`) and the
+ * attempt identity it belongs to, converge exactly one failure comment
+ * (idempotent upsert keyed on `attemptId`, via `projectComment`) and exactly
+ * one needs-human parking transition (via `projectNeedsHumanPark`).
+ *
+ * This is what makes "at most one failure comment and one parking
+ * transition" true ACROSS every path that can observe the same attempt's
+ * failure and call this function with the same `attemptId` -- the hosted
+ * finalizer's own completion callback, a retried delivery of that callback,
+ * or a later re-observation of the identical attempt all resolve to the same
+ * marker and the same (independently idempotent) label/assignee write,
+ * rather than each delivery producing its own comment or its own park.
+ *
+ * A retryable classification (`needsMaintainer(failure)` false --
+ * `classifyWorkerFailureOutcome` never produces one today, but a future
+ * caller might) is a full no-op, not just a skipped park: this function
+ * checks `needsMaintainer` itself, BEFORE calling `projectComment` at all,
+ * rather than posting a "this failed" comment for something that is about
+ * to retry on its own. That would misrepresent an in-progress recovery as a
+ * human-owned failure and duplicate whatever system already owns that
+ * retry's own visible state (e.g. the lane-readiness incident).
+ */
+export async function projectWorkerFailure(
+  api: GitHubApiClient,
+  task: LedgerTaskRef,
+  maintainer: string,
+  attempt: WorkerFailureAttempt,
+  failure: FailureClassification,
+): Promise<ProjectWorkerFailureResult> {
+  if (!needsMaintainer(failure)) return { park: { parked: false } };
+  const display =
+    attempt.pipeline.length > 0
+      ? attempt.pipeline[0].toUpperCase() + attempt.pipeline.slice(1)
+      : attempt.pipeline;
+  const comment = await projectComment(
+    api,
+    task,
+    'worker-failure',
+    attempt.attemptId,
+    (marker) =>
+      `${marker}
+
+${display} agent run failed: ${attempt.runUrl}
+
+${failure.evidence ?? `[${failure.owningSystem}/${failure.phase}] ${failure.reason}`}`,
+  );
+  const park = await projectNeedsHumanPark(api, task, maintainer, failure);
+  return { comment, park };
+}
+
 // Re-exported under the projector's own surface: #645 Phase 4 names stale
 // `agent:*` label cleanup as one of the GitHub-facing writes that belongs
 // here. `removeIssueLabel` itself (github-api.ts) is unchanged — its 404-
