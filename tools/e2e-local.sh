@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Runs an e2e project's Playwright suite directly on the host, with the same
-# environment CI uses. The final Nx process runs through
-# tools/e2e/run-hermetic.sh, which starts from an empty environment and an
-# isolated temporary HOME so ambient credentials cannot reach test tooling.
+# environment CI uses. The final Nx process starts from an empty environment
+# and an isolated temporary HOME so ambient credentials cannot reach test
+# tooling.
 #
 # Why this exists: `nx run <project>:e2e` on a fresh checkout fails twice
 # over, and neither failure names its real cause.
@@ -49,7 +49,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PROJECT="${E2E_PROJECT:-@agent-lcars/console-e2e}"
-HERMETIC_RUNNER="$ROOT/tools/e2e/run-hermetic.sh"
 # Fixed and repo-specific (not per-worktree): every worktree of this repo
 # binds the same host ports, so the lock must serialize across all of them,
 # not just within one. Overridable only so this script's own tests can assert
@@ -64,11 +63,6 @@ if [ "$#" -gt 0 ]; then
   echo "  for. Scope the same hermetic entrypoint with E2E_GREP instead:" >&2
   echo "    E2E_GREP='@smoke' ./tools/e2e-local.sh" >&2
   exit 2
-fi
-
-if [ ! -x "$HERMETIC_RUNNER" ]; then
-  echo "tools/e2e-local.sh: missing executable $HERMETIC_RUNNER" >&2
-  exit 1
 fi
 
 # Take a non-blocking host-level lock before touching any port or starting
@@ -90,11 +84,8 @@ fi
 # Open in append mode so a losing attempt never truncates the winner's
 # recorded pid out from under it -- only the confirmed holder (below)
 # rewrites the file. `exec 9>>` opens the descriptor on the current shell
-# (rather than a subshell), and the later `exec "$HERMETIC_RUNNER"` replaces
-# this process without closing it, so the lock stays held for the entire
-# run -- build, emulators, and Playwright -- and is only released when the
-# whole descendant process tree exits and the kernel drops the last
-# reference to it.
+# (rather than a subshell), so it stays held for the entire run -- build,
+# emulators, and Playwright -- and is only released when this process exits.
 exec 9>>"$LOCK_FILE"
 if ! flock -n 9; then
   holder_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
@@ -111,6 +102,197 @@ echo "$$" >"$LOCK_FILE"
 # suite rather than replaying an earlier green result. Do not add
 # `--skip-nx-cache`: that broader switch would also prevent its deterministic
 # dependency builds from restoring artifacts from L2.
-exec "$HERMETIC_RUNNER" \
-  pnpm exec nx run \
-    "${PROJECT}:e2e-implementation:emulator"
+
+# Hermetic environment boundary. This deliberately sits after the host-level
+# lock above: the lock must be held while this script creates its isolated
+# HOME, builds the application, runs the emulators, and executes Playwright.
+CI_ENV="$ROOT/tools/e2e/ci.env"
+VALIDATOR="$ROOT/tools/e2e/validate-env.mjs"
+CALLER_HOME="${HOME:-}"
+PLATFORM="$(uname -s)"
+
+if [ ! -f "$CI_ENV" ]; then
+  echo "e2e-hermetic: missing $CI_ENV" >&2
+  exit 1
+fi
+
+NODE_BIN="$(command -v node)"
+if [ -z "$NODE_BIN" ]; then
+  echo "e2e-hermetic: node is not available on PATH" >&2
+  exit 1
+fi
+
+TEMP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/agent-lcars-e2e-home.XXXXXX")"
+CHILD_PID=""
+cleanup() {
+  rm -rf "$TEMP_HOME"
+}
+forward_termination() {
+  local signal="$1"
+
+  # `env` is run in the background below so this shell can clean up its
+  # temporary HOME after the child exits. Forward direct termination signals
+  # first; otherwise the child can outlive this process with its HOME removed
+  # and a stale e2e-local pid in the host lock file.
+  if [ -n "$CHILD_PID" ]; then
+    kill "-$signal" "$CHILD_PID" 2>/dev/null || true
+    if ! wait "$CHILD_PID"; then
+      :
+    fi
+    CHILD_PID=""
+  fi
+
+  case "$signal" in
+    HUP) exit 129 ;;
+    INT) exit 130 ;;
+    TERM) exit 143 ;;
+  esac
+}
+trap cleanup EXIT
+trap 'forward_termination HUP' HUP
+trap 'forward_termination INT' INT
+trap 'forward_termination TERM' TERM
+mkdir -p "$TEMP_HOME/tmp"
+
+# Reads one KEY="value" entry from the checked-in emulator-only fixture.
+ci_env_value() {
+  local line
+  line="$(grep -m1 "^${1}=" "$CI_ENV" || true)"
+  line="${line#*=}"
+  line="${line%\"}"
+  line="${line#\"}"
+  printf '%s' "$line"
+}
+
+BUILD_ENV=()
+for key in \
+  AUTH_SECRET \
+  NEXT_PUBLIC_FIREBASE_API_KEY \
+  NEXT_PUBLIC_FIREBASE_APP_ID \
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN \
+  NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST \
+  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID \
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID \
+  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET; do
+  value="$(ci_env_value "$key")"
+  if [ -z "$value" ]; then
+    echo "e2e-hermetic: $key missing from tools/e2e/ci.env" >&2
+    exit 1
+  fi
+  BUILD_ENV+=("$key=$value")
+done
+
+SAFE_ENV=(
+  "PATH=$PATH"
+  "HOME=$TEMP_HOME"
+  "USER=e2e"
+  "LOGNAME=e2e"
+  "SHELL=${SHELL:-/bin/bash}"
+  "LANG=${LANG:-C.UTF-8}"
+  "TMPDIR=$TEMP_HOME/tmp"
+  "NX_DAEMON=false"
+  "NX_LOAD_DOT_ENV_FILES=false"
+  "E2E_HERMETIC=1"
+  "NODE_OPTIONS=--max-old-space-size=6144"
+  "E2E_ENV_FILE=$CI_ENV"
+  "E2E_ENV_LOCAL_FILE=$TEMP_HOME/.env.e2e.local"
+)
+
+case "${CI:-}" in
+  1 | true) SAFE_ENV+=("CI=1") ;;
+esac
+
+# Corepack and Firebase normally store downloaded tooling below HOME. Point
+# only those caches at their conventional durable locations so an isolated HOME
+# does not force network downloads on every run (or break offline runs). Do not
+# preserve ambient cache overrides: they could widen the filesystem paths
+# admitted through this boundary.
+if [ -n "$CALLER_HOME" ]; then
+  case "$PLATFORM" in
+    CYGWIN* | MINGW* | MSYS*)
+      corepack_cache="$CALLER_HOME/AppData/Local/node/corepack"
+      ;;
+    *) corepack_cache="$CALLER_HOME/.cache/node/corepack" ;;
+  esac
+  SAFE_ENV+=(
+    "COREPACK_HOME=$corepack_cache"
+    "FIREBASE_EMULATORS_PATH=$CALLER_HOME/.cache/firebase/emulators"
+  )
+fi
+
+# These are deliberate, non-credential inputs to Playwright. Boolean controls
+# only have meaning when set to exactly 1; E2E_GREP is the supported way to
+# scope a host run because the public Nx target cannot forward CLI arguments.
+for key in SKIP_VISUAL VISUAL_ONLY UPDATE_SNAPSHOTS; do
+  value="${!key-}"
+  if [ "$value" = "1" ]; then
+    SAFE_ENV+=("$key=1")
+  fi
+done
+if [ -n "${E2E_GREP:-}" ]; then
+  SAFE_ENV+=("E2E_GREP=$E2E_GREP")
+fi
+
+# The E2E target itself is deliberately uncached: replaying a green test run
+# would mean the suite never actually exercised the app. Its dependency graph
+# includes a separately invoked, deterministic console bundle, though, and
+# that build is safe and valuable to share through L2. Admit only the complete
+# remote-cache capability pair; no other caller credentials cross this
+# hermetic boundary.
+if [ -n "${NX_SELF_HOSTED_REMOTE_CACHE_SERVER:-}" ] && \
+  [ -n "${NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN:-}" ]; then
+  SAFE_ENV+=(
+    "NX_SELF_HOSTED_REMOTE_CACHE_SERVER=$NX_SELF_HOSTED_REMOTE_CACHE_SERVER"
+    "NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN=$NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN"
+  )
+fi
+
+# Playwright normally installs browsers below the caller's HOME. Preserve only
+# that cache location while replacing HOME itself; no other caller state crosses
+# the boundary.
+if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+  SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
+elif [ -n "$CALLER_HOME" ]; then
+  case "$PLATFORM" in
+    Darwin) browser_cache="$CALLER_HOME/Library/Caches/ms-playwright" ;;
+    CYGWIN* | MINGW* | MSYS*)
+      browser_cache="$CALLER_HOME/AppData/Local/ms-playwright"
+      ;;
+    *) browser_cache="$CALLER_HOME/.cache/ms-playwright" ;;
+  esac
+  if [ -d "$browser_cache" ]; then
+    SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$browser_cache")
+  fi
+fi
+
+if [ -n "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]; then
+  SAFE_ENV+=(
+    "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"
+  )
+fi
+
+# Validate under the same empty environment so even the guard process cannot
+# inherit provider credentials. The target validates again immediately before
+# dotenv loads its files, protecting direct target invocations too.
+env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
+  "$NODE_BIN" "$VALIDATOR" --require-hermetic \
+  --next-root "$ROOT/apps/console" "$CI_ENV"
+
+# Run the child in its own subshell so it does not inherit our lock descriptor:
+# this parent keeps the lock until it has observed child exit, including after a
+# signal. The child becomes `pnpm` directly so the forwarded signal reaches the
+# process that owns Nx and its emulator descendants.
+(
+  exec 9>&-
+  exec env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
+    pnpm exec nx run \
+      "${PROJECT}:e2e-implementation:emulator"
+) &
+CHILD_PID=$!
+if wait "$CHILD_PID"; then
+  status=0
+else
+  status=$?
+fi
+CHILD_PID=""
+exit "$status"
