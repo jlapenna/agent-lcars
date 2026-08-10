@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -152,13 +153,69 @@ func TestParseSweepOutput(t *testing.T) {
 	}
 }
 
+func TestParsePnpmStoreBytes(t *testing.T) {
+	cases := []struct {
+		name   string
+		out    string
+		want   int64
+		wantOK bool
+	}{
+		{"well formed", "SWEEP before=1 after=1 cap=2\nPNPM_STORE_BYTES=104857600\n", 104857600, true},
+		{"zero", "PNPM_STORE_BYTES=0\n", 0, true},
+		{"missing", "SWEEP before=1 after=1 cap=2\n", 0, false},
+		{"empty", "", 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := parsePnpmStoreBytes(c.out)
+			if ok != c.wantOK || got != c.want {
+				t.Errorf("parsePnpmStoreBytes(%q) = (%d, %v), want (%d, %v)", c.out, got, ok, c.want, c.wantOK)
+			}
+		})
+	}
+}
+
+func TestParsePnpmMaintenanceResult(t *testing.T) {
+	cases := []struct {
+		name   string
+		re     *regexp.Regexp
+		out    string
+		want   string
+		wantOK bool
+	}{
+		{"prune success", pnpmPruneResultRe, "PNPM_PRUNE=success\n", "success", true},
+		{"prune failure", pnpmPruneResultRe, "PNPM_PRUNE=failure\n", "failure", true},
+		{"prune skipped", pnpmPruneResultRe, "PNPM_PRUNE=skipped\n", "skipped", true},
+		{"evict success", pnpmEvictResultRe, "PNPM_EVICT=success\n", "success", true},
+		{"missing", pnpmPruneResultRe, "SWEEP before=1 after=1 cap=2\n", "", false},
+		{"wrong line", pnpmPruneResultRe, "PNPM_EVICT=success\n", "", false},
+		{"empty", pnpmPruneResultRe, "", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := parsePnpmMaintenanceResult(c.re, c.out)
+			if ok != c.wantOK || got != c.want {
+				t.Errorf("parsePnpmMaintenanceResult(%q) = (%q, %v), want (%q, %v)", c.out, got, ok, c.want, c.wantOK)
+			}
+		})
+	}
+}
+
 func TestWorkDirSweepScriptBoundsPnpmStore(t *testing.T) {
 	script := workDirSweepScript(30 * 1024 * 1024 * 1024)
 	for _, want := range []string{
 		`pnpm_store=/home/runner/_work/.pnpm-store`,
-		`pnpm --store-dir "$pnpm_store" store prune || true`,
-		`rm -rf "$pnpm_store"`,
+		`if pnpm --store-dir "$pnpm_store" store prune; then`,
+		`if rm -rf "$pnpm_store"; then`,
 		`_tool|_actions|_PipelineMapping|.pnpm-store|cache|_temp`,
+		// agent-lcars#853: always measured, and the prune/evict outcome
+		// always reported, even when neither ran this sweep (workdir under
+		// cap) -- see the PNPM_STORE_BYTES/PNPM_PRUNE/PNPM_EVICT asserts
+		// below and TestParsePnpmStoreBytes/TestParsePnpmMaintenanceResult.
+		`pnpm_store_bytes=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); pnpm_store_bytes=${pnpm_store_bytes:-0}`,
+		`echo "PNPM_STORE_BYTES=$pnpm_store_bytes"`,
+		`echo "PNPM_PRUNE=$pnpm_prune"`,
+		`echo "PNPM_EVICT=$pnpm_evict"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("workDirSweepScript() missing %q", want)
@@ -294,6 +351,175 @@ func TestSweepWorkDirsWithTimeoutBoundsContendedLock(t *testing.T) {
 	scaler.sweepWorkDirsWithTimeout(context.Background(), 25*time.Millisecond)
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("timed sweep took %s, want context deadline to bound lock acquisition", elapsed)
+	}
+}
+
+// TestSweepHostWorkDirRecordsContainerCreateFailure pins agent-lcars#853:
+// before this change, a helper-container failure during the idle-host sweep
+// (e.g. the runner image vanished, the daemon rejected the create) was only
+// ever a slog.Warn one level up in sweepHostIfIdle -- invisible in
+// Prometheus. Exercises the real ContainerCreate round trip against the fake
+// daemon (a genuine failure, not a stub), then asserts the bounded-reason
+// failure counter actually moved.
+func TestSweepHostWorkDirRecordsContainerCreateFailure(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	fake.setCreateFailures(http.StatusInternalServerError)
+	scaler := &Scaler{
+		runnerImage: "registry.example/runner:test",
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	client := fake.client(t)
+
+	failures := workdirSweepFailuresTotal.WithLabelValues("pike", sweepFailureReasonContainerCreate)
+	before := testutil.ToFloat64(failures)
+
+	if err := scaler.sweepHostWorkDir(context.Background(), client, "pike"); err == nil {
+		t.Fatal("expected sweepHostWorkDir to fail when ContainerCreate fails")
+	}
+
+	if got := testutil.ToFloat64(failures) - before; got != 1 {
+		t.Errorf("workdir_sweep_failures_total{host=%q,reason=%q} rose by %v, want 1", "pike", sweepFailureReasonContainerCreate, got)
+	}
+}
+
+// TestRecordPnpmStoreSweepResult covers the real metric-emission and
+// fleet-cache-population path recordPnpmStoreSweepResult runs on every
+// successful idle-host sweep (agent-lcars#853), using realistic script
+// output (workDirSweepScript's actual echo lines) as the input a real
+// ContainerLogs read would have produced. The fleet-cache write is what
+// pickHostLocked's #852 budget gate later reads, so this also proves the
+// two issues' mechanisms are wired to the same value.
+func TestRecordPnpmStoreSweepResult(t *testing.T) {
+	scaler := &Scaler{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	out := "SWEEP before=100 after=50 cap=80\n" +
+		"PNPM_STORE_BYTES=31457280\n" +
+		"PNPM_PRUNE=success\n" +
+		"PNPM_EVICT=failure\n"
+
+	pruneSuccess := pnpmStorePruneTotal.WithLabelValues("pike", pnpmMaintenanceResultSuccess)
+	evictFailure := pnpmStoreEvictionTotal.WithLabelValues("pike", pnpmMaintenanceResultFailure)
+	beforePrune := testutil.ToFloat64(pruneSuccess)
+	beforeEvict := testutil.ToFloat64(evictFailure)
+
+	scaler.recordPnpmStoreSweepResult("pike", out)
+
+	if got := testutil.ToFloat64(pnpmStoreBytesGauge.WithLabelValues("pike")); got != 31457280 {
+		t.Errorf("pnpm_store_bytes{host=%q} = %v, want 31457280", "pike", got)
+	}
+	if got := testutil.ToFloat64(pruneSuccess) - beforePrune; got != 1 {
+		t.Errorf("pnpm_store_prune_total{host=%q,result=success} rose by %v, want 1", "pike", got)
+	}
+	if got := testutil.ToFloat64(evictFailure) - beforeEvict; got != 1 {
+		t.Errorf("pnpm_store_eviction_total{host=%q,result=failure} rose by %v, want 1", "pike", got)
+	}
+
+	fleet := scaler.coordinator()
+	fleet.pnpmStoreMu.Lock()
+	cached, ok := fleet.pnpmStoreBytes["pike"]
+	fleet.pnpmStoreMu.Unlock()
+	if !ok || cached != 31457280 {
+		t.Errorf("fleet.pnpmStoreBytes[%q] = (%d, %v), want (31457280, true)", "pike", cached, ok)
+	}
+}
+
+// TestPickHostRefusesHostOverPnpmStoreBudget and its siblings below pin
+// agent-lcars#852's placement-time guard: pickHostLocked must exclude a
+// shared-workdir host whose LAST KNOWN pnpm-store size (as populated by
+// recordPnpmStoreSweepResult above -- the real cache pickHostLocked reads)
+// is at or over its configured budget, without touching any active job.
+func TestPickHostRefusesHostOverPnpmStoreBudget(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName:         "e2e",
+		shareWorkDir:         true,
+		dockerHosts:          []DockerHost{{Name: "a", Client: fake.client(t)}},
+		pnpmStoreBudgetBytes: 100,
+		logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.pnpmStoreMu.Lock()
+	fleet.pnpmStoreBytes["a"] = 150 // over the 100-byte budget
+	fleet.pnpmStoreMu.Unlock()
+
+	blocked := placementBlocked.WithLabelValues("e2e", placementReasonPnpmStoreBudget)
+	before := testutil.ToFloat64(blocked)
+
+	if _, err := scaler.pickHost(context.Background()); !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost error = %v, want one wrapping errFleetAtCapacity", err)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 1 {
+		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonPnpmStoreBudget, got)
+	}
+}
+
+// TestPickHostAllowsHostUnderPnpmStoreBudget is the allow half of the same
+// boundary: a host whose cached store size sits below budget remains a
+// normal placement candidate.
+func TestPickHostAllowsHostUnderPnpmStoreBudget(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		shareWorkDir:         true,
+		dockerHosts:          []DockerHost{{Name: "a", Client: fake.client(t)}},
+		pnpmStoreBudgetBytes: 100,
+		logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.pnpmStoreMu.Lock()
+	fleet.pnpmStoreBytes["a"] = 99 // just under the 100-byte budget
+	fleet.pnpmStoreMu.Unlock()
+
+	picked, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost returned error: %v", err)
+	}
+	if picked != "a" {
+		t.Errorf("expected pickHost to allow the under-budget host, got %s", picked)
+	}
+}
+
+// TestPickHostFailsOpenWithNoPnpmStoreMeasurementYet covers a host that has
+// never been swept (e.g. brand new, or booted since the last restart): with
+// no cached measurement at all, the budget gate must not exclude it --
+// otherwise a host could never receive its first placement, since only a
+// placed-then-idle host is ever swept in the first place.
+func TestPickHostFailsOpenWithNoPnpmStoreMeasurementYet(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		shareWorkDir:         true,
+		dockerHosts:          []DockerHost{{Name: "a", Client: fake.client(t)}},
+		pnpmStoreBudgetBytes: 100,
+		logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	picked, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost returned error: %v", err)
+	}
+	if picked != "a" {
+		t.Errorf("expected pickHost to fail open for a never-swept host, got %s", picked)
+	}
+}
+
+// TestPickHostHonorsPerHostPnpmStoreBudgetOverride covers the per-host
+// pnpm_store_budget override (FleetCoordinator.pnpmStoreBudgets), not just
+// the scale-set-level default.
+func TestPickHostHonorsPerHostPnpmStoreBudgetOverride(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName:         "e2e",
+		shareWorkDir:         true,
+		dockerHosts:          []DockerHost{{Name: "a", Client: fake.client(t)}},
+		pnpmStoreBudgetBytes: 1000, // scale-set-level default: 150 would pass this
+		pnpmStoreBudgets:     map[string]int64{"a": 100},
+		logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.pnpmStoreMu.Lock()
+	fleet.pnpmStoreBytes["a"] = 150 // over the per-host 100-byte override
+	fleet.pnpmStoreMu.Unlock()
+
+	if _, err := scaler.pickHost(context.Background()); !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost error = %v, want one wrapping errFleetAtCapacity (per-host override must win over the higher default)", err)
 	}
 }
 

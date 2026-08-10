@@ -81,7 +81,19 @@ type Scaler struct {
 	// (split from MountDockerSocket in agent-lcars#101/#136).
 	workDirSizeCapBytes int64
 	workDirSizeCaps     map[string]int64
-	hostRunnerLimits    map[string]int
+	// pnpmStoreBudgetBytes/pnpmStoreBudgets (agent-lcars#852): the budget
+	// pickHostLocked enforces against the shared pnpm content-addressable
+	// store's LAST KNOWN size (cached by sweepHostWorkDir, refreshed on
+	// every idle-host sweep and immediately after each job completes on
+	// that host). A host at or above budget is excluded from new
+	// shared-workdir placements -- see pnpmStoreOverBudget -- so a fat
+	// store never grows further from a NEW job while the existing idle
+	// sweep prunes/evicts it back down. Mirrors workDirSizeCapBytes/
+	// workDirSizeCaps exactly, one level down: the store is one tenant of
+	// the shared workdir, not an independent cap.
+	pnpmStoreBudgetBytes int64
+	pnpmStoreBudgets     map[string]int64
+	hostRunnerLimits     map[string]int
 	// hostImageLocks prevent multiple scale-set listeners from concurrently
 	// pulling the same image after a host-side prune removes it.
 	hostImageLocks sync.Map // map[host+image]*sync.Mutex
@@ -219,6 +231,7 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 	}
 	a.localFleetOnce.Do(func() {
 		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, a.workDirSizeCaps, map[string]string{}, map[string]int{a.scaleSetName: 1}, []string{a.scaleSetName})
+		a.localFleet.pnpmStoreBudgets = a.pnpmStoreBudgets
 	})
 	return a.localFleet
 }
@@ -230,6 +243,14 @@ const (
 	// ceiling when a fleet host has no per-host override (see
 	// resolvedOrchestratorConfig.WorkDirSizeCaps / FleetCoordinator.workDirSizeCaps).
 	defaultWorkDirSizeCapBytes = 50 * 1024 * 1024 * 1024
+	// defaultPnpmStoreBudgetBytes is the shared pnpm-store budget
+	// (agent-lcars#852) when a fleet host has no per-host pnpm_store_budget
+	// override. 20 GiB comfortably fits under every workdir_size_cap
+	// deployed today (the smallest is 30 GiB), leaving headroom for
+	// checkouts, _tool/_actions caches, and e2e artifacts sharing the same
+	// tree, while still bounding the store itself well below the point a
+	// fat store alone could exhaust a tight host.
+	defaultPnpmStoreBudgetBytes = 20 * 1024 * 1024 * 1024
 )
 
 type hostLoad struct {
@@ -1283,6 +1304,25 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			return "", fmt.Errorf("shared-workdir scale set %q: every reachable docker host already has a runner placed: %w", scaleSet, errFleetAtCapacity)
 		}
 		candidates = withCapacity
+
+		// agent-lcars#852: refuse a NEW shared-workdir placement on a host
+		// whose pnpm store is already at/over budget, rather than let it grow
+		// further before the next idle sweep prunes/evicts it. Every
+		// candidate here is already confirmed idle (the loop above), so
+		// excluding one here never touches an active job -- it just leaves
+		// that host idle a little longer, which is exactly what lets the
+		// sweep clear it.
+		var underPnpmBudget []DockerHost
+		for _, h := range candidates {
+			if !a.pnpmStoreOverBudget(fleet, h.Name) {
+				underPnpmBudget = append(underPnpmBudget, h)
+			}
+		}
+		if len(underPnpmBudget) == 0 {
+			placementBlocked.WithLabelValues(scaleSet, placementReasonPnpmStoreBudget).Inc()
+			return "", fmt.Errorf("shared-workdir scale set %q: every host with placement capacity is over its pnpm store budget: %w", scaleSet, errFleetAtCapacity)
+		}
+		candidates = underPnpmBudget
 	}
 
 	effectiveCount := func(hostName string) int {
@@ -1309,6 +1349,37 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	fleet.placementMu.Unlock()
 	placementDecisions.WithLabelValues(scaleSet, best).Inc()
 	return best, nil
+}
+
+// pnpmStoreOverBudget reports whether host's last-known shared pnpm-store
+// size is at or above its configured budget (agent-lcars#852). Reads
+// fleet.pnpmStoreBytes, a cache populated by sweepHostWorkDir on every
+// idle-host sweep -- periodic (workDirSweepInterval) and immediately after
+// each job completes on that host (see HandleJobCompleted) -- rather than
+// measuring live: the sweep already keeps this fresh at every natural
+// idle boundary, and a synchronous du(1) here would add filesystem latency
+// to every placement decision for no material gain in freshness.
+//
+// A host with no cached measurement yet (never swept, e.g. brand new or
+// freshly booted) fails OPEN, same policy as probeHostLoad's missing-
+// telemetry handling: excluding it would otherwise permanently lock out a
+// host until its first sweep, which only runs once it has capacity to be
+// picked in the first place.
+func (a *Scaler) pnpmStoreOverBudget(fleet *FleetCoordinator, host string) bool {
+	fleet.pnpmStoreMu.Lock()
+	bytes, ok := fleet.pnpmStoreBytes[host]
+	fleet.pnpmStoreMu.Unlock()
+	if !ok {
+		return false
+	}
+	budget := a.pnpmStoreBudgetBytes
+	if override, has := a.pnpmStoreBudgets[host]; has {
+		budget = override
+	}
+	if budget <= 0 {
+		return false
+	}
+	return bytes >= budget
 }
 
 // hostOnMains is deliberately fail-closed for mains-required hosts: a missing
@@ -2398,6 +2469,9 @@ func workDirSweepScript(capBytes int64) string {
 rm -rf /home/runner/_work/_temp/* 2>/dev/null || true
 before=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); before=${before:-0}
 cap=%d
+pnpm_store=/home/runner/_work/.pnpm-store
+pnpm_prune=skipped
+pnpm_evict=skipped
 if [ "$before" -gt "$cap" ]; then
   # E2E caches are intentionally host-local (node_modules and browser HOME
   # are unsafe/slow on network storage), but they are not immortal. Evict
@@ -2428,19 +2502,39 @@ if [ "$before" -gt "$cap" ]; then
   # its contents are reproducible and the next install will repopulate it.
   # sweepHostIfIdle holds the same host lock used by runner placement, so this
   # cannot race an install or a newly starting shared-workdir runner.
-  pnpm_store=/home/runner/_work/.pnpm-store
+  #
+  # Both steps report a result (success/failure/skipped) instead of relying
+  # on set -e -- a failing "pnpm store prune" or "rm -rf" must not abort
+  # this script before the SWEEP/PNPM_* lines below print, or the whole
+  # sweep (and its metrics) goes dark instead of just this one step
+  # (agent-lcars#853).
   if [ -d "$pnpm_store" ]; then
     if command -v pnpm >/dev/null 2>&1; then
-      pnpm --store-dir "$pnpm_store" store prune || true
+      if pnpm --store-dir "$pnpm_store" store prune; then
+        pnpm_prune=success
+      else
+        pnpm_prune=failure
+      fi
     fi
     current=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); current=${current:-0}
     if [ "$current" -gt "$cap" ]; then
-      rm -rf "$pnpm_store"
+      if rm -rf "$pnpm_store"; then
+        pnpm_evict=success
+      else
+        pnpm_evict=failure
+      fi
     fi
   fi
 fi
 after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
+# Measured unconditionally (not just when over cap): the steady-state size
+# is exactly what operators watch for sustained growth (agent-lcars#853),
+# not only the value at the moment maintenance ran.
+pnpm_store_bytes=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); pnpm_store_bytes=${pnpm_store_bytes:-0}
 echo "SWEEP before=$before after=$after cap=$cap"
+echo "PNPM_STORE_BYTES=$pnpm_store_bytes"
+echo "PNPM_PRUNE=$pnpm_prune"
+echo "PNPM_EVICT=$pnpm_evict"
 
 # Proactively verify (and repair) the shared required Actions Node runtimes as
 # part of this same idle-host maintenance pass (agent-lcars#392), using the
@@ -2497,6 +2591,7 @@ func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Clie
 		"",
 	)
 	if err != nil {
+		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonContainerCreate).Inc()
 		return fmt.Errorf("creating workdir-sweep helper on host %q: %w", host, err)
 	}
 	defer func() {
@@ -2508,6 +2603,7 @@ func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Clie
 	err = client.ContainerStart(startCtx, resp.ID, container.StartOptions{})
 	cancelStart()
 	if err != nil {
+		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonContainerStart).Inc()
 		return fmt.Errorf("starting workdir-sweep helper on host %q: %w", host, err)
 	}
 	waitCtx, cancelWait := context.WithTimeout(ctx, dockerContainerWaitTimeout)
@@ -2516,34 +2612,41 @@ func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Clie
 	select {
 	case err := <-errCh:
 		if err != nil {
+			workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonContainerWait).Inc()
 			return fmt.Errorf("waiting for workdir-sweep helper on host %q: %w", host, err)
 		}
 	case status := <-statusCh:
 		if status.StatusCode != 0 {
+			workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonExitNonzero).Inc()
 			return fmt.Errorf("workdir-sweep helper on host %q exited %d", host, status.StatusCode)
 		}
 	}
 
 	logs, err := client.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
 	if err != nil {
+		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonLogsRead).Inc()
 		return fmt.Errorf("reading workdir-sweep helper logs on host %q: %w", host, err)
 	}
 	defer func() { _ = logs.Close() }()
 	out, err := io.ReadAll(logs)
 	if err != nil {
+		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonLogsRead).Inc()
 		return fmt.Errorf("reading workdir-sweep helper output on host %q: %w", host, err)
 	}
 
 	before, after, ok := parseSweepOutput(string(out))
 	if !ok {
+		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonOutputUnparseable).Inc()
 		a.logger.Warn("Could not parse workdir-sweep output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
 		return nil
 	}
+	workdirSweepSuccessTotal.WithLabelValues(host).Inc()
 	workdirBytesGauge.WithLabelValues(host).Set(float64(after))
 	if reclaimed := before - after; reclaimed > 0 {
 		workdirSweptBytesTotal.WithLabelValues(host).Add(float64(reclaimed))
 		a.logger.Info("Swept shared workdir", slog.String("host", host), slog.Int64("before_bytes", before), slog.Int64("after_bytes", after), slog.Int64("reclaimed_bytes", reclaimed))
 	}
+	a.recordPnpmStoreSweepResult(host, string(out))
 
 	if externalsHealthSkipped(string(out)) {
 		// This runner_image has no agent-lcars externals-health.sh baked in
@@ -2570,6 +2673,65 @@ func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Clie
 		a.logger.Warn("Shared required Actions Node runtime is still unhealthy after a repair attempt", slog.String("host", host))
 	}
 	return nil
+}
+
+// recordPnpmStoreSweepResult parses workDirSweepScript's PNPM_* lines and
+// updates the pnpm-store metrics plus the fleet's cached last-known size
+// (agent-lcars#852/#853). Best-effort: an unparseable/missing PNPM_STORE_
+// BYTES line only logs a Warn (the sweep itself already succeeded per
+// parseSweepOutput above -- this is observability on top of it, not a
+// second sweep-level failure mode with its own metric).
+func (a *Scaler) recordPnpmStoreSweepResult(host, out string) {
+	if bytes, ok := parsePnpmStoreBytes(out); ok {
+		pnpmStoreBytesGauge.WithLabelValues(host).Set(float64(bytes))
+		fleet := a.coordinator()
+		fleet.pnpmStoreMu.Lock()
+		if fleet.pnpmStoreBytes == nil {
+			fleet.pnpmStoreBytes = map[string]int64{}
+		}
+		fleet.pnpmStoreBytes[host] = bytes
+		fleet.pnpmStoreMu.Unlock()
+	} else {
+		a.logger.Warn("Could not parse pnpm store size from workdir-sweep output", slog.String("host", host), slog.String("output", strings.TrimSpace(out)))
+	}
+	if result, ok := parsePnpmMaintenanceResult(pnpmPruneResultRe, out); ok {
+		pnpmStorePruneTotal.WithLabelValues(host, result).Inc()
+	}
+	if result, ok := parsePnpmMaintenanceResult(pnpmEvictResultRe, out); ok {
+		pnpmStoreEvictionTotal.WithLabelValues(host, result).Inc()
+		if result == pnpmMaintenanceResultSuccess {
+			a.logger.Info("Evicted shared pnpm store", slog.String("host", host))
+		} else if result == pnpmMaintenanceResultFailure {
+			a.logger.Warn("Failed to evict shared pnpm store", slog.String("host", host))
+		}
+	}
+}
+
+var pnpmStoreBytesRe = regexp.MustCompile(`PNPM_STORE_BYTES=(\d+)`)
+
+func parsePnpmStoreBytes(out string) (int64, bool) {
+	m := pnpmStoreBytesRe.FindStringSubmatch(out)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+var (
+	pnpmPruneResultRe = regexp.MustCompile(`PNPM_PRUNE=(success|failure|skipped)`)
+	pnpmEvictResultRe = regexp.MustCompile(`PNPM_EVICT=(success|failure|skipped)`)
+)
+
+func parsePnpmMaintenanceResult(re *regexp.Regexp, out string) (string, bool) {
+	m := re.FindStringSubmatch(out)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
 }
 
 func externalsHealthSkipped(out string) bool {
