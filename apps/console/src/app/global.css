@@ -1713,6 +1713,21 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     max-width: none;
   }
 
+  .queue-search-input .mantine-Input-wrapper {
+    --input-height: 44px !important;
+    --input-right-section-width: 44px !important;
+  }
+
+  .queue-search-input:has([aria-label='Clear search text'])
+    .mantine-Input-wrapper {
+    --input-right-section-width: 88px !important;
+  }
+
+  .queue-search-input .queue-refine-control {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .console-page-content > [data-testid='data-freshness'] {
     min-height: 20px;
     padding: 2px 12px 0;

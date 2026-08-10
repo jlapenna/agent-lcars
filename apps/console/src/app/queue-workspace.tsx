@@ -380,6 +380,7 @@ export function QueueWorkspace({
                         }
                         size="xs"
                         aria-label="Filter and sort"
+                        className="queue-refine-control"
                       >
                         <IconAdjustments aria-hidden="true" size={14} />
                       </ActionIcon>

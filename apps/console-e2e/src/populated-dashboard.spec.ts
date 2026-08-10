@@ -531,6 +531,9 @@ test.describe('responsive decision inbox', () => {
     });
     const searchBounds = await search.boundingBox();
     expect(searchBounds?.width).toBeGreaterThan(340);
+    await expect(
+      workspace.getByRole('button', { name: 'Filter and sort' }),
+    ).toHaveCSS('min-height', '44px');
 
     await workspace.getByRole('button', { name: 'Filter and sort' }).click();
     await page.getByRole('menuitem', { name: 'Newest update' }).click();
