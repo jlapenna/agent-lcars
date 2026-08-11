@@ -20,7 +20,9 @@
 # Output: one timestamped line per state change, then a final verdict:
 #   VERDICT ALL-MERGED                          (exit 0)
 #   VERDICT ATTENTION <pr> <reason>             (exit 2)
-# Reasons: dirty (needs rebase), checks-failed:<names>, closed-unmerged.
+# Reasons: dirty (needs rebase), behind (strict up-to-date policy — update
+# the branch), checks-failed:<names> (failed OR cancelled required checks),
+# closed-unmerged.
 #
 # Requires: gh (authenticated). Poll cost is two `gh` calls per PR per
 # interval; the default 120s keeps that well inside rate limits.
@@ -98,14 +100,25 @@ while true; do
         echo "VERDICT ATTENTION $pr dirty"
         exit 2
         ;;
+      *BEHIND*)
+        # Under a strict up-to-date-branch policy, auto-merge waits
+        # indefinitely for someone to update the branch — that someone
+        # is the watching session.
+        echo "VERDICT ATTENTION $pr behind"
+        exit 2
+        ;;
     esac
 
-    # `gh pr checks` exits non-zero while checks are pending or failed;
-    # we only care about the fail rows it prints.
-    failed=$(gh pr checks "$pr" 2>/dev/null |
-      awk -F'\t' '$2 == "fail" { print $1 }' | paste -sd, - || true)
+    # A cancelled required check blocks auto-merge exactly like a failed
+    # one, so both buckets are attention states (`gh pr checks` buckets:
+    # pass / fail / pending / skipping / cancel). The command exits
+    # non-zero while anything is pending or failed; only the output
+    # matters here.
+    failed=$(gh pr checks "$pr" --json name,bucket \
+      --jq '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(",")' \
+      2>/dev/null || true)
     if [ -n "$failed" ]; then
-      log "PR #$pr: failed checks: $failed"
+      log "PR #$pr: failed/cancelled checks: $failed"
       echo "VERDICT ATTENTION $pr checks-failed:$failed"
       exit 2
     fi

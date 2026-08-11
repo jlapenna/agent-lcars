@@ -22,12 +22,13 @@ merge/DIRTY and let check failures sit for hours).
 **Behavior:** polls every PR (default every 120s), prints a timestamped
 line per state change, and exits at the first event that needs you:
 
-| verdict (last stdout line)                     | exit | meaning / next action                                                                   |
-| ---------------------------------------------- | ---- | --------------------------------------------------------------------------------------- |
-| `VERDICT ALL-MERGED`                           | 0    | every watched PR merged — proceed                                                       |
-| `VERDICT ATTENTION <pr> dirty`                 | 2    | needs rebase onto main, re-push, still armed                                            |
-| `VERDICT ATTENTION <pr> checks-failed:<names>` | 2    | inspect with `gh run view --log-failed`; rerun flakes with `gh run rerun <id> --failed` |
-| `VERDICT ATTENTION <pr> closed-unmerged`       | 2    | someone closed it — find out why                                                        |
+| verdict (last stdout line)                     | exit | meaning / next action                                                                                                         |
+| ---------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `VERDICT ALL-MERGED`                           | 0    | every watched PR merged — proceed                                                                                             |
+| `VERDICT ATTENTION <pr> dirty`                 | 2    | needs rebase onto main, re-push, still armed                                                                                  |
+| `VERDICT ATTENTION <pr> behind`                | 2    | strict up-to-date policy: update the branch (`gh pr update-branch` or rebase + push)                                          |
+| `VERDICT ATTENTION <pr> checks-failed:<names>` | 2    | failed or cancelled required checks — inspect with `gh run view --log-failed`; rerun flakes with `gh run rerun <id> --failed` |
+| `VERDICT ATTENTION <pr> closed-unmerged`       | 2    | someone closed it — find out why                                                                                              |
 
 Transient `gh`/network errors are reported once and retried, never
 treated as a verdict. There is no timeout: a quiet watch is the success
