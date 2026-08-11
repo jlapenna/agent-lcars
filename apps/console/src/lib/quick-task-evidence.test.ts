@@ -8,14 +8,6 @@ import {
   sanitizeQuickTaskSourceRoute,
 } from './quick-task-evidence';
 
-const EMPTY_STRUCTURED = {
-  observed: '',
-  expected: '',
-  stepsToReproduce: '',
-  doneWhen: '',
-  evidenceLinks: '',
-};
-
 describe('sanitizeQuickTaskSourceRoute', () => {
   it('keeps only typed, allowlisted console query state', () => {
     expect(
@@ -76,7 +68,7 @@ describe('Quick Task evidence composition', () => {
       composeQuickTaskIssueBody(
         {
           description: 'Update the stale docs',
-          structured: EMPTY_STRUCTURED,
+          screenshot: '',
           source: {
             route: '/agents?token=secret&repo=org%2Frepo',
             identities: '',
@@ -94,16 +86,11 @@ describe('Quick Task evidence composition', () => {
 - Captured: 2026-08-08T12:34:56.000Z`);
   });
 
-  it('renders only the guided sections that contain evidence', () => {
+  it('renders a screenshot section only when a link is given', () => {
     const body = composeQuickTaskIssueBody(
       {
         description: 'The task list hangs after refresh',
-        structured: {
-          ...EMPTY_STRUCTURED,
-          observed: 'The spinner never clears.',
-          expected: 'The task list appears.',
-          doneWhen: 'A regression test covers the refresh path.',
-        },
+        screenshot: 'https://example.invalid/screenshot.png',
         source: {
           route: '/inbox',
           identities: 'Task: org/repo#42\nWorkflow run: org/repo#1234',
@@ -113,13 +100,23 @@ describe('Quick Task evidence composition', () => {
       { owner: 'org', name: 'repo' },
     );
 
-    expect(body).toContain('## Problem details');
-    expect(body).toContain('### Observed\nThe spinner never clears.');
-    expect(body).toContain('### Expected\nThe task list appears.');
-    expect(body).not.toContain('### Steps to reproduce');
+    expect(body).toContain(
+      '## Screenshot\nhttps://example.invalid/screenshot.png',
+    );
     expect(body).toContain('- Task: org/repo#42');
     expect(body).toContain('- Workflow run: org/repo#1234');
     expect(body).not.toContain('Captured:');
+
+    expect(
+      composeQuickTaskIssueBody(
+        {
+          description: 'No evidence attached',
+          screenshot: '',
+          source: { route: '', identities: '', capturedAt: '' },
+        },
+        { owner: 'org', name: 'repo' },
+      ),
+    ).not.toContain('## Screenshot');
   });
 });
 

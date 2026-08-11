@@ -4,7 +4,6 @@ import {
   Anchor,
   Box,
   Button,
-  Divider,
   Group,
   Modal,
   Paper,
@@ -12,7 +11,6 @@ import {
   Stack,
   Text,
   Textarea,
-  TextInput,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { startTransition, useEffect, useRef, useState } from 'react';
@@ -25,7 +23,6 @@ import {
   lowInformationQuickTaskGuidance,
   type QuickTaskSourceContext,
   type QuickTaskSourceIdentity,
-  type QuickTaskStructuredEvidence,
 } from '../lib/quick-task-evidence';
 import {
   type AgentPipeline,
@@ -48,14 +45,6 @@ const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'codex', label: 'codex' },
   { value: 'opencode', label: 'opencode' },
 ];
-
-const emptyStructuredEvidence = (): QuickTaskStructuredEvidence => ({
-  observed: '',
-  expected: '',
-  stepsToReproduce: '',
-  doneWhen: '',
-  evidenceLinks: '',
-});
 
 const emptySourceContext = (): QuickTaskSourceContext => ({
   route: '',
@@ -90,19 +79,16 @@ export function QuickTaskButton({
    * the surrounding page. The picker falls back to the first watched repo
    * only when that identity is absent or no longer configured. */
   initialRepoKey?: string;
-  /** Canonical identity already resolved by a detail page. It is rendered
-   * into the editable source block; browser code never guesses PR/run
-   * identity from unrelated hidden page data. */
+  /** Canonical identity already resolved by a detail page. It is folded into
+   * the issue's auto-captured source context; browser code never guesses
+   * PR/run identity from unrelated hidden page data. */
   sourceIdentities?: QuickTaskSourceIdentity[];
   size?: string;
 }) {
   const [hydrated, setHydrated] = useState(false);
   const [opened, setOpened] = useState(false);
   const [description, setDescription] = useState('');
-  const [showGuided, setShowGuided] = useState(false);
-  const [structured, setStructured] = useState<QuickTaskStructuredEvidence>(
-    emptyStructuredEvidence,
-  );
+  const [screenshot, setScreenshot] = useState('');
   const [source, setSource] =
     useState<QuickTaskSourceContext>(emptySourceContext);
   const [repoIndex, setRepoIndex] = useState(() => {
@@ -159,7 +145,7 @@ export function QuickTaskButton({
 
   const issueBody = selectedRepo
     ? composeQuickTaskIssueBody(
-        { description, structured, source },
+        { description, screenshot, source },
         {
           owner: selectedRepo.owner,
           name: selectedRepo.name,
@@ -309,9 +295,8 @@ export function QuickTaskButton({
       description: issueBody,
     };
     setDescription('');
-    setStructured(emptyStructuredEvidence());
+    setScreenshot('');
     setSource(emptySourceContext());
-    setShowGuided(false);
     close();
     notifications.show(pendingNotification(request));
     launchSubmission(request);
@@ -398,127 +383,15 @@ export function QuickTaskButton({
               {lowInformationGuidance} You can still file this task as-is.
             </Text>
           )}
-
-          <Button
-            variant="light"
-            size="compact-sm"
-            onClick={() => setShowGuided((current) => !current)}
-            aria-expanded={showGuided}
-          >
-            {showGuided ? 'Hide guided details' : 'Add guided details'}
-          </Button>
-          {showGuided && (
-            <Stack gap="xs">
-              <Textarea
-                label="Observed"
-                description="What happened, including visible errors or timing"
-                value={structured.observed}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setStructured((current) => ({
-                    ...current,
-                    observed: value,
-                  }));
-                }}
-                autosize
-                minRows={2}
-              />
-              <Textarea
-                label="Expected"
-                value={structured.expected}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setStructured((current) => ({
-                    ...current,
-                    expected: value,
-                  }));
-                }}
-                autosize
-                minRows={2}
-              />
-              <Textarea
-                label="Steps to reproduce"
-                value={structured.stepsToReproduce}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setStructured((current) => ({
-                    ...current,
-                    stepsToReproduce: value,
-                  }));
-                }}
-                autosize
-                minRows={3}
-              />
-              <Textarea
-                label="Done when"
-                value={structured.doneWhen}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setStructured((current) => ({
-                    ...current,
-                    doneWhen: value,
-                  }));
-                }}
-                autosize
-                minRows={2}
-              />
-              <Textarea
-                label="Evidence links"
-                description="Screenshot, video, console, network, or workflow-run links"
-                value={structured.evidenceLinks}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setStructured((current) => ({
-                    ...current,
-                    evidenceLinks: value,
-                  }));
-                }}
-                autosize
-                minRows={2}
-              />
-            </Stack>
-          )}
-
-          <Divider label="Source context" labelPosition="left" />
-          <Text size="xs" c="dimmed">
-            Automatically captured fields are visible and editable. Only known
-            relative console routes and typed query values are included.
-          </Text>
-          <TextInput
-            label="Console route"
-            value={source.route}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setSource((current) => ({
-                ...current,
-                route: value,
-              }));
-            }}
-          />
           <Textarea
-            label="Related identity"
-            description="One canonical Task, Pull request, Workflow run, or Session identity per line"
-            value={source.identities}
+            label="Screenshot"
+            description="A link to a screenshot, video, or other evidence"
+            value={screenshot}
             onChange={(event) => {
-              const value = event.currentTarget.value;
-              setSource((current) => ({
-                ...current,
-                identities: value,
-              }));
+              setScreenshot(event.currentTarget.value);
             }}
             autosize
-            minRows={source.identities ? 2 : 1}
-          />
-          <TextInput
-            label="Captured at"
-            value={source.capturedAt}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setSource((current) => ({
-                ...current,
-                capturedAt: value,
-              }));
-            }}
+            minRows={1}
           />
 
           {description.trim() && (

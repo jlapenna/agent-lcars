@@ -2,14 +2,6 @@ import type { RepositoryRef } from './watched-repo';
 
 const QUICK_TASK_TITLE_MAX_LENGTH = 80;
 
-export interface QuickTaskStructuredEvidence {
-  observed: string;
-  expected: string;
-  stepsToReproduce: string;
-  doneWhen: string;
-  evidenceLinks: string;
-}
-
 export interface QuickTaskSourceContext {
   /** A relative, allowlisted console route. Never an origin or raw URL. */
   route: string;
@@ -21,7 +13,8 @@ export interface QuickTaskSourceContext {
 
 export interface QuickTaskIssueDraft {
   description: string;
-  structured: QuickTaskStructuredEvidence;
+  /** A link to an already-hosted screenshot, video, or other evidence. */
+  screenshot: string;
   source: QuickTaskSourceContext;
 }
 
@@ -137,7 +130,7 @@ export function captureQuickTaskSource(
 
 function markdownSection(heading: string, value: string): string | undefined {
   const trimmed = value.trim();
-  return trimmed ? `### ${heading}\n${trimmed}` : undefined;
+  return trimmed ? `## ${heading}\n${trimmed}` : undefined;
 }
 
 function safeCapturedAt(value: string): string | undefined {
@@ -153,13 +146,7 @@ export function composeQuickTaskIssueBody(
   repository: RepositoryRef,
 ): string {
   const description = draft.description.trim();
-  const problemSections = [
-    markdownSection('Observed', draft.structured.observed),
-    markdownSection('Expected', draft.structured.expected),
-    markdownSection('Steps to reproduce', draft.structured.stepsToReproduce),
-    markdownSection('Done when', draft.structured.doneWhen),
-    markdownSection('Evidence', draft.structured.evidenceLinks),
-  ].filter((section): section is string => Boolean(section));
+  const screenshotSection = markdownSection('Screenshot', draft.screenshot);
 
   const route = sanitizeQuickTaskSourceRoute(draft.source.route);
   const identities = draft.source.identities
@@ -178,9 +165,7 @@ export function composeQuickTaskIssueBody(
 
   return [
     description,
-    ...(problemSections.length > 0
-      ? [`## Problem details\n\n${problemSections.join('\n\n')}`]
-      : []),
+    screenshotSection,
     `## Source context\n\n${sourceLines.join('\n')}`,
   ]
     .filter(Boolean)

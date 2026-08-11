@@ -376,7 +376,7 @@ describe('QuickTaskButton', () => {
     });
   });
 
-  it('previews and submits optional structured evidence plus editable canonical source identity', async () => {
+  it('previews and submits an optional screenshot link plus captured canonical source identity', async () => {
     window.history.replaceState(
       null,
       '',
@@ -398,26 +398,12 @@ describe('QuickTaskButton', () => {
     );
     await openDialog();
     enterDescription('The task page hangs after refresh');
-    fireEvent.click(screen.getByRole('button', { name: 'Add guided details' }));
-    fireEvent.change(screen.getByLabelText('Observed'), {
-      target: { value: 'The loading state never clears.' },
-    });
-    fireEvent.change(screen.getByLabelText('Expected'), {
-      target: { value: 'The task card becomes visible.' },
-    });
-    fireEvent.change(screen.getByLabelText('Done when'), {
-      target: { value: 'A browser regression test covers refresh.' },
-    });
-    fireEvent.change(screen.getByLabelText('Evidence links'), {
+    fireEvent.change(screen.getByLabelText('Screenshot'), {
       target: { value: 'https://example.invalid/screenshot' },
     });
 
-    expect(screen.getByLabelText('Console route')).toHaveValue(
-      '/task/supersprinklesracing/sprinkles/42',
-    );
-    expect(screen.getByLabelText('Related identity')).toHaveValue(
-      'Task: supersprinklesracing/sprinkles#42',
-    );
+    expect(screen.queryByLabelText('Console route')).toBeNull();
+    expect(screen.queryByLabelText('Related identity')).toBeNull();
     expect(screen.getByTestId('quick-task-preview-title')).toHaveTextContent(
       'The task page hangs after refresh',
     );
@@ -425,13 +411,10 @@ describe('QuickTaskButton', () => {
       'quick-task-preview-body',
     ).textContent;
     expect(previewBody).toContain(
-      '### Observed\nThe loading state never clears.',
+      '## Screenshot\nhttps://example.invalid/screenshot',
     );
     expect(previewBody).toContain(
-      '### Expected\nThe task card becomes visible.',
-    );
-    expect(previewBody).toContain(
-      '### Done when\nA browser regression test covers refresh.',
+      '- Console route: `/task/supersprinklesracing/sprinkles/42`',
     );
     expect(previewBody).toContain('- Task: supersprinklesracing/sprinkles#42');
     expect(previewBody).not.toContain('token=secret');
