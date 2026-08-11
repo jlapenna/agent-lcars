@@ -221,6 +221,13 @@ jobs:
           pnpm nx bundle @agent-lcars/console
           ./tools/console-standalone-smoke.sh
 
+      # This bundle is outside the default build graph, but is what both the
+      # telemetry-watcher image and the runner sidecar execute. Keep its
+      # isolated startup gate in normal CI now that image publishing is owned
+      # by the canonical homelab controller.
+      - name: Smoke test telemetry-watcher bundle
+        run: ./tools/telemetry-watcher-standalone-smoke.sh
+
   e2e:
     name: E2E
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft

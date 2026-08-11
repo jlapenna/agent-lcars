@@ -145,18 +145,14 @@ zero runtime `node_modules` dependency:
 ./tools/nx run @agent-lcars/telemetry-watcher:bundle
 # -> dist/apps/telemetry-watcher/sidecar.cjs
 
-# Verify it actually runs standalone (copy it out of the checkout first —
-# running it in place can accidentally succeed via an ambient node_modules
-# resolution that won't exist wherever claude.yml downloads it to):
-cp dist/apps/telemetry-watcher/sidecar.cjs /tmp/some-empty-dir/
-cd /tmp/some-empty-dir
-node sidecar.cjs runner sidecar --run-id test --projects-dir /tmp/some/fixture/dir
+# Verify it actually runs standalone (the script copies it out of the
+# checkout so ambient node_modules resolution cannot hide a runtime failure):
+./tools/telemetry-watcher-standalone-smoke.sh
 ```
 
 Deliberately **not** in the default `build` target's dependency chain (a
-separate `bundle` target, not depended on by anything on its own). Before a
-canonical image publish that selects `telemetry-watcher` or `homelab-runner`,
-run this standalone check as well as the normal repository validation:
+separate `bundle` target, not depended on by anything on its own). CI runs the
+same standalone check before any canonical image publish can be promoted:
 esbuild inlines every dependency, so a transitive dep that cannot be inlined
 can break only at runtime. The old
 `publish-telemetry-tool.yml`
