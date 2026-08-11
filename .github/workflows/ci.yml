@@ -301,13 +301,16 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # The version marker only exists in an image that baked Chromium's
-      # system dependencies. tools/e2e/Dockerfile (the sandbox lcars-e2e's
-      # own runner image FROMs) does NOT bake this marker file -- only the
-      # generic JIT worker image does -- so this still correctly falls
-      # through to --with-deps on lcars-e2e today. Revisit once the sandbox
-      # itself bakes a version marker; until then this extra install is a
-      # harmless, if slightly redundant, safety net there.
+      # Two environments already carry Chromium's system dependencies: the
+      # generic JIT worker image (which bakes the #905 version marker) and
+      # the lcars-e2e sandbox lineage (FROM mcr.microsoft.com/playwright,
+      # which preinstalls browsers at /ms-playwright and their system deps
+      # -- being that environment is the pool's entire purpose). The first
+      # run on lcars-e2e (run 31464244136) proved the --with-deps fallback
+      # is NOT a harmless safety net there: it needs root for apt, the
+      # container has none by design, and the job hard-fails on `su:
+      # Authentication failure`. Recognize both environments; only a truly
+      # bare host (fork PRs on ubuntu-latest) takes the --with-deps path.
       - name: Detect baked Playwright dependencies
         id: playwright-deps
         shell: bash
@@ -315,6 +318,9 @@ jobs:
           baked_version_file=/usr/local/share/agent-lcars-corepack/playwright-version
           if [[ -r "$baked_version_file" ]] && \
             [[ "$(cat "$baked_version_file")" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif compgen -G '/ms-playwright/chromium-*' > /dev/null; then
+            # Playwright-base sandbox: browsers AND system deps preinstalled.
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
