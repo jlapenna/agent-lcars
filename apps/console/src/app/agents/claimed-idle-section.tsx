@@ -1,9 +1,8 @@
-import { Anchor, Group, Stack, Text } from '@mantine/core';
+import { Anchor, Group, Stack } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import { mostRecentSessionForItem } from '../../lib/claimed-idle';
 import type { CliSession } from '../../lib/cli-sessions';
-import { agentFleetLogin } from '../../lib/deployment';
 import { repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
 import { ItemOverflowMenu } from '../item-overflow-menu';
@@ -32,6 +31,12 @@ export function ClaimedIdleSection({
    * this section *because* it has no active session behind it. */
   cliSessions?: CliSession[];
 }) {
+  // This panel exists to surface a problem that needs intervention. An empty
+  // "all clear" panel pushes the working set below the fold while adding no
+  // decision or action, so let the live Fleet strip be the quiet healthy
+  // state and reserve this space for actual stale claims.
+  if (items.length === 0) return null;
+
   return (
     <AgentOperationsPanel
       title={`Claimed but Idle (${items.length})`}
@@ -39,50 +44,44 @@ export function ClaimedIdleSection({
       testId="claimed-idle-section"
       separated
     >
-      {items.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          Every {agentFleetLogin()} claim has a live run or session behind it.
-        </Text>
-      ) : (
-        <Stack gap="xs">
-          {items.map((item) => {
-            const session = mostRecentSessionForItem(item, cliSessions);
-            return (
-              <Stack
-                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
-                gap={4}
-              >
-                <CompactItemRow
-                  item={item}
-                  hint={
-                    <>
-                      updated <RelativeTime iso={item.updatedAt} />
-                    </>
-                  }
-                  action={
-                    <Group gap={4} wrap="nowrap">
-                      {session && (
-                        <Anchor
-                          href={`/sessions/${session.sessionId}`}
-                          size="xs"
-                          c="dimmed"
-                          data-testid="claimed-idle-session-link"
-                        >
-                          session
-                        </Anchor>
-                      )}
-                      <ItemOverflowMenu item={item} />
-                    </Group>
-                  }
-                />
-                {item.takeoverCommand && (
-                  <TakeoverCommand command={item.takeoverCommand} />
-                )}
-              </Stack>
-            );
-          })}
-        </Stack>
-      )}
+      <Stack gap="xs">
+        {items.map((item) => {
+          const session = mostRecentSessionForItem(item, cliSessions);
+          return (
+            <Stack
+              key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
+              gap={4}
+            >
+              <CompactItemRow
+                item={item}
+                hint={
+                  <>
+                    updated <RelativeTime iso={item.updatedAt} />
+                  </>
+                }
+                action={
+                  <Group gap={4} wrap="nowrap">
+                    {session && (
+                      <Anchor
+                        href={`/sessions/${session.sessionId}`}
+                        size="xs"
+                        c="dimmed"
+                        data-testid="claimed-idle-session-link"
+                      >
+                        session
+                      </Anchor>
+                    )}
+                    <ItemOverflowMenu item={item} />
+                  </Group>
+                }
+              />
+              {item.takeoverCommand && (
+                <TakeoverCommand command={item.takeoverCommand} />
+              )}
+            </Stack>
+          );
+        })}
+      </Stack>
     </AgentOperationsPanel>
   );
 }

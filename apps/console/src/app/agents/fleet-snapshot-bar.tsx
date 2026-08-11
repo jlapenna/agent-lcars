@@ -20,6 +20,19 @@ const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
  * for the per-pipeline live counts above it.
  */
 function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
+  const hasDispatchWork =
+    metrics.logicalTaskCount > 0 ||
+    metrics.queuedAttempts > 0 ||
+    metrics.runningAttempts > 0;
+
+  if (!hasDispatchWork) {
+    return (
+      <Text size="xs" c="dimmed" data-testid="activity-metrics-row">
+        No queued or running dispatches
+      </Text>
+    );
+  }
+
   return (
     <Group gap="md" wrap="wrap" data-testid="activity-metrics-row">
       <Text size="xs" c="dimmed" data-testid="metric-logical-tasks">
@@ -66,6 +79,9 @@ export function FleetSnapshotBar({
   const { liveRuns, fleet, fleetByRepo } = activity;
   const liveCountByPipeline = (pipeline: AgentPipeline) =>
     liveRuns.filter((run) => run.pipeline === pipeline).length;
+  const activePipelines = PIPELINES.filter(
+    (pipeline) => liveCountByPipeline(pipeline) > 0,
+  );
 
   return (
     <Card
@@ -79,12 +95,18 @@ export function FleetSnapshotBar({
     >
       <Stack gap="sm">
         <Group gap="lg" wrap="wrap">
-          {PIPELINES.map((pipeline) => (
-            <Group key={pipeline} gap={6} wrap="nowrap">
-              <PipelineBadge pipeline={pipeline} />
-              <Text size="sm">{liveCountByPipeline(pipeline)} live</Text>
-            </Group>
-          ))}
+          {activePipelines.length > 0 ? (
+            activePipelines.map((pipeline) => (
+              <Group key={pipeline} gap={6} wrap="nowrap">
+                <PipelineBadge pipeline={pipeline} />
+                <Text size="sm">{liveCountByPipeline(pipeline)} live</Text>
+              </Group>
+            ))
+          ) : (
+            <Text size="sm" c="dimmed">
+              No workflow runs active
+            </Text>
+          )}
           <Group gap={6} wrap="nowrap">
             <Badge
               variant="outline"

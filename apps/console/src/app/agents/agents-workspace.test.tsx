@@ -41,4 +41,18 @@ describe('AgentsWorkspace', () => {
 
     expect(container.querySelector('.agents-workspace__warnings')).toBeNull();
   });
+
+  it('does not reserve a secondary column when every secondary panel is empty', () => {
+    const { container } = render(
+      <AgentsWorkspace
+        fleet={<p>Fleet status</p>}
+        active={<p>Active agents</p>}
+        claimedIdle={null}
+        recentOutcomes={null}
+        hasSecondary={false}
+      />,
+    );
+
+    expect(container.querySelector('.agents-workspace__secondary')).toBeNull();
+  });
 });

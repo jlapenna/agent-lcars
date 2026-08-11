@@ -410,16 +410,39 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   background: var(--mantine-color-dark-9);
 }
 
+/* One route gets one memorable structural accent. The Fleet strip retains
+   the LCARS elbow as the route's status instrument; repeating it on every
+   operational panel made the page read as nested chrome instead of a
+   hierarchy of live data. */
+.agents-panel::before {
+  width: 4px;
+}
+
+.agents-panel::after {
+  display: none;
+}
+
 .agents-fleet-strip {
   border-bottom: 1px solid var(--mantine-color-default-border) !important;
 }
 
 .agents-workspace__operations {
+  min-width: 0;
+}
+
+.agents-workspace__operations:has(.agents-workspace__secondary) {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(20rem, 0.9fr);
   gap: 1px;
-  min-width: 0;
   background: var(--mantine-color-default-border);
+}
+
+/* Without a secondary column the primary panel is a concise status readout,
+   not a faux full-height card. Leave the route's dark data plane beneath it
+   instead of drawing an empty box to the viewport edge. */
+.agents-workspace__operations:not(:has(.agents-workspace__secondary))
+  .agents-panel {
+  min-height: 0;
 }
 
 .agents-workspace__primary,
@@ -604,6 +627,10 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   background: var(--mantine-color-cyan-5);
 }
 
+.session-card__title > span {
+  min-width: 0;
+}
+
 /* ---- Costs ledger workspace (#255) ---- */
 
 .costs-utilities--mobile {
@@ -643,34 +670,31 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 }
 
 .costs-ledger-section__heading {
+  position: relative;
   display: flex;
-  min-height: 48px;
+  min-height: 44px;
   align-items: center;
   gap: 12px;
-  padding: 8px 16px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
   background: color-mix(
     in srgb,
-    var(--mantine-color-yellow-8) 8%,
+    var(--mantine-color-yellow-8) 5%,
     var(--mantine-color-dark-9)
   );
 }
 
 .costs-ledger-section__heading::before {
   content: '';
-  align-self: stretch;
-  width: 8px;
-  margin: -8px 0 -8px -16px;
-  border-radius: 0 12px 12px 0;
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 4px;
   background: var(--mantine-color-yellow-5);
 }
 
 .costs-ledger-section__heading::after {
-  content: '';
-  height: 8px;
-  flex: 1;
-  border-radius: 999px;
-  background: var(--mantine-color-yellow-7);
-  opacity: 0.75;
+  display: none;
 }
 
 .costs-ledger-scroll {
@@ -718,6 +742,20 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
 .costs-ledger-mobile-list {
   display: none;
+}
+
+.costs-estimated-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.costs-estimated-value__label {
+  color: var(--mantine-color-yellow-3);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .costs-ledger-note {
@@ -1560,6 +1598,21 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .session-mobile-row > .mantine-Stack-root > a {
     display: flex !important;
+  }
+
+  /* The work title is the session card's primary datum. Let it use two
+     deliberate lines instead of competing with the card's provenance and
+     status chips for a single truncated line. */
+  .session-mobile-row > .mantine-Stack-root > .session-card__title {
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .session-mobile-row > .mantine-Stack-root > .session-card__title > span {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .sessions-workspace .mantine-ActionIcon-root,
