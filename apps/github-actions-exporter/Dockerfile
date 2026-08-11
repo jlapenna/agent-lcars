@@ -7,7 +7,9 @@ RUN pip install --no-cache-dir -r requirements.lock \
     && mkdir -p /var/lib/github-actions-exporter \
     && chown 65534:65534 /var/lib/github-actions-exporter
 
-COPY exporter.py ./
+# The remote BuildKit source context can materialize source files as 0600.
+# Set the runtime contract explicitly: this image executes as nobody below.
+COPY --chmod=0644 exporter.py ./
 
 USER 65534:65534
 

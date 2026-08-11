@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, Mock, patch
 from prometheus_client import CollectorRegistry, generate_latest
 
 MODULE_PATH = Path(__file__).parents[1] / "exporter.py"
+DOCKERFILE_PATH = Path(__file__).parents[1] / "Dockerfile"
 SPEC = importlib.util.spec_from_file_location(
     "github_actions_exporter_under_test", MODULE_PATH
 )
@@ -102,6 +103,12 @@ class FakeAPI:
 
 
 class GitHubActionsExporterTests(unittest.TestCase):
+    def test_image_packages_exporter_readable_by_its_non_root_user(self):
+        dockerfile = DOCKERFILE_PATH.read_text()
+
+        self.assertIn("COPY --chmod=0644 exporter.py ./", dockerfile)
+        self.assertIn("USER 65534:65534", dockerfile)
+
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
