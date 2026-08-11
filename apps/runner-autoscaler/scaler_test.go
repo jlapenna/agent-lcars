@@ -1232,6 +1232,37 @@ func TestReconcileTrackedRunners(t *testing.T) {
 	}
 }
 
+// TestHandleDesiredRunnerCountDefersBusyRunnerReconciliation keeps the
+// listener callback bounded even when a fleet has many busy entries. The
+// periodic reconciler still owns busy-container cleanup (covered above).
+func TestHandleDesiredRunnerCountDefersBusyRunnerReconciliation(t *testing.T) {
+	fakeDocker := newFakeDockerServer(t)
+	fakeDocker.setInspect("busy-container", http.StatusOK, &container.State{Status: container.StateExited, Running: false})
+
+	scaler := &Scaler{
+		dockerHosts: []DockerHost{{Name: "host-a", Client: fakeDocker.client(t)}},
+		maxRunners:  1,
+		runners: runnerState{
+			idle: map[string]runnerRef{},
+			busy: map[string]runnerRef{
+				"runner-1": {host: "host-a", containerID: "busy-container"},
+			},
+		},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(os.Stdout, nil)),
+	}
+
+	if _, err := scaler.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatalf("HandleDesiredRunnerCount() error = %v", err)
+	}
+	if got := fakeDocker.inspectCallCount("busy-container"); got != 0 {
+		t.Fatalf("listener callback inspected busy runner %d times, want 0", got)
+	}
+	if _, ok := scaler.runners.busy["runner-1"]; !ok {
+		t.Fatal("listener callback removed busy runner; periodic reconciliation owns that cleanup")
+	}
+}
+
 // TestCleanupOrphansScopedToScaleSet exercises the boot=true pass: stopped
 // owned containers are removed, running owned containers are adopted, and
 // other scale sets/unlabeled containers are untouched.

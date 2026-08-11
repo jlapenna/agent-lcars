@@ -621,10 +621,12 @@ func (a *Scaler) runnersChanged() {
 
 func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
 	a.queuedJobs.Store(int64(count))
-	// Correct currentCount against reality BEFORE comparing it to demand --
-	// see reconcileTrackedRunners for why a stale entry can otherwise pin
-	// desired == current forever and starve every future scale-up.
-	a.reconcileTrackedRunners(ctx)
+	// Correct idle currentCount against reality BEFORE comparing it to demand --
+	// a stale idle entry can otherwise pin desired == current forever and starve
+	// every future scale-up. Busy entries are deliberately left to the periodic
+	// full reconciliation: probing them here would put one slow Docker/SSH
+	// inspect per busy runner on the listener callback's critical path.
+	a.reconcileIdleRunners(ctx)
 	currentCount := a.runners.count()
 	if a.draining.Load() {
 		a.removeIdleRunners(context.WithoutCancel(ctx))
@@ -719,6 +721,18 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 // else leaves the entry tracked and gets logged instead -- otherwise a host
 // having a bad moment over SSH would mass-deregister every healthy runner.
 func (a *Scaler) reconcileTrackedRunners(ctx context.Context) {
+	a.reconcileRunners(ctx, true)
+}
+
+// reconcileIdleRunners is the latency-sensitive listener-path subset of
+// reconcileTrackedRunners. It clears entries which immediately block a
+// scale-up, while the one-minute tracked-runner reconciler handles busy
+// entries without serializing a desired-count callback behind Docker/SSH I/O.
+func (a *Scaler) reconcileIdleRunners(ctx context.Context) {
+	a.reconcileRunners(ctx, false)
+}
+
+func (a *Scaler) reconcileRunners(ctx context.Context, includeBusy bool) {
 	type trackedEntry struct {
 		name string
 		ref  runnerRef
@@ -728,8 +742,10 @@ func (a *Scaler) reconcileTrackedRunners(ctx context.Context) {
 	for name, ref := range a.runners.idle {
 		snapshot = append(snapshot, trackedEntry{name, ref})
 	}
-	for name, ref := range a.runners.busy {
-		snapshot = append(snapshot, trackedEntry{name, ref})
+	if includeBusy {
+		for name, ref := range a.runners.busy {
+			snapshot = append(snapshot, trackedEntry{name, ref})
+		}
 	}
 	a.runners.mu.Unlock()
 
@@ -739,10 +755,8 @@ func (a *Scaler) reconcileTrackedRunners(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		// 5s cap: this function runs on the listener's message-handling
-		// path (HandleDesiredRunnerCount), so an inspect against a
-		// wedged-but-still-connectable host must not block it for the
-		// kernel TCP timeout.
+		// Cap each Docker/SSH inspect so the listener's immediate idle pass
+		// and the periodic full pass never inherit a kernel TCP timeout.
 		inspectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		info, inspectErr := client.ContainerInspect(inspectCtx, e.ref.containerID)
 		cancel()
