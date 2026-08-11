@@ -27,6 +27,36 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends nodejs gh; \
     node --version; \
     gh --version; \
+    # The runner base carries three npm copies. Replace their vulnerable
+    # node-tar implementations while retaining npm for control-plane agent
+    # jobs, which install their CLI into an unprivileged user prefix.
+    mkdir -p /tmp/control-plane-tar; \
+    npm install --prefix /tmp/control-plane-tar --no-save --ignore-scripts \
+      --install-strategy=nested tar@7.5.19; \
+    for tar_target in \
+      /usr/lib/node_modules/npm/node_modules/tar \
+      /home/runner/externals/node24/lib/node_modules/npm/node_modules/tar \
+      /home/runner/externals/node20/lib/node_modules/npm/node_modules/tar; do \
+      rm -rf "${tar_target}"; \
+      mkdir -p "${tar_target}"; \
+      cp -a /tmp/control-plane-tar/node_modules/tar/. "${tar_target}"; \
+      test "$(node -p "require(process.argv[1]).version" "${tar_target}/package.json")" = 7.5.19; \
+    done; \
+    rm -rf /tmp/control-plane-tar; \
+    # The Actions runner base also carries a Docker runtime. Control-plane
+    # jobs are deliberately socketless and never invoke Docker, so retaining
+    # those binaries only adds an unneeded privilege-shaped attack surface.
+    # In particular, the bundled containerd can otherwise carry vulnerabilities
+    # unrelated to this image's runner, git, Node, and gh contract.
+    rm -f /usr/bin/docker /usr/bin/dockerd /usr/bin/docker-proxy \
+      /usr/bin/containerd /usr/bin/containerd-shim-runc-v2 /usr/bin/ctr \
+      /usr/bin/runc; \
+    test ! -e /usr/bin/docker; \
+    test ! -e /usr/bin/dockerd; \
+    test ! -e /usr/bin/containerd; \
+    test ! -e /usr/bin/containerd-shim-runc-v2; \
+    test ! -e /usr/bin/ctr; \
+    test ! -e /usr/bin/runc; \
     rm -rf /var/lib/apt/lists/*
 
 USER runner
