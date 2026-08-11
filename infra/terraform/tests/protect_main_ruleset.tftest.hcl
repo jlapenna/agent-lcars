@@ -77,8 +77,8 @@ run "renders_protect_main_ruleset" {
   }
 
   assert {
-    condition     = github_repository_ruleset.protect_main.rules[0].deletion == true && github_repository_ruleset.protect_main.rules[0].non_fast_forward == true
-    error_message = "The ruleset must keep blocking branch deletion and force-pushes."
+    condition     = github_repository_ruleset.protect_main.rules[0].deletion == true && github_repository_ruleset.protect_main.rules[0].non_fast_forward == true && github_repository_ruleset.protect_main.rules[0].required_linear_history == true
+    error_message = "The ruleset must keep blocking branch deletion and force-pushes, and require linear history (harmonized with sprinkles, 2026-08-11)."
   }
 
   assert {
@@ -87,7 +87,7 @@ run "renders_protect_main_ruleset" {
   }
 
   assert {
-    condition     = tolist(github_repository_ruleset.protect_main.rules[0].required_status_checks[0].required_check)[0].context == "Verify" && github_repository_ruleset.protect_main.rules[0].required_status_checks[0].strict_required_status_checks_policy == true
-    error_message = "The ruleset must require the Verify check under the strict up-to-date-branch policy."
+    condition     = tolist(github_repository_ruleset.protect_main.rules[0].required_status_checks[0].required_check)[0].context == "Verify" && github_repository_ruleset.protect_main.rules[0].required_status_checks[0].strict_required_status_checks_policy == false
+    error_message = "The ruleset must require the Verify check under the NON-strict up-to-date-branch policy (harmonized with sprinkles, 2026-08-11)."
   }
 }

@@ -29,12 +29,13 @@ resource "github_repository_ruleset" "protect_main" {
   }
 
   rules {
-    deletion         = true
-    non_fast_forward = true
+    deletion                = true
+    non_fast_forward        = true
+    required_linear_history = true
 
     pull_request {
       required_approving_review_count   = 0
-      dismiss_stale_reviews_on_push     = false
+      dismiss_stale_reviews_on_push     = true
       require_code_owner_review         = false
       require_last_push_approval        = false
       required_review_thread_resolution = true
@@ -42,7 +43,11 @@ resource "github_repository_ruleset" "protect_main" {
     }
 
     required_status_checks {
-      strict_required_status_checks_policy = true
+      # Harmonized with the sprinkles repo (2026-08-11): non-strict, so an
+      # armed PR merges on green without requiring a branch update per
+      # main-side merge. The stale-tested-tree risk is accepted in both
+      # repos; post-merge Verify re-runs on main are the safety net.
+      strict_required_status_checks_policy = false
       do_not_enforce_on_create             = false
 
       required_check {
