@@ -113,12 +113,6 @@ RUN echo "cache-bust: ${CACHE_BUST}" && \
 # correct as agent-lcars bumps it.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     HUSKY=0 CI=true pnpm install --frozen-lockfile
-# The frozen install resolves the direct @playwright/test dependency exactly as
-# pnpm-lock.yaml specifies. Export its verified package version so the runtime
-# stage below can install the matching browser without a second, hand-maintained
-# Dockerfile version pin drifting from the lockfile (#905 review).
-RUN node -e 'const version = require("./node_modules/@playwright/test/package.json").version; if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) { throw new Error(`unexpected @playwright/test version: ${version}`); } process.stdout.write(version);' \
-    > /playwright-version
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
 
 # CI's Verify job runs Go race tests and validates Actions syntax with
@@ -195,11 +189,6 @@ ENV PATH=/usr/local/go/bin:${PATH}
 # warm-up near the end of the image.
 COPY --from=telemetry-watcher-build /repo/package.json \
     /usr/local/share/agent-lcars-corepack/package.json
-# This is produced from the frozen dependency installation above, not copied
-# from package.json's semver range, so the image's browser always matches the
-# resolved Playwright version the jobs run.
-COPY --from=telemetry-watcher-build /playwright-version \
-    /usr/local/share/agent-lcars-corepack/playwright-version
 WORKDIR /usr/local/share/agent-lcars-corepack
 
 # Forward-looking hook (homelab#97): lets a future registration-specific
@@ -211,29 +200,14 @@ WORKDIR /usr/local/share/agent-lcars-corepack
 # toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
 
-# Playwright's browser system libraries are baked below rather than installed
-# per job. `playwright install --with-deps` shells out to `sudo apt-get
-# install` for ~80 packages on this base (Ubuntu 24.04 noble), and every E2E
-# job that calls it pays that download, dpkg unpack, and the resulting disk
-# churn again -- measured on pike as sustained 50%+ IO stall with ~400ms write
-# latency while it ran. We build this image anyway; the libraries belong in it.
-#
-# The list is deliberately NOT enumerated here. `install-deps` asks Playwright
-# for the set matching this base's distro, so a base refresh or a Playwright
-# upgrade re-resolves it at build time instead of silently drifting from a
-# hand-copied list -- the noble names carry `t64` suffixes that do not exist on
-# other releases, so a stale literal list would fail in a confusing way.
-#
-# The exact Playwright version is read from playwright-version, which the build
-# stage derives after pnpm's frozen install of this repo's pnpm-lock.yaml.
-# This deliberately follows the lockfile rather than package.json's semver
-# range, so a Renovate update cannot leave the image baking an older browser.
-#
-# A job on a NEWER Playwright still works: the system libraries here stay
-# valid, and only its browser binary is fetched.
+# Playwright's browser stack is deliberately NOT baked here (reverted per
+# agent-lcars#920): E2E no longer runs on this generic JIT image -- the
+# trusted path runs on the dedicated lcars-e2e pool, whose runner image IS
+# the pinned Playwright sandbox, and fork PRs run on GitHub-hosted
+# ubuntu-latest. The #905 bake cost ~1.1GB of image for a job class this
+# image no longer serves.
 
 RUN set -eux; \
-    PLAYWRIGHT_VERSION="$(cat /usr/local/share/agent-lcars-corepack/playwright-version)"; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
     install -m 0755 -d /etc/apt/keyrings; \
@@ -278,10 +252,6 @@ RUN set -eux; \
     test "$(go env GOVERSION)" = "go${GO_VERSION}"; \
     actionlint -version; \
     java --version; \
-    # Inside this RUN, and before the cleanup below, so it reuses the apt
-    # lists already fetched above instead of paying a second `apt-get update`
-    # and leaving a second lists/ directory in the layer.
-    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
@@ -336,25 +306,6 @@ USER runner
 # copied manifest resolves the exact repo-pinned version, and deliberately
 # leaves the cache under /home/runner for offline job startup.
 RUN pnpm --version
-
-# Chromium itself, for the same reason as the corepack cache above: the
-# browser cache is per-user, so installing it root-side would warm /root and
-# leave jobs -- which run as `runner` -- downloading it anyway.
-#
-# Deliberately not pinned behind PLAYWRIGHT_BROWSERS_PATH. Left at the default
-# ~/.cache/ms-playwright, `runner` owns the directory, so a job on a different
-# Playwright version simply fetches its own build alongside this one. A shared
-# root-owned path would be unwritable for exactly that case and would turn a
-# version skew into a hard failure instead of a slow first run.
-#
-# Chromium only, matching `install-deps chromium` above and what ci.yml's E2E
-# job actually installs. A bare `install-deps` also pulls firefox and webkit's
-# stack -- gstreamer, libmanette, CJK fonts -- which measured ~1.7GB of image
-# for browsers nothing here runs. A suite that later needs those should widen
-# both lines together rather than carry the cost speculatively.
-RUN set -eux; \
-    PLAYWRIGHT_VERSION="$(cat /usr/local/share/agent-lcars-corepack/playwright-version)"; \
-    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install chromium
 
 WORKDIR /home/runner
 

@@ -301,26 +301,20 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Two environments already carry Chromium's system dependencies: the
-      # generic JIT worker image (which bakes the #905 version marker) and
-      # the lcars-e2e sandbox lineage (FROM mcr.microsoft.com/playwright,
-      # which preinstalls browsers at /ms-playwright and their system deps
-      # -- being that environment is the pool's entire purpose). The first
-      # run on lcars-e2e (run 31464244136) proved the --with-deps fallback
-      # is NOT a harmless safety net there: it needs root for apt, the
-      # container has none by design, and the job hard-fails on `su:
-      # Authentication failure`. Recognize both environments; only a truly
-      # bare host (fork PRs on ubuntu-latest) takes the --with-deps path.
-      - name: Detect baked Playwright dependencies
+      # The trusted E2E path runs on the lcars-e2e sandbox lineage (FROM
+      # mcr.microsoft.com/playwright), which preinstalls browsers at
+      # /ms-playwright along with their system dependencies -- being that
+      # environment is the pool's entire purpose. Only a truly bare host
+      # (fork PRs on ubuntu-latest) takes the --with-deps path; the first
+      # lcars-e2e run (31464244136) proved that fallback hard-fails without
+      # root there, so this detection is load-bearing, not an optimization.
+      # (The generic JIT image's #905 bake and its version marker were
+      # reverted per #920 -- E2E never runs on that image anymore.)
+      - name: Detect preinstalled Playwright browsers
         id: playwright-deps
         shell: bash
         run: |
-          baked_version_file=/usr/local/share/agent-lcars-corepack/playwright-version
-          if [[ -r "$baked_version_file" ]] && \
-            [[ "$(cat "$baked_version_file")" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          elif compgen -G '/ms-playwright/chromium-*' > /dev/null; then
-            # Playwright-base sandbox: browsers AND system deps preinstalled.
+          if compgen -G '/ms-playwright/chromium-*' > /dev/null; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
