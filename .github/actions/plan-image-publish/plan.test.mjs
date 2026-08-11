@@ -14,6 +14,7 @@ test('no changed files plans no image builds', () => {
     watcher: false,
     exporter: false,
     e2e: false,
+    e2eRunner: false,
   });
 });
 
@@ -26,6 +27,7 @@ test('a shared telemetry lib change schedules both the JIT runner and watcher, n
     watcher: true,
     exporter: false,
     e2e: false,
+    e2eRunner: false,
   });
 });
 
@@ -69,6 +71,11 @@ test('every bundle input schedules both the JIT runner and watcher, not the cont
       `${file} should not schedule the control plane`,
     );
     assert.equal(plan.e2e, false, `${file} should not schedule the e2e image`);
+    assert.equal(
+      plan.e2eRunner,
+      false,
+      `${file} should not schedule the e2e-runner image`,
+    );
   }
 });
 
@@ -88,6 +95,7 @@ test('a watcher deployment-config-only change schedules no image build (regressi
       watcher: false,
       exporter: false,
       e2e: false,
+      e2eRunner: false,
     },
   );
 });
@@ -99,6 +107,7 @@ test('a watcher documentation-only change schedules no image build', () => {
     watcher: false,
     exporter: false,
     e2e: false,
+    e2eRunner: false,
   });
 });
 
@@ -111,6 +120,7 @@ test('a control-plane-only change schedules only the control plane', () => {
     watcher: false,
     exporter: false,
     e2e: false,
+    e2eRunner: false,
   });
 });
 
@@ -126,6 +136,7 @@ test('runner-image inputs schedule the JIT runner, not the control plane', () =>
       watcher: false,
       exporter: false,
       e2e: false,
+      e2eRunner: false,
     },
   );
 });
@@ -142,6 +153,7 @@ test('a mixed push schedules exactly the images its changes touch', () => {
       watcher: false,
       exporter: false,
       e2e: false,
+      e2eRunner: false,
     },
   );
 });
@@ -155,6 +167,7 @@ test('an exporter source change schedules only the exporter', () => {
       watcher: false,
       exporter: true,
       e2e: false,
+      e2eRunner: false,
     },
   );
 });
@@ -172,21 +185,46 @@ test('exporter tests, Nx config, and documentation schedule no image build', () 
       watcher: false,
       exporter: false,
       e2e: false,
+      e2eRunner: false,
     },
   );
 });
 
 // agent-lcars#908: the E2E sandbox image's ONE input is
 // tools/e2e/Dockerfile (no COPY instructions -- see plan.mjs's own
-// comment), so only that file schedules it, and it schedules nothing else.
-test('an e2e Dockerfile change schedules only the e2e image', () => {
+// comment), so only that file schedules it. agent-lcars#920: it ALSO
+// schedules the e2e-runner image, which FROMs the sandbox -- the shared-
+// input invariant plan.mjs documents alongside planImageBuilds().
+test('an e2e Dockerfile change schedules the e2e image and the e2e-runner image that FROMs it', () => {
   assert.deepEqual(planImageBuilds(['tools/e2e/Dockerfile']), {
     controlPlane: false,
     jitRunner: false,
     watcher: false,
     exporter: false,
     e2e: true,
+    e2eRunner: true,
   });
+});
+
+// agent-lcars#920: the e2e-runner image's own build context is
+// tools/e2e-runner/** (its Dockerfile plus anything else added there). A
+// change scoped to it alone must not also rebuild the sandbox it FROMs --
+// the shared-input invariant above is one-directional.
+test('an e2e-runner Dockerfile change schedules only the e2e-runner image', () => {
+  assert.deepEqual(
+    planImageBuilds([
+      'tools/e2e-runner/Dockerfile',
+      'tools/e2e-runner/some-helper.sh',
+    ]),
+    {
+      controlPlane: false,
+      jitRunner: false,
+      watcher: false,
+      exporter: false,
+      e2e: false,
+      e2eRunner: true,
+    },
+  );
 });
 
 test('other tools/e2e/** files (bind-mounted at run time, not baked in) schedule no image build', () => {
@@ -202,6 +240,7 @@ test('other tools/e2e/** files (bind-mounted at run time, not baked in) schedule
       watcher: false,
       exporter: false,
       e2e: false,
+      e2eRunner: false,
     },
   );
 });
@@ -223,6 +262,7 @@ test('a publish-images.yml or scan-image change schedules every image', () => {
         watcher: true,
         exporter: true,
         e2e: true,
+        e2eRunner: true,
       },
       `${file} should schedule every image`,
     );
@@ -238,6 +278,7 @@ test('an unrelated change (e.g. the console app) schedules no image build', () =
       watcher: false,
       exporter: false,
       e2e: false,
+      e2eRunner: false,
     },
   );
 });
@@ -252,6 +293,7 @@ test('the null sentinel (no diffable base) plans every image', () => {
     watcher: true,
     exporter: true,
     e2e: true,
+    e2eRunner: true,
   });
 });
 
