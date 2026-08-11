@@ -16,6 +16,7 @@
       "skills": [
         "./agent-lcars-dev",
         "./agent-protocol",
+        "./github-ci-monitor",
         "./lcars",
         "./verifying-console-session"
       ]
