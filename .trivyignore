@@ -10,8 +10,3 @@
 # tar (node-tar) DoS via crafted gzip bomb. Vendored inside RUNNER_BASE's
 # bundled npm (externals/node20's tar@6.2.1, externals/node24's tar@7.5.15).
 CVE-2026-59873 exp:2026-11-01
-
-# grpc-go authorization bypass via improper HTTP/2 path validation. In
-# containerd/ctr/containerd-shim-runc-v2, also bundled by RUNNER_BASE for
-# its own docker/buildx tooling (agent-lcars#101).
-CVE-2026-33186 exp:2026-11-01
