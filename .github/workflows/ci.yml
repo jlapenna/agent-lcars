@@ -334,51 +334,17 @@ jobs:
         if: steps.playwright-deps.outputs.ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
-      # Fork PRs land on ubuntu-latest, not the pinned sandbox -- keep the
-      # existing hermetic host-direct path (fixed ports, isolated HOME,
-      # host-level lock) unchanged for them; none of that machinery is
-      # needed on a fresh ephemeral lcars-e2e container below, which never
-      # has a prior run's ports or HOME to isolate against.
-      - name: Run console e2e suite (fork PR, ubuntu-latest)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
+      # One e2e entrypoint for every environment (fork ubuntu-latest,
+      # trusted lcars-e2e, dev machines): tools/e2e-local.sh. Its `env -i`
+      # allowlist is load-bearing on the trusted path too -- a Codex P1/P2
+      # pair on #931 flagged that the earlier bespoke direct invocation ran
+      # the suite under the runner's full ambient environment (GITHUB_TOKEN
+      # included), satisfying the hermetic validator's marker without the
+      # isolation the marker asserts. The script's port-fixing and lock are
+      # harmless no-ops on a fresh ephemeral container, and its two-phase
+      # NEXT_PUBLIC_*/AUTH_SECRET handling replaces the bespoke prepare
+      # step this converged away. The sandbox's preinstalled browsers cross
+      # the boundary via the PLAYWRIGHT_BROWSERS_PATH carve-out the script
+      # forwards when the image sets it.
+      - name: Run console e2e suite
         run: ./tools/e2e-local.sh
-
-      # Trusted path (agent-lcars#920): direct invocation of the same
-      # `e2e-implementation:emulator` target tools/e2e-local.sh and
-      # tools/e2e-docker.sh both ultimately drive, mirroring sprinkles'
-      # own E2E_IN_CONTAINER direct-invocation job shape -- no
-      # tools/e2e-docker.sh wrapper, since the runner container already IS
-      # the environment that script would otherwise create a second,
-      # redundant container to provide.
-      #
-      # NEXT_PUBLIC_*/AUTH_SECRET must be real PROCESS env before `next
-      # build` runs -- that build is part of e2e-implementation's own
-      # dependsOn chain, which starts BEFORE the target's internal `dotenv
-      # -e .env.e2e` wrapper ever loads the file version (see
-      # tools/e2e-local.sh's own header comment for the same two-phase
-      # problem it exists to solve for the host-direct path).
-      - name: Prepare E2E environment (lcars-e2e)
-        if: "!(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)"
-        run: |
-          cp tools/e2e/ci.env .env.e2e
-          while IFS='=' read -r key value; do
-            [[ "$key" == NEXT_PUBLIC_* ]] || continue
-            value="${value%\"}"
-            value="${value#\"}"
-            echo "${key}=${value}" >> "$GITHUB_ENV"
-          done < tools/e2e/ci.env
-          auth_secret="$(sed -nE 's/^AUTH_SECRET="?([^"]*)"?$/\1/p' tools/e2e/ci.env)"
-          echo "AUTH_SECRET=${auth_secret}" >> "$GITHUB_ENV"
-
-      - name: Run console e2e suite (lcars-e2e)
-        if: "!(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)"
-        env:
-          # Satisfies tools/e2e/validate-env.mjs's --require-hermetic gate
-          # (the same one tools/e2e-local.sh's isolated-HOME wrapper and
-          # tools/e2e-docker.sh's container both set) -- this ephemeral
-          # runner container is itself the isolation boundary, so no
-          # separate sandboxed HOME/lock is layered on top here.
-          E2E_HERMETIC: '1'
-          NX_LOAD_DOT_ENV_FILES: 'false'
-          HUSKY: '0'
-        run: pnpm exec nx run @agent-lcars/console-e2e:e2e-implementation:emulator
