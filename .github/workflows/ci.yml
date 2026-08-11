@@ -227,16 +227,32 @@ jobs:
   e2e:
     name: E2E
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    # Self-hosted for everything trusted (push to main, merge_group,
-    # workflow_dispatch, and a same-repo PR branch); ubuntu-latest only for
-    # a pull_request whose head is a fork -- the one case where this public
-    # repo would be building/running someone else's arbitrary code (see
-    # codeql.yml's `analyze` job for the same rationale in more detail).
-    # No cgo dependency here (that's the `verify` job's problem), so this
-    # job doesn't need the ubuntu-latest carve-out `verify` currently has.
-    # CI_RUNNER_LABEL, not DEFAULT_RUNNER_LABEL -- see the `verify` job
-    # above for why (#451).
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_RUNNER_LABEL }}
+    # !!! DO NOT MERGE until jlapenna/homelab#520's lcars-e2e scale set is
+    # actually deployed and its listener is confirmed registering runners
+    # (see that PR's own "Deploy procedure" section) !!! Until then this
+    # job's trusted path has no runner label to land on and every push
+    # would hang until the 30-minute timeout. Tracked on agent-lcars#920.
+    #
+    # The runner IS the pinned sandbox now (agent-lcars#920, mirroring
+    # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
+    # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox
+    # plus the JIT runner agent, and jlapenna/homelab's orchestrator.yml
+    # pins that image as the lcars-e2e pool's runner_image. That's what
+    # lets this job invoke the suite directly below -- no
+    # tools/e2e-docker.sh wrapper, no host Docker socket, and (once a
+    # @visual spec exists) screenshot rendering that matches
+    # tools/e2e-docker.sh's local runs byte-for-byte, closing the gap the
+    # job-level comment used to carry here.
+    #
+    # Fork PRs still run on ubuntu-latest via tools/e2e-local.sh -- lcars-e2e
+    # is a trusted self-hosted pool, off-limits to untrusted fork code the
+    # same way CI_RUNNER_LABEL already is for `verify` above (see
+    # codeql.yml's `analyze` job for the same fork-PR rationale in more
+    # detail). Literal 'lcars-e2e', not a vars.* indirection: this job is
+    # only correct on a runner whose image IS the pinned sandbox, so
+    # nothing should be able to silently redirect it elsewhere (mirrors
+    # sprinkles' own e2e.yml `runs-on: [e2e]`).
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-e2e' }}
     timeout-minutes: 30
 
     steps:
@@ -256,7 +272,11 @@ jobs:
 
       # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
       # emulator. Fork PRs use GitHub-hosted runners, where Java 17 remains
-      # the default, so retain setup-java only as that fallback.
+      # the default, so retain setup-java only as that fallback. Kept
+      # unconditional (not narrowed to the fork branch) because it already
+      # correctly no-ops on lcars-e2e -- the baked marker check below finds
+      # nothing to install there either way, and narrowing it would just be
+      # two ways to express the same runtime condition.
       - name: Detect Java 21 runtime
         id: java-runtime
         shell: bash
@@ -282,8 +302,12 @@ jobs:
           java-version: '21'
 
       # The version marker only exists in an image that baked Chromium's
-      # system dependencies. This preserves the --with-deps fallback while
-      # pre-rollout self-hosted runners are still using the prior image.
+      # system dependencies. tools/e2e/Dockerfile (the sandbox lcars-e2e's
+      # own runner image FROMs) does NOT bake this marker file -- only the
+      # generic JIT worker image does -- so this still correctly falls
+      # through to --with-deps on lcars-e2e today. Revisit once the sandbox
+      # itself bakes a version marker; until then this extra install is a
+      # harmless, if slightly redundant, safety net there.
       - name: Detect baked Playwright dependencies
         id: playwright-deps
         shell: bash
@@ -304,13 +328,51 @@ jobs:
         if: steps.playwright-deps.outputs.ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
-      # No @visual specs exist yet, so this runs directly on the runner
-      # rather than through the pinned E2E sandbox tools/e2e-docker.sh now
-      # pulls locally (#908) -- CI can't just call that script instead: it
-      # needs a dedicated runner pool whose own image IS that sandbox, the
-      # way sprinkles' `homelab-autoscale-e2e` pool works, and standing that
-      # up is an out-of-repo homelab change tracked separately (#920).
-      # Revisit once #920 lands and once a @visual spec makes
-      # screenshot-rendering consistency actually matter.
-      - name: Run console e2e suite
+      # Fork PRs land on ubuntu-latest, not the pinned sandbox -- keep the
+      # existing hermetic host-direct path (fixed ports, isolated HOME,
+      # host-level lock) unchanged for them; none of that machinery is
+      # needed on a fresh ephemeral lcars-e2e container below, which never
+      # has a prior run's ports or HOME to isolate against.
+      - name: Run console e2e suite (fork PR, ubuntu-latest)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
         run: ./tools/e2e-local.sh
+
+      # Trusted path (agent-lcars#920): direct invocation of the same
+      # `e2e-implementation:emulator` target tools/e2e-local.sh and
+      # tools/e2e-docker.sh both ultimately drive, mirroring sprinkles'
+      # own E2E_IN_CONTAINER direct-invocation job shape -- no
+      # tools/e2e-docker.sh wrapper, since the runner container already IS
+      # the environment that script would otherwise create a second,
+      # redundant container to provide.
+      #
+      # NEXT_PUBLIC_*/AUTH_SECRET must be real PROCESS env before `next
+      # build` runs -- that build is part of e2e-implementation's own
+      # dependsOn chain, which starts BEFORE the target's internal `dotenv
+      # -e .env.e2e` wrapper ever loads the file version (see
+      # tools/e2e-local.sh's own header comment for the same two-phase
+      # problem it exists to solve for the host-direct path).
+      - name: Prepare E2E environment (lcars-e2e)
+        if: "!(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)"
+        run: |
+          cp tools/e2e/ci.env .env.e2e
+          while IFS='=' read -r key value; do
+            [[ "$key" == NEXT_PUBLIC_* ]] || continue
+            value="${value%\"}"
+            value="${value#\"}"
+            echo "${key}=${value}" >> "$GITHUB_ENV"
+          done < tools/e2e/ci.env
+          auth_secret="$(sed -nE 's/^AUTH_SECRET="?([^"]*)"?$/\1/p' tools/e2e/ci.env)"
+          echo "AUTH_SECRET=${auth_secret}" >> "$GITHUB_ENV"
+
+      - name: Run console e2e suite (lcars-e2e)
+        if: "!(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)"
+        env:
+          # Satisfies tools/e2e/validate-env.mjs's --require-hermetic gate
+          # (the same one tools/e2e-local.sh's isolated-HOME wrapper and
+          # tools/e2e-docker.sh's container both set) -- this ephemeral
+          # runner container is itself the isolation boundary, so no
+          # separate sandboxed HOME/lock is layered on top here.
+          E2E_HERMETIC: '1'
+          NX_LOAD_DOT_ENV_FILES: 'false'
+          HUSKY: '0'
+        run: pnpm exec nx run @agent-lcars/console-e2e:e2e-implementation:emulator
