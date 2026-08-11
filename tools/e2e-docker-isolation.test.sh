@@ -82,4 +82,13 @@ first_stamp="$(E2E_DOCKER_PRINT_STAMP=1 E2E_DOCKER_CACHE_DIR="$TEST_DIR/a" "$SCR
 second_stamp="$(E2E_DOCKER_PRINT_STAMP=1 E2E_DOCKER_CACHE_DIR="$TEST_DIR/b" "$SCRIPT" "$PROJECT")"
 [ "$first_stamp" = "$second_stamp" ]
 
+# -- E2E_DOCKER_IMAGE overrides the resolved image, and the stamp MUST follow
+# it even though E2E_TAG (derived only from tools/e2e/Dockerfile) is
+# unchanged -- otherwise a stamp hit computed under one override would reuse
+# node_modules installed under a DIFFERENT image's runtime/system libraries
+# after switching to another override (Codex review, PR #924).
+default_stamp="$(E2E_DOCKER_PRINT_STAMP=1 E2E_DOCKER_CACHE_DIR="$TEST_DIR/c" "$SCRIPT" "$PROJECT")"
+override_stamp="$(E2E_DOCKER_PRINT_STAMP=1 E2E_DOCKER_IMAGE=some-other-registry/e2e:latest E2E_DOCKER_CACHE_DIR="$TEST_DIR/c" "$SCRIPT" "$PROJECT")"
+[ "$default_stamp" != "$override_stamp" ]
+
 echo "e2e-docker-isolation: PASS"

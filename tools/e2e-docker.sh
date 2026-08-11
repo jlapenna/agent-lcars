@@ -259,20 +259,27 @@ IMAGE="${E2E_DOCKER_IMAGE:-docker-registry.lan.jlapenna.net/agent-lcars/e2e:${E2
 
 # The node_modules mount is only correct for a given (lockfile, workspace
 # package.json set, patches, image) tuple: hash the working-tree content of
-# all of them, plus the resolved image tag. Any mismatch (or a missing
-# stamp/modules) means `pnpm install` must run; a match skips it entirely --
-# ported from sprinkles' install.stamp (#4049), ~470 lines lighter: no
-# run.lock/suite.lock split and no MemTotal-sized concurrency slots, because
-# those exist there to schedule seven suites against finite host memory and
-# this repo has one (see this file's header comment).
+# all of them, plus the resolved IMAGE reference itself -- not just E2E_TAG.
+# Those differ only when E2E_DOCKER_IMAGE overrides the default; without this
+# distinction, switching that override while E2E_TAG stays the same (nothing
+# under tools/e2e/Dockerfile changed) would leave install.stamp unchanged too,
+# so a later hit would reuse node_modules a DIFFERENT image had installed --
+# possibly with a mismatched glibc/system-library set (Codex review, PR #924).
+# Any mismatch (or a missing stamp/modules) means `pnpm install` must run; a
+# match skips it entirely -- ported from sprinkles' install.stamp (#4049),
+# ~470 lines lighter: no run.lock/suite.lock split and no MemTotal-sized
+# concurrency slots, because those exist there to schedule seven suites
+# against finite host memory and this repo has one (see this file's header
+# comment).
 #
 # Computed before the registry pull below (unlike the code it's derived
 # from) so the test hook right after it needs neither Docker nor network
-# access.
+# access -- IMAGE is already a resolved string at this point (no digest
+# lookup), so this stays true even with the fix above.
 compute_install_stamp() {
   (
     cd "$ROOT"
-    printf '%s\n' "$E2E_TAG"
+    printf '%s\n' "$IMAGE"
     git ls-files -- pnpm-lock.yaml pnpm-workspace.yaml .npmrc '*package.json' patches |
       while IFS= read -r f; do
         { [ -f "$f" ] && sha256sum -- "$f"; } || true
