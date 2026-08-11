@@ -193,7 +193,7 @@ WORKDIR /usr/local/share/agent-lcars-corepack
 
 # Forward-looking hook (homelab#97): lets a future registration-specific
 # build add extra tooling without forking this Dockerfile. Empty by
-# default; publish-images.yml is what actually sets a real value today --
+# default; canonical homelab publication sets a real value today --
 # `gcc libc6-dev`, so `go test -race` (cgo) can run for
 # apps/runner-autoscaler's own test-race target (agent-lcars#410 --
 # self-hosting ci.yml's `verify` job surfaced that the image had no C

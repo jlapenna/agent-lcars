@@ -145,26 +145,16 @@ zero runtime `node_modules` dependency:
 ./tools/nx run @agent-lcars/telemetry-watcher:bundle
 # -> dist/apps/telemetry-watcher/sidecar.cjs
 
-# Verify it actually runs standalone (copy it out of the checkout first —
-# running it in place can accidentally succeed via an ambient node_modules
-# resolution that won't exist wherever claude.yml downloads it to):
-cp dist/apps/telemetry-watcher/sidecar.cjs /tmp/some-empty-dir/
-cd /tmp/some-empty-dir
-node sidecar.cjs runner sidecar --run-id test --projects-dir /tmp/some/fixture/dir
+# Verify it actually runs standalone (the script copies it out of the
+# checkout so ambient node_modules resolution cannot hide a runtime failure):
+./tools/telemetry-watcher-standalone-smoke.sh
 ```
 
 Deliberately **not** in the default `build` target's dependency chain (a
-separate `bundle` target, not depended on by anything on its own) — it's
-invoked by `.github/workflows/publish-images.yml`, whenever a push to
-`main` touches `apps/telemetry-watcher/**` or `libs/telemetry/**`, not by
-anything in this repo's own `ci.yml`.
-
-Because `ci.yml`'s `nx run-many -t test typecheck build --all` therefore
-never exercises it, that workflow also runs the standalone check above as a
-real step ("Verify the telemetry-watcher bundle runs standalone") before it
-publishes anything. That step is the only automated gate on this artifact:
-esbuild inlines every dependency, so a transitive dep that can't be inlined
-breaks at runtime and is invisible to unit tests. The old
+separate `bundle` target, not depended on by anything on its own). CI runs the
+same standalone check before any canonical image publish can be promoted:
+esbuild inlines every dependency, so a transitive dep that cannot be inlined
+can break only at runtime. The old
 `publish-telemetry-tool.yml`
 workflow (publishing immutable semver-tagged releases to
 `gs://agent-lcars-tools/telemetry/`, curl-downloaded per job) is gone —
@@ -179,13 +169,15 @@ image comments for why `COPY . .` is cache-invalidated on every build and
 how the cache mounts compensate; note the build context is the **repo
 root**, not this directory).
 
-**CI publishes it.** `publish-images.yml` builds and pushes
-`agent-lcars/telemetry-watcher` — `:latest` plus an immutable commit-sha
-tag, linux/amd64 — on every push to `main` touching
-`apps/telemetry-watcher/**` or `libs/telemetry/**` (agent-lcars#231).
+**Canonical homelab publishes it.** After the reviewed source revision has
+passed repository validation, run
+`bin/publish-agent-lcars-images.sh telemetry-watcher` from the canonical
+`jlapenna/homelab` checkout. It builds
+`agent-lcars/telemetry-watcher` for linux/amd64, stages a commit-SHA tag,
+scans it, and promotes `:latest` only after the scan passes.
 
 That was not always true, and its absence caused a real outage: nothing in
-CI built this image, so it only reached the registry when someone ran
+the image was never built, so it only reached the registry when someone ran
 `docker build` by hand. The `members` → `sprinkles` allowlist fix landed in
 #137 and then sat unpublished for weeks while pike kept running a pre-fix
 image, reporting 0 active CLI sessions while ~10 were live (homelab#202;

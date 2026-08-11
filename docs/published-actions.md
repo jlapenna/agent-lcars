@@ -57,7 +57,6 @@ workflows, no separate actions repo, and no Marketplace listing.
   runner image (consumers on that image may still call them; the coupling
   is to the image, not the repo checkout — see
   [onboarding-console-and-telemetry.md](onboarding-console-and-telemetry.md)).
-- `plan-image-publish` — routes this repo's three specific images.
 
 ## Referencing from a consumer repo
 

@@ -14,9 +14,9 @@
 # Ported from members' tools/e2e-docker.sh (this repo's origin, #2373 Phase
 # 2's hardening), trimmed to agent-lcars' single e2e project. #908 reconciled
 # the two remaining differences that mattered: this now PULLS the same
-# content-hash-tagged image .github/workflows/publish-images.yml publishes to
-# HOMELAB_REGISTRY (agent-lcars/e2e, keyed off tools/e2e/Dockerfile's own
-# sha256) instead of building on demand, and it skips `pnpm install` entirely
+# content-hash-tagged image canonical homelab publication creates
+# (agent-lcars/e2e, keyed off tools/e2e/Dockerfile's own sha256) instead of
+# building on demand, and it skips `pnpm install` entirely
 # once install.stamp already matches the lockfile/package.json/patches/image
 # tuple -- ported from sprinkles' v4 design (#4049), but deliberately NOT its
 # run.lock/suite.lock/MemTotal-sized concurrency-slot machinery: that exists
@@ -251,8 +251,7 @@ to_host_path() {
 DK_DIR="${E2E_DOCKER_CACHE_DIR:-$HOME/.cache/agent-lcars-e2e-docker}"
 
 # Tag derives from the Dockerfile's content, so any Dockerfile change yields a
-# new tag. Must match the derivation in .github/workflows/publish-images.yml's
-# "Compute e2e image tag" step.
+# new tag. Must match homelab's publish-agent-lcars-images.sh derivation.
 DOCKERFILE="$ROOT/tools/e2e/Dockerfile"
 E2E_TAG="df-$(sha256sum "$DOCKERFILE" | cut -c1-12)"
 IMAGE="${E2E_DOCKER_IMAGE:-docker-registry.lan.jlapenna.net/agent-lcars/e2e:${E2E_TAG}}"
@@ -302,9 +301,9 @@ INSTALL_STAMP="$DK_DIR/install.stamp"
 # published image (identical bytes everywhere -- this is what makes local
 # screenshot runs trustworthy against CI's own baselines). Deliberately no
 # local-build fallback (#908): a missing tag means either
-# tools/e2e/Dockerfile changed and hasn't reached main yet (fix: merge it, so
-# publish-images.yml's push-to-main trigger can publish this exact tag), or
-# the registry is unreachable -- either way, silently spending several
+# tools/e2e/Dockerfile changed and has not been published from canonical
+# homelab yet (fix: merge it, then publish e2e and e2e-runner), or the
+# registry is unreachable -- either way, silently spending several
 # minutes on a local rebuild here masked both cases rather than surfacing
 # them (the same tradeoff sprinkles' tools/e2e-docker.sh makes, and the
 # reconciliation #908 exists to converge on).
@@ -313,9 +312,9 @@ if [ "$DRY_RUN" -eq 0 ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   if ! docker pull "$IMAGE"; then
     echo ">> e2e-docker: ERROR — $IMAGE not found locally or in the registry." >&2
     echo ">> If tools/e2e/Dockerfile changed on a branch that hasn't reached" >&2
-    echo ">> main yet, merge it -- publish-images.yml publishes this exact" >&2
-    echo ">> content-hash tag on every push to main. Otherwise check registry" >&2
-    echo ">> connectivity to docker-registry.lan.jlapenna.net." >&2
+    echo ">> main yet, merge it, then publish e2e and e2e-runner from" >&2
+    echo ">> canonical homelab. Otherwise check connectivity to" >&2
+    echo ">> docker-registry.lan.jlapenna.net." >&2
     exit 1
   fi
 fi

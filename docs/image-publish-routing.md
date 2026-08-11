@@ -1,215 +1,62 @@
-# Which image builds when: `publish-images.yml`'s path-based routing
+# Canonical image publishing
 
-`publish-images.yml` publishes seven images in six independently routed groups.
-Building every group serially on every push — including ones that only touch
-one of them, or touch none of them at all — is what made a
-deployment-config-only telemetry-watcher change (#440) spend ~20 minutes of
-builder capacity on a run that built nothing. This document is the map:
-which image's inputs are which, the one invariant that must never drift, and
-the routing tests that enforce it. See #441 for the original report and
-`.github/actions/plan-image-publish/plan.mjs` for the actual routing code —
-this document explains it, that file is the source of truth.
+Agent LCARS owns the source and the Dockerfiles for its fleet images. The
+canonical `jlapenna/homelab` checkout is the only publisher: it resolves a
+reviewed Agent LCARS revision, sends builds to the mTLS remote BuildKit
+builder, stages immutable commit-SHA tags, scans every target platform, and
+only then promotes the fleet tag. GitHub Actions and repository runners do
+not publish images or receive registry-write credentials.
 
-## The images
+From the canonical homelab checkout:
 
-| Image                                 | Build context                                | Dockerfile                                              | Consumer                                                     |
-| ------------------------------------- | -------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
-| `agent-lcars/runner-autoscaler`       | `apps/runner-autoscaler`                     | `apps/runner-autoscaler/Dockerfile`                     | homelab's autoscaler control-plane deployment                |
-| `agent-lcars/control-plane-runner`    | `apps/runner-autoscaler/control-plane-image` | `apps/runner-autoscaler/control-plane-image/Dockerfile` | router/reconciler jobs; routed with the control plane        |
-| `homelab-runner:jit-node24`           | `apps/runner-autoscaler/runner-image`        | `apps/runner-autoscaler/runner-image/Dockerfile`        | every self-hosted CI job in this fleet                       |
-| `agent-lcars/telemetry-watcher`       | repo root (`.`)                              | `apps/telemetry-watcher/Dockerfile`                     | pike, the per-workstation telemetry daemon                   |
-| `agent-lcars/github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | homelab Prometheus                                           |
-| `agent-lcars/e2e`                     | `tools/e2e`                                  | `tools/e2e/Dockerfile`                                  | `tools/e2e-docker.sh` (local/CI-consistent E2E runs)         |
-| `agent-lcars/e2e-runner`              | `tools/e2e-runner`                           | `tools/e2e-runner/Dockerfile`                           | jlapenna/homelab's `lcars-e2e` runner pool (agent-lcars#920) |
+```bash
+./bin/publish-agent-lcars-images.sh <image> [<image> ...]
+```
 
-The e2e-runner image FROMs the e2e sandbox image directly (`SANDBOX_IMAGE`
-build-arg) plus the JIT runner agent — the same "runner container IS the
-sandbox" shape as `supersprinklesracing/sprinkles`' own e2e-runner pool. See
-"The shared sandbox invariant" below for how a sandbox change stays linked to
-this image.
+The wrapper invokes the shared `bin/publish-internal-image.sh` primitive for
+each selected image. All selected images use one resolved Agent LCARS commit.
+It preserves the existing provenance/SBOM, remote BuildKit cache, scan, and
+registry-side promotion contract.
 
-The JIT runner image and the telemetry-watcher image are **different
-artifacts built from the same source**: both bake in
-`nx bundle @agent-lcars/telemetry-watcher`'s output (see that Dockerfile's
-own comments). The control-plane image is a self-contained Go build with no
-dependency on the Node/pnpm workspace at all.
+## Image map
 
-## Routing rules
+| Select this argument      | Build context                                | Dockerfile                                              | Promotion tag          |
+| ------------------------- | -------------------------------------------- | ------------------------------------------------------- | ---------------------- |
+| `runner-autoscaler`       | `apps/runner-autoscaler`                     | `apps/runner-autoscaler/Dockerfile`                     | `latest`               |
+| `control-plane-runner`    | `apps/runner-autoscaler/control-plane-image` | `apps/runner-autoscaler/control-plane-image/Dockerfile` | `latest`               |
+| `homelab-runner`          | `apps/runner-autoscaler/runner-image`        | `apps/runner-autoscaler/runner-image/Dockerfile`        | `jit-node24`           |
+| `telemetry-watcher`       | repo root                                    | `apps/telemetry-watcher/Dockerfile`                     | `latest`               |
+| `github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | `latest`               |
+| `e2e`                     | `tools/e2e`                                  | `tools/e2e/Dockerfile`                                  | `df-<Dockerfile hash>` |
+| `e2e-runner`              | repo root                                    | `tools/e2e-runner/Dockerfile`                           | `latest`               |
 
-Each pushed file is classified by `plan.mjs`, in this priority order:
+The JIT runner receives the selected source SHA as both `CACHE_BUST` and
+`AGENT_LCARS_REF`, plus its required C toolchain packages. The E2E runner
+receives the matching E2E sandbox reference as `SANDBOX_IMAGE`.
 
-1. **Workflow infrastructure** — `.github/workflows/publish-images.yml`,
-   `.github/actions/scan-image/**`, `.github/actions/plan-image-publish/**`.
-   Schedules **all six groups**. Changing how an image is built, scanned,
-   or routed is as much a reason to republish-and-exercise as changing what's
-   in it (the same reasoning `scan-image` already applied, #224).
-2. **Bundle inputs** — `apps/telemetry-watcher/**` (except the two
-   exclusions below), plus `libs/telemetry/**`, `libs/logging/**`,
-   `libs/env-vars/**`, `libs/util/**`, `libs/util-server/**`, `package.json`,
-   `pnpm-lock.yaml`, `patches/**`. Schedules **both** the JIT runner and the
-   watcher (never the control plane, which doesn't depend on any of these).
-   See "The shared bundle invariant" below — the watcher app's own source is
-   in this bucket too, not a separate "watcher-only" one, because both
-   images bundle it identically.
-3. **JIT runner image inputs** — `apps/runner-autoscaler/runner-image/**`.
-   Schedules only the JIT runner.
-4. **Control-plane inputs** — everything else under
-   `apps/runner-autoscaler/**`. Schedules only the control plane.
-5. **Exporter image inputs** — its `Dockerfile`, `exporter.py`, and
-   `requirements.lock`. Schedules only the exporter. Its README, tests, and
-   Nx project config remain CI inputs but cannot change the image and do not
-   consume the serialized builder lane.
-6. **E2E sandbox input** — `tools/e2e/Dockerfile` (agent-lcars#908). Schedules
-   the e2e image **and** the e2e-runner image (see "The shared sandbox
-   invariant" below). That one file has no `COPY` instructions, so it is the
-   image's entire content — everything else under `tools/e2e/` (`ci.env`,
-   `screenshot.css`, …) is bind-mounted into the container at run time by
-   `tools/e2e-docker.sh`, not baked in, and does not belong here.
-7. **E2E runner image inputs** — `tools/e2e-runner/**` (agent-lcars#920).
-   Schedules only the e2e-runner image.
-8. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
+## Select only artifacts whose inputs changed
 
-A push can match more than one rule; each image is scheduled if **any**
-matching rule schedules it — there is no "first match wins" short-circuit
-across images, only within a single image's own inputs.
+This command is intentionally explicit rather than triggered from GitHub.
+It avoids a repository credential path and keeps each promotion a deliberate
+homelab operation. Select:
 
-## The shared bundle invariant
+- `runner-autoscaler` and `control-plane-runner` for control-plane source or
+  Dockerfile changes.
+- `homelab-runner` and `telemetry-watcher` together for any
+  telemetry-watcher bundle input: the watcher app, `libs/telemetry`,
+  `libs/logging`, `libs/env-vars`, `libs/util`, `libs/util-server`,
+  `package.json`, `pnpm-lock.yaml`, or `patches`.
+- `homelab-runner` alone for its runner-image-only inputs.
+- `github-actions-exporter` for its Dockerfile, `exporter.py`, or
+  `requirements.lock`.
+- `e2e` and `e2e-runner` together when `tools/e2e/Dockerfile` changes.
+- `e2e-runner` alone for `tools/e2e-runner/**` changes.
 
-A change to the telemetry-watcher bundle's inputs — its own app source, or
-anything it inlines — must schedule the JIT runner and watcher builds
-**together, every time** — never one without the other. Left to drift, one
-image would keep shipping the daemon bundle without the other's fix or
-dependency bump, silently, until some unrelated change happened to trigger
-the missed one (see #29 and #52 for the two prior incidents this exact
-failure mode already caused, and the PR #443 review discussion for a third:
-an early version of `plan.mjs` treated `apps/telemetry-watcher/src/**` as
-watcher-only, which would have left the JIT runner on a stale bundle after
-every plain watcher-app source change).
+The E2E sandbox tag is content-addressed. Do not select `e2e` for unrelated
+changes: its `df-<hash>` tag must continue to identify the Dockerfile that
+created it. `--all` is available only for an intentional complete rebuild.
 
-`plan.mjs` protects this by reading both routes from **one** function
-(`isBundleInput`) rather than maintaining a separate "runner telemetry
-inputs" and "watcher telemetry inputs" list that could diverge.
-`plan.test.mjs` asserts every bundle input schedules both images and never
-the control plane.
-
-## The shared sandbox invariant (agent-lcars#920)
-
-A change to `tools/e2e/Dockerfile` (the e2e sandbox) must **also** schedule
-the e2e-runner image, every time — the runner image's own Dockerfile FROMs
-the sandbox at build time (`SANDBOX_IMAGE` build-arg, resolved to the
-sandbox's own content-hash tag), so a sandbox-only rebuild that skips the
-runner would leave `jlapenna/homelab`'s `lcars-e2e` pool booting an
-environment whose fonts/browser build no longer match what
-`tools/e2e-docker.sh` pulls locally — the same silent-drift failure mode the
-bundle invariant above exists to prevent, just expressed as a build-time
-`FROM` instead of a baked-in bundle output. This is deliberately
-**one-directional**: a runner-only change (`tools/e2e-runner/**` without
-touching the sandbox `Dockerfile`) does NOT reschedule the sandbox — nothing
-about the runner layer changes what the sandbox itself contains.
-
-`plan.mjs`'s `planImageBuilds` reads `isE2eImage(file)` once and ORs it into
-both the `e2e` and `e2eRunner` outputs, rather than letting the two routes
-diverge. `plan.test.mjs` asserts a sandbox-only change schedules both images
-and an e2e-runner-only change schedules just the one.
-
-## What never triggers a build
-
-`apps/telemetry-watcher/deploy/**` (the standalone daemon's own Docker
-Compose config, `.env.example`, deploy script, and its own README) and the
-app's top-level `README.md` never reach the published image — the Dockerfile
-only copies `src/` output, not `deploy/`. This is a concrete regression fix:
-#440 changed exactly `deploy/docker-compose.yml` and `deploy/README.md` (an
-immutable image pin and a healthcheck fix) and still triggered a full
-publish run that built nothing (run
-[30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750),
-19m57s wall-clock, ~17m44s of it queued for builder capacity).
-
-These two exclusions are also carried into `publish-images.yml`'s own
-`on.push.paths` filter (via `!`-prefixed negation patterns), so a push
-touching only these paths never creates a workflow run at all — not merely
-one whose jobs are skipped.
-
-Everything else under `apps/telemetry-watcher/` — `src/**`, `project.json`,
-`tsconfig*`, `eslint.config.mjs`, `vitest.config.mts` — stays a trigger.
-Nx's `bundle` target definition itself lives in `project.json`, so excluding
-config files risks silently shipping a stale bundle; this repo's default is
-to rebuild rather than risk that (the same "loud beats silent" tradeoff the
-whole-workspace test gate below already makes).
-
-## Job graph: one job, not one per image
-
-`publish-images.yml` is a single job (`publish`). The plan step runs first;
-every later step -- the whole-workspace test gate, the bundle smoke-test,
-and each image's own build/scan/promote steps -- has its own `if:` reading
-`steps.plan.outputs.*` directly, so a push that needs nothing built skips
-every step after the plan (and a control-plane-only push skips the bundle
-smoke-test and both other images' build/scan/promote steps, etc.).
-
-This was **not** the first design. A now-reverted version split
-`control-plane`/`jit-runner`/`watcher` into separate GitHub Actions jobs
-(`plan -> verify-workspace -> {control-plane, jit-runner, watcher}` in
-parallel), reasoning that independent images could build concurrently. That
-parallelism bought nothing: **`lcars-build-client` is capped at
-`max_runners: 1`, by design.** jlapenna/homelab's orchestrator config
-comments this exact scale set: "image publishing is serialized by the
-registry anyway, and one holder of the push credential at a time is the
-point." Three dependency-free jobs on that label can never actually run
-concurrently -- only one runner of that label is ever online -- so the
-split's entire premise was moot from the start. That fact alone, independent
-of anything below, is reason enough to prefer one job: no benefit, plus real
-added complexity (job-output plumbing, three duplicated
-checkout/buildx-setup/registry-login sequences).
-
-> **Correction (2026-08-04):** this section previously also claimed the
-> split _measurably cost more wall-clock time_ -- a forced
-> `workflow_dispatch` of the 5-job design
-> ([run 30869868020](https://github.com/jlapenna/agent-lcars/actions/runs/30869868020))
-> took 52m09s, cited as "slower than the original single-job baseline." That
-> attribution was wrong, caught by the user pushing back on "why would
-> spinning up an already-built image over LAN take 15 minutes?" -- a fair
-> question the original writeup never actually answered. What really
-> happened: merging the PR that introduced each design (#443, then later
-> #457) auto-triggered its own `push`-triggered `publish-images.yml` run via
-> this same workflow's own paths filter, and the forced `workflow_dispatch`
-> validation run landed in the same `concurrency: group: publish-images,
-cancel-in-progress: false` group as that already-running automatic run --
-> so the "cold start" observed in _both_ the 5-job and single-job validation
-> runs was almost entirely each dispatch queuing behind itself, not a
-> property of runner count or job count. A clean run with nothing else in
-> that concurrency group ([run 30878411972](https://github.com/jlapenna/agent-lcars/actions/runs/30878411972))
-> measured a 13-second queue delay -- there is no multi-minute scale-up cost
-> on this pool at all when nothing else is contending for it. One ~16-minute
-> gap between two jobs inside the original 5-job run remains genuinely
-> unexplained (it happened entirely within one run, so the concurrency-group
-> finding above doesn't cover it) and correlated suspiciously with the
-> runner-autoscaler control-plane container itself restarting seconds before
-> the next job started -- but no confirmed trigger for that restart was
-> found, and no clean (uncontaminated) measurement of the 5-job design was
-> ever taken. It's left here as an open question, not a settled fact the
-> way the original text presented it.
-
-Step-level `if:` gates inside one job get the same "skip unrelated image
-work" benefit -- the actual point of agent-lcars#441 -- as the reverted
-design, without its added complexity, and without ever needing real
-concurrency (which, per the `max_runners: 1` constraint, was never available
-anyway).
-
-## Recorded run durations
-
-| Scenario                                                       | Before (serial, single job, no routing)                                                                                                  | After (single job, step-level routing)                                                                                                                                                                                   |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Representative full run (all three images legitimately change) | 20m02s ([run 30863366962](https://github.com/jlapenna/agent-lcars/actions/runs/30863366962))                                             | **16m43s: 13s queued + 16m28s execution** ([run 30878411972](https://github.com/jlapenna/agent-lcars/actions/runs/30878411972)) -- clean measurement, nothing else in the `publish-images` concurrency group at the time |
-| Watcher deployment-config-only (#440)                          | 19m57s wall-clock (~17m44s queued), no image built ([run 30864786750](https://github.com/jlapenna/agent-lcars/actions/runs/30864786750)) | No workflow run created (excluded by the `on.push.paths` negation) -- 0 builder capacity consumed                                                                                                                        |
-| Bundle-input-only change (watcher app source or a shared lib)  | ~20m02s (same as the full run -- no routing existed)                                                                                     | _to record: first post-merge push touching only bundle inputs -- expect the workspace gate + bundle smoke-test + two image steps_                                                                                        |
-
-The "before" rows and the clean single-job full-run row are concrete,
-uncontaminated evidence. Two earlier `workflow_dispatch` validation runs
-(one for the reverted 5-job design, one for this single-job design) each
-measured 15-52 minutes with large queue delays -- both later found to be
-mostly an artifact of colliding with an automatic push-triggered run in the
-same concurrency group, not a property of either design; see the "Job
-graph" section's correction above for the full story rather than treating
-either of those two numbers as current evidence. The one remaining "after"
-row needs a real push that touches only bundle inputs (a `workflow_dispatch`
-always plans every image, so it can't produce this data point) -- update
-this table from the Actions run list the first time that occurs.
+Before publishing an artifact, run the normal repository validation for its
+source revision. The publisher does not replace application tests; it makes
+the resulting trusted image deterministic, scanned, and promoted only after
+those checks succeed.

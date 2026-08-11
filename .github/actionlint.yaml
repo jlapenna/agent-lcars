@@ -6,13 +6,6 @@
 # lcars-default job in this repo (claude.yml, opencode.yml, codex.yml,
 # agent-automerge.yml) - none of them are actually validated by this file.
 #
-# The one label this file genuinely protects is `lcars-build-client`:
-# publish-images.yml pins it as a literal `runs-on: lcars-build-client`
-# (agent-lcars#101, socketless BuildKit publish lane - see that workflow's
-# own comment for why it's deliberately NOT routed through a repo
-# variable), so actionlint's CI step (.github/workflows/ci.yml) genuinely
-# flags it as an unknown label without this entry.
-#
 # claude-agent-lcars and lcars-default stay listed anyway, for
 # documentation - their real registrations, matched to the `vars.*` names
 # above, live in jlapenna/homelab's github-runner-autoscaler/
@@ -23,4 +16,3 @@ self-hosted-runner:
   labels:
     - claude-agent-lcars
     - lcars-default
-    - lcars-build-client

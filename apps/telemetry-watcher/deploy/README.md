@@ -1,9 +1,9 @@
 # Deploying the telemetry watcher
 
 The `agent-lcars-telemetry-watcher` container (this app's Docker image,
-published by [`.github/workflows/publish-images.yml`](../../../.github/workflows/publish-images.yml)
-— see the app README's [Deployment](../README.md#deployment) section) runs
-as a per-host daemon on `pike`, `laforge`, and `janeway`, which are
+published from canonical `jlapenna/homelab` — see the app README's
+[Deployment](../README.md#deployment) section) runs as a per-host daemon on
+`pike`, `laforge`, and `janeway`, which are
 `jlapenna/homelab`-fleet Docker hosts.
 This directory is the deployment config's canonical home — moved from
 `jlapenna/homelab` in homelab#218 Phase 6, on the reasoning that the

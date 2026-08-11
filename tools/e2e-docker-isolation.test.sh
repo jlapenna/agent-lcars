@@ -32,10 +32,10 @@ set -e
 [ "$unknown_status" -eq 2 ]
 grep -q 'unknown arg: --bogus' "$TEST_DIR/unknown-arg.log"
 
-# -- image tag derivation matches publish-images.yml's own derivation -------
-# Must stay in lockstep with the "Compute e2e image tag" step there and with
-# the sha256sum invocation this asserts against -- both hash
-# tools/e2e/Dockerfile the same way.
+# -- image tag derivation matches canonical publisher's derivation ----------
+# Must stay in lockstep with homelab's publish-agent-lcars-images.sh and with
+# the sha256sum invocation this asserts against -- both hash tools/e2e/Dockerfile
+# the same way.
 expected_tag="df-$(sha256sum "$REPO/tools/e2e/Dockerfile" | cut -c1-12)"
 run_dry "$PROJECT" >"$TEST_DIR/default.log" 2>&1
 grep -qF "docker-registry.lan.jlapenna.net/agent-lcars/e2e:${expected_tag}" "$TEST_DIR/default.log"

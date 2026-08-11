@@ -78,7 +78,6 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | `AGENT_RUNNER_LABEL`              | `claude-agent-lcars`                                                             | claude / codex / opencode                                                                                               |
 | `DEFAULT_RUNNER_LABEL`            | `lcars-default`                                                                  | agent-automerge, label-contract-audit, deploy-console — small, fast glue jobs only (#451)                               |
 | `CI_RUNNER_LABEL`                 | `lcars-ci`                                                                       | ci (verify, e2e) — split off DEFAULT_RUNNER_LABEL (#451) so a 20-30 min CI run cannot queue latency-sensitive glue jobs |
-| `BUILD_RUNNER_LABEL`              | `lcars-build-client`                                                             | publish-images                                                                                                          |
 | `GCP_PROJECT_ID`                  | `agent-lcars`                                                                    | codex (secret access)                                                                                                   |
 | `GCP_WIF_PROVIDER`                | `projects/611425338852/…/providers/github`                                       | claude / codex / opencode                                                                                               |
 | `GCP_DEPLOYER_WIF_PROVIDER`       | `projects/611425338852/…/workloadIdentityPools/github-deployer/providers/github` | deploy-console only; provider accepts `deploy-console.yml` from `main`                                                  |
@@ -88,7 +87,6 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | `GCP_DISPATCH_PREFLIGHT_SA`       | `dispatch-preflight@agent-lcars…`                                                | worker preflight reads only                                                                                             |
 | `GCP_WEBHOOK_CONFIG_SA`           | Terraform output `github_app_webhook_configurator_service_account`               | configure-github-app-webhook; reads only the webhook HMAC secret                                                        |
 | `DISPATCH_FIRESTORE_DATABASE_ID`  | `dispatch-controller`                                                            | hosted controller and worker preflight                                                                                  |
-| `HOMELAB_REGISTRY`                | `docker-registry.lan.jlapenna.net`                                               | publish-images                                                                                                          |
 | `MAINTAINER_LOGIN`                | `jlapenna`                                                                       | dispatch guards, failure assignment                                                                                     |
 | `AGENT_FLEET_LOGIN`               | `jclaw-bot`                                                                      | claim steps and queue hand-off                                                                                          |
 | `APPHOSTING_BACKEND_ID`           | `agent-lcars`                                                                    | deploy-console                                                                                                          |
@@ -116,15 +114,12 @@ gh workflow run configure-github-app-webhook.yml --ref main -f webhook_secret_ve
 For a rotation, replace `1` with the new version only after the deployment
 carrying that version has completed and the production route is healthy.
 
-Two values in `publish-images.yml` are deliberately **not**
-variables — its `runs-on: lcars-build-client` and its BuildKit
-`endpoint:`. That workflow publishes the images the entire fleet pulls and
-trusts, so where it runs and where it builds are trust decisions, not
-configuration: a mutable repository variable would let anyone who can edit
-variables redirect fleet-image publishing to a pool or builder they
-control. The `runs-on` comment records that this was already fixed once
-(it used to read `fromJSON(vars.CI_RUNS_ON || ...)`). A fork edits those
-two lines by hand.
+Image publication intentionally has no repository variable or workflow.
+Canonical `jlapenna/homelab` owns the internal registry endpoint, remote
+BuildKit endpoint, and publisher credential; see
+`docs/image-publish-routing.md` for the source-to-image map. A fork changes
+those trust decisions in its own canonical infrastructure, not through an
+Agent LCARS repository variable.
 
 One further exception:
 

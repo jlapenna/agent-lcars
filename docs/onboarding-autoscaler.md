@@ -157,56 +157,20 @@ same `runner_image`, same privilege posture, just a different `name`/
 `labels`/`max_runners`, mirroring `homelab-autoscale-lcars-ci` alongside
 `homelab-autoscale-lcars-default` in the live `orchestrator.yml`.
 
-### Building images: use the BuildKit builder, not a Docker socket
+### Building images: use the canonical publisher
 
-**If you only need to build and publish container images, you do not need
-a Docker socket at all** — and you should not ask for one. Point the job at
-the shared rootless BuildKit builder over mutually authenticated TLS
-instead:
+Do not create a repository-specific publish runner, GitHub App, or workflow.
+The canonical `jlapenna/homelab` checkout is the fleet's sole image-publish
+authority. It holds the mTLS BuildKit client material and the internal
+registry writer credential, while every repository runner remains free of
+both.
 
-```yaml
-# under registrations[].scale_sets: (or top-level scale_sets: for the
-# primary registration)
-- name: <registration>-autoscale-<name>-build-client
-  labels: [<name>-build-client, <registration>-autoscale-<name>-build-client]
-  runner_image: docker-registry.lan.jlapenna.net/homelab-runner:jit-node24
-  min_runners: 0
-  max_runners: 1
-  mount_docker_socket: false
-  file_mounts:
-    - /etc/buildkit-client/ca.pem:/secrets/buildkit-ca.pem
-    - /etc/buildkit-client/client-cert.pem:/secrets/buildkit-client-cert.pem
-    - /etc/buildkit-client/client-key.pem:/secrets/buildkit-client-key.pem
-```
-
-and in the workflow:
-
-```yaml
-# in your workflow, under jobs.<job-id>:
-runs-on: <name>-build-client
-steps:
-  - uses: docker/setup-buildx-action@<pinned-sha>
-    with:
-      driver: remote
-      endpoint: tcp://oldbook.lan.jlapenna.net:1234
-      driver-opts: |
-        cacert=/secrets/buildkit-ca.pem
-        cert=/secrets/buildkit-client-cert.pem
-        key=/secrets/buildkit-client-key.pem
-```
-
-`driver-opts` take **absolute file paths**. Do not use the
-`BUILDER_NODE_<n>_AUTH_TLS_*` environment variables from Docker's GitHub
-Actions docs — those carry PEM _contents_, the shape that only makes sense
-when the material comes from GitHub secrets. Here it is a local
-bind-mount and the PEM never transits GitHub.
-
-`file_mounts` sources must sit under a `fleet.file_mount_allowlist` prefix,
-are always mounted read-only, and can never be a Docker socket (rejected in
-config validation, so this cannot be used to route around
-`fleet.docker_socket_allowlist`). See jlapenna/homelab's
-`docs/buildkit-builder.md` for the builder runbook, certificate rotation,
-and how to add a new builder host.
+Add a narrow wrapper in canonical homelab that calls
+`bin/publish-internal-image.sh`. The wrapper should declare only the source
+repository, build context, Dockerfile, platforms, required build arguments,
+and final promotion tag. The shared publisher stages a commit-SHA tag,
+attests provenance/SBOM, scans every platform, and promotes only after scans
+pass. See `docs/registry.md` there for the runbook.
 
 ### If you still think you need the socket — split by trust level
 
@@ -339,67 +303,16 @@ cloning another repo's live branch mid-build for the one sanctioned
 telemetry-watcher stage in `apps/runner-autoscaler/runner-image/Dockerfile`;
 that's not a pattern to repeat for a new image.
 
-Publish it from a **socketless build-client** scale set (§2 above) — never
-the AI-agent pool, and no longer from a docker-socket-enabled pool either.
-See this repo's own `.github/workflows/publish-images.yml` for a
-working reference: multi-arch build+push through the remote BuildKit
-builder, with a registry-backed layer cache (`cache-from`/`cache-to:
-type=registry`).
+Add the custom image to canonical homelab rather than creating a
+registration-specific publisher. Its wrapper calls the generic publisher,
+so it gets the same remote BuildKit driver, registry-backed cache,
+provenance/SBOM, staged commit-SHA tag, per-platform Trivy scan, and
+registry-side promotion as every other fleet image. The registry password is
+read only by the canonical controller, never a GitHub Actions runner.
 
-No `docker/setup-qemu-action` is needed — nothing is built on the runner,
-and arm64 emulation lives on the builder, which is where `RUN` steps
-actually execute under the remote driver.
-
-Pushes to `docker-registry.lan.jlapenna.net` require the `publisher`
-credential. The registry keeps pulls anonymous but uses its Bearer-token
-service to authorize writes. The credential is distributed from the
-homelab Ansible vault to the socketless publish lane as the read-only
-`/secrets/registry-password` mount; it is not a GitHub Actions secret.
-
-Run `docker login docker-registry.lan.jlapenna.net --username publisher
---password-stdin < /secrets/registry-password` before invoking Buildx.
-With the remote driver, the client forwards that credential through the
-build session; the builder does not store it. Log out in an `always()`
-cleanup step. See jlapenna/homelab `docs/registry.md` for credential
-rotation and policy verification.
-
-### Scanning and attesting a new published image
-
-Every image `publish-images.yml` builds and pushes gets provenance/SBOM
-attestation and a vulnerability scan that actually gates the mutable tag
-the fleet consumes (agent-lcars#224) — do the same for a new image rather
-than treating it as optional:
-
-- Add `provenance: true` and `sbom: true` to the `docker/build-push-action`
-  step. This needs the same remote-driver BuildKit builder already in use
-  here; the default `docker` driver does not support attestations.
-- **Push to a staging tag first, never straight to the mutable tag.** Tag
-  the build `:<github.sha>` and push only that. Scanning an already-live
-  mutable tag (`:latest` and friends) is too late to matter: the
-  autoscaler's `ensureRunnerImage` treats a moving tag as immediately
-  consumable the moment it's pushed, so a scan that fails after that push
-  only turns the CI run red without having stopped anything.
-- Scan the staging reference with the local `.github/actions/scan-image`
-  composite action, reusing the `docker login` credential already
-  established above — never a local tag or image ID. This runner has no
-  Docker socket (§2 above / agent-lcars#101), so there is no local image to
-  scan even if one were preferable. **If the image is multi-platform, scan
-  it once per platform** (pass `platform:` to `scan-image`) — Trivy
-  resolves an arbitrary single manifest from a manifest list otherwise, so
-  scanning it only once silently leaves every other architecture unchecked.
-  Give each image+platform its own `category` input so its SARIF results
-  don't overwrite another one's in the code-scanning UI.
-- Only after the scan(s) pass, promote the staging tag to the real mutable
-  tag with `docker buildx imagetools create --tag <mutable> <staging>` — a
-  registry-side manifest copy, not a rebuild, and (per docker/buildx's own
-  docs) a "carbon copy" when given one manifest-list source, so it carries
-  the attestations over rather than losing them. This is the same tool
-  `runner-image/Dockerfile`'s own comment already uses to mirror its
-  upstream base image.
-
-See `scan-image/action.yml` for the CRITICAL + fixable-only severity bar
-and why it was chosen, and `publish-images.yml`'s own header comment for
-the full staging-tag/promote shape applied to all three images it builds.
+No `docker/setup-qemu-action` is needed: arm64 emulation lives on the remote
+builder. See canonical homelab's `docs/registry.md` for the publisher
+contract, credential rotation, and policy verification.
 
 ## Verifying it actually worked
 
