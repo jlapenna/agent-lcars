@@ -229,6 +229,16 @@ if [ -n "$CALLER_HOME" ]; then
   )
 fi
 
+# Playwright-base sandbox images (the lcars-e2e pool's runner, tools/e2e's
+# container) preinstall browsers at an image-level PLAYWRIGHT_BROWSERS_PATH
+# (/ms-playwright). It is a browser-cache location of the same class as the
+# corepack/firebase carve-outs above -- not a credential -- and without it an
+# isolated HOME makes Playwright resolve an empty per-HOME cache and fail to
+# launch. Forward it only when the ambient environment set it.
+if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+  SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
+fi
+
 # These are deliberate, non-credential inputs to Playwright. Boolean controls
 # only have meaning when set to exactly 1; E2E_GREP is the supported way to
 # scope a host run because the public Nx target cannot forward CLI arguments.
