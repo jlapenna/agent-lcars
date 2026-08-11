@@ -226,11 +226,14 @@ jobs:
     # a repository variable could otherwise redirect fleet-image publishing.
     # A fork edits this line.
     runs-on: lcars-build-client
-    # Raised from 20: arm64 is emulated on the builder (no native aarch64
-    # host is available -- see agent-lcars#101), and a cold BuildKit cache
-    # makes the JIT runner image build the dominant cost. Steady-state runs
-    # are far quicker once the cache is warm.
-    timeout-minutes: 60
+    # Raised from 20, then from 60: arm64 is emulated on the builder (no
+    # native aarch64 host is available -- see agent-lcars#101), and a cold
+    # BuildKit cache makes the JIT runner image build the dominant cost.
+    # 2026-08-11: a cold six-group publish (the e2e/e2e-runner groups added
+    # by #924/#929) measured 60m23s of job time before the 60m cap killed it
+    # 50 steps in, mid-push (run 31451206074) -- three consecutive runs died
+    # this way. Steady-state runs are far quicker once the cache is warm.
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v7
