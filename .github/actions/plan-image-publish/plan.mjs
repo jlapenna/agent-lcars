@@ -1,10 +1,11 @@
 // Path-based build planning for publish-images.yml (agent-lcars#441).
 //
-// The workflow publishes four independently routed image groups from this repo:
+// The workflow publishes five independently routed image groups from this repo:
 //   - the runner-autoscaler control-plane image
 //   - the JIT worker runner image (bakes in the telemetry-watcher bundle)
 //   - the standalone telemetry-watcher daemon image (the same bundle)
 //   - the standalone GitHub Actions metrics exporter image
+//   - the pinned Playwright E2E sandbox image (agent-lcars#908)
 //
 // Building every group serially on every push -- including ones that only
 // touch one of them, or touch none of them -- is what made a
@@ -81,6 +82,13 @@ const EXPORTER_IMAGE_FILES = new Set([
   'apps/github-actions-exporter/requirements.lock',
 ]);
 
+// tools/e2e-docker.sh and publish-images.yml both derive the image tag from
+// this ONE file's content hash (agent-lcars#908) -- it has no COPY
+// instructions, so it is the image's entire input; ci.env/screenshot.css/etc
+// under tools/e2e/ are bind-mounted at run time, not baked in, and do not
+// belong here.
+const E2E_IMAGE_FILES = new Set(['tools/e2e/Dockerfile']);
+
 function startsWithAny(file, prefixes) {
   return prefixes.some((prefix) => file.startsWith(prefix));
 }
@@ -118,6 +126,10 @@ function isExporter(file) {
   return EXPORTER_IMAGE_FILES.has(file);
 }
 
+function isE2eImage(file) {
+  return E2E_IMAGE_FILES.has(file);
+}
+
 // `changedFiles === null` is the explicit "no well-defined diff" sentinel
 // (a manual workflow_dispatch republish, or a push whose `before` SHA is
 // unreachable -- see main.mjs) and always plans every image, the same safe
@@ -129,6 +141,7 @@ function planImageBuilds(changedFiles) {
       jitRunner: true,
       watcher: true,
       exporter: true,
+      e2e: true,
     };
   }
   const workflow = changedFiles.some(isWorkflowInfra);
@@ -138,6 +151,7 @@ function planImageBuilds(changedFiles) {
     jitRunner: workflow || bundleInput || changedFiles.some(isRunnerImage),
     watcher: workflow || bundleInput,
     exporter: workflow || changedFiles.some(isExporter),
+    e2e: workflow || changedFiles.some(isE2eImage),
   };
 }
 
@@ -152,6 +166,7 @@ function parseChangedFiles(diffOutput) {
 export {
   isBundleInput,
   isControlPlane,
+  isE2eImage,
   isExporter,
   isRunnerImage,
   isWorkflowInfra,

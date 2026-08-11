@@ -24,6 +24,15 @@
 # host run. Values come from tools/e2e/ci.env in both places rather than
 # being hardcoded here, so there is no second copy to drift.
 #
+# Still CI's own entrypoint after #908 (which containerized the local-dev
+# path, tools/e2e-docker.sh) -- not dead code kept by oversight. #908 found
+# that moving ci.yml's `e2e` job into the same pinned container needs a
+# dedicated runner pool whose own image IS that container (sprinkles'
+# model), which doesn't exist for this repo yet and means infrastructure
+# changes outside this repo (see #920). Until that lands, this script -- and
+# tools/kill-e2e-ports.sh's fixed-port cleanup, which only this host-direct
+# path needs -- remain CI's real path, not a leftover.
+#
 # Usage:
 #   tools/e2e-local.sh                   # emulator, whole suite
 #   E2E_GREP='@smoke' tools/e2e-local.sh # emulator, scoped suite

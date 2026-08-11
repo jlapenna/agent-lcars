@@ -1,6 +1,6 @@
 # Which image builds when: `publish-images.yml`'s path-based routing
 
-`publish-images.yml` publishes five images in four independently routed groups.
+`publish-images.yml` publishes six images in five independently routed groups.
 Building every group serially on every push — including ones that only touch
 one of them, or touch none of them at all — is what made a
 deployment-config-only telemetry-watcher change (#440) spend ~20 minutes of
@@ -19,6 +19,7 @@ this document explains it, that file is the source of truth.
 | `homelab-runner:jit-node24`           | `apps/runner-autoscaler/runner-image`        | `apps/runner-autoscaler/runner-image/Dockerfile`        | every self-hosted CI job in this fleet                |
 | `agent-lcars/telemetry-watcher`       | repo root (`.`)                              | `apps/telemetry-watcher/Dockerfile`                     | pike, the per-workstation telemetry daemon            |
 | `agent-lcars/github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | homelab Prometheus                                    |
+| `agent-lcars/e2e`                     | `tools/e2e`                                  | `tools/e2e/Dockerfile`                                  | `tools/e2e-docker.sh` (local/CI-consistent E2E runs)  |
 
 The JIT runner image and the telemetry-watcher image are **different
 artifacts built from the same source**: both bake in
@@ -32,7 +33,7 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
 
 1. **Workflow infrastructure** — `.github/workflows/publish-images.yml`,
    `.github/actions/scan-image/**`, `.github/actions/plan-image-publish/**`.
-   Schedules **all four groups**. Changing how an image is built, scanned,
+   Schedules **all five groups**. Changing how an image is built, scanned,
    or routed is as much a reason to republish-and-exercise as changing what's
    in it (the same reasoning `scan-image` already applied, #224).
 2. **Bundle inputs** — `apps/telemetry-watcher/**` (except the two
@@ -51,7 +52,12 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
    `requirements.lock`. Schedules only the exporter. Its README, tests, and
    Nx project config remain CI inputs but cannot change the image and do not
    consume the serialized builder lane.
-6. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
+6. **E2E sandbox input** — `tools/e2e/Dockerfile` (agent-lcars#908). Schedules
+   only the e2e image. That one file has no `COPY` instructions, so it is the
+   image's entire content — everything else under `tools/e2e/` (`ci.env`,
+   `screenshot.css`, …) is bind-mounted into the container at run time by
+   `tools/e2e-docker.sh`, not baked in, and does not belong here.
+7. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
 
 A push can match more than one rule; each image is scheduled if **any**
 matching rule schedules it — there is no "first match wins" short-circuit
