@@ -182,16 +182,16 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
   }) => {
     await stubRequestId(page, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
     await page.goto('/');
-
-    const description = 'E2E idempotency check: same request ID twice';
-    const capturedAt = '2026-08-08T12:34:56.000Z';
-
-    await openQuickTask(page);
-    // Auto-captured context is part of the human-readable issue body and
-    // therefore its digest. Hold this editable field constant so the two
+    // Auto-captured context (including its capture timestamp) is part of the
+    // human-readable issue body and therefore its digest. Freeze the clock so
+    // the two independent modal opens capture the same instant and the two
     // requests are genuinely byte-identical; a fixed UUID with a different
     // capture time must (correctly) conflict as different content.
-    await page.getByRole('dialog').getByLabel('Captured at').fill(capturedAt);
+    await page.clock.setFixedTime(new Date('2026-08-08T12:34:56.000Z'));
+
+    const description = 'E2E idempotency check: same request ID twice';
+
+    await openQuickTask(page);
     await fillAndSubmit(page, description);
     const firstReceipt = taskRefNotification(page);
     await expect(firstReceipt).toBeVisible();
@@ -230,7 +230,6 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // that those are different: same content under a *different* ID is a
     // new, unrelated task).
     await openQuickTask(page);
-    await page.getByRole('dialog').getByLabel('Captured at').fill(capturedAt);
     const retryActionRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
@@ -302,22 +301,15 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await openQuickTask(page);
     const intake = page.getByRole('dialog');
     await intake.getByLabel('Description').fill(originalDescription);
-    await intake.getByRole('button', { name: 'Add guided details' }).click();
-    await intake.getByLabel('Observed').fill('The old behavior is visible.');
-    await intake.getByLabel('Expected').fill('The corrected behavior appears.');
     await intake
-      .getByLabel('Done when')
-      .fill('The browser regression remains green.');
-    await intake
-      .getByLabel('Evidence links')
+      .getByLabel('Screenshot')
       .fill('https://example.invalid/evidence');
 
     const previewTitle = intake.getByTestId('quick-task-preview-title');
     const previewBody = intake.getByTestId('quick-task-preview-body');
     await expect(previewTitle).toHaveText(originalDescription);
-    await expect(previewBody).toContainText('## Problem details');
     await expect(previewBody).toContainText(
-      '### Observed\nThe old behavior is visible.',
+      '## Screenshot\nhttps://example.invalid/evidence',
     );
     await expect(previewBody).toContainText('## Source context');
     await expect(previewBody).toContainText(
@@ -338,14 +330,16 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
 
     await page.goto(`/task/supersprinklesracing/sprinkles/${issueNumber}`);
     // Detail pages contribute their canonical identity instead of making the
-    // client infer it from hidden page data. The source block remains
-    // editable before the next issue is filed.
+    // client infer it from hidden page data - proven here via the next
+    // issue's own preview body, since the source block is captured
+    // automatically rather than shown as editable fields.
     await openQuickTask(page);
-    await expect(page.getByLabel('Console route')).toHaveValue(
-      `/task/supersprinklesracing/sprinkles/${issueNumber}`,
+    await intake.getByLabel('Description').fill('Follow-up quick task');
+    await expect(previewBody).toContainText(
+      `- Console route: \`/task/supersprinklesracing/sprinkles/${issueNumber}\``,
     );
-    await expect(page.getByLabel('Related identity')).toHaveValue(
-      `Task: supersprinklesracing/sprinkles#${issueNumber}`,
+    await expect(previewBody).toContainText(
+      `- Task: supersprinklesracing/sprinkles#${issueNumber}`,
     );
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toBeHidden();
