@@ -161,6 +161,9 @@ jobs:
       - name: Check contracts
         run: pnpm check:contracts
 
+      - name: Test Nx remote-cache read failure is non-fatal (#942)
+        run: bash tools/nx-remote-cache-read-failure.test.sh
+
       # dispatch-broker's action.yml runs the committed bundle at
       # dispatch-broker/dist/main.mjs, not the loose sources next to it
       # (built by apps/dispatch-broker's `build` target -- see its "// why"). A committed build artifact that

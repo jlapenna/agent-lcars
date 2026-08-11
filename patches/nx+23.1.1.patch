@@ -1,0 +1,97 @@
+diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/dist/src/tasks-runner/cache.js
+index 4a34ba2..a1c3489 100644
+--- a/node_modules/nx/dist/src/tasks-runner/cache.js
++++ b/node_modules/nx/dist/src/tasks-runner/cache.js
+@@ -80,7 +80,19 @@ class DbCache {
+         if (this.remoteCache) {
+             // didn't find it locally but we have a remote cache
+             // attempt remote cache
+-            const res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
++            //
++            // A remote-cache read is an optimization: losing it must fall back
++            // to recomputing the task locally, not crash the run (a network
++            // blip here has no way to distinguish itself from a real miss —
++            // agent-lcars#942, sprinkles#4255).
++            let res;
++            try {
++                res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
++            }
++            catch (e) {
++                logger_1.logger.warn(`NX   Failed to read remote cache entry for ${task.id}, continuing without it: ${e}`);
++                return null;
++            }
+             if (res) {
+                 this.applyRemoteCacheResults(task.hash, res, task.outputs);
+                 return {
+@@ -132,7 +144,17 @@ class DbCache {
+         //    Promise.all over individual retrieve() calls.
+         if (remoteMisses.length > 0) {
+             await Promise.all(remoteMisses.map(async (task) => {
+-                const res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
++                // See the matching comment in get() above: a remote-cache
++                // read failure degrades to a local miss, it must not crash
++                // the run (agent-lcars#942, sprinkles#4255).
++                let res;
++                try {
++                    res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
++                }
++                catch (e) {
++                    logger_1.logger.warn(`NX   Failed to read remote cache entry for ${task.id}, continuing without it: ${e}`);
++                    return;
++                }
+                 if (res) {
+                     this.applyRemoteCacheResults(task.hash, res, task.outputs);
+                     results.set(task.hash, {
+@@ -157,7 +179,15 @@ class DbCache {
+             // Notify TaskIOService of actual output files
+             (0, task_io_service_1.getTaskIOService)().notifyTaskOutputs(task.id, expandedOutputs);
+             if (this.remoteCache) {
+-                await this.remoteCache.store(task.hash, this.cache.cacheDirectory, terminalOutput, code);
++                // Same rationale as the read side above: an upload failure
++                // must not crash an already-successful task (agent-lcars#942,
++                // sprinkles#4255).
++                try {
++                    await this.remoteCache.store(task.hash, this.cache.cacheDirectory, terminalOutput, code);
++                }
++                catch (e) {
++                    logger_1.logger.warn(`NX   Failed to write remote cache entry for ${task.id}, continuing without it: ${e}`);
++                }
+             }
+         });
+     }
+@@ -349,7 +379,17 @@ class Cache {
+         else if (this.options.remoteCache && !this.options.skipRemoteCache) {
+             // didn't find it locally but we have a remote cache
+             // attempt remote cache
+-            await this.options.remoteCache.retrieve(task.hash, this.cachePath);
++            //
++            // See DbCache.get()'s matching comment: a remote-cache read
++            // failure must degrade to a local miss, not crash the run
++            // (agent-lcars#942, sprinkles#4255).
++            try {
++                await this.options.remoteCache.retrieve(task.hash, this.cachePath);
++            }
++            catch (e) {
++                logger_1.logger.warn(`NX   Failed to read remote cache entry for ${task.hash}, continuing without it: ${e}`);
++                return null;
++            }
+             // try again from local cache
+             const res2 = await this.getFromLocalDir(task);
+             return res2 ? { ...res2, remote: true } : null;
+@@ -397,7 +437,15 @@ class Cache {
+             await (0, promises_1.writeFile)((0, path_1.join)(td, 'source'), await (0, machine_id_cache_1.getCurrentMachineId)());
+             await (0, promises_1.writeFile)(tdCommit, 'true');
+             if (this.options.remoteCache && !this.options.skipRemoteCache) {
+-                await this.options.remoteCache.store(task.hash, this.cachePath);
++                // See DbCache.put()'s matching comment: an upload failure
++                // must not crash an already-successful task (agent-lcars#942,
++                // sprinkles#4255).
++                try {
++                    await this.options.remoteCache.store(task.hash, this.cachePath);
++                }
++                catch (e) {
++                    logger_1.logger.warn(`NX   Failed to write remote cache entry for ${task.hash}, continuing without it: ${e}`);
++                }
+             }
+             if (terminalOutput) {
+                 const outputPath = this.temporaryOutputPath(task);
