@@ -53,6 +53,24 @@ USER root
 # depends on the agent's original uid -- a JIT config carries none -- but
 # /home/runner must be owned by whoever executes run.sh, hence --chown on
 # the COPY below.
+#
+# 1002 is ALSO a load-bearing match with sprinkles' own e2e-runner image
+# (which independently chose the same uid, for the same 1001-collision
+# reason -- see that Dockerfile), not just a coincidence to leave alone: the
+# homelab orchestrator's `share_workdir: true` (set on both pools' scale
+# sets) bind-mounts the SAME host `/home/runner/{_work,externals}` paths
+# (scaler.go's `runnerBinds`, gated on `shareWorkDir`), and `ensureWorkDir
+# Ownership` chowns them to whichever scale set's own image last placed a
+# runner there (`id runner` inside `a.runnerImage`) -- see the id checks
+# earlier in this file's own build verification. Both pools draw from the
+# SAME shared fleet host pool (orchestrator.yml's own header comment), so
+# they WILL land on the same hosts over time. If this image's uid ever
+# drifts from sprinkles' e2e-runner image's uid, two share_workdir pools
+# alternating on one host would flip-flop ownership of that shared tree and
+# jobs could fail to write their own workspace (caught in PR #929 review) --
+# keep the two in lockstep, or migrate away from a raw uid match by
+# isolating the shared paths per pool (an orchestrator-level change, out of
+# scope here).
 RUN groupadd -g 1002 runner \
   && useradd -m -u 1002 -g 1002 -s /bin/bash runner
 
@@ -83,10 +101,15 @@ WORKDIR /home/runner
 # run.sh directly, with no entrypoint wrapper: the shared JIT runner image's
 # wrapper (apps/runner-autoscaler/runner-image/entrypoint.sh) exists to
 # repair /home/runner/externals from a backup because externals is a shared
-# bind mount on socket-mounted scale sets, and to preflight node20/node24 for
-# arbitrary Actions runtimes -- neither applies here. runnerBinds only
-# creates that bind for mount_docker_socket pools, and this pool is not one;
-# externals stays exactly as baked in, container-local and uncontended. No
-# telemetry sidecar either -- that is claude.yml's concern on the
-# claude-agent pool, not this one's.
+# bind mount on share_workdir scale sets (scaler.go's `runnerBinds` gates
+# that bind on `shareWorkDir`, NOT `mountDockerSocket` -- those were one flag
+# until agent-lcars#101 split them apart, and this pool sets
+# `share_workdir: true` without `mount_docker_socket` in homelab's
+# orchestrator.yml, so it DOES get that bind; see the uid comment above for
+# why that matters here), and to preflight node20/node24 for arbitrary
+# Actions runtimes -- neither wrapper concern applies to this pool: it runs
+# exactly one job type (this repo's own console-e2e suite, not arbitrary
+# Actions), so externals stays exactly as baked in. No telemetry sidecar
+# either -- that is claude.yml's concern on the claude-agent pool, not this
+# one's.
 ENTRYPOINT ["/home/runner/run.sh"]
