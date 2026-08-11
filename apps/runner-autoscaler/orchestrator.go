@@ -454,6 +454,8 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	go func() { defer wg.Done(); runConsoleStatusPublisher(ctx, runtimes, statusPublisher) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); runFleetOrphanSweeper(ctx, runtimes) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); runFleetTrackedRunnerReconciler(ctx, runtimes) }()
 	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)
 	for _, runtime := range runtimes {
 		if runtime.config.ShareWorkDir {
@@ -655,6 +657,43 @@ func runFleetOrphanSweeper(ctx context.Context, runtimes []*scaleSetRuntime) {
 					runtime.scaler.cleanupOrphans(ctx, false)
 				}
 			}
+		}
+	}
+}
+
+// trackedRunnerReconcileInterval bounds how long a stale checkpoint/runtime
+// entry can suppress placement when GitHub has no completion event to deliver.
+// It is intentionally much shorter than orphanSweepInterval: this loop is a
+// read-only Docker inspect pass over the already-tracked (and fleet-bounded)
+// set, whereas orphan cleanup lists and may remove every owned container.
+const trackedRunnerReconcileInterval = time.Minute
+
+// runFleetTrackedRunnerReconciler continuously compares each initialized scale
+// set's in-memory map with Docker. Run once immediately so a checkpoint that
+// retained a container which exited during a restart cannot strand the first
+// queued job while waiting for a later desired-count callback.
+func runFleetTrackedRunnerReconciler(ctx context.Context, runtimes []*scaleSetRuntime) {
+	reconcile := func() {
+		for _, runtime := range runtimes {
+			runtime.mu.RLock()
+			initialized := runtime.initialized
+			scaler := runtime.scaler
+			runtime.mu.RUnlock()
+			if initialized {
+				scaler.reconcileTrackedRunners(ctx)
+			}
+		}
+	}
+
+	reconcile()
+	ticker := time.NewTicker(trackedRunnerReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reconcile()
 		}
 	}
 }

@@ -25,6 +25,9 @@ type fakeDockerServer struct {
 
 	mu      sync.Mutex
 	inspect map[string]inspectStub // containerID -> canned ContainerInspect response
+	// inspectCalls records ContainerInspect requests by container ID so tests
+	// can prove a listener-path reconciliation did not probe busy runners.
+	inspectCalls map[string]int
 	// tops: containerID -> canned ContainerTop process list. An ID absent
 	// here 404s, which is what cleanupOrphans sees as a top error.
 	tops       map[string]container.TopResponse
@@ -54,7 +57,7 @@ type inspectStub struct {
 // t.Cleanup.
 func newFakeDockerServer(t *testing.T) *fakeDockerServer {
 	t.Helper()
-	f := &fakeDockerServer{inspect: make(map[string]inspectStub), tops: make(map[string]container.TopResponse)}
+	f := &fakeDockerServer{inspect: make(map[string]inspectStub), inspectCalls: make(map[string]int), tops: make(map[string]container.TopResponse)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -85,6 +88,12 @@ func (f *fakeDockerServer) setInspect(containerID string, status int, state *con
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.inspect[containerID] = inspectStub{status: status, state: state}
+}
+
+func (f *fakeDockerServer) inspectCallCount(containerID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.inspectCalls[containerID]
 }
 
 // setListDelay makes every ContainerList response stall, standing in for a
@@ -152,6 +161,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		// Inspect: GET .../containers/{id}/json
 		id := containerIDFromPath(r.URL.Path)
 		f.mu.Lock()
+		f.inspectCalls[id]++
 		stub, ok := f.inspect[id]
 		f.mu.Unlock()
 		if !ok || stub.status == http.StatusNotFound {
