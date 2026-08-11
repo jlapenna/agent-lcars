@@ -76,14 +76,23 @@ const (
 	sweepFailureReasonOutputUnparseable = "output_unparseable"
 )
 
-// The complete set of `reason` label values runnerDiedIdleTotal is ever
-// incremented with, for the same bounded-cardinality reason as the
-// placementReason* constants above: pruneDeadIdleRunners' own log message
-// embeds a free-form container status string that must never reach a metric
-// label directly.
+// The complete set of `reason` label values runnerDiedIdleTotal and
+// trackedRunnerMismatchTotal are ever incremented with, for the same bounded
+// cardinality reason as the placementReason* constants above:
+// reconcileTrackedRunners' own log message embeds a free-form container status
+// string that must never reach a metric label directly.
 const (
 	runnerDeadReasonNotRunning = "not_running"
 	runnerDeadReasonNotFound   = "not_found"
+)
+
+// The state label on trackedRunnerMismatchTotal reflects the authoritative
+// in-memory state just before it was reconciled away. Keeping it bounded makes
+// it possible to distinguish an exited busy runner (the #387 incident) from
+// the existing idle-runner crash-loop signal.
+const (
+	runnerTrackedStateIdle = "idle"
+	runnerTrackedStateBusy = "busy"
 )
 
 const (
@@ -176,6 +185,13 @@ var (
 				runnerDeadReasonNotRunning + ", " + runnerDeadReasonNotFound + ".",
 		},
 		[]string{"scale_set", "host", "reason"},
+	)
+	trackedRunnerMismatchTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_tracked_runner_mismatch_total",
+			Help: "Tracked runner entries reconciled because authoritative Docker state found their container stopped or missing, by scale set, host, tracked state, and reason.",
+		},
+		[]string{"scale_set", "host", "state", "reason"},
 	)
 	hostReachableGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -409,6 +425,7 @@ func registerMetrics() {
 			runnerStartDuration,
 			runnerStartFailures,
 			runnerDiedIdleTotal,
+			trackedRunnerMismatchTotal,
 			hostReachableGauge,
 			hostExternalsHealthyGauge,
 			hostReadyGauge,

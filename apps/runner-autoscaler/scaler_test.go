@@ -1093,50 +1093,55 @@ func TestScoreHostLoadSwapNeverHardOverloads(t *testing.T) {
 	}
 }
 
-// TestPruneDeadIdleRunners exercises pruneDeadIdleRunners' ContainerInspect
-// outcomes: only a successful inspect showing a non-running state, or a
-// definitive not-found, counts as death. A transport-ish failure (a generic
-// 500, or the host being unreachable altogether) must leave the entry
-// tracked.
-func TestPruneDeadIdleRunners(t *testing.T) {
+// TestReconcileTrackedRunners exercises the runtime Docker reconciliation for
+// both idle and busy entries. Only a successful inspect showing a non-running
+// state, or a definitive not-found, counts as death. A transport-ish failure
+// (a generic 500, or the host being unreachable altogether) must leave the
+// entry tracked.
+func TestReconcileTrackedRunners(t *testing.T) {
 	running := &container.State{Status: container.StateRunning, Running: true}
 	exited := &container.State{Status: container.StateExited, Running: false}
 
 	cases := []struct {
 		name        string
 		unreachable bool
+		state       string
 		setup       func(f *fakeDockerServer)
 		wantPruned  bool
-		// wantReason is the runnerDiedIdleTotal reason label expected to
-		// increment by exactly 1, or "" if pruning must not touch the
-		// counter at all (agent-lcars#393).
+		// wantReason is the bounded mismatch reason expected for a pruned
+		// entry. runnerDiedIdleTotal remains intentionally idle-only.
 		wantReason string
 	}{
 		{
 			name:       "running container is kept",
+			state:      runnerTrackedStateIdle,
 			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusOK, running) },
 			wantPruned: false,
 		},
 		{
-			name:       "exited container is pruned",
+			name:       "exited idle container is pruned",
+			state:      runnerTrackedStateIdle,
 			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusOK, exited) },
 			wantPruned: true,
 			wantReason: runnerDeadReasonNotRunning,
 		},
 		{
-			name:       "not found (404) is pruned",
+			name:       "missing busy container is pruned",
+			state:      runnerTrackedStateBusy,
 			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusNotFound, nil) },
 			wantPruned: true,
 			wantReason: runnerDeadReasonNotFound,
 		},
 		{
 			name:       "server error (500) is kept, not treated as not-found",
+			state:      runnerTrackedStateBusy,
 			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusInternalServerError, nil) },
 			wantPruned: false,
 		},
 		{
 			name:        "transport error (connection refused) is kept",
 			unreachable: true,
+			state:       runnerTrackedStateBusy,
 			wantPruned:  false,
 		},
 	}
@@ -1159,11 +1164,18 @@ func TestPruneDeadIdleRunners(t *testing.T) {
 				client = f.client(t)
 			}
 
+			idle := map[string]runnerRef{}
+			busy := map[string]runnerRef{}
+			if c.state == runnerTrackedStateBusy {
+				busy["runner-1"] = runnerRef{host: "host-a", containerID: "c1"}
+			} else {
+				idle["runner-1"] = runnerRef{host: "host-a", containerID: "c1"}
+			}
 			scaler := &Scaler{
 				dockerHosts: []DockerHost{{Name: "host-a", Client: client}},
 				runners: runnerState{
-					idle: map[string]runnerRef{"runner-1": {host: "host-a", containerID: "c1"}},
-					busy: make(map[string]runnerRef),
+					idle: idle,
+					busy: busy,
 				},
 				scalesetClient: newStubScalesetClient(t),
 				logger:         slog.New(slog.NewTextHandler(os.Stdout, nil)),
@@ -1175,33 +1187,46 @@ func TestPruneDeadIdleRunners(t *testing.T) {
 			// TestPickHostSharedWorkDirExhaustionCountsPlacementBlocked).
 			notRunningCounter := runnerDiedIdleTotal.WithLabelValues("default", "host-a", runnerDeadReasonNotRunning)
 			notFoundCounter := runnerDiedIdleTotal.WithLabelValues("default", "host-a", runnerDeadReasonNotFound)
+			mismatchCounter := trackedRunnerMismatchTotal.WithLabelValues("default", "host-a", c.state, c.wantReason)
 			beforeNotRunning := testutil.ToFloat64(notRunningCounter)
 			beforeNotFound := testutil.ToFloat64(notFoundCounter)
+			beforeMismatch := testutil.ToFloat64(mismatchCounter)
 
-			scaler.pruneDeadIdleRunners(context.Background())
+			scaler.reconcileTrackedRunners(context.Background())
 
 			_, stillIdle := scaler.runners.idle["runner-1"]
+			_, stillBusy := scaler.runners.busy["runner-1"]
 			switch {
-			case c.wantPruned && stillIdle:
-				t.Errorf("expected runner-1 to be pruned, but it is still tracked idle")
-			case !c.wantPruned && !stillIdle:
-				t.Errorf("expected runner-1 to remain tracked idle, but it was pruned")
+			case c.wantPruned && (stillIdle || stillBusy):
+				t.Errorf("expected runner-1 to be pruned, but it remains tracked (idle=%v busy=%v)", stillIdle, stillBusy)
+			case !c.wantPruned && !(stillIdle || stillBusy):
+				t.Errorf("expected runner-1 to remain tracked, but it was pruned")
 			}
 
 			gotNotRunning := testutil.ToFloat64(notRunningCounter) - beforeNotRunning
 			gotNotFound := testutil.ToFloat64(notFoundCounter) - beforeNotFound
 			wantNotRunning, wantNotFound := 0.0, 0.0
-			switch c.wantReason {
-			case runnerDeadReasonNotRunning:
-				wantNotRunning = 1
-			case runnerDeadReasonNotFound:
-				wantNotFound = 1
+			if c.state == runnerTrackedStateIdle {
+				switch c.wantReason {
+				case runnerDeadReasonNotRunning:
+					wantNotRunning = 1
+				case runnerDeadReasonNotFound:
+					wantNotFound = 1
+				}
 			}
 			if gotNotRunning != wantNotRunning {
 				t.Errorf("runner_died_idle_total{reason=%q} rose by %v, want %v", runnerDeadReasonNotRunning, gotNotRunning, wantNotRunning)
 			}
 			if gotNotFound != wantNotFound {
 				t.Errorf("runner_died_idle_total{reason=%q} rose by %v, want %v", runnerDeadReasonNotFound, gotNotFound, wantNotFound)
+			}
+			gotMismatch := testutil.ToFloat64(mismatchCounter) - beforeMismatch
+			wantMismatch := 0.0
+			if c.wantPruned {
+				wantMismatch = 1
+			}
+			if gotMismatch != wantMismatch {
+				t.Errorf("tracked_runner_mismatch_total{state=%q,reason=%q} rose by %v, want %v", c.state, c.wantReason, gotMismatch, wantMismatch)
 			}
 		})
 	}

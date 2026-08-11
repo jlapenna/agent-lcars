@@ -622,9 +622,9 @@ func (a *Scaler) runnersChanged() {
 func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
 	a.queuedJobs.Store(int64(count))
 	// Correct currentCount against reality BEFORE comparing it to demand --
-	// see pruneDeadIdleRunners for why a stale idle entry can otherwise
-	// pin desired == current forever and starve every future scale-up.
-	a.pruneDeadIdleRunners(ctx)
+	// see reconcileTrackedRunners for why a stale entry can otherwise pin
+	// desired == current forever and starve every future scale-up.
+	a.reconcileTrackedRunners(ctx)
 	currentCount := a.runners.count()
 	if a.draining.Load() {
 		a.removeIdleRunners(context.WithoutCancel(ctx))
@@ -694,15 +694,13 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	return a.runners.count(), nil
 }
 
-// pruneDeadIdleRunners checks every runner currently tracked as idle
-// against its actual container state and drops any whose container has
-// stopped or vanished. Without this, such an entry sits "idle" forever:
-// the ONLY other path that removes an idle/busy entry is HandleJobCompleted,
-// which requires GitHub to send a completion message correlated by runner
-// name -- a runner whose container never actually ran a real job (see
-// below) never gets one, so it silently pins currentCount above reality
-// and HandleDesiredRunnerCount concludes no scale-up is needed when one
-// clearly is.
+// reconcileTrackedRunners checks every tracked runner -- idle and busy --
+// against its authoritative Docker state and drops entries whose containers
+// have stopped or vanished. HandleJobCompleted is normally the path that
+// removes an idle/busy entry, but it can never arrive when the container dies
+// after GitHub assigned a job and before the listener receives completion.
+// Leaving that busy entry counted was the homelab#387 incident: desired count
+// matched stale in-memory state while no corresponding runner existed.
 //
 // Confirmed live during the members#2986 landing: a control-plane restart
 // mid-session made the fresh listener adopt GitHub's "assigned jobs" count
@@ -718,21 +716,24 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 // host -- this fleet has had exactly that with spark) is deliberately NOT
 // treated as "container gone": only a successful inspect showing a
 // non-running state, or a definitive not-found, counts as death. Anything
-// else leaves the entry tracked and gets logged instead -- otherwise a
-// host having a bad moment over SSH would mass-deregister every healthy
-// idle runner placed on it.
-func (a *Scaler) pruneDeadIdleRunners(ctx context.Context) {
-	type idleEntry struct {
+// else leaves the entry tracked and gets logged instead -- otherwise a host
+// having a bad moment over SSH would mass-deregister every healthy runner.
+func (a *Scaler) reconcileTrackedRunners(ctx context.Context) {
+	type trackedEntry struct {
 		name string
 		ref  runnerRef
 	}
 	a.runners.mu.Lock()
-	snapshot := make([]idleEntry, 0, len(a.runners.idle))
+	snapshot := make([]trackedEntry, 0, len(a.runners.idle)+len(a.runners.busy))
 	for name, ref := range a.runners.idle {
-		snapshot = append(snapshot, idleEntry{name, ref})
+		snapshot = append(snapshot, trackedEntry{name, ref})
+	}
+	for name, ref := range a.runners.busy {
+		snapshot = append(snapshot, trackedEntry{name, ref})
 	}
 	a.runners.mu.Unlock()
 
+	changed := false
 	for _, e := range snapshot {
 		client, err := a.hostClient(e.ref.host)
 		if err != nil {
@@ -750,7 +751,7 @@ func (a *Scaler) pruneDeadIdleRunners(ctx context.Context) {
 			continue
 		}
 		if inspectErr != nil && !cerrdefs.IsNotFound(inspectErr) {
-			a.logger.Warn("Could not inspect idle runner; keeping it tracked",
+			a.logger.Warn("Could not inspect tracked runner; keeping it tracked",
 				slog.String("name", e.name), slog.String("host", e.ref.host), slog.String("error", inspectErr.Error()))
 			continue
 		}
@@ -760,16 +761,25 @@ func (a *Scaler) pruneDeadIdleRunners(ctx context.Context) {
 			reason = fmt.Sprintf("container state is %q, not running", info.State.Status)
 			metricReason = runnerDeadReasonNotRunning
 		}
-		a.logger.Warn("Pruning idle runner whose container is not actually running",
-			slog.String("name", e.name), slog.String("host", e.ref.host), slog.String("reason", reason))
-		// Distinguishes "died before ever completing a job" (e.g. a
-		// crash-looping image, such as entrypoint.sh's node24 preflight
-		// failing on every boot) from ordinary job-completion churn, which
-		// only ever shows up here as a slog.Warn otherwise -- see
-		// agent-lcars#393.
-		runnerDiedIdleTotal.WithLabelValues(a.scaleSetLabel(), e.ref.host, metricReason).Inc()
-		a.runners.markDone(e.name)
+		runner, state, ok := a.runners.markDoneWithState(e.name)
+		if !ok {
+			// HandleJobCompleted may have reconciled this snapshot entry while
+			// ContainerInspect was in flight. It owns cleanup in that case.
+			continue
+		}
+		a.logger.Warn("Reconciling tracked runner whose container is not actually running",
+			slog.String("name", e.name), slog.String("host", runner.host), slog.String("state", state), slog.String("reason", reason))
+		trackedRunnerMismatchTotal.WithLabelValues(a.scaleSetLabel(), runner.host, state, metricReason).Inc()
+		if state == runnerTrackedStateIdle {
+			// Keep the established crash-loop signal for idle runners while the
+			// new mismatch metric covers both idle and busy state.
+			runnerDiedIdleTotal.WithLabelValues(a.scaleSetLabel(), runner.host, metricReason).Inc()
+		}
 		a.deregisterRunner(ctx, e.name)
+		changed = true
+	}
+	if changed {
+		a.runnersChanged()
 	}
 }
 
@@ -3019,9 +3029,27 @@ func (r *runnerState) markBusy(name string, jobID ...string) bool {
 }
 
 func (r *runnerState) markDone(name string) (runnerRef, bool) {
+	ref, _, ok := r.markDoneWithState(name)
+	return ref, ok
+}
+
+// markDoneWithState removes a tracked runner and returns the state it held at
+// the instant of removal. Runtime reconciliation uses that state for its
+// bounded Prometheus label; it must not trust a stale snapshot because a
+// JobStarted event may have moved the runner from idle to busy while Docker
+// inspection was in flight.
+func (r *runnerState) markDoneWithState(name string) (runnerRef, string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.markDoneUnlocked(name)
+	if ref, ok := r.busy[name]; ok {
+		delete(r.busy, name)
+		return ref, runnerTrackedStateBusy, true
+	}
+	if ref, ok := r.idle[name]; ok {
+		delete(r.idle, name)
+		return ref, runnerTrackedStateIdle, true
+	}
+	return runnerRef{}, "", false
 }
 
 func (r *runnerState) markDoneUnlocked(name string) (runnerRef, bool) {
