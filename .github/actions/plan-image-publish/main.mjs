@@ -58,13 +58,15 @@ async function run() {
       `${changedFiles === null ? 'unknown' : changedFiles.length} changed ` +
       `file(s)): control-plane=${plan.controlPlane} ` +
       `jit-runner=${plan.jitRunner} watcher=${plan.watcher} ` +
-      `exporter=${plan.exporter} e2e=${plan.e2e}`,
+      `exporter=${plan.exporter} e2e=${plan.e2e} ` +
+      `e2e-runner=${plan.e2eRunner}`,
   );
   await output('control-plane', String(plan.controlPlane));
   await output('jit-runner', String(plan.jitRunner));
   await output('watcher', String(plan.watcher));
   await output('exporter', String(plan.exporter));
   await output('e2e', String(plan.e2e));
+  await output('e2e-runner', String(plan.e2eRunner));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

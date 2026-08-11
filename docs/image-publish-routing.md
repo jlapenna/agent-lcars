@@ -1,6 +1,6 @@
 # Which image builds when: `publish-images.yml`'s path-based routing
 
-`publish-images.yml` publishes six images in five independently routed groups.
+`publish-images.yml` publishes seven images in six independently routed groups.
 Building every group serially on every push — including ones that only touch
 one of them, or touch none of them at all — is what made a
 deployment-config-only telemetry-watcher change (#440) spend ~20 minutes of
@@ -12,14 +12,21 @@ this document explains it, that file is the source of truth.
 
 ## The images
 
-| Image                                 | Build context                                | Dockerfile                                              | Consumer                                              |
-| ------------------------------------- | -------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------- |
-| `agent-lcars/runner-autoscaler`       | `apps/runner-autoscaler`                     | `apps/runner-autoscaler/Dockerfile`                     | homelab's autoscaler control-plane deployment         |
-| `agent-lcars/control-plane-runner`    | `apps/runner-autoscaler/control-plane-image` | `apps/runner-autoscaler/control-plane-image/Dockerfile` | router/reconciler jobs; routed with the control plane |
-| `homelab-runner:jit-node24`           | `apps/runner-autoscaler/runner-image`        | `apps/runner-autoscaler/runner-image/Dockerfile`        | every self-hosted CI job in this fleet                |
-| `agent-lcars/telemetry-watcher`       | repo root (`.`)                              | `apps/telemetry-watcher/Dockerfile`                     | pike, the per-workstation telemetry daemon            |
-| `agent-lcars/github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | homelab Prometheus                                    |
-| `agent-lcars/e2e`                     | `tools/e2e`                                  | `tools/e2e/Dockerfile`                                  | `tools/e2e-docker.sh` (local/CI-consistent E2E runs)  |
+| Image                                 | Build context                                | Dockerfile                                              | Consumer                                                     |
+| ------------------------------------- | -------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
+| `agent-lcars/runner-autoscaler`       | `apps/runner-autoscaler`                     | `apps/runner-autoscaler/Dockerfile`                     | homelab's autoscaler control-plane deployment                |
+| `agent-lcars/control-plane-runner`    | `apps/runner-autoscaler/control-plane-image` | `apps/runner-autoscaler/control-plane-image/Dockerfile` | router/reconciler jobs; routed with the control plane        |
+| `homelab-runner:jit-node24`           | `apps/runner-autoscaler/runner-image`        | `apps/runner-autoscaler/runner-image/Dockerfile`        | every self-hosted CI job in this fleet                       |
+| `agent-lcars/telemetry-watcher`       | repo root (`.`)                              | `apps/telemetry-watcher/Dockerfile`                     | pike, the per-workstation telemetry daemon                   |
+| `agent-lcars/github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | homelab Prometheus                                           |
+| `agent-lcars/e2e`                     | `tools/e2e`                                  | `tools/e2e/Dockerfile`                                  | `tools/e2e-docker.sh` (local/CI-consistent E2E runs)         |
+| `agent-lcars/e2e-runner`              | `tools/e2e-runner`                           | `tools/e2e-runner/Dockerfile`                           | jlapenna/homelab's `lcars-e2e` runner pool (agent-lcars#920) |
+
+The e2e-runner image FROMs the e2e sandbox image directly (`SANDBOX_IMAGE`
+build-arg) plus the JIT runner agent — the same "runner container IS the
+sandbox" shape as `supersprinklesracing/sprinkles`' own e2e-runner pool. See
+"The shared sandbox invariant" below for how a sandbox change stays linked to
+this image.
 
 The JIT runner image and the telemetry-watcher image are **different
 artifacts built from the same source**: both bake in
@@ -33,7 +40,7 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
 
 1. **Workflow infrastructure** — `.github/workflows/publish-images.yml`,
    `.github/actions/scan-image/**`, `.github/actions/plan-image-publish/**`.
-   Schedules **all five groups**. Changing how an image is built, scanned,
+   Schedules **all six groups**. Changing how an image is built, scanned,
    or routed is as much a reason to republish-and-exercise as changing what's
    in it (the same reasoning `scan-image` already applied, #224).
 2. **Bundle inputs** — `apps/telemetry-watcher/**` (except the two
@@ -53,11 +60,14 @@ Each pushed file is classified by `plan.mjs`, in this priority order:
    Nx project config remain CI inputs but cannot change the image and do not
    consume the serialized builder lane.
 6. **E2E sandbox input** — `tools/e2e/Dockerfile` (agent-lcars#908). Schedules
-   only the e2e image. That one file has no `COPY` instructions, so it is the
+   the e2e image **and** the e2e-runner image (see "The shared sandbox
+   invariant" below). That one file has no `COPY` instructions, so it is the
    image's entire content — everything else under `tools/e2e/` (`ci.env`,
    `screenshot.css`, …) is bind-mounted into the container at run time by
    `tools/e2e-docker.sh`, not baked in, and does not belong here.
-7. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
+7. **E2E runner image inputs** — `tools/e2e-runner/**` (agent-lcars#920).
+   Schedules only the e2e-runner image.
+8. Everything else (`apps/console/**`, `docs/**`, …) schedules nothing.
 
 A push can match more than one rule; each image is scheduled if **any**
 matching rule schedules it — there is no "first match wins" short-circuit
@@ -81,6 +91,26 @@ every plain watcher-app source change).
 inputs" and "watcher telemetry inputs" list that could diverge.
 `plan.test.mjs` asserts every bundle input schedules both images and never
 the control plane.
+
+## The shared sandbox invariant (agent-lcars#920)
+
+A change to `tools/e2e/Dockerfile` (the e2e sandbox) must **also** schedule
+the e2e-runner image, every time — the runner image's own Dockerfile FROMs
+the sandbox at build time (`SANDBOX_IMAGE` build-arg, resolved to the
+sandbox's own content-hash tag), so a sandbox-only rebuild that skips the
+runner would leave `jlapenna/homelab`'s `lcars-e2e` pool booting an
+environment whose fonts/browser build no longer match what
+`tools/e2e-docker.sh` pulls locally — the same silent-drift failure mode the
+bundle invariant above exists to prevent, just expressed as a build-time
+`FROM` instead of a baked-in bundle output. This is deliberately
+**one-directional**: a runner-only change (`tools/e2e-runner/**` without
+touching the sandbox `Dockerfile`) does NOT reschedule the sandbox — nothing
+about the runner layer changes what the sandbox itself contains.
+
+`plan.mjs`'s `planImageBuilds` reads `isE2eImage(file)` once and ORs it into
+both the `e2e` and `e2eRunner` outputs, rather than letting the two routes
+diverge. `plan.test.mjs` asserts a sandbox-only change schedules both images
+and an e2e-runner-only change schedules just the one.
 
 ## What never triggers a build
 

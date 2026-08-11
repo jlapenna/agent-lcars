@@ -1,11 +1,13 @@
 // Path-based build planning for publish-images.yml (agent-lcars#441).
 //
-// The workflow publishes five independently routed image groups from this repo:
+// The workflow publishes six independently routed image groups from this repo:
 //   - the runner-autoscaler control-plane image
 //   - the JIT worker runner image (bakes in the telemetry-watcher bundle)
 //   - the standalone telemetry-watcher daemon image (the same bundle)
 //   - the standalone GitHub Actions metrics exporter image
 //   - the pinned Playwright E2E sandbox image (agent-lcars#908)
+//   - the lcars-e2e pool's JIT runner image: the sandbox above plus the
+//     runner agent (agent-lcars#920)
 //
 // Building every group serially on every push -- including ones that only
 // touch one of them, or touch none of them -- is what made a
@@ -89,6 +91,13 @@ const EXPORTER_IMAGE_FILES = new Set([
 // belong here.
 const E2E_IMAGE_FILES = new Set(['tools/e2e/Dockerfile']);
 
+// The lcars-e2e runner image's own build context (agent-lcars#920):
+// tools/e2e-runner/Dockerfile plus anything else under that directory.
+// Distinct from E2E_IMAGE_FILES above even though this image FROMs the
+// sandbox that file builds -- see the shared-input invariant below for how
+// the two stay linked.
+const E2E_RUNNER_IMAGE_PREFIX = 'tools/e2e-runner/';
+
 function startsWithAny(file, prefixes) {
   return prefixes.some((prefix) => file.startsWith(prefix));
 }
@@ -130,6 +139,10 @@ function isE2eImage(file) {
   return E2E_IMAGE_FILES.has(file);
 }
 
+function isE2eRunnerImage(file) {
+  return file.startsWith(E2E_RUNNER_IMAGE_PREFIX);
+}
+
 // `changedFiles === null` is the explicit "no well-defined diff" sentinel
 // (a manual workflow_dispatch republish, or a push whose `before` SHA is
 // unreachable -- see main.mjs) and always plans every image, the same safe
@@ -142,16 +155,25 @@ function planImageBuilds(changedFiles) {
       watcher: true,
       exporter: true,
       e2e: true,
+      e2eRunner: true,
     };
   }
   const workflow = changedFiles.some(isWorkflowInfra);
   const bundleInput = changedFiles.some(isBundleInput);
+  const e2eImage = changedFiles.some(isE2eImage);
   return {
     controlPlane: workflow || changedFiles.some(isControlPlane),
     jitRunner: workflow || bundleInput || changedFiles.some(isRunnerImage),
     watcher: workflow || bundleInput,
     exporter: workflow || changedFiles.some(isExporter),
-    e2e: workflow || changedFiles.some(isE2eImage),
+    e2e: workflow || e2eImage,
+    // The lcars-e2e runner image FROMs the sandbox image, so a sandbox
+    // change must always reschedule this one too (agent-lcars#920) -- the
+    // same "shared input" shape as the telemetry bundle invariant above,
+    // just a build-time FROM instead of a baked-in bundle. Left to drift,
+    // the pool would keep booting an environment whose fonts/browser build
+    // no longer match what tools/e2e-docker.sh pulls locally.
+    e2eRunner: workflow || e2eImage || changedFiles.some(isE2eRunnerImage),
   };
 }
 
@@ -167,6 +189,7 @@ export {
   isBundleInput,
   isControlPlane,
   isE2eImage,
+  isE2eRunnerImage,
   isExporter,
   isRunnerImage,
   isWorkflowInfra,
