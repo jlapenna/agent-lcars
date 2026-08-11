@@ -89,6 +89,15 @@ func TestConfigEmptyDisablesFeatures(t *testing.T) {
 	}
 }
 
+func TestConfigDefaultsUseInternalRunnerMirror(t *testing.T) {
+	cfg := Config{}
+	cfg.defaults()
+
+	if got, want := cfg.RunnerImage, "docker-registry.lan.jlapenna.net/mirror/actions-runner:latest"; got != want {
+		t.Errorf("RunnerImage default = %q, want %q", got, want)
+	}
+}
+
 func TestBuildLabels(t *testing.T) {
 	t.Run("default to scale set name", func(t *testing.T) {
 		cfg := Config{ScaleSetName: "my-scale-set"}

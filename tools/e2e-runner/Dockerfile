@@ -28,11 +28,12 @@
 # orchestrator.yml comment on that scale set) -- so both this and the sandbox
 # base publish linux/amd64 and linux/arm64.
 #
-# Build:
+# Build (context is the REPO ROOT, not tools/e2e-runner -- see the
+# externals-health.sh COPY below, which reaches outside this directory):
 #   TAG="df-$(sha256sum tools/e2e/Dockerfile | cut -c1-12)"
 #   docker buildx build \
 #     --build-arg SANDBOX_IMAGE=<registry>/agent-lcars/e2e:$TAG \
-#     -f tools/e2e-runner/Dockerfile tools/e2e-runner
+#     -f tools/e2e-runner/Dockerfile .
 
 # Digest-pinned mirror, matching apps/runner-autoscaler/runner-image's own
 # RUNNER_BASE in this repo. Only the agent payload is copied out of it --
@@ -53,6 +54,24 @@ USER root
 # depends on the agent's original uid -- a JIT config carries none -- but
 # /home/runner must be owned by whoever executes run.sh, hence --chown on
 # the COPY below.
+#
+# 1002 is ALSO a load-bearing match with sprinkles' own e2e-runner image
+# (which independently chose the same uid, for the same 1001-collision
+# reason -- see that Dockerfile), not just a coincidence to leave alone: the
+# homelab orchestrator's `share_workdir: true` (set on both pools' scale
+# sets) bind-mounts the SAME host `/home/runner/{_work,externals}` paths
+# (scaler.go's `runnerBinds`, gated on `shareWorkDir`), and `ensureWorkDir
+# Ownership` chowns them to whichever scale set's own image last placed a
+# runner there (`id runner` inside `a.runnerImage`) -- see the id checks
+# earlier in this file's own build verification. Both pools draw from the
+# SAME shared fleet host pool (orchestrator.yml's own header comment), so
+# they WILL land on the same hosts over time. If this image's uid ever
+# drifts from sprinkles' e2e-runner image's uid, two share_workdir pools
+# alternating on one host would flip-flop ownership of that shared tree and
+# jobs could fail to write their own workspace (caught in PR #929 review) --
+# keep the two in lockstep, or migrate away from a raw uid match by
+# isolating the shared paths per pool (an orchestrator-level change, out of
+# scope here).
 RUN groupadd -g 1002 runner \
   && useradd -m -u 1002 -g 1002 -s /bin/bash runner
 
@@ -60,6 +79,23 @@ RUN groupadd -g 1002 runner \
 # upstream base is JIT-native (honors ACTIONS_RUNNER_INPUT_JITCONFIG), so
 # the scaler's container spec needs no change to drive this image.
 COPY --from=agent --chown=runner:runner /home/runner /home/runner
+
+# Backup the baked-in externals directory BEFORE share_workdir's host bind
+# mount ever masks it at runtime (mirrors apps/runner-autoscaler/runner-image/
+# Dockerfile's own identical step) -- entrypoint.sh's repair_externals_if_needed
+# restores from this backup whenever the host-side directory turns out to be
+# empty, root-owned, or stale (see that entrypoint's own COPY below). `cp -r`
+# as root preserves the runner:runner ownership the COPY above just set.
+RUN cp -r /home/runner/externals /home/runner/externals_backup
+
+# Shared externals self-heal/health-check logic (agent-lcars#920 fix, PR #930
+# review) -- the SAME file apps/runner-autoscaler/runner-image/entrypoint.sh
+# and the control plane's own periodic idle-host maintenance sweep
+# (scaler.go:sweepHostWorkDir) use, not a second hand-copied version that
+# could drift. Repo-root build context (see this file's own header) is what
+# lets this COPY reach outside tools/e2e-runner/.
+COPY apps/runner-autoscaler/runner-image/externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
+RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 
 # Nothing else is INSTALLED here. tools/e2e/Dockerfile already bakes the JRE
 # (Firebase emulators) and `corepack enable`; Node ships in the Playwright
@@ -77,16 +113,21 @@ COPY --from=agent --chown=runner:runner /home/runner /home/runner
 # baselines inside its own container job) -- confirmed by grepping
 # apps/console-e2e, tools/e2e, and ci.yml's checkout step before leaving them
 # out, not assumed from the sprinkles precedent.
+# A minimal entrypoint wrapper IS needed here, unlike sprinkles' own
+# e2e-runner image -- this pool sets share_workdir: true without
+# mount_docker_socket in homelab's orchestrator.yml (scaler.go's
+# `runnerBinds` gates the shared /home/runner/{_work,externals} bind on
+# `shareWorkDir`, NOT `mountDockerSocket` -- those were one flag until
+# agent-lcars#101 split them apart), so a cold host -- one neither this pool
+# nor sprinkles' e2e pool has ever populated -- would otherwise boot straight
+# into an empty or root-owned externals directory and fail actions/checkout@v7
+# before the suite ever starts (PR #930 review). Everything else the generic
+# JIT worker image's own wrapper does (pnpm/Java preflight, telemetry
+# sidecar) stays out of scope -- see entrypoint.sh's own comment.
+COPY tools/e2e-runner/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 USER runner
 WORKDIR /home/runner
 
-# run.sh directly, with no entrypoint wrapper: the shared JIT runner image's
-# wrapper (apps/runner-autoscaler/runner-image/entrypoint.sh) exists to
-# repair /home/runner/externals from a backup because externals is a shared
-# bind mount on socket-mounted scale sets, and to preflight node20/node24 for
-# arbitrary Actions runtimes -- neither applies here. runnerBinds only
-# creates that bind for mount_docker_socket pools, and this pool is not one;
-# externals stays exactly as baked in, container-local and uncontended. No
-# telemetry sidecar either -- that is claude.yml's concern on the
-# claude-agent pool, not this one's.
-ENTRYPOINT ["/home/runner/run.sh"]
+ENTRYPOINT ["/entrypoint.sh"]

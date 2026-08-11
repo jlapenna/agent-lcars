@@ -144,7 +144,10 @@ func (c *Config) defaults() {
 		c.RegistrationName = primaryRegistrationName
 	}
 	if c.RunnerImage == "" {
-		c.RunnerImage = "ghcr.io/actions/actions-runner:latest"
+		// The fleet must never fall back to a public image registry. The
+		// multi-architecture Actions runner base is mirrored into the
+		// homelab registry before any runner image is published.
+		c.RunnerImage = "docker-registry.lan.jlapenna.net/mirror/actions-runner:latest"
 	}
 	// SparkMetricsURL is deliberately NOT defaulted here: empty is a
 	// meaningful, documented value (disables spark-aware placement), and the

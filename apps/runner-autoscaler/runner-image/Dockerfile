@@ -16,9 +16,8 @@
 #
 # This is the base of the image every runner in the fleet executes, so an
 # unpinned `:latest` meant its contents could change with no source change
-# and no review -- and it made every build depend on ghcr.io being up and
-# not rate-limiting us (anonymous ghcr pulls were already failing locally
-# during this work).
+# and no review -- and it made every build depend on an external registry
+# being up and not rate-limiting us.
 #
 # The digest is the multi-arch INDEX digest, so both linux/amd64 and
 # linux/arm64 resolve from it. Mirror is a manifest copy, so these are the
@@ -43,7 +42,7 @@
 #   docker buildx imagetools create \
 #     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:vX.Y.Z \
 #     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:latest \
-#     ghcr.io/actions/actions-runner@sha256:<upstream-index-digest>
+#     <verified-upstream-actions-runner-index-digest>
 #
 # To update: re-run that against the new upstream digest, then bump the
 # digest below. Deliberately two steps -- mirroring does not silently
@@ -156,7 +155,7 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 
 # Phase-2 JIT runner image for the autoscaler.
 #
-# Base: ghcr.io/actions/actions-runner — JIT-native (honors
+# Base: the internal mirror of Actions Runner — JIT-native (honors
 # ACTIONS_RUNNER_INPUT_JITCONFIG, user `runner`, /home/runner/run.sh), so the
 # scaler's container spec needs no change to use it.
 #

@@ -33,24 +33,26 @@
    practice, and a violation names the rule without saying which system
    raised it, so the failure reads like a broken flag rather than policy.
 
-   The ruleset itself is codified in
-   [`infra/terraform/github.tf`](../../../infra/terraform/github.tf)
-   (`github_repository_ruleset.protect_main`, issue #900) — change branch
-   protection there and go through a reviewed `plan`/`apply`, not by hand
-   through the GitHub UI or API. See
+   The ruleset itself is codified in the **homelab** repo's terraform
+   root (`homelab/terraform/github_rulesets.tf`'s `protect-main` module —
+   unified fleet governance, homelab#523; issue #900 has the history) —
+   change branch protection there and go through a reviewed
+   `plan`/`apply`, not by hand through the GitHub UI or API. See
    [`infra/terraform/README.md`](../../../infra/terraform/README.md#github-ruleset-protect-main)
-   for the credential story and the admin-bypass hazard.
+   for the hand-over record and the admin-bypass hazard.
 
-   The ruleset enforces required `Verify`, a strict up-to-date-branch
-   policy, `required_review_thread_resolution`, and no deletion or
-   force-push. Admins (`RepositoryRole:5`) hold `bypass_mode: always` as a
-   deliberate escape hatch. That bypass is the whole reason `--admin` works
-   — while classic protection existed it set `enforce_admins: true`, which
-   revoked the exemption and made `gh pr merge --admin` fail with
-   `Required status check "Verify" is expected` even on a green PR, because
-   a check that passed against a stale base does not count under the strict
-   policy. If an admin merge is refused now, update the branch and let
-   `Verify` re-run rather than reaching for a bigger hammer.
+   The ruleset enforces required `Verify`,
+   `required_review_thread_resolution`, linear history, and no deletion or
+   force-push. The up-to-date-branch policy is **non-strict** (harmonized
+   with the sprinkles repo, 2026-08-11): an armed PR merges on green even
+   if `main` moved after its checks ran — post-merge `Verify` on `main` is
+   the safety net for stale-base breakage (this repo's own PR CI checks
+   out the event revision as-is; the `merge-live-base` action published
+   here is consumed by sprinkles' E2E, not by this repo's workflows).
+   Admins (`RepositoryRole:5`) hold
+   `bypass_mode: always` as a deliberate escape hatch; if an admin merge
+   is ever refused, update the branch and let `Verify` re-run rather than
+   reaching for a bigger hammer.
 
 5. **Resolve every review thread — replying is not enough.** The
    `Protect main` ruleset sets `required_review_thread_resolution: true`

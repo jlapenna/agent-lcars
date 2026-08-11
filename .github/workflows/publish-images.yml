@@ -226,11 +226,14 @@ jobs:
     # a repository variable could otherwise redirect fleet-image publishing.
     # A fork edits this line.
     runs-on: lcars-build-client
-    # Raised from 20: arm64 is emulated on the builder (no native aarch64
-    # host is available -- see agent-lcars#101), and a cold BuildKit cache
-    # makes the JIT runner image build the dominant cost. Steady-state runs
-    # are far quicker once the cache is warm.
-    timeout-minutes: 60
+    # Raised from 20, then from 60: arm64 is emulated on the builder (no
+    # native aarch64 host is available -- see agent-lcars#101), and a cold
+    # BuildKit cache makes the JIT runner image build the dominant cost.
+    # 2026-08-11: a cold six-group publish (the e2e/e2e-runner groups added
+    # by #924/#929) measured 60m23s of job time before the 60m cap killed it
+    # 50 steps in, mid-push (run 31451206074) -- three consecutive runs died
+    # this way. Steady-state runs are far quicker once the cache is warm.
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v7
@@ -762,7 +765,13 @@ jobs:
         if: steps.plan.outputs.e2e-runner == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: tools/e2e-runner
+          # Repo root, NOT tools/e2e-runner: the Dockerfile COPYs
+          # apps/runner-autoscaler/runner-image/externals-health.sh (agent-lcars#920
+          # fix, PR #930 review) so its externals-repair entrypoint reuses the
+          # exact same shared logic the generic JIT worker image and the
+          # control plane's own maintenance sweep already use, instead of a
+          # second hand-copied version that could drift.
+          context: .
           file: tools/e2e-runner/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64

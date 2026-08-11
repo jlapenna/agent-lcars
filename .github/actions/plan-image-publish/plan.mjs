@@ -92,11 +92,30 @@ const EXPORTER_IMAGE_FILES = new Set([
 const E2E_IMAGE_FILES = new Set(['tools/e2e/Dockerfile']);
 
 // The lcars-e2e runner image's own build context (agent-lcars#920):
-// tools/e2e-runner/Dockerfile plus anything else under that directory.
+// tools/e2e-runner/Dockerfile plus anything else under that directory --
+// with one deliberate exception, E2E_RUNNER_SHARED_FILES just below.
 // Distinct from E2E_IMAGE_FILES above even though this image FROMs the
 // sandbox that file builds -- see the shared-input invariant below for how
 // the two stay linked.
 const E2E_RUNNER_IMAGE_PREFIX = 'tools/e2e-runner/';
+
+// The e2e-runner Dockerfile ALSO COPYs this one file from outside its own
+// directory (repo-root build context, PR #930 review) so its
+// externals-repair entrypoint shares byte-for-byte the exact same logic
+// the generic JIT worker image's own entrypoint.sh and the control plane's
+// idle-host maintenance sweep (scaler.go:sweepHostWorkDir) already use.
+// The whole point of that one-copy arrangement is that a fix to this
+// script propagates everywhere at once; if we only rebuilt jitRunner on a
+// script-only change (isRunnerImage below), the e2e-runner image would
+// stay pinned to whatever copy it last happened to bake in, silently
+// reintroducing exactly the drift the shared file exists to prevent. Kept
+// as a narrow one-file set rather than reusing isRunnerImage so an
+// unrelated runner-image change (its own Dockerfile, its own
+// entrypoint.sh, its externals-health.test.sh CI harness -- none of which
+// this image COPYs) does not trigger a wasted e2e-runner rebuild.
+const E2E_RUNNER_SHARED_FILES = new Set([
+  'apps/runner-autoscaler/runner-image/externals-health.sh',
+]);
 
 function startsWithAny(file, prefixes) {
   return prefixes.some((prefix) => file.startsWith(prefix));
@@ -140,7 +159,10 @@ function isE2eImage(file) {
 }
 
 function isE2eRunnerImage(file) {
-  return file.startsWith(E2E_RUNNER_IMAGE_PREFIX);
+  return (
+    file.startsWith(E2E_RUNNER_IMAGE_PREFIX) ||
+    E2E_RUNNER_SHARED_FILES.has(file)
+  );
 }
 
 // `changedFiles === null` is the explicit "no well-defined diff" sentinel
