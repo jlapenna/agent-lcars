@@ -59,6 +59,21 @@ rendered for Glance. The exporter serves the last successfully collected data
 if GitHub is temporarily unavailable; `github_actions_exporter_*` metrics make
 API errors and stale repository refreshes observable.
 
+## GitHub API quota metrics
+
+Every GitHub REST response increments the bounded
+`github_actions_exporter_api_requests_total{endpoint,status}` counter and, when
+the corresponding header is valid, updates these unlabelled gauges:
+
+- `github_actions_exporter_api_rate_limit_remaining`
+- `github_actions_exporter_api_rate_limit_limit`
+- `github_actions_exporter_api_rate_limit_used`
+- `github_actions_exporter_api_rate_limit_reset_timestamp_seconds`
+
+Missing or malformed rate-limit headers leave the previous valid observation
+intact. This makes the metrics safe for projected-exhaustion alerts while an
+individual GitHub response is incomplete or otherwise malformed.
+
 ## Verification
 
 ```sh

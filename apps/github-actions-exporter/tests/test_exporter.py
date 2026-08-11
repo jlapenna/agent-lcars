@@ -55,6 +55,13 @@ def workflow_job(**overrides):
     return job
 
 
+def exported_metric_value(metrics: str, name: str) -> float:
+    for line in metrics.splitlines():
+        if line.startswith(f"{name} "):
+            return float(line.split()[-1])
+    raise AssertionError(f"missing metric: {name}")
+
+
 class FakeState:
     class Metric:
         def __init__(self):
@@ -643,23 +650,82 @@ class GitHubAPITests(unittest.TestCase):
         )
         self.addCleanup(self.api.close)
 
-    def test_invalid_rate_limit_headers_do_not_replace_last_valid_value(self):
+    def test_rate_limit_headers_export_complete_quota_contract(self):
         registry = CollectorRegistry()
         state = exporter.ExporterState(registry)
         state.record_response(
-            "test", Mock(status_code=200, headers={"x-ratelimit-remaining": "42"})
+            "test",
+            Mock(
+                status_code=200,
+                headers={
+                    "x-ratelimit-remaining": "42",
+                    "x-ratelimit-limit": "5000",
+                    "x-ratelimit-used": "4958",
+                    "x-ratelimit-reset": "1786500000",
+                },
+            ),
+        )
+        metrics = generate_latest(registry).decode()
+        self.assertEqual(
+            exported_metric_value(
+                metrics, "github_actions_exporter_api_rate_limit_remaining"
+            ),
+            42,
+        )
+        self.assertEqual(
+            exported_metric_value(
+                metrics, "github_actions_exporter_api_rate_limit_limit"
+            ),
+            5000,
+        )
+        self.assertEqual(
+            exported_metric_value(
+                metrics, "github_actions_exporter_api_rate_limit_used"
+            ),
+            4958,
+        )
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_exporter_api_rate_limit_reset_timestamp_seconds",
+            ),
+            1786500000,
         )
 
-        for value in ("nan", "inf", "1.5", "-1"):
-            with self.subTest(value=value):
-                state.record_response(
-                    "test",
-                    Mock(status_code=200, headers={"x-ratelimit-remaining": value}),
-                )
-                self.assertIn(
-                    "github_actions_exporter_api_rate_limit_remaining 42.0",
-                    generate_latest(registry).decode(),
-                )
+    def test_invalid_rate_limit_headers_do_not_replace_last_valid_values(self):
+        registry = CollectorRegistry()
+        state = exporter.ExporterState(registry)
+        headers = {
+            "x-ratelimit-remaining": ("42", "api_rate_limit_remaining", 42),
+            "x-ratelimit-limit": ("5000", "api_rate_limit_limit", 5000),
+            "x-ratelimit-used": ("4958", "api_rate_limit_used", 4958),
+            "x-ratelimit-reset": (
+                "1786500000",
+                "api_rate_limit_reset_timestamp_seconds",
+                1786500000,
+            ),
+        }
+        state.record_response(
+            "test",
+            Mock(
+                status_code=200,
+                headers={header: value[0] for header, value in headers.items()},
+            ),
+        )
+
+        for header, (_valid, suffix, expected) in headers.items():
+            for value in ("nan", "inf", "1.5", "-1"):
+                with self.subTest(header=header, value=value):
+                    state.record_response(
+                        "test", Mock(status_code=200, headers={header: value})
+                    )
+                    self.assertEqual(
+                        exported_metric_value(
+                            generate_latest(registry).decode(),
+                            f"github_actions_exporter_{suffix}",
+                        ),
+                        expected,
+                    )
 
     def test_run_searches_are_partitioned_before_githubs_thousand_result_cap(self):
         start = datetime(2026, 8, 8, 0, 0, tzinfo=UTC)

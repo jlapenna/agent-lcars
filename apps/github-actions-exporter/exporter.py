@@ -202,6 +202,21 @@ class ExporterState:
             "Requests remaining in GitHub's current core API rate window.",
             registry=registry,
         )
+        self.api_rate_limit = Gauge(
+            "github_actions_exporter_api_rate_limit_limit",
+            "Maximum requests in GitHub's current core API rate window.",
+            registry=registry,
+        )
+        self.api_rate_used = Gauge(
+            "github_actions_exporter_api_rate_limit_used",
+            "Requests used in GitHub's current core API rate window.",
+            registry=registry,
+        )
+        self.api_rate_reset_timestamp = Gauge(
+            "github_actions_exporter_api_rate_limit_reset_timestamp_seconds",
+            "Unix timestamp when GitHub's current core API rate window resets.",
+            registry=registry,
+        )
         self.backfill_in_progress = Gauge(
             "github_actions_exporter_backfill_in_progress",
             "Whether a repository's initial history import is running.",
@@ -211,17 +226,28 @@ class ExporterState:
 
     def record_response(self, endpoint: str, response: requests.Response) -> None:
         self.api_requests.labels(endpoint, str(response.status_code)).inc()
-        remaining = response.headers.get("x-ratelimit-remaining")
-        if remaining is not None:
+        for header, metric in (
+            ("x-ratelimit-remaining", self.api_rate_remaining),
+            ("x-ratelimit-limit", self.api_rate_limit),
+            ("x-ratelimit-used", self.api_rate_used),
+            ("x-ratelimit-reset", self.api_rate_reset_timestamp),
+        ):
+            value = response.headers.get(header)
+            if value is None:
+                continue
             try:
-                remaining_count = int(remaining)
+                count = int(value)
             except ValueError:
-                LOGGER.warning("GitHub returned an invalid rate-limit value")
+                LOGGER.warning(
+                    "GitHub returned an invalid rate-limit header: %s", header
+                )
             else:
-                if remaining_count < 0:
-                    LOGGER.warning("GitHub returned an invalid rate-limit value")
+                if count < 0:
+                    LOGGER.warning(
+                        "GitHub returned an invalid rate-limit header: %s", header
+                    )
                 else:
-                    self.api_rate_remaining.set(remaining_count)
+                    metric.set(count)
 
 
 class GitHubRequestError(RuntimeError):
