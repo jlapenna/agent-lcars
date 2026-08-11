@@ -7,10 +7,25 @@ name: Publish images
 #   3. the standalone telemetry-watcher daemon
 #      (apps/telemetry-watcher/Dockerfile), the per-host image pike runs;
 #   4. the GitHub Actions metrics exporter
-#      (apps/github-actions-exporter/Dockerfile), scraped by Prometheus.
+#      (apps/github-actions-exporter/Dockerfile), scraped by Prometheus;
+#   5. the pinned Playwright E2E sandbox (tools/e2e/Dockerfile), pulled by
+#      tools/e2e-docker.sh for local/CI-consistent screenshot rendering
+#      (agent-lcars#908).
 # jlapenna/homelab pulls the published service images rather than building from source
 # (agent-lcars#52) -- this workflow is the one place that source gets
 # compiled into a real, published artifact.
+#
+# (5) is content-hash tagged rather than staged-then-promoted like (1)-(4):
+# tools/e2e/Dockerfile has no COPY instructions (nothing else it could build
+# FROM changes its bytes), so the tag itself already only ever names one
+# possible set of bytes -- there is no separate "mutable trusted tag" a
+# scan-in-progress window could expose the fleet to the way :latest/
+# :jit-node24 could for the other four (see the staging-tag rationale
+# below). It is still scanned like every other image here (agent-lcars#224);
+# a scan failure just means the job goes red with the tag already pushed,
+# which is fine for an image nothing auto-consumes -- only an explicit
+# `docker pull` of that exact tag (a developer, or a future CI job) ever
+# reaches it.
 #
 # (3) was added in agent-lcars#231, after its absence caused a real outage.
 # Nothing in CI built it, so it only ever reached the registry when someone
@@ -156,6 +171,9 @@ on:
       - package.json
       - pnpm-lock.yaml
       - patches/**
+      # The E2E sandbox image's entire content (agent-lcars#908) -- see the
+      # header comment above for why this one file is its sole input.
+      - tools/e2e/Dockerfile
   workflow_dispatch:
 
 permissions:
@@ -244,7 +262,8 @@ jobs:
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
           steps.plan.outputs.watcher == 'true' ||
-          steps.plan.outputs.exporter == 'true'
+          steps.plan.outputs.exporter == 'true' ||
+          steps.plan.outputs.e2e == 'true'
         with:
           version: 0.12.3
           python-version: '3.14'
@@ -274,7 +293,8 @@ jobs:
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
           steps.plan.outputs.watcher == 'true' ||
-          steps.plan.outputs.exporter == 'true'
+          steps.plan.outputs.exporter == 'true' ||
+          steps.plan.outputs.e2e == 'true'
         run: ./tools/nx run-many -t build test typecheck --all
 
       # Only relevant to the two images that bake in this bundle. Skipped
@@ -349,7 +369,8 @@ jobs:
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
           steps.plan.outputs.watcher == 'true' ||
-          steps.plan.outputs.exporter == 'true'
+          steps.plan.outputs.exporter == 'true' ||
+          steps.plan.outputs.e2e == 'true'
         with:
           driver: remote
           endpoint: tcp://oldbook.lan.jlapenna.net:1234
@@ -365,7 +386,8 @@ jobs:
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
           steps.plan.outputs.watcher == 'true' ||
-          steps.plan.outputs.exporter == 'true'
+          steps.plan.outputs.exporter == 'true' ||
+          steps.plan.outputs.e2e == 'true'
         run: docker buildx inspect --bootstrap
 
       # Fail loudly rather than silently falling back to a local daemon if
@@ -376,7 +398,8 @@ jobs:
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
           steps.plan.outputs.watcher == 'true' ||
-          steps.plan.outputs.exporter == 'true'
+          steps.plan.outputs.exporter == 'true' ||
+          steps.plan.outputs.e2e == 'true'
         run: |
           if [ -S /var/run/docker.sock ]; then
             echo "::error::/var/run/docker.sock is present; this job must run on a socketless pool"
@@ -392,7 +415,8 @@ jobs:
           steps.plan.outputs.control-plane == 'true' ||
           steps.plan.outputs.jit-runner == 'true' ||
           steps.plan.outputs.watcher == 'true' ||
-          steps.plan.outputs.exporter == 'true'
+          steps.plan.outputs.exporter == 'true' ||
+          steps.plan.outputs.e2e == 'true'
         run: |
           test -r /secrets/registry-password || {
             echo "::error::registry credential not mounted; check the lane's file_mounts"
@@ -651,6 +675,50 @@ jobs:
           docker buildx imagetools create \
             --tag ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:latest \
             ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/github-actions-exporter:${{ github.sha }}
+
+      # Must match the derivation in tools/e2e-docker.sh's own IMAGE
+      # computation (agent-lcars#908) -- that script refuses to build
+      # locally, so a mismatch here silently strands every consumer against
+      # a tag this workflow never publishes.
+      - name: Compute e2e image tag
+        id: e2e_tag
+        if: steps.plan.outputs.e2e == 'true'
+        run: |
+          echo "tag=df-$(sha256sum tools/e2e/Dockerfile | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
+      # Pushed straight to its final content-hash tag, not a staging tag --
+      # see this workflow's own header comment for why that two-step
+      # (needed for the OTHER four images' mutable :latest/:jit-node24 tags)
+      # doesn't apply here.
+      - name: Build and push e2e sandbox image
+        if: steps.plan.outputs.e2e == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: tools/e2e
+          file: tools/e2e/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/e2e:${{ steps.e2e_tag.outputs.tag }}
+          cache-from: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/e2e:buildcache
+          cache-to: type=registry,ref=${{ vars.HOMELAB_REGISTRY }}/agent-lcars/e2e:buildcache,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Scan e2e sandbox image (linux/amd64)
+        if: steps.plan.outputs.e2e == 'true'
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/e2e:${{ steps.e2e_tag.outputs.tag }}
+          platform: linux/amd64
+          category: e2e-linux-amd64
+
+      - name: Scan e2e sandbox image (linux/arm64)
+        if: steps.plan.outputs.e2e == 'true'
+        uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ vars.HOMELAB_REGISTRY }}/agent-lcars/e2e:${{ steps.e2e_tag.outputs.tag }}
+          platform: linux/arm64
+          category: e2e-linux-arm64
 
       - name: Log out of the registry
         if: always()

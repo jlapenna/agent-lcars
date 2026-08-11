@@ -1,9 +1,10 @@
 name: Plan image publish
 description: >-
   Decide which image groups publish-images.yml produces (control-plane,
-  JIT runner, telemetry-watcher, GitHub Actions exporter) need building for this
-  push, from the set of changed paths (agent-lcars#441). See plan.mjs for
-  the routing rules and the shared-telemetry-input invariant they preserve.
+  JIT runner, telemetry-watcher, GitHub Actions exporter, E2E sandbox) need
+  building for this push, from the set of changed paths (agent-lcars#441,
+  agent-lcars#908). See plan.mjs for the routing rules and the
+  shared-telemetry-input invariant they preserve.
 
 inputs:
   base-ref:
@@ -30,6 +31,9 @@ outputs:
   exporter:
     description: 'Whether the GitHub Actions exporter image should be built ("true"/"false")'
     value: ${{ steps.run.outputs.exporter }}
+  e2e:
+    description: 'Whether the E2E sandbox image should be built ("true"/"false")'
+    value: ${{ steps.run.outputs.e2e }}
 
 runs:
   using: composite

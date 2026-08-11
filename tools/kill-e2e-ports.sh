@@ -11,6 +11,14 @@
 #
 # Ported from members' tools/kill-e2e-ports.sh (this repo's origin), trimmed
 # to agent-lcars' single e2e project and its own emulator port set.
+#
+# #908 (containerized E2E) considered deleting this: tools/e2e-docker.sh's
+# container path never binds a host port at all, so it has never needed this
+# script. But ci.yml's `e2e` job still runs tools/e2e-local.sh directly on
+# the host -- fixed ports and all -- because moving it into a container
+# needs a dedicated runner pool that doesn't exist yet (#920). This script
+# is still load-bearing for that real path, not dead cleanup tooling; revisit
+# once #920 lands and ci.yml no longer calls tools/e2e-local.sh.
 
 set -uo pipefail
 
