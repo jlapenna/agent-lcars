@@ -762,7 +762,13 @@ jobs:
         if: steps.plan.outputs.e2e-runner == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: tools/e2e-runner
+          # Repo root, NOT tools/e2e-runner: the Dockerfile COPYs
+          # apps/runner-autoscaler/runner-image/externals-health.sh (agent-lcars#920
+          # fix, PR #930 review) so its externals-repair entrypoint reuses the
+          # exact same shared logic the generic JIT worker image and the
+          # control plane's own maintenance sweep already use, instead of a
+          # second hand-copied version that could drift.
+          context: .
           file: tools/e2e-runner/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
