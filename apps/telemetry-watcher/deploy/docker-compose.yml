@@ -5,10 +5,9 @@ name: agent-lcars-telemetry-watcher
 # on personal-login hosts into the dedicated agent-telemetry Firestore
 # database, so they show up alongside GitHub Actions runner sessions.
 #
-# The immutable image is built from this repo's own main
-# (.github/workflows/publish-images.yml) and published to the homelab
-# registry. Watcher hosts only pull and run it; they do not build application
-# code during deployment.
+# The immutable image is built from this repo's reviewed main revision by the
+# canonical homelab publisher. Watcher hosts only pull and run it; they do not
+# build application code during deployment.
 #
 # Canonical copy of this compose file lives here, in jlapenna/agent-lcars
 # (moved from jlapenna/homelab in homelab#218 Phase 6 -- the deployment

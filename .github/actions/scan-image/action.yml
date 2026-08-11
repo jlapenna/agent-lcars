@@ -9,9 +9,8 @@ inputs:
     description: >-
       Registry reference to scan, e.g.
       docker-registry.lan.jlapenna.net/agent-lcars/runner-autoscaler:abc123.
-      Must be the just-pushed reference, not a local tag or image ID --
-      publish-images.yml's runner holds no Docker socket (agent-lcars#101),
-      so there is no local image for Trivy to inspect. Trivy pulls the
+      Must be the just-pushed reference, not a local tag or image ID. Trivy
+      pulls the
       manifest over the registry API instead, reusing the `docker login`
       credential the earlier push step already established for this job
       (Trivy reads the same `~/.docker/config.json` credential store Docker
@@ -106,9 +105,8 @@ runs:
     # aquasecurity/trivy-action's README ("Skipping Setup when Calling
     # Trivy Action multiple times").
     #
-    # publish-images.yml calls this action against a STAGING tag, before
-    # the fleet-consumed mutable tag is moved to point at it (see that
-    # workflow's own comments) -- so exiting 1 here still actually blocks
+    # A publisher calls this action against a STAGING tag, before the
+    # fleet-consumed mutable tag is moved to point at it, so exiting 1 blocks
     # a vulnerable image from ever becoming the one the fleet pulls,
     # rather than just turning the run red after the damage is done.
     #

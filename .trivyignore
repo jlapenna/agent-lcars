@@ -1,7 +1,6 @@
-# Scoped, expiring suppressions consumed by .github/actions/scan-image's
-# gate step only (the SARIF upload step is untouched, so both findings stay
-# visible in the Security tab). Both CVEs are baked into RUNNER_BASE
-# (ghcr.io/actions/actions-runner, pinned in
+# Scoped, expiring suppressions consumed by the canonical image publisher's
+# Trivy gate. Both CVEs are baked into RUNNER_BASE
+# (the internal actions-runner mirror, pinned in
 # apps/runner-autoscaler/runner-image/Dockerfile) -- not a dependency of this
 # monorepo -- and https://api.github.com/repos/actions/runner/releases/latest
 # is v2.336.0, the exact version already pinned: there is no newer upstream

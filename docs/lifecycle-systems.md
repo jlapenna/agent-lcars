@@ -287,9 +287,9 @@ pressure, and runner loss — across the shared Docker host pool.
 definitions that decide which label(s) get a listener at all — is owned by
 `jlapenna/homelab`'s `github-runner-autoscaler/` directory, deployed by that
 repo's Ansible playbook. `docs/onboarding-autoscaler.md` documents the
-split in detail. agent-lcars only _publishes the images_ homelab pulls and
+split in detail. Canonical homelab publishes the images it pulls; agent-lcars
 _names the labels_ its own workflows expect (`AGENT_RUNNER_LABEL`,
-`DEFAULT_RUNNER_LABEL`, `CI_RUNNER_LABEL`, `BUILD_RUNNER_LABEL` — see
+`DEFAULT_RUNNER_LABEL`, `CI_RUNNER_LABEL` — see
 `docs/deployment-boundary.md` §3). Whether
 anything is actually listening for a given label is entirely homelab's
 question to answer.

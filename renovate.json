@@ -34,7 +34,7 @@
       "enabled": false
     },
     {
-      "description": "Same LAN-only-registry unreachability as the mirror rule above, now also true of apps/telemetry-watcher/deploy/docker-compose.yml's own image reference (that file moved here from jlapenna/homelab in homelab#218 Phase 6; homelab's own renovate.json covered it there under a blanket docker-registry.lan.jlapenna.net/** exclusion this repo doesn't have). Updated by hand on pike via deploy/deploy.sh after a publish-images.yml run.",
+      "description": "Same LAN-only-registry unreachability as the mirror rule above, now also true of apps/telemetry-watcher/deploy/docker-compose.yml's own image reference (that file moved here from jlapenna/homelab in homelab#218 Phase 6; homelab's own renovate.json covered it there under a blanket docker-registry.lan.jlapenna.net/** exclusion this repo doesn't have). Updated by hand on pike via deploy/deploy.sh after canonical homelab publication.",
       "matchDatasources": ["docker"],
       "matchPackageNames": [
         "docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher"

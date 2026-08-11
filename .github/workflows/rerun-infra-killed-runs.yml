@@ -22,7 +22,7 @@ name: Rerun Infra-Killed CI Runs
 # that action's operation switch would mix two independent scanning
 # domains behind one entry point for no benefit -- a second small
 # self-contained action (rerun-infra-killed-runs, mirroring
-# plan-image-publish's shape: one composite action, one main.mjs, one pure
+# image publication previously used the same shape: one composite action, one main.mjs, one pure
 # detect.mjs) keeps each scanner's blast radius and permission scope
 # exactly as small as its own job needs.
 #
