@@ -33,13 +33,13 @@
    practice, and a violation names the rule without saying which system
    raised it, so the failure reads like a broken flag rather than policy.
 
-   The ruleset itself is codified in
-   [`infra/terraform/github.tf`](../../../infra/terraform/github.tf)
-   (`github_repository_ruleset.protect_main`, issue #900) — change branch
-   protection there and go through a reviewed `plan`/`apply`, not by hand
-   through the GitHub UI or API. See
+   The ruleset itself is codified in the **homelab** repo's terraform
+   root (`homelab/terraform/github_rulesets.tf`'s `protect-main` module —
+   unified fleet governance, homelab#523; issue #900 has the history) —
+   change branch protection there and go through a reviewed
+   `plan`/`apply`, not by hand through the GitHub UI or API. See
    [`infra/terraform/README.md`](../../../infra/terraform/README.md#github-ruleset-protect-main)
-   for the credential story and the admin-bypass hazard.
+   for the hand-over record and the admin-bypass hazard.
 
    The ruleset enforces required `Verify`,
    `required_review_thread_resolution`, linear history, and no deletion or

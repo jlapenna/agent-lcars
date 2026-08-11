@@ -2,9 +2,9 @@
 
 Terraform owns the project services, default Firestore database, transcript
 bucket, runtime secret containers, service accounts, GitHub Workload Identity
-Federation, the $5/month billing budget, and (via the `github` provider) the
-`Protect main` repository ruleset. Secret _values_ are never stored in
-Terraform state.
+Federation, and the $5/month billing budget. Secret _values_ are never stored
+in Terraform state. (The `Protect main` repository ruleset moved to the
+homelab repo's terraform root — see the GitHub ruleset section below.)
 
 Bootstrap state once with `gcloud storage buckets create
 gs://agent-lcars-terraform-state --project agent-lcars --location us`, then add
@@ -18,35 +18,15 @@ run `firebase apphosting:backends:create --project agent-lcars` and select
 
 ## GitHub ruleset (`Protect main`)
 
-`infra/terraform/github.tf`'s `github_repository_ruleset.protect_main` is the
-version-controlled record of the ruleset that is the only thing protecting
-`main` (`agent-lcars-dev/references/pr.md`). Change branch protection here,
-not by hand through the GitHub UI or API — a hand edit now only creates drift
-for the next `plan` to report, rather than a change anyone can review.
-
-The `github` provider needs a token with admin rights on this repository
-(ruleset read/write requires admin) at every plan and apply. No CI workflow
-runs Terraform, so this is always operator-supplied, never a repo secret or a
-value committed anywhere: export it into the environment before running
-Terraform, e.g.
-
-```sh
-export GITHUB_TOKEN=$(gh auth token)
-```
-
-The resource was adopted with `terraform import` rather than created, so the
-live ruleset was never recreated (which would have briefly left `main`
-unprotected):
-
-```sh
-terraform import github_repository_ruleset.protect_main agent-lcars:19524095
-```
-
-Keep the admin bypass (`bypass_actors { actor_type = "RepositoryRole" ... }`)
-exactly as configured. Terraform manages the very ruleset that gates its own
-pull requests circularly: a bad apply that misconfigures it can only be
-recovered through that bypass, so any change touching this resource should be
-reviewed like the safety-critical config it is, not applied unattended.
+Branch protection for this repo is now managed in the **homelab** repo's
+terraform root (homelab#523, unified fleet governance 2026-08-11):
+`homelab/terraform/github_rulesets.tf` instantiates one `protect-main`
+module for homelab, agent-lcars, and supersprinklesracing/sprinkles, and
+homelab's scheduled drift check reports hand edits. The live ruleset
+(id 19524095) was imported there with a 0-diff plan and removed from
+this state with a `removed` block (`github.tf`), so it was never
+recreated. Change branch protection in homelab — never here, never by
+hand through the GitHub UI or API.
 
 ## Custom domain DNS handoff
 
