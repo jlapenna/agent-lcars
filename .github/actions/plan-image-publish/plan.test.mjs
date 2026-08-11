@@ -141,6 +141,29 @@ test('runner-image inputs schedule the JIT runner, not the control plane', () =>
   );
 });
 
+// The e2e-runner Dockerfile COPYs this one file from outside its own
+// tools/e2e-runner/** context (PR #930 review) so its externals-repair
+// entrypoint shares byte-for-byte the same logic the JIT worker image's
+// own entrypoint.sh uses. A change scoped to it alone must reschedule
+// BOTH images -- leaving the e2e-runner image out would silently pin it
+// to a stale copy of a script whose whole point is having exactly one
+// copy.
+test('the shared externals-health.sh script schedules both the JIT runner and the e2e-runner image', () => {
+  assert.deepEqual(
+    planImageBuilds([
+      'apps/runner-autoscaler/runner-image/externals-health.sh',
+    ]),
+    {
+      controlPlane: false,
+      jitRunner: true,
+      watcher: false,
+      exporter: false,
+      e2e: false,
+      e2eRunner: true,
+    },
+  );
+});
+
 test('a mixed push schedules exactly the images its changes touch', () => {
   assert.deepEqual(
     planImageBuilds([
