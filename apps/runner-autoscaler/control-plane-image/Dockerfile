@@ -11,6 +11,20 @@ FROM ${RUNNER_BASE}
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# The upstream runner image bundles a Docker engine even though this
+# socketless control-plane image deliberately has no Docker workload. Remove
+# the daemon and its containerd payload rather than carrying a fixed critical
+# gRPC vulnerability in an unused component.
+RUN rm -f \
+    /usr/bin/containerd \
+    /usr/bin/containerd-shim-runc-v2 \
+    /usr/bin/ctr \
+    /usr/bin/docker \
+    /usr/bin/docker-init \
+    /usr/bin/docker-proxy \
+    /usr/bin/dockerd \
+    /usr/local/lib/docker/cli-plugins/docker-buildx
+
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg git; \

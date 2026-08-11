@@ -174,6 +174,18 @@ ARG GO_VERSION
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# The JIT worker needs Docker client + Buildx to submit remote BuildKit
+# sessions, but no scale set mounts a Docker socket or needs a local engine.
+# Keep that client surface and remove the bundled daemon/containerd payload,
+# which otherwise carries CVE-2026-33186 through an unused gRPC server.
+RUN rm -f \
+    /usr/bin/containerd \
+    /usr/bin/containerd-shim-runc-v2 \
+    /usr/bin/ctr \
+    /usr/bin/docker-init \
+    /usr/bin/docker-proxy \
+    /usr/bin/dockerd
+
 # The whole Go distribution is copied from the exact-version Go image above,
 # rather than relying on Ubuntu's older distribution package. Keep its bin
 # first on PATH so both CI and actionlint use this compiler consistently.
