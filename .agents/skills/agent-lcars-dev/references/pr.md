@@ -46,8 +46,10 @@
    force-push. The up-to-date-branch policy is **non-strict** (harmonized
    with the sprinkles repo, 2026-08-11): an armed PR merges on green even
    if `main` moved after its checks ran — post-merge `Verify` on `main` is
-   the safety net for stale-base breakage, and PR E2E already merges the
-   live base at run time. Admins (`RepositoryRole:5`) hold
+   the safety net for stale-base breakage (this repo's own PR CI checks
+   out the event revision as-is; the `merge-live-base` action published
+   here is consumed by sprinkles' E2E, not by this repo's workflows).
+   Admins (`RepositoryRole:5`) hold
    `bypass_mode: always` as a deliberate escape hatch; if an admin merge
    is ever refused, update the branch and let `Verify` re-run rather than
    reaching for a bigger hammer.
