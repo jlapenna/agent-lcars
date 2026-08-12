@@ -24,7 +24,6 @@ HUSKY=0 pnpm install --frozen-lockfile
 # HUSKY=0 skips the prepare hook, and every worktree has its own ignored
 # .husky/_ bootstrap directory. Regenerate it here so commit/push guards work.
 echo "==> Regenerating git hooks"
-pnpm exec husky
-./tools/assert-git-hooks-installed.sh
+./tools/setup-git-hooks.sh
 
 echo "==> Worktree ready."
