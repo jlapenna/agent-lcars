@@ -462,4 +462,59 @@ describe('ActionItemCard', () => {
       expect(screen.queryByTestId('markdown-stub')).toBeNull();
     });
   });
+
+  // #949: the description preview reuses the same collapsible markdown
+  // component as the last-comment preview above, so it needs its own
+  // independent expand/collapse affordance instead of sharing state with it.
+  describe('description preview', () => {
+    it('renders the issue body through the markdown renderer', () => {
+      renderCard(
+        makeItem({
+          body: '**bold** description with a [link](https://example.com)',
+        }),
+      );
+
+      expect(screen.getByTestId('markdown-stub').textContent).toBe(
+        '**bold** description with a [link](https://example.com)',
+      );
+    });
+
+    it('renders nothing when the item has no description', () => {
+      renderCard(makeItem({ body: '' }));
+
+      expect(screen.queryByTestId('markdown-stub')).toBeNull();
+    });
+
+    it('renders both the description and the last comment independently', () => {
+      const longBody = 'D'.repeat(500);
+      const longComment = 'C'.repeat(500);
+      renderCard(
+        makeItem({
+          body: longBody,
+          lastCommentBody: longComment,
+          lastCommentUrl: 'https://github.com/o/r/issues/1#issuecomment-1',
+        }),
+      );
+
+      const stubs = screen.getAllByTestId('markdown-stub');
+      expect(stubs.map((stub) => stub.textContent)).toEqual([
+        longBody,
+        longComment,
+      ]);
+
+      const [showDescription, showResponse] = screen.getAllByRole('button', {
+        name: /Show full/,
+      });
+      expect(showDescription.textContent).toContain('Show full description');
+      expect(showResponse.textContent).toContain('Show full response');
+
+      // Expanding the description must not also expand the comment - each
+      // preview owns its own collapsed/expanded state.
+      fireEvent.click(showDescription);
+      expect(screen.getByRole('button', { name: /Show less/ })).toBeTruthy();
+      expect(
+        screen.getByRole('button', { name: /Show full response/ }),
+      ).toBeTruthy();
+    });
+  });
 });
