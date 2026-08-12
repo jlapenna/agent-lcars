@@ -516,5 +516,56 @@ describe('ActionItemCard', () => {
         screen.getByRole('button', { name: /Show full response/ }),
       ).toBeTruthy();
     });
+
+    // #949 review: with both previews on the card, two "View on GitHub"
+    // links with the same accessible name were indistinguishable to
+    // assistive tech.
+    it('gives the description and comment previews distinct accessible link names', () => {
+      renderCard(
+        makeItem({
+          body: 'Some description text',
+          lastCommentBody: 'Some comment text',
+          lastCommentUrl: 'https://github.com/o/r/issues/1#issuecomment-1',
+        }),
+      );
+
+      expect(
+        screen.getByRole('link', { name: 'View description on GitHub ↗' }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole('link', { name: 'View comment on GitHub ↗' }),
+      ).toBeTruthy();
+    });
+
+    // #949 review: the Inbox detail pane reuses one ActionItemCard instance
+    // across selections instead of remounting it per item (queue-workspace.tsx
+    // renders it at a stable position with no `key`), so an expanded
+    // description must not leak onto the next item selected.
+    it('collapses on selecting a different item, even if the previous one was expanded', () => {
+      const itemA = makeItem({ number: 1, body: 'D'.repeat(500) });
+      const itemB = makeItem({ number: 2, body: 'E'.repeat(500) });
+
+      const { rerender } = render(
+        <MantineProvider>
+          <ActionItemCard item={itemA} variant="workspace" />
+        </MantineProvider>,
+      );
+
+      fireEvent.click(
+        screen.getByRole('button', { name: /Show full description/ }),
+      );
+      expect(screen.getByRole('button', { name: /Show less/ })).toBeTruthy();
+
+      rerender(
+        <MantineProvider>
+          <ActionItemCard item={itemB} variant="workspace" />
+        </MantineProvider>,
+      );
+
+      expect(
+        screen.getByRole('button', { name: /Show full description/ }),
+      ).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /Show less/ })).toBeNull();
+    });
   });
 });
