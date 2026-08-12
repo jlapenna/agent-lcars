@@ -1,3 +1,41 @@
 packages:
   - 'apps/*'
   - 'libs/*'
+
+allowBuilds:
+  '@firebase/util': true
+  '@google/genai': true
+  '@parcel/watcher': true
+  '@swc/core': true
+  core-js: true
+  esbuild: true
+  less: true
+  nx: true
+  protobufjs: true
+  re2: true
+  sharp: true
+  tree-sitter-go: false
+  unrs-resolver: true
+
+# pnpm 11 revalidates the existing frozen lockfile against its new default
+# 24-hour release-age policy. These are the exact versions accepted by #964;
+# keep the default policy for every other present and future dependency.
+minimumReleaseAgeExclude:
+  - '@eslint-react/ast@5.18.4'
+  - '@eslint-react/core@5.18.4'
+  - '@eslint-react/eslint-plugin@5.18.4'
+  - '@eslint-react/eslint@5.18.4'
+  - '@eslint-react/jsx@5.18.4'
+  - '@eslint-react/shared@5.18.4'
+  - '@eslint-react/var@5.18.4'
+  - '@google-cloud/firestore@9.0.0'
+  - 'electron-to-chromium@1.5.405'
+  - 'eslint-plugin-react-dom@5.18.4'
+  - 'eslint-plugin-react-jsx@5.18.4'
+  - 'eslint-plugin-react-naming-convention@5.18.4'
+  - 'eslint-plugin-react-rsc@5.18.4'
+  - 'eslint-plugin-react-web-api@5.18.4'
+  - 'eslint-plugin-react-x@5.18.4'
+  - 'proto3-json-serializer@4.0.1'
+  - 'retry-request@9.0.1'
+  - 'teeny-request@11.0.1'
