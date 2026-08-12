@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/tools/codex-issue-guardrail.cjs\"",
+            "command": "repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true); if [ -n \"$repo_root\" ] && [ -f \"$repo_root/tools/codex-issue-guardrail.cjs\" ]; then node \"$repo_root/tools/codex-issue-guardrail.cjs\"; fi; exit 0",
             "timeout": 10
           }
         ]
