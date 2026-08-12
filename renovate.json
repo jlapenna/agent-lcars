@@ -26,6 +26,12 @@
       "automergeType": "pr"
     },
     {
+      "description": "github.com/google/uuid v1.6.0 is the current release and resolves normally through the Go proxy, but Renovate's hosted Go lookup intermittently reports no-result. Disable only this false-positive lookup; all other Go module updates remain enabled.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/google/uuid"],
+      "enabled": false
+    },
+    {
       "description": "This mirror lives on a LAN-only registry (docker-registry.lan.jlapenna.net) that Renovate's runner cannot reach or authenticate to, so digest lookups always fail here. The image is already pinned deliberately and updated by hand per the instructions in apps/runner-autoscaler/runner-image/Dockerfile — disable Renovate for it rather than have it keep filing the same unfixable lookup-failure warning.",
       "matchDatasources": ["docker"],
       "matchPackageNames": [
