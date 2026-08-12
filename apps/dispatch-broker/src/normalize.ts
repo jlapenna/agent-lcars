@@ -94,6 +94,14 @@ export interface NormalizeContext {
   runId: number;
   now: string;
   actor?: string;
+  /** GitHub's own delivery UUID for this webhook (the `x-github-delivery`
+   *  header, threaded through as `admitGitHubWebhook`'s `deliveryId`) --
+   *  present for every real webhook transport, absent for
+   *  workflow_dispatch/console-originated calls that never carry one.
+   *  `timelineSource()`'s only consumer: it is the fallback identity used
+   *  when the issue/PR timeline can't be correlated to a single event (see
+   *  that function). */
+  deliveryId?: string;
 }
 
 interface WorkflowDispatchInputs {
@@ -337,6 +345,7 @@ function timelineSource(
   timeline: TimelineEvent[],
   eventName: string,
   event: WebhookEvent,
+  deliveryId?: string,
 ): { sourceId: string; occurredAt: string } {
   const action = event.action;
   // Callers only ever reach here once `event.issue ?? event.pull_request`
@@ -362,13 +371,43 @@ function timelineSource(
       Math.abs(occurredAt - targetTime) <= 10_000
     );
   });
-  if (candidates.length !== 1 || !candidates[0].id) {
-    throw new Error(`Ambiguous ${eventName}:${action} timeline event`);
+  if (candidates.length === 1 && candidates[0].id) {
+    return {
+      sourceId: `timeline:${candidates[0].id}`,
+      occurredAt: candidates[0].created_at,
+    };
   }
-  return {
-    sourceId: `timeline:${candidates[0].id}`,
-    occurredAt: candidates[0].created_at,
-  };
+  // The 10-second correlation window is a best-effort match, not a
+  // guarantee, and it fails two different ways in production (#955):
+  //   - Zero candidates: unrelated activity on the issue between webhook
+  //     emission and Cloud Tasks processing drifts `updated_at` past the
+  //     window. Every retry re-reads the issue's *current* `updated_at`,
+  //     which can only drift further as more time and activity accrue --
+  //     so a delivery that lands here once can never self-heal by retrying.
+  //     Hard-failing turned this into a poison pill retried forever (one
+  //     task hit 1,346 attempts before its burst ended).
+  //   - Multiple candidates: two same-label-same-actor events landed within
+  //     the window. Not timing-recoverable even in principle -- the
+  //     ambiguity is a permanent property of the timeline.
+  // Neither case has a single real timeline event left to key a sourceId
+  // off. Fall back to the webhook delivery's own identity instead of
+  // throwing: GitHub assigns exactly one delivery ID per webhook attempt,
+  // and every Cloud Tasks retry of that *same* delivery (this queue's
+  // actual retry unit) carries that same ID, so this fallback sourceId
+  // stays stable across retries -- preserving the idempotent
+  // (sourceKind, sourceId) dedup controller-core.ts relies on for
+  // exactly-once admission. It deliberately does not stay stable across a
+  // genuine GitHub-UI *redelivery* (a fresh delivery ID for the same
+  // underlying event, distinct from a Cloud Tasks retry of one delivery) --
+  // an accepted trade-off given the alternative is a permanent outage; see
+  // the PR that introduced this fallback for the full reasoning.
+  if (deliveryId) {
+    return {
+      sourceId: `github-delivery:${deliveryId}`,
+      occurredAt: numbered.updated_at,
+    };
+  }
+  throw new Error(`Ambiguous ${eventName}:${action} timeline event`);
 }
 
 // Shared by the manual-dispatch workflow_dispatch branch
@@ -785,7 +824,12 @@ function normalizeEvent({
   }
 
   if (['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)) {
-    const source = timelineSource(timeline, semanticEventName, event);
+    const source = timelineSource(
+      timeline,
+      semanticEventName,
+      event,
+      context.deliveryId,
+    );
     if (event.action === 'closed' || event.action === 'reopened') {
       return {
         kind: 'anchor-control',
