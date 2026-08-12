@@ -83,6 +83,16 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
+    condition     = google_secret_manager_secret.admin_storage_state.secret_id == "AGENT_LCARS_ADMIN_STORAGE_STATE"
+    error_message = "The production verifier storage state must use its documented dedicated secret."
+  }
+
+  assert {
+    condition     = google_secret_manager_secret_iam_member.admin_storage_state_accessor.role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.admin_storage_state_accessor.member == "serviceAccount:${google_service_account.codex_agent.email}"
+    error_message = "The Agent LCARS Codex service account must have read-only access to the verifier session secret."
+  }
+
+  assert {
     condition     = google_service_account_iam_member.homelab_codex_agent_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/homelab"
     error_message = "The Homelab Codex grant must use the exact repository principal."
   }

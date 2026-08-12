@@ -47,11 +47,10 @@ export function readSecretValue(
     );
   }
 
-  const normalized = value.trimEnd();
-  if (!normalized) {
+  if (!value) {
     throw new Error(`${project}/${secretName} is empty.`);
   }
-  return normalized;
+  return value;
 }
 
 export async function mintStorageState(

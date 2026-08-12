@@ -353,6 +353,19 @@ resource "google_secret_manager_secret" "runtime" {
   depends_on = [google_project_service.services]
 }
 
+# Playwright storage state for the dedicated production verification identity.
+# This is a tooling credential, not an App Hosting runtime secret: a maintainer
+# mints/rotates its VALUE with `console:mint-session`, while the headless Codex
+# identity receives read access to this container only. In particular, it must
+# never receive access to AUTH_SECRET, which is what makes minting possible.
+resource "google_secret_manager_secret" "admin_storage_state" {
+  secret_id = "AGENT_LCARS_ADMIN_STORAGE_STATE"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
 resource "google_secret_manager_secret" "telemetry_writer_key" {
   secret_id = "AGENT_TELEMETRY_WRITER_KEY_JSON"
   replication {
@@ -419,6 +432,15 @@ resource "google_secret_manager_secret" "codex_auth" {
 resource "google_service_account" "codex_agent" {
   account_id   = "codex-agent"
   display_name = "Agent LCARS Codex issue agent"
+}
+
+# Deliberately read-only and scoped to the minted browser session alone. The
+# agent can reuse the bearer credential for approved production UI checks but
+# cannot mint one, rotate it, or read the Auth.js key that signs all sessions.
+resource "google_secret_manager_secret_iam_member" "admin_storage_state_accessor" {
+  secret_id = google_secret_manager_secret.admin_storage_state.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.codex_agent.email}"
 }
 
 # Deliberately scoped to this ONE secret, not a project-level role.

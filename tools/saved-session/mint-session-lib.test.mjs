@@ -57,7 +57,7 @@ test('Auth.js secret access is narrow and never prints the value', () => {
   const value = readSecretValue('AUTH_SECRET', 'test-project', {
     runFile(file, args, options) {
       call = { file, args, options };
-      return 'super-secret-value\n';
+      return 'super-secret-value';
     },
   });
 
