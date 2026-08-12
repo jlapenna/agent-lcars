@@ -132,6 +132,7 @@ function renderPanel(
   activity: AgentActivity = EMPTY_ACTIVITY,
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>,
   itemsByRunId?: Record<number, RunItemRef>,
+  repoFilter?: string,
 ) {
   render(
     <MantineProvider>
@@ -140,6 +141,7 @@ function renderPanel(
         cliSessions={cliSessions}
         sessionsByRunId={sessionsByRunId}
         itemsByRunId={itemsByRunId}
+        repoFilter={repoFilter}
       />
     </MantineProvider>,
   );
@@ -324,6 +326,23 @@ describe('AgentActivityPanel recent runs', () => {
     expect(
       screen.getByRole('link', { name: 'View all outcomes →' }),
     ).toHaveAttribute('href', '/agents');
+  });
+
+  it('keeps the active repository scope when opening all outcomes', () => {
+    renderPanel(
+      [],
+      {
+        ...EMPTY_ACTIVITY,
+        recentRuns: [makeAgentRun()],
+      },
+      undefined,
+      undefined,
+      'supersprinklesracing/sprinkles',
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'View all outcomes →' }),
+    ).toHaveAttribute('href', '/agents?repo=supersprinklesracing%2Fsprinkles');
   });
 
   it('keeps the recent-run conclusion badge from shrinking away on narrow layouts', () => {

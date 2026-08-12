@@ -909,6 +909,7 @@ export function AgentActivityPanel({
   cliSessions = [],
   itemsByRunId = {},
   sessionsByRunId = {},
+  repoFilter,
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
@@ -917,8 +918,13 @@ export function AgentActivityPanel({
    * `indexSessionsByNumericRunId` in run-classification.ts. Absent/empty
    * renders exactly as before this telemetry existed (PRD user story 16). */
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+  /** Keep the Bridge's active repository scope when opening full history. */
+  repoFilter?: string;
 }) {
   const { liveRuns, recentRuns, fleet } = activity;
+  const outcomesHref = repoFilter
+    ? `/agents?${new URLSearchParams({ repo: repoFilter })}`
+    : '/agents';
 
   const activeSessions = cliSessions.filter(
     (session) => session.liveness === 'live' || session.liveness === 'idle',
@@ -998,7 +1004,11 @@ export function AgentActivityPanel({
                 />
               ))}
             </Stack>
-            <Anchor href="/agents" size="sm" className="operations-more-link">
+            <Anchor
+              href={outcomesHref}
+              size="sm"
+              className="operations-more-link"
+            >
               View all outcomes →
             </Anchor>
           </section>

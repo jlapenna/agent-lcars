@@ -158,6 +158,7 @@ async function IndexBody({
         cliSessions={filteredCliSessions}
         itemsByRunId={itemsByRunId}
         sessionsByRunId={sessionsByRunId}
+        repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
       />
 
       <BridgeSections
