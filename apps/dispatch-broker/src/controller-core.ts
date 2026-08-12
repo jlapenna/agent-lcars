@@ -1051,6 +1051,26 @@ async function repairMissingIntentFromLabel(
       return;
     }
 
+    // #955/#960: the live webhook path now derives 'labeled' evidence from
+    // the delivery's own identity (`github-delivery:<id>`, normalize.mjs's
+    // timelineSource()) whenever it has one -- GitHub's timeline API is
+    // only eventually consistent, so a webhook admission cannot safely
+    // commit to a specific timeline event ID across every Cloud Tasks
+    // retry of itself. That means this repair's own `timeline:<id>` exact
+    // match above can no longer be trusted as the sole "already handled"
+    // signal for a live webhook's own evidence. Recognize it the same way
+    // the legacy check just above recognizes its own predecessor scheme:
+    // by the resulting generation's (pipeline, mode) and occurredAt
+    // ordering, not by re-deriving the exact sourceId string the webhook
+    // happened to use.
+    const alreadyDispatched = ledger.generations.some(
+      (generation) =>
+        generation.pipeline === pipeline &&
+        generation.mode === mode &&
+        Date.parse(generation.occurredAt) >= Date.parse(occurredAt),
+    );
+    if (alreadyDispatched) return;
+
     actor = mostRecent.actor;
     if (!actor || actor.login !== maintainer) return;
     quickTask = quickTaskRequest(issue, task.repository, pipeline);

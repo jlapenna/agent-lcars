@@ -3842,6 +3842,79 @@ test('the real timeline identity does not replay a label already covered by the 
   }
 });
 
+test('reconcileLedger repair recognizes a webhook-admitted labeled intent recorded under the delivery-derived sourceId and does not duplicate it (#960 review)', async () => {
+  // Codex review on PR #960: the live webhook path (normalize.mjs's
+  // timelineSource()) now always prefers a `github-delivery:<id>` sourceId
+  // over `timeline:<id>` whenever it has a delivery ID, precisely so a
+  // Cloud Tasks retry can never flip sourceId mid-delivery. That means
+  // repairMissingIntentFromLabel's own exact `timeline:<id>` dedup check
+  // (above) can no longer recognize evidence the webhook already recorded
+  // -- this proves its (pipeline, mode, occurredAt) fallback check catches
+  // it instead, so a later scheduled reconcile pass does not admit a
+  // second, duplicate generation for the exact same label application.
+  process.env.MAINTAINER_LOGIN = 'jlapenna';
+  try {
+    const ledger = createLedger(task);
+    const webhookTimeline = maintainerLabelTimeline(); // id 501, agent:codex, jlapenna, 2026-08-04T05:59:00Z
+    const normalized = normalizeEvent({
+      eventName: 'issues',
+      event: {
+        action: 'labeled',
+        issue: {
+          id: 9304,
+          number: task.issue,
+          title: 'Fix dispatch',
+          created_at: '2026-08-04T05:58:00.000Z',
+          updated_at: '2026-08-04T05:59:00.000Z',
+          labels: [{ name: 'agent:codex' }],
+        },
+        label: { name: 'agent:codex' },
+        sender: { login: 'jlapenna' },
+      },
+      context: {
+        repository: task.repository,
+        repositoryId: task.repositoryId,
+        issue: task.issue,
+        runId: 90001,
+        actor: 'jlapenna',
+        now: '2026-08-04T05:59:01.000Z',
+        deliveryId: '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
+      },
+      timeline: webhookTimeline,
+      maintainer: 'jlapenna',
+    });
+    assert.equal(normalized.kind, 'intent');
+    assert.equal(
+      normalized.intent.sourceId,
+      'github-delivery:4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820',
+    );
+    acceptIntent(ledger, normalized.intent, '2026-08-04T05:59:01.000Z');
+    assert.equal(ledger.generations.length, 1);
+
+    const { client } = reconcileStubClient({
+      issue: { id: 9304, labels: [{ name: 'agent:codex' }], assignees: [] },
+      timeline: webhookTimeline,
+    });
+
+    await reconcileLedger(
+      client,
+      { ledger, comment: { id: 9 } },
+      '2026-08-04T06:30:00.000Z',
+      30880000,
+      undefined,
+      'jlapenna',
+    );
+
+    assert.equal(
+      ledger.generations.length,
+      1,
+      'the reconcile repair must not create a second generation for evidence the webhook already recorded under a different sourceId scheme',
+    );
+  } finally {
+    delete process.env.MAINTAINER_LOGIN;
+  }
+});
+
 test('reconcileLedger repair honors a Quick Task marker for its intentId (dedupes against the original opened-event intent)', async () => {
   process.env.MAINTAINER_LOGIN = 'jlapenna';
   try {

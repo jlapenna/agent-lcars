@@ -480,10 +480,10 @@ test('pipeline-specific comment commands still require an exact match against th
 // to key a sourceId off -- but a webhook transport always carries its own
 // delivery ID, and that is enough to keep the admission deterministic and
 // retry-stable without picking (arbitrarily) among the candidates. This
-// test now exercises the one caller that has no delivery identity to fall
-// back on at all (a direct `timelineSource()` call with no fourth
-// argument) -- fail closed remains correct there, since there is truly
-// nothing stable left to key off.
+// test exercises the one caller that has no delivery identity to fall back
+// on at all (a direct `timelineSource()` call with no fourth argument) --
+// fail closed remains correct there, since there is truly nothing stable
+// left to key off.
 test('timeline matching fails closed when a label delivery is ambiguous and no delivery ID is available', () => {
   assert.throws(
     () =>
@@ -494,6 +494,16 @@ test('timeline matching fails closed when a label delivery is ambiguous and no d
       ),
     /Ambiguous/u,
   );
+});
+
+test('timeline matching still uses the real timeline event ID when it is unambiguous and no delivery ID is available', () => {
+  const source = timelineSource(
+    timeline('labeled'),
+    'issues',
+    issueEvent('labeled'),
+  );
+  assert.equal(source.sourceId, 'timeline:77');
+  assert.equal(source.occurredAt, baseIssue.updated_at);
 });
 
 test('timeline matching falls back to a delivery-derived sourceId when the label delivery is ambiguous (#955)', () => {
@@ -527,6 +537,50 @@ test('timeline matching falls back to a delivery-derived sourceId when no candid
   );
   assert.equal(source.sourceId, `github-delivery:${context.deliveryId}`);
   assert.equal(source.occurredAt, driftedIssue.updated_at);
+});
+
+// PR #960 (Codex review): a delivery ID, once available, must win
+// *unconditionally* -- not merely as a fallback for the ambiguous cases --
+// because GitHub's timeline API is only eventually consistent. The very
+// same delivery can see zero candidates on one attempt and exactly one
+// clean candidate on the next (the timeline simply caught up in between),
+// and if sourceId tracked "what this attempt's query happened to return"
+// instead of the delivery itself, that transition would silently switch
+// sourceId mid-retry -- exactly the flip that broke the dedup invariant
+// this fallback exists to preserve.
+test('timeline matching prefers the delivery-derived sourceId even when a single unambiguous candidate is present (#960 review)', () => {
+  const source = timelineSource(
+    timeline('labeled'),
+    'issues',
+    issueEvent('labeled'),
+    context.deliveryId,
+  );
+  assert.equal(source.sourceId, `github-delivery:${context.deliveryId}`);
+  // occurredAt still gets enriched from the real matched event -- that
+  // field carries no dedup weight, only display/ordering value.
+  assert.equal(source.occurredAt, baseIssue.updated_at);
+});
+
+test('a Cloud Tasks retry never flips sourceId once the eventually-consistent timeline catches up (#960 review)', () => {
+  const event = issueEvent('labeled');
+  const firstAttempt = timelineSource(
+    [], // the real timeline event has not propagated yet on this attempt
+    'issues',
+    event,
+    context.deliveryId,
+  );
+  const retryAfterTimelineCaughtUp = timelineSource(
+    timeline('labeled'), // now visible, and would unambiguously match
+    'issues',
+    event,
+    context.deliveryId,
+  );
+  assert.equal(firstAttempt.sourceId, `github-delivery:${context.deliveryId}`);
+  assert.equal(
+    retryAfterTimelineCaughtUp.sourceId,
+    firstAttempt.sourceId,
+    'the retry must reuse the exact same sourceId as the first attempt, not switch to timeline:77',
+  );
 });
 
 test('an ambiguous labeled event with drifted updated_at no longer hard-fails admission end to end (#955)', () => {
@@ -595,6 +649,37 @@ test('the ambiguous-timeline fallback sourceId is stable across repeated Cloud T
   });
   assert.equal(first.kind, 'intent');
   assert.equal(retry.kind, 'intent');
+  assert.equal(first.intent.sourceId, retry.intent.sourceId);
+  assert.equal(first.intent.intentId, retry.intent.intentId);
+});
+
+test('an end-to-end Cloud Tasks retry keeps the same intentId even after the timeline becomes unambiguous (#960 review)', () => {
+  // The exact scenario Codex's review on PR #960 called out: the first
+  // admission attempt sees no timeline candidates yet (GitHub's timeline
+  // API had not caught up), so it must admit via the delivery-derived
+  // sourceId rather than throwing. A later Cloud Tasks retry of the *same*
+  // delivery re-queries the timeline and now finds the one real, clean
+  // candidate. Admission must still resolve to the identical sourceId (and
+  // therefore identical intentId) as the first attempt -- not the
+  // timeline-derived one that would otherwise be preferred on its own.
+  const event = issueEvent('labeled');
+  const first = normalizeEvent({
+    eventName: 'issues',
+    event,
+    context,
+    timeline: [],
+    maintainer: 'jlapenna',
+  });
+  const retry = normalizeEvent({
+    eventName: 'issues',
+    event,
+    context,
+    timeline: timeline('labeled'),
+    maintainer: 'jlapenna',
+  });
+  assert.equal(first.kind, 'intent');
+  assert.equal(retry.kind, 'intent');
+  assert.equal(first.intent.sourceId, `github-delivery:${context.deliveryId}`);
   assert.equal(first.intent.sourceId, retry.intent.sourceId);
   assert.equal(first.intent.intentId, retry.intent.intentId);
 });
