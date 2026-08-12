@@ -56,7 +56,7 @@ ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0c
 # apps/runner-autoscaler/go.mod so an update cannot silently leave CI using a
 # stale compiler. An exact release tag keeps the toolchain reproducible while
 # still letting BuildKit cache its immutable image layers.
-ARG GO_VERSION=1.26.3
+ARG GO_VERSION=1.26.5
 
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool
 # (apps/telemetry-watcher's `bundle` target) from source, baked into the

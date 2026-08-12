@@ -12,8 +12,8 @@ importers:
         specifier: 9.0.0
         version: 9.0.0
       '@google-cloud/storage':
-        specifier: ^7.19.0
-        version: 7.21.0(encoding@0.1.13)
+        specifier: ^7.22.0
+        version: 7.22.0(encoding@0.1.13)
       '@google-cloud/tasks':
         specifier: ^7.0.0
         version: 7.0.0
@@ -1652,9 +1652,9 @@ packages:
     resolution: {integrity: sha512-xXAQBVVrFviWz8L8yDKEqv1ziVw/gMSpYHt3IxSYRSY0fTyjis+xOrKJILj8dd8PAUHGnGiAIYuTprflkE9jsQ==}
     engines: {node: '>=18'}
 
-  '@google-cloud/storage@7.21.0':
-    resolution: {integrity: sha512-l+IFTkd+6Y5LoAuXyYCKNAKtw/Ci+rAMqgdTB1jv4iZiLhw0rtq+0qjIRbBizXkNzEFmXiXUW0H7sZQQvk1ffA==}
-    engines: {node: '>=14'}
+  '@google-cloud/storage@7.22.0':
+    resolution: {integrity: sha512-W98gTQOAntEeEQ7/pZxSQXxfUO5CiQcXJRsxBpUa6UU25n8YN/VtogPBi0H+MAmUrn/6bY/sBhFansoWEsr2/g==}
+    engines: {node: '>=18'}
 
   '@google-cloud/tasks@7.0.0':
     resolution: {integrity: sha512-BJe5J4NyBFP/98/09LltESzd6YzRG+xZRyqhRaDVuEOIIzJk8zqTt9prT497CqLGGPdh6vd6R4tq5/LIGdXx/w==}
@@ -12463,7 +12463,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@google-cloud/storage@7.21.0(encoding@0.1.13)':
+  '@google-cloud/storage@7.22.0(encoding@0.1.13)':
     dependencies:
       '@google-cloud/paginator': 5.0.2
       '@google-cloud/projectify': 4.0.0
@@ -17803,7 +17803,7 @@ snapshots:
       jwks-rsa: 4.1.0
     optionalDependencies:
       '@google-cloud/firestore': 8.7.1
-      '@google-cloud/storage': 7.21.0(encoding@0.1.13)
+      '@google-cloud/storage': 7.22.0(encoding@0.1.13)
     transitivePeerDependencies:
       - encoding
       - supports-color
