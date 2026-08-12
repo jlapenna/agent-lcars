@@ -14,6 +14,7 @@ allowBuilds:
   protobufjs: true
   re2: true
   sharp: true
+  tree-sitter-go: false
   unrs-resolver: true
 
 # pnpm 11 revalidates the existing frozen lockfile against its new default
